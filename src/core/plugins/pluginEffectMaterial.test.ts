@@ -16,7 +16,6 @@ import {
   pluginShaderSource,
   pluginEffectMaterial,
   registerPluginShaders,
-  isPassthroughOnly,
   PLUGIN_EFFECT_MATERIAL_LAYOUT,
   type PluginShaderSource,
   type ShaderRegistryLike,
@@ -100,14 +99,6 @@ describe('★ the WebGL2 tier', () => {
     // The layout has to match binding 0 or the pipeline is invalid, whether or
     // not a passthrough has any use for a parameter.
     expect(pluginShaderSource(PLUGIN, effect()).glsl.vertex).toContain('uniform Object');
-  });
-
-  it('says which tiers are passthrough-only', () => {
-    // Asked as a question rather than hardcoded, so surfaces that warn about it
-    // stop warning the day authors can ship GLSL.
-    expect(isPassthroughOnly('webgl2')).toBe(true);
-    expect(isPassthroughOnly('software')).toBe(true);
-    expect(isPassthroughOnly('webgpu')).toBe(false);
   });
 });
 

@@ -80,7 +80,24 @@ export class NullBackend implements RenderBackend {
   readonly kind = 'null' as const;
   /** No pixels are produced; value is irrelevant but must exist. */
   readonly renderTargetFlipV = false;
-  readonly capabilities: BackendCapabilities = {
+  /**
+   * MUTABLE, unlike every other backend's.
+   *
+   * These were hardcoded, and `float16Textures: true` in particular meant every
+   * headless test took the float branch of `RenderGraph.resolveTargets` and the
+   * 8-bit fallback — the branch that runs on real hardware WITHOUT
+   * `EXT_color_buffer_float`, and on the software rasteriser in CI — was
+   * exercised by nothing at all. A branch no test can reach is a branch nobody
+   * finds out about until a user does.
+   *
+   * The defaults are unchanged, so existing tests keep the environment they
+   * were written against. What is new is that a test can now say which machine
+   * it is pretending to be:
+   *
+   *     const backend = new NullBackend();
+   *     backend.capabilities.float16Textures = false;   // no EXT_color_buffer_float
+   */
+  capabilities: BackendCapabilities = {
     kind: 'null',
     maxTextureSize: 16384,
     instancing: true,

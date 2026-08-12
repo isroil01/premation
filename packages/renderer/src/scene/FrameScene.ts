@@ -492,8 +492,6 @@ export interface FrameScene {
   composition: CompositionInfo;
   /** Renderables in paint order (back to front). */
   renderables: Renderable[];
-  /** Selected renderable ids (drives the selection overlay pass). */
-  selection?: string[];
   /** True if any layer in the frame has post-processing effects. */
   hasEffects?: boolean;
   /**

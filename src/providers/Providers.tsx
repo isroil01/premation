@@ -36,6 +36,7 @@ import { getAutosaveController } from '@core/persistence/AutosaveController';
 import { readRecovery, clearRecovery, restoreRecovery } from '@core/persistence/recovery';
 import pluginHost from '@core/plugins/PluginHost';
 import { usePluginStore } from '@stores/pluginStore';
+import { reconcileInstalledSet, installInstalledSyncSink } from '@core/plugins/installedSync';
 import { showPluginPanel, hidePluginPanel } from '@layout/Plugins/PluginPanel';
 import { openExportDialog } from '@layout/Export/ExportDialog';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -81,7 +82,7 @@ import {
   eligibleExpressionProps,
   BAKE_REFUSAL_TEXT,
 } from '@core/animation/convertExpressionToKeyframes';
-import { armMotionSketch, finishMotionSketch } from '@core/animation/motionSketch';
+import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
 import { readNodeKind } from '@core/scene/sceneDerive';
@@ -96,7 +97,7 @@ import { openPalette } from '@stores/commandPaletteStore';
 import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
 import { findNavTarget } from '@core/workspace/cameraNav';
 import { insertNull, moveNodeInStack } from '@core/scene/parenting';
-import { fitNodeTo, centreAnchorInContent } from '@core/source/fitCommands';
+import { fitNodeTo, centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { activeCompSize } from '@core/scene/activeComp';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
@@ -453,15 +454,45 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         armMotionSketch(nodeId);
         const ctrl = getTimelineController();
         if (!ctrl.isPlaying) ctrl.play();
-        notify('Motion Sketch armed — drag the layer to record', 'info');
-        window.addEventListener('pointerup', () => {
+        notify('Motion Sketch armed — drag to record, Esc to cancel', 'info');
+
+        /*
+          Two ways out, not one.
+
+          The pointer-up path FINISHES: it writes whatever was sampled, which
+          for someone who armed the command and thought better of it is a set of
+          keyframes they did not ask for and now have to undo. Escape is the
+          other answer — `cancelMotionSketch` drops the session without writing.
+          It had no caller at all until this, which is precisely why arming was a
+          one-way door.
+
+          Both paths tear down BOTH listeners. `{ once: true }` removes only the
+          handler it is attached to, so without an explicit teardown an Escape
+          would leave a live pointer-up handler waiting to finish a session that
+          no longer exists.
+        */
+        const cleanup = (): void => {
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('keydown', onKey);
+        };
+        const onUp = (): void => {
+          cleanup();
           const n = finishMotionSketch();
           if (ctrl.isPlaying) ctrl.pause();
           notify(
             n > 0 ? `Motion Sketch — ${n} keyframes recorded` : 'Motion Sketch — nothing recorded',
             n > 0 ? 'success' : 'warning',
           );
-        }, { once: true });
+        };
+        const onKey = (ev: KeyboardEvent): void => {
+          if (ev.key !== 'Escape') return;
+          cleanup();
+          cancelMotionSketch();
+          if (ctrl.isPlaying) ctrl.pause();
+          notify('Motion Sketch cancelled', 'info');
+        };
+        window.addEventListener('pointerup', onUp);
+        window.addEventListener('keydown', onKey);
       },
     },
     {
@@ -867,6 +898,31 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
         for (const nodeId of useSelectionStore.getState().ids) centreAnchorInContent(nodeId);
+      },
+    },
+    {
+      /*
+        The companion to the fit commands above, and the reason `centreInFrame`
+        existed with no caller.
+
+        It sat in `fitCommands.ts` under a comment claiming import auto-fit used
+        it — which was never true: `insertMedia` sizes with `computeFit` and
+        positions with `placeInComp`, both before the node is in the graph, so it
+        could not have been the caller. What the function actually is, is this
+        menu command: AE has Layer ▸ Transform ▸ Center In View, and this did
+        not.
+
+        Distinct from the anchor command above. That one moves the ANCHOR inside
+        the layer's own content and leaves the layer where it is; this moves the
+        LAYER to the middle of the frame. They read similarly and do opposite
+        halves of the same job, which is why both labels name what moves.
+      */
+      id: asCommandId('layer.centreInComp'),
+      label: 'Centre Layer in Comp',
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        const frame = activeCompSize();
+        for (const nodeId of useSelectionStore.getState().ids) centreInFrame(nodeId, frame);
       },
     },
     {
@@ -1443,7 +1499,27 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // what stops third-party code from running at all — `configure()`
           // brings up every enabled plugin and starts the ones that asked.
           if (pluginsEnabled()) {
+            // Before hydrate, so nothing the reconcile or the user does next
+            // is announced into a no-op sink.
+            installInstalledSyncSink();
             await usePluginStore.getState().hydrate();
+            /*
+              Reconcile against the ACCOUNT's installed set.
+
+              Deliberately NOT awaited, and deliberately after `hydrate()`. Not
+              awaited because it is a network call and the editor must not wait
+              on the registry to boot — an unreachable server would otherwise
+              hold up the first frame. After hydrate because the local list is
+              its input: running it against a list that had not loaded yet
+              would report every plugin the user owns as "restorable".
+
+              Safe to leave running in the background because it cannot delete
+              anything locally — see `installedSync.ts`, where that is the
+              load-bearing rule.
+            */
+            void reconcileInstalledSet(usePluginStore.getState().plugins)
+              .then((report) => usePluginStore.getState().noteSync(report))
+              .catch(() => undefined);
             pluginHost.configure({
               getSelection: () => useSelectionStore.getState().ids,
               // What makes `motion.ui.openPanel()` real. The host cannot import
@@ -1544,12 +1620,20 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           });
           registry.register({
             id: asCommandId('view.safeAreas'), label: 'Toggle Safe Areas', icon: 'frame',
-            enabled: () => true, execute: () => useGuidesStore.getState().toggleSafeArea(),
+            enabled: () => true,
+            // `isChecked` is what puts the tick beside a toggle in the menus.
+            // It was declared on the Command interface and implemented by
+            // nothing, so every one of these read as a plain action and the
+            // menu could not tell you whether the thing was already on.
+            isChecked: () => useGuidesStore.getState().safeArea,
+            execute: () => useGuidesStore.getState().toggleSafeArea(),
           });
           registry.register({
             id: asCommandId('view.grid'), label: 'Show Grid', icon: 'grid',
             shortcut: { key: "'", meta: true },
-            enabled: () => true, execute: () => useGuidesStore.getState().toggleGrid(),
+            enabled: () => true,
+            isChecked: () => useGuidesStore.getState().grid,
+            execute: () => useGuidesStore.getState().toggleGrid(),
           });
           // AE keeps these three as separate View commands with AE's own chords.
           // Snap to Grid in particular is NOT tied to Show Grid — see the
@@ -1557,7 +1641,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           registry.register({
             id: asCommandId('view.proportionalGrid'), label: 'Show Proportional Grid', icon: 'grid',
             shortcut: { key: "'", alt: true },
-            enabled: () => true, execute: () => useGuidesStore.getState().toggleProportionalGrid(),
+            enabled: () => true,
+            isChecked: () => useGuidesStore.getState().proportionalGrid,
+            execute: () => useGuidesStore.getState().toggleProportionalGrid(),
           });
           registry.register({
             id: asCommandId('view.snapToGrid'), label: 'Snap to Grid', icon: 'grid',
@@ -1567,11 +1653,15 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // as `'` would never fire. Layout-dependent, like every punctuation
             // chord in this system.
             shortcut: { key: '"', meta: true, shift: true },
-            enabled: () => true, execute: () => useGuidesStore.getState().toggleSnapToGrid(),
+            enabled: () => true,
+            isChecked: () => useGuidesStore.getState().snapToGrid,
+            execute: () => useGuidesStore.getState().toggleSnapToGrid(),
           });
           registry.register({
             id: asCommandId('view.rulers'), label: 'Toggle Rulers', icon: 'ruler',
-            enabled: () => true, execute: () => useGuidesStore.getState().toggleRulers(),
+            enabled: () => true,
+            isChecked: () => useGuidesStore.getState().rulers,
+            execute: () => useGuidesStore.getState().toggleRulers(),
           });
           registry.register({
             // The ViewportTools tooltip has advertised this chord all along —
@@ -1579,7 +1669,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             // with position keyframes; this hides/shows them globally.
             id: asCommandId('view.motionPath'), label: 'Toggle Motion Paths', icon: 'path',
             shortcut: { key: 'm', meta: true, alt: true },
-            enabled: () => true, execute: () => useGuidesStore.getState().toggleMotionPath(),
+            enabled: () => true,
+            isChecked: () => useGuidesStore.getState().motionPathVisible,
+            execute: () => useGuidesStore.getState().toggleMotionPath(),
           });
           registry.register({
             id: asCommandId('view.renderQueue'), label: 'Render Queue', icon: 'queue',

@@ -116,3 +116,69 @@ The migration ladder is in better shape than the product's own messaging says.
 The gap is **evidence and commitment**, not engineering. Do (1) — the corpus
 test — first and independently: it is valuable whether or not a freeze is
 declared, and until it exists nobody can honestly say what still opens.
+
+---
+
+## Backend parity: what a document is promised on a weaker machine
+
+Added 2026-08-12. This policy was already being followed — consistently, in
+three separate subsystems — and had never been written down. That is worth
+correcting here rather than in a code comment, because it is a promise about
+what a `.motion` file MEANS, and the format freeze is where such promises live.
+
+**The rule, in one line: degrade visibly, label it, never refuse the document.**
+
+Unpacked, and in priority order:
+
+**1. A document opens everywhere.** The renderer tiers WebGPU → WebGL2 → Null.
+A feature that only the top tier can draw must never make a document fail to
+open, fail to save, or lose data on round-trip. Whatever cannot be drawn is
+still parsed, still stored, still exported, and still there when the file is
+opened on a machine that can draw it.
+
+**2. What cannot be drawn draws its INPUT, not nothing and not garbage.** A
+plugin effect ships WGSL only. Requiring authors to also write GLSL ES 3.0 to
+serve a fallback tier was judged the worse trade — it doubles the authoring
+cost of every effect and the second version is the one nobody tests — so the
+host generates a GLSL **passthrough** and the effect draws its input unchanged
+on WebGL2 (`pluginEffectMaterial.ts`). A layer that renders as itself is a
+degraded picture. A layer that renders as nothing, or as a broken frame, is a
+corrupted one, and a user cannot tell the second from a bug in their project.
+
+**3. The UI says so, at every surface that can show the feature.** This is the
+half most easily skipped, and skipping it is what turns a documented limitation
+into a support ticket: the effect appears in the browser, adds to the stack,
+shows its parameters, and does nothing — which reads as a broken plugin and
+sends the user to uninstall it. The predicate is `pluginEffectsCanRender()`;
+the effects browser tags such an effect **"No WebGPU"** with a tooltip saying
+it is saved with the project and renders where the capability exists, and
+`hostApi` reports it inert to the plugin itself.
+
+Note the shape of that predicate: it asks about a **capability**, not about a
+tier name. A second predicate `isPassthroughOnly(tier)` existed beside it, was
+documented as being for exactly these surfaces, and was called by none of them;
+it was deleted on 2026-08-12. Two predicates for one question is how the two
+answers drift apart, and the unused one was the weaker — a tier string is not
+what decides whether a WGSL pipeline can be built.
+
+**4. Nothing is hidden on the grounds that this machine cannot draw it.** A
+plugin effect stays listed and stays addable on WebGL2. Hiding it would make a
+document depend on which laptop authored it, which is precisely the property a
+format freeze exists to deny.
+
+**5. Divergence between backends is measured and ratcheted, not assumed.**
+WebGL2 is the reference oracle — it needs no GPU and is what golden references
+are blessed from — and WebGPU is gated against those references by a per-frame
+ceiling (`webgpu-baseline.json`). Byte equality between two hardware
+rasterizers is not a reasonable demand, so the gate's claim is narrower and
+enforceable: *a frame may not get worse.* Until that ratchet existed, a plugin
+shader that failed to compile on WebGPU sat at 87.8% divergence and printed a
+number nobody acted on.
+
+### What this does NOT promise
+
+Not that a document looks identical on both tiers. It cannot: 26 frames of the
+render-test suite differ measurably today, and the honest position is that they
+are recorded and bounded rather than resolved. The promise is about **data and
+legibility** — the file survives, and the user is told what this machine could
+not draw — not about pixels.

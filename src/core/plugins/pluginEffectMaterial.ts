@@ -25,9 +25,17 @@
  *
  * That is a real gap and it is deliberately not silent. It is the same answer
  * the rest of this subsystem gives to "the shader is not usable right now" —
- * passthrough, never a broken frame — and `isPassthroughOnly` exists so a
- * surface can SAY so rather than leaving a user to wonder why their effect does
- * nothing on one machine and works on another.
+ * passthrough, never a broken frame — and the surfaces that can show a plugin
+ * effect SAY so rather than leaving a user to wonder why their effect does
+ * nothing on one machine and works on another. The effects browser tags it
+ * "No WebGPU"; `hostApi` reports it inert.
+ *
+ * The question they ask is `pluginEffectsCanRender()`, which tests the
+ * CAPABILITY. This file used to export an `isPassthroughOnly(tier)` beside it,
+ * testing a tier STRING, whose docstring said it existed for those surfaces to
+ * call — and which none of them ever did. Deleted 2026-08-12: two predicates
+ * for one question, and the unused one was the weaker (a tier name is not what
+ * decides whether a WGSL pipeline can be built).
  */
 
 import type { EffectContribution } from './effectSchema';
@@ -250,14 +258,3 @@ export function registerPluginShaders(
   return names;
 }
 
-/**
- * True when this effect can only draw on the WebGPU tier.
- *
- * Every plugin effect, today — it is a function rather than a constant so the
- * surfaces that need to say "does nothing on this machine" ask a question
- * rather than hardcode an answer that stops being true the day authors can
- * ship GLSL.
- */
-export function isPassthroughOnly(tier: string): boolean {
-  return tier !== 'webgpu';
-}

@@ -94,6 +94,12 @@ export function AppMenuBar(): JSX.Element {
                   // whose click silently no-ops (execute on an unknown id)
                   // reads as broken; greyed-out reads as "not available".
                   const enabled = cmd ? (cmd.enabled ? cmd.enabled() : true) : false;
+                  // A toggle's CURRENT state. `Command.isChecked` was declared
+                  // on the interface and read by nothing, so "Show Grid" looked
+                  // identical whether the grid was on or off — the menu could
+                  // tell you an action existed but not what it would do.
+                  // `undefined` for a non-toggle keeps role="menuitem".
+                  const checked = cmd?.isChecked?.();
                   const label = it.label ?? cmd?.label ?? it.commandId ?? '';
                   const resolvedChord = cmd ? resolveChord(cmd.id as unknown as string, cmd.shortcut, getShortcutOverrides()) : undefined;
                   const shortcut = resolvedChord ? formatChord(resolvedChord) : undefined;
@@ -104,6 +110,7 @@ export function AppMenuBar(): JSX.Element {
                       label={label}
                       shortcut={shortcut}
                       disabled={!enabled}
+                      checked={checked}
                       onSelect={() => it.commandId && run(it.commandId)}
                     />
                   );

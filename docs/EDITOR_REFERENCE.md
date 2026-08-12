@@ -901,6 +901,63 @@ hits in `.ts`/`.tsx` at all; and `aces` at 255 hits was pure substring noise —
 
 ---
 
+### Fixed 2026-08-12 — four small ones, all the same shape
+
+Each was a declaration nothing honoured, and each is the kind of thing that
+makes a larger change expensive later rather than being expensive itself.
+
+**`Command.isChecked` was a feature that did not exist.** Declared on the
+interface — "Optional check invoked by menus to show toggled state" — with zero
+implementations and zero readers. So every toggle in the View menu rendered
+identically whether it was on or off: *Show Grid* told you the action existed
+and nothing about what it would do. WIRED rather than deleted, because six real
+toggles wanted it (grid, proportional grid, snap to grid, rulers, safe areas,
+motion paths) and both menu renderers already consulted `enabled` beside it.
+`MenuItem` now takes `checked`, renders the tick in the icon gutter menus
+already reserve, and switches to `role="menuitemcheckbox"` with `aria-checked`
+— a tick that exists only as a glyph is invisible to a screen reader. Held by
+`commandIsChecked.test.ts`, which asserts from BOTH ends: implemented by the
+toggles, *and* read by the renderers. Either half alone reproduces the original
+nothing.
+
+**`SelectionPass` could never draw.** It rendered `scene.selection`, which
+`snapshotToFrameScene` set to `[]` unconditionally. Deleted, along with the
+`selection` field on `FrameScene` and its parameter on `buildFrameScene` — the
+outline and handles are, and always were, 2D-canvas chrome in `useWorkspace.ts`.
+`OverlayPass.after` had to lose the name too: a dangling `after` entry is
+silently NO constraint (`compile()` links one only when the named pass is
+active), which is the exact mechanism behind the grid-erasure bug its own
+comment documents.
+
+**`MASK_TARGET` was allocated every frame for a pass that cannot run.**
+`MaskPass` is `enabled = false` and nothing turns it on, but target resolution
+walked the declarations without asking whether anything could still write to
+them — a full-viewport `rgba8unorm`, roughly 8 MB at 1920×1080, held for
+nothing. Fixed in the ALLOCATION, per the rule that the pass is not the problem.
+Deliberately narrow: a target is skipped only when it has declared writers and
+every one of them is disabled. The tempting rule — "allocate only what an active
+pass reads or writes" — would break the renderer, because `CompositionPass` uses
+the blur, backdrop and plugin-scale pools as scratch and most appear in no
+`writes` list at all.
+
+**Two capability lies.** `WebGL2Backend` declared `float16Textures: true` as a
+field initializer and only corrected it in `initialize()`, so anything asking a
+constructed-but-uninitialised backend got a yes and could take the float branch
+on a context with no `EXT_color_buffer_float`. Defaults are now pessimistic —
+the value it is safe to be wrong about. `NullBackend` hardcoded the same `true`,
+so every headless test took the float branch and the 8-bit fallback (the branch
+that runs on the CI software rasteriser) was exercised by nothing; its
+capabilities are now mutable so a test can say which machine it is pretending to
+be.
+
+**And one that would have poisoned the GPU port.** `WebGL2Backend.createTexture`
+ignored `desc.format` and always allocated RGBA8, while `createRenderTarget`
+honoured it — so one backend held two meanings for a format request depending on
+which function you reached. A ported effect allocating a float intermediate
+through `createTexture` would work on WebGPU, quantise here, and present as
+"that effect bands on WebGL2": a fresh mystery per effect instead of one wrong
+line. Fixed before any porting starts.
+
 ### Fixed 2026-08-12 — Compound Blur drew nothing on the primary backend
 
 250 scenes rendered on WebGPU and **not one pixel of it was gated**. The parity

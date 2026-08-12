@@ -45,20 +45,26 @@ describe('render pass order — chrome paints last', () => {
     EffectPass.activeColorTarget = SURFACE;
   });
 
-  it('draws overlay and selection after composition when there are no effects', () => {
+  it('draws overlay after composition when there are no effects', () => {
     const order = compiledOrder(false);
     expect(order).toContain('overlay');
     expect(order.indexOf('overlay')).toBeGreaterThan(order.indexOf('composition'));
-    expect(order.indexOf('selection')).toBeGreaterThan(order.indexOf('composition'));
   });
 
-  it('draws overlay and selection AFTER the effect blit, which replaces the surface', () => {
+  it('draws overlay AFTER the effect blit, which replaces the surface', () => {
     const order = compiledOrder(true);
     const effect = order.indexOf('effect');
     expect(effect).toBeGreaterThanOrEqual(0);
     // The regression: chrome before the blit is chrome that gets erased.
     expect(order.indexOf('overlay')).toBeGreaterThan(effect);
-    expect(order.indexOf('selection')).toBeGreaterThan(effect);
+  });
+
+  it('no longer builds a selection pass at all', () => {
+    // It drew `scene.selection`, which the adapter set to [] unconditionally.
+    // Asserted rather than merely deleted: `after` entries naming an absent
+    // pass are silently no constraint, so a half-revert would be invisible.
+    expect(compiledOrder(false)).not.toContain('selection');
+    expect(compiledOrder(true)).not.toContain('selection');
   });
 
   it('never names a pass in `after` that the graph does not build', () => {

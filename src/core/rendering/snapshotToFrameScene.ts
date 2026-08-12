@@ -1334,7 +1334,6 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
       background: snapshot.transparent ? Color.transparent() : Color.fromHex(snapshot.background),
     },
     renderables,
-    selection: [],
     hasEffects,
     ...(has3d ? { camera3d: snapshot.camera3d } : {}),
     ...(has3d && snapshot.lights3d && snapshot.lights3d.length > 0 ? { lights3d: snapshot.lights3d } : {}),

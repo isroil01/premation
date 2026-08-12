@@ -4,7 +4,6 @@ import { RenderGraph } from '../RenderGraph';
 import { ClearPass } from './ClearPass';
 import { BackgroundPass } from './BackgroundPass';
 import { CompositionPass, PLUGIN_ORIGIN, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS } from './CompositionPass';
-import { SelectionPass } from './SelectionPass';
 import { OverlayPass } from './OverlayPass';
 import { MaskPass, MASK_TARGET } from './MaskPass';
 import { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
@@ -12,7 +11,6 @@ import { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
 export { ClearPass } from './ClearPass';
 export { BackgroundPass } from './BackgroundPass';
 export { CompositionPass, PLUGIN_ORIGIN, PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2, PLUGIN_SCALED_TARGETS, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, BACKDROP_HALF1, BACKDROP_HALF2, BACKDROP_DOWNSCALE, PRECOMP_TARGETS, MAX_PRECOMP_DEPTH } from './CompositionPass';
-export { SelectionPass } from './SelectionPass';
 export { OverlayPass } from './OverlayPass';
 export { MaskPass, MASK_TARGET } from './MaskPass';
 export { EffectPass, SCENE_COLOR_TARGET } from './EffectPass';
@@ -20,7 +18,7 @@ export * from './passUtils';
 
 /**
  * The standard pipeline: clear → background → composition (shapes/images/text) →
- * selection → overlay. Mask/effect passes are registered (disabled) with their
+ * overlay. Mask/effect passes are registered (disabled) with their
  * transient targets declared, ready to enable. Pass order is *derived* from each
  * pass's `after`/reads/writes by the graph, not from this insertion order.
  */
@@ -36,7 +34,6 @@ export function buildDefaultGraph(): RenderGraph {
     .addPass(new ClearPass())
     .addPass(new BackgroundPass())
     .addPass(new CompositionPass())
-    .addPass(new SelectionPass())
     .addPass(new OverlayPass())
     .addPass(new MaskPass())
     .addPass(new EffectPass());

@@ -29,7 +29,6 @@ describe('snapshotToFrameScene', () => {
       r: 0x10 / 255, g: 0x10 / 255, b: 0x14 / 255, a: 1,
     });
     expect(scene.renderables).toHaveLength(0);
-    expect(scene.selection).toEqual([]);
   });
 
   test('transparent comp → fully transparent background (alpha 0)', () => {
