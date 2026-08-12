@@ -1032,9 +1032,11 @@ ships through `effectBake`, which reads `maskId` off the **effect**, not the
 renderable — which is why a repo-wide grep for `maskId` looks busy while the
 renderable field stays untouched.
 
-The sweep is now `renderableFieldCoverage.test.ts` rather than a one-off, so a
-field added to `Renderable` that nothing produces fails a test instead of
-shipping as a control with no effect.
+The sweep then widened to the whole boundary — `RenderLayer` (73 fields),
+`Renderable`, `SceneLight3D` and `FrameScene`, **120 fields, all produced**. It
+is now `renderableFieldCoverage.test.ts` rather than a one-off, so a field added
+to any of the four that nothing produces fails a test instead of shipping as a
+control with no effect.
 
 Two of the sweep's own bugs are pinned in it, because both are the failure mode
 this document keeps recording — a detector that is wrong in the direction of
@@ -1047,8 +1049,22 @@ looking right:
 - It then reported `depthExempt` as never written, by matching literal syntax
   and calling that production.
 
-Both were caught by checking a surprising result rather than reporting it. The
-first version of this entry would have claimed a dead pass and two dead fields.
+A third followed when the sweep widened: `hasEffects` and `strokes` reported
+dead because they are written as bare ES6 **shorthand** (`hasEffects,`), which
+has no colon and no dot for a punctuation-reading detector to find.
+
+And the producer LIST turned out to be wrong in both directions. Too short, and
+the sweep invents dead fields — swept against the `Renderable` producers,
+`SceneLight3D` reported seven, including `halfConeRad`, which ships and has its
+own parity guard. Too long, and it silences real findings while looking better
+researched: `paintStrokes.ts` sat in the table for one run, covering for the
+shorthand gap rather than for a real second producer. Both directions are now
+asserted, and each list is down to the single module that actually builds the
+type.
+
+Every one of these was caught by checking a surprising result rather than
+reporting it. The first version of this entry would have claimed a dead pass and
+two dead fields; the second would have claimed two more.
 
 ### Fixed 2026-08-12 — this branch shipped its own dead control
 
