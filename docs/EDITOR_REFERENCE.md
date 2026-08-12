@@ -1009,6 +1009,36 @@ remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
 
+### Verified 2026-08-12 — time effects are four, not two, and all four run
+
+Listed as "2 of 145 (`echo`, `posterize-time`). Thin, heavily used." The count
+is now **four**: `wide-time` and `force-motion-blur` have joined, and both are
+implemented rather than merely registered — the check that matters, since this
+branch has already found three fields that existed only as declarations.
+
+| effect | consumed by |
+|---|---|
+| `echo` | `buildSnapshot` (ghost copies at sampled past transforms) |
+| `posterize-time` | `buildSnapshot`'s time plumbing |
+| `wide-time` | `temporalGhosts.ts`, with its own test file |
+| `force-motion-blur` | `readForceMotionBlur`, read in `buildSnapshot` |
+
+All four are in the `TEMPORAL` set, which is what routes them through the time
+plumbing rather than the per-layer effect chain.
+
+Worth recording how nearly this became a sixth wrong entry. A first search for
+`wide-time` scoped to `src/core/rendering/` and `echo.ts` returned nothing, and
+"declared but unimplemented" was the obvious reading — the exact conclusion
+drawn correctly three times earlier in this branch. Widening the search to the
+whole tree found the consumer immediately. The lesson is not "search wider" but
+that a negative result from a SCOPED search carries no information about
+anything outside the scope, and the scope is chosen from a guess about where
+the code should live.
+
+That leaves **simulation as the single genuinely empty class** in the backlog —
+the one item of six whose gap survived every check, and the only one whose
+evidence was a registry count from the start.
+
 ### Scoped 2026-08-12 — simulation, and why particles are not a head start
 
 "0 of 145" survives scrutiny — it is a registry-derived count, not a symbol
