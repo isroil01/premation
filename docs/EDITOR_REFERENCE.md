@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 145 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 148 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 36 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 8 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -406,8 +406,8 @@ deliberate render-test golden rebaseline, not a flag.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 145 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 145 effects present are properly
+**Effect breadth: 148 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 148 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -421,7 +421,7 @@ volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D implementation and a Generate entry in the effects
 browser. They are CPU passes rather than shaders, which is a performance fact
-(see the GPU-porting work) and not an absence. The count is now phrased as "145
+(see the GPU-porting work) and not an absence. The count is now phrased as "148
 effects" rather than as a bare figure specifically so that
 `docPropagatedCounts.test.ts` can check it.
 
@@ -957,14 +957,14 @@ answers what can be answered exactly and refuses the rest.
 
 | | |
 |---|---|
-| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 145 |
+| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 148 |
 | already a pure `(data, w, h, …)` kernel | **92** (82%) |
 | need a whole-image reduction | **4** — `equalize`, `auto-levels`, `auto-contrast`, `auto-color` |
 | drawn with canvas ops, no pure kernel | **20** |
 
 The **112** confirms the figure every brief has been quoting; unlike the effect
 count, this one was right. Derived from the predicate rather than a copy of the
-list, and `unaccounted: 0` — every one of the 145 lands in exactly one bucket,
+list, and `unaccounted: 0` — every one of the 148 lands in exactly one bucket,
 so there is no silent third category rendering as a no-op.
 
 **The 82% is the finding that decides the answer.** The pixel work is already
@@ -1008,6 +1008,43 @@ kernel: a body slice that ran past its own closing brace, and — the one worth
 remembering in this repo specifically — a match on the word "histogram" inside
 a **doc comment** describing a different effect. Signals get read from code with
 comments stripped, for the same reason `docFeatureCounts.test.ts` does it.
+
+### Verified 2026-08-12 — variable font axes: one works by accident, the rest cannot
+
+Listed as "never checked — verify first". Checked, and the answer is sharper
+than present/absent.
+
+**Nothing implements them.** Zero hits repo-wide for `fontVariationSettings`,
+`variationSettings`, or any axis tag (`wght`, `wdth`, `slnt`, `opsz`).
+
+**And nothing could, through the current path.** Text is rasterized on a
+Canvas2D context via `g.font = cssFont(s)`, and `cssFont` emits exactly this:
+
+```
+`${style}${s.fontWeight} ${s.fontSize}px "${s.fontFamily}", Inter, system-ui, sans-serif`
+```
+
+That is the CSS **font shorthand**, and the shorthand cannot express
+`font-variation-settings` — it is a separate property, and Canvas2D has no API
+for it at all. So this is not an unimplemented feature sitting behind a small
+patch; the axis values have nowhere to go until text stops going through
+`ctx.font`.
+
+**One axis does work, incidentally.** `fontWeight` is carried as a *string* and
+lands in the shorthand as a numeric weight, and browsers interpolate a variable
+font's `wght` axis from a numeric weight. So a variable font already responds to
+the weight control, continuously, and nobody wrote code for that. `italic`
+likewise reaches `slnt`/`ital` where the family defines it.
+
+**Every other axis is unreachable.** `wdth` would need `font-stretch` in the
+shorthand and there is no `fontStretch` field to emit; `opsz` and any custom
+axis have no shorthand form whatsoever.
+
+So the honest scope of "add variable font axes" is not a text-style field plus a
+UI control. It is a different text rasterization path — glyph shaping that
+carries variation coordinates — which is the same prerequisite the
+outline-based text extrusion in §5 wants. Worth planning those together rather
+than separately.
 
 ### Fixed 2026-08-12 — four small ones, all the same shape
 
@@ -1176,7 +1213,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "145 effects".
+it. Prose stating a count should say "148 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and
