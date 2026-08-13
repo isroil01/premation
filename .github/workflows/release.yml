@@ -190,17 +190,40 @@ jobs:
         run: |
           node -e "try{require('better-sqlite3');console.log('better-sqlite3: built')}catch(e){console.error('::error::better-sqlite3 failed to build; the release would ship without the local index');console.error(e.message);process.exit(1)}"
 
+      # ── POLICY GATE 3: the installers must know where the backend is ──
+      #
+      # This was a WARNING placed AFTER the build, and it was survivable only
+      # because `.env.production` was committed and supplied the origin as a
+      # fallback. That arrangement let the warning lie in both directions: it
+      # reads `vars.` alone, so it announced "these installers point at
+      # localhost" while the committed file had in fact set a real origin.
+      #
+      # The file is gitignored now — it is per-deployment config, not source —
+      # so the fallback is gone and the variable is the only source. A missing
+      # one would hard-wire the installers to http://localhost:4000: an app that
+      # cannot reach the backend at all, found by users rather than by us, and
+      # fixable only by cutting another release.
+      #
+      # So it FAILS, and it fails BEFORE the build rather than after, so nothing
+      # is compiled, signed, notarized or uploaded against an origin we already
+      # know is wrong. A release that cannot say where its backend is has
+      # nothing worth publishing.
+      #
+      #   Settings > Secrets and variables > Actions > Variables
+      - name: Backend origin must be configured
+        if: ${{ vars.VITE_BACKEND_ORIGIN == '' }}
+        shell: bash
+        run: |
+          echo "::error::VITE_BACKEND_ORIGIN is not set, so these installers would point at http://localhost:4000."
+          echo "::error::Set the repository variable under Settings > Secrets and variables > Actions > Variables."
+          exit 1
+
       - name: Build renderer and main process
         shell: bash
         run: |
           if [ -n "${{ vars.VITE_BACKEND_ORIGIN }}" ]; then export VITE_BACKEND_ORIGIN="${{ vars.VITE_BACKEND_ORIGIN }}"; fi
           if [ -n "${{ vars.VITE_MEDIA_ORIGINS }}" ]; then export VITE_MEDIA_ORIGINS="${{ vars.VITE_MEDIA_ORIGINS }}"; fi
           npm run electron:build
-
-      - name: Warn if no backend origin was configured
-        if: ${{ vars.VITE_BACKEND_ORIGIN == '' }}
-        shell: bash
-        run: echo "::warning::VITE_BACKEND_ORIGIN is not set — these installers point at http://localhost:4000."
 
       # ── Package + sign ──
       # electron-builder reads CSC_LINK / CSC_KEY_PASSWORD from the environment.
