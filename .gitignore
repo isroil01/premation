@@ -35,6 +35,14 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
+# Per-deployment config, not source. This was tracked, which gave the backend
+# origin TWO sources of truth — this file and the CI variable — and release.yml's
+# guard only ever read the variable, so it could announce "installers point at
+# localhost" while the committed file had set a real origin. CI supplies it from
+# `vars.VITE_BACKEND_ORIGIN`, and the workflow now FAILS when that is missing
+# rather than shipping a localhost build. See .env.production.example.
+.env.production
+!.env.production.example
 
 # OS files
 .DS_Store

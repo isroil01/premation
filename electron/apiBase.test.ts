@@ -12,6 +12,8 @@
  * both straight through.
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { resolveApiUrl, apiBaseUrl } from './apiBase';
 
 const BASE = 'http://localhost:4000/api';
@@ -93,5 +95,81 @@ describe('the base URL is main s to decide', () => {
     // after that would arrive there with a valid bearer.
     process.env.MOTION_BACKEND_ORIGIN = 'https://api.premation.app/';
     expect(apiBaseUrl()).toBe('https://api.premation.app/api');
+  });
+});
+
+/**
+ * ★ The packaged app must not talk to localhost.
+ *
+ * This is the 0.3.1 regression, and the shape is worth naming because it
+ * recurs: `MOTION_BACKEND_ORIGIN` was the ONLY source main had, and nothing
+ * anywhere set it — not the release workflow, not electron-builder, not main.
+ * It appeared in this repo solely in the suite above, which passes by setting
+ * the variable itself and therefore proved only that the READER worked.
+ *
+ * So every packaged build resolved to http://localhost:4000 on the end user's
+ * machine. Desktop sign-in routes through main by design (tokens must not enter
+ * the renderer) and every other call goes through `api.request`, which is also
+ * main — so the whole backend was unreachable, and "login is broken" was merely
+ * the first thing anyone tried.
+ *
+ * `VITE_BACKEND_ORIGIN` looked like the answer and is not: it reaches the
+ * renderer bundle and the CSP built from it, neither of which main can read.
+ * What these tests now hold is that the value ARRIVES, not just that a reader
+ * can parse it.
+ */
+describe('a packaged build reads the origin baked into its manifest', () => {
+  const originalEnv = process.env.MOTION_BACKEND_ORIGIN;
+  const pkgPath = join(__dirname, '..', 'package.json');
+  const originalPkg = readFileSync(pkgPath, 'utf8');
+
+  beforeEach(() => {
+    delete process.env.MOTION_BACKEND_ORIGIN;
+    delete process.env.MOTION_BACKEND_PORT;
+  });
+
+  afterEach(() => {
+    // Byte-for-byte, not a re-serialisation: this is the repo's real manifest
+    // and a reformat here would show up as a spurious diff.
+    writeFileSync(pkgPath, originalPkg);
+    if (originalEnv === undefined) delete process.env.MOTION_BACKEND_ORIGIN;
+    else process.env.MOTION_BACKEND_ORIGIN = originalEnv;
+  });
+
+  /** Write `backendOrigin` the way `npm pkg set` does at package time. */
+  function bake(origin: unknown): void {
+    const pkg = JSON.parse(originalPkg) as Record<string, unknown>;
+    if (origin === undefined) delete pkg.backendOrigin;
+    else pkg.backendOrigin = origin;
+    writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+  }
+
+  it('uses the baked origin when no environment variable is set', () => {
+    bake('https://motion-back-production.up.railway.app');
+    expect(apiBaseUrl()).toBe('https://motion-back-production.up.railway.app/api');
+  });
+
+  it('strips a trailing slash from the baked value', () => {
+    bake('https://api.premation.app/');
+    expect(apiBaseUrl()).toBe('https://api.premation.app/api');
+  });
+
+  it('lets the environment override the baked value', () => {
+    // So a packaged build can be pointed at staging without rebuilding it.
+    bake('https://motion-back-production.up.railway.app');
+    process.env.MOTION_BACKEND_ORIGIN = 'https://staging.premation.app';
+    expect(apiBaseUrl()).toBe('https://staging.premation.app/api');
+  });
+
+  it('falls back to localhost when nothing is baked — the dev run', () => {
+    // The repo's own package.json carries no `backendOrigin`, so running from
+    // source keeps talking to a local server.
+    bake(undefined);
+    expect(apiBaseUrl()).toBe('http://localhost:4000/api');
+  });
+
+  it('ignores a non-string baked value rather than coercing it', () => {
+    bake({ url: 'https://evil.test' });
+    expect(apiBaseUrl()).toBe('http://localhost:4000/api');
   });
 });
