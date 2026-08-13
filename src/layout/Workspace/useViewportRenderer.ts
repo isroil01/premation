@@ -191,7 +191,7 @@ export function useViewportRenderer(
         channel: channelRef.current,
       });
     } catch (err) {
-      // eslint-disable-next-line no-console
+
       console.error('[useViewportRenderer] renderImmediate failed:', err);
     } finally {
       // Always clear the guard so future render calls can schedule a new RAF.
@@ -328,7 +328,7 @@ export function useViewportRenderer(
       // failed. Without this check a dead backend silently painted nothing, which
       // is the same bug useWorkspace already guards against.
       if (backend.initFailed) {
-        // eslint-disable-next-line no-console
+
         console.warn('[useViewportRenderer] GPU init failed for this pane:', backend.initErrorMessage);
         setInitError(
           backend.initErrorMessage ??

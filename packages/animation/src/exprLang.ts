@@ -476,8 +476,8 @@ function applyBinary(op: BinaryOp, l: unknown, r: unknown): unknown {
     case '<=': return a <= b;
     case '>': return a > b;
     case '>=': return a >= b;
-    case '==': return a == b; // eslint-disable-line eqeqeq
-    case '!=': return a != b; // eslint-disable-line eqeqeq
+    case '==': return a == b;
+    case '!=': return a != b;
     case '===': return a === b;
     case '!==': return a !== b;
   }

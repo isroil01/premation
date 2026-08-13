@@ -211,7 +211,7 @@ export async function runBackendDirector(
               if (!toolName) {
                 // Skip rather than execute `undefined` — one malformed entry
                 // should not abort a plan the directors spent minutes building.
-                // eslint-disable-next-line no-console
+
                 console.warn('[ai] director emitted a tool call with no tool name:', call);
                 continue;
               }

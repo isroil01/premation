@@ -65,7 +65,7 @@ describe('§12.2 — render-tick subscribers', () => {
   it('a subscriber unsubscribing DURING a tick does not corrupt the dispatch', () => {
     const c = getWorkspaceController();
     const seen: string[] = [];
-    // eslint-disable-next-line prefer-const
+
     let offSelf: (() => void) | null = null;
     offSelf = c.onRender(() => {
       seen.push('self');

@@ -21,7 +21,7 @@ import type { Casting, CreativeBrief } from './types';
 const FRAME = { width: 1920, height: 1080, fps: 30 };
 const VERBOSE = process.env.CORPUS_METRICS === '1';
 const log = (...a: unknown[]): void => {
-  // eslint-disable-next-line no-console
+
   if (VERBOSE) console.log(...a);
 };
 

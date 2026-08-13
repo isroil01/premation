@@ -31,7 +31,7 @@ async function waitForPluginEffects(timeoutMs = 8000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (registeredEffects().some((e) => e.state === 'pending')) {
     if (Date.now() > deadline) {
-      // eslint-disable-next-line no-console
+
       console.warn('[harness] plugin effects still pending after '
         + `${timeoutMs}ms: ${registeredEffects().filter((e) => e.state === 'pending').map((e) => e.id).join(', ')}`);
       return;
@@ -229,7 +229,7 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
   // the run log next to the results it is a claim about.
   if (!announcedBackend) {
     announcedBackend = true;
-    // eslint-disable-next-line no-console
+
     console.log(`[harness] backend resolved: asked ${backend}, running ${be.resolvedKind}`);
   }
 
@@ -375,7 +375,7 @@ async function main(): Promise<void> {
           // Per-scene isolation for RENDER failures only — setup already passed
           // above, so anything here is a backend problem, not a dead scene.
           failures.push(`${scene.id}/${backend}: ${(err as Error)?.message ?? err}`);
-          // eslint-disable-next-line no-console
+
           console.error(`[scene-fail] ${scene.id}/${backend}:`, err);
         } finally {
           // Recorded on the failure path too: a scene that took 40 seconds and

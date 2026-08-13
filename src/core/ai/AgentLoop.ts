@@ -79,7 +79,7 @@ function recordPathFailure(path: AiPathFailure['path'], err: unknown): void {
   const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
   pathFailures.push({ path, message, at: Date.now() });
   if (pathFailures.length > 20) pathFailures.shift();
-  // eslint-disable-next-line no-console
+
   console.warn(`[ai] ${path} failed, falling back:`, err);
   if (typeof window !== 'undefined') {
     (window as unknown as { __aiPathFailures?: readonly AiPathFailure[] }).__aiPathFailures = pathFailures;
@@ -121,7 +121,7 @@ function recordTally(tally: ToolCallTally): void {
   const ratio = composeRatio(tally);
   runTallies.push({ ...tally, ratio, at: Date.now() });
   if (runTallies.length > 20) runTallies.shift();
-  // eslint-disable-next-line no-console
+
   console.info(
     `[ai] tool mix — compose ${tally.compose}, primitive ${tally.primitive}, read ${tally.read}` +
     (ratio === null ? ' (no writes)' : ` → compose ratio ${(ratio * 100).toFixed(0)}%`),
@@ -339,7 +339,7 @@ export interface RunAgentOptions {
  */
 export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<AgentResult> {
   const { provider, dialect, model, signal, events } = opts;
-  
+
   const reg = getAiRegistry();
   const ctx = createToolContext(signal, opts.images);
   const tools = reg.list();
@@ -627,7 +627,7 @@ ${casterCritique}` : planSummary;
             mechanical = formatFindings(verifyScene(ctx));
           } catch (err) {
             // A broken verifier must never take the run down with it.
-            // eslint-disable-next-line no-console
+
             console.warn('[ai] mechanical verification failed:', err);
           }
 

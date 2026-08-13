@@ -25,7 +25,7 @@ function initDb(app: App): Db | null {
   if (initTried) return db;
   initTried = true;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+
     const Database = require('better-sqlite3');
     const file = path.join(app.getPath('userData'), 'index.sqlite');
     db = new Database(file);

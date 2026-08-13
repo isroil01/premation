@@ -124,7 +124,7 @@ export class Application {
 
   registerPlugin(plugin: ApplicationPlugin): void {
     if (this.plugins.has(plugin.name)) {
-      // eslint-disable-next-line no-console
+
       console.warn(`[Application] plugin "${plugin.name}" already registered`);
       return;
     }

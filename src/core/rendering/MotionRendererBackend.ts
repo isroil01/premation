@@ -160,7 +160,7 @@ export class MotionRendererBackend implements RenderBackend {
     // it should never reject — but attach is sync and an escaped rejection here
     // would be an unhandled promise rejection with the spinner left spinning.
     this.init(canvas).catch((err) => {
-      // eslint-disable-next-line no-console
+
       console.error('[MotionRendererBackend] init threw unexpectedly:', err);
       this.initFailed = true;
       this.initErrorMessage = err instanceof Error ? err.message : String(err);
@@ -219,7 +219,7 @@ export class MotionRendererBackend implements RenderBackend {
         report.result = 'ok';
         return true;
       } catch (err) {
-        // eslint-disable-next-line no-console
+
         console.warn('[MotionRendererBackend] WebGPU probe failed, using WebGL2:', err);
         report.result = 'threw';
         report.error = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -412,7 +412,7 @@ export class MotionRendererBackend implements RenderBackend {
         MotionRendererBackend.noteBinding(canvas, attempt.kind);
         lastError = err;
         this.lastInitErrorText = err instanceof Error ? `${attempt.kind}: ${err.name}: ${err.message}` : `${attempt.kind}: ${String(err)}`;
-        // eslint-disable-next-line no-console
+
         console.warn(`[MotionRendererBackend] init failed for ${attempt.kind}:`, err);
         try {
           renderer.dispose();
@@ -751,7 +751,7 @@ export class MotionRendererBackend implements RenderBackend {
           } catch (err) {
             if (!this.warnedTextureLayers.has(layer.id)) {
               this.warnedTextureLayers.add(layer.id);
-              // eslint-disable-next-line no-console
+
               console.warn(`[MotionRendererBackend] texture feed failed for layer ${layer.id}:`, err);
             }
           }

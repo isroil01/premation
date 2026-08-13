@@ -144,7 +144,7 @@ describe('MEASURED: what CR does to re-rasterization across a zoom', () => {
     const crCount = identities((s) => continuousResolutionTier(s, 100, 100));
     // 1,2,4,8,16,32 — six rasters for a 32x zoom, not one per frame.
     expect(crCount).toBeLessThanOrEqual(6);
-    // eslint-disable-next-line no-console
+
     console.log(`[measured] distinct CR rasters over a 1x→32x zoom: ${crCount}`);
   });
 

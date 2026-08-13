@@ -49,7 +49,7 @@ describe('routing — one implementation, both backends', () => {
 import { canAssertLayerStylePixels } from './__testHelpers__/canvasFidelity';
 
 (canAssertLayerStylePixels ? describe : describe.skip)('pixels', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+
   const { applyEffectChain } = require('./effectBake') as typeof import('./effectBake');
   const W = 60, H = 60;
   const scratch = (w: number, h: number): HTMLCanvasElement => {

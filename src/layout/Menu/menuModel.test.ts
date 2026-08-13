@@ -101,7 +101,7 @@ describe('APP_MENU ⇄ command registry', () => {
       { separator: true },
       { commandId: 'b' },
     ];
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+
     const { visibleItems } = require('./useAppMenuGroups') as typeof import('./useAppMenuGroups');
     expect(visibleItems(items)).toEqual([{ commandId: 'a' }, { separator: true }, { commandId: 'b' }]);
   });

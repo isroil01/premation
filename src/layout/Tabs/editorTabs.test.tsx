@@ -185,7 +185,7 @@ describe('tab state is workspace state', () => {
     // Re-import the module to re-run its load. `jest.isolateModules` gives a
     // fresh module registry, which is the only way to re-run module init.
     jest.isolateModules(() => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires -- isolateModules needs require
+
       const mod = require('@stores/editorTabStore') as typeof import('@stores/editorTabStore');
       expect(mod.useEditorTabStore.getState().tabs.map((t) => t.id)).toEqual(['plugin:a.one']);
     });
@@ -197,7 +197,7 @@ describe('tab state is workspace state', () => {
       activeId: 'plugin:a.one',
     }));
     jest.isolateModules(() => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires -- isolateModules needs require
+
       const mod = require('@stores/editorTabStore') as typeof import('@stores/editorTabStore');
       // Preview-ness describes an in-progress browse. Restoring one as italic
       // and replaceable would surprise someone who left it open deliberately.

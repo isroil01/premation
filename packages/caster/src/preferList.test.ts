@@ -68,7 +68,7 @@ const FRAME = { width: 1920, height: 1080 };
 const FPS = 30;
 const VERBOSE = process.env.PREFER_LIST === '1';
 const log = (...a: unknown[]): void => {
-  // eslint-disable-next-line no-console
+
   if (VERBOSE) console.log(...a);
 };
 

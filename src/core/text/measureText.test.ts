@@ -90,7 +90,7 @@ function loadMeasure(): typeof import('./measureText') {
     (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = function getContext() {
       return new FakeCtx() as unknown as CanvasRenderingContext2D;
     };
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+
     mod = require('./measureText') as typeof import('./measureText');
   });
   return mod;
@@ -304,7 +304,7 @@ describe('measureText — degraded runtimes', () => {
     let mod!: typeof import('./measureText');
     jest.isolateModules(() => {
       (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = () => null;
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+
       mod = require('./measureText') as typeof import('./measureText');
     });
     expect(mod.measureTextBoxes(style())).toBeNull();
@@ -316,7 +316,7 @@ describe('measureText — degraded runtimes', () => {
     jest.isolateModules(() => {
       (HTMLCanvasElement.prototype as unknown as { getContext: unknown }).getContext = () =>
         ({ font: '', textBaseline: 'alphabetic', measureText: () => ({ width: 100 }) }) as unknown as CanvasRenderingContext2D;
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
+
       mod = require('./measureText') as typeof import('./measureText');
     });
     const b = mod.measureTextBoxes(style())!;

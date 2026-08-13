@@ -48,7 +48,7 @@ export class CommandSystem {
   async execute(id: CommandId): Promise<void> {
     const cmd = getCommandRegistry().get(id);
     if (!cmd) {
-      // eslint-disable-next-line no-console
+
       console.warn(`[CommandSystem] unknown command: ${id}`);
       return;
     }
