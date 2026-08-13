@@ -24,6 +24,7 @@
 
 import { usePluginStore, STORE_KEY } from './pluginStore';
 import { PluginDatabase } from '@core/services/PluginDatabase';
+import { parseManifest } from '@core/plugins/manifest';
 
 /**
  * An in-memory stand-in for the package database.
@@ -321,5 +322,101 @@ describe('payload relocation to IndexedDB', () => {
     await reload();
     await usePluginStore.getState().hydrate();
     expect(usePluginStore.getState().get('com.legacy.a')?.files['main.js']).toBeDefined();
+  });
+});
+
+/**
+ * ★ An install survives being restarted. Repeatedly.
+ *
+ * Everything above seeds a HAND-WRITTEN record and hydrates it once, which is
+ * the migration path — and it is the one path that never re-reads what this
+ * build itself wrote. So a parser that emitted a manifest it would not accept
+ * passed every test in this file while deleting every user's plugins at their
+ * second launch, silently, for as long as it shipped.
+ *
+ * This closes that: install exactly as the consent screen does, then hydrate
+ * twice, because the failure lives on the SECOND parse and a single reload
+ * cannot see it.
+ */
+describe('an install survives a restart', () => {
+  /** A record built the way `PluginHost.install` builds one: a PARSED manifest. */
+  function installed(apiVersion: number, over: Record<string, unknown> = {}): void {
+    const { manifest, errors } = parseManifest({
+      id: 'studio.acme.thing',
+      name: 'Thing',
+      version: '1.0.0',
+      description: 'A plugin that does a thing.',
+      apiVersion,
+      main: 'main.js',
+      permissions: ['scene:read'],
+      ...over,
+    });
+    expect(errors).toEqual([]);
+    usePluginStore.getState().put({
+      manifest: manifest!,
+      files: { 'main.js': 'export function activate() {}' },
+      binaries: {},
+      granted: ['scene:read'],
+      enabled: true,
+      installedAt: 1,
+      updatedAt: 1,
+      source: 'registry',
+    });
+  }
+
+  /** Boot again: a fresh store reading only what is in the database. */
+  async function restart(): Promise<void> {
+    localStorage.clear();
+    usePluginStore.setState({ plugins: [], hydrated: false, lastHydration: null });
+    await usePluginStore.getState().hydrate();
+  }
+
+  // Every apiVersion, because the asymmetries that caused this hit different
+  // ones — the `contributes` gate at 1, "net requires API 4" at 2 and 3, and
+  // `parseNet(null)` at 4. Only a plugin that declared network access survived.
+  for (const apiVersion of [1, 2, 3, 4]) {
+    it(`apiVersion ${apiVersion}: still installed after two restarts`, async () => {
+      installed(apiVersion);
+      await restart();
+      expect(usePluginStore.getState().get('studio.acme.thing')).toBeDefined();
+      await restart();
+      const still = usePluginStore.getState().get('studio.acme.thing');
+      expect(still).toBeDefined();
+      // Not merely listed — startable. A record whose payload was swept by the
+      // orphan pass lists once and cannot run.
+      expect(still?.files['main.js']).toBeDefined();
+      expect(usePluginStore.getState().lastHydration?.droppedInvalid).toEqual([]);
+    });
+  }
+
+  it('an API 1 package with a bare "panel" survives too', async () => {
+    installed(1, { panel: 'panel.html' });
+    await restart();
+    await restart();
+    expect(usePluginStore.getState().get('studio.acme.thing')).toBeDefined();
+  });
+
+  it('keeps the grants and the enabled flag across the restart', async () => {
+    installed(4);
+    usePluginStore.getState().setEnabled('studio.acme.thing', false);
+    await restart();
+    const entry = usePluginStore.getState().get('studio.acme.thing');
+    expect(entry?.enabled).toBe(false);
+    expect(entry?.granted).toEqual(['scene:read']);
+  });
+
+  it('reports an unreadable record instead of dropping it in silence', async () => {
+    // The diagnosis channel, not the bug: a record this build genuinely cannot
+    // read must reach `lastHydration` with its reason attached.
+    await PluginDatabase.putIndex([
+      { manifest: { id: 'studio.acme.broken', apiVersion: 99 }, granted: [] },
+    ]);
+    usePluginStore.setState({ plugins: [], hydrated: false, lastHydration: null });
+    await usePluginStore.getState().hydrate();
+
+    const invalid = usePluginStore.getState().lastHydration?.droppedInvalid ?? [];
+    expect(invalid).toHaveLength(1);
+    expect(invalid[0]!.id).toBe('studio.acme.broken');
+    expect(invalid[0]!.reason).not.toBe('');
   });
 });

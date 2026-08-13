@@ -145,41 +145,64 @@ function loadMeta(): StoredMeta[] {
  * a legitimately empty IndexedDB record would resurrect plugins the user
  * uninstalled after the move.
  */
-function validateMeta(parsed: unknown): StoredMeta[] | null {
+function validateMeta(
+  parsed: unknown,
+  /**
+   * Told about every record thrown away, and WHY.
+   *
+   * ★ Dropping here used to be completely silent — no report, no warning,
+   * nothing. That silence is why a parser asymmetry that deleted every
+   * installed plugin at the second boot survived two rounds of investigation:
+   * the symptom ("I reinstall my plugins after every restart") arrived with no
+   * evidence attached, so both previous fixes addressed storage failures that
+   * were never happening. A drop that nobody can see is a drop nobody can
+   * diagnose.
+   */
+  onDrop?: (id: string, reason: string) => void,
+): StoredMeta[] | null {
   if (!Array.isArray(parsed)) return null;
   const out: StoredMeta[] = [];
   for (const p of parsed) {
-    if (!p || typeof p !== 'object') continue;
+    if (!p || typeof p !== 'object') { onDrop?.('(unreadable record)', 'not an object'); continue; }
     const record = p as StoredMeta;
-    if (typeof record.manifest?.id !== 'string' || !Array.isArray(record.granted)) continue;
-    const manifest = normaliseManifest(record.manifest);
-    if (!manifest) continue;
-    out.push({ ...record, manifest });
+    const id = typeof record.manifest?.id === 'string' ? record.manifest.id : '(no id)';
+    if (typeof record.manifest?.id !== 'string' || !Array.isArray(record.granted)) {
+      onDrop?.(id, 'missing a manifest id or a grant list');
+      continue;
+    }
+    const parsedManifest = parseManifest(record.manifest);
+    if (!parsedManifest.manifest) {
+      // The messages, not just the fact. This is the one place that can say
+      // which field of a stored manifest this build no longer accepts.
+      onDrop?.(id, parsedManifest.errors.join(' '));
+      continue;
+    }
+    out.push({ ...record, manifest: parsedManifest.manifest });
   }
   return out;
 }
 
-/**
- * Bring a stored manifest up to the current format, or drop it.
- *
- * A record written by an API-1 build has a `panel: "panel.html"` string and no
- * `contributes` / `activationEvents` at all. Everything added in API 2 reads
- * `manifest.contributes.commands` directly — on purpose, because a key that is
- * sometimes absent and sometimes empty is two representations of one state — so
- * an unnormalised record does not degrade gracefully. It throws, inside
- * `pluginHost.configure()`, before the editor has rendered anything. The user's
- * plugins would not stop working; the app would.
- *
- * Normalising through `parseManifest` rather than a hand-written migration is
- * the point: a bespoke one would be a second definition of the manifest format,
- * free to drift from the real one and guaranteed to eventually. Anything the
- * validator would refuse today is dropped, exactly as a malformed record is —
- * repairing a record nobody fully understands is how one reaches the sandbox
- * loader.
- */
-function normaliseManifest(stored: PluginManifest): PluginManifest | null {
-  return parseManifest(stored).manifest;
-}
+/*
+  ── Why the stored manifest goes back through `parseManifest` at all ─────────
+
+  A record written by an API-1 build has a `panel: "panel.html"` string and no
+  `contributes` / `activationEvents`. Everything added in API 2 reads
+  `manifest.contributes.commands` directly — on purpose, because a key that is
+  sometimes absent and sometimes empty is two representations of one state — so
+  an unnormalised record does not degrade gracefully. It throws, inside
+  `pluginHost.configure()`, before the editor has rendered. The user's plugins
+  would not stop working; the app would.
+
+  Normalising through the real validator rather than a hand-written migration
+  is the point: a bespoke one would be a second definition of the manifest
+  format, free to drift and guaranteed to eventually.
+
+  ★ The cost of that decision, and the thing to keep in mind before editing
+  `parseManifest`: this makes parser IDEMPOTENCY load-bearing. What is stored is
+  the parser's own OUTPUT, so anything the parser emits but will not accept is
+  not a lint slip — it is every installed plugin disappearing at the next boot.
+  `manifestRoundTrip.test.ts` is what holds that line.
+*/
 
 /** The index as it is stored: everything except the package bytes. */
 function toMeta(list: readonly InstalledPlugin[]): StoredMeta[] {
@@ -234,6 +257,13 @@ export interface HydrationReport {
   droppedNoPayload: string[];
   /** Payloads with no index entry. Invisible, so nothing else could free them. */
   orphansRemoved: string[];
+  /**
+   * Records this build could not READ — a stored manifest the validator
+   * refuses. Different from `droppedNoPayload` in the way that matters: the
+   * package is fine and the metadata is the problem, so "install it again" is
+   * a workaround rather than a fix, and the reason belongs in a bug report.
+   */
+  droppedInvalid: Array<{ id: string; reason: string }>;
 }
 
 interface PluginStore {
@@ -466,8 +496,9 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
       that survived a reload, an app upgrade and possibly a hand-edited store is
       not more trustworthy for having moved.
     */
+    const droppedInvalid: Array<{ id: string; reason: string }> = [];
     const stored = await PluginDatabase.getIndex();
-    const fromDb = validateMeta(stored);
+    const fromDb = validateMeta(stored, (id, reason) => droppedInvalid.push({ id, reason }));
     const legacy = get().plugins;
 
     let current: InstalledPlugin[];
@@ -504,7 +535,9 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
      * silently dropping something a user installed is exactly the behaviour
      * that makes people distrust a plugin manager.
      */
-    const report: HydrationReport = { restored: [], droppedNoPayload: [], orphansRemoved: [] };
+    const report: HydrationReport = {
+      restored: [], droppedNoPayload: [], orphansRemoved: [], droppedInvalid,
+    };
 
     const settled = await Promise.all(
       current.map(async (p) => {
@@ -542,7 +575,11 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
     // stranding a plugin with its bytes nowhere.
     saveMeta(hydrated);
 
-    if (report.droppedNoPayload.length > 0 || report.orphansRemoved.length > 0) {
+    if (
+      report.droppedNoPayload.length > 0
+      || report.orphansRemoved.length > 0
+      || report.droppedInvalid.length > 0
+    ) {
       // The store must not import the UI. `lastHydration` is the structured
       // channel a surface should read; this is the breadcrumb for a developer.
       console.warn(
@@ -550,7 +587,12 @@ export const usePluginStore = create<PluginStore>((set, get) => ({
         `dropped ${report.droppedNoPayload.length} without a package`,
         `(${report.droppedNoPayload.join(', ') || 'none'});`,
         `removed ${report.orphansRemoved.length} orphaned package(s)`,
-        `(${report.orphansRemoved.join(', ') || 'none'})`,
+        `(${report.orphansRemoved.join(', ') || 'none'});`,
+        // Printed with the REASON, which is the whole point of this line. An
+        // unreadable record is a bug in this build, not a storage accident,
+        // and the validator's message is the only thing that says which field.
+        `dropped ${report.droppedInvalid.length} unreadable record(s)`,
+        `(${report.droppedInvalid.map((d) => `${d.id}: ${d.reason}`).join('; ') || 'none'})`,
       );
     }
   },

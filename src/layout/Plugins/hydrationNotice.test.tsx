@@ -11,7 +11,7 @@
  */
 
 import { render, screen, fireEvent } from '@testing-library/react';
-import { usePluginStore } from '@stores/pluginStore';
+import { usePluginStore, type HydrationReport } from '@stores/pluginStore';
 import { PluginsList } from './PluginsList';
 
 jest.mock('@core/config/edition', () => ({ pluginRegistryEnabled: () => false }));
@@ -21,9 +21,11 @@ jest.mock('@core/plugins/registry', () => ({
   registryMediaUrl: (p: string | null) => p,
 }));
 
-function setReport(over: Partial<{ droppedNoPayload: string[]; orphansRemoved: string[] }>) {
+function setReport(over: Partial<HydrationReport>) {
   usePluginStore.setState({
-    lastHydration: { restored: [], droppedNoPayload: [], orphansRemoved: [], ...over },
+    lastHydration: {
+      restored: [], droppedNoPayload: [], orphansRemoved: [], droppedInvalid: [], ...over,
+    },
   });
 }
 
@@ -54,6 +56,26 @@ it('reports freed orphans even though nothing visible was lost', () => {
   setReport({ orphansRemoved: ['a.b.c'] });
   render(<PluginsList />);
   expect(screen.getByRole('status')).toHaveTextContent(/leftover package was.*cleared/is);
+});
+
+it('★ names an UNREADABLE record, and the reason it was rejected', () => {
+  /*
+    The failure mode this was added for. A stored manifest the validator
+    refuses used to be dropped with no report, no console line and no UI — so
+    the user saw their plugins vanish at every restart and there was nothing
+    anywhere to say why. The reason string is the part that matters: it is what
+    turns "my plugins disappear" into a bug report someone can act on.
+  */
+  setReport({
+    droppedInvalid: [{ id: 'studio.acme.easing-lab', reason: '"contributes.net" must be an object.' }],
+  });
+  render(<PluginsList />);
+  const notice = screen.getByRole('status');
+  expect(notice).toHaveTextContent('studio.acme.easing-lab');
+  expect(notice).toHaveTextContent('"contributes.net" must be an object.');
+  // Deliberately NOT the "install it again" copy: reinstalling an entry this
+  // build cannot read just loses it again at the next launch.
+  expect(screen.queryByText(/Installing again will fix it/i)).not.toBeInTheDocument();
 });
 
 it('can be dismissed', () => {

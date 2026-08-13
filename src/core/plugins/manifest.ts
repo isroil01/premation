@@ -427,10 +427,61 @@ function emptyContributes(): PluginContributes {
 }
 
 /**
+ * Does a `contributes` block actually declare anything?
+ *
+ * ★ The version gates below must fire on a block that DECLARES something, not
+ * on a block that merely EXISTS — because a normalised block always exists.
+ *
+ * `parseManifest` always writes `contributes`, including for an API-1 manifest
+ * that never had one, and the installed-plugin index stores that normalised
+ * manifest. So every boot re-parses this parser's own output (see
+ * `validateMeta` in `pluginStore.ts`), and a gate keyed on existence rejects
+ * the app's own writing — silently dropping every installed plugin at the next
+ * launch. Keyed on content, an empty block round-trips and an author who really
+ * did declare commands under `"apiVersion": 1` is still told so.
+ */
+function declaresContributions(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return true;
+  const c = raw as Record<string, unknown>;
+  for (const [key, v] of Object.entries(c)) {
+    // `null` and `[]` are what `emptyContributes()` writes for "nothing here".
+    if (v == null) continue;
+    if (!Array.isArray(v)) return true;
+    if (v.length === 0) continue;
+    /*
+      The one non-empty thing normalising an API-1 package produces on its own:
+      a bare `panel: "panel.html"` promoted to the single legacy panel entry.
+      Refusing it would refuse the classic API-1 shape — which is the shape most
+      likely to have been installed longest.
+
+      This does mean an API-1 author who hand-writes that exact entry is no
+      longer told to bump their apiVersion. That is the right trade: the result
+      is identical to the `panel` key they are allowed to write, and the cost of
+      the alternative is a plugin that uninstalls itself overnight.
+    */
+    if (
+      key === 'panels' &&
+      v.length === 1 &&
+      (v[0] as { id?: unknown } | null)?.id === LEGACY_PANEL_ID
+    ) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
  * Validate `contributes`, pushing messages rather than throwing.
  *
  * Takes `name` because a legacy panel has no declared title and the plugin's
  * own name is the only honest thing to put in the tab.
+ *
+ * ── Idempotent, and that is a requirement rather than a nicety ───────────────
+ *
+ * `parseManifest(parseManifest(x).manifest)` must equal `parseManifest(x)`. The
+ * store persists the NORMALISED manifest and re-parses it at every boot, so any
+ * asymmetry between what this emits and what it accepts is not a cosmetic
+ * inconsistency — it is a plugin the user has to install again after every
+ * restart. `manifestRoundTrip.test.ts` is that property.
  */
 function parseContributes(
   raw: unknown,
@@ -441,7 +492,7 @@ function parseContributes(
 ): PluginContributes {
   const out = emptyContributes();
 
-  if (raw !== undefined && apiVersion < 2) {
+  if (raw !== undefined && apiVersion < 2 && declaresContributions(raw)) {
     errors.push('"contributes" requires "apiVersion": 2. Bump it, or remove the block.');
     return out;
   }
@@ -522,7 +573,13 @@ function parseContributes(
     }
   }
 
-  if (c.net !== undefined) {
+  // `null` is ABSENT, not a malformed block. That is not leniency for authors'
+  // sake — it is the value `emptyContributes()` writes for "this plugin asks
+  // for no network", so a re-parse of our own normalised manifest arrives here
+  // with `null` every time. Testing `!== undefined` made that reject: below API
+  // 4 with "requires apiVersion 4", and at API 4 with `parseNet(null)` saying
+  // "must be an object". Either way the record was dropped at the next boot.
+  if (c.net !== undefined && c.net !== null) {
     if (apiVersion >= 4) {
       out.net = parseNet(c.net, errors);
     } else {

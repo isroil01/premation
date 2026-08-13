@@ -678,10 +678,35 @@ function StorageReconciledNotice(): JSX.Element | null {
 
   const dropped = report?.droppedNoPayload ?? [];
   const orphans = report?.orphansRemoved ?? [];
-  if (dismissed || (dropped.length === 0 && orphans.length === 0)) return null;
+  const invalid = report?.droppedInvalid ?? [];
+  if (dismissed || (dropped.length === 0 && orphans.length === 0 && invalid.length === 0)) {
+    return null;
+  }
 
   return (
     <div className={styles.state} role="status">
+      {/*
+        Kept separate from `droppedNoPayload`, and worded differently on
+        purpose. That one is a storage accident and "install it again" is a
+        real fix. This one is a record this BUILD cannot read — the package is
+        intact and the app is what changed — so the honest thing is to name the
+        reason and ask for a report, rather than send the user round a loop of
+        reinstalling something that will vanish again at the next launch.
+      */}
+      {invalid.length > 0 && (
+        <>
+          <span className={styles.stateTitle}>
+            {invalid.length === 1
+              ? 'A plugin entry could not be read.'
+              : `${invalid.length} plugin entries could not be read.`}
+          </span>
+          <span>
+            This version of the app rejected what was saved for{' '}
+            {invalid.map((d) => d.id).join(', ')}. Please report it with this
+            detail: {invalid.map((d) => `${d.id} — ${d.reason}`).join('; ')}
+          </span>
+        </>
+      )}
       {dropped.length > 0 && (
         <>
           <span className={styles.stateTitle}>
