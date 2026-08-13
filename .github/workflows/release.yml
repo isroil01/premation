@@ -225,6 +225,34 @@ jobs:
           if [ -n "${{ vars.VITE_MEDIA_ORIGINS }}" ]; then export VITE_MEDIA_ORIGINS="${{ vars.VITE_MEDIA_ORIGINS }}"; fi
           npm run electron:build
 
+      # ── Bake the origin into the manifest the MAIN process reads ──
+      #
+      # `VITE_BACKEND_ORIGIN` above reaches the renderer and the CSP, and only
+      # those. Main resolves the backend separately, in `electron/apiBase.ts`,
+      # and it cannot read `import.meta.env` — so before this step it fell back
+      # to http://localhost:4000 in every packaged build. Desktop sign-in and
+      # every `api.request` go through main, so the shipped app could not reach
+      # the backend at all. That is 0.3.1's "login is broken".
+      #
+      # Written into package.json rather than passed as
+      # `--config.extraMetadata.backendOrigin`, because electron-builder is
+      # invoked FOUR times below (package + publish, signed + unsigned) and a
+      # flag on three of four would ship an unbaked build from whichever path
+      # was missed. The manifest is read by all of them.
+      #
+      # `npm pkg set` rather than a sed: it is npm's own JSON writer, so it
+      # cannot corrupt the file the packager is about to read.
+      - name: Bake the backend origin into the packaged manifest
+        shell: bash
+        run: |
+          npm pkg set backendOrigin="${{ vars.VITE_BACKEND_ORIGIN }}"
+          BAKED="$(node -p "require('./package.json').backendOrigin || ''")"
+          if [ -z "$BAKED" ]; then
+            echo "::error::backendOrigin was not written to package.json; main would fall back to localhost."
+            exit 1
+          fi
+          echo "main-process backend origin: $BAKED"
+
       # ── Package + sign ──
       # electron-builder reads CSC_LINK / CSC_KEY_PASSWORD from the environment.
       # Notarization is done explicitly below rather than by electron-builder, so

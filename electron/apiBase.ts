@@ -22,16 +22,75 @@
  * still be on our origin and under our base path, or it does not go out.
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+/**
+ * The origin baked into the packaged app, written by electron-builder's
+ * `extraMetadata` at package time. Same mechanism `edition.ts` uses, and for
+ * the same reason: main cannot read `import.meta.env`, so a build-time value it
+ * needs has to arrive through the packaged manifest.
+ *
+ * Located from `__dirname` rather than `app.getAppPath()` on purpose. This
+ * module's whole design note is that it stays free of Electron so the path
+ * rejection table can be tested without one — and importing `electron` here
+ * would also fail CI outright, where `npm ci --ignore-scripts` leaves the
+ * package without the `path.txt` its postinstall writes.
+ *
+ * Compiled main lives at `<root>/dist-electron/main.js`, so the manifest is one
+ * level up in both worlds: inside the asar when packaged, and the repo's own
+ * package.json in a dev run — which carries no `backendOrigin`, so a dev run
+ * falls through to localhost exactly as it did before.
+ */
+function bakedOrigin(): string | undefined {
+  try {
+    const pkgPath = join(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { backendOrigin?: unknown };
+    return typeof pkg.backendOrigin === 'string' ? pkg.backendOrigin : undefined;
+  } catch {
+    // Unreadable or absent. Fall through to localhost, exactly as before this
+    // field existed — an unreadable manifest must not decide where the app talks.
+    return undefined;
+  }
+}
+
 /**
  * The backend origin, resolved in MAIN rather than taken from the renderer.
  *
  * Deliberately not an IPC parameter. A base URL the renderer could set is a
  * base URL a compromised renderer could point at its own server, and every
  * request after that would arrive there with a valid bearer token attached.
+ *
+ * ── ★ Why this reads a baked value, and what broke without one ──────────────
+ *
+ * This used to be `MOTION_BACKEND_ORIGIN` or localhost, and NOTHING ever set
+ * that variable — not the release workflow, not electron-builder, not main. It
+ * appears in this repo only in its own test. So every packaged build resolved
+ * to `http://localhost:4000`, on the END USER's machine, where nothing is
+ * listening.
+ *
+ * That shipped in 0.3.1 as "login is broken". Sign-in is the visible symptom
+ * rather than the scope: `authRequest` routes desktop sign-in through main
+ * precisely so tokens never enter the renderer, and every other call goes
+ * through `api.request`, which is also main — so the whole backend was
+ * unreachable and sign-in was merely the first thing anyone tried.
+ *
+ * The trap was that it LOOKED configured. `VITE_BACKEND_ORIGIN` is set at build
+ * time and is genuinely correct — for the renderer, and for the CSP built from
+ * it. `main.ts` even says the app "talks to a deployed motion-back at the origin
+ * baked in by VITE_BACKEND_ORIGIN". Main never read it. Two resolvers for one
+ * question, one of them wired to nothing, and the half that was wired is the
+ * half a developer sees working because their dev server IS on localhost:4000.
+ *
+ * Order is deliberate: an explicit env var still wins, so a developer can point
+ * a packaged build at a staging server without rebuilding it.
  */
 export function backendOrigin(): string {
   const configured = (process.env.MOTION_BACKEND_ORIGIN ?? '').trim().replace(/\/+$/, '');
-  return configured || `http://localhost:${Number(process.env.MOTION_BACKEND_PORT || 4000)}`;
+  if (configured) return configured;
+  const baked = (bakedOrigin() ?? '').trim().replace(/\/+$/, '');
+  if (baked) return baked;
+  return `http://localhost:${Number(process.env.MOTION_BACKEND_PORT || 4000)}`;
 }
 
 /** Everything the renderer may reach, as one absolute prefix. */
