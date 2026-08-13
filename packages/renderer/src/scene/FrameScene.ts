@@ -162,7 +162,7 @@ export type RenderableEffect =
       type: 'spotlight';
       fromX: number; fromY: number; toX: number; toY: number;
       coneHalfRad: number; softness: number; intensity: number; ambient: number;
-      aspect: number; lightOnly: boolean; color: Color;
+      aspect: number; lightOnly: boolean; reach: number; color: Color;
     }
   /**
    * Sphere / Cylinder. `radius` is a fraction of the layer's short side (1 =

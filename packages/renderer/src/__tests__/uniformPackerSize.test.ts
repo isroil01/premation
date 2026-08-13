@@ -99,7 +99,7 @@ function structFloats(wgsl: string): number | null {
 /** shader name → the packer that fills its uniform block. */
 const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'bend', pack: () => packBend(MVP, RECT, 1, 0, 1, 0, 0, 0, 0, 1, RECT) },
-  { shader: 'spotlight', pack: () => packSpotlight(MVP, RECT, 0, 0, 0, 1, 0.5, 0.4, 1, 0.1, 1, false, RECT, COLOR) },
+  { shader: 'spotlight', pack: () => packSpotlight(MVP, RECT, 0, 0, 0, 1, 0.5, 0.4, 1, 0.1, 1, false, 1.5, RECT, COLOR) },
   // The four that share one block.
   { shader: 'bevel-alpha', pack: () => packPerspective(MVP, RECT, [0, 0, 0, 0], [0, 0, 0, 0], RECT, COLOR) },
   { shader: 'bevel-edges', pack: () => packPerspective(MVP, RECT, [0, 0, 0, 0], [0, 0, 0, 0], RECT, COLOR) },
@@ -135,7 +135,7 @@ describe('uniform packer size matches the shader struct', () => {
     const declared = structFloats(spotlight.wgsl)!;
     expect(declared).toBe(36);              // 12 + uvRect + p0 + p1 + p2 + fxBox + colour
     expect(declared - 4).not.toBe(packSpotlight(
-      MVP, RECT, 0, 0, 0, 1, 0.5, 0.4, 1, 0.1, 1, false, RECT, COLOR,
+      MVP, RECT, 0, 0, 0, 1, 0.5, 0.4, 1, 0.1, 1, false, 1.5, RECT, COLOR,
     ).length);
   });
 

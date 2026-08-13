@@ -618,6 +618,8 @@ export function extractSpatialEffects(
         ambient: n('ambient') / 100,
         aspect,
         lightOnly: Math.round(n('render')) === 1,
+        // Percent of the layer's height — the unit the shader works in.
+        reach: n('reach') / 100,
         color: c('lightColor', 1),
       });
     }

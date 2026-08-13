@@ -1859,6 +1859,7 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   let ambient   = obj.p1.w;
   let aspect    = obj.p2.x;
   let lightOnly = obj.p2.y;
+  let reachCtl  = max(obj.p2.z, 0.0001);
 
   let c = textureSample(tex, smp, uv);
   let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
@@ -1874,13 +1875,25 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
     // Angle off the From→To axis, via the dot product rather than atan2 — no
     // ±π seam to tear on.
     let ang = acos(clamp(dot(p / dist, axis / reach), -1.0, 1.0));
-    // Softness widens the falloff INWARD from the cone edge: 0 is a hard edge,
-    // 1 fades from the axis outward.
-    let inner = coneHalf * (1.0 - softness);
+    /*
+      Softness widens the falloff INWARD from the cone edge: 0 is a hard edge,
+      1 fades from the axis outward. The inner limit is held strictly below the
+      outer one — at softness 0 they would be equal, and smoothstep with
+      low == high divides by zero, giving NaN for every pixel in the cone.
+    */
+    let inner = min(coneHalf * (1.0 - softness), coneHalf - 0.0001);
     cone = 1.0 - smoothstep(inner, coneHalf, ang);
   }
-  // Reach is the From→To distance, as in AE — the light dims out at To.
-  let falloff = 1.0 - smoothstep(0.0, max(reach, 0.0001), dist);
+  /*
+    Reach is its OWN control (AE's Height), not the From→To distance.
+
+    Welding it to the handles is what made this effect look like it deleted the
+    layer: the default handles sit half a layer-height apart, so everything
+    further than that from the lamp fell to ambient — 15% — and a layer at
+    15% brightness on a dark composition is indistinguishable from a layer that
+    is not there.
+  */
+  let falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
   let lightAmt = ambient + cone * falloff * intensity;
   // Multiplies the layer: a spotlight reveals what is there, so outside the
   // cone the picture goes DARK rather than unchanged. Light Only drops the
@@ -1911,6 +1924,8 @@ void main() {
   float ambient = p1.w;
   float aspect = p2.x;
   float lightOnly = p2.y;
+  // Its OWN control (AE's Height), not the From→To distance — see the WGSL note.
+  float reachCtl = max(p2.z, 0.0001);
 
   vec4 c = texture(uTex, vUv);
   vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
@@ -1924,10 +1939,10 @@ void main() {
   float cone = 1.0;
   if (reach > 0.0001 && dist > 0.00001) {
     float ang = acos(clamp(dot(p / dist, axis / reach), -1.0, 1.0));
-    float inner = coneHalf * (1.0 - softness);
+    float inner = min(coneHalf * (1.0 - softness), coneHalf - 0.0001);
     cone = 1.0 - smoothstep(inner, coneHalf, ang);
   }
-  float falloff = 1.0 - smoothstep(0.0, max(reach, 0.0001), dist);
+  float falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
   float lightAmt = ambient + cone * falloff * intensity;
   vec3 base = (lightOnly > 0.5) ? vec3(c.a) : c.rgb;
   frag = vec4(base * lightColor.rgb * lightAmt, c.a);

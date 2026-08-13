@@ -522,7 +522,7 @@ export function packSpotlight(
   mvp: Mat3, uvRect: Rect,
   fromX: number, fromY: number, toX: number, toY: number,
   coneHalfRad: number, softness: number, intensity: number, ambient: number,
-  aspect: number, lightOnly: boolean,
+  aspect: number, lightOnly: boolean, reach: number,
   /** The LAYER's box within the chain buffer — NOT `uvRect`. See the shader. */
   fxBox: Rect,
   color: Color,
@@ -537,7 +537,7 @@ export function packSpotlight(
   o = packRect(uvRect, out, o);
   out[o + 0] = fromX; out[o + 1] = fromY; out[o + 2] = toX; out[o + 3] = toY; o += 4;
   out[o + 0] = coneHalfRad; out[o + 1] = softness; out[o + 2] = intensity; out[o + 3] = ambient; o += 4;
-  out[o + 0] = aspect; out[o + 1] = lightOnly ? 1 : 0; out[o + 2] = 0; out[o + 3] = 0; o += 4;
+  out[o + 0] = aspect; out[o + 1] = lightOnly ? 1 : 0; out[o + 2] = reach; out[o + 3] = 0; o += 4;
   o = packRect(fxBox, out, o);
   out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
   return out;

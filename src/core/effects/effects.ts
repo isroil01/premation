@@ -779,6 +779,17 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'toY', label: 'To Y', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'To' },
       { key: 'coneAngle', label: 'Cone Angle', type: 'number', unit: '°', min: 1, max: 180, default: 60, group: 'Cone' },
       { key: 'edgeSoftness', label: 'Edge Softness', type: 'number', unit: '%', min: 0, max: 100, default: 40, group: 'Cone' },
+      /*
+        How far the beam reaches, as a percentage of the layer's HEIGHT — AE's
+        Height, and its own control rather than the From→To distance.
+
+        Welding reach to the handles is what made this effect look like it
+        deleted the layer: at rest the points sit half a layer-height apart, so
+        everything beyond that fell to Ambient (15%), and a layer at 15%
+        brightness on a dark composition is indistinguishable from one that is
+        not there. The default now covers the whole layer and then some.
+      */
+      { key: 'reach', label: 'Reach', type: 'number', unit: '%', min: 1, max: 400, default: 150, group: 'Cone' },
       { key: 'lightColor', label: 'Light Color', type: 'color', default: '#ffffff' },
       { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 400, default: 150 },
       { key: 'ambient', label: 'Ambient', type: 'number', unit: '%', min: 0, max: 100, default: 15 },

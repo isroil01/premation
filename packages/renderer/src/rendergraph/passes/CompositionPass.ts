@@ -817,7 +817,7 @@ export class CompositionPass extends RenderPass {
             mvp, targetUv,
             effect.fromX, effect.fromY, effect.toX, effect.toY,
             effect.coneHalfRad, effect.softness, effect.intensity, effect.ambient,
-            effect.aspect, effect.lightOnly,
+            effect.aspect, effect.lightOnly, effect.reach,
             fxBox,
             effect.color,
           ),
