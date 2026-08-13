@@ -13,6 +13,34 @@
  * assertion here would pass having checked nothing.
  */
 
+/*
+  ★ `electron` is mocked because IMPORTING it is what breaks, not calling it.
+
+  This suite reads the main-process sources as TEXT; the only runtime thing it
+  needs is `checkFrame`, a pure function. But `ipcGuard.ts` imports `ipcMain`
+  at module scope, and the `electron` npm package's entry point resolves the
+  binary through a `path.txt` written by its POSTINSTALL script. CI installs
+  with `npm ci --ignore-scripts` — deliberately, since building native modules
+  is the slowest and flakiest step and nothing here needs them — so that file
+  is absent and the import throws "Electron failed to install correctly".
+
+  It passed locally and failed only on CI, which is the worst shape a failure
+  can have: a developer machine has run the postinstall, so the difference is
+  invisible until it is a red pipeline. Note the real module would not have
+  helped anyway — required from plain Node, `electron` exports the PATH STRING
+  to the binary, so `ipcMain` is `undefined` here regardless. This suite passed
+  only because it never touches it.
+
+  The five sibling electron suites already mock it exactly like this; this one
+  was the only file reaching the real package.
+*/
+jest.mock('electron', () => ({
+  // Enough for `ipcGuard.ts` to load. Registering through the mock is not
+  // asserted anywhere — the guarantee this file makes is about the SOURCE, and
+  // stubbing more would invite someone to believe it was checked at runtime.
+  ipcMain: { handle: () => undefined, on: () => undefined },
+}));
+
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { checkFrame } from './ipcGuard';
