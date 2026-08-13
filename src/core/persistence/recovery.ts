@@ -8,10 +8,10 @@
  */
 
 import { getSettingsManager } from '@core/services/coreServices';
-import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { baselineHistory } from '@stores/historyStore';
-import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
+import { type AnimSnapshot } from '@motion/animation';
+import { IMPLIED_LEGACY_VERSION } from '@core/project/migrations';
 import type { ProjectFile } from '@core/types';
 
 const KEY = 'recovery';
@@ -82,9 +82,22 @@ export function restoreRecovery(snap: RecoverySnapshot): number {
   if (snap.doc) {
     restoreDocument(structuredClone(snap.doc));
   } else {
-    // Pre-1.1 snapshot: scene + animation only.
-    sceneProjectIO.restore(structuredClone(snap.scene));
-    defaultAnimation.restore(snap.anim);
+    // Pre-1.1 snapshot: scene + animation only, and no version field — so it is
+    // assembled into a document at the implied legacy version and put through
+    // the same door every other foreign state uses.
+    //
+    // It used to call `defaultAnimation.restore` directly, which was harmless
+    // only while every schema change happened to be additive. Document 1.6.0
+    // changes the SHAPE of `animation.expressions`, and this was the one path
+    // from a persisted snapshot to the engine with no migration in between — an
+    // old snapshot's expressions would have been silently dropped by the
+    // restore that exists to not lose work. Rule 4c asked prospectively: which
+    // guard observes this crossing? None did.
+    restoreDocument({
+      version: IMPLIED_LEGACY_VERSION,
+      scene: structuredClone(snap.scene),
+      animation: snap.anim,
+    });
   }
   // Recovering IS a load: undo must not be able to step behind it into the
   // seeded starter scene captured at boot.

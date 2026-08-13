@@ -82,10 +82,3 @@ export function parseTimecode(raw: string): number | null {
   return seconds;
 }
 
-/** Format seconds as mm:ss.s for display. */
-export function formatSeconds(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = sec - m * 60;
-  const ss = s.toFixed(s % 1 === 0 ? 0 : 1).padStart(s < 10 ? (s % 1 === 0 ? 2 : 4) : 2, '0');
-  return `${m}:${ss}`;
-}

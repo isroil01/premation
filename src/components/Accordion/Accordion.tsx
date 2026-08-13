@@ -68,10 +68,10 @@ export function Accordion({ items, exclusive = false, className }: AccordionProp
               >
                 <Icon
                   name={isOpen ? 'chevron-down' : 'chevron-right'}
-                  size={12}
+                  size="sm"
                   className={styles.chevron}
                 />
-                {item.icon ? <Icon name={item.icon} size={14} className={styles.icon} /> : null}
+                {item.icon ? <Icon name={item.icon} size="md" className={styles.icon} /> : null}
                 <span className={styles.title}>{item.title}</span>
                 {item.badge ? <span className={styles.badge}>{item.badge}</span> : null}
               </button>

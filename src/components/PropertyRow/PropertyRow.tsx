@@ -60,7 +60,7 @@ export function StopwatchButton({ animated, label, onToggle, className }: Stopwa
         onToggle();
       }}
     >
-      <Icon name="stopwatch" size={11} />
+      <Icon name="stopwatch" size="sm" />
     </button>
   );
 }
@@ -104,7 +104,7 @@ export function KeyframeNavigator({
         title="Previous keyframe"
         onClick={(e) => { e.stopPropagation(); onPrev(); }}
       >
-        <Icon name="chevron-left" size={11} />
+        <Icon name="chevron-left" size="sm" />
       </button>
       <button
         type="button"
@@ -115,7 +115,7 @@ export function KeyframeNavigator({
         title={atKeyframe ? 'Remove keyframe at playhead' : 'Add keyframe at playhead'}
         onClick={(e) => { e.stopPropagation(); onToggleKeyframe(); }}
       >
-        <Icon name="keyframe" size={11} />
+        <Icon name="keyframe" size="sm" />
       </button>
       <button
         type="button"
@@ -125,7 +125,7 @@ export function KeyframeNavigator({
         title="Next keyframe"
         onClick={(e) => { e.stopPropagation(); onNext(); }}
       >
-        <Icon name="chevron-right" size={11} />
+        <Icon name="chevron-right" size="sm" />
       </button>
     </div>
   );
@@ -208,7 +208,7 @@ export function PropertyRow({
           title={`Reset ${a11yLabel}`}
           onClick={(e) => { e.stopPropagation(); onReset(); }}
         >
-          <Icon name="rotate" size={10} />
+          <Icon name="rotate" size="sm" />
         </button>
       ) : (
         <span />

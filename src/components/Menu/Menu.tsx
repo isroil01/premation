@@ -53,9 +53,11 @@ export interface MenuProps {
   onItemActivate?: () => void;
   /** Optional: take over the role/aria for menu (default true). */
   ariaLabel?: string;
+  /** When true, removes the max-height cap and shows all items without scrolling. */
+  noScroll?: boolean;
 }
 
-export function Menu({ children, className, onItemActivate, ariaLabel }: MenuProps): JSX.Element {
+export function Menu({ children, className, onItemActivate, ariaLabel, noScroll }: MenuProps): JSX.Element {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const subMenuOpen = useRef<Set<string>>(new Set());
   const [, force] = useState(0);
@@ -65,8 +67,25 @@ export function Menu({ children, className, onItemActivate, ariaLabel }: MenuPro
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (!rootRef.current) return;
+    /*
+      Skip items that cannot take focus.
+
+      This filtered on `aria-disabled` only — and nothing in this file ever SETS
+      aria-disabled. `MenuItem` renders the native `disabled` attribute, so
+      disabled entries stayed in this list, and `.focus()` on a natively
+      disabled button is a silent no-op: arrow-key navigation STOPPED dead on
+      the first greyed-out entry. In File that is "Sync Project…", which is
+      disabled whenever no bundle project is open — so Export… and Close
+      Project below it could not be reached by keyboard at all.
+
+      Both selectors, so this stays correct if an item ever opts for the
+      aria-disabled form (which stays focusable) instead.
+    */
     const items = Array.from(
-      rootRef.current.querySelectorAll<HTMLElement>('[role="menuitem"]:not([aria-disabled="true"])'),
+      rootRef.current.querySelectorAll<HTMLElement>(
+        '[role="menuitem"]:not([aria-disabled="true"]):not([disabled]),' +
+        '[role="menuitemcheckbox"]:not([aria-disabled="true"]):not([disabled])',
+      ),
     );
     if (items.length === 0) return;
     const active = document.activeElement as HTMLElement | null;
@@ -91,7 +110,7 @@ export function Menu({ children, className, onItemActivate, ariaLabel }: MenuPro
         ref={rootRef}
         role="menu"
         aria-label={ariaLabel}
-        className={cn(styles.menu, className)}
+        className={cn(styles.menu, noScroll && styles.noScroll, className)}
         onKeyDown={onKeyDown}
       >
         {Children.map(children, (child) => child)}
@@ -109,6 +128,19 @@ export interface MenuItemProps {
   shortcut?: string;
   disabled?: boolean;
   danger?: boolean;
+  /**
+   * Toggle state, for an item that turns something on and off.
+   *
+   * `undefined` = not a toggle, and the item keeps `role="menuitem"`. A boolean
+   * makes it a `menuitemcheckbox` with `aria-checked`, so the state is
+   * announced rather than only drawn — a tick that exists solely as a glyph is
+   * invisible to a screen reader.
+   *
+   * The tick occupies the ICON gutter, replacing the command's own icon while
+   * checked. Menus already reserve that gutter for every item (see
+   * `itemIconSpacer`), so nothing shifts as the state changes.
+   */
+  checked?: boolean;
   onSelect?: () => void;
   /** Submenu children render in a portal anchored to this item. */
   children?: ReactNode;
@@ -121,6 +153,7 @@ export function MenuItem({
   shortcut,
   disabled = false,
   danger = false,
+  checked,
   onSelect,
   children,
 }: MenuItemProps): JSX.Element {
@@ -195,7 +228,8 @@ export function MenuItem({
         ref={(el) => { ref.current = el; triggerRef.current = el; }}
         id={id}
         type="button"
-        role="menuitem"
+        role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
+        aria-checked={checked}
         aria-haspopup={children ? 'menu' : undefined}
         aria-expanded={children ? subOpen : undefined}
         disabled={disabled}
@@ -205,10 +239,12 @@ export function MenuItem({
         onPointerEnter={() => { if (children) openSub(); }}
         onPointerLeave={() => { if (children) scheduleCloseSub(); }}
       >
-        {icon ? <Icon name={icon} size={14} className={styles.itemIcon} /> : <span className={styles.itemIconSpacer} />}
+        {checked
+          ? <Icon name="check" size="md" className={styles.itemIcon} />
+          : icon ? <Icon name={icon} size="md" className={styles.itemIcon} /> : <span className={styles.itemIconSpacer} />}
         <span className={styles.itemLabel}>{label}</span>
         {shortcut ? <span className={styles.itemShortcut}>{shortcut}</span> : null}
-        {children ? <Icon name="chevron-right" size={12} className={styles.itemChevron} /> : null}
+        {children ? <Icon name="chevron-right" size="sm" className={styles.itemChevron} /> : null}
       </button>
       {subOpen && children ? createPortal(
         <div
@@ -272,7 +308,7 @@ export function MenuCheckbox({ id, label, checked, onChange, disabled = false }:
       onKeyDown={onKey}
     >
       <span className={cn(styles.itemIconSpacer, checked && styles.itemIconActive)}>
-        {checked ? <Icon name="check" size={12} /> : null}
+        {checked ? <Icon name="check" size="sm" /> : null}
       </span>
       <span className={cn(styles.itemLabel, checked && styles.itemLabelActive)}>{label}</span>
     </button>

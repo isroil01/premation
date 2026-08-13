@@ -1,4 +1,5 @@
 import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
+import { getNodeLabelColor } from '@core/scene/labelColor';
 import { getRemappedTime } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
@@ -55,7 +56,7 @@ import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore'
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { bumpScene } from '@stores/sceneStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { addPaintStroke } from '@core/paint/paintStrokes';
+import { addPaintStroke, type PaintMode } from '@core/paint/paintStrokes';
 import { compToLayerLocal, isPaintableKind, localBrushSize } from '@core/paint/paintCoords';
 import { usePaintStore } from '@stores/paintStore';
 import { useInfoStore } from '@stores/infoStore';
@@ -88,15 +89,25 @@ import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace } from '@core/scene/facePicking';
 import { compSizeOf } from '@core/composition/compSizes';
 import { customPrompt } from '@components/Modal/Dialogs';
+import { RULER_CSS_PX, inStrip, rulerStrips } from './rulerGeometry';
 
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
-/** Ruler strip thickness in DEVICE px — must match Canvas2DBackend.drawOverlays. */
-const RULER_DEVICE_PX = 16;
+// Geometry lives in rulerGeometry.ts, shared by the painter and the hit-test —
+// see that file for why they must not be two numbers.
 /** Screen-px tolerance for grabbing an existing guide line. */
 const GUIDE_GRAB_PX = 4;
-/** Guide line color (cyan — distinct from the magenta snap lines). */
-const GUIDE_COLOR = 'rgba(45, 212, 235, 0.9)';
+/**
+ * Guide line colour (cyan — distinct from the magenta snap lines).
+ *
+ * Read from the theme rather than frozen as `rgba(45, 212, 235, 0.9)`, which
+ * was a dark-theme cyan drawn onto a light canvas too. Alpha is applied at the
+ * draw site via `globalAlpha`, so the token stays a plain colour.
+ */
+const GUIDE_ALPHA = 0.9;
+function guideColor(): string {
+  return themeGuides().GUIDE;
+}
 
 /** An in-flight ruler-guide drag. `guideId` is null while dragging out a new guide. */
 interface GuideDrag {
@@ -108,30 +119,6 @@ interface GuideDrag {
   overRuler: boolean;
 }
 
-interface StripRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
-const inStrip = (r: StripRect, p: { x: number; y: number }): boolean =>
-  p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
-
-/**
- * The ruler strips in overlay (CSS px) space. The backend paints them just
- * outside the composition frame, RULER_DEVICE_PX device-px thick.
- */
-function rulerStrips(controller: WorkspaceController, dpr: number): { top: StripRect; left: StripRect } {
-  const comp = useCompositionStore.getState();
-  const o = controller.ws.worldToScreen({ x: 0, y: 0 });
-  const e = controller.ws.worldToScreen({ x: comp.width, y: comp.height });
-  const t = RULER_DEVICE_PX / dpr;
-  return {
-    top: { x: o.x, y: o.y - t, width: e.x - o.x, height: t },
-    left: { x: o.x - t, y: o.y, width: t, height: e.y - o.y },
-  };
-}
 
 /** Topmost unlocked guide whose line passes within GUIDE_GRAB_PX of `p` (screen px). */
 function hitGuideAt(controller: WorkspaceController, p: { x: number; y: number }): Guide | null {
@@ -179,7 +166,14 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
   const mpDragRef = useRef<{ nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null>(null);
   // Active Brush-tool paint pass: comp[] commits to the layer on release,
   // screen[] previews the wet stroke on the overlay while dragging.
-  const paintDragRef = useRef<{ nodeId: string; comp: Array<{ x: number; y: number }>; screen: Array<{ x: number; y: number }> } | null>(null);
+  // `mode` is captured when the stroke STARTS (see the paint branch): the
+  // eraser must erase regardless of what the shared paint setting says.
+  const paintDragRef = useRef<{
+    nodeId: string;
+    comp: Array<{ x: number; y: number }>;
+    screen: Array<{ x: number; y: number }>;
+    mode: PaintMode;
+  } | null>(null);
   const creationDragRef = useRef<{ start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null>(null);
   // Active ruler-guide drag (drag-out / move / delete), or null.
   const guideDragRef = useRef<GuideDrag | null>(null);
@@ -307,7 +301,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
 
     const paintChrome = (): void => {
-      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current, creationDragRef.current);
+      paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current, creationDragRef.current, paintDragRef.current?.mode ?? 'paint');
       paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
       paintRoi(overlay, controller, dprRef.current);
       paintFaceSelection(overlay, controller, dprRef.current);
@@ -844,7 +838,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Checked before anything is forwarded to the engine.
       if (overlaysRef.current.rulers) {
         const p = local(e);
-        const strips = rulerStrips(controller, dprRef.current);
+        const strips = rulerStrips(stage.clientWidth, stage.clientHeight);
         const axis: GuideAxis | null = inStrip(strips.top, p) ? 'y' : inStrip(strips.left, p) ? 'x' : null;
         if (axis) {
           guideDragRef.current = { axis, guideId: null, screen: p, overRuler: true };
@@ -914,34 +908,68 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         controller.requestRender();
         return;
       }
-      // Brush tool over a selected paintable layer = paint a stroke onto that
-      // layer (AE Paint), not draw a freehand shape via the engine. Gated on a
-      // single paintable selection so the freehand brush still works with none
-      // selected. Points collect in comp space; committed layer-local on release.
-      if (controller.ws.getTool() === 'brush') {
+      /*
+       * PAINT — AE's Paint effect: strokes stored on an existing layer.
+       *
+       * Its own tool, and that is the fix for a real bug. This used to be a
+       * hidden mode of the BRUSH: "brush tool + exactly one paintable layer
+       * selected + the pointer is over it" silently painted into that layer
+       * instead of drawing a freehand ribbon. Every branch of that condition is
+       * satisfied by accident, because `createNode` selects the layer it just
+       * made — so the FIRST brush stroke created a ribbon layer and selected it,
+       * and the SECOND stroke, if it started anywhere on top of the first, was
+       * quietly a different tool. It painted into the first stroke's layer, in
+       * that layer's local space, clipped to that layer's box.
+       *
+       * That is precisely the reported symptom: draw, stop, draw again, and the
+       * second stroke comes out looking nothing like the first with part of it
+       * missing — while a single unbroken stroke was always fine, because a
+       * stroke that never ends never re-enters this branch.
+       *
+       * Two tools cannot share one gesture and be told apart by what happens to
+       * be under the cursor. Paint is now something the user picks.
+       */
+      const paintTool = useUIStore.getState().activeTool;
+      if (paintTool === 'paint' || paintTool === 'eraser') {
+        const erasing = paintTool === 'eraser';
         const ids = useSelectionStore.getState().ids;
-        if (ids.length === 1) {
-          const node = defaultSceneGraph.getNode(ids[0]!);
-          if (node && isPaintableKind(node)) {
-            const hitNode = controller.ws.hitTestScreen(local(e));
-            if (hitNode && hitNode.id === node.id) {
-              e.preventDefault();
-              const cp = controller.ws.screenToWorld(local(e));
-              paintDragRef.current = { nodeId: node.id, comp: [cp], screen: [local(e)] };
-              try {
-                overlay.setPointerCapture(e.pointerId);
-              } catch {
-                /* best-effort */
-              }
-              useUIStore.getState().setDragging(true);
-              controller.requestRender();
-              return;
-            }
-            if (!hitNode) {
-              useSelectionStore.getState().clear();
-            }
-          }
+        const node = ids.length === 1 ? defaultSceneGraph.getNode(ids[0]!) : null;
+        if (!node || !isPaintableKind(node)) {
+          // Say why nothing happened. Silently falling through to the engine
+          // here is what a marquee-select on a paint stroke would look like.
+          useUIStore.getState().notify({
+            level: 'info',
+            message: erasing ? 'Select one layer to erase on.' : 'Select one layer to paint on.',
+            durationMs: 2600,
+          });
+          return;
         }
+        const hitNode = controller.ws.hitTestScreen(local(e));
+        if (!hitNode || hitNode.id !== node.id) {
+          // Off the layer. Not an error worth a toast on every stray click —
+          // paint simply has nowhere to land outside its own layer.
+          return;
+        }
+        e.preventDefault();
+        const cp = controller.ws.screenToWorld(local(e));
+        // The mode rides on the DRAG, not on the store. The eraser is not "paint
+        // with a checkbox someone remembered to tick" — its whole identity is
+        // that it erases, so it must not be able to lay down colour because a
+        // shared setting happened to be on `paint` when it started.
+        paintDragRef.current = {
+          nodeId: node.id,
+          comp: [cp],
+          screen: [local(e)],
+          mode: erasing ? 'erase' : usePaintStore.getState().mode,
+        };
+        try {
+          overlay.setPointerCapture(e.pointerId);
+        } catch {
+          /* best-effort */
+        }
+        useUIStore.getState().setDragging(true);
+        controller.requestRender();
+        return;
       }
       // E4: grabbing a motion-path keyframe dot starts a local drag that edits
       // the keyframe directly (the engine never sees it, so it can't also
@@ -1041,7 +1069,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (gd) {
         const p = local(e);
         gd.screen = p;
-        const strips = rulerStrips(controller, dprRef.current);
+        const strips = rulerStrips(stage.clientWidth, stage.clientHeight);
         gd.overRuler = inStrip(gd.axis === 'y' ? strips.top : strips.left, p);
         if (gd.guideId) {
           const w = controller.ws.screenToWorld(p);
@@ -1053,7 +1081,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Hover cursor over rulers / guide lines (only while no buttons are down).
       if (overlaysRef.current.rulers && e.buttons === 0) {
         const p = local(e);
-        const strips = rulerStrips(controller, dprRef.current);
+        const strips = rulerStrips(stage.clientWidth, stage.clientHeight);
         const cursor = inStrip(strips.top, p)
           ? 'ns-resize'
           : inStrip(strips.left, p)
@@ -1146,7 +1174,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             size: localBrushSize(node, drawToolOptions.brushSize),
             opacity: s.opacity,
             hardness: s.hardness,
-            mode: s.mode,
+            // From the DRAG, not the store: the eraser decided this when the
+            // stroke began, and a store read here would let a mode change
+            // mid-stroke commit the opposite of what was drawn on screen.
+            mode: pd.mode,
           });
         }
         controller.requestRender();
@@ -1158,7 +1189,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         guideDragRef.current = null;
         useUIStore.getState().setDragging(false);
         const p = local(e);
-        const strips = rulerStrips(controller, dprRef.current);
+        const strips = rulerStrips(stage.clientWidth, stage.clientHeight);
         const overRuler = inStrip(gd.axis === 'y' ? strips.top : strips.left, p);
         const w = controller.ws.screenToWorld(p);
         const pos = gd.axis === 'x' ? w.x : w.y;
@@ -1483,6 +1514,15 @@ function paintOverlay(
   // and light guides that used it now live in the 3D gizmo overlay.
   _time = 0,
   creationDrag: { start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null = null,
+  /**
+   * The in-flight stroke's mode, captured when it started.
+   *
+   * Passed in rather than read from `usePaintStore` here, because the ERASER
+   * forces `erase` on its own drag while the shared store may still say
+   * `paint` — reading the store would preview white ink for a stroke that is
+   * about to cut a hole.
+   */
+  paintMode: PaintMode = 'paint',
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -1501,16 +1541,17 @@ function paintOverlay(
   // round-capped ink at brush width so what you drag IS what commits on release.
   if (paintStroke && paintStroke.length > 0) {
     const s = usePaintStore.getState();
+    const erasing = paintMode === 'erase';
     const zoom = controller?.getView().scale ?? 1;
     const w = Math.max(1, drawToolOptions.brushSize * zoom);
     ctx.save();
-    ctx.globalAlpha = s.mode === 'erase' ? 0.5 : s.opacity;
-    ctx.strokeStyle = s.mode === 'erase' ? '#ffffff' : drawToolOptions.brushColor;
+    ctx.globalAlpha = erasing ? 0.5 : s.opacity;
+    ctx.strokeStyle = erasing ? '#ffffff' : drawToolOptions.brushColor;
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = w;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    if (s.mode === 'erase') ctx.setLineDash([Math.max(4, w / 2), Math.max(4, w / 2)]);
+    if (erasing) ctx.setLineDash([Math.max(4, w / 2), Math.max(4, w / 2)]);
     if (paintStroke.length === 1) {
       const p = paintStroke[0]!;
       ctx.beginPath();
@@ -1527,7 +1568,9 @@ function paintOverlay(
 
   // Persistent ruler guides (screen-space, from the engine's overlay).
   if (overlay.guides.length) {
-    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.save();
+    ctx.globalAlpha = GUIDE_ALPHA;
+    ctx.strokeStyle = guideColor();
     ctx.lineWidth = 1;
     for (const g of overlay.guides) {
       ctx.beginPath();
@@ -1540,12 +1583,15 @@ function paintOverlay(
       }
       ctx.stroke();
     }
+    ctx.restore();
   }
 
   // Live preview while dragging a NEW guide out of a ruler (hidden while the
   // pointer is back over the ruler — releasing there cancels).
   if (guideDrag && !guideDrag.guideId && !guideDrag.overRuler) {
-    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.save();
+    ctx.globalAlpha = GUIDE_ALPHA;
+    ctx.strokeStyle = guideColor();
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 3]);
     ctx.beginPath();
@@ -1557,7 +1603,9 @@ function paintOverlay(
       ctx.lineTo(cssW, guideDrag.screen.y + 0.5);
     }
     ctx.stroke();
-    ctx.setLineDash([]);
+    // setLineDash was reset by hand here; the save/restore pair now covers it
+    // along with the alpha and stroke colour.
+    ctx.restore();
   }
 
   // Selection chrome follows the theme's selection token (white in the
@@ -1684,18 +1732,43 @@ function paintOverlay(
   // rotation that was not a multiple of 90° it was visibly larger than the
   // artwork with dead padding at every corner.
   if (!isActivelyDrawing && overlay.selectionBoxes.length > 0) {
-    ctx.strokeStyle = ACCENT;
-    // Hairline. A 2px selection stroke is the single loudest tell of an
-    // unpolished editor — it reads as chrome competing with the artwork
-    // rather than a thin annotation over it.
-    ctx.lineWidth = 1;
     if (sel3D) ctx.setLineDash([4, 3]);
-    for (const box of overlay.selectionBoxes) strokeCorners(ctx, box);
+    for (const box of overlay.selectionBoxes) {
+      // Each outline takes its OWN layer's label colour, so with several layers
+      // selected you can tell which box belongs to which timeline row. That
+      // linkage is the point of label colours. No label set ⇒ the accent,
+      // exactly as before.
+      const label = getNodeLabelColor(box.id);
+
+      // A pale label over a pale composition is nearly invisible, and AE has
+      // this weakness. A dark halo UNDER the hairline is the fix, rather than
+      // handles with a contrasting core: the halo costs the outline no colour,
+      // so the label stays the thing you read, and it only guarantees the line
+      // separates from whatever is behind it. A contrasting core would split
+      // every outline into two colours and make the palette harder to
+      // recognise at a glance — which defeats the feature.
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.lineWidth = 3;
+      strokeCorners(ctx, box.corners);
+
+      // Hairline. A 2px selection stroke is the single loudest tell of an
+      // unpolished editor — it reads as chrome competing with the artwork
+      // rather than a thin annotation over it.
+      ctx.strokeStyle = label ?? ACCENT;
+      ctx.lineWidth = 1;
+      strokeCorners(ctx, box.corners);
+    }
     if (sel3D) ctx.setLineDash([]);
   }
 
   // Handles (hidden while actively drawing or painting a stroke, and in 3D).
   if (!isActivelyDrawing && !sel3D) {
+    // Handles belong to the selection as a whole, not to one layer, so they
+    // only take a label colour when exactly ONE layer is selected. With two
+    // selected there is no non-arbitrary answer, and picking the first would
+    // assert a linkage that is not there.
+    const only = overlay.selectionBoxes.length === 1 ? overlay.selectionBoxes[0] : null;
+    const handleAccent = (only ? getNodeLabelColor(only.id) : undefined) ?? ACCENT;
     for (const h of overlay.handles) {
       if (h.kind === 'anchor') {
         // The pivot, as a crosshair/target — deliberately unlike every square
@@ -1703,7 +1776,7 @@ function paintOverlay(
         // sit outside the box entirely. Previously it fell through to the
         // default branch and drew as a plain square, indistinguishable from a
         // handle that scales the layer.
-        drawAnchorWidget(ctx, h.position.x, h.position.y, ACCENT);
+        drawAnchorWidget(ctx, h.position.x, h.position.y, handleAccent);
       } else if (h.kind === 'rotate') {
         // No rotate handle is produced any more (rotation is a tool mode), but
         // a stale overlay from another tool could still carry one.
@@ -1711,12 +1784,12 @@ function paintOverlay(
         ctx.arc(h.position.x, h.position.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = '#fff';
         ctx.fill();
-        ctx.strokeStyle = ACCENT;
+        ctx.strokeStyle = handleAccent;
         ctx.lineWidth = 1;
         ctx.stroke();
       } else if (h.kind === 'point') {
         // Vertex anchor: filled square
-        ctx.fillStyle = ACCENT;
+        ctx.fillStyle = handleAccent;
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 1.5;
         ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
@@ -1727,7 +1800,7 @@ function paintOverlay(
         ctx.arc(h.position.x, h.position.y, 4, 0, Math.PI * 2);
         ctx.fillStyle = '#fff';
         ctx.fill();
-        ctx.strokeStyle = ACCENT;
+        ctx.strokeStyle = handleAccent;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       } else {
@@ -1735,7 +1808,7 @@ function paintOverlay(
         // precise where circles read as a design tool, and the fill/outline
         // contrast is what keeps them visible over both light and dark artwork.
         ctx.fillStyle = '#fff';
-        ctx.strokeStyle = ACCENT;
+        ctx.strokeStyle = handleAccent;
         ctx.lineWidth = 1;
         ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
         ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
@@ -1949,6 +2022,49 @@ function themeChrome(): { ACCENT: string; ACCENT_SOFT: string; HOVER: string } {
     HOVER: root.getPropertyValue('--color-border-strong').trim() || 'rgba(255,255,255,0.35)',
   };
   return chromeCache;
+}
+
+/**
+ * Theme colours for the RULER and SAFE-AREA overlays, on the same
+ * once-per-theme cache as `themeChrome` above and for the same reason.
+ *
+ * These two overlays were the last surfaces in the app painted from literals,
+ * and not even from ONE set of literals: the ruler bar was `#12131a` on a
+ * `#161616` app, its borders `#2e3440` / `#3b4252` (Nord), its corner `#1a1b26`
+ * (Tokyo Night), its text `#e2e8f0` (Tailwind slate) and its accent `#38bdf8`
+ * (Tailwind sky) — while the app's accent is `#2988ff`. Three borrowed palettes
+ * and a blue-black bar over a neutral-grey editor, which is what made the strip
+ * read as pasted on from somewhere else. The safe-area boxes used the same
+ * foreign sky blue.
+ *
+ * Reading tokens means these also follow the LIGHT theme, which literals could
+ * never do: a `#12131a` bar stayed near-black on a light canvas.
+ */
+let guideCache: {
+  key: string; BAR: string; CORNER: string; BORDER: string;
+  ACCENT: string; TEXT: string; TICK: string; GUIDE: string;
+} | null = null;
+
+function themeGuides(): Omit<NonNullable<typeof guideCache>, 'key'> {
+  const el = document.documentElement;
+  const key = `${el.getAttribute('data-theme') ?? ''}|${el.className}`;
+  if (guideCache && guideCache.key === key) return guideCache;
+  const root = getComputedStyle(el);
+  const read = (token: string, fallback: string): string =>
+    root.getPropertyValue(token).trim() || fallback;
+  guideCache = {
+    key,
+    // The same strip colour as the panel headers and the toolbar, because that
+    // is what the ruler bar IS — a chrome gutter, not a third surface.
+    BAR: read('--color-panel-header', '#1d1d1d'),
+    CORNER: read('--color-surface-1', '#232323'),
+    BORDER: read('--color-border-strong', '#333333'),
+    ACCENT: read('--color-primary', '#2988ff'),
+    TEXT: read('--color-text-secondary', '#a6a6a6'),
+    TICK: read('--color-text-tertiary', '#8c8c8c'),
+    GUIDE: read('--color-ruler-guide', '#2dd4eb'),
+  };
+  return guideCache;
 }
 
 /**
@@ -2292,15 +2408,21 @@ function paintSafeArea(ctx: CanvasRenderingContext2D, controller: WorkspaceContr
     const h = p1.y - p0.y;
     if (w <= 0 || h <= 0) return;
 
+    const C = themeGuides();
+
     ctx.save();
     ctx.lineWidth = 1;
+    // Alpha comes from globalAlpha, not from baking it into an rgba() literal —
+    // that is what lets every stroke here be the theme's accent token.
+    ctx.strokeStyle = C.ACCENT;
+    ctx.fillStyle = C.ACCENT;
 
     // Action Safe Box (90%)
     const asX = p0.x + w * 0.05;
     const asY = p0.y + h * 0.05;
     const asW = w * 0.9;
     const asH = h * 0.9;
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+    ctx.globalAlpha = 0.55;
     ctx.setLineDash([4, 4]);
     ctx.strokeRect(asX + 0.5, asY + 0.5, asW, asH);
 
@@ -2309,7 +2431,7 @@ function paintSafeArea(ctx: CanvasRenderingContext2D, controller: WorkspaceContr
     const tsY = p0.y + h * 0.1;
     const tsW = w * 0.8;
     const tsH = h * 0.8;
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+    ctx.globalAlpha = 0.45;
     ctx.setLineDash([2, 2]);
     ctx.strokeRect(tsX + 0.5, tsY + 0.5, tsW, tsH);
 
@@ -2317,15 +2439,19 @@ function paintSafeArea(ctx: CanvasRenderingContext2D, controller: WorkspaceContr
     const cx = p0.x + w / 2;
     const cy = p0.y + h / 2;
     ctx.setLineDash([]);
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+    ctx.globalAlpha = 0.7;
     ctx.beginPath();
     ctx.moveTo(cx - 10, cy + 0.5); ctx.lineTo(cx + 10, cy + 0.5);
     ctx.moveTo(cx + 0.5, cy - 10); ctx.lineTo(cx + 0.5, cy + 10);
     ctx.stroke();
 
-    // Clean labels
-    ctx.fillStyle = 'rgba(56, 189, 248, 0.75)';
-    ctx.font = '9px system-ui, sans-serif';
+    // Labels. Tracked uppercase at 9px is the app's chrome-label convention,
+    // and the tracking is what keeps it legible over busy footage.
+    ctx.globalAlpha = 0.85;
+    ctx.font = '600 9px ui-sans-serif, system-ui, sans-serif';
+    ctx.letterSpacing = '0.06em';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
     ctx.fillText('ACTION SAFE 90%', asX + 4, asY + 12);
     ctx.fillText('TITLE SAFE 80%', tsX + 4, tsY + 12);
 
@@ -2342,17 +2468,19 @@ function paintRulers(
   cssH: number,
 ): void {
   try {
-    const rulerHeight = 22; // Crisp 22px ruler bar
+    // The SAME number `rulerStrips` hit-tests with — see RULER_CSS_PX.
+    const rulerHeight = RULER_CSS_PX;
+    const C = themeGuides();
 
     ctx.save();
 
     // Top & Left ruler background strip
-    ctx.fillStyle = '#12131a';
+    ctx.fillStyle = C.BAR;
     ctx.fillRect(0, 0, cssW, rulerHeight);
     ctx.fillRect(0, 0, rulerHeight, cssH);
 
     // Border lines
-    ctx.strokeStyle = '#2e3440';
+    ctx.strokeStyle = C.BORDER;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(0, rulerHeight + 0.5);
@@ -2361,13 +2489,15 @@ function paintRulers(
     ctx.lineTo(rulerHeight + 0.5, cssH);
     ctx.stroke();
 
-    // Corner (0,0) square
-    ctx.fillStyle = '#1a1b26';
+    // Corner (0,0) square. Inset by the half-pixel the stroke occupies, so the
+    // box lands ON the 22px gutter instead of overhanging it by a pixel into
+    // the canvas — which is what put a stray light line down the artboard edge.
+    ctx.fillStyle = C.CORNER;
     ctx.fillRect(0, 0, rulerHeight, rulerHeight);
-    ctx.strokeStyle = '#3b4252';
-    ctx.strokeRect(0.5, 0.5, rulerHeight, rulerHeight);
-    ctx.fillStyle = '#38bdf8';
-    ctx.font = 'bold 9px monospace';
+    ctx.strokeStyle = C.BORDER;
+    ctx.strokeRect(0.5, 0.5, rulerHeight - 1, rulerHeight - 1);
+    ctx.fillStyle = C.ACCENT;
+    ctx.font = 'bold 9px ui-monospace, monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText('px', rulerHeight / 2, rulerHeight / 2);
@@ -2404,26 +2534,31 @@ function paintRulers(
         ctx.beginPath();
         ctx.moveTo(Math.floor(sx) + 0.5, rulerHeight - 7);
         ctx.lineTo(Math.floor(sx) + 0.5, rulerHeight);
-        ctx.strokeStyle = isZero ? '#38bdf8' : 'rgba(255, 255, 255, 0.5)';
+        ctx.strokeStyle = isZero ? C.ACCENT : C.TEXT;
         ctx.lineWidth = isZero ? 1.5 : 1;
         ctx.stroke();
 
-        ctx.font = isZero ? 'bold 10px monospace' : '10px monospace';
-        ctx.fillStyle = isZero ? '#38bdf8' : '#e2e8f0';
+        ctx.font = isZero ? 'bold 10px ui-monospace, monospace' : '10px ui-monospace, monospace';
+        ctx.fillStyle = isZero ? C.ACCENT : C.TEXT;
         ctx.fillText(String(x), Math.floor(sx), 2);
 
+        // Minor ticks: the token at reduced alpha rather than a hardcoded
+        // white wash, which was invisible in the light theme.
         const minorStep = stepWorld / 5;
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.strokeStyle = C.TICK;
+        ctx.lineWidth = 1;
         for (let m = 1; m < 5; m++) {
           const msx = controller.ws.worldToScreen({ x: x + m * minorStep, y: 0 }).x;
           if (Number.isFinite(msx) && msx >= rulerHeight && msx <= cssW) {
             ctx.beginPath();
             ctx.moveTo(Math.floor(msx) + 0.5, rulerHeight - 4);
             ctx.lineTo(Math.floor(msx) + 0.5, rulerHeight);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-            ctx.lineWidth = 1;
             ctx.stroke();
           }
         }
+        ctx.restore();
       }
     }
 
@@ -2447,31 +2582,34 @@ function paintRulers(
         ctx.beginPath();
         ctx.moveTo(rulerHeight - 7, Math.floor(sy) + 0.5);
         ctx.lineTo(rulerHeight, Math.floor(sy) + 0.5);
-        ctx.strokeStyle = isZero ? '#38bdf8' : 'rgba(255, 255, 255, 0.5)';
+        ctx.strokeStyle = isZero ? C.ACCENT : C.TEXT;
         ctx.lineWidth = isZero ? 1.5 : 1;
         ctx.stroke();
 
         ctx.save();
         ctx.translate(2, Math.floor(sy) - 2);
-        ctx.font = isZero ? 'bold 9px monospace' : '9px monospace';
-        ctx.fillStyle = isZero ? '#38bdf8' : '#e2e8f0';
+        ctx.font = isZero ? 'bold 9px ui-monospace, monospace' : '9px ui-monospace, monospace';
+        ctx.fillStyle = isZero ? C.ACCENT : C.TEXT;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
         ctx.fillText(String(y), 0, 0);
         ctx.restore();
 
         const minorStep = stepWorld / 5;
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.strokeStyle = C.TICK;
+        ctx.lineWidth = 1;
         for (let m = 1; m < 5; m++) {
           const msy = controller.ws.worldToScreen({ x: 0, y: y + m * minorStep }).y;
           if (Number.isFinite(msy) && msy >= rulerHeight && msy <= cssH) {
             ctx.beginPath();
             ctx.moveTo(rulerHeight - 4, Math.floor(msy) + 0.5);
             ctx.lineTo(rulerHeight, Math.floor(msy) + 0.5);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
-            ctx.lineWidth = 1;
             ctx.stroke();
           }
         }
+        ctx.restore();
       }
     }
 

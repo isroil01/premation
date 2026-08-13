@@ -26,7 +26,7 @@ import {
   type Paginated,
 } from './transport';
 import { cachedGet, clear as clearCache, invalidate } from './cache';
-import { clientNameHeader, currentRefreshToken } from './session';
+import { clearSession, clientNameHeader, signIn } from './session';
 
 export {
   apiBaseUrl,
@@ -381,33 +381,90 @@ export interface AiConversationRecord extends AiConversationSummary {
   messages: AiMessageRecord[];
 }
 
-export const api = {
-  // auth
-  register: (email: string, password: string, name?: string) =>
-    request<AuthResult>('/auth/register', {
-      method: 'POST',
-      headers: clientNameHeader(),
-      body: JSON.stringify({ email, password, name }),
-    }),
-  login: (email: string, password: string) =>
-    request<AuthResult>('/auth/login', {
+/**
+ * A call that MINTS a session, routed so its tokens never reach this realm.
+ *
+ * On desktop these four routes deliberately do not go through `api.request`:
+ * their responses carry the very tokens Track A moved out of the renderer, so
+ * proxying them generically would hand them straight back. Main posts them,
+ * keeps what it minted, and answers with a status.
+ *
+ * The result returned here is token-FREE on purpose. Every caller does
+ * `setSession(result)` next, and on desktop `setSession` ignores its argument
+ * and re-reads the status — so the two builds stay one code path and the
+ * desktop one has nothing to leak. `apiProxy` refuses these paths too, so a
+ * future caller cannot quietly route around this.
+ *
+ * `user`, though, is NOT a credential, and dropping it broke sign-in outright.
+ * Main answers `signIn` with an `AuthStatus` — signedIn, an id, an email — not
+ * with the account record, so this used to return a shim with no `user` at all
+ * and a cast that made the compiler agree it was an `AuthResult`. Every caller
+ * reads `res.user.id` immediately, so every desktop sign-in threw
+ * "Cannot read properties of undefined (reading 'id')" — *after* main had
+ * already adopted the tokens. That is why the app both refused to sign in and
+ * came back signed in on the next launch: the session was real, only the store
+ * never learned whose it was. So fetch the account over the session that was
+ * just minted and hand back a complete record.
+ */
+async function authRequest(path: string, body: unknown): Promise<AuthResult> {
+  if (!IS_ELECTRON) {
+    return request<AuthResult>(path, {
       method: 'POST',
       // Names this device in the account's session list, so a user can tell
       // their laptop from a machine they no longer have.
       headers: clientNameHeader(),
-      body: JSON.stringify({ email, password }),
-    }),
+      body: JSON.stringify(body),
+    });
+  }
+
+  const result = await signIn(path, body);
+  if (!result.ok) {
+    const err = new Error(
+      (result.body as { message?: string })?.message || `Sign-in failed (${result.status}).`,
+    ) as ApiError;
+    err.status = result.status;
+    err.body = result.body;
+    throw err;
+  }
+  // The session exists now, so this call is authenticated — main attaches the
+  // token it just kept. `force`, because a cached /auth/me on this machine
+  // belongs to whoever was signed in before.
+  const me = await api.me({ force: true });
+  return {
+    token: '',
+    refreshToken: '',
+    expiresIn: 0,
+    refreshExpiresAt: '',
+    user: {
+      id: me.id,
+      email: me.email,
+      name: me.name,
+      role: me.role,
+      emailVerified: me.emailVerified,
+    },
+  };
+}
+
+export const api = {
+  // auth
+  register: (email: string, password: string, name?: string) =>
+    authRequest('/auth/register', { email, password, name }),
+  login: (email: string, password: string) =>
+    authRequest('/auth/login', { email, password }),
   /**
-   * Revoke this device's refresh token server-side.
+   * End this device's session.
    *
-   * Clearing it locally is not enough on its own: a copy taken from the
-   * keystore would otherwise stay valid for the rest of its 90 days.
+   * `clearSession` is the whole operation now, not a local half of it: on
+   * desktop it calls through to main, which revokes server-side and THEN drops
+   * the stored credential — and drops it even if that call fails, because a
+   * sign-out that leaves a usable refresh token behind because the network was
+   * down is not a sign-out. This side never held the token to present, which is
+   * exactly why the request could not stay here.
    */
-  logout: () =>
-    request<{ ok: true }>('/auth/logout', {
-      method: 'POST',
-      body: JSON.stringify({ refreshToken: currentRefreshToken() ?? undefined }),
-    }),
+  logout: async (): Promise<{ ok: true }> => {
+    await clearSession();
+    return { ok: true };
+  },
   /**
    * Which social sign-in providers this server can actually use.
    *
@@ -430,12 +487,7 @@ export const api = {
   oauthStartUrl: (provider: 'google' | 'github', client: 'web' | 'desktop' = 'web') =>
     `${apiBaseUrl()}/auth/oauth/${provider}/start${client === 'desktop' ? '?client=desktop' : ''}`,
   /** Swap the one-time code from the OAuth redirect for a real session. */
-  oauthExchange: (code: string) =>
-    request<AuthResult>('/auth/oauth/exchange', {
-      method: 'POST',
-      headers: clientNameHeader(),
-      body: JSON.stringify({ code }),
-    }),
+  oauthExchange: (code: string) => authRequest('/auth/oauth/exchange', { code }),
 
   /** Devices with a live session. */
   listSessions: () => request<SessionRecord[]>('/auth/sessions'),
@@ -460,12 +512,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ email }),
     }),
-  /** Spend the emailed token. Signs in on success; every old session dies. */
+  /**
+   * Spend the emailed token. Signs in on success; every old session dies.
+   *
+   * Through `authRequest`, like the other routes whose response is a session:
+   * it used to use the generic `request`, which on desktop meant the tokens
+   * came back to the renderer and main never adopted them — so the app showed
+   * the user as signed in and then 401'd on every call it made.
+   */
   resetPassword: (token: string, password: string) =>
-    request<AuthResult>('/auth/reset-password', {
-      method: 'POST',
-      body: JSON.stringify({ token, password }),
-    }),
+    authRequest('/auth/reset-password', { token, password }),
 
   // projects
   /**

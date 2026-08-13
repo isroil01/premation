@@ -676,6 +676,21 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     co = d.rgb * k;
     ao = ad * k;
   }
+  // ── Preserve Underlying Transparency (cr0.y) ──
+  // Independent of the blend mode, because it composes with every blend: the
+  // layer is clipped to the coverage beneath it and may not ADD coverage.
+  // source-atop, with the blended colour in place of the source colour:
+  //     co = ad*( as*B + (1-as)*cb ),  ao = ad
+  // The tempting shortcut — scale as by ad and keep the source-over line —
+  // is wrong: at ad=0.5, as=1 it yields ao=0.75, so the layer adds opacity
+  // exactly where it is meant to be clipped by it.
+  // Not applied to the matte family (31-34): those contribute no colour of
+  // their own and scale the whole backdrop, so "clip me to the backdrop" is not
+  // a meaningful composition with them.
+  if (obj.cr0.y > 0.5 && mode < 31) {
+    co = ad * (as1 * B + (1.0 - as1) * cb);
+    ao = ad;
+  }
   return vec4<f32>(co, ao);
 }
 `,
@@ -727,6 +742,21 @@ void main() {
     float k = matteFactor(mode, s);
     co = d.rgb * k;
     ao = ad * k;
+  }
+  // ── Preserve Underlying Transparency (cr0.y) ──
+  // Independent of the blend mode, because it composes with every blend: the
+  // layer is clipped to the coverage beneath it and may not ADD coverage.
+  // source-atop, with the blended colour in place of the source colour:
+  //     co = ad*( as*B + (1-as)*cb ),  ao = ad
+  // The tempting shortcut — scale as by ad and keep the source-over line —
+  // is wrong: at ad=0.5, as=1 it yields ao=0.75, so the layer adds opacity
+  // exactly where it is meant to be clipped by it.
+  // Not applied to the matte family (31-34): those contribute no colour of
+  // their own and scale the whole backdrop, so "clip me to the backdrop" is not
+  // a meaningful composition with them.
+  if (cr0.y > 0.5 && mode < 31) {
+    co = ad * (as1 * B + (1.0 - as1) * cb);
+    ao = ad;
   }
   frag = vec4(co, ao);
 }
@@ -1022,6 +1052,260 @@ void main() {
 };
 
 /**
+ * Apply Color LUT — a 3D `.cube` lookup, on the GPU.
+ *
+ * The fourth member of the read-a-second-texture family. The second texture is
+ * not another layer this time; it is the LUT itself, packed as a STRIP.
+ *
+ * ── Why a strip, and what it costs ──────────────────────────────────────────
+ *
+ * WebGPU has 3D textures and WebGL2 has them too, but nothing else in this
+ * renderer allocates one and the backend abstraction has no 3D texture path. A
+ * cube of edge N is therefore laid out as N slices of N×N side by side: width
+ * N², height N. Slice z occupies x ∈ [z·N, (z+1)·N).
+ *
+ * The cost is that a LINEAR sampler does not know where a slice ends. Sampling
+ * near x = z·N blends into slice z−1, which is a completely different blue
+ * value — visible as banded fringing on smooth gradients. So the horizontal
+ * coordinate is clamped to half a texel inside its own slice and the blue axis
+ * is interpolated MANUALLY between two slice samples. Red and green still ride
+ * the hardware's bilinear filter, which is the whole point of doing this on the
+ * GPU rather than per pixel on the CPU.
+ *
+ * params.x — cube edge length N
+ * params.y — 1 when the LUT is 1D (a strip of N×1, no blue axis to walk)
+ * params.zw — domain min and max, applied to all three channels
+ *
+ * ── Premultiplied in, premultiplied out ─────────────────────────────────────
+ *
+ * A LUT is defined on straight colour, and this pipeline carries premultiplied.
+ * The shader un-premultiplies before the lookup and re-premultiplies after —
+ * skipping that grades the colour a transparent pixel does not have, and turns
+ * a soft edge into a fringe of whatever the LUT maps black to.
+ */
+export const APPLY_COLOR_LUT: ShaderSource = {
+  name: 'apply-color-lut',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var lutTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn sliceSample(rg : vec2<f32>, slice : f32, n : f32) -> vec3<f32> {
+  // Half a texel in from each end of THIS slice, so the linear filter cannot
+  // reach the neighbouring slice's very different blue.
+  let xIn = clamp(rg.x * (n - 1.0) + 0.5, 0.5, n - 0.5);
+  let u = (slice * n + xIn) / (n * n);
+  let v = clamp(rg.y * (n - 1.0) + 0.5, 0.5, n - 0.5) / n;
+  return textureSampleLevel(lutTex, smp, vec2<f32>(u, v), 0.0).rgb;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  if (src.a <= 0.0001) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  // Straight colour for the lookup; premultiplied again at the end.
+  let straight = clamp(src.rgb / src.a, vec3<f32>(0.0), vec3<f32>(1.0));
+  let lo = obj.params.z;
+  let hi = obj.params.w;
+  let span = max(hi - lo, 0.0001);
+  let c = clamp((straight - vec3<f32>(lo)) / span, vec3<f32>(0.0), vec3<f32>(1.0));
+  let n = obj.params.x;
+  var graded : vec3<f32>;
+  if (obj.params.y > 0.5) {
+    // 1D: one texel row, each channel looked up independently.
+    let w = n;
+    let rr = textureSampleLevel(lutTex, smp, vec2<f32>((c.r * (w - 1.0) + 0.5) / w, 0.5), 0.0).r;
+    let gg = textureSampleLevel(lutTex, smp, vec2<f32>((c.g * (w - 1.0) + 0.5) / w, 0.5), 0.0).g;
+    let bb = textureSampleLevel(lutTex, smp, vec2<f32>((c.b * (w - 1.0) + 0.5) / w, 0.5), 0.0).b;
+    graded = vec3<f32>(rr, gg, bb);
+  } else {
+    let bz = c.b * (n - 1.0);
+    let z0 = floor(bz);
+    let z1 = min(z0 + 1.0, n - 1.0);
+    let f = bz - z0;
+    graded = mix(sliceSample(c.rg, z0, n), sliceSample(c.rg, z1, n), f);
+  }
+  return vec4<f32>(graded * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+uniform sampler2D uMapTex;
+in vec2 vUv;
+out vec4 frag;
+vec3 sliceSample(vec2 rg, float slice, float n) {
+  float xIn = clamp(rg.x * (n - 1.0) + 0.5, 0.5, n - 0.5);
+  float u = (slice * n + xIn) / (n * n);
+  float v = clamp(rg.y * (n - 1.0) + 0.5, 0.5, n - 0.5) / n;
+  return textureLod(uMapTex, vec2(u, v), 0.0).rgb;
+}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  if (src.a <= 0.0001) { frag = vec4(0.0); return; }
+  vec3 straight = clamp(src.rgb / src.a, 0.0, 1.0);
+  float lo = params.z;
+  float hi = params.w;
+  float span = max(hi - lo, 0.0001);
+  vec3 c = clamp((straight - vec3(lo)) / span, 0.0, 1.0);
+  float n = params.x;
+  vec3 graded;
+  if (params.y > 0.5) {
+    float w = n;
+    float rr = textureLod(uMapTex, vec2((c.r * (w - 1.0) + 0.5) / w, 0.5), 0.0).r;
+    float gg = textureLod(uMapTex, vec2((c.g * (w - 1.0) + 0.5) / w, 0.5), 0.0).g;
+    float bb = textureLod(uMapTex, vec2((c.b * (w - 1.0) + 0.5) / w, 0.5), 0.0).b;
+    graded = vec3(rr, gg, bb);
+  } else {
+    float bz = c.b * (n - 1.0);
+    float z0 = floor(bz);
+    float z1 = min(z0 + 1.0, n - 1.0);
+    float f = bz - z0;
+    graded = mix(sliceSample(c.rg, z0, n), sliceSample(c.rg, z1, n), f);
+  }
+  frag = vec4(graded * src.a, src.a);
+}
+`
+  }
+};
+
+/**
+ * Compound Blur — blur this layer by ANOTHER layer's luminance.
+ *
+ * The third member of the read-a-second-layer family, after `displacement-map`
+ * and `set-matte`: same shape (a second texture at binding 3, sampled with the
+ * SAME target UV so orientation matches on both backends), different
+ * arithmetic. Following that shape is deliberate — it is the established route
+ * for an effect that reads another layer, and it inherits UV handling that took
+ * real work to get right.
+ *
+ * params.x — max blur radius, in TEXELS of this target
+ * params.y — 1 inverts the map (bright areas sharp instead of blurred)
+ * params.zw — one texel, so the taps can step in uv space
+ *
+ * ── Why one pass with a scaled kernel, not a separable blur ─────────────────
+ *
+ * A separable Gaussian is two passes with a SHARED radius, and the whole point
+ * of this effect is that the radius differs per pixel. There is no pair of 1D
+ * passes that produces a spatially varying kernel — the horizontal pass would
+ * have to know the vertical pass's radius at a neighbour it has not blurred yet.
+ *
+ * So this samples a fixed 13-tap rosette whose SPACING scales with the local
+ * radius. Cost is constant; quality degrades at large radii into a slightly
+ * ringed blur rather than a smooth one, which is the standard trade and is what
+ * "Max Blur" being a ceiling rather than a promise means.
+ *
+ * The taps are a golden-angle spiral, not a grid. A grid at low tap counts
+ * produces visible axis-aligned banding on soft gradients; a spiral spreads the
+ * same 13 samples so the error looks like grain instead of structure.
+ */
+export const COMPOUND_BLUR: ShaderSource = {
+  name: 'compound-blur',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, params: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var mapTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let mapC = textureSample(mapTex, smp, uv);
+  // Rec.709 luma. The map's own ALPHA is ignored on purpose: AE reads a
+  // luminance map, and an unpremultiplied read would make a transparent map
+  // blur by whatever colour happened to sit behind it.
+  var lum = dot(mapC.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+  if (obj.params.y > 0.5) { lum = 1.0 - lum; }
+  let radius = obj.params.x * clamp(lum, 0.0, 1.0);
+  let c0 = textureSample(tex, smp, uv);
+  // Below a third of a texel the rosette collapses onto the centre and the
+  // taps are 13 copies of one sample — cheaper and exact to return it.
+  if (radius < 0.34) { return c0; }
+  var acc = c0;
+  var wsum = 1.0;
+  for (var i = 0; i < 12; i = i + 1) {
+    let fi = f32(i);
+    // Golden angle, and sqrt so the samples spread by AREA rather than
+    // clustering at the centre.
+    let a = fi * 2.39996323;
+    let r = radius * sqrt((fi + 0.5) / 12.0);
+    let off = vec2<f32>(cos(a), sin(a)) * r * obj.params.zw;
+    // textureSampleLEVEL, not textureSample. The plain form computes implicit
+    // derivatives, which WGSL permits only in uniform control flow — and the
+    // radius < 0.34 early return above makes this loop non-uniform. So the
+    // shader failed to compile on WebGPU ("must only be called from uniform
+    // control flow"), its pipeline was invalid, and Compound Blur drew NOTHING
+    // on the primary backend while rendering correctly on WebGL2, whose GLSL
+    // twin has no such rule.
+    //
+    // Explicit LOD 0 is not a compromise: every source here is a non-mipmapped
+    // render target, so it is the level implicit sampling would have chosen.
+    // The WebGL2 path is untouched.
+    acc = acc + textureSampleLevel(tex, smp, uv + off, 0.0);
+    wsum = wsum + 1.0;
+  }
+  return acc / wsum;
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+uniform sampler2D uMapTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 mapC = texture(uMapTex, vUv);
+  float lum = dot(mapC.rgb, vec3(0.2126, 0.7152, 0.0722));
+  if (params.y > 0.5) lum = 1.0 - lum;
+  float radius = params.x * clamp(lum, 0.0, 1.0);
+  vec4 c0 = texture(uTex, vUv);
+  if (radius < 0.34) { frag = c0; return; }
+  vec4 acc = c0;
+  float wsum = 1.0;
+  for (int i = 0; i < 12; i++) {
+    float fi = float(i);
+    float a = fi * 2.39996323;
+    float r = radius * sqrt((fi + 0.5) / 12.0);
+    vec2 off = vec2(cos(a), sin(a)) * r * params.zw;
+    acc += texture(uTex, vUv + off);
+    wsum += 1.0;
+  }
+  frag = acc / wsum;
+}
+`
+  }
+};
+
+/**
  * Set Matte — take this layer's coverage from ANOTHER layer's pixels.
  *
  * The structural sibling of `displacement-map`: same shape (a second texture at
@@ -1132,6 +1416,815 @@ void main() {
   vec2 p = vUv * scale + offset;
   p -= floor(p);
   frag = texture(uTex, p);
+}
+`
+  }
+};
+
+/**
+ * Bend — AE's CC Bender: curl the layer around an axis, like bending a strip.
+ *
+ * ── Why this is one sample and no iteration ──────────────────────────────────
+ *
+ * A warp shader is an INVERSE map: for the pixel being written, find where in
+ * the source it came from. Most bend implementations approximate that with a
+ * fixed-point solve because the profile makes the forward map hard to invert.
+ * It does not have to be. Model the bend as a circular arc and every step has a
+ * closed form:
+ *
+ *   forward   x = (R - v)·sin(θ·w),  y = R - (R - v)·cos(θ·w)
+ *   inverse   r = |(x, R - y)|,  v = R - r,  φ = atan2(x, R - y),  w = φ/θ
+ *
+ * with R = L/θ the arc radius for total angle θ over span L. The only remaining
+ * piece is undoing the STYLE profile w = f(t), and all three of AE's are
+ * analytically invertible — see `bendProfileInv`. So the whole effect is one
+ * `textureSample` per pixel.
+ *
+ * Outside the bend span the map stays exact rather than clamping: before the
+ * start the layer is untouched, and past the end it is a RIGID rotation by θ
+ * about the arc's end point. Clamping there instead would smear the last row of
+ * the bend across everything below it.
+ */
+export const BEND: ShaderSource = {
+  name: 'bend',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+// Undo the style profile: given how far through the bend a pixel is, recover
+// how far along the SOURCE strip it came from. Exact for all three styles.
+fn bendProfileInv(w : f32, style : f32) -> f32 {
+  if (style < 0.5) {
+    // Marilyn — smoothstep 3t²−2t³. Its real root, via the trigonometric
+    // solution of the depressed cubic.
+    return 0.5 - sin(asin(clamp(1.0 - 2.0 * w, -1.0, 1.0)) / 3.0);
+  }
+  if (style < 1.5) { return w; }            // Sharp — linear ramp, a crease
+  return asin(clamp(w, 0.0, 1.0)) * 0.63661977;  // Circular — sin(t·π/2), ×2/π
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let theta   = obj.p0.x;
+  let style   = obj.p0.y;
+  let aspect  = obj.p0.z;
+  let outside = obj.p0.w;   // 0 = carry the remainder, 1 = hold it still
+  let top     = obj.p1.xy;  // bend line start, aspect-corrected layer units
+  let base    = obj.p1.zw;  // bend line end
+
+  /*
+    LAYER-LOCAL via fxBox, NOT uvRect.
+
+    On the 2D route the chain's buffer is SCREEN SPACE and the layer is a
+    sub-rect of it. uvRect addresses the quad within that buffer, which is not
+    the same thing. Deriving layer coordinates from uvRect therefore bends the
+    whole buffer instead of the layer: content sweeps hundreds of pixels
+    outside the layer box, which is exactly what it did. fxBox is the layer's
+    box within the buffer, and it is the quantity Beam and Gradient Ramp
+    already resolve against for this same reason.
+
+    Then ASPECT-CORRECTED: UV is anisotropic on a non-square layer, which would
+    shear any bend line that is not exactly axis-aligned. Working in units of
+    the layer's HEIGHT makes distance mean the same thing on both axes.
+
+    Outside the layer box there is nothing to bend, so those pixels pass
+    through untouched rather than being dragged into the arc.
+  */
+  let box = obj.fxBox;
+  let l = (uv - box.xy) / max(box.zw, vec2<f32>(0.000001, 0.000001));
+  let q = vec2<f32>(l.x * aspect, l.y);
+
+  // The two points ARE the bend: direction and span both come from them, so
+  // there is no separate axis or extent to disagree with them.
+  let axis = base - top;
+  let L    = length(axis);
+
+  var srcQ = q;
+  if (abs(theta) > 0.0001 && L > 0.0001) {
+    let d = axis / L;
+    let n = vec2<f32>(-d.y, d.x);
+    let rel = q - top;
+    let a = dot(rel, d);      // 0 at Top, L at Base
+    /*
+      MIRROR a negative bend rather than signing the arc.
+
+      A negative angle puts the arc centre on the OTHER side of the strip, so
+      R = L/theta goes negative, dy = R - b with it, and atan2(a, dy)/theta
+      comes out NEGATIVE for the whole band — which lands in the untouched
+      "before Top" case below. The result is that a negative Amount did
+      nothing at all, and because nothing ever reached the past-Base region,
+      Style and Past Base looked dead too.
+
+      Solving the POSITIVE problem in a frame flipped across the bend line, and
+      flipping the answer back, keeps one code path and makes the two
+      directions exactly symmetric.
+    */
+    let sgn = select(-1.0, 1.0, theta >= 0.0);
+    let th = abs(theta);
+    let b = dot(rel, n) * sgn;
+    let R = L / th;
+    let dy = R - b;
+    let r  = length(vec2<f32>(a, dy));
+    let w  = atan2(a, dy) / th;
+    var sa = a;
+    var sb = b;
+    if (w > 1.0 && outside < 0.5) {
+      /*
+        CARRY (AE's CC Bender): past Base the remainder is rigid, rotated by the
+        full bend — the object hinges and everything below the hinge swings.
+      */
+      let ce = cos(th); let se = sin(th);
+      let ex = R * se; let ey = R - R * ce;
+      let rx = a - ex;  let ry = b - ey;
+      sa = L + (rx * ce + ry * se);
+      sb = -rx * se + ry * ce;
+    } else if (w > 1.0) {
+      /*
+        HOLD: past Base the layer is left exactly where it was, so the bend is
+        confined to the Top→Base band and nothing else in the object moves.
+        sa/sb are already a/b, so this branch deliberately does nothing — it
+        exists to stop the carry branch above from claiming this region.
+      */
+    } else if (w >= 0.0) {
+      sa = bendProfileInv(w, style) * L;
+      sb = R - r;
+    }
+    // Before Top (w < 0) the layer is untouched, which is sa/sb as initialised.
+    srcQ = top + d * sa + n * (sb * sgn);
+  }
+
+  let src = vec2<f32>(srcQ.x / aspect, srcQ.y);
+  // A bend pulls source coordinates off the layer; those pixels are empty, not
+  // the edge smeared outwards, so this reads transparent rather than clamping.
+  if (src.x < 0.0 || src.x > 1.0 || src.y < 0.0 || src.y > 1.0) {
+    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  }
+  // Back to BUFFER uv through the layer's box — the inverse of the mapping at
+  // the top. Going back through uvRect instead would place the sampled pixel
+  // in a different part of the buffer than it was read from.
+  let bufUv = box.xy + src * box.zw;
+  // textureSampleLEVEL, not textureSample. The plain form computes implicit
+  // derivatives, and WGSL requires UNIFORM CONTROL FLOW for those — the bounds
+  // check above is an early return, which makes this call non-uniform. Tint
+  // rejects the module, pipeline creation fails, the effect pass draws nothing,
+  // and because the chain relies on a draw to composite the layer back out the
+  // LAYER DISAPPEARS. apply-color-lut and compound-blur hit this first; see the
+  // note in compound-blur.
+  return textureSampleLevel(tex, smp, bufUv, 0.0);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+// MUST match the fragment stage's block exactly, member for member. Two stages
+// declaring the same uniform block name with different members is a LINK error
+// in GLSL ES 300 — so a stale copy here does not fail locally, the whole
+// PROGRAM fails to build and the effect silently does nothing on WebGL2, while
+// WebGPU (which has no such rule) renders it perfectly. Guarded by
+// glslStageBlockParity.test.ts.
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+float bendProfileInv(float w, float style) {
+  if (style < 0.5) return 0.5 - sin(asin(clamp(1.0 - 2.0 * w, -1.0, 1.0)) / 3.0);
+  if (style < 1.5) return w;
+  return asin(clamp(w, 0.0, 1.0)) * 0.63661977;
+}
+void main() {
+  float theta   = p0.x;
+  float style   = p0.y;
+  float aspect  = p0.z;
+  float outside = p0.w;
+  vec2  top     = p1.xy;
+  vec2  base    = p1.zw;
+
+  // fxBox, NOT uvRect — see the WGSL note. uvRect addresses the quad within a
+  // screen-space buffer; fxBox is the layer's own box inside it.
+  vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
+  vec2 q = vec2(l.x * aspect, l.y);
+
+  vec2  axis = base - top;
+  float L    = length(axis);
+
+  vec2 srcQ = q;
+  if (abs(theta) > 0.0001 && L > 0.0001) {
+    vec2  d = axis / L;
+    vec2  n = vec2(-d.y, d.x);
+    vec2  rel = q - top;
+    float a = dot(rel, d);
+    // Mirror a negative bend — see the WGSL note. Without this a negative
+    // Amount fell into the untouched branch and did nothing.
+    float sgn = (theta >= 0.0) ? 1.0 : -1.0;
+    float th = abs(theta);
+    float b = dot(rel, n) * sgn;
+    float R = L / th;
+    float dy = R - b;
+    float r  = length(vec2(a, dy));
+    float w  = atan(a, dy) / th;
+    float sa = a;
+    float sb = b;
+    if (w > 1.0 && outside < 0.5) {
+      // CARRY — the remainder swings with the hinge.
+      float ce = cos(th); float se = sin(th);
+      float ex = R * se; float ey = R - R * ce;
+      float rx = a - ex;  float ry = b - ey;
+      sa = L + (rx * ce + ry * se);
+      sb = -rx * se + ry * ce;
+    } else if (w > 1.0) {
+      // HOLD — confine the bend to the Top→Base band; sa/sb stay as a/b.
+    } else if (w >= 0.0) {
+      sa = bendProfileInv(w, style) * L;
+      sb = R - r;
+    }
+    srcQ = top + d * sa + n * (sb * sgn);
+  }
+
+  vec2 src = vec2(srcQ.x / aspect, srcQ.y);
+  if (src.x < 0.0 || src.x > 1.0 || src.y < 0.0 || src.y > 1.0) { frag = vec4(0.0); return; }
+  frag = texture(uTex, fxBox.xy + src * fxBox.zw);
+}
+`
+  }
+};
+
+/*
+ * ── Perspective family ──────────────────────────────────────────────────────
+ *
+ * Five effects that give a flat layer the appearance of a lit surface. Two
+ * light an edge (Bevel Alpha, Bevel Edges), two map the layer onto a solid
+ * (Sphere, Cylinder), one throws a cone across it (Spotlight).
+ *
+ * The two mapping shaders are INVERSE maps like Bend, and like Bend they are
+ * exact rather than iterative: ray-casting a unit sphere or cylinder from an
+ * orthographic camera is a quadratic with a closed-form root, so `z` falls out
+ * as one `sqrt` and the surface normal with it. That normal then does double
+ * duty — it is both where to sample the source and how much light the point
+ * receives, which is why neither needs a separate lighting pass.
+ *
+ * Shared uniform convention across all five: `p0`/`p1` carry the geometry and
+ * `lightColor` the tint, so they can share one packer shape and one material.
+ */
+
+/** Bevel Alpha — chisel the ALPHA boundary and light it from an angle. */
+export const BEVEL_ALPHA: ShaderSource = {
+  name: 'bevel-alpha',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32>, lightColor: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let thick = max(obj.p0.x, 0.0001);
+  let lightDir = vec2<f32>(obj.p0.y, obj.p0.z);
+  let intensity = obj.p0.w;
+  let texel = obj.p1.xy * thick;
+
+  let c = textureSample(tex, smp, uv);
+  // Central differences on ALPHA: the gradient points into the shape, so it is
+  // the 2D part of the surface normal of a chamfer around the silhouette.
+  let ax = textureSample(tex, smp, uv + vec2<f32>(texel.x, 0.0)).a
+         - textureSample(tex, smp, uv - vec2<f32>(texel.x, 0.0)).a;
+  let ay = textureSample(tex, smp, uv + vec2<f32>(0.0, texel.y)).a
+         - textureSample(tex, smp, uv - vec2<f32>(0.0, texel.y)).a;
+  let g = vec2<f32>(ax, ay);
+  let mag = length(g);
+  // Flat interior has no gradient and must stay untouched, or the whole layer
+  // tints instead of just its rim.
+  if (mag < 0.0001 || c.a <= 0.0) { return c; }
+  let lambert = dot(g / mag, lightDir);
+  // Rim strength rides the gradient magnitude, so a soft edge bevels softly.
+  let shade = lambert * clamp(mag, 0.0, 1.0) * intensity;
+  // Premultiplied in, premultiplied out: scale by the pixel's own alpha so the
+  // highlight cannot exceed coverage (see project-motion-alpha-invariant).
+  let lit = obj.lightColor.rgb * max(shade, 0.0) * c.a;
+  let dark = 1.0 - clamp(-shade, 0.0, 1.0);
+  return vec4<f32>(c.rgb * dark + lit, c.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  float thick = max(p0.x, 0.0001);
+  vec2 lightDir = vec2(p0.y, p0.z);
+  float intensity = p0.w;
+  vec2 texel = p1.xy * thick;
+  vec4 c = texture(uTex, vUv);
+  float ax = texture(uTex, vUv + vec2(texel.x, 0.0)).a - texture(uTex, vUv - vec2(texel.x, 0.0)).a;
+  float ay = texture(uTex, vUv + vec2(0.0, texel.y)).a - texture(uTex, vUv - vec2(0.0, texel.y)).a;
+  vec2 g = vec2(ax, ay);
+  float mag = length(g);
+  if (mag < 0.0001 || c.a <= 0.0) { frag = c; return; }
+  float lambert = dot(g / mag, lightDir);
+  float shade = lambert * clamp(mag, 0.0, 1.0) * intensity;
+  vec3 lit = lightColor.rgb * max(shade, 0.0) * c.a;
+  float dark = 1.0 - clamp(-shade, 0.0, 1.0);
+  frag = vec4(c.rgb * dark + lit, c.a);
+}
+`
+  }
+};
+
+/** Bevel Edges — the same chisel, but on the layer's RECTANGULAR border. */
+export const BEVEL_EDGES: ShaderSource = {
+  name: 'bevel-edges',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32>, lightColor: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let thick = max(obj.p0.x, 0.0001);
+  let lightDir = vec2<f32>(obj.p0.y, obj.p0.z);
+  let intensity = obj.p0.w;
+  let c = textureSample(tex, smp, uv);
+  // Local coordinates INSIDE the layer box, so the bevel follows the frame
+  // rather than the content — that is the whole difference from Bevel Alpha.
+  let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
+  let dl = l.x; let dr = 1.0 - l.x; let dt = l.y; let db = 1.0 - l.y;
+  let d = min(min(dl, dr), min(dt, db));
+  if (d > thick) { return c; }
+  // The nearest border decides which way the chamfer faces.
+  var n = vec2<f32>(0.0, 0.0);
+  if (d == dl) { n = vec2<f32>(-1.0, 0.0); }
+  else if (d == dr) { n = vec2<f32>(1.0, 0.0); }
+  else if (d == dt) { n = vec2<f32>(0.0, -1.0); }
+  else { n = vec2<f32>(0.0, 1.0); }
+  // Ramp to zero at the inner limit of the bevel so it does not end in a line.
+  let ramp = 1.0 - d / thick;
+  let shade = dot(n, lightDir) * ramp * intensity;
+  let lit = obj.lightColor.rgb * max(shade, 0.0) * c.a;
+  let dark = 1.0 - clamp(-shade, 0.0, 1.0);
+  return vec4<f32>(c.rgb * dark + lit, c.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  float thick = max(p0.x, 0.0001);
+  vec2 lightDir = vec2(p0.y, p0.z);
+  float intensity = p0.w;
+  vec4 c = texture(uTex, vUv);
+  vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
+  float dl = l.x, dr = 1.0 - l.x, dt = l.y, db = 1.0 - l.y;
+  float d = min(min(dl, dr), min(dt, db));
+  if (d > thick) { frag = c; return; }
+  vec2 n = vec2(0.0);
+  if (d == dl) n = vec2(-1.0, 0.0);
+  else if (d == dr) n = vec2(1.0, 0.0);
+  else if (d == dt) n = vec2(0.0, -1.0);
+  else n = vec2(0.0, 1.0);
+  float ramp = 1.0 - d / thick;
+  float shade = dot(n, lightDir) * ramp * intensity;
+  vec3 lit = lightColor.rgb * max(shade, 0.0) * c.a;
+  float dark = 1.0 - clamp(-shade, 0.0, 1.0);
+  frag = vec4(c.rgb * dark + lit, c.a);
+}
+`
+  }
+};
+
+/**
+ * Spotlight — AE's CC Spotlight: a cone thrown across the layer.
+ *
+ * FROM and TO are point controls, and between them they carry the light's
+ * position, its aim and its reach — "the light changes shape as they move".
+ * An earlier version here used a centre plus an angle plus a radius, which
+ * cannot express "shine from off-frame at that corner" without the user
+ * solving for the angle themselves.
+ *
+ * Distances are aspect-corrected (units of the layer's height) so the cone is a
+ * real cone on a non-square layer rather than an ellipse.
+ */
+export const SPOTLIGHT: ShaderSource = {
+  name: 'spotlight',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, fxBox: vec4<f32>, lightColor: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let from      = obj.p0.xy;
+  let to        = obj.p0.zw;
+  let coneHalf  = max(obj.p1.x, 0.0001);
+  let softness  = clamp(obj.p1.y, 0.0, 1.0);
+  let intensity = obj.p1.z;
+  let ambient   = obj.p1.w;
+  let aspect    = obj.p2.x;
+  let lightOnly = obj.p2.y;
+  let reachCtl  = max(obj.p2.z, 0.0001);
+
+  let c = textureSample(tex, smp, uv);
+  let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
+  let q = vec2<f32>(l.x * aspect, l.y);
+
+  let axis = to - from;
+  let reach = length(axis);
+  let p = q - from;
+  let dist = length(p);
+
+  var cone = 1.0;
+  if (reach > 0.0001 && dist > 0.00001) {
+    // Angle off the From→To axis, via the dot product rather than atan2 — no
+    // ±π seam to tear on.
+    let ang = acos(clamp(dot(p / dist, axis / reach), -1.0, 1.0));
+    /*
+      Softness widens the falloff INWARD from the cone edge: 0 is a hard edge,
+      1 fades from the axis outward. The inner limit is held strictly below the
+      outer one — at softness 0 they would be equal, and smoothstep with
+      low == high divides by zero, giving NaN for every pixel in the cone.
+    */
+    let inner = min(coneHalf * (1.0 - softness), coneHalf - 0.0001);
+    cone = 1.0 - smoothstep(inner, coneHalf, ang);
+  }
+  /*
+    Reach is its OWN control (AE's Height), not the From→To distance.
+
+    Welding it to the handles is what made this effect look like it deleted the
+    layer: the default handles sit half a layer-height apart, so everything
+    further than that from the lamp fell to ambient — 15% — and a layer at
+    15% brightness on a dark composition is indistinguishable from a layer that
+    is not there.
+  */
+  let falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
+  let lightAmt = ambient + cone * falloff * intensity;
+  // Multiplies the layer: a spotlight reveals what is there, so outside the
+  // cone the picture goes DARK rather than unchanged. Light Only drops the
+  // layer's colour and keeps the beam, which is AE's second Render mode.
+  let base = select(c.rgb, vec3<f32>(c.a, c.a, c.a), lightOnly > 0.5);
+  return vec4<f32>(base * obj.lightColor.rgb * lightAmt, c.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; vec4 fxBox; vec4 lightColor; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; vec4 fxBox; vec4 lightColor; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec2  from = p0.xy;
+  vec2  to = p0.zw;
+  float coneHalf = max(p1.x, 0.0001);
+  float softness = clamp(p1.y, 0.0, 1.0);
+  float intensity = p1.z;
+  float ambient = p1.w;
+  float aspect = p2.x;
+  float lightOnly = p2.y;
+  // Its OWN control (AE's Height), not the From→To distance — see the WGSL note.
+  float reachCtl = max(p2.z, 0.0001);
+
+  vec4 c = texture(uTex, vUv);
+  vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
+  vec2 q = vec2(l.x * aspect, l.y);
+
+  vec2  axis = to - from;
+  float reach = length(axis);
+  vec2  p = q - from;
+  float dist = length(p);
+
+  float cone = 1.0;
+  if (reach > 0.0001 && dist > 0.00001) {
+    float ang = acos(clamp(dot(p / dist, axis / reach), -1.0, 1.0));
+    float inner = min(coneHalf * (1.0 - softness), coneHalf - 0.0001);
+    cone = 1.0 - smoothstep(inner, coneHalf, ang);
+  }
+  float falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
+  float lightAmt = ambient + cone * falloff * intensity;
+  vec3 base = (lightOnly > 0.5) ? vec3(c.a) : c.rgb;
+  frag = vec4(base * lightColor.rgb * lightAmt, c.a);
+}
+`
+  }
+};
+
+/**
+ * Sphere — map the layer onto a sphere (AE's CC Sphere).
+ *
+ * Orthographic ray-cast, so the depth is a closed form: a ray down -z hitting
+ * a unit sphere solves `x² + y² + z² = 1` for the near root, i.e. one `sqrt`
+ * and no iteration. The resulting vector IS the surface normal, which then does
+ * double duty — inverse-rotated it gives the equirectangular source coordinate,
+ * and its z component is the Lambert term for a head-on light. That is why
+ * there is no separate lighting pass here.
+ *
+ * Rotation is applied as the INVERSE to the normal rather than forward to the
+ * texture: this shader is asked "what belongs at this pixel", and spinning the
+ * sphere one way means looking up the other way.
+ */
+export const SPHERE: ShaderSource = {
+  name: 'sphere',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32>, lightColor: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let radius = max(obj.p0.x, 0.0001);
+  let rotX = obj.p0.y;
+  let rotY = obj.p0.z;
+  let shading = obj.p0.w;
+  let aspect = max(obj.p1.x, 0.0001);
+  let rotZ = obj.p1.y;
+
+  // ASPECT-CORRECTED, or the sphere is an ellipse on a non-square layer: raw
+  // UV compresses x by w/h, so the silhouette test below describes an oval.
+  // Distances are taken in units of the layer's SHORT side, so a radius of 1
+  // touches the nearer pair of edges whatever the layer's shape.
+  let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
+  let scale = vec2<f32>(max(aspect, 1.0), max(1.0 / aspect, 1.0));
+  var p = (l - vec2<f32>(0.5, 0.5)) * 2.0 * scale / radius;
+  // Rotation about the viewing axis spins the map in the plane of the screen —
+  // AE's third rotation, which this shader shipped without.
+  let cz = cos(-rotZ); let sz = sin(-rotZ);
+  p = vec2<f32>(p.x * cz - p.y * sz, p.x * sz + p.y * cz);
+  let r2 = dot(p, p);
+  // Off the silhouette there is no surface, so nothing is drawn. Clamping
+  // instead would smear the limb pixels across the rest of the frame.
+  if (r2 > 1.0) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  let z = sqrt(1.0 - r2);
+
+  // Inverse-rotate the normal: about X first, then Y, undoing the forward order.
+  let cx = cos(-rotX); let sx = sin(-rotX);
+  let y1 = p.y * cx - z * sx;
+  let z1 = p.y * sx + z * cx;
+  let cy = cos(-rotY); let sy = sin(-rotY);
+  let x2 = p.x * cy + z1 * sy;
+  let z2 = -p.x * sy + z1 * cy;
+
+  // Equirectangular: longitude from atan2, latitude from asin.
+  let su = fract(0.5 + atan2(x2, z2) * 0.15915494);           // ÷2π
+  let sv = clamp(0.5 - asin(clamp(y1, -1.0, 1.0)) * 0.31830989, 0.0, 1.0); // ÷π
+  // textureSampleLEVEL: the silhouette test above is an early return, so this
+  // is non-uniform control flow and the derivative-computing form is invalid
+  // WGSL. See the note in compound-blur.
+  let c = textureSampleLevel(tex, smp, obj.uvRect.xy + vec2<f32>(su, sv) * obj.uvRect.zw, 0.0);
+  // shading at 0 is a flat unlit map; at 1 the limb falls fully dark.
+  let lam = mix(1.0, z, shading);
+  return vec4<f32>(c.rgb * obj.lightColor.rgb * lam, c.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  float radius = max(p0.x, 0.0001);
+  float rotX = p0.y, rotY = p0.z, shading = p0.w;
+  float aspect = max(p1.x, 0.0001);
+  float rotZ = p1.y;
+  vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
+  vec2 scale = vec2(max(aspect, 1.0), max(1.0 / aspect, 1.0));
+  vec2 p = (l - vec2(0.5)) * 2.0 * scale / radius;
+  float cz = cos(-rotZ), sz = sin(-rotZ);
+  p = vec2(p.x * cz - p.y * sz, p.x * sz + p.y * cz);
+  float r2 = dot(p, p);
+  if (r2 > 1.0) { frag = vec4(0.0); return; }
+  float z = sqrt(1.0 - r2);
+  float cx = cos(-rotX), sx = sin(-rotX);
+  float y1 = p.y * cx - z * sx;
+  float z1 = p.y * sx + z * cx;
+  float cy = cos(-rotY), sy = sin(-rotY);
+  float x2 = p.x * cy + z1 * sy;
+  float z2 = -p.x * sy + z1 * cy;
+  float su = fract(0.5 + atan(x2, z2) * 0.15915494);
+  float sv = clamp(0.5 - asin(clamp(y1, -1.0, 1.0)) * 0.31830989, 0.0, 1.0);
+  vec4 c = texture(uTex, uvRect.xy + vec2(su, sv) * uvRect.zw);
+  float lam = mix(1.0, z, shading);
+  frag = vec4(c.rgb * lightColor.rgb * lam, c.a);
+}
+`
+  }
+};
+
+/**
+ * Cylinder — wrap the layer around a vertical cylinder (AE's CC Cylinder).
+ *
+ * The same closed-form cast as Sphere reduced by one dimension: only x is
+ * curved, so `z = sqrt(1 - x²)` and the axis coordinate passes straight
+ * through. Source u is proportional to the surface ANGLE, not to x — that is
+ * what makes the texture compress towards the limb the way a real wrap does
+ * rather than merely being squashed.
+ */
+export const CYLINDER: ShaderSource = {
+  name: 'cylinder',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32>, lightColor: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let radius = max(obj.p0.x, 0.0001);
+  let rot = obj.p0.y;
+  let shading = obj.p0.z;
+
+  let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
+  let px = (l.x - 0.5) * 2.0 / radius;
+  if (abs(px) > 1.0) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  let z = sqrt(1.0 - px * px);
+  // Angle across the visible front half maps to the FULL texture width, so
+  // rotating spins the whole image past the viewer.
+  let su = fract(0.5 + asin(px) * 0.31830989 + rot * 0.15915494);
+  // textureSampleLEVEL — non-uniform control flow after the silhouette test.
+  let c = textureSampleLevel(tex, smp, obj.uvRect.xy + vec2<f32>(su, l.y) * obj.uvRect.zw, 0.0);
+  let lam = mix(1.0, z, shading);
+  return vec4<f32>(c.rgb * obj.lightColor.rgb * lam, c.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; vec4 lightColor; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  float radius = max(p0.x, 0.0001);
+  float rot = p0.y, shading = p0.z;
+  vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
+  float px = (l.x - 0.5) * 2.0 / radius;
+  if (abs(px) > 1.0) { frag = vec4(0.0); return; }
+  float z = sqrt(1.0 - px * px);
+  float su = fract(0.5 + asin(px) * 0.31830989 + rot * 0.15915494);
+  vec4 c = texture(uTex, uvRect.xy + vec2(su, l.y) * uvRect.zw);
+  float lam = mix(1.0, z, shading);
+  frag = vec4(c.rgb * lightColor.rgb * lam, c.a);
+}
+`
+  }
+};
+
+/**
+ * Arithmetic — AE's Channel ▸ Arithmetic: one operator applied per channel
+ * against a constant.
+ *
+ * Operates on UNPREMULTIPLIED colour and re-premultiplies at the end. The
+ * chain's textures are premultiplied, so applying the operator directly would
+ * make every result depend on the pixel's own alpha — Multiply against a
+ * half-transparent pixel would darken twice, and Difference would key off
+ * coverage rather than colour.
+ *
+ * The three bitwise operators are AE's, and they are the reason the values are
+ * authored 0..255: And/Or/Xor on a normalised float is meaningless, so they
+ * round-trip through 8-bit integers exactly as AE does.
+ */
+export const ARITHMETIC: ShaderSource = {
+  name: 'arithmetic',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn bits(x : f32) -> u32 { return u32(clamp(x, 0.0, 1.0) * 255.0 + 0.5); }
+fn unbits(x : u32) -> f32 { return f32(x) / 255.0; }
+fn arith(c : f32, v : f32, op : f32) -> f32 {
+  if (op < 0.5)  { return c + v; }                       // Add
+  if (op < 1.5)  { return c - v; }                       // Subtract
+  if (op < 2.5)  { return c * v; }                       // Multiply
+  if (op < 3.5)  { return abs(c - v); }                  // Difference
+  if (op < 4.5)  { return max(c, v); }                   // Max
+  if (op < 5.5)  { return min(c, v); }                   // Min
+  if (op < 6.5)  { return select(c, 0.0, c > v); }       // Block Above
+  if (op < 7.5)  { return select(c, 0.0, c < v); }       // Block Below
+  if (op < 8.5)  { return unbits(bits(c) & bits(v)); }   // And
+  if (op < 9.5)  { return unbits(bits(c) | bits(v)); }   // Or
+  return unbits(bits(c) ^ bits(v));                      // Xor
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let op = obj.p0.x;
+  let v = obj.p0.yzw;
+  let clipResult = obj.p1.x;
+
+  let src = textureSample(tex, smp, uv);
+  // Straight colour: the operators describe COLOUR, not coverage.
+  let a = max(src.a, 0.00001);
+  let c = select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0);
+
+  var outC = vec3<f32>(arith(c.r, v.x, op), arith(c.g, v.y, op), arith(c.b, v.z, op));
+  // Clipping OFF keeps out-of-range results, which is what lets Add then
+  // Subtract round-trip; ON is AE's default and matches 8-bpc behaviour.
+  outC = select(outC, clamp(outC, vec3<f32>(0.0), vec3<f32>(1.0)), clipResult > 0.5);
+  return vec4<f32>(outC * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+uint bits(float x) { return uint(clamp(x, 0.0, 1.0) * 255.0 + 0.5); }
+float unbits(uint x) { return float(x) / 255.0; }
+float arith(float c, float v, float op) {
+  if (op < 0.5)  return c + v;
+  if (op < 1.5)  return c - v;
+  if (op < 2.5)  return c * v;
+  if (op < 3.5)  return abs(c - v);
+  if (op < 4.5)  return max(c, v);
+  if (op < 5.5)  return min(c, v);
+  if (op < 6.5)  return (c > v) ? 0.0 : c;
+  if (op < 7.5)  return (c < v) ? 0.0 : c;
+  if (op < 8.5)  return unbits(bits(c) & bits(v));
+  if (op < 9.5)  return unbits(bits(c) | bits(v));
+  return unbits(bits(c) ^ bits(v));
+}
+void main() {
+  float op = p0.x;
+  vec3 v = p0.yzw;
+  float clipResult = p1.x;
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = (src.a <= 0.0) ? vec3(0.0) : src.rgb / a;
+  vec3 outC = vec3(arith(c.r, v.x, op), arith(c.g, v.y, op), arith(c.b, v.z, op));
+  if (clipResult > 0.5) outC = clamp(outC, vec3(0.0), vec3(1.0));
+  frag = vec4(outC * src.a, src.a);
 }
 `
   }
@@ -1304,6 +2397,102 @@ void main() {
   }
 };
 
+/**
+ * Beam — a travelling pulse along a segment, drawn additively.
+ *
+ * The GPU twin of `applyBeam` (canvas2dEffects.ts), which strokes the segment
+ * TWICE with `globalCompositeOperation = 'lighter'`: a wide soft pass at alpha
+ * 0.35, then a narrow bright core at alpha 1, both round-capped and both faded
+ * by a linear gradient running tail → head. This reproduces that exactly:
+ *
+ *   coverage  = capsule SDF against the segment (round caps ARE the capsule)
+ *   ramp      = position along the segment, 0 at the tail and 1 at the head
+ *   out       = src + colour · ramp · (0.35 · soft + 1.0 · core)
+ *
+ * ── The coordinate space, which is where a port like this goes wrong ────────
+ *
+ * The CPU version works in the LAYER's own pixels: `startX` is a percentage of
+ * the layer's width. The 2D effect chain runs in a SCREEN-space buffer, so the
+ * layer occupies a sub-rect of it — `box`, the same `fxBox` the gradient ramp
+ * uses for exactly this reason. Endpoints are therefore box-relative, and
+ * `thickness` (comp px) is converted to texels by the caller's kx/ky, so a
+ * beam is the same width whichever route the chain took.
+ *
+ * Antialiasing is a 1-texel smoothstep. Canvas2D antialiases a stroke edge and
+ * a hard `step` here would read as a jagged beam against a smooth reference —
+ * the visible difference in a diff, and not a tolerance question.
+ */
+export const BEAM: ShaderSource = {
+  name: 'beam',
+  wgsl: `
+struct Object {
+  mvp: mat3x3<f32>,
+  uvRect: vec4<f32>,
+  ends: vec4<f32>,
+  params: vec4<f32>,
+  color: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = obj.ends.xy;
+  let b = obj.ends.zw;
+  let core = obj.params.x;
+  let soft = obj.params.y;
+  let aa = obj.params.z;
+  let ab = b - a;
+  let len2 = max(dot(ab, ab), 1e-12);
+  let t = clamp(dot(uv - a, ab) / len2, 0.0, 1.0);
+  let d = length(uv - (a + ab * t));
+  let cov = 1.0 - smoothstep(core - aa, core + aa, d);
+  let covSoft = 1.0 - smoothstep(soft - aa, soft + aa, d);
+  let add = obj.color.rgb * t * (0.35 * covSoft + cov);
+  return vec4<f32>(src.rgb + add, min(1.0, src.a + t * (0.35 * covSoft + cov)));
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 src = texture(uTex, vUv);
+  vec2 a = ends.xy;
+  vec2 b = ends.zw;
+  float core = params.x;
+  float soft = params.y;
+  float aa = params.z;
+  vec2 ab = b - a;
+  float len2 = max(dot(ab, ab), 1e-12);
+  float t = clamp(dot(vUv - a, ab) / len2, 0.0, 1.0);
+  float d = length(vUv - (a + ab * t));
+  float cov = 1.0 - smoothstep(core - aa, core + aa, d);
+  float covSoft = 1.0 - smoothstep(soft - aa, soft + aa, d);
+  vec3 add = color.rgb * t * (0.35 * covSoft + cov);
+  frag = vec4(src.rgb + add, min(1.0, src.a + t * (0.35 * covSoft + cov)));
+}
+`
+  }
+};
+
 export const NOISE: ShaderSource = {
   name: 'noise',
   wgsl: `
@@ -1412,8 +2601,9 @@ void main() {
 // Every 3d Object block ends with the SHADE TAIL (must match packShade3D in
 // pipeline/uniforms.ts exactly): model (mat4, unit quad → 3D comp space),
 // eyeLit (xyz camera eye, w = lit flag), shadeParams (light count, specular
-// 0..1, shininess, 0) and lights (MAX_LIGHTS3D × 3 vec4s: pos+type,
-// color+gain, radius/halfCone/aimX/aimY). When the lit flag is 0 the tail is
+// 0..1, shininess, metal) and lights (MAX_LIGHTS3D × 4 vec4s: pos+type,
+// color+gain, radius/halfCone/aimX/aimY, aimZ/coneFeather/falloffMode/
+// falloffDistance). When the lit flag is 0 the tail is
 // all zeros and shading is a byte-exact identity — unlit layers render exactly
 // as before. When lit, the fragment stage runs the SAME light model as
 // lightShading.ts (two-sided Lambert, linear radius falloff, feathered 2D spot
@@ -1430,7 +2620,7 @@ struct Object {
   model : mat4x4<f32>,
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
-  lights : array<vec4<f32>, 24>,
+  lights : array<vec4<f32>, 32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 
@@ -1451,6 +2641,20 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
 
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   if (obj.eyeLit.w < 0.5) { return baseRgb; }
+  /*
+    Two-sided or one-sided, from the lit flag.
+
+    eyeLit.w: 0 = unlit, 1 = lit TWO-SIDED, 2 = lit ONE-SIDED. Encoded in the
+    existing flag rather than a new uniform slot, so the shade tail's std140
+    layout is untouched.
+
+    Two-sided (abs) is right for the app's primitive — a 2D layer in space has
+    no inside, and a layer seen from behind should still light. It is wrong for
+    a face that BOUNDS A VOLUME: with abs(), a box lit hard from one side comes
+    out lit identically on both, which is what "it doesn't read as a solid"
+    actually was. Only an extrusion's walls and back cap set 2.
+  */
+  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
@@ -1460,9 +2664,10 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
     if (i >= count) { break; }
-    let posType = obj.lights[i * 3];
-    let colGain = obj.lights[i * 3 + 1];
-    let misc = obj.lights[i * 3 + 2];
+    let posType = obj.lights[i * 4];
+    let colGain = obj.lights[i * 4 + 1];
+    let misc = obj.lights[i * 4 + 2];
+    let misc2 = obj.lights[i * 4 + 3];
     let lType = i32(posType.w + 0.5);
     let gain = colGain.w;
     if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
@@ -1470,28 +2675,46 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     var atten = 1.0;
     var lambert = 1.0;
     var skip = false;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length, so there is no per-type fallback to
+    // keep in step with the CPU here — see toShaderLights.
+    let aim = vec3<f32>(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      let L = vec3<f32>(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
+      toLight = -aim;
     } else {
       let Lvec = posType.xyz - world;
       let d = length(Lvec);
       let radius = misc.x;
-      if (radius > 0.0 && d >= radius) { skip = true; }
-      if (!skip) {
-        atten = select(1.0, 1.0 - d / radius, radius > 0.0);
-        if (d > 1e-6) {
-          toLight = Lvec / d;
-          lambert = abs(dot(N, toLight));
-          if (lType == 2) {
-            let cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
-            let halfCone = max(misc.y, 1e-3);
-            let ang = acos(clamp(cosA, -1.0, 1.0));
-            if (ang > halfCone) { skip = true; }
-            let feather = halfCone * 0.2;
-            if (!skip && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
-          }
+      let fMode = i32(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) { skip = true; }
+        if (!skip) { atten = select(1.0, 1.0 - d / radius, radius > 0.0); }
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        let r = max(1.0, radius);
+        var curve = 1.0;
+        if (d > r) {
+          if (fMode == 1) { curve = max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)); }
+          else { curve = (r * r) / (d * d); }
+        }
+        if (curve <= 0.001) { skip = true; }
+        if (!skip) { atten = curve; }
+      }
+      if (!skip && d > 1e-6) {
+        toLight = Lvec / d;
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+        if (lType == 2) {
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          let cosA = dot(aim, -Lvec / d);
+          let halfCone = max(misc.y, 1e-3);
+          let ang = acos(clamp(cosA, -1.0, 1.0));
+          if (ang > halfCone) { skip = true; }
+          let feather = misc2.y;
+          if (!skip && feather > 1e-6 && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
         }
       }
     }
@@ -1501,7 +2724,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     if (specI > 0.0) {
       let V = normalize(obj.eyeLit.xyz - world);
       let H = normalize(toLight + V);
-      spec = spec + colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec = spec + colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
@@ -1541,7 +2764,7 @@ fn fs(@location(0) local : vec2<f32>, @location(1) world : vec3<f32>) -> @locati
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
 out vec2 vLocal;
 out vec3 vWorld;
 void main() {
@@ -1552,12 +2775,14 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
 in vec2 vLocal;
 in vec3 vWorld;
 out vec4 frag;
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
+  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
+  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
@@ -1567,35 +2792,54 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   vec3 spec = vec3(0.0);
   for (int i = 0; i < 8; i++) {
     if (i >= count) break;
-    vec4 posType = lights[i * 3];
-    vec4 colGain = lights[i * 3 + 1];
-    vec4 misc = lights[i * 3 + 2];
+    vec4 posType = lights[i * 4];
+    vec4 colGain = lights[i * 4 + 1];
+    vec4 misc = lights[i * 4 + 2];
+    vec4 misc2 = lights[i * 4 + 3];
     int lType = int(posType.w + 0.5);
     float gain = colGain.w;
     if (lType == 0) { diff += colGain.rgb * gain; continue; }
     vec3 toLight = vec3(0.0, 0.0, -1.0);
     float atten = 1.0;
     float lambert = 1.0;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length — see toShaderLights.
+    vec3 aim = vec3(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      vec3 L = vec3(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
+      toLight = -aim;
     } else {
       vec3 Lvec = posType.xyz - world;
       float d = length(Lvec);
       float radius = misc.x;
-      if (radius > 0.0 && d >= radius) continue;
-      atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      int fMode = int(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) continue;
+        atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        float r = max(1.0, radius);
+        float curve = 1.0;
+        if (d > r) {
+          curve = fMode == 1 ? max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)) : (r * r) / (d * d);
+        }
+        if (curve <= 0.001) continue;
+        atten = curve;
+      }
       if (d > 1e-6) {
         toLight = Lvec / d;
-        lambert = abs(dot(N, toLight));
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
         if (lType == 2) {
-          float cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          float cosA = dot(aim, -Lvec / d);
           float halfCone = max(misc.y, 1e-3);
           float ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) continue;
-          float feather = halfCone * 0.2;
-          if (ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+          float feather = misc2.y;
+          if (feather > 1e-6 && ang > halfCone - feather) atten *= (halfCone - ang) / feather;
         }
       }
     }
@@ -1604,7 +2848,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     if (specI > 0.0) {
       vec3 V = normalize(eyeLit.xyz - world);
       vec3 H = normalize(toLight + V);
-      spec += colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec += colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
@@ -1654,7 +2898,7 @@ struct Object {
   model : mat4x4<f32>,
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
-  lights : array<vec4<f32>, 24>,
+  lights : array<vec4<f32>, 32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 `;
@@ -1662,6 +2906,20 @@ struct Object {
 const WGSL_SHADE3D_FN = /* wgsl */ `
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   if (obj.eyeLit.w < 0.5) { return baseRgb; }
+  /*
+    Two-sided or one-sided, from the lit flag.
+
+    eyeLit.w: 0 = unlit, 1 = lit TWO-SIDED, 2 = lit ONE-SIDED. Encoded in the
+    existing flag rather than a new uniform slot, so the shade tail's std140
+    layout is untouched.
+
+    Two-sided (abs) is right for the app's primitive — a 2D layer in space has
+    no inside, and a layer seen from behind should still light. It is wrong for
+    a face that BOUNDS A VOLUME: with abs(), a box lit hard from one side comes
+    out lit identically on both, which is what "it doesn't read as a solid"
+    actually was. Only an extrusion's walls and back cap set 2.
+  */
+  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
@@ -1671,9 +2929,10 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
     if (i >= count) { break; }
-    let posType = obj.lights[i * 3];
-    let colGain = obj.lights[i * 3 + 1];
-    let misc = obj.lights[i * 3 + 2];
+    let posType = obj.lights[i * 4];
+    let colGain = obj.lights[i * 4 + 1];
+    let misc = obj.lights[i * 4 + 2];
+    let misc2 = obj.lights[i * 4 + 3];
     let lType = i32(posType.w + 0.5);
     let gain = colGain.w;
     if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
@@ -1681,28 +2940,46 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     var atten = 1.0;
     var lambert = 1.0;
     var skip = false;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length, so there is no per-type fallback to
+    // keep in step with the CPU here — see toShaderLights.
+    let aim = vec3<f32>(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      let L = vec3<f32>(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
+      toLight = -aim;
     } else {
       let Lvec = posType.xyz - world;
       let d = length(Lvec);
       let radius = misc.x;
-      if (radius > 0.0 && d >= radius) { skip = true; }
-      if (!skip) {
-        atten = select(1.0, 1.0 - d / radius, radius > 0.0);
-        if (d > 1e-6) {
-          toLight = Lvec / d;
-          lambert = abs(dot(N, toLight));
-          if (lType == 2) {
-            let cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
-            let halfCone = max(misc.y, 1e-3);
-            let ang = acos(clamp(cosA, -1.0, 1.0));
-            if (ang > halfCone) { skip = true; }
-            let feather = halfCone * 0.2;
-            if (!skip && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
-          }
+      let fMode = i32(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) { skip = true; }
+        if (!skip) { atten = select(1.0, 1.0 - d / radius, radius > 0.0); }
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        let r = max(1.0, radius);
+        var curve = 1.0;
+        if (d > r) {
+          if (fMode == 1) { curve = max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)); }
+          else { curve = (r * r) / (d * d); }
+        }
+        if (curve <= 0.001) { skip = true; }
+        if (!skip) { atten = curve; }
+      }
+      if (!skip && d > 1e-6) {
+        toLight = Lvec / d;
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+        if (lType == 2) {
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          let cosA = dot(aim, -Lvec / d);
+          let halfCone = max(misc.y, 1e-3);
+          let ang = acos(clamp(cosA, -1.0, 1.0));
+          if (ang > halfCone) { skip = true; }
+          let feather = misc2.y;
+          if (!skip && feather > 1e-6 && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
         }
       }
     }
@@ -1712,7 +2989,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     if (specI > 0.0) {
       let V = normalize(obj.eyeLit.xyz - world);
       let H = normalize(toLight + V);
-      spec = spec + colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec = spec + colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
@@ -1723,11 +3000,13 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
 `;
 
 // GLSL twins of the above (UBO tail + light model), same layout contract.
-const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[24]; };`;
+const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };`;
 
 const GLSL_SHADE3D_FN = /* glsl */ `
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
+  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
+  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
@@ -1737,35 +3016,54 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   vec3 spec = vec3(0.0);
   for (int i = 0; i < 8; i++) {
     if (i >= count) break;
-    vec4 posType = lights[i * 3];
-    vec4 colGain = lights[i * 3 + 1];
-    vec4 misc = lights[i * 3 + 2];
+    vec4 posType = lights[i * 4];
+    vec4 colGain = lights[i * 4 + 1];
+    vec4 misc = lights[i * 4 + 2];
+    vec4 misc2 = lights[i * 4 + 3];
     int lType = int(posType.w + 0.5);
     float gain = colGain.w;
     if (lType == 0) { diff += colGain.rgb * gain; continue; }
     vec3 toLight = vec3(0.0, 0.0, -1.0);
     float atten = 1.0;
     float lambert = 1.0;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length — see toShaderLights.
+    vec3 aim = vec3(misc.z, misc.w, misc2.x);
     if (lType == 3) {
-      vec3 L = vec3(misc.z * 0.70710678, misc.w * 0.70710678, -0.70710678);
-      lambert = abs(dot(N, L));
-      toLight = -L;
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
+      toLight = -aim;
     } else {
       vec3 Lvec = posType.xyz - world;
       float d = length(Lvec);
       float radius = misc.x;
-      if (radius > 0.0 && d >= radius) continue;
-      atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      int fMode = int(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) continue;
+        atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        float r = max(1.0, radius);
+        float curve = 1.0;
+        if (d > r) {
+          curve = fMode == 1 ? max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)) : (r * r) / (d * d);
+        }
+        if (curve <= 0.001) continue;
+        atten = curve;
+      }
       if (d > 1e-6) {
         toLight = Lvec / d;
-        lambert = abs(dot(N, toLight));
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
         if (lType == 2) {
-          float cosA = misc.z * (-Lvec.x / d) + misc.w * (-Lvec.y / d);
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          float cosA = dot(aim, -Lvec / d);
           float halfCone = max(misc.y, 1e-3);
           float ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) continue;
-          float feather = halfCone * 0.2;
-          if (ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+          float feather = misc2.y;
+          if (feather > 1e-6 && ang > halfCone - feather) atten *= (halfCone - ang) / feather;
         }
       }
     }
@@ -1774,7 +3072,7 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     if (specI > 0.0) {
       vec3 V = normalize(eyeLit.xyz - world);
       vec3 H = normalize(toLight + V);
-      spec += colGain.rgb * (gain * atten * pow(abs(dot(N, H)), shin));
+      spec += colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
@@ -2186,8 +3484,9 @@ function unpremultiplyingSample(base: ShaderSource): ShaderSource {
 const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
-  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, MOTION_TILE,
-  FILL, STROKE, SHARPEN, NOISE, SET_MATTE,
+  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
+  FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, BEND,
+  BEVEL_ALPHA, BEVEL_EDGES, SPOTLIGHT, SPHERE, CYLINDER, ARITHMETIC,
   SOLID3D,
   // The six families that sample a layer texture. Every one un-premultiplies.
   unpremultiplyingSample(TEXTURED),

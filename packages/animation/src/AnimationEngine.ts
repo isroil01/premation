@@ -36,6 +36,45 @@ export type ControlProvider = (name: string, t: number) => number;
  *  accessor. Injected by the host (the engine doesn't know scene names).
  *  `null` = no such layer. */
 export type LayerResolver = (name: string) => string | null;
+
+/**
+ * The prefix that makes a cross-layer reference survive a rename.
+ *
+ * `layer('Hero depth', 'x')` resolves a NAME at evaluation time, every frame,
+ * which means renaming the layer silently breaks the reference — and the
+ * symptom (a value quietly reading 0) appears nowhere near the rename that
+ * caused it.
+ *
+ * `layer('#n_a1b2c3', 'x')` names the layer's stable id instead. The `#` is
+ * what makes the two unambiguous: without it, a layer whose NAME happened to
+ * equal another layer's id would resolve to the wrong one, and that bug would
+ * be essentially undiagnosable.
+ *
+ * Fixed HERE, in the one place every cross-layer read passes through, rather
+ * than in the proxy path that found it. `layer`, `layerAt`, `toComp` and every
+ * other name-taking API gets it from one change, and a user-authored
+ * expression can use the id form the same way a plugin-written one does.
+ */
+export const LAYER_ID_PREFIX = '#';
+
+/** True for a reference that names an id rather than a layer name. */
+export function isLayerIdRef(ref: string): boolean {
+  return ref.startsWith(LAYER_ID_PREFIX);
+}
+
+/** `#<id>` → the id; anything else → whatever the host's name lookup says. */
+export function resolveLayerRef(ref: string, byName: LayerResolver): string | null {
+  if (isLayerIdRef(ref)) {
+    const id = ref.slice(LAYER_ID_PREFIX.length);
+    return id.length > 0 ? id : null;
+  }
+  return byName(ref);
+}
+
+/** `n_a1b2c3` → `#n_a1b2c3`. What an author-time resolution should write. */
+export function layerIdRef(nodeId: string): string {
+  return `${LAYER_ID_PREFIX}${nodeId}`;
+}
 /** Supplies a node's static/base value for a prop (e.g. the Transform
  *  component's x/y) when a cross-layer read finds no keyframe track. Injected
  *  by the host; `undefined` = no base value either. */
@@ -49,11 +88,47 @@ export type CompInfoProvider = () => {
   numLayers: number;
 };
 /** Supplies layer metadata (`thisLayer`) for expressions. */
+/** Content bounds of a layer at a time — see `setSourceRectProvider`. */
+export type SourceRectProvider = (
+  nodeId: string,
+  t: number,
+  extents: boolean,
+) => import('./expressions').SourceRect | undefined;
+
+/**
+ * A layer's layer-local → composition placement at a time — see
+ * `setLayerSpaceProvider`. Backs `toComp` / `toWorld` / `fromComp` /
+ * `fromWorld`.
+ *
+ * `name` is null for the layer the expression is ON, or another layer's NAME,
+ * matching how `layer(name, prop)` addresses layers. `self` is that node's id,
+ * so the provider can resolve the null case without the engine having to.
+ */
+export type LayerSpaceProvider = (
+  self: string,
+  name: string | null,
+  t: number,
+) => import('./expressions').LayerSpace | undefined;
+
 export type LayerInfoProvider = (nodeId: string) => {
   name: string;
   width: number;
   height: number;
 };
+
+/**
+ * Markers for `marker.*` — see `setMarkerProvider`.
+ *
+ * `scope: 'layer'` asks for `nodeId`'s own markers; `'comp'` ignores `nodeId`
+ * and asks for the composition's. Both must be in COMPOSITION seconds, which
+ * for layer markers means the host has already undone the layer-relative
+ * storage — the engine cannot do that conversion because it does not know
+ * where a layer starts.
+ */
+export type MarkerProvider = (
+  nodeId: string,
+  scope: 'comp' | 'layer',
+) => readonly import('./expressions').ExprMarkerData[];
 
 /** Which vector component a decomposed track reads from an `[x, y, z]`
  *  expression return. Unknown props read component 0. */
@@ -61,6 +136,55 @@ function componentIndexOf(prop: PropPath): number {
   if (prop === 'y' || prop === 'scaleY' || prop === 'anchorY') return 1;
   if (prop === 'z' || prop === 'rotationZ') return 2;
   return 0;
+}
+
+/**
+ * A property's expression as the engine holds it: the compiled source plus
+ * whether it currently drives the value.
+ *
+ * `enabled` is deliberately NOT a field of `CompiledExpression`. Compilation is
+ * a pure function of the source text and is shared by `previewExpression`,
+ * which compiles a draft that is not attached to anything; enablement is state
+ * that belongs to the (node, prop) slot. Putting the bit on the compilation
+ * would make a preview carry an enabled-ness it has no business having.
+ */
+interface ExpressionEntry {
+  compiled: CompiledExpression;
+  enabled: boolean;
+  /** See `ExpressionState.authoredBy`. */
+  authoredBy?: string;
+}
+
+/**
+ * The serializable form of the above — the undo seam and the persisted shape.
+ *
+ * It is what `snapshot()` writes, what `setExpressionState` takes back, and
+ * what a command stores as its before and after. Carrying `enabled` here rather
+ * than encoding presence in a `string | null` is what makes "disable" and
+ * "delete" different undo steps.
+ */
+export interface ExpressionState {
+  src: string;
+  enabled: boolean;
+  /**
+   * The plugin id that wrote this expression, when a plugin did.
+   *
+   * Absent means a person typed it, which is the overwhelmingly common case and
+   * the reason this is optional rather than defaulted.
+   *
+   * It exists because an expression written through `animation.setExpression`
+   * PERSISTS IN THE SAVED DOCUMENT and re-evaluates for whoever opens the
+   * project next — it survives uninstalling the plugin, and it travels to
+   * collaborators who never had it. Without provenance, a user seeing wrong
+   * animation has no way to tell a formula they wrote from one a plugin left
+   * behind, and no way to find the rest of them.
+   *
+   * One field, and it is what makes an origin label, a "this project contains
+   * expressions from a plugin you do not have" state, and a bulk revert
+   * possible at all. None of those can be added later to expressions already
+   * written without it.
+   */
+  authoredBy?: string;
 }
 
 /** Small deterministic string hash → a noise-phase seed (NOT crypto). */
@@ -72,8 +196,17 @@ function stringSeed(s: string): number {
 
 export class AnimationEngine {
   private tracks = new Map<string, Map<PropPath, PropertyTrack>>();
-  /** Per-property expressions that override the sampled value each frame. */
-  private expressions = new Map<string, Map<PropPath, CompiledExpression>>();
+  /**
+   * Per-property expressions that override the sampled value each frame —
+   * unless DISABLED, in which case the entry is retained and ignored.
+   *
+   * Presence and enablement are two questions, not one. `hasExpression` answers
+   * the first (is there a formula to show in the editor?) and
+   * `isExpressionEnabled` the second (does it drive the value?). Anything that
+   * conflates them reads a disabled expression as an active one, which compiles
+   * fine and is wrong at every frame.
+   */
+  private expressions = new Map<string, Map<PropPath, ExpressionEntry>>();
   /** Change sink — no-op until the host binds one via setChangeListener. */
   private changeListener: AnimationChangeListener = () => {};
   /** >0 while inside batch; notifications are held until the batch closes. */
@@ -132,11 +265,23 @@ export class AnimationEngine {
     numLayers: 1,
   });
   /** Layer metadata provider for `thisLayer`. */
+  private sourceRectProvider: SourceRectProvider = () => undefined;
+
+  /** Layer placement provider for the coordinate-space functions. */
+  private layerSpaceProvider: LayerSpaceProvider = () => undefined;
+
   private layerInfoProvider: LayerInfoProvider = () => ({
     name: 'Layer',
     width: 1920,
     height: 1080,
   });
+
+  /**
+   * Defaults to NO markers rather than throwing, unlike `layerSpaceProvider`.
+   * An empty marker list is an ordinary state — most comps have none — so
+   * `marker.numKeys === 0` is the honest answer here, not a missing wire.
+   */
+  private markerProvider: MarkerProvider = () => [];
 
   /**
    * Bind the change sink (the app maps this onto its EventBus 'AnimationChanged'
@@ -176,6 +321,46 @@ export class AnimationEngine {
   /** Bind layer metadata (`thisLayer`) provider. */
   setLayerInfoProvider(provider: LayerInfoProvider): void {
     this.layerInfoProvider = provider;
+  }
+
+  /**
+   * Supplies `sourceRectAtTime` with a layer's CONTENT bounds at a time.
+   *
+   * Defaults to undefined rather than to the layer box: the expression falls
+   * back to the box itself, and having the default here too would make an
+   * unwired provider indistinguishable from a correctly wired one that happens
+   * to return the box — which is how a provider stays unwired for months (see
+   * the four that did exactly that before the layer/comp providers were
+   * connected).
+   */
+  setSourceRectProvider(provider: SourceRectProvider): void {
+    this.sourceRectProvider = provider;
+  }
+
+  /**
+   * Supplies the coordinate-space functions with a layer's placement.
+   *
+   * Defaults to undefined for the same reason `sourceRectProvider` does, and
+   * the consequence here is stronger: with no provider the host THROWS a stated
+   * error rather than converting. An unwired provider that silently returned
+   * identity would make `toComp` report its input back as the answer, which is
+   * correct-looking for a layer at the origin and wrong for every other one.
+   */
+  setLayerSpaceProvider(provider: LayerSpaceProvider): void {
+    this.layerSpaceProvider = provider;
+  }
+
+  /**
+   * Bind `marker.*` to the timeline's markers.
+   *
+   * The engine holds keyframes, not markers — markers live on the timeline
+   * (`packages/timeline`), which the engine has no reference to and should
+   * not grow one. Same separation as `sourceRectProvider` and
+   * `layerSpaceProvider`: the host owns the lookup, the engine owns the AE
+   * semantics built on top of it.
+   */
+  setMarkerProvider(provider: MarkerProvider): void {
+    this.markerProvider = provider;
   }
 
   /** All property tracks for a node. */
@@ -458,9 +643,12 @@ export class AnimationEngine {
     try {
       const track = this.tracks.get(nodeId)?.get(prop);
       const base = track ? sampleTrack(track, t) : undefined;
-      const expr = this.expressions.get(nodeId)?.get(prop);
-      if (expr) {
-        const r = expr.run(this.exprContext(nodeId, prop, t, base, visited, depth + 1));
+      const entry = this.expressions.get(nodeId)?.get(prop);
+      // The one line where enablement decides anything. A disabled expression
+      // is skipped entirely — not run-and-discarded — so it costs nothing per
+      // frame and cannot raise a cycle error from a formula nobody is using.
+      if (entry?.enabled) {
+        const r = entry.compiled.run(this.exprContext(nodeId, prop, t, base, visited, depth + 1));
         if (r.error) {
           if (/Cycle detected/i.test(r.error) || /Maximum cross-layer/i.test(r.error)) {
             throw new Error(r.error);
@@ -506,6 +694,16 @@ export class AnimationEngine {
       layerAt: (name, p, tt) => this.crossLayerValue(name, p, tt, visited, depth),
       comp: this.compInfoProvider(),
       layerInfo: this.layerInfoProvider(nodeId),
+      // Needs no provider: the engine already holds this property's track, so
+      // numKeys / key(n) / nearestKey() are free.
+      keyTimes: kfs.map((k) => k.t),
+      // Does need one — measuring content bounds requires the scene graph and,
+      // for text, a DOM measuring context, neither of which belongs in here.
+      sourceRectAt: (tt, extents) => this.sourceRectProvider(nodeId, tt, extents),
+      // Same reason: composing a layer's world matrix needs the scene graph.
+      spaceAt: (name, tt) => this.layerSpaceProvider(nodeId, name, tt),
+      // And again: markers belong to the timeline, not to the engine.
+      markersAt: (which) => this.markerProvider(nodeId, which),
       // Per-(node, prop) noise phase so `wiggle` on x and y move
       // independently (AE) — still deterministic run to run.
       propSeed: stringSeed(`${nodeId}:${prop}`),
@@ -524,7 +722,7 @@ export class AnimationEngine {
     visited: Set<string>,
     depth: number,
   ): number | undefined {
-    const targetNodeId = this.layerResolver(name);
+    const targetNodeId = resolveLayerRef(name, this.layerResolver);
     if (!targetNodeId) return undefined;
     return this.sampleInternal(targetNodeId, prop, t, visited, depth);
   }
@@ -727,13 +925,75 @@ export class AnimationEngine {
   }
 
   // ── Expressions ─────────────────────────────────────────────────
-  /** Attach/replace an expression on a property (compiles immediately). */
-  setExpression(nodeId: string, prop: PropPath, src: string): void {
+  /**
+   * Attach/replace an expression on a property (compiles immediately).
+   *
+   * PRESERVES the enabled bit when one is already attached. Editing the text of
+   * a disabled expression must not silently re-enable it — the user turned it
+   * off, and a keystroke is not a request to turn it back on. A newly attached
+   * expression is enabled, which is the only sensible default for something the
+   * user just typed.
+   */
+  setExpression(nodeId: string, prop: PropPath, src: string, authoredBy?: string): void {
     if (src.trim() === '') { this.removeExpression(nodeId, prop); return; }
     let byProp = this.expressions.get(nodeId);
     if (!byProp) { byProp = new Map(); this.expressions.set(nodeId, byProp); }
-    byProp.set(prop, compileExpression(src));
+    const enabled = byProp.get(prop)?.enabled ?? true;
+    // Authorship is REPLACED, not inherited. Editing a plugin-written
+    // expression by hand makes it yours — carrying the old plugin id forward
+    // would mislabel the user's own work, and a bulk "revert what this plugin
+    // wrote" would then silently discard it.
+    byProp.set(prop, {
+      compiled: compileExpression(src),
+      enabled,
+      ...(authoredBy ? { authoredBy } : {}),
+    });
     this.notifyChange(nodeId);
+  }
+
+  /**
+   * Every (node, prop) carrying an expression a given plugin wrote.
+   *
+   * The read that makes provenance worth storing: it backs an origin label, a
+   * "this project contains expressions from a plugin you do not have" notice,
+   * and a bulk revert.
+   */
+  expressionsAuthoredBy(pluginId: string): Array<{ nodeId: string; prop: PropPath }> {
+    const out: Array<{ nodeId: string; prop: PropPath }> = [];
+    for (const [nodeId, byProp] of this.expressions) {
+      for (const [prop, entry] of byProp) {
+        if (entry.authoredBy === pluginId) out.push({ nodeId, prop });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Every expression in the document, with its source and its provenance.
+   *
+   * `expressionsAuthoredBy` answers "which are this plugin's". This answers
+   * "which exist at all", which is what any operation over expression TEXT
+   * needs — repairing cross-layer references after a rename, most of all.
+   * Filtering to one author cannot serve that: the references at risk are
+   * overwhelmingly the ones a person typed.
+   *
+   * A read, and a copy. Handing out the live `ExpressionEntry` would expose the
+   * compiled form, and a caller that mutated it would corrupt evaluation with
+   * no path back to who did it.
+   */
+  allExpressions(): Array<{ nodeId: string; prop: PropPath; src: string; authoredBy?: string }> {
+    const out: Array<{ nodeId: string; prop: PropPath; src: string; authoredBy?: string }> = [];
+    for (const [nodeId, byProp] of this.expressions) {
+      for (const [prop, entry] of byProp) {
+        out.push({
+          nodeId,
+          prop,
+          src: entry.compiled.src,
+          ...(entry.authoredBy ? { authoredBy: entry.authoredBy } : {}),
+        });
+      }
+    }
+    return out;
   }
 
   removeExpression(nodeId: string, prop: PropPath): void {
@@ -743,17 +1003,75 @@ export class AnimationEngine {
     this.notifyChange(nodeId);
   }
 
+  /**
+   * Turn an attached expression on or off WITHOUT discarding its source.
+   *
+   * A disabled expression is not evaluated: the property falls back to its
+   * keyframes, and to its static value when it has none. No-op when the
+   * property has no expression — there is nothing to enable, and creating an
+   * empty one here would put an expression-shaped hole in the snapshot.
+   */
+  setExpressionEnabled(nodeId: string, prop: PropPath, enabled: boolean): void {
+    const entry = this.expressions.get(nodeId)?.get(prop);
+    if (!entry || entry.enabled === enabled) return;
+    entry.enabled = enabled;
+    this.notifyChange(nodeId);
+  }
+
   getExpressionSrc(nodeId: string, prop: PropPath): string | undefined {
-    return this.expressions.get(nodeId)?.get(prop)?.src;
+    return this.expressions.get(nodeId)?.get(prop)?.compiled.src;
   }
 
   /** Compile error for the property's expression (null if valid or none). */
   getExpressionError(nodeId: string, prop: PropPath): string | null {
-    return this.expressions.get(nodeId)?.get(prop)?.compileError ?? null;
+    return this.expressions.get(nodeId)?.get(prop)?.compiled.compileError ?? null;
   }
 
+  /**
+   * Is there an expression attached at all — enabled or not?
+   *
+   * This is the question the EDITOR asks (show the source, offer the toggle).
+   * It is NOT the question the sampler asks; see `isExpressionEnabled`.
+   */
   hasExpression(nodeId: string, prop: PropPath): boolean {
     return this.expressions.get(nodeId)?.has(prop) ?? false;
+  }
+
+  /**
+   * Does an expression currently DRIVE this property?
+   *
+   * False both when none is attached and when one is attached but disabled —
+   * the two cases a caller asking "will the keyframes win?" wants merged, and
+   * exactly the two `hasExpression` must keep apart.
+   */
+  isExpressionEnabled(nodeId: string, prop: PropPath): boolean {
+    return this.expressions.get(nodeId)?.get(prop)?.enabled ?? false;
+  }
+
+  /**
+   * Replace a property's expression wholesale (null removes).
+   *
+   * This is what undo/redo applies: one call restores source and enablement
+   * together, so no ordering of two setters can leave a half-restored state.
+   *
+   * There is deliberately NO matching `getExpressionState`. One was written, to
+   * mirror `getDataTrack`, and breaking it failed exactly one test — its own —
+   * which is what a unit no production path touches looks like. The reader on
+   * the undo path is `snapshot()`, which `diffTracks` already consumes; a second
+   * accessor beside it would be dead API carrying a false claim about where the
+   * before/after states come from. `getExpressionSrc` + `isExpressionEnabled`
+   * answer the two questions callers actually ask.
+   */
+  setExpressionState(nodeId: string, prop: PropPath, state: ExpressionState | null): void {
+    if (!state || state.src.trim() === '') { this.removeExpression(nodeId, prop); return; }
+    let byProp = this.expressions.get(nodeId);
+    if (!byProp) { byProp = new Map(); this.expressions.set(nodeId, byProp); }
+    byProp.set(prop, {
+      compiled: compileExpression(state.src),
+      enabled: state.enabled,
+      ...(state.authoredBy ? { authoredBy: state.authoredBy } : {}),
+    });
+    this.notifyChange(nodeId);
   }
 
   /** All props on a node that are keyframed and/or expressed. */
@@ -791,8 +1109,18 @@ export class AnimationEngine {
     }
     const expressions: AnimSnapshot['expressions'] = {};
     for (const [nodeId, byProp] of this.expressions) {
-      const props: Record<string, string> = {};
-      for (const [prop, expr] of byProp) props[prop] = expr.src;
+      const props: Record<string, ExpressionState> = {};
+      for (const [prop, entry] of byProp) {
+        props[prop] = {
+          src: entry.compiled.src,
+          enabled: entry.enabled,
+          // Carried into the snapshot, which IS the saved document. A field
+          // that lived only in memory would answer 'who wrote this' for the
+          // session that wrote it and for nobody who opens the file later —
+          // which is the only audience that needs the answer.
+          ...(entry.authoredBy ? { authoredBy: entry.authoredBy } : {}),
+        };
+      }
       expressions[nodeId] = props;
     }
     const data: NonNullable<AnimSnapshot['data']> = {};
@@ -848,13 +1176,27 @@ export class AnimationEngine {
       }
       this.tracks.set(nodeId, byProp);
     }
-    for (const nodeId of Object.keys(data.expressions)) {
+    // `?? {}` because a snapshot predating the expression feature has no
+    // `expressions` key at all — an ABSENT optional field, not a second shape.
+    // This path now carries pre-1.1 recovery snapshots, which is where such a
+    // blob actually turns up, and `Object.keys(undefined)` threw.
+    for (const nodeId of Object.keys(data.expressions ?? {})) {
       const props = data.expressions[nodeId];
       if (!props) continue;
-      const byProp = new Map<PropPath, CompiledExpression>();
+      const byProp = new Map<PropPath, ExpressionEntry>();
       for (const prop of Object.keys(props)) {
-        const src = props[prop];
-        if (src) byProp.set(prop, compileExpression(src));
+        // ONE SHAPE ONLY. The pre-1.6.0 form was a bare `src` string; it is
+        // upgraded by the document migration, never here. A reader that quietly
+        // accepted both would let documents stay un-migrated indefinitely and
+        // the two shapes drift — same precedent as fx.repeater in 1.5.0.
+        const state = props[prop];
+        if (state?.src) {
+          byProp.set(prop, {
+            compiled: compileExpression(state.src),
+            enabled: state.enabled !== false,
+            ...(state.authoredBy ? { authoredBy: state.authoredBy } : {}),
+          });
+        }
       }
       if (byProp.size) this.expressions.set(nodeId, byProp);
     }
@@ -862,11 +1204,15 @@ export class AnimationEngine {
   }
 }
 
-/** Serializable animation state: keyframe tracks + expression sources +
- *  (optionally) non-scalar data tracks. `data` is absent on old documents. */
+/** Serializable animation state: keyframe tracks + expression states +
+ *  (optionally) non-scalar data tracks. `data` is absent on old documents.
+ *
+ *  `expressions` values were a bare source STRING before document 1.6.0 and are
+ *  `{ src, enabled }` from 1.6.0 on. The upgrade lives in
+ *  `migrations/v1_5_0_to_v1_6_0.ts`; nothing here reads the old shape. */
 export interface AnimSnapshot {
   tracks: Record<string, Record<string, PropertyTrack>>;
-  expressions: Record<string, Record<string, string>>;
+  expressions: Record<string, Record<string, ExpressionState>>;
   data?: Record<string, Record<string, DataTrack>>;
 }
 

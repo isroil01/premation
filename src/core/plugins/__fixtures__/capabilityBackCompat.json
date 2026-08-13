@@ -1,0 +1,84 @@
+{
+  "_comment": [
+    "What each apiVersion implied before capabilities existed, plus the whole",
+    "capability vocabulary. BYTE-IDENTICAL in motion-editor",
+    "(src/core/plugins/__fixtures__/) and motion-back (src/plugins/__fixtures__/);",
+    "a test in each repo asserts its own copy of the tables against this one.",
+    "",
+    "Why it is shared: the registry validates a manifest on publish and the editor",
+    "gates the install. If the two disagree about what apiVersion 4 implied, a",
+    "plugin publishes in one and refuses to install in the other, with no error on",
+    "the side that could have caught it.",
+    "",
+    "Capability strings are ADDITIVE AND PERMANENT. Never renamed, never removed,",
+    "never repurposed: a published `requires` list is frozen in bytes that were",
+    "signed, and there is no migration path for a string that changes meaning."
+  ],
+  "staticCapabilities": [
+    "scene.read",
+    "scene.write",
+    "scene.proxy",
+    "scene.batch",
+    "animation.read",
+    "animation.write",
+    "assets.read",
+    "assets.write",
+    "timeline",
+    "net.fetch",
+    "storage.global",
+    "storage.project",
+    "effects.single",
+    "effects.multipass",
+    "layerkinds",
+    "panels",
+    "wasm"
+  ],
+  "runtimeCapabilities": [
+    "webgpu"
+  ],
+  "capabilitiesByApiVersion": {
+    "1": [
+      "scene.read",
+      "scene.write",
+      "animation.read",
+      "animation.write",
+      "timeline",
+      "panels"
+    ],
+    "2": [
+      "scene.read",
+      "scene.write",
+      "animation.read",
+      "animation.write",
+      "timeline",
+      "panels"
+    ],
+    "3": [
+      "scene.read",
+      "scene.write",
+      "scene.proxy",
+      "animation.read",
+      "animation.write",
+      "assets.read",
+      "assets.write",
+      "timeline",
+      "panels",
+      "layerkinds"
+    ],
+    "4": [
+      "scene.read",
+      "scene.write",
+      "scene.proxy",
+      "animation.read",
+      "animation.write",
+      "assets.read",
+      "assets.write",
+      "timeline",
+      "net.fetch",
+      "panels",
+      "layerkinds",
+      "effects.single",
+      "webgpu"
+    ]
+  }
+}

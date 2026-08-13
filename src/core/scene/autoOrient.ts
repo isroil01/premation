@@ -23,9 +23,44 @@
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { bumpScene } from '@stores/sceneStore';
 
 export type AutoOrientMode = 'off' | 'path' | 'camera';
+
+/**
+ * The kinds `buildSnapshot` SKIPS before it ever consults auto-orient.
+ *
+ * Both readers (`readNodeAutoOrient`, `isAutoOrientedToCamera`) are called from
+ * inside the drawn-layer loop, and that loop `continue`s past these four kinds
+ * at its top and diverts `light` a few lines later. So on any of them the mode
+ * is stored, persisted and displayed — and read by nobody.
+ *
+ * Kept as data rather than prose because `autoOrientKindParity.test.ts` reads
+ * the skip list back out of `buildSnapshot.ts` and fails if the two drift.
+ */
+export const AUTO_ORIENT_DEAD_KINDS: ReadonlySet<string> = new Set([
+  'group', 'null', 'camera', 'audio', 'light',
+]);
+
+/**
+ * True when auto-orient can actually change pixels for this node.
+ *
+ * Every auto-orient affordance gates on this ONE predicate, for the same reason
+ * `canBe3D` exists in `threeD.ts`: a control must not light up without pixels
+ * changing. It was added after the dropdown was found offering "Along Path" on
+ * cameras, lights, nulls and groups — five kinds where nothing reads the value.
+ *
+ * `null` is the one that stings. Auto-orienting a null with children parented
+ * to it is a standard AE rig, and the control looked available. Hiding it is
+ * honest, not a fix: making it WORK means composing a derived rotation into the
+ * null's own transform so children inherit it, which is a change to the parent
+ * composition path rather than to this module.
+ */
+export function canAutoOrient(node: SceneNode): boolean {
+  if (!node.components.some((c) => c.type === 'Transform')) return false;
+  return !AUTO_ORIENT_DEAD_KINDS.has(readNodeKind(node));
+}
 
 function fxProps(node: SceneNode): Record<string, unknown> | undefined {
   return node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;

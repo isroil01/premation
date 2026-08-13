@@ -165,8 +165,11 @@ export class SceneNode {
 
   /** Path from the root down to (and including) this node. */
   path(): SceneNode[] {
-    const out: SceneNode[] = [];
-    let n: SceneNode | null = this;
+    // Seeded with `this` and walked from the PARENT, rather than aliasing
+    // `this` into the cursor. Same array, and it keeps the cursor's type
+    // honest — it is the nullable one, `this` never is.
+    const out: SceneNode[] = [this];
+    let n = this.parent;
     while (n) { out.push(n); n = n.parent; }
     return out.reverse();
   }

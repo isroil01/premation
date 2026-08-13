@@ -27,6 +27,12 @@ export interface PaginationProps {
   itemLabel?: string;
   /** Offered page sizes. Hidden when the list fits in the smallest one. */
   pageSizes?: number[];
+  /**
+   * Offer the page-size select at all. Set false where the page size belongs to
+   * the surface rather than to the reader — a 280px dock column, say. The count
+   * line and the pager still render; this drops only the third control.
+   */
+  showPageSizes?: boolean;
   /** A request is in flight — the controls stay visible but stop responding. */
   busy?: boolean;
   className?: string;
@@ -68,6 +74,7 @@ export function Pagination({
   onChange,
   itemLabel = 'item',
   pageSizes = DEFAULT_PAGE_SIZES,
+  showPageSizes = true,
   busy = false,
   className,
 }: PaginationProps): JSX.Element | null {
@@ -89,7 +96,7 @@ export function Pagination({
   };
 
   const sizes = pageSizes.includes(size) ? pageSizes : [...pageSizes, size].sort((a, b) => a - b);
-  const showSizes = total > Math.min(...sizes);
+  const showSizes = showPageSizes && total > Math.min(...sizes);
 
   return (
     <nav className={cn(styles.root, className)} aria-label="Pagination">
@@ -132,12 +139,11 @@ export function Pagination({
               disabled={busy || current === 1}
               aria-label="Previous page"
             >
-              <Icon name="chevron-left" size={13} />
+              <Icon name="chevron-left" size="sm" />
             </button>
 
             {pages.map((p, i) =>
               p === null ? (
-                // eslint-disable-next-line react/no-array-index-key
                 <span key={`gap-${i}`} className={styles.gap} aria-hidden="true">
                   …
                 </span>
@@ -163,7 +169,7 @@ export function Pagination({
               disabled={busy || current === pageCount}
               aria-label="Next page"
             >
-              <Icon name="chevron-right" size={13} />
+              <Icon name="chevron-right" size="sm" />
             </button>
           </div>
         )}

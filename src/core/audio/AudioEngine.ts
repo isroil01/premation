@@ -16,6 +16,9 @@
 import { computePeaks, mixToMono, amplitudeAt, type WaveformPeaks } from './waveform';
 import { rmsPeak, type Levels } from './audioLevels';
 import { buildParamRamp, applyRamp } from './audioParams';
+import {
+  connectAudioEffects, hasBackwards, reverseBuffer, backwardsOffset, type AudioEffect,
+} from './audioEffects';
 
 /** One audio layer's transport-relevant state, derived from the scene. */
 export interface AudioLayerState {
@@ -39,6 +42,12 @@ export interface AudioLayerState {
    *  Read by `currentLevel` so audio-reactive expressions can keep their
    *  pre-existing meaning — see there. */
   source?: 'audio' | 'video';
+  /**
+   * The layer's audio effect chain, applied BEFORE the level gain by both the
+   * live engine and the offline mixdown. Absent means no nodes are created at
+   * all, so a project without effects has the graph it always had.
+   */
+  effects?: AudioEffect[];
   /** Comp time (seconds) at which the clip starts. */
   startSec: number;
   /** In/out trim within the clip, seconds. */
@@ -56,6 +65,14 @@ interface LoadedAsset {
 interface ActiveVoice {
   source: AudioBufferSourceNode;
   gain: GainNode;
+  /**
+   * Oscillators the effect chain created (an LFO, a tone generator).
+   *
+   * Held on the voice because they share its lifetime exactly: they are started
+   * with it and must be stopped with it. A voice that tracked only its buffer
+   * source would leave them running into a disconnected subgraph on every seek.
+   */
+  sources: AudioScheduledSourceNode[];
   /** The layer state hash this voice was started for (restart on change). */
   key: string;
   /** AudioContext time when the voice started, and the buffer offset it began
@@ -360,12 +377,47 @@ class AudioEngine {
   private startVoice(voiceId: string, l: AudioLayerState, asset: LoadedAsset, offset: number): void {
     const ctx = this.ctx!;
     const source = ctx.createBufferSource();
-    source.buffer = asset.buffer;
+    // Backwards reverses the BUFFER, so it is decided before the graph exists.
+    const reversed = hasBackwards(l.effects);
+    source.buffer = reversed ? reverseBuffer(ctx, asset.buffer) : asset.buffer;
     const gain = ctx.createGain();
-    source.connect(gain).connect(this.master ?? ctx.destination);
+    // Effects sit BEFORE the gain, so the layer's level (and its automation)
+    // has the last word on loudness — a delay's feedback cannot outrun a fade
+    // to silence. Built by the same function the offline mixdown calls; see
+    // audioEffects.ts for why that is one function and not two.
     const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
     const remaining = Math.max(0, outSec - offset);
-    const startAt = Math.max(0, offset);
+    /*
+      TWO offsets, and they are not interchangeable.
+
+      `clipAt` is a position in the CLIP — what the fade curve and the voice
+      bookkeeping are expressed in, and what the rest of the engine means by
+      "where we are". `readAt` is a position in the BUFFER handed to
+      `source.start`, which is the reversed one when Backwards is on.
+
+      Collapsing them is the silent failure `backwardsOffset` documents: a clip
+      trimmed to 2–4 s of a ten-second file would play 6–8 s backwards, in time,
+      with nothing to indicate it.
+    */
+    const clipAt = Math.max(0, offset);
+    const readAt = reversed
+      ? backwardsOffset(asset.buffer.duration, clipAt, remaining)
+      : clipAt;
+    const resumeCompSec = l.startSec + (clipAt - l.inSec);
+
+    /*
+      Built HERE rather than above, because the chain needs the voice window to
+      schedule keyframed effect parameters — the same window, from the same
+      arithmetic, that the level ramp below uses. Passing it is what makes an
+      animated Dry/Wet a curve instead of a value frozen at the voice's start.
+    */
+    const chain = connectAudioEffects(ctx, source, l.effects, {
+      nodeId: l.nodeId,
+      startCompSec: resumeCompSec,
+      durationSec: remaining,
+      whenCtx: ctx.currentTime,
+    });
+    chain.node.connect(gain).connect(this.master ?? ctx.destination);
 
     // Gain is SCHEDULED on the param, never assigned per frame — see
     // audioParams for why (assignment steps once per render quantum and
@@ -375,24 +427,42 @@ class AudioEngine {
     // The ramp is built from the comp time this voice resumes at, which is
     // `startSec + (offset - inSec)` — NOT `startSec`. Seeking into the middle
     // of a fade has to pick the curve up where the playhead is, or the fade
-    // restarts from its beginning every time the transport moves.
-    const resumeCompSec = l.startSec + (startAt - l.inSec);
+    // restarts from its beginning every time the transport moves. (Computed
+    // above, because the effect chain schedules its own curves from the same
+    // window.)
     const ramp = buildParamRamp(l.nodeId, l.levelDb, resumeCompSec, remaining, {
       animated: l.levelAnimated === true,
     });
     applyRamp(gain.gain, ramp, ctx.currentTime);
 
     try {
-      source.start(ctx.currentTime, startAt, remaining);
+      source.start(ctx.currentTime, readAt, remaining);
     } catch {
       return;
+    }
+    /*
+      The chain's own oscillators run for exactly this voice's window.
+
+      Started here rather than inside `connectAudioEffects` because the window
+      is the caller's knowledge, and stopped explicitly because an oscillator
+      with no stop time keeps its whole subgraph reachable for the life of the
+      context — one leaked LFO per seek, on every scrub, for the session.
+    */
+    for (const s of chain.sources) {
+      try {
+        s.start(ctx.currentTime);
+        s.stop(ctx.currentTime + remaining);
+      } catch {
+        /* already started — cannot happen for a freshly built chain */
+      }
     }
     this.voices.set(voiceId, {
       source,
       gain,
+      sources: chain.sources,
       key: this.voiceKey(l),
       startCtxTime: ctx.currentTime,
-      startOffset: startAt,
+      startOffset: clipAt,
     });
   }
 
@@ -403,6 +473,17 @@ class AudioEngine {
       v.source.stop();
     } catch {
       /* already stopped */
+    }
+    // The chain's oscillators go with it. They carry a scheduled stop already,
+    // so this is about stopping them NOW on a seek rather than leaving an LFO
+    // running into a disconnected subgraph until its window would have ended.
+    for (const s of v.sources ?? []) {
+      try {
+        s.stop();
+      } catch {
+        /* already stopped, or never started */
+      }
+      s.disconnect();
     }
     v.source.disconnect();
     v.gain.disconnect();

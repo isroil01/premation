@@ -9,6 +9,7 @@
  */
 
 import { parseHex } from './canvas2dEffects';
+import { clamp01 } from '@utils/lang';
 
 export interface KeyParams {
   /** The screen colour to key out, `#rrggbb`. */
@@ -117,9 +118,6 @@ export function applyKeyData(data: Uint8ClampedArray, params: KeyParams): void {
   }
 }
 
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v;
-}
 
 /**
  * Matte choke (AE Screen Shrink/Grow): a separable morphological filter on the

@@ -14,7 +14,29 @@ export class OverlayPass extends RenderPass {
   override get writes(): readonly string[] {
     return [SURFACE];
   }
-  override readonly after = ['selection'];
+  /**
+   * `composition` and `effect` are named explicitly: two passes that both WRITE
+   * one resource get no ordering edge from it — order is derived from `reads`
+   * and `after` only — and `EffectPass` REPLACES the surface rather than
+   * blending onto it.
+   *
+   * This read `['selection', 'composition', 'effect']`, and the history is kept
+   * because it is the bug that produced the rule. Ordering after `selection`
+   * alone was not enough: chained through selection's own (then dangling)
+   * `after: ['text']`, the grid was emitted before `composition` and before
+   * `effect`, so **every composition grid line and user guide was wiped the
+   * moment any layer in the scene carried an effect** — the frame routes
+   * through SCENE_COLOR_TARGET and the final blit overwrote chrome already
+   * drawn. Removing the effect brought the grid back, which is what made it
+   * look like an effects bug rather than an ordering one.
+   *
+   * `selection` is gone because the pass is gone: it drew `scene.selection`,
+   * which the adapter set to `[]` unconditionally, so it could never draw
+   * anything. Leaving the name behind would have re-created the exact shape of
+   * the defect above — `compile()` links an `after` entry only when that pass
+   * is active, so a dangling name is silently NO constraint.
+   */
+  override readonly after = ['composition', 'effect'];
 
   gridColor = Color.of(1, 1, 1, 0.06);
   guideColor = Color.of(0.23, 0.51, 0.96, 0.8);

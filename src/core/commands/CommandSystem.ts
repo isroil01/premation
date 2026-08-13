@@ -10,7 +10,7 @@
  * This is the layer that knows about Application. Commands themselves never do.
  */
 
-import { getCommandRegistry, chordKey } from './Command';
+import { getCommandRegistry } from './Command';
 import type {
   Command,
   CommandContext,
@@ -48,7 +48,7 @@ export class CommandSystem {
   async execute(id: CommandId): Promise<void> {
     const cmd = getCommandRegistry().get(id);
     if (!cmd) {
-      // eslint-disable-next-line no-console
+
       console.warn(`[CommandSystem] unknown command: ${id}`);
       return;
     }
@@ -101,11 +101,6 @@ export class CommandSystem {
   }
 }
 
-/** Stringify a chord for debug logging. */
-export function describeChord(chord: import('@app-types/common').KeyChord): string {
-  return chordKey(chord);
-}
-
 /** Default Application-wide instance. */
 let commandSystemInstance: CommandSystem | null = null;
 
@@ -122,8 +117,33 @@ export function setCommandSystem(cs: CommandSystem): void {
 
 // ── Default key-chord utilities ────────────────────────────────────
 export const isMeta = (e: KeyboardEvent): boolean => e.metaKey || e.ctrlKey;
+
+/**
+ * The key a chord should be matched on.
+ *
+ * `e.key` is the PRODUCED CHARACTER, not the physical key, and on the digit row
+ * those differ the moment a modifier or a non-US layout is involved:
+ *
+ *   • US layout, Shift+1  → `e.key === '!'`. A chord registered as
+ *     `{ key: '1', shift: true }` could therefore never match — Shift+digit was
+ *     unexpressible in this system, silently. Nothing failed; the binding just
+ *     never fired.
+ *   • AZERTY, bare Digit1 → `e.key === '&'`, so the existing bare-digit chords
+ *     (`1`/`2` for 3D views) did not fire there either.
+ *
+ * `e.code` is layout- and modifier-independent, so the digit row is resolved
+ * from it. Scoped to `Digit0`–`Digit9` deliberately: letters already behave
+ * (Shift+A gives 'A', which `chordKey` lowercases), and remapping the whole
+ * keyboard to physical codes would change every existing chord on non-US
+ * layouts — a much larger behaviour change than this fixes.
+ */
+function chordKeyFromEvent(e: KeyboardEvent): string {
+  const m = /^Digit([0-9])$/.exec(e.code ?? '');
+  return m && e.key !== m[1] ? m[1]! : e.key;
+}
+
 export const chordFromEvent = (e: KeyboardEvent): import('@app-types/common').KeyChord => ({
-  key: e.key,
+  key: chordKeyFromEvent(e),
   ctrl:  e.ctrlKey,
   meta:  e.metaKey,
   alt:   e.altKey,

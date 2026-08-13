@@ -88,6 +88,32 @@ export type RenderableEffect =
       mapLayerId?: string;
     }
   | {
+      type: 'apply-color-lut';
+      /** Texture key of the LUT STRIP (N slices of N×N, or N×1 for a 1D LUT). */
+      lutTextureKey: string;
+      /** Cube edge length, or the entry count for a 1D LUT. */
+      size: number;
+      is1d: boolean;
+      /** 0..1. Mixes toward the graded colour, so the control is a STRENGTH
+       *  rather than a switch — and matches what the Canvas2D path does. */
+      intensity: number;
+      domainMin: number;
+      domainMax: number;
+    }
+  | {
+      type: 'compound-blur';
+      /** Ceiling on the blur, in comp px. The map scales each pixel's radius
+       *  between 0 and this, so it is a maximum rather than an amount. */
+      maxRadiusPx: number;
+      /** Bright areas sharp instead of blurred. */
+      invert: boolean;
+      /** Renderable id of the layer whose LUMINANCE drives the radius. Unset or
+       *  unresolvable → the layer blurs by its own luminance, matching the
+       *  displacement-map fallback: visibly wrong and debuggable, rather than a
+       *  silent no-op that reads as the effect being broken. */
+      mapLayerId?: string;
+    }
+  | {
       type: 'set-matte';
       /** Renderable id of the layer supplying the coverage. Unset or
        *  unresolvable → the effect is a NO-OP, deliberately. Falling back to
@@ -99,10 +125,195 @@ export type RenderableEffect =
       invert: boolean;
     }
   | { type: 'motion-tile'; scale: number }
+  /**
+   * Bend (AE's CC Bender). `angleRad` is the TOTAL bend and `style` indexes the
+   * profile (0 Marilyn, 1 Sharp, 2 Circular). Everything else about the bend —
+   * where the line sits, which way it runs, how far the bend takes to complete
+   * — comes from the two POINTS, exactly as AE's Top and Base do.
+   *
+   * The points are in ASPECT-CORRECTED layer units: x is scaled by `aspect`
+   * (w/h) so one unit means the same distance on both axes. Raw UV would shear
+   * any bend line that is not axis-aligned on a non-square layer.
+   */
+  | {
+      type: 'bend';
+      angleRad: number; style: number; aspect: number;
+      /** True confines the deformation to the Top→Base band; false hinges the
+       *  remainder along with it, which is AE's CC Bender behaviour. */
+      holdOutside: boolean;
+      topX: number; topY: number; baseX: number; baseY: number;
+    }
+  /**
+   * Perspective family. `thickness` is in UV units for the bevels; `lightRad`
+   * is the direction light arrives from; `intensity` is a multiplier, not a
+   * percentage. Spotlight's cone is a HALF-angle in radians, and `ambient` is
+   * what the layer keeps outside it — 0 means fully dark.
+   */
+  | { type: 'bevel-alpha'; thickness: number; lightRad: number; intensity: number; color: Color }
+  | { type: 'bevel-edges'; thickness: number; lightRad: number; intensity: number; color: Color }
+  /**
+   * Spotlight (CC Spotlight). `from`/`to` are point controls in
+   * ASPECT-CORRECTED layer units — between them they carry the light's
+   * position, its aim and its reach, so there is no separate direction or
+   * radius to contradict them. `coneHalfRad` is measured from the axis;
+   * `softness` 0..1 widens the falloff inward from the cone edge.
+   */
+  | {
+      type: 'spotlight';
+      fromX: number; fromY: number; toX: number; toY: number;
+      coneHalfRad: number; softness: number; intensity: number; ambient: number;
+      aspect: number; lightOnly: boolean; reach: number; color: Color;
+    }
+  /**
+   * Sphere / Cylinder. `radius` is a fraction of the layer's short side (1 =
+   * the sphere touches the edges); `shading` is 0..1, where 0 is a flat unlit
+   * map and 1 lets the limb fall fully dark. Rotations are radians.
+   */
+  | {
+      type: 'sphere';
+      radius: number; rotXRad: number; rotYRad: number; rotZRad: number;
+      shading: number; aspect: number; color: Color;
+    }
+  | { type: 'cylinder'; radius: number; rotRad: number; shading: number; color: Color }
+  /**
+   * Arithmetic (Channel). `operator` indexes AE's menu; `r`/`g`/`b` are the
+   * per-channel constants normalised to 0..1 (authored 0..255, as AE does,
+   * because the bitwise operators are only meaningful on 8-bit integers).
+   */
+  | { type: 'arithmetic'; operator: number; r: number; g: number; b: number; clip: boolean }
   | { type: 'fill'; color: Color }
   | { type: 'stroke'; widthPx: number; color: Color }
   | { type: 'sharpen'; amount: number }
-  | { type: 'noise'; amount: number; evolution: number; monochrome: boolean };
+  /**
+   * Beam. Endpoints are fractions of the LAYER's box (0..1), matching the
+   * percentage controls, because the chain's buffer is not the layer's box on
+   * the 2D route; the pass resolves them against `fxBox`.
+   */
+  | {
+      type: 'beam';
+      startX: number; startY: number; endX: number; endY: number;
+      /** 0..1 — how far along the path the head has travelled. */
+      length: number;
+      /** Comp px. */
+      thickness: number;
+      /** 0..1. Widens the soft outer pass to thickness*(1+softness*3). */
+      softness: number;
+      color: Color;
+    }
+  | { type: 'noise'; amount: number; evolution: number; monochrome: boolean }
+  /**
+   * An effect a PLUGIN declared, from WGSL the host validated and compiled.
+   *
+   * Deliberately opaque to this package. `shader` names a source the app
+   * registered into `ShaderRegistry`; `params` is the plugin's half of the
+   * uniform block, already packed by the app because only the app knows the
+   * plugin's parameter layout.
+   *
+   * The pass fills in the `mvp`/`uvRect` header before drawing — it is the only
+   * thing that knows the transform, and the transform changes per frame while
+   * the plugin's parameters do not.
+   *
+   * The renderer therefore has no idea what a plugin effect DOES, which is the
+   * point: supporting one must not mean teaching this package about plugins.
+   */
+  | {
+      type: 'plugin';
+      /** Registered shader name — `<pluginId>.<effectId>`, `…#<pass>` after the first. */
+      shader: string;
+      /** The plugin's parameters, packed at their declared offsets. */
+      params: Float32Array;
+      /**
+       * Which pass of a chain this is. 0 for a single-pass effect.
+       *
+       * A multi-pass effect arrives as SEVERAL of these entries, in order, and
+       * the existing ping-pong runs them — a chain needs no new mechanism here,
+       * which is why this package still does not know what a plugin is.
+       *
+       * Carried as a number rather than folded into `params` because it sits in
+       * the shader beside `texelSize`, and the texel size depends on the target
+       * being drawn into. That is knowable here and nowhere else, so the whole
+       * host block is written on this side.
+       */
+      passIndex?: number;
+      /**
+       * Linear downsample of the target this pass renders into. 1 by default.
+       *
+       * `0.5` renders into a half-size target — a quarter of the pixels — and
+       * `0.25` a sixteenth. What makes a bloom affordable, and the upsample is
+       * free because whatever samples the result next reads the smaller
+       * texture through a linear sampler.
+       *
+       * Carried here rather than folded into the shader's uniforms because the
+       * renderer needs it three ways: to pick the target, to size the
+       * viewport, and to compute the texel size the shader reads. Only the
+       * first two are this package's business, and the third has to agree with
+       * them or a downsampled blur silently comes out too small.
+       */
+      passScale?: number;
+      /**
+       * Snapshot this pass's INPUT before drawing, for later passes to read.
+       *
+       * Set on pass 0 of a chain whose later passes declare `reads: origin`.
+       * Decided app-side because only that side knows how this flat list of
+       * entries groups into chains — and set per-chain rather than always,
+       * because it is a full-screen blit that most chains never look at.
+       */
+      capturesOrigin?: boolean;
+      /**
+       * Bind the chain's pass-0 input at binding 4.
+       *
+       * What a composite step needs: a bloom adds its blurred copy back over
+       * the ORIGINAL, which by then is several ping-pongs ago and overwritten.
+       */
+      readsOrigin?: boolean;
+      /**
+       * How far this effect draws outside the layer, in composition pixels.
+       *
+       * Feeds the margin reserved around a 3D layer's effect buffer. Absent or
+       * 0 for the majority of effects, which map a pixel to a pixel and stay
+       * inside the rectangle.
+       *
+       * Computed app-side from the effect's LIVE parameters, once per frame —
+       * the same job After Effects does in its pre-render phase. A number
+       * baked at install would have to be the animated worst case, and would
+       * enlarge every 3D layer's buffer on frames where the radius is zero.
+       */
+      spreadPx?: number;
+      /**
+       * This effect's shader declares a fourth binding, so its material must
+       * too — whether or not a map layer has been chosen.
+       *
+       * SEPARATE from `mapLayerId` on purpose, and the distinction is the whole
+       * correctness argument. `mapLayerId` says which layer the user picked;
+       * this says what the compiled shader asks for. An effect that declared a
+       * layer parameter and has not been pointed at anything yet still declares
+       * `@binding(3)`, and a layout missing it is an invalid pipeline — a dead
+       * viewport rather than a missing map. Deriving the layout from
+       * `mapLayerId` would produce exactly that, for every effect in its
+       * default state.
+       */
+      readsMap?: boolean;
+      /**
+       * Renderable id supplying a SECOND texture, bound at 3.
+       *
+       * The same field name and the same unset rule as `displacement-map`
+       * above, deliberately: absent means the effect self-samples rather than
+       * being skipped, so a missing map draws something visibly wrong instead
+       * of nothing at all.
+       *
+       * Present only for effects whose material declared the fourth binding.
+       * Binding a texture the layout does not declare — or declaring one and
+       * binding nothing — are both invalid pipelines, so the two are derived
+       * from one predicate on the app side.
+       */
+      mapLayerId?: string;
+      /**
+       * Called around the draw so a device loss can be attributed to this
+       * effect. Injected rather than imported: this package must not know that
+       * plugins exist, and the app must not have to reach into the pass.
+       */
+      onDraw?: { begin(): void; end(): void };
+    };
 
 export interface Renderable {
   id: string;
@@ -118,6 +329,26 @@ export interface Renderable {
    *  'normal' and CompositionPass routes the layer through the backdrop-sampling
    *  BLEND_COMBINE shader instead. 0/undefined = simple blend via `blend`. */
   advancedBlend?: number;
+  /**
+   * Preserve Underlying Transparency: composite `source-atop` the accumulated
+   * backdrop instead of `source-over`. Needs the backdrop as a shader input for
+   * exactly the reason `advancedBlend` does, so it routes the same way — and it
+   * COMPOSES with `advancedBlend` rather than replacing it.
+   */
+  preserveTransparency?: boolean;
+  /**
+   * Force this renderable off the depth-tested 3D path.
+   *
+   * Not a property of the layer — a property of the OBJECT it belongs to. An
+   * extrusion is one solid spread across up to fourteen renderables, and
+   * `depthEligible3D` is asked one renderable at a time, so any exclusion that
+   * catches some faces and not others splits the body between the depth group
+   * and the affine painter path. The snapshot adapter sets this on every face of
+   * such an object so they stay together (`enforceExtrusionPathAgreement`).
+   *
+   * Written by the adapter only; nothing in the renderer sets it.
+   */
+  depthExempt?: boolean;
   /**
    * Frosted-glass backdrop blur radius in device px (0/undefined = off).
    *
@@ -244,6 +475,9 @@ export interface Renderable {
       metal?: number;
       /** Per-quad Lambert gain fallback (adapter-computed). */
       quadGain?: readonly [number, number, number];
+      /** Light this surface from one side — see `Shade3D.oneSided`. Set by an
+       *  extrusion's walls and back cap, which bound a volume. */
+      oneSided?: boolean;
     };
   };
 }
@@ -272,8 +506,18 @@ export interface Renderable {
  */
 export function depthEligible3D(r: Renderable): boolean {
   if (!r.threeD) return false;
+  // Set by the snapshot adapter when this renderable belongs to an object whose
+  // OTHER parts are ineligible — an extrusion's faces, which are one solid
+  // spread across many renderables. Without it a per-renderable exclusion cuts
+  // the object in half: the excluded faces take the affine painter path while
+  // their siblings stay depth-tested, and the two halves visibly come apart.
+  // See `enforceExtrusionPathAgreement`. Checked FIRST so the exemption cannot
+  // be overtaken by a rule below it.
+  if (r.depthExempt) return false;
   if (r.matteSource || r.matte || r.adjustment || r.precomp) return false;
   if (r.advancedBlend && r.advancedBlend > 0) return false;
+  // Reads the accumulated backdrop's alpha, which the depth pass cannot supply.
+  if (r.preserveTransparency) return false;
   // GLASS / backdrop blur read what is composited BENEATH the layer, which the
   // depth pass cannot supply: it draws into the scene target it would have to
   // sample. render3DGroup has no backdrop branch, so a 3D glass panel used to
@@ -298,11 +542,19 @@ export interface SceneLight3D {
   y: number;
   z: number;
   radius: number;
-  /** cos/sin of the light's 2D aim angle. */
+  /** Resolved 3D UNIT aim — the Point of Interest direction, or this light
+   *  type's legacy 2D-angle fallback. */
   aimX: number;
   aimY: number;
+  aimZ: number;
   /** Spot half-cone in radians. */
   halfConeRad: number;
+  /** Spot cone feather in ABSOLUTE radians (0 = hard edge). */
+  coneFeatherRad: number;
+  /** 0 none (legacy hard cutoff + linear ramp), 1 smooth, 2 inverse-square. */
+  falloffMode: number;
+  /** Smooth-curve span in px, default already applied. */
+  falloffDistance: number;
 }
 
 export interface CompositionInfo {
@@ -315,8 +567,6 @@ export interface FrameScene {
   composition: CompositionInfo;
   /** Renderables in paint order (back to front). */
   renderables: Renderable[];
-  /** Selected renderable ids (drives the selection overlay pass). */
-  selection?: string[];
   /** True if any layer in the frame has post-processing effects. */
   hasEffects?: boolean;
   /**

@@ -37,7 +37,7 @@ export function Inspector({ groups, className, emptyMessage = 'No selection' }: 
       <div className={cn(styles.empty, className)}>
         <div className={styles.emptyInner}>
           <span className={styles.emptyIcon} aria-hidden>
-            <Icon name="mouse-pointer" size={15} />
+            <Icon name="mouse-pointer" size="md" />
           </span>
           {emptyMessage}
         </div>

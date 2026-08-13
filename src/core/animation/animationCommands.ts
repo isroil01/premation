@@ -28,7 +28,7 @@
 import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
-import { defaultAnimation, AnimationEngine, type AnimSnapshot, type Keyframe, type PropPath, type DataTrack } from '@motion/animation';
+import { defaultAnimation, AnimationEngine, type AnimSnapshot, type Keyframe, type PropPath, type DataTrack, type ExpressionState } from '@motion/animation';
 
 /** One track's before/after keyframes (`null` = the track is absent). */
 export interface TrackChange {
@@ -36,8 +36,18 @@ export interface TrackChange {
   prop: PropPath;
   before: Keyframe[] | null;
   after: Keyframe[] | null;
-  expressionBefore?: string | null;
-  expressionAfter?: string | null;
+  /**
+   * The property's whole expression state, or `null` for "no expression".
+   *
+   * These were `string | null`, where the string WAS the presence bit — and
+   * that shape cannot express the difference between "removed" and "disabled".
+   * Undoing a disable would have restored the source with a fresh `enabled`
+   * default and re-run a formula the user had switched off; undoing an enable
+   * would have done the reverse. The undo representation has to carry the state
+   * itself, not a proxy for it.
+   */
+  expressionBefore?: ExpressionState | null;
+  expressionAfter?: ExpressionState | null;
   /** Non-scalar (data) track states — text/points/gradient keyframes. */
   dataBefore?: DataTrack | null;
   dataAfter?: DataTrack | null;
@@ -75,9 +85,10 @@ export class AnimEditCommand implements Command {
   execute(): void {
     for (const c of this.changes) {
       if (c.after !== undefined) this.engine.setTrackKeyframes(c.nodeId, c.prop, c.after);
+      // One call restores source AND enablement — `setExpressionState` handles
+      // the null case itself, so no ordering of two setters can half-apply.
       if (c.expressionAfter !== undefined) {
-        if (c.expressionAfter === null) this.engine.removeExpression(c.nodeId, c.prop);
-        else this.engine.setExpression(c.nodeId, c.prop, c.expressionAfter);
+        this.engine.setExpressionState(c.nodeId, c.prop, c.expressionAfter);
       }
       if (c.dataAfter !== undefined) this.engine.setDataTrack(c.nodeId, c.prop, c.dataAfter);
     }
@@ -87,8 +98,7 @@ export class AnimEditCommand implements Command {
     for (const c of this.changes) {
       if (c.before !== undefined) this.engine.setTrackKeyframes(c.nodeId, c.prop, c.before);
       if (c.expressionBefore !== undefined) {
-        if (c.expressionBefore === null) this.engine.removeExpression(c.nodeId, c.prop);
-        else this.engine.setExpression(c.nodeId, c.prop, c.expressionBefore);
+        this.engine.setExpressionState(c.nodeId, c.prop, c.expressionBefore);
       }
       if (c.dataBefore !== undefined) this.engine.setDataTrack(c.nodeId, c.prop, c.dataBefore);
     }
@@ -149,7 +159,11 @@ export function diffTracks(before: AnimSnapshot, after: AnimSnapshot): TrackChan
     const ea = after.expressions?.[nodeId]?.[prop] ?? null;
     const db = before.data?.[nodeId]?.[prop] ?? null;
     const da = after.data?.[nodeId]?.[prop] ?? null;
-    if (kfEqual(b, a) && eb === ea && dataEqual(db, da)) continue;
+    // `eb === ea` was correct while these were strings and is a REFERENCE
+    // comparison now that they are objects — every snapshot allocates fresh
+    // ones, so it would report a change on every unrelated edit and record an
+    // expression rewrite into every undo step.
+    if (kfEqual(b, a) && exprEqual(eb, ea) && dataEqual(db, da)) continue;
     const change: TrackChange = {
       nodeId,
       prop,
@@ -165,6 +179,20 @@ export function diffTracks(before: AnimSnapshot, after: AnimSnapshot): TrackChan
     changes.push(change);
   }
   return changes;
+}
+
+/**
+ * Structural equality for expression states.
+ *
+ * BOTH fields, deliberately. Comparing only `src` would make a pure
+ * enable/disable toggle diff to nothing, `captureAnimEdit` would return null,
+ * and the toggle would apply to the engine with no command recorded — visible,
+ * unundoable, and gone on the next history jump.
+ */
+function exprEqual(a: ExpressionState | null, b: ExpressionState | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.src === b.src && a.enabled === b.enabled;
 }
 
 /** Structural equality for data tracks (values are JSON-safe by contract). */

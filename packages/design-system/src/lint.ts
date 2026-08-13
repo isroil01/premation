@@ -103,6 +103,43 @@ export interface LintLayer {
   /** True when the layer carries a repeater — one layer, many marks. */
   hasRepeater?: boolean;
   /**
+   * The repeater's actual geometry, not merely its presence.
+   *
+   * `hasRepeater` is a boolean, and a boolean is exactly what let eight copies
+   * stacked on a single 16px dot pass as "has a repeater". A repeater whose
+   * copies do not separate is one layer wearing a flag; the count and the
+   * per-copy offsets are what make it many marks.
+   */
+  repeater?: {
+    copies: number;
+    offsetX: number;
+    offsetY: number;
+    offsetRotation: number;
+    /** Pivot radius. At 0 every copy spins about its own origin and the ring collapses. */
+    anchorX: number;
+  };
+  /**
+   * Trim-path window, 0..100. Present when the layer is a stroke draw-on.
+   *
+   * `set_trim_path` was invisible to this linter entirely, so the five authored
+   * surfaces that use it — two of them in pack `prefer` lists — were both
+   * emitting nothing (a handler bug, fixed in Phase 0) and unmeasurable (this
+   * gap). Either alone is survivable; together they are why nobody noticed.
+   */
+  trim?: { start: number; end: number; offset: number };
+  /** Path operators applied, in chain order. A deformed outline is not a rect. */
+  pathOps?: readonly string[];
+  /** True when the layer is clipped by a mask — a shaped reveal, not a box. */
+  hasMask?: boolean;
+  /** Text animators on the layer, by type. Per-character motion is typographic craft. */
+  textAnimators?: readonly string[];
+  /** True for a light layer. Lighting is the difference between flat and lit. */
+  isLight?: boolean;
+  /** Photoshop-style layer styles present, by name. */
+  layerStyles?: readonly string[];
+  /** True when the layer is a particle emitter. */
+  isParticle?: boolean;
+  /**
    * True for an ambient graphic device — a drawn arc, a halftone field, a
    * registration mark.
    *
@@ -239,6 +276,37 @@ function isInsideAPanel(l: LintLayer, layers: readonly LintLayer[], g: GridSpec)
 function isOrnament(l: LintLayer): boolean {
   const text = l.name?.replace(/^[a-z]+: /, '') ?? '';
   return l.fontSizePx !== undefined && text.trim().length <= 2;
+}
+
+/**
+ * Does this shape escape being a box?
+ *
+ * Everything here has a live reader in the renderer, and until `sceneFromCalls`
+ * was extended the linter could see only the first three conditions — so a
+ * stroke draw-on, a deformed outline and a masked reveal all counted as plain
+ * rectangles. Two of the surfaces that produce them sit in pack `prefer` lists.
+ *
+ * The repeater clause is the one that got STRICTER rather than looser. It was
+ * `l.hasRepeater` — a boolean — and a boolean cannot tell a ring of twelve marks
+ * from twelve copies stacked on one dot, which is precisely the state
+ * `add_repeater` shipped in. A repeater earns the exemption when its copies
+ * actually separate: more than one copy, and either a positional step or a
+ * rotation about a real pivot radius.
+ */
+function isDrawnNotBoxed(l: LintLayer): boolean {
+  if (l.shape !== undefined && l.shape !== 'rect') return true;
+  if ((l.cornerRadius ?? 0) > 0) return true;
+  // A trim window that is not the whole path is a partial stroke — an arc.
+  if (l.trim && (l.trim.start > 0 || l.trim.end < 100)) return true;
+  if (l.pathOps?.some((op) => op && op !== 'none')) return true;
+  if (l.hasMask) return true;
+  const r = l.repeater;
+  if (r && r.copies > 1) {
+    const steps = Math.abs(r.offsetX) > 0.5 || Math.abs(r.offsetY) > 0.5;
+    const orbits = Math.abs(r.offsetRotation) > 0.5 && Math.abs(r.anchorX) > 0.5;
+    if (steps || orbits) return true;
+  }
+  return false;
 }
 
 const find = (rule: DesignRule, nodeIds: string[], message: string): DesignFinding => ({
@@ -465,9 +533,7 @@ export function lintDesign(scene: LintScene): DesignFinding[] {
   // can actually fix on its own.
   const shapes = layers.filter((l) => l.kind === 'shape');
   if (shapes.length >= 4) {
-    const drawn = shapes.filter(
-      (l) => (l.shape !== undefined && l.shape !== 'rect') || l.hasRepeater || (l.cornerRadius ?? 0) > 0,
-    );
+    const drawn = shapes.filter((l) => isDrawnNotBoxed(l));
     if (!drawn.length && !layers.some((l) => l.isAsset)) {
       out.push(find('RECT_ONLY', [],
         `All ${shapes.length} shapes in this composition are plain rectangles — no curve, no ` +

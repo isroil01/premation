@@ -23,8 +23,11 @@ import { Matrix4Math } from '@motion/scene';
 import type { LayerBlendMode } from '@core/effects/blendMode';
 import { effectColorMatrix, applyColorMatrix, IDENTITY_COLOR_MATRIX } from '@core/effects/effectColorMatrix';
 import { isLutEffect } from '@core/effects/colorLut';
+import { readCubeLutParam } from '@core/effects/cubeLut';
 import { readMatte } from '@core/effects/matte';
-import { effectNumber, effectParam, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
+import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect } from '@core/effects/effects';
+import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
+import { layerParamNames, packParameters, effectSpreadFor } from '@core/plugins/effectSchema';
 import { layerIsBaked } from '@core/effects/effectBake';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
@@ -401,7 +404,13 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
  *   neither a CSS form nor a Canvas2D case, so the bake skips them and dropping
  *   them here too made them vanish entirely.
  */
-function extractSpatialEffects(
+/**
+ * Exported for `pluginEffectSnapshot.test.ts`, which asserts what a plugin
+ * effect does and — more importantly — does not emit. Driving it through
+ * `snapshotToFrameScene` would need a whole snapshot to ask a question about
+ * one effect, and the answer would be buried in a scene.
+ */
+export function extractSpatialEffects(
   layer: RenderLayer,
   onlyGpuOnly = false,
 ): import('@motion/renderer').RenderableEffect[] | undefined {
@@ -436,6 +445,29 @@ function extractSpatialEffects(
       // Gradient Overlay layer style's, which compiles to it — moved nothing.
       spatial.push({ type: 'gradient-ramp', blend: n('blend') / 100, colorA: c('colorA'), colorB: c('colorB'), angle: n('angle') });
     }
+    if (e.type === 'beam') {
+      /*
+        Percentages become FRACTIONS here, and the endpoints stay relative to
+        the layer's box — the renderer resolves them against the chain's
+        buffer, which is not the layer's box on the 2D route.
+
+        `length` is AE's Time control: how far along the path the head has
+        travelled. It is clamped here rather than in the shader because
+        `applyBeam` clamps it too, and a value the two paths disagree about is
+        the kind of difference that shows up as a beam of the wrong length on
+        one backend only.
+      */
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'beam',
+        startX: n('startX') / 100, startY: n('startY') / 100,
+        endX: n('endX') / 100, endY: n('endY') / 100,
+        length: clamp01n(n('length') / 100),
+        thickness: Math.max(0.5, n('thickness')),
+        softness: clamp01n(n('softness') / 100),
+        color: c('color'),
+      });
+    }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {
       // Map source layer (node id === renderable id). '' / non-string = unset →
@@ -443,6 +475,49 @@ function extractSpatialEffects(
       const mapRaw = effectParam(e, 'mapLayerId');
       const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
       spatial.push({ type: 'displacement-map', amount: n('amount'), ...(mapLayerId ? { mapLayerId } : {}) });
+    }
+    if (e.type === 'apply-color-lut') {
+      /*
+        Emitted only when the file actually parsed.
+
+        An unset or unreadable LUT is a layer with no grade, and the honest
+        render of that is the layer unchanged — so the entry is omitted rather
+        than emitted with an empty table for the renderer to skip. That also
+        keeps the effect list free of entries the pass would only discard, which
+        matters because `effectSpreadPx` and the batching walk it.
+      */
+      const cube = readCubeLutParam(e);
+      if (cube) {
+        spatial.push({
+          type: 'apply-color-lut',
+          // The SAME key MotionRendererBackend registers the strip under. Two
+          // spellings of one key is how a texture ends up uploaded and never
+          // sampled — see `lut:` vs `cubelut:` there for why they differ.
+          lutTextureKey: `cubelut:${layer.id}`,
+          size: cube.size1d > 0 ? cube.size1d : cube.size,
+          is1d: cube.size1d > 0,
+          intensity: n('intensity') / 100,
+          // One pair for all three channels; `.cube` allows a per-channel
+          // domain and files using one are vanishingly rare.
+          domainMin: cube.domainMin[0],
+          domainMax: cube.domainMax[0],
+        });
+      }
+    }
+    if (e.type === 'compound-blur') {
+      // Same unset rule and the same self-fallback as displacement-map above.
+      const mapRaw = effectParam(e, 'blurLayerId');
+      const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
+      spatial.push({
+        type: 'compound-blur',
+        maxRadiusPx: n('maxBlur'),
+        // Read as a BOOLEAN, not through `n()`: `effectNumber` returns 0 for a
+        // checkbox param, so `n('invert') > 0.5` would be unconditionally false
+        // and the control would persist, keyframe, and do nothing. Same reading
+        // as set-matte's `invert` below, which is the existing precedent.
+        invert: e.params?.invert === true,
+        ...(mapLayerId ? { mapLayerId } : {}),
+      });
     }
     if (e.type === 'set-matte') {
       // Same shape as displacement-map above — node id === renderable id. The
@@ -463,6 +538,123 @@ function extractSpatialEffects(
       });
     }
     if (e.type === 'motion-tile') spatial.push({ type: 'motion-tile', scale: n('scale') });
+    if (e.type === 'bevel-alpha' || e.type === 'bevel-edges') {
+      /*
+        Thickness arrives in PIXELS and the shaders work in UV, so it is scaled
+        by the layer box here — a bevel specified in pixels must not get
+        thicker when the same layer is used at a larger size.
+      */
+      const px = Math.max(1, layer.width || 1);
+      const py = Math.max(1, layer.height || 1);
+      spatial.push({
+        type: e.type,
+        thickness: n('thickness') / Math.min(px, py),
+        lightRad: (n('lightAngle') * Math.PI) / 180,
+        intensity: n('intensity') / 100,
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'arithmetic') {
+      // 0..255 → 0..1. Authored 8-bit because And/Or/Xor are only meaningful
+      // on integers; the shader re-quantises for those three operators.
+      spatial.push({
+        type: 'arithmetic',
+        operator: Math.round(n('operator')),
+        r: n('red') / 255,
+        g: n('green') / 255,
+        b: n('blue') / 255,
+        // Read as a BOOLEAN: effectNumber returns 0 for a checkbox param, so
+        // `n('clip') > 0.5` would be unconditionally false and the control
+        // would persist, keyframe and do nothing.
+        clip: e.params?.clip !== false,
+      });
+    }
+    if (e.type === 'sphere') {
+      // `aspect` lets the shader keep the silhouette CIRCULAR on a non-square
+      // layer — without it the sphere is an ellipse, because raw UV compresses
+      // x by w/h.
+      spatial.push({
+        type: 'sphere',
+        radius: n('radius') / 100,
+        rotXRad: (n('rotateX') * Math.PI) / 180,
+        rotYRad: (n('rotateY') * Math.PI) / 180,
+        rotZRad: (n('rotateZ') * Math.PI) / 180,
+        shading: n('shading') / 100,
+        aspect: Math.max(1, layer.width || 1) / Math.max(1, layer.height || 1),
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'cylinder') {
+      spatial.push({
+        type: 'cylinder',
+        radius: n('radius') / 100,
+        rotRad: (n('rotation') * Math.PI) / 180,
+        shading: n('shading') / 100,
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'spotlight') {
+      // From/To are offsets from rest (top-centre, layer centre), resolved here
+      // and converted to aspect-corrected units — the same treatment Bend's
+      // Top/Base get, and for the same reason: a cone measured in raw UV is an
+      // ellipse on a non-square layer.
+      const w = Math.max(1, layer.width || 1);
+      const h = Math.max(1, layer.height || 1);
+      const aspect = w / h;
+      const toQ = (pxX: number, pxY: number): { x: number; y: number } =>
+        ({ x: (pxX / w) * aspect, y: pxY / h });
+      const from = toQ(w / 2 + n('fromX'), 0 + n('fromY'));
+      const to = toQ(w / 2 + n('toX'), h / 2 + n('toY'));
+      spatial.push({
+        type: 'spotlight',
+        fromX: from.x, fromY: from.y,
+        toX: to.x, toY: to.y,
+        // The control is the FULL cone; the shader measures a half angle from
+        // the axis. Halving once here beats every reader of the uniform having
+        // to remember which one it holds.
+        coneHalfRad: (n('coneAngle') * Math.PI) / 360,
+        softness: n('edgeSoftness') / 100,
+        intensity: n('intensity') / 100,
+        ambient: n('ambient') / 100,
+        aspect,
+        lightOnly: Math.round(n('render')) === 1,
+        // Percent of the layer's height — the unit the shader works in.
+        reach: n('reach') / 100,
+        color: c('lightColor', 1),
+      });
+    }
+    if (e.type === 'bend') {
+      /*
+        Top and Base are stored as OFFSETS from a rest position — the layer's
+        top-centre and bottom-centre — which is the convention every handled
+        effect uses (effectHandles.ts). Resolving rest here, once, is what lets
+        the params default to zero and survive a resize.
+
+        Converted to ASPECT-CORRECTED layer units, the space the shader bends
+        in: x scaled by w/h so a unit is the same distance on both axes. In raw
+        UV a bend line at any angle other than horizontal or vertical would
+        shear on a non-square layer.
+      */
+      const w = Math.max(1, layer.width || 1);
+      const h = Math.max(1, layer.height || 1);
+      const aspect = w / h;
+      // rest + offset, in px, then into units of the layer's height.
+      const topPxX = w / 2 + n('topX');
+      const topPxY = 0 + n('topY');
+      const basePxX = w / 2 + n('baseX');
+      const basePxY = h + n('baseY');
+      spatial.push({
+        type: 'bend',
+        angleRad: (n('amount') * Math.PI) / 180,
+        style: Math.round(n('style')),
+        aspect,
+        holdOutside: Math.round(n('outside')) === 1,
+        topX: (topPxX / w) * aspect,
+        topY: topPxY / h,
+        baseX: (basePxX / w) * aspect,
+        baseY: basePxY / h,
+      });
+    }
     if (e.type === 'fill') {
       spatial.push({ type: 'fill', color: c('color', n('opacity') / 100) });
     }
@@ -474,6 +666,135 @@ function extractSpatialEffects(
     }
     if (e.type === 'noise') {
       spatial.push({ type: 'noise', amount: n('amount') / 100, evolution: n('evolution'), monochrome: e.params?.monochrome !== false });
+    }
+    /*
+      A plugin's effect.
+
+      Matched by the DOT in its type rather than against a list, because the set
+      is not knowable at build time — it is whatever is installed. Namespacing
+      (`<pluginId>.<effectId>`) is what makes that safe: no built-in type
+      contains a dot, so this branch cannot swallow one.
+
+      Everything the renderer needs is resolved HERE. The parameter layout comes
+      from the plugin's manifest, which only this side knows about; the pass
+      receives a shader name and packed bytes and stays ignorant of plugins.
+    */
+    if (e.type.includes('.')) {
+      const registered = effectById(e.type);
+      /*
+        Emitted only when READY.
+
+        `pending` has no compiled pipeline yet, `failed` had its shader refused,
+        and `disabled` was implicated in a device loss. Drawing any of them asks
+        the renderer for a pipeline that does not exist — and for `disabled` it
+        would silently undo the protection the user was given, which is the
+        worst of the three.
+      */
+      if (registered?.state === 'ready') {
+        /*
+          The second texture, when this effect declared one.
+
+          Same shape and the same unset rule as `displacement-map` above — node
+          id === renderable id, empty or non-string means unset — and the same
+          fallback: unset self-samples rather than being skipped. An effect
+          whose map is missing should draw the layer against itself, which is
+          visibly wrong and debuggable, rather than disappear.
+
+          Read from whatever the manifest named its layer parameter, not a fixed
+          key, so the scene follows the author's own vocabulary.
+        */
+        const [layerParam] = layerParamNames(registered.contribution.params);
+        const mapRaw = layerParam ? paramsOf(e)[layerParam] : undefined;
+        const mapLayerId = typeof mapRaw === 'string' && mapRaw !== '' ? mapRaw : undefined;
+
+        // Packed ONCE and shared by every pass. They all read the same
+        // parameter block from the same offsets; only the host's own fields
+        // differ per pass, and the renderer writes those.
+        // `packParameters` hands back an ArrayBuffer; the scene carries a typed
+        // view so the renderer never has to know the element size.
+        const params = new Float32Array(packParameters(
+          registered.layout.layout,
+          registered.layout.size,
+          paramsOf(e),
+        ));
+
+        /*
+          ★ One spatial entry PER PASS. This is what executes a chain.
+
+          The renderer's spatial-effects list already ping-pongs between
+          offscreen targets — that is how a layer with a blur and then a glow
+          works — so a chain needs no new mechanism, only its passes emitted in
+          order. The host sequences and allocates; the plugin never sees a
+          target, which is the promise multi-pass had to keep.
+
+          `passIndex` travels as a field rather than being baked into `params`
+          because the value beside it in the shader, `texelSize`, depends on the
+          size of the target being drawn into. Only the renderer knows that, so
+          the whole host block is written there and this side stays out of it.
+        */
+        /*
+          Does anything in this chain want the original back?
+
+          Decided HERE, once per chain, because this is the only side that
+          knows how the flat list of scene entries below groups into chains.
+          The renderer sees N independent entries and could not work it out.
+
+          Per chain rather than always, because capturing costs a full-screen
+          blit every frame and the overwhelming majority of chains — every
+          separable blur — never look at it.
+        */
+        const chainReadsOrigin = registered.passes.some((p) => p.readsOrigin);
+
+        /*
+          How far this effect reaches outside the layer, at THIS frame's
+          parameter values.
+
+          Evaluated here because this is the side that holds them. A number
+          fixed at install would have to be the animated worst case — a blur
+          going 0 → 40 would reserve 40px of margin on the frame where its
+          radius is 0, on every 3D layer carrying it.
+
+          Emitted on pass 0 only. The margin is a property of the EFFECT, and
+          `effectSpreadPx` takes the max over the list, so repeating it on
+          every pass would be the same number counted several times — harmless
+          today and exactly the sort of thing that stops being harmless when
+          someone later sums instead of maxing.
+        */
+        const spreadPx = effectSpreadFor(registered.contribution, paramsOf(e));
+
+        for (const pass of registered.passes) {
+          spatial.push({
+            type: 'plugin',
+            shader: pass.shaderId,
+            passIndex: pass.index,
+            // Only when it is not 1, so a single-pass effect's scene entry is
+            // byte-identical to what it was before chains existed.
+            ...(pass.scale !== 1 ? { passScale: pass.scale } : {}),
+            // Pass 0 takes the snapshot; the passes that asked read it.
+            ...(chainReadsOrigin && pass.index === 0 ? { capturesOrigin: true } : {}),
+            ...(pass.readsOrigin ? { readsOrigin: true } : {}),
+            ...(spreadPx > 0 && pass.index === 0 ? { spreadPx } : {}),
+            // What the SHADER asks for, not what the user chose — see the field's
+            // own note. Set from the declaration so an effect with no map picked
+            // yet still gets a material whose layout matches its bindings.
+            ...(layerParam ? { readsMap: true } : {}),
+            ...(mapLayerId ? { mapLayerId } : {}),
+            params,
+            /*
+              Attribution names the EFFECT, not the pass.
+
+              A device loss inside the vertical half of a blur is the blur's
+              fault as far as a user is concerned, and `disableEffect` keys off
+              the effect id — reporting `acme.blur#vertical` would name
+              something they cannot find in any list.
+            */
+            onDraw: {
+              begin: () => beginEffectDraw(registered.id),
+              end: () => endEffectDraw(),
+            },
+          });
+        }
+      }
     }
   }
   return spatial.length > 0 ? spatial : undefined;
@@ -663,6 +984,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.preserveTransparency ? { preserveTransparency: true } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     // AE's per-layer Quality switch. Only emitted for 'draft' — the linear
@@ -718,6 +1040,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         specular: layer.shade3d.specular,
         shininess: layer.shade3d.shininess,
         ...(layer.shade3d.metal ? { metal: layer.shade3d.metal } : {}),
+        ...(layer.shade3d.oneSided ? { oneSided: true } : {}),
         quadGain: layer.lighting,
       };
     } else if (out.color) {
@@ -802,6 +1125,7 @@ function precompToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpaci
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.preserveTransparency ? { preserveTransparency: true } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     color: Color.white(),
@@ -836,6 +1160,7 @@ function particlesToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpa
     opacity: parentOpacity * layer.opacity,
     blend: advBlend > 0 ? 'normal' : fieldAdd ? 'add' : layerBlendToGpu(layer.blend),
     ...(advBlend > 0 ? { advancedBlend: advBlend } : {}),
+    ...(layer.preserveTransparency ? { preserveTransparency: true } : {}),
     ...(layer.backdropBlur && layer.backdropBlur > 0 ? { backdropBlur: layer.backdropBlur } : {}),
     ...(layer.glass ? { glass: toRenderableGlass(layer.glass) } : {}),
     color: Color.white(),
@@ -1033,8 +1358,84 @@ function gradientBackgroundRenderable(width: number, height: number): Renderable
   };
 }
 
+/**
+ * The synthesized faces of one extrusion take the SAME render path as the layer
+ * they belong to.
+ *
+ * ── The failure this closes ─────────────────────────────────────────────────
+ *
+ * `depthEligible3D` is asked per RENDERABLE, but an extrusion is one OBJECT
+ * spread across up to fourteen of them, and the predicate cannot see that. So a
+ * per-renderable exclusion cuts a solid in half: `CompositionPass.renderList`
+ * collects CONTIGUOUS runs of eligible renderables, so the excluded faces drop
+ * to the affine painter path — which has no depth state at all — while their
+ * siblings stay in the depth-tested group.
+ *
+ * Observed with glass. Glass and backdrop blur are excluded for a good reason
+ * (they read what is composited beneath, which the depth pass cannot supply),
+ * and they reached the front face and the back cap but not the four walls. The
+ * body went to the depth group, the caps went to the painter, and the glass
+ * panel visibly detached from the solid with its rim overlapping the top wall.
+ *
+ * ── Why this is a pass over the result, not a rule in the predicate ─────────
+ *
+ * The correct answer is not "make glass eligible" — it is not — but "do not
+ * split the object". That is a statement about a SET of renderables, which a
+ * per-renderable predicate cannot express whatever rules are added to it. So
+ * the agreement is enforced where the whole set exists, by asking the REAL
+ * `depthEligible3D` rather than by restating its rules. A future exclusion
+ * added to that predicate is therefore honoured here automatically, which is
+ * the property the glass case did not have.
+ *
+ * Faces are identified by the `::ext-` id convention `buildSnapshot` mints
+ * them with — the same convention that keeps them out of hit-testing and the
+ * timeline.
+ */
+const EXT_FACE_MARK = '::ext-';
+
+/** `foo::ext-r` → `foo`; anything else → itself. */
+function extrusionBaseId(id: string): string {
+  const at = id.indexOf(EXT_FACE_MARK);
+  return at < 0 ? id : id.slice(0, at);
+}
+
+function enforceExtrusionPathAgreement(renderables: Renderable[]): void {
+  // Recurse FIRST: a sealed precomp renders through its own list, so an
+  // extrusion inside one would otherwise be missed entirely — and a nested comp
+  // is exactly where nobody would think to look for a body that came apart.
+  for (const r of renderables) {
+    if (r.precomp) enforceExtrusionPathAgreement(r.precomp.renderables as Renderable[]);
+  }
+  // Three linear passes rather than a nested scan. The obvious version asks,
+  // for each renderable, whether any OTHER renderable is one of its faces —
+  // which is quadratic, and this runs on every frame of every scene including
+  // the overwhelming majority that contain no extrusion at all.
+  const owners = new Set<string>();
+  for (const r of renderables) {
+    if (r.id.includes(EXT_FACE_MARK)) owners.add(extrusionBaseId(r.id));
+  }
+  if (owners.size === 0) return;
+
+  const split = new Set<string>();
+  for (const r of renderables) {
+    const base = extrusionBaseId(r.id);
+    if (!owners.has(base)) continue;
+    if (!depthEligible3D(r)) split.add(base);
+  }
+  if (split.size === 0) return;
+
+  // Only ever sets the flag: the resolution of a disagreement is that the whole
+  // object leaves the depth group, never that an ineligible face is forced into
+  // it. Glass genuinely cannot be depth-tested — the fix is to stop the body
+  // splitting, not to pretend the exclusion was wrong.
+  for (const r of renderables) {
+    if (split.has(extrusionBaseId(r.id))) r.depthExempt = true;
+  }
+}
+
 export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   const renderables = flattenLayers(snapshot.layers, Mat3.identity(), 1);
+  enforceExtrusionPathAgreement(renderables);
   // Gradient background sits behind everything (solids stay on the flat
   // composition.background below, which also serves as the fallback plate).
   const bgPaint = snapshot.backgroundPaint;
@@ -1050,7 +1451,12 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   };
   // Advanced blend layers need the samplable SCENE_COLOR_TARGET (they sample the
   // backdrop), same precondition as effects — force it on when any are present.
-  const hasAdvancedBlend = renderables.some((r) => (r.advancedBlend ?? 0) > 0);
+  // Preserve Underlying Transparency samples the accumulated backdrop's ALPHA,
+  // so it has the same precondition — and it can be on with a Normal blend
+  // (advancedBlend 0), which is the common case, so testing advancedBlend alone
+  // would miss every one of them.
+  const hasAdvancedBlend = renderables.some(
+    (r) => (r.advancedBlend ?? 0) > 0 || !!r.preserveTransparency);
   // Backdrop blur samples the scene beneath the layer — same precondition.
   // Glass samples the backdrop too, and can legitimately run with a blur
   // radius of 0 (clear glass), so testing backdropBlur alone would miss it.
@@ -1069,7 +1475,6 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
       background: snapshot.transparent ? Color.transparent() : Color.fromHex(snapshot.background),
     },
     renderables,
-    selection: [],
     hasEffects,
     ...(has3d ? { camera3d: snapshot.camera3d } : {}),
     ...(has3d && snapshot.lights3d && snapshot.lights3d.length > 0 ? { lights3d: snapshot.lights3d } : {}),

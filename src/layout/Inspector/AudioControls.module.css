@@ -20,7 +20,7 @@
 }
 
 .clipBadge {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-semibold);
   padding: 1px 6px;
   border-radius: 999px;
@@ -50,7 +50,7 @@
   text-transform: none;
   letter-spacing: 0;
   font-weight: var(--font-weight-regular);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
   opacity: 0.75;
 }
@@ -164,13 +164,13 @@
 
 .panelDesc {
   margin: calc(var(--space-2) * -1) 0 0;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   line-height: 1.45;
   color: var(--color-text-tertiary);
 }
 
 .panelDesc code {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   padding: 0 3px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
@@ -183,7 +183,7 @@
 }
 
 .fieldLabel {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--letter-spacing-uppercase);
   text-transform: uppercase;
@@ -203,7 +203,7 @@
 .segOn {
   height: 22px;
   padding: 0 4px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-semibold);
   border: none;
   border-radius: calc(var(--radius-sm) - 1px);
@@ -235,7 +235,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }

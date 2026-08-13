@@ -165,7 +165,7 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
         aria-expanded={moveMenuOpen}
         onClick={() => setMoveMenuOpen((v) => !v)}
       >
-        <Icon name="grip-vertical" size={16} />
+        <Icon name="grip-vertical" size="md" />
       </button>
       {moveMenuOpen && (
         <ul className={cn(styles.moveMenu, isRightInspector && styles.moveMenuRightInspector)} role="menu">
@@ -254,7 +254,7 @@ export function DockPanel({ region, renderers, headerExtras, className }: DockPa
                 // The tooltip on the wrapper covers sighted users; this is what
                 // a screen reader announces for an otherwise nameless button.
                 ariaLabel: typeof item.label === 'string' ? item.label : item.id,
-                icon: item.icon ? <Icon name={item.icon} size={18} /> : undefined,
+                icon: item.icon ? <Icon name={item.icon} size="md" /> : undefined,
                 // Honour the panel's own flag. Every panel registers
                 // `closable: true` and this hardcoded `false` threw it away, so
                 // `Tabs` never rendered the button and `onClose` was dead.

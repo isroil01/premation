@@ -13,6 +13,7 @@
 import type { GlassStyle } from './layerStyles';
 import { defaultGlassStyle } from './layerStyles';
 import { parseColorChannels, channelsToColor } from '@core/effects/effects';
+import { clamp01 } from '@utils/lang';
 
 /** Prop-path a glass parameter animates under. */
 export function glassPropPath(param: keyof GlassStyle): string {
@@ -121,6 +122,3 @@ export function resolveGlass(
   };
 }
 
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v;
-}

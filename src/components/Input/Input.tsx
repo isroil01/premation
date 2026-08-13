@@ -68,7 +68,7 @@ function InputInner(
         className={cn(styles.field, styles[`size-${size}`], disabled && styles.disabled)}
         data-size={size}
       >
-        {leftIcon ? <Icon name={leftIcon} size={14} className={styles.adornment} /> : null}
+        {leftIcon ? <Icon name={leftIcon} size="md" className={styles.adornment} /> : null}
         {prefix ? <span className={styles.adornment}>{prefix}</span> : null}
         <input
           ref={ref}
@@ -87,10 +87,10 @@ function InputInner(
             className={styles.clear}
             onClick={onClear}
           >
-            <Icon name="close" size={12} />
+            <Icon name="close" size="sm" />
           </button>
         ) : null}
-        {rightIcon && !showClear ? <Icon name={rightIcon} size={14} className={styles.adornment} /> : null}
+        {rightIcon && !showClear ? <Icon name={rightIcon} size="md" className={styles.adornment} /> : null}
         {suffix ? <span className={styles.adornment}>{suffix}</span> : null}
       </div>
       {error ? (

@@ -14,38 +14,37 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  height: 32px;
-  padding: 0 var(--space-5);
+  height: 34px;
+  padding: 0 var(--space-4);
   background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-border-subtle);
   flex: none;
   user-select: none;
 }
 
 .compact .header {
   height: 30px;
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-3);
 }
 
 .titleGroup {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
   flex: 1;
 }
 
 .icon {
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   flex: none;
 }
 
 .title {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-spacing-uppercase);
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -62,7 +61,7 @@
 .actions {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   flex: none;
 }
 
@@ -82,10 +81,10 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  height: 24px;
+  height: var(--control-height-md);
   padding: 0 var(--space-5);
   background: var(--color-panel-header);
-  border-top: 1px solid var(--color-divider);
+  border-top: 1px solid var(--color-border-subtle);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   flex: none;

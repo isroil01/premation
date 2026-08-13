@@ -275,7 +275,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
         }}
         aria-label={animated ? 'Disable animation' : 'Enable animation'}
       >
-        <Icon name="stopwatch" size={11} />
+        <Icon name="stopwatch" size="sm" />
       </button>
     );
   };
@@ -357,7 +357,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
             title={linkedScale ? 'Unlink Scale dimensions' : 'Link Scale dimensions (Uniform Zoom)'}
             style={{ marginLeft: 6 }}
           >
-            <Icon name={linkedScale ? 'lock' : 'unlock'} size={10} />
+            <Icon name={linkedScale ? 'lock' : 'unlock'} size="sm" />
           </button>
           {isScaleAnimated && <span className={styles.animatedDot} />}
           <span style={{ flex: 1 }} />

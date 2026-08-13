@@ -112,14 +112,14 @@ export function ExportPreview({
       >
         {error ? (
           <div className={styles.overlayError}>
-            <Icon name="warning" size={16} />
+            <Icon name="warning" size="md" />
             <span>{error}</span>
           </div>
         ) : !ready ? (
           <div className={styles.overlayMuted}>Preparing preview…</div>
         ) : blank ? (
           <div className={styles.overlayWarn}>
-            <Icon name="warning" size={16} />
+            <Icon name="warning" size="md" />
             <span>
               Nothing is visible at this frame — an export starting here would look empty. Check layer
               visibility, the work area, and whether this composition is the active one.

@@ -86,11 +86,14 @@ export function packSolid(mvp: Mat3, color: Color, opacity: number, shape: Solid
 /** Hard cap on lights uploaded per draw; extra scene lights are truncated. */
 export const MAX_LIGHTS3D = 8;
 
-/** vec4 slots per packed light (posType, colorGain, radius/cone/aim). */
-export const LIGHT3D_VEC4S = 3;
+/** vec4 slots per packed light: posType, colorGain, radius/cone/aimXY, and
+ *  aimZ/feather/falloff. The shader's `array<vec4<f32>, N>` and `vec4 lights[N]`
+ *  declarations are MAX_LIGHTS3D × this — change one and the others must follow
+ *  or the tail silently misaligns. */
+export const LIGHT3D_VEC4S = 4;
 
 /** Floats occupied by the shade tail appended to every 3d material uniform:
- *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×3 vec4). */
+ *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×4 vec4). */
 export const SHADE3D_FLOATS = MAT4_STD140_FLOATS + 4 + 4 + MAX_LIGHTS3D * LIGHT3D_VEC4S * 4;
 
 /** One scene light in the shader's terms. Structurally compatible with the
@@ -105,11 +108,20 @@ export interface Shade3DLight {
   y: number;
   z: number;
   radius: number;
-  /** cos/sin of the light's 2D aim angle (spot cone aim / parallel direction). */
+  /** Resolved 3D UNIT aim (spot cone aim / parallel direction) — the light's
+   *  Point of Interest when it has one, else its type's legacy 2D-angle
+   *  fallback. Was cos/sin of the angle, which no POI could ever reach. */
   aimX: number;
   aimY: number;
+  aimZ: number;
   /** Spot half-cone in radians. */
   halfConeRad: number;
+  /** Spot cone feather in ABSOLUTE radians (0 = hard edge). */
+  coneFeatherRad: number;
+  /** 0 none (legacy hard cutoff + linear ramp), 1 smooth, 2 inverse-square. */
+  falloffMode: number;
+  /** Smooth-curve span in px, default already applied by the producer. */
+  falloffDistance: number;
 }
 
 const LIGHT3D_TYPE_ID: Record<Shade3DLight['type'], number> = { ambient: 0, point: 1, spot: 2, parallel: 3 };
@@ -133,6 +145,22 @@ export interface Shade3D {
    * 1 tints it fully by the surface (metal).
    */
   metal?: number;
+  /**
+   * Light this surface from ONE side: `max(dot(N, L), 0)` instead of
+   * `abs(dot(N, L))`.
+   *
+   * Off by default, and that default is correct for the app's primitive — a 2D
+   * layer in space has no inside, and a layer seen from behind should still
+   * light. It is wrong for a face that BOUNDS A VOLUME: with `abs()` a box lit
+   * hard from one side comes out lit identically on both sides.
+   *
+   * Set only by an extrusion's synthesized WALLS and BACK CAP, whose normals
+   * point out of the solid. Not the front face — that is the layer itself, and
+   * its outward direction is −Z, the opposite of the convention `planeNormalOf`
+   * returns. Not text depth slices either: their normals are all +Z, so
+   * one-sided shading would black the whole stack out under a front light.
+   */
+  oneSided?: boolean;
   lights: ReadonlyArray<Shade3DLight>;
 }
 
@@ -147,7 +175,10 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
   out[o + 0] = shade.eye[0];
   out[o + 1] = shade.eye[1];
   out[o + 2] = shade.eye[2];
-  out[o + 3] = 1; // lit flag
+  // Lit flag: 1 = two-sided, 2 = one-sided. A third value in an existing slot
+  // rather than a new one, so the std140 layout of the shade tail is unchanged
+  // and no other packer or shader moves.
+  out[o + 3] = shade.oneSided ? 2 : 1;
   o += 4;
   const lights = shade.lights.filter((l) => l.gain > 0).slice(0, MAX_LIGHTS3D);
   out[o + 0] = lights.length;
@@ -169,7 +200,15 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
     out[o + 9] = l.halfConeRad;
     out[o + 10] = l.aimX;
     out[o + 11] = l.aimY;
-    o += 12;
+    // Fourth vec4 — the parameters that used to stop at the CPU. Feather was
+    // hardcoded to 20 % in the shader, the falloff curves degraded to linear,
+    // and the aim's z was unrepresentable, so a Point of Interest did nothing
+    // on the depth path.
+    out[o + 12] = l.aimZ;
+    out[o + 13] = l.coneFeatherRad;
+    out[o + 14] = l.falloffMode;
+    out[o + 15] = l.falloffDistance;
+    o += 16;
   }
   return end;
 }
@@ -369,12 +408,161 @@ export function packDisplacementMap(mvp: Mat3, uvRect: Rect, amountX: number, am
   return out;
 }
 
+/**
+ * Apply Color LUT: x = cube edge N, y = 1 for a 1D LUT, zw = the input domain.
+ *
+ * The domain travels as a single min/max pair rather than per channel. `.cube`
+ * allows a per-channel domain and files that use one are vanishingly rare;
+ * carrying three pairs would cost a second uniform vec4 for a case no LUT in
+ * the wild exercises. `toStoredLut` keeps the full domain, so widening this
+ * later needs no format change.
+ */
+export function packApplyColorLut(
+  mvp: Mat3,
+  uvRect: Rect,
+  size: number,
+  is1d: boolean,
+  intensity: number,
+  domainMin: number,
+  domainMax: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  // Size is SIGN-ENCODED (negative = 1D) so intensity gets the second slot.
+  // The block is one vec4 and a size is never legitimately negative, so the
+  // encoding cannot collide with a real value.
+  out[o + 0] = is1d ? -size : size;
+  out[o + 1] = intensity;
+  out[o + 2] = domainMin; out[o + 3] = domainMax;
+  return out;
+}
+
+/**
+ * Compound Blur: x = max radius in TEXELS, y = 1 inverts the map, zw = one texel.
+ *
+ * The radius is in texels rather than uv because the shader scales a rosette by
+ * it and then multiplies by `texel` to step — passing a uv-space radius would
+ * make the blur anisotropic on any non-square target, which is every comp that
+ * is not 1:1.
+ */
+export function packCompoundBlur(
+  mvp: Mat3,
+  uvRect: Rect,
+  radiusTexels: number,
+  invert: boolean,
+  texelW: number,
+  texelH: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = radiusTexels; out[o + 1] = invert ? 1 : 0;
+  out[o + 2] = texelW; out[o + 3] = texelH;
+  return out;
+}
+
 /** Set Matte: x = 1 reads the matte's luminance (0 = its alpha), y = 1 inverts. */
 export function packSetMatte(mvp: Mat3, uvRect: Rect, useLuminance: boolean, invert: boolean): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
   out[o + 0] = useLuminance ? 1 : 0; out[o + 1] = invert ? 1 : 0; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * The Perspective family's shared block: two generic vec4s then the light
+ * colour. One packer for all of them because the LAYOUT is what has to agree
+ * with the shaders, and three packers that must stay identical is three places
+ * for them to stop being identical.
+ *
+ * What p0/p1 mean is each shader's business and documented there.
+ */
+export function packPerspective(
+  mvp: Mat3, uvRect: Rect,
+  p0: readonly [number, number, number, number],
+  p1: readonly [number, number, number, number],
+  /** The LAYER's box within the chain buffer — NOT `uvRect`. See the shaders. */
+  fxBox: Rect,
+  color: Color,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = p0[0]; out[o + 1] = p0[1]; out[o + 2] = p0[2]; out[o + 3] = p0[3]; o += 4;
+  out[o + 0] = p1[0]; out[o + 1] = p1[1]; out[o + 2] = p1[2]; out[o + 3] = p1[3]; o += 4;
+  o = packRect(fxBox, out, o);
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
+/** Arithmetic: the operator and its per-channel constants, then the clip flag. */
+export function packArithmetic(
+  mvp: Mat3, uvRect: Rect,
+  operator: number, r: number, g: number, b: number, clip: boolean,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = operator; out[o + 1] = r; out[o + 2] = g; out[o + 3] = b; o += 4;
+  out[o + 0] = clip ? 1 : 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * Spotlight's block. One vec4 wider than the rest of the Perspective family
+ * because From/To take four floats between them and the cone still needs its
+ * angle, softness, intensity, ambient, aspect and render mode.
+ *
+ * A wider UNIFORM does not change the binding layout, so this still uses the
+ * shared `SPOTLIGHT_MATERIAL` — only the packer and the shader's struct differ.
+ */
+export function packSpotlight(
+  mvp: Mat3, uvRect: Rect,
+  fromX: number, fromY: number, toX: number, toY: number,
+  coneHalfRad: number, softness: number, intensity: number, ambient: number,
+  aspect: number, lightOnly: boolean, reach: number,
+  /** The LAYER's box within the chain buffer — NOT `uvRect`. See the shader. */
+  fxBox: Rect,
+  color: Color,
+): Float32Array {
+  // uvRect + p0 + p1 + p2 + lightColor — FIVE vec4s after the matrix, not four.
+  // Allocating one short does not throw: JS drops the out-of-range writes, so
+  // the colour silently never arrives AND the buffer is 16 bytes smaller than
+  // the struct the shader declares. WebGPU rejects the bind group, the draw
+  // never happens, and the layer disappears. Guarded by uniformPackerSize.test.
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = fromX; out[o + 1] = fromY; out[o + 2] = toX; out[o + 3] = toY; o += 4;
+  out[o + 0] = coneHalfRad; out[o + 1] = softness; out[o + 2] = intensity; out[o + 3] = ambient; o += 4;
+  out[o + 0] = aspect; out[o + 1] = lightOnly ? 1 : 0; out[o + 2] = reach; out[o + 3] = 0; o += 4;
+  o = packRect(fxBox, out, o);
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
+/**
+ * Bend's two blocks: the arc itself, then the span it acts over.
+ *
+ * `angleRad` is pre-converted and the axis arrives as its cos/sin rather than
+ * as an angle — the shader needs the direction VECTOR, and computing it once
+ * per draw beats recomputing it per fragment.
+ */
+export function packBend(
+  mvp: Mat3, uvRect: Rect,
+  angleRad: number, style: number, aspect: number, outside: number,
+  topX: number, topY: number, baseX: number, baseY: number,
+  /** The LAYER's box within the chain buffer — not `uvRect`. See the shader. */
+  fxBox: Rect,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = angleRad; out[o + 1] = style; out[o + 2] = aspect; out[o + 3] = outside; o += 4;
+  out[o + 0] = topX; out[o + 1] = topY; out[o + 2] = baseX; out[o + 3] = baseY; o += 4;
+  packRect(fxBox, out, o);
   return out;
 }
 
@@ -411,10 +599,105 @@ export function packSharpen(mvp: Mat3, uvRect: Rect, texelWidth: number, texelHe
   return out;
 }
 
+/**
+ * Beam's block: endpoints and radii already in TARGET UV, and the colour.
+ *
+ * The conversion happens in the pass rather than here because only the pass
+ * knows the layer's box within the chain's buffer and the comp-px-to-texel
+ * scale — the two facts that differ between the 2D and 3D routes. This packs
+ * what it is given.
+ */
+export function packBeam(
+  mvp: Mat3, uvRect: Rect,
+  ax: number, ay: number, bx: number, by: number,
+  coreRadius: number, softRadius: number, aa: number,
+  color: Color,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = ax; out[o + 1] = ay; out[o + 2] = bx; out[o + 3] = by; o += 4;
+  out[o + 0] = coreRadius; out[o + 1] = softRadius; out[o + 2] = aa; out[o + 3] = 0; o += 4;
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
 export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: number, monochrome: boolean): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
   out[o + 0] = amount; out[o + 1] = evolution; out[o + 2] = monochrome ? 1 : 0; out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * A plugin effect's uniform block: the renderer's header, then the plugin's own
+ * parameters exactly as the app packed them.
+ *
+ * ── Why the two halves are packed in different places ────────────────────────
+ *
+ * Only the APP knows a plugin's parameter layout — it generated the WGSL struct
+ * from the manifest, so it owns the offsets. Only the PASS knows `mvp` and
+ * `uvRect`, which are per-frame and per-layer. Neither can produce the whole
+ * block alone, and duplicating either half so that one of them could is how the
+ * CPU-side packing and the GPU-side struct drift apart.
+ *
+ * So the app hands over its half, already at its own offsets, and this writes
+ * the header underneath it. `params` is copied rather than mutated: the app may
+ * reuse that buffer across frames, and writing a per-frame transform into it
+ * would make the plugin's parameters depend on where the layer happened to be.
+ *
+ * ── The host pass block, at floats 16..23 (bytes 64..95) ─────────────────────
+ *
+ * Between the renderer's header and the plugin's parameters sits a block this
+ * function owns entirely:
+ *
+ *   16,17  texelSize : vec2<f32>   one over the target's dimensions
+ *   18     passScale : f32
+ *   19     passIndex : f32
+ *   20..23 _reserved : vec4<f32>   zeroed
+ *
+ * `texelSize` is the reason a separable blur can be written at all — `uv +
+ * vec2(texelSize.x, 0)` is one pixel to the right at whatever resolution the
+ * host allocated. It is written HERE and not by the app because the app does
+ * not know the size of the target being drawn into; that is a per-pass,
+ * per-frame fact of the render graph.
+ *
+ * Written unconditionally, for single-pass effects too. The struct declares
+ * these members for every plugin effect, so leaving them as whatever `params`
+ * held would hand a shader a `texelSize` of zero and a blur that samples the
+ * same texel 65 times.
+ */
+const PASS_BLOCK_FLOAT = MAT3_STD140_FLOATS + 4;
+
+export function packPluginEffect(
+  mvp: Mat3,
+  uvRect: Rect,
+  params: Float32Array,
+  /** Target width in texels. `texelSize.x` is one over this. */
+  targetWidth: number,
+  targetHeight: number,
+  passScale: number,
+  passIndex: number,
+): Float32Array {
+  const out = new Float32Array(Math.max(params.length, PASS_BLOCK_FLOAT + 8));
+  out.set(params);
+  const o = packMat3(mvp, out, 0);
+  packRect(uvRect, out, o);
+
+  // Guarded: a zero-sized target is a real state during teardown, and dividing
+  // by it puts Infinity in a uniform — which does not throw and renders a layer
+  // as one flat colour.
+  out[PASS_BLOCK_FLOAT + 0] = targetWidth > 0 ? 1 / targetWidth : 0;
+  out[PASS_BLOCK_FLOAT + 1] = targetHeight > 0 ? 1 / targetHeight : 0;
+  out[PASS_BLOCK_FLOAT + 2] = passScale;
+  out[PASS_BLOCK_FLOAT + 3] = passIndex;
+  // `_reserved`, zeroed explicitly. It is the part a later version will start
+  // using, and a plugin reading stale bytes from it today would break on the
+  // day it becomes meaningful.
+  out[PASS_BLOCK_FLOAT + 4] = 0;
+  out[PASS_BLOCK_FLOAT + 5] = 0;
+  out[PASS_BLOCK_FLOAT + 6] = 0;
+  out[PASS_BLOCK_FLOAT + 7] = 0;
   return out;
 }

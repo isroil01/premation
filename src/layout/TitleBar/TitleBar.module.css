@@ -2,10 +2,10 @@
    with a subtle translucent surface blur and sleek divider seam. */
 .titleBar {
   height: 32px;
-  background: var(--color-titlebar);
+  background: var(--color-surface-1, #1e1e24);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.1));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -59,41 +59,9 @@
   white-space: nowrap;
 }
 
-.center {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  z-index: 1;
-  padding: 3px 10px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.center:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.09);
-}
-
-.projectName {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-text-primary);
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dirtyDot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-modified);
-  box-shadow: 0 0 6px rgba(224, 168, 60, 0.45);
-  flex-shrink: 0;
-}
+/* `.center`, `.projectName` and `.dirtyDot` moved to ProjectStatus.module.css.
+   They were fully styled here and rendered by nothing; they now live with the
+   component that draws them, which both this bar and the web TopNav mount. */
 
 .right {
   display: flex;
@@ -153,6 +121,67 @@
   color: var(--color-primary-hover) !important;
 }
 
+.previewBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  -webkit-app-region: no-drag;
+}
+
+.previewBtn:hover {
+  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+  color: var(--color-primary-hover);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 25%, transparent);
+  transform: translateY(-0.5px);
+}
+
+.previewBtn:active {
+  transform: scale(0.96);
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+}
+
+.exportBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground, #ffffff);
+  border: 1px solid transparent;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  -webkit-app-region: no-drag;
+}
+
+.exportBtn:hover {
+  background: var(--color-primary-hover);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--color-primary) 45%, transparent);
+  transform: translateY(-0.5px);
+}
+
+.exportBtn:active {
+  transform: scale(0.96);
+  background: var(--color-primary-active);
+}
+
 .appMenuBarWrapper {
   display: flex;
   align-items: center;
@@ -178,7 +207,7 @@
 }
 
 .userEmail {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: rgba(255, 255, 255, 0.9);
   max-width: 140px;

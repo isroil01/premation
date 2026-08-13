@@ -14,7 +14,6 @@ import {
   CORNER_HANDLES,
   EDGE_HANDLE_MIN_PX,
   ANY_HANDLE_MIN_PX,
-  type HandleId,
 } from '../selection/handles';
 import { resizeBoundsAboutPivot, isResizeHandle } from '../selection/transform';
 import * as R from '../math/Rect';

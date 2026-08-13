@@ -214,3 +214,164 @@ export function luminanceMapFrom(data: Uint8ClampedArray): Float32Array {
   }
   return map;
 }
+
+/** Which way a Radial Wipe sweeps. */
+export type RadialWipeDirection = 'clockwise' | 'counterclockwise' | 'both';
+
+/** Map the stored 0/1/2 to the direction, defaulting to AE's clockwise. */
+export function radialWipeDirection(v: number): RadialWipeDirection {
+  return v >= 2 ? 'both' : v >= 1 ? 'counterclockwise' : 'clockwise';
+}
+
+/**
+ * Radial Wipe — reveal by sweeping a hand around a centre.
+ *
+ * The clock wipe. Nothing else in the family can produce it: Linear Wipe travels
+ * along a direction and Venetian Blinds opens slats, but neither has an origin
+ * to pivot on, so neither can sweep. It is the transition for anything that
+ * should read as time passing, and the standard way to build a progress dial.
+ *
+ * Angle zero is TWELVE O'CLOCK growing clockwise, the same convention
+ * `polarCoordinatesData` uses and for the same reason: a clock wipe that starts
+ * at three o'clock is not a clock wipe. `Math.atan2(y, x)` puts zero at three
+ * and grows anticlockwise on screen, so the arguments swap and Y negates.
+ *
+ * `both` opens from the start angle in BOTH directions at once, so each side
+ * only has to travel half as far — completion still finishes at 100, which is
+ * what makes the three directions interchangeable on the same keyframes.
+ *
+ * `feather` softens the leading edge, in degrees of arc rather than pixels: a
+ * pixel feather would be wide at the centre and invisible at the rim, since the
+ * same arc covers less distance near the pivot.
+ */
+export function radialWipeData(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  completion: number,
+  startAngleDeg: number,
+  direction: RadialWipeDirection,
+  centerX: number,
+  centerY: number,
+  featherDeg: number,
+): Uint8ClampedArray {
+  const t = completion <= 0 ? 0 : completion >= 1 ? 1 : completion;
+  if (t <= 0) return data;
+  if (t >= 1) {
+    for (let i = 3; i < data.length; i += 4) data[i] = 0;
+    return data;
+  }
+
+  const TAU = Math.PI * 2;
+  const start = ((startAngleDeg * Math.PI) / 180) % TAU;
+  // Half the sweep per side when opening both ways, so the two arms meet
+  // exactly at completion 1.
+  const swept = (direction === 'both' ? t / 2 : t) * TAU;
+  const soft = Math.max(0, (featherDeg * Math.PI) / 180);
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const vx = x + 0.5 - centerX;
+      const vy = y + 0.5 - centerY;
+      // Twelve o'clock, clockwise.
+      let a = Math.atan2(vx, -vy) - start;
+      // Into 0..2π so the comparisons below are a single interval test rather
+      // than a wrap-aware one.
+      a = ((a % TAU) + TAU) % TAU;
+
+      // How far INTO the swept region this pixel is. Negative = not yet reached.
+      let into: number;
+      if (direction === 'clockwise') {
+        into = swept - a;
+      } else if (direction === 'counterclockwise') {
+        into = swept - (TAU - a);
+      } else {
+        // Whichever arm reaches it first.
+        into = Math.max(swept - a, swept - (TAU - a));
+      }
+
+      let coverage: number;
+      if (soft <= 0) {
+        coverage = into > 0 ? 0 : 1;
+      } else {
+        coverage = Math.max(0, Math.min(1, -into / soft));
+      }
+
+      const o = (y * w + x) * 4;
+      data[o + 3] = data[o + 3]! * coverage;
+    }
+  }
+  return data;
+}
+
+/**
+ * Block Dissolve — reveal in a pseudo-random order, one block at a time.
+ *
+ * The digital-glitch dissolve, and the one transition here whose look is set by
+ * its BLOCK SIZE rather than its geometry: at 1×1 it is a per-pixel dissolve, at
+ * 40×40 it is a chunky wipe-on, and the two read as completely different
+ * effects. Gradient Wipe can imitate it only if someone first authors a noise
+ * map at exactly the right block scale, which is the work this removes.
+ *
+ * ── The order must be a hash, not a shuffle ─────────────────────────────────
+ *
+ * Each block's reveal threshold is a hash of its own grid coordinates, so a
+ * block's position in the order never changes. Drawing from a shuffled list
+ * instead would re-shuffle whenever the block size changed — and, worse, blocks
+ * would pop in and out as `completion` was scrubbed BACKWARDS, because the list
+ * would be regenerated per frame. Hashing makes the transition a pure function
+ * of completion, which is what lets it be scrubbed, reversed and cached.
+ *
+ * `feather` softens each block's own edges, so at high values the blocks read as
+ * soft blobs rather than squares.
+ */
+export function blockDissolveData(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  completion: number,
+  blockWidth: number,
+  blockHeight: number,
+  feather: number,
+  seed: number,
+): Uint8ClampedArray {
+  const t = completion <= 0 ? 0 : completion >= 1 ? 1 : completion;
+  if (t <= 0) return data;
+  if (t >= 1) {
+    for (let i = 3; i < data.length; i += 4) data[i] = 0;
+    return data;
+  }
+
+  const bw = Math.max(1, Math.round(blockWidth));
+  const bh = Math.max(1, Math.round(blockHeight));
+  const soft = Math.max(0, feather);
+
+  // The same integer hash the noise kernels in stylize.ts use, keyed on the
+  // BLOCK's coordinates so every pixel of a block gets one shared threshold.
+  const blockThreshold = (bx: number, by: number): number => {
+    let n = bx * 374761393 + by * 668265263 + seed * 1442695040888963328;
+    n = (n ^ (n >> 13)) * 1274126177;
+    return ((n ^ (n >> 16)) >>> 0) / 4294967295;
+  };
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      const threshold = blockThreshold(Math.floor(x / bw), Math.floor(y / bh));
+
+      // Not yet this block's turn — untouched.
+      if (threshold >= t) continue;
+
+      let coverage = 0;
+      if (soft > 0) {
+        // Distance to the nearest edge of this block, so the softening applies
+        // inside the block rather than bleeding into its neighbours.
+        const inX = Math.min(x % bw, bw - 1 - (x % bw));
+        const inY = Math.min(y % bh, bh - 1 - (y % bh));
+        coverage = 1 - Math.max(0, Math.min(1, Math.min(inX, inY) / soft));
+      }
+      data[o + 3] = data[o + 3]! * coverage;
+    }
+  }
+  return data;
+}

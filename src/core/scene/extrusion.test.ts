@@ -215,3 +215,98 @@ describe('extrusion shading constants', () => {
     expect(EXTRUSION_BACK_GAIN).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Winding — every face's normal points OUT of the solid.
+ *
+ * ── Why nothing above catches this ──────────────────────────────────────────
+ *
+ * Left shared `Ry(90°)` with right and bottom shared `Rx(90°)` with top, so
+ * each pair carried the SAME normal and one of every pair pointed into the
+ * body. The suite above passed throughout, and had to: mirroring a quad within
+ * its own plane moves no corner, and every existing assertion is about where
+ * corners land. Two-sided lighting (`abs(dot(N, L))`, in `lightShading.ts` and
+ * all four `builtin.ts` shaders) then made the wrong sign render identically to
+ * the right one.
+ *
+ * So the normal is asserted directly, against the face's own position on the
+ * body — the only statement of the property that does not go through pixels or
+ * through corners.
+ */
+describe('extrusionFaces — face winding', () => {
+  /** A face's outward direction: its own +Z axis (columns 8..10). */
+  const normalOf = (m: import('@motion/scene').Matrix4) => {
+    const n = [m[8]!, m[9]!, m[10]!];
+    const len = Math.hypot(n[0]!, n[1]!, n[2]!) || 1;
+    return n.map((v) => v / len) as [number, number, number];
+  };
+  /** Where the face sits, in the layer's centred frame. */
+  const centreOf = (m: import('@motion/scene').Matrix4) => [m[12]!, m[13]!, m[14]!] as const;
+
+  /**
+   * A wall's normal must point AWAY from the body's axis, i.e. agree in sign
+   * with its own offset from the centre line. Stated as a dot product rather
+   * than as literal vectors so it holds for the chamfer rings and the ellipse
+   * ring too, whose normals are diagonal.
+   */
+  const pointsOutward = (m: import('@motion/scene').Matrix4) => {
+    const n = normalOf(m);
+    const c = centreOf(m);
+    // Only the planar offset — z is the extrusion axis, along which every wall
+    // sits at d/2 and carries no outward component.
+    return n[0]! * c[0]! + n[1]! * c[1]! > 0;
+  };
+
+  it('opposing walls of a box carry OPPOSED normals', () => {
+    const faces = extrusionFaces(W, H, D, 'rect');
+    const by = (s: string) => normalOf(faces.find((f) => f.suffix === s)!.m);
+    const dot = (a: number[], b: number[]) => a[0]! * b[0]! + a[1]! * b[1]! + a[2]! * b[2]!;
+    // Exactly −1: the walls are parallel planes, so anything else is not a
+    // winding difference but a geometry one.
+    expect(dot(by('r'), by('l'))).toBeCloseTo(-1, 9);
+    expect(dot(by('t'), by('b'))).toBeCloseTo(-1, 9);
+  });
+
+  it('every wall of a box points out of the body', () => {
+    for (const f of extrusionFaces(W, H, D, 'rect')) {
+      if (f.role !== 'wall') continue;
+      expect([f.suffix, pointsOutward(f.m)]).toEqual([f.suffix, true]);
+    }
+  });
+
+  it('every wall STRIP points out of the body (the gradient split)', () => {
+    // The split path repeated the shared-rotation mistake verbatim, twenty
+    // strips at a time, so it needs its own assertion rather than trusting the
+    // unsplit case to stand for it.
+    for (const f of extrusionFaces(W, H, D, 'rect', undefined, { wallSegments: 20 })) {
+      if (f.role !== 'wall') continue;
+      expect([f.suffix, pointsOutward(f.m)]).toEqual([f.suffix, true]);
+    }
+  });
+
+  it('every bevel chamfer points out of the body', () => {
+    for (const f of extrusionFaces(W, H, D, 'rect', undefined, { bevel: 8 })) {
+      if (f.role !== 'wall') continue;
+      expect([f.suffix, pointsOutward(f.m)]).toEqual([f.suffix, true]);
+    }
+  });
+
+  it('every facet of an ellipse ring points out of the body', () => {
+    for (const f of extrusionFaces(W, H, D, 'ellipse')) {
+      if (f.role !== 'wall') continue;
+      expect([f.suffix, pointsOutward(f.m)]).toEqual([f.suffix, true]);
+    }
+  });
+
+  it('every facet of a rounded-rect outline points out of the body', () => {
+    for (const f of extrusionFaces(W, H, D, 'rect', undefined, { cornerRadius: 16 })) {
+      if (f.role !== 'wall') continue;
+      expect([f.suffix, pointsOutward(f.m)]).toEqual([f.suffix, true]);
+    }
+  });
+
+  it('the back cap faces away from the viewer (+z is away, see project3d)', () => {
+    const back = extrusionFaces(W, H, D, 'rect').find((f) => f.suffix === 'back')!;
+    expect(normalOf(back.m)[2]).toBeCloseTo(1, 9);
+  });
+});

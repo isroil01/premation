@@ -119,6 +119,15 @@ export interface ProjectStoreShape {
     removeComp: (id: string) => void;
     /** Replace the whole comp table (project load). */
     replaceComps: (comps: Record<string, CompositionSettings>) => void;
+    /**
+     * Collapse back to a single tab on the default composition (File ▸ New).
+     *
+     * A new project replaces the comp table, and any precomp tabs the previous
+     * project had open then pointed at compositions that no longer exist —
+     * silently falling back to DEFAULT_COMPOSITION and dropping every settings
+     * edit made through them.
+     */
+    resetTabs: () => void;
   };
 }
 
@@ -319,6 +328,25 @@ export const useProjectStore = create<ProjectStoreShape>()(
         replaceComps: (comps) => {
           set((s) => {
             s.comps = { ...comps };
+          });
+        },
+        resetTabs: () => {
+          const tabId = `tab_${shortId()}`;
+          set((s) => {
+            s.tabs = {
+              [tabId]: {
+                id: tabId,
+                compositionId: defaultCompId,
+                breadcrumbPath: [defaultCompId],
+                time: 0,
+                frame: 0,
+                playing: false,
+                title: 'Main Comp',
+                dirty: false,
+              },
+            };
+            s.tabOrder = [tabId];
+            s.activeTabId = tabId;
           });
         },
       },

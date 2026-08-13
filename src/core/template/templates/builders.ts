@@ -37,6 +37,75 @@ export function choreographyDuration(animate: (set: SetKf) => void): number {
   return max;
 }
 
+/**
+ * The time (seconds) at which a choreography shows the MOST of itself — the
+ * frame to park a playhead on so the thing that was just inserted is actually
+ * on screen.
+ *
+ * "The end" is the obvious answer and it is wrong for a whole class of item: a
+ * particle burst, a ripple, a glitch stinger and every exit all finish at
+ * opacity 0 on purpose, so their last frame is an empty comp. Deriving the
+ * answer from the keyframes instead of hardcoding one per item means the
+ * catalogs can keep growing without each new entry having to remember to
+ * declare where its own visible frame is.
+ *
+ * Pure: replays `animate` into a table and evaluates it, touching no engine.
+ * Ties go to the LATEST time, so an ordinary entrance still rests settled
+ * rather than mid-flight.
+ */
+export function choreographyRestTime(animate: (set: SetKf) => void, samples = 48): number {
+  // id → prop → sorted (t, value) pairs. Only opacity and scale decide
+  // visibility; position can move a layer off-frame but no authored item
+  // relies on that as its finish.
+  const tracks = new Map<string, Map<string, Array<[number, number]>>>();
+  let duration = 0;
+  animate((id, prop, t, value) => {
+    if (t > duration) duration = t;
+    if (prop !== 'opacity' && prop !== 'scaleX' && prop !== 'scaleY') return;
+    let byProp = tracks.get(id);
+    if (!byProp) { byProp = new Map(); tracks.set(id, byProp); }
+    const list = byProp.get(prop);
+    if (list) list.push([t, value]);
+    else byProp.set(prop, [[t, value]]);
+  });
+  if (duration <= 0 || tracks.size === 0) return duration;
+  for (const byProp of tracks.values()) for (const list of byProp.values()) list.sort((a, b) => a[0] - b[0]);
+
+  // Linear read-back. Easing changes the shape between keys but never whether a
+  // value is zero AT a key, which is all this scoring needs.
+  const at = (list: Array<[number, number]> | undefined, t: number, fallback: number): number => {
+    if (!list || list.length === 0) return fallback;
+    if (t <= list[0]![0]) return list[0]![1];
+    if (t >= list[list.length - 1]![0]) return list[list.length - 1]![1];
+    for (let i = 1; i < list.length; i++) {
+      const [t1, v1] = list[i]!;
+      if (t <= t1) {
+        const [t0, v0] = list[i - 1]!;
+        const span = t1 - t0;
+        return span <= 0 ? v1 : v0 + (v1 - v0) * ((t - t0) / span);
+      }
+    }
+    return list[list.length - 1]![1];
+  };
+
+  let bestT = duration;
+  let bestScore = -1;
+  for (let i = 0; i <= samples; i++) {
+    const t = (i / samples) * duration;
+    let score = 0;
+    for (const byProp of tracks.values()) {
+      // Authoring units here, not render units: opacity is 0..100 and scale is
+      // a 1-is-natural multiplier.
+      const opacity = at(byProp.get('opacity'), t, 100);
+      const sx = at(byProp.get('scaleX'), t, 1);
+      const sy = at(byProp.get('scaleY'), t, 1);
+      if (opacity > 1 && Math.abs(sx) > 0.01 && Math.abs(sy) > 0.01) score++;
+    }
+    if (score >= bestScore) { bestScore = score; bestT = t; }
+  }
+  return bestT;
+}
+
 export function tf(x: number, y: number, rotation = 0): Transform {
   return { position: { x, y }, rotation, scale: { x: 1, y: 1 } };
 }

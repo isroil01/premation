@@ -518,10 +518,10 @@ export function GraphEditor({
       {/* ── Toolbar ────────────────────────────────────────────── */}
       <div className={styles.toolbar}>
         <button type="button" className={mode === 'value' ? styles.tabActive : styles.tab} onClick={() => setMode('value')} title="Value graph">
-          <Icon name="graph-value" size={13} /> Value
+          <Icon name="graph-value" size="sm" /> Value
         </button>
         <button type="button" className={mode === 'speed' ? styles.tabActive : styles.tab} onClick={() => setMode('speed')} title="Speed graph">
-          <Icon name="graph-speed" size={13} /> Speed
+          <Icon name="graph-speed" size="sm" /> Speed
         </button>
         <span className={styles.spacer} />
         {selectedKfData && (
@@ -556,7 +556,7 @@ export function GraphEditor({
             <button
               type="button"
               className={selectedKfData.continuous !== false ? styles.tabActive : styles.tab}
-              style={{ padding: '2px 6px', fontSize: 10, display: 'inline-flex', alignItems: 'center', gap: 3 }}
+              style={{ padding: '2px 6px', fontSize: 'var(--font-size-micro)', display: 'inline-flex', alignItems: 'center', gap: 3 }}
               title={selectedKfData.continuous !== false ? "Click to break tangent handles" : "Click to link tangent handles"}
               onClick={() => {
                 const nextContinuous = selectedKfData.continuous === false;

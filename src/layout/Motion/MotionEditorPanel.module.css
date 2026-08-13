@@ -1,3 +1,24 @@
+/**
+ * Graph panel chrome.
+ *
+ * Three rules this file now holds itself to, because the panel broke all three:
+ *
+ *  1. **One radius system.** Controls are `--radius-control` (4px), wells and
+ *     surfaces are `--radius-surface` (8px). Nothing else. The panel previously
+ *     mixed 1px, 2px, 4px and 6px corners inside one column.
+ *  2. **The type scale means what it says.** `--font-size-micro` is documented in
+ *     tokens/typography.css as uppercase chrome labels ONLY. Sentence-case text
+ *     the user has to read starts at `--font-size-xs`. The easing chips were
+ *     reading "Continuous Bezier" at the 10px chrome floor.
+ *  3. **Every control takes focus visibly.** The app ships `--shadow-focus-ring`
+ *     and this panel used it nowhere, in an editor whose whole pitch is
+ *     keyboard-first.
+ *
+ * Density is deliberately high (cockpit, not gallery): this is a tool panel
+ * docked beside a canvas, and vertical space spent on padding is space the curve
+ * does not get. Rhythm comes from the section rule, not from large gaps.
+ */
+
 .root {
   display: flex;
   flex-direction: column;
@@ -6,6 +27,43 @@
   height: 100%;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* ── Section label ────────────────────────────────────────────────
+   ONE label treatment for the whole panel. This used to be an inline
+   style object repeated at two call sites, against `styles.sectionTitle`
+   — a class name that was never defined in this file. The hairline is what
+   separates sections; there is no card, border box or elevation, because
+   nothing here is floating above anything else. */
+.sectionLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+/* The rule runs to the end of the column, so sections read as bands rather
+   than as a stack of headings. */
+.sectionLabel::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-subtle);
+}
+
+/* A secondary note on the right of a section label (counts, state). */
+.sectionNote {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-regular);
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--color-text-muted);
 }
 
 .empty {
@@ -29,95 +87,155 @@
   gap: var(--space-2);
 }
 
-/* Value / Speed graph toggle (segmented). */
-.modeToggle {
-  display: inline-flex;
-  flex-shrink: 0;
+/* ── Shared control surface ───────────────────────────────────────
+   Every chip and button in the panel is the same object at the same radius,
+   with the same three states. Divergence here is what made the panel read as
+   several different tools stacked in one column. */
+.propChip,
+.modeChip,
+.actionChip,
+.easeChip {
+  border-radius: var(--radius-control);
+  /* `--color-border`, not `--color-border-subtle`: subtle is 4% black in the
+     light theme, which on a white panel leaves a control with no visible edge
+     at all. A thing you click needs to look like a thing you can click in both
+     themes. Subtle stays for dividers and wells, which are not clickable. */
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-.modeChip {
-  padding: 4px var(--space-3);
   background: var(--color-surface-0);
-  border: none;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
   cursor: pointer;
-}
-.modeChip + .modeChip { border-left: 1px solid var(--color-border); }
-.modeChipOn {
-  background: var(--color-primary-subtle);
-  color: var(--color-primary-hover);
-}
-
-/* Easy Ease / Roving quick actions. */
-.actions {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-}
-.actionChip {
-  padding: 4px var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-.actionChip:hover:not(:disabled) { border-color: var(--color-border-strong); color: var(--color-text-primary); }
-.actionChip:disabled { opacity: 0.4; cursor: default; }
-.actionChipOn {
-  background: var(--color-primary-subtle);
-  border-color: var(--color-primary);
-  color: var(--color-primary-hover);
-}
-
-/* Roving keyframe marker — a diamond ring accent. */
-.pointRoving {
-  stroke-dasharray: 2 2;
-}
-
-.propChip {
-  padding: 4px var(--space-3);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-secondary);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.propChip:hover {
+.propChip:hover:not(:disabled),
+.modeChip:hover:not(:disabled),
+.actionChip:hover:not(:disabled),
+.easeChip:hover:not(:disabled) {
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
 }
 
-.propChipOn {
-  background: var(--color-primary-subtle);
-  border-color: var(--color-primary);
-  color: var(--color-primary-hover);
+.propChip:focus-visible,
+.modeChip:focus-visible,
+.actionChip:focus-visible,
+.easeChip:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus-ring);
 }
 
-/* Large, direct-manipulation curve — an inset graph well. */
+/* Pressed: a control that moves under the pointer reads as a real button.
+   1px, because this is a dense tool panel, not a marketing CTA. */
+.propChip:active:not(:disabled),
+.modeChip:active:not(:disabled),
+.actionChip:active:not(:disabled),
+.easeChip:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+/* Disabled was `opacity: 0.4`, which put the label under every contrast floor
+   the theme file is careful about elsewhere. Dim the CONTENT, keep the shape. */
+.propChip:disabled,
+.modeChip:disabled,
+.actionChip:disabled,
+.easeChip:disabled {
+  color: var(--color-text-muted);
+  border-color: var(--color-border-subtle);
+  background: transparent;
+  cursor: not-allowed;
+}
+
+/* The segmented toggle keeps ONE outline; its members must not draw their own. */
+.modeToggle {
+  border-color: var(--color-border);
+}
+
+/* Selected state: one accent, the app's primary, everywhere in the panel.
+ *
+ * The FILL and the BORDER carry "selected"; the label just stays readable.
+ * Measured in the running app, blue-on-blue-tint does not survive the light
+ * theme: `--color-primary-hover` came in at 2.87:1 and `--color-primary` at
+ * 3.89:1 against the 12% tint over white, both under the 4.5:1 floor for an
+ * 11px label. Text at full contrast reads at 11:1 there and the chip is no
+ * less obviously selected, because two other channels already say so. */
+.propChipOn,
+.modeChipOn,
+.actionChipOn,
+.easeChipOn {
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.propChip {
+  padding: 3px var(--space-3);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+}
+
+/* Value / Speed graph toggle — a segmented control, so the two halves share
+   one outline rather than sitting as two loose chips. */
+.modeToggle {
+  display: inline-flex;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.modeToggle .modeChip {
+  border: none;
+  border-radius: 0;
+  padding: 3px var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.modeToggle .modeChip + .modeChip {
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.modeToggle .modeChip:focus-visible {
+  /* Inset, so the ring is not clipped by the segmented control's overflow. */
+  box-shadow: inset 0 0 0 2px var(--color-focus-ring);
+}
+
+/* ── Keyframe actions ─────────────────────────────────────────────
+   Easy Ease / Roving / Copy Ease / Paste Ease were three separate rows with
+   two different button treatments. One row, one treatment, icons leading. */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.actionChip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.pointRoving {
+  stroke-dasharray: 2 2;
+}
+
+/* ── The curve ────────────────────────────────────────────────────
+   A well, not a card: recessed surface, hairline, no shadow. The curve is the
+   only saturated thing in the panel, which is how the eye finds it. */
 .graph {
   width: 100%;
-  height: 200px;
-  /* Keep full height inside the scrolling column (don't let flex shrink it). */
+  height: 208px;
   flex: none;
   display: block;
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-surface);
   touch-action: none;
 }
 
-/* Faint graph-paper divisions. */
 .grid line {
   stroke: var(--color-border-subtle);
   stroke-width: 1;
@@ -130,6 +248,25 @@
   stroke: var(--color-border);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
+}
+
+/* Axis extents, in mono like every other number in the app. Without these the
+   graph showed a shape with no magnitude: you could see a curve rise but not
+   what it rose to. */
+.axisLabel {
+  fill: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+/* Where the playhead sits on this curve. The graph and the timeline show the
+   same time; nothing on screen used to say so. */
+.playhead {
+  stroke: var(--color-timeline-playhead);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  opacity: 0.9;
 }
 
 .curve {
@@ -158,7 +295,14 @@
   stroke: var(--color-selection);
 }
 
-/* Bezier control handles (custom easing). */
+/* An invisible, generous grab target behind each keyframe. The drawn dot is
+   5px; a 5px hit area in a tool people drag all day is a miss-click generator. */
+.pointHit {
+  fill: transparent;
+  stroke: none;
+  cursor: grab;
+}
+
 .bezierLine {
   stroke: var(--color-text-tertiary);
   stroke-width: 1;
@@ -182,13 +326,13 @@
 .controls {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .numeric {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-4);
+  gap: var(--space-3);
 }
 
 .field {
@@ -199,40 +343,42 @@
 }
 
 .fieldLabel {
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.06em;
+  letter-spacing: var(--letter-spacing-uppercase);
   text-transform: uppercase;
   color: var(--color-text-tertiary);
 }
 
+/* ── Easing presets ───────────────────────────────────────────────
+   Five columns, not four: there are ten presets, and a 4-column grid left two
+   orphans on a third row. The curve preview is the control's real content —
+   it is what you recognise an easing by — so it gets the size, and the name
+   sits under it at a readable 11px rather than the 10px chrome floor. */
 .easings {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: var(--space-2);
 }
 
-/* Easing button — a curve preview over its label. */
 .easeChip {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   padding: var(--space-2) 2px;
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
   color: var(--color-text-tertiary);
-  font-size: 10px;
-  cursor: pointer;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-tight);
+  /* Names are one word wide at this column count; "Continuous Bezier" is the
+     one that is not, so it wraps to two lines instead of clipping. */
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .easePreview {
-  width: 24px;
-  height: 16px;
+  width: 26px;
+  height: 17px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.75;
@@ -240,20 +386,28 @@
   stroke-linejoin: round;
 }
 
-.easeChip:hover {
-  color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
-}
-
-.easeChipOn {
-  background: var(--color-primary-subtle);
-  border-color: var(--color-primary);
-  color: var(--color-primary-hover);
-}
-
 .hint {
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   color: var(--color-text-muted);
   text-align: center;
   padding: var(--space-4);
+}
+
+/* The panel's chrome does not animate. Motion in a motion editor belongs to
+   the canvas; a hover transition that fights the preview the user is judging
+   is noise. This only silences the 120ms colour fades above. */
+@media (prefers-reduced-motion: reduce) {
+  .propChip,
+  .modeChip,
+  .actionChip,
+  .easeChip {
+    transition: none;
+  }
+
+  .propChip:active:not(:disabled),
+  .modeChip:active:not(:disabled),
+  .actionChip:active:not(:disabled),
+  .easeChip:active:not(:disabled) {
+    transform: none;
+  }
 }

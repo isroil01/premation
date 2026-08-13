@@ -74,7 +74,7 @@ export function customConfirm(
     openModal({
       title: (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Icon name={isDanger ? 'warning' : 'info'} size={18} style={{ color: isDanger ? 'var(--color-danger)' : 'var(--color-primary)' }} />
+          <Icon name={isDanger ? 'warning' : 'info'} size="md" style={{ color: isDanger ? 'var(--color-danger)' : 'var(--color-primary)' }} />
           <span>{title}</span>
         </div>
       ),
@@ -149,7 +149,7 @@ export function customAlert(
     openModal({
       title: (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Icon name={isDanger ? 'warning' : 'info'} size={18} style={{ color: isDanger ? 'var(--color-danger)' : 'var(--color-primary)' }} />
+          <Icon name={isDanger ? 'warning' : 'info'} size="md" style={{ color: isDanger ? 'var(--color-danger)' : 'var(--color-primary)' }} />
           <span>{title}</span>
         </div>
       ),
@@ -191,7 +191,7 @@ export function customPrompt(
     openModal({
       title: (
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <Icon name="pencil" size={18} style={{ color: 'var(--color-primary)' }} />
+          <Icon name="pencil" size="md" style={{ color: 'var(--color-primary)' }} />
           <span>{title}</span>
         </div>
       ),

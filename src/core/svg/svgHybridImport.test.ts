@@ -123,24 +123,63 @@ describe('import cost', () => {
     }
   });
 
+  /**
+   * The scan was O(n²) once: a live HTMLCollection whose indexed access
+   * re-walks the tree made a 1MB file take 33 SECONDS. This is the only test
+   * here that can see that, because the difference is entirely in the cost.
+   *
+   * ── Why it is shaped the way it is ──────────────────────────────────────
+   *
+   * It used to time each size ONCE, at a 2× size ratio, against a ceiling of
+   * 3 — and it failed under parallel jest load while passing in isolation.
+   * Two separate reasons, and only one of them was noise:
+   *
+   *  1. **A floor that biases the ratio upward.** `Math.max(1, smallMs)` meant
+   *     that once the small import dropped under a millisecond — which it does
+   *     on any current machine — the denominator stopped being a measurement.
+   *     The ratio then read `largeMs / 1`, which exceeds 3 whenever the large
+   *     import takes 3ms, with nothing quadratic anywhere. That is a test that
+   *     gets FLAKIER as hardware gets faster.
+   *  2. **One sample of a one-sided distribution.** A descheduled worker or a
+   *     GC pause only ever makes a timing LONGER. A single sample is therefore
+   *     an upper bound, not an estimate, and dividing two upper bounds gives a
+   *     number that can move in either direction by a lot.
+   *
+   * So: take the MINIMUM of several runs (the right statistic when the noise
+   * is one-sided — the fastest run is the one that was interrupted least), and
+   * widen the size ratio rather than tightening the ceiling. At 4× the input,
+   * linear costs ~4× and quadratic ~16×; a ceiling of 8 sits an entire factor
+   * of two clear of both, which is what makes it robust. The regression this
+   * guards against was four orders of magnitude, not a factor of three — the
+   * test never needed to be sensitive, only reliable.
+   */
   it('stays linear in file size — no quadratic scan', () => {
-    // The scan was O(n²) once: a live HTMLCollection whose indexed access
-    // re-walks the tree made a 1MB file take 33 seconds. Doubling the input
-    // must roughly double the cost, not quadruple it.
     const small = bigSvg(150_000);
-    const large = bigSvg(300_000);
+    const large = bigSvg(600_000);
 
-    const t0 = performance.now();
-    insertSvgLayer(small, 'small.svg');
-    const smallMs = Math.max(1, performance.now() - t0);
+    const bestOf = (runs: number, markup: string, name: string): number => {
+      let best = Infinity;
+      for (let i = 0; i < runs; i += 1) {
+        const t = performance.now();
+        insertSvgLayer(markup, name);
+        best = Math.min(best, performance.now() - t);
+      }
+      return best;
+    };
 
-    const t1 = performance.now();
-    insertSvgLayer(large, 'large.svg');
-    const largeMs = performance.now() - t1;
+    // Warm the parse path once so JIT compilation is not charged to the first
+    // measured size — it is otherwise a fixed cost paid entirely by `small`,
+    // which shrinks the ratio and would hide a real regression.
+    insertSvgLayer(bigSvg(20_000), 'warmup.svg');
 
-    // Linear would be ~2×. Quadratic would be ~4×. A ceiling of 3 separates
-    // them without being sensitive to timer noise on a loaded machine.
-    expect(largeMs / smallMs).toBeLessThan(3);
+    const smallMs = bestOf(3, small, 'small.svg');
+    const largeMs = bestOf(3, large, 'large.svg');
+
+    // No artificial floor. If the timer cannot resolve the small case there is
+    // no ratio to test, and saying so is better than substituting a constant
+    // for a measurement — which is exactly what the old floor did.
+    expect(smallMs).toBeGreaterThan(0);
+    expect(largeMs / smallMs).toBeLessThan(8);
   });
 });
 

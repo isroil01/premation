@@ -22,21 +22,20 @@ export interface LabelColor {
   color: string;
 }
 
-/** The classic AE label palette (fixed swatches, hex — Canvas-safe). */
+/** Curated medium, eye-relaxing pastel/matte label palette. */
 export const LABEL_COLORS: ReadonlyArray<LabelColor> = [
-  { id: 'red',      label: 'Red',      color: '#d5493d' },
-  { id: 'orange',   label: 'Orange',   color: '#e08a3a' },
-  { id: 'yellow',   label: 'Yellow',   color: '#e6c74c' },
-  { id: 'green',    label: 'Green',    color: '#4faf4e' },
-  { id: 'seafoam',  label: 'Sea Foam', color: '#79b39a' },
-  { id: 'aqua',     label: 'Aqua',     color: '#3fc1c9' },
-  { id: 'blue',     label: 'Blue',     color: '#4a7fe0' },
-  { id: 'lavender', label: 'Lavender', color: '#a08fd1' },
-  { id: 'purple',   label: 'Purple',   color: '#8a63d2' },
-  { id: 'pink',     label: 'Pink',     color: '#ef86b5' },
-  { id: 'peach',    label: 'Peach',    color: '#eb9a71' },
-  { id: 'brown',    label: 'Brown',    color: '#996f4d' },
-  { id: 'gray',     label: 'Gray',     color: '#9e9e9e' },
+  { id: 'slate',      label: 'Slate Blue',     color: '#5282b8' },
+  { id: 'teal',       label: 'Sage Teal',      color: '#4ea885' },
+  { id: 'coral',      label: 'Warm Coral',     color: '#d0705a' },
+  { id: 'lavender',   label: 'Soft Lavender',  color: '#8b75c8' },
+  { id: 'steel',      label: 'Steel Blue',     color: '#5692a8' },
+  { id: 'amber',      label: 'Muted Amber',    color: '#b87e4c' },
+  { id: 'olive',      label: 'Soft Olive',     color: '#7b9c6a' },
+  { id: 'magenta',    label: 'Muted Magenta',  color: '#a86b96' },
+  { id: 'aqua',       label: 'Dusty Aqua',     color: '#4b9e99' },
+  { id: 'terracotta', label: 'Terracotta',     color: '#a2775f' },
+  { id: 'royal',      label: 'Soft Royal',     color: '#587db8' },
+  { id: 'coolgray',   label: 'Cool Slate',     color: '#7d8ca3' },
 ];
 
 /** Pure read — the node's explicit label color, or undefined for kind default. */
@@ -55,6 +54,31 @@ export function getNodeLabelColor(nodeId: string): string | undefined {
  * bump the scene revision so every projection (Scene tree, timeline tracks,
  * clip bars) re-derives.
  */
+export function matchLabelColor(
+  nodes: ReadonlyArray<SceneNode>,
+  color: string | undefined,
+): string[] {
+  return nodes.filter((n) => readNodeLabelColor(n) === color).map((n) => n.id);
+}
+
+/**
+ * Ids of every node carrying the same label colour as `nodeId`, in scene order.
+ *
+ * Backs "Select All with This Label". `undefined` is a real match, not a gap in
+ * the query — sweeping up the UNLABELLED layers is exactly as useful as
+ * sweeping up the red ones, and is how you find what you forgot to tag.
+ *
+ * Returns [] when the node is gone rather than throwing: a context menu is
+ * built from a snapshot and the scene can move underneath it.
+ */
+export function nodesWithLabelColor(nodeId: string): string[] {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return [];
+  const all: SceneNode[] = [];
+  defaultSceneGraph.traverse((n) => all.push(n));
+  return matchLabelColor(all, readNodeLabelColor(node));
+}
+
 export function setNodeLabelColor(nodeIds: string | ReadonlyArray<string>, color: string | undefined): void {
   const ids = typeof nodeIds === 'string' ? [nodeIds] : nodeIds;
   let changed = false;

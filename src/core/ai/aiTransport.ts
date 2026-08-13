@@ -24,7 +24,8 @@
  * edition now has a real path and "coming soon" would be the false statement.
  */
 
-import { apiBaseUrl, getToken } from '@core/api/client';
+import { isAuthenticated } from '@core/api/client';
+import { streamApi, StreamStartError } from '@core/api/streamRequest';
 import { aiRunsThroughBackend } from '@core/config/edition';
 import type { AiVaultProvider, AiStreamEvent } from '@app-types/motionEditor';
 
@@ -74,63 +75,57 @@ export function localAiAvailable(): boolean {
  * aborts its upstream provider call, so cancel truly stops the tokens.
  */
 async function* streamViaBackend(req: TransportRequest, signal: AbortSignal): ChunkStream {
-  const token = getToken();
-  if (!token) {
+  // A claim about the session, not a token: the renderer holds no bearer on
+  // desktop, but it still knows whether anyone is signed in — and saying so
+  // here is better than a 401 after the request has gone out.
+  if (!isAuthenticated()) {
     throw new AiTransportError('auth', 'Sign in to use the assistant — AI runs through your Motion account.');
   }
 
-  let res: Response;
+  let handle;
   try {
-    res = await fetch(`${apiBaseUrl()}/ai/stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        provider: req.provider,
-        model: req.model,
-        isPipeline: req.isPipeline ?? false,
-        body: req.body,
-      }),
+    handle = await streamApi(
+      '/ai/stream',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          provider: req.provider,
+          model: req.model,
+          isPipeline: req.isPipeline ?? false,
+          body: req.body,
+        }),
+      },
       signal,
-    });
+    );
   } catch (err) {
     if (signal.aborted) throw new AiTransportError('cancelled', 'Cancelled.');
+    if (err instanceof StreamStartError) {
+      // The gateway answers failures with typed JSON: { code, message,
+      // retryAfterMs }. Preserved exactly — the renderer already renders these
+      // codes, and losing them would turn every gateway refusal into "network".
+      let body: { code?: string; message?: string; retryAfterMs?: number } = {};
+      try {
+        body = JSON.parse(err.body ?? '{}') as typeof body;
+      } catch {
+        /* non-JSON error body — fall through to the status-based default */
+      }
+      // A 0 means the request never left: on desktop that is main refusing the
+      // path, on web a dead socket. Neither is an auth problem.
+      if (err.status === 0) throw new AiTransportError('network', body.message ?? err.message);
+      throw new AiTransportError(
+        body.code ?? (err.status === 401 ? 'auth' : 'network'),
+        body.message ?? `AI gateway returned ${err.status}.`,
+        body.retryAfterMs,
+      );
+    }
     throw new AiTransportError('network', err instanceof Error ? err.message : 'Could not reach the AI gateway.');
   }
 
-  if (!res.ok) {
-    // The gateway answers failures with typed JSON: { code, message, retryAfterMs }.
-    let body: { code?: string; message?: string; retryAfterMs?: number } = {};
-    try {
-      body = (await res.json()) as typeof body;
-    } catch {
-      /* non-JSON error body — fall through to the status-based default */
-    }
-    throw new AiTransportError(
-      body.code ?? (res.status === 401 ? 'auth' : 'network'),
-      body.message ?? `AI gateway returned ${res.status}.`,
-      body.retryAfterMs,
-    );
-  }
-  if (!res.body) throw new AiTransportError('bad_response', 'The AI gateway returned an empty body.');
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
   try {
-    for (;;) {
-      let chunk: ReadableStreamReadResult<Uint8Array>;
-      try {
-        chunk = await reader.read();
-      } catch (err) {
-        if (signal.aborted) throw new AiTransportError('cancelled', 'Cancelled.');
-        throw new AiTransportError('network', err instanceof Error ? err.message : 'The stream failed.');
-      }
-      if (chunk.done) break;
-      yield decoder.decode(chunk.value, { stream: true });
-    }
-    const tail = decoder.decode();
-    if (tail) yield tail;
-  } finally {
-    void reader.cancel().catch(() => undefined);
+    for await (const text of handle.chunks) yield text;
+  } catch (err) {
+    if (signal.aborted) throw new AiTransportError('cancelled', 'Cancelled.');
+    throw new AiTransportError('network', err instanceof Error ? err.message : 'The stream failed.');
   }
 }
 
@@ -238,6 +233,9 @@ export function streamProviderBytes(req: TransportRequest, signal: AbortSignal):
   if (!localAiAvailable()) {
     // A browser build of the local edition — no Electron bridge at all. Say the
     // true thing rather than "coming soon": the desktop app is the local edition.
+    // Throws on the first next() by design, so this failure reaches the caller
+    // through the stream it already handles rather than a second, separate path.
+    // eslint-disable-next-line require-yield
     return (async function* (): ChunkStream {
       throw new AiTransportError(
         'unsupported',

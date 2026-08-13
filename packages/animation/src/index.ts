@@ -40,6 +40,10 @@ export type {
   TokenKind,
   SyntaxToken,
   LoopMode,
+  LayerSpace,
+  SourceRect,
+  ExprMarker,
+  ExprMarkerData,
 } from './expressions';
 
 // The raw parser/evaluator, for callers that need their own scope rather than
@@ -47,6 +51,8 @@ export type {
 // `textTotal` / `selectorValue`, which `compileExpression` knows nothing
 // about). Interpreted, never eval'd — the app's CSP refuses `new Function`.
 export { parseExpression, evaluateExpression, ExprSyntaxError, ExprRuntimeError } from './exprLang';
+export { LAYER_ID_PREFIX, isLayerIdRef, resolveLayerRef, layerIdRef } from './AnimationEngine';
+export { mapLayerNameRefs, layerNameRefsIn } from './layerNameRefs';
 export type { ExprNode } from './exprLang';
 
 // ── Keyframe ids (timeline ↔ engine reference encoding) ───────────
@@ -69,9 +75,11 @@ export type { LottieBezier, LottieShapeProp } from './lottiePath';
 export { AnimationEngine, defaultAnimation } from './AnimationEngine';
 export type {
   AnimSnapshot,
+  ExpressionState,
   AnimationChangeListener,
   AudioLevelProvider,
   ControlProvider,
   LayerResolver,
   BaseValueProvider,
+  MarkerProvider,
 } from './AnimationEngine';

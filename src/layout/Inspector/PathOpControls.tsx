@@ -26,6 +26,7 @@ import {
   type PathOpType,
   type PathOpParam,
 } from '@core/scene/pathOps';
+import type { RepeaterComposite } from '@core/scene/repeater';
 import styles from './TextAnimatorControls.module.css';
 import { Checkbox } from '@components/Checkbox';
 
@@ -38,7 +39,74 @@ const TYPES: { id: PathOpType; label: string }[] = [
   // AE's name for this operator. The stored id stays `roughen` so existing
   // projects keep loading — the label is what was wrong, not the data.
   { id: 'roughen', label: 'Wiggle Paths' },
+  // Trim is an operator like any other since document version 1.4.0. It had its
+  // own inspector section and its own fixed slot after the chain, which made its
+  // position unchangeable — and the position is exactly what matters: trimming
+  // by arc length cuts a ruffled outline somewhere quite different from where it
+  // cuts the smooth one it was built from.
+  { id: 'trim', label: 'Trim Paths' },
+  // Folded in for the same reason Trim was, and the reason is stronger here.
+  // The Repeater applies a per-copy SCALE, and every operator in the chain
+  // measures its effect in absolute px — zigzag's amplitude, Round Corners'
+  // radius, Offset Path's distance. Scaling before an operator changes the
+  // ratio between the two; scaling after it does not. So the position genuinely
+  // changes the picture, which a fixed slot after the chain could not express.
+  { id: 'repeater', label: 'Repeater' },
 ];
+
+/** AE's stacking choice. `above` is this renderer's historical behaviour. */
+const COMPOSITE: { id: RepeaterComposite; label: string }[] = [
+  { id: 'above', label: 'Above' },
+  { id: 'below', label: 'Below' },
+];
+
+interface ParamSpec {
+  param: PathOpParam;
+  label: string;
+  unit?: string;
+  /** Explicit bounds/granularity, when the type alone does not imply them. */
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Signed parameter — suppresses the default non-negative floor. */
+  signed?: boolean;
+}
+
+/** The rows a given operator actually has. One list, read by the card. */
+function paramsFor(type: PathOpType): ReadonlyArray<ParamSpec> {
+  if (type === 'trim') {
+    return [
+      { param: 'start', label: 'Start', unit: '%' },
+      { param: 'end', label: 'End', unit: '%' },
+      { param: 'offset', label: 'Offset', unit: '%' },
+    ];
+  }
+  if (type === 'repeater') {
+    // Same rows, same labels and the same order the Repeater section had, so
+    // the fold is a move rather than a redesign. `offset` is the ladder Offset
+    // — AE's, shifting which rung copy 0 starts on — sharing the param slot
+    // with Trim's, which is safe because an operator is exactly one type.
+    // Bounds and steps carried over verbatim: a ladder that cannot be nudged in
+    // hundredths is a scale field that jumps from 1 to 2, and the positions,
+    // rotation and anchors are all signed — a repeater marching left is as
+    // ordinary as one marching right.
+    return [
+      { param: 'copies', label: 'Copies', min: 1, max: 200, step: 1 },
+      { param: 'offset', label: 'Offset', step: 0.1, signed: true },
+      { param: 'anchorX', label: 'Anchor X', unit: 'px', signed: true },
+      { param: 'anchorY', label: 'Anchor Y', unit: 'px', signed: true },
+      { param: 'offsetX', label: 'Position X', unit: 'px', signed: true },
+      { param: 'offsetY', label: 'Position Y', unit: 'px', signed: true },
+      { param: 'offsetRotation', label: 'Rotation', unit: '°', signed: true },
+      { param: 'offsetScale', label: 'Scale', min: 0, step: 0.02 },
+      { param: 'offsetOpacity', label: 'Opacity', min: 0, max: 1, step: 0.02 },
+    ];
+  }
+  const { amount, detail } = paramLabels(type);
+  const rows: ParamSpec[] = [{ param: 'amount', label: amount }];
+  if (detail) rows.push({ param: 'detail', label: detail });
+  return rows;
+}
 
 /** Per-operator labels for the two numeric params (detail is unused by some). */
 function paramLabels(type: PathOpType): { amount: string; detail: string | null } {
@@ -79,6 +147,9 @@ function ParamRow({
   label,
   value,
   min,
+  max,
+  step,
+  unit,
 }: {
   nodeId: string;
   /** Which operator in the chain this row edits. Keyframes are id-scoped. */
@@ -87,6 +158,9 @@ function ParamRow({
   label: string;
   value: number;
   min?: number;
+  max?: number;
+  step?: number;
+  unit?: string;
 }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
@@ -119,7 +193,7 @@ function ParamRow({
           />
         </div>
       <span className={styles.paramLabel}>{label}</span>
-      <ValueField value={display} onChange={onChange} min={min} aria-label={label} />
+      <ValueField value={display} onChange={onChange} min={min} max={max} step={step} unit={unit} aria-label={label} />
     </div>
   );
 }
@@ -156,7 +230,7 @@ function PathOpCard({
     <div className={styles.root}>
       <div className={styles.head}>
         <span className={styles.title}>
-          {count > 1 ? `${index + 1}. ${typeLabel}` : 'Path Operator'}
+          {count > 1 ? `${index + 1}. ${typeLabel}` : typeLabel}
         </span>
         {index > 0 && (
           <button
@@ -166,7 +240,7 @@ function PathOpCard({
             aria-label={`Move ${typeLabel} up`}
             title="Move up — operators apply top to bottom"
           >
-            <Icon name="chevron-up" size={12} />
+            <Icon name="chevron-up" size="sm" />
           </button>
         )}
         {index < count - 1 && (
@@ -177,7 +251,7 @@ function PathOpCard({
             aria-label={`Move ${typeLabel} down`}
             title="Move down — operators apply top to bottom"
           >
-            <Icon name="chevron-down" size={12} />
+            <Icon name="chevron-down" size="sm" />
           </button>
         )}
         <button
@@ -187,40 +261,67 @@ function PathOpCard({
           aria-label={`Remove ${typeLabel}`}
           title="Remove path operator"
         >
-          <Icon name="minus" size={12} />
+          <Icon name="minus" size="sm" />
         </button>
       </div>
-      <div className={styles.selectorRow}>
-        <span className={styles.paramLabel}>Type</span>
-        <Dropdown
-          placement="left-start"
-          trigger={
-            <button type="button" className={styles.pick}>
-              <span>{typeLabel}</span>
-              <Icon name="chevron-down" size={11} />
-            </button>
-          }
-          items={items}
-        />
-      </div>
-      <ParamRow
-        nodeId={nodeId}
-        opId={op.id}
-        param="amount"
-        label={paramLabels(op.type).amount}
-        value={op.amount}
-        min={paramMin(op.type, 'amount')}
-      />
-      {paramLabels(op.type).detail && (
+      {/* No type picker on a Trim or Repeater card. Retyping either into a
+          Zig-Zag would silently reinterpret its own parameters as
+          amount/detail, and there is no sensible value to carry across — both
+          are chosen when added, from the same Add menu as everything else. */}
+      {op.type !== 'trim' && op.type !== 'repeater' && (
+        <div className={styles.selectorRow}>
+          <span className={styles.paramLabel}>Type</span>
+          <Dropdown
+            placement="left-start"
+            trigger={
+              <button type="button" className={styles.pick}>
+                <span>{typeLabel}</span>
+                <Icon name="chevron-down" size="sm" />
+              </button>
+            }
+            items={items}
+          />
+        </div>
+      )}
+      {/* Composite is the Repeater's one DISCRETE parameter, so it is a picker
+          rather than a numeric row and carries no stopwatch — interpolating it
+          would mean a frame where the copies are halfway between in front of
+          and behind the original. */}
+      {op.type === 'repeater' && (
+        <div className={styles.selectorRow}>
+          <span className={styles.paramLabel}>Composite</span>
+          <Dropdown
+            placement="left-start"
+            trigger={
+              <button type="button" className={styles.pick}>
+                <span>{op.composite === 'below' ? 'Below' : 'Above'}</span>
+                <Icon name="chevron-down" size="sm" />
+              </button>
+            }
+            items={COMPOSITE.map((c) => ({
+              type: 'item' as const,
+              id: c.id,
+              label: c.label,
+              icon: (op.composite ?? 'above') === c.id ? 'check' : undefined,
+              onSelect: () => updatePathOp(nodeId, op.id, { composite: c.id }),
+            }))}
+          />
+        </div>
+      )}
+      {paramsFor(op.type).map((row) => (
         <ParamRow
+          key={row.param}
           nodeId={nodeId}
           opId={op.id}
-          param="detail"
-          label={paramLabels(op.type).detail!}
-          value={op.detail}
-          min={paramMin(op.type, 'detail')}
+          param={row.param}
+          label={row.label}
+          value={(op[row.param] ?? 0) as number}
+          min={row.min ?? (row.signed ? undefined : row.unit === '%' ? -100 : paramMin(op.type, row.param))}
+          max={row.max ?? (row.unit === '%' ? 200 : undefined)}
+          step={row.step}
+          unit={row.unit}
         />
-      )}
+      ))}
       {/* Roughen is the only temporal operator: the others are a pure function
           of the outline, so a wiggle rate would be a dead control on them. */}
       {op.type === 'roughen' && (
@@ -232,6 +333,24 @@ function PathOpCard({
             label="Wiggles/Second"
             value={op.wigglesPerSecond ?? 0}
             min={0}
+          />
+          {/*
+            Correlation is what makes this operator AE's Wiggle Paths rather
+            than AE's Roughen: how alike NEIGHBOURING points move. 0 shreds the
+            outline — and is the pre-existing behaviour, so stored projects are
+            unchanged — while higher values make it undulate like something with
+            stiffness. It was the one defining parameter the operator lacked
+            while already carrying the name.
+          */}
+          <ParamRow
+            nodeId={nodeId}
+            opId={op.id}
+            param="correlation"
+            label="Correlation"
+            value={op.correlation ?? 0}
+            min={0}
+            max={100}
+            unit="%"
           />
           <div className={styles.paramRow}>
             <div />

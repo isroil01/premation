@@ -27,9 +27,11 @@ export interface DropdownProps {
   items: ReadonlyArray<DropdownItem>;
   placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end' | 'right-start' | 'left-start';
   className?: string;
+  /** When true, removes the max-height cap so all items show without scrolling. */
+  noScroll?: boolean;
 }
 
-export function Dropdown({ trigger, items, placement = 'bottom-start', className }: DropdownProps): JSX.Element {
+export function Dropdown({ trigger, items, placement = 'bottom-start', className, noScroll }: DropdownProps): JSX.Element {
   const [open, setOpen] = useState(false);
 
   const handleSelect = (onSelect?: () => void) => {
@@ -50,7 +52,7 @@ export function Dropdown({ trigger, items, placement = 'bottom-start', className
       open={open}
       onOpenChange={setOpen}
     >
-      <Menu>
+      <Menu noScroll={noScroll}>
         {items.map((item, idx) => {
           if (item.type === 'separator') return <MenuSeparator key={`sep_${idx}`} />;
           if (item.type === 'label') return <MenuLabel key={`label_${idx}`}>{item.label}</MenuLabel>;

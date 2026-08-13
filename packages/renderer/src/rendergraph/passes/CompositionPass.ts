@@ -6,9 +6,10 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
+import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
 
 /**
@@ -65,6 +66,64 @@ export const BACKDROP_HALF2 = 'backdrop-half2';
 /** Downsample factor for the backdrop blur chain. */
 export const BACKDROP_DOWNSCALE = 2;
 
+/**
+ * Ping-pong targets for DOWNSAMPLED plugin effect passes.
+ *
+ * A plugin pass may declare `scale: 0.5` or `0.25`, which is what makes a bloom
+ * affordable: the expensive blur runs on a quarter or a sixteenth of the
+ * pixels, and the upsample costs nothing because whatever samples the result
+ * next reads the smaller texture through a linear sampler. Exactly the trick
+ * the backdrop blur above already uses, generalised so a plugin can ask for it.
+ *
+ * Two per scale, because consecutive passes at the SAME scale must ping-pong —
+ * a separable blur at quarter scale is two draws and they cannot share one
+ * target. Full scale keeps using the existing `BLUR_TARGET*` pool, so only the
+ * fractional sizes are new here.
+ */
+export const PLUGIN_HALF1 = 'plugin-half1';
+export const PLUGIN_HALF2 = 'plugin-half2';
+export const PLUGIN_QUARTER1 = 'plugin-quarter1';
+export const PLUGIN_QUARTER2 = 'plugin-quarter2';
+
+/** Every scaled plugin target, for the graph's declaration list. */
+export const PLUGIN_SCALED_TARGETS = [
+  PLUGIN_HALF1, PLUGIN_HALF2, PLUGIN_QUARTER1, PLUGIN_QUARTER2,
+] as const;
+
+/**
+ * A copy of a plugin chain's pass-0 input, held for the whole chain.
+ *
+ * `reads: "origin"` is what every composite effect needs — a bloom's last pass
+ * adds the blurred copy back over the ORIGINAL, and by then the original is
+ * three ping-pongs ago and overwritten.
+ *
+ * Its own target rather than a reservation out of the effect pool, which is
+ * what made this look expensive before. Borrowing from the pool would contend
+ * with the slot glow takes for its wide lobe, and would mean a chain's legal
+ * length depended on which other effects were on the layer — a plugin that
+ * worked alone and broke when a user added a glow beneath it.
+ *
+ * Written only when a chain actually asks. Declared always, because the graph
+ * resolves targets once per frame and a target that appeared on demand would
+ * allocate mid-frame.
+ */
+export const PLUGIN_ORIGIN = 'plugin-origin';
+
+/**
+ * The ping-pong pair for a pass scale, or null at full scale.
+ *
+ * Null rather than "the full-size pair", so the caller has to notice which
+ * case it is in. A full-scale pass picks from the CHAIN's own pool — which
+ * differs between the ordinary route, the matte-borrowing one and the
+ * adjustment-layer one — and handing back a fixed pair here would quietly take
+ * that choice away from it.
+ */
+export function scaledPluginTargets(scale: number): readonly [string, string] | null {
+  if (scale === 0.5) return [PLUGIN_HALF1, PLUGIN_HALF2];
+  if (scale === 0.25) return [PLUGIN_QUARTER1, PLUGIN_QUARTER2];
+  return null;
+}
+
 /** Offscreen targets for isolated precomps, one per nesting depth. A precomp's
  *  subtree renders into its depth's target and is composited (as one unit)
  *  before any sibling can reuse the slot, so one target per depth suffices.
@@ -115,12 +174,92 @@ function effectSpreadPx(effects: readonly RenderableEffect[]): number {
     else if (e.type === 'drop-shadow') s = Math.hypot(e.offsetX, e.offsetY) + e.radiusPx * BLUR_TAIL;
     else if (e.type === 'stroke') s = e.widthPx;
     else if (e.type === 'displacement-map') s = e.amount;
+    // The MAX, because the margin has to hold wherever the map happens to be
+    // bright. Reserving the average would clip exactly the pixels the effect
+    // was pointed at.
+    else if (e.type === 'compound-blur') s = e.maxRadiusPx * BLUR_TAIL;
+    /*
+      A plugin effect answers for itself, or asks for nothing.
+
+      Without this branch every plugin fell through to 0, so a plugin glow on a
+      3D layer was clipped flat at the layer's edge while the built-in one
+      beside it bled correctly — and only on 3D layers, because the 2D route
+      runs its chain over a viewport-sized buffer and has room to spare.
+
+      The number is computed app-side from the effect's live parameters (see
+      `effectSpreadFor`), which is what makes an animated radius reserve the
+      margin it needs on the frame it needs it. This package still learns
+      nothing about plugins: it receives pixels of reach, like every branch
+      above.
+    */
+    else if (e.type === 'plugin') s = e.spreadPx ?? 0;
     if (s > max) max = s;
   }
   return max;
 }
 
 /** Gaussian extent the blur shader actually samples, in radii. */
+/**
+ * Material descriptors for plugin effects, memoised by shader name.
+ *
+ * Built lazily rather than declared, because unlike every other material in
+ * this file the SET of them is not known until plugins are installed. Memoised
+ * because a descriptor is compared by identity downstream when deciding whether
+ * a pipeline can be reused — a fresh object per frame would rebuild the
+ * pipeline on every frame, for every plugin effect in the document.
+ *
+ * The layout is the standard effect one: uniform, texture, sampler. A plugin
+ * effect is not a new kind of pass.
+ */
+const pluginMaterials = new Map<string, MaterialDescriptor>();
+function pluginMaterial(shader: string, readsMap: boolean, readsOrigin: boolean): MaterialDescriptor {
+  let m = pluginMaterials.get(shader);
+  if (!m) {
+    m = {
+      shader,
+      topology: 'triangle-list',
+      layout: [
+        { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+        { binding: 1, type: 'texture', stages: ['fragment'] },
+        { binding: 2, type: 'sampler', stages: ['fragment'] },
+        /*
+          The fourth binding, for effects that sample a second texture.
+
+          Declared from what the SHADER asks for, never from whether a map
+          layer happens to be chosen: the generated WGSL contains
+          `@binding(3)` as soon as the effect declares a layer parameter, and a
+          layout that omits it is an invalid pipeline for every such effect in
+          its default state.
+
+          Safe to cache by `shader` alone even though this now takes a second
+          argument — `readsMap` is a property of the effect, fixed by its
+          manifest, so the same shader name cannot arrive both ways. It changes
+          only when the plugin is updated, which re-registers the shader.
+        */
+        ...(readsMap
+          ? [{ binding: 3, type: 'texture' as const, stages: ['fragment' as const] }]
+          : []),
+        /*
+          Binding 4: the pass-0 input, for a pass declaring `reads: origin`.
+
+          Fixed at 4 whether or not 3 is in use, matching what
+          `composeEffectShader` emits. Sliding it down when no layer parameter
+          is declared would make the binding number depend on an unrelated part
+          of the manifest, and this side and the shader generator would each
+          have to reach that conclusion separately — two derivations of one
+          number is how a bind group points a shader at the wrong texture.
+          WebGPU numbers bindings; it does not require them contiguous.
+        */
+        ...(readsOrigin
+          ? [{ binding: 4, type: 'texture' as const, stages: ['fragment' as const] }]
+          : []),
+      ],
+    };
+    pluginMaterials.set(shader, m);
+  }
+  return m;
+}
+
 const BLUR_TAIL = 2.5;
 
 /** Margin ceiling, as a fraction of the layer's own size per side. Past this
@@ -208,6 +347,11 @@ function rampPoints(
  * layer showed whatever slice of it happened to fall behind it. Falls back to
  * the full buffer when there is nothing to measure, which is the old behaviour.
  */
+/** Fraction of the path the beam's tail trails behind its head. Mirrors
+ *  `applyBeam`'s `tailLen` — the two must agree or the CPU and GPU beams are
+ *  different lengths, which no tolerance would forgive. */
+const BEAM_TAIL = 0.35;
+
 function renderableBox(ctx: RenderPassContext, r: Renderable | undefined): Rect {
   const vwr = ctx.viewport.visibleWorldRect;
   if (!r || vwr.width <= 0 || vwr.height <= 0) return { x: 0, y: 0, width: 1, height: 1 };
@@ -365,6 +509,42 @@ export class CompositionPass extends RenderPass {
       const f1 = free[1];
       // Need two scratch targets to blur; without them skip the spatial pass.
       if (!f0 || !f1) continue;
+
+      /*
+        The scale this draw runs at. 1 for everything except a plugin pass that
+        declared otherwise.
+
+        Read once, here, because three places downstream need to agree about
+        it: the uniform's `texelSize`, which target the draw lands in, and the
+        viewport that draw is given. Recomputing it at each would be three
+        chances to disagree, and disagreeing produces a quarter-size image in a
+        full-size target rather than an error.
+      */
+      const pluginPassScale = effect.type === 'plugin' ? (effect.passScale ?? 1) : 1;
+
+      /*
+        Snapshot the chain's input, for a chain that will want it back.
+
+        `capturesOrigin` is set by the app on pass 0 of any chain whose later
+        passes declare `reads: origin` — decided there because only that side
+        knows how the flat list of scene entries groups into chains. Copying
+        unconditionally would cost a full-screen blit per plugin effect on
+        every frame, for the majority of chains that never look at it.
+
+        A blit rather than remembering the target name: `curTex` at this moment
+        belongs to the ping-pong pool and will be drawn over within two passes.
+        A reference to it would be a reference to whatever the chain last
+        wrote — the "random picture" this feature was refused for.
+      */
+      if (effect.type === 'plugin' && effect.capturesOrigin) {
+        const originCmds = new CommandBuffer();
+        emitTextured(originCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+        const encO = beginViewportPass(
+          ctx, 'fx-origin', writeAttachment(ctx, PLUGIN_ORIGIN, Color.transparent()),
+        );
+        services.quad.execute(encO, originCmds);
+        encO.end();
+      }
       // Optional third slot (BLUR_TARGET3) for optical bloom's wide lobe.
 
       if (effect.type === 'blur' || effect.type === 'glow' || effect.type === 'drop-shadow') {
@@ -519,6 +699,53 @@ export class CompositionPass extends RenderPass {
           texture: curTex, sampler: clampSampler(),
           maskTexture: mapTex,
         });
+      } else if (effect.type === 'apply-color-lut') {
+        /*
+          The LUT strip comes from the texture PROVIDER, not from a renderable —
+          so unlike its three siblings there is no map layer to resolve and no
+          MATTE_TARGET to borrow.
+
+          A missing strip SKIPS the effect rather than falling back. The others
+          self-sample because a layer displaced or blurred by itself is visibly
+          wrong and debuggable; there is no equivalent here. A LUT with no table
+          is not a degraded grade, it is no grade — and the layer drawn unchanged
+          is exactly what no grade looks like.
+        */
+        const strip = services.textures.get(effect.lutTextureKey);
+        if (strip) {
+          cmds.add({
+            batchKey: `colorlut:${effect.lutTextureKey}`,
+            material: APPLY_COLOR_LUT_MATERIAL,
+            blend: 'normal',
+            uniforms: packApplyColorLut(
+              mvp, targetUv, effect.size, effect.is1d, effect.intensity,
+              effect.domainMin, effect.domainMax,
+            ),
+            texture: curTex, sampler: clampSampler(),
+            maskTexture: strip.texture,
+          });
+        }
+      } else if (effect.type === 'compound-blur') {
+        // Same borrow-MATTE_TARGET constraint and the same self-fallback as
+        // displacement-map above — this is that family's third member.
+        const canUseMap = !pool.includes(MATTE_TARGET);
+        const mapTex = (canUseMap ? this.displacementMapTexture(ctx, byId, effect.mapLayerId, selfId) : null) ?? curTex;
+        cmds.add({
+          batchKey: 'compoundblur', material: COMPOUND_BLUR_MATERIAL, blend: 'normal',
+          uniforms: packCompoundBlur(
+            mvp, targetUv,
+            // Comp px → texels of THIS buffer, the same `kx` conversion every
+            // radius in this function makes. A 3D layer's buffer is scaled by
+            // its own size, so an unconverted radius would blur a fraction of
+            // what was asked for — the defect the DOF radii once had.
+            effect.maxRadiusPx * kx,
+            effect.invert,
+            1 / viewport.pixelSize.width,
+            1 / viewport.pixelSize.height,
+          ),
+          texture: curTex, sampler: clampSampler(),
+          maskTexture: mapTex,
+        });
       } else if (effect.type === 'set-matte') {
         // Same borrow-MATTE_TARGET constraint as displacement-map: the source
         // render needs a target, and MATTE_TARGET is only free when it is not
@@ -538,6 +765,90 @@ export class CompositionPass extends RenderPass {
             maskTexture: matteTex,
           });
         }
+      } else if (effect.type === 'bevel-alpha' || effect.type === 'bevel-edges') {
+        // One branch for both: they differ only in WHICH edge they chisel, and
+        // that lives in the shader. `p1.xy` is the texel size the alpha
+        // gradient is sampled across — meaningless to Bevel Edges, which reads
+        // no neighbours, and harmless to pack for it.
+        cmds.add({
+          batchKey: effect.type, blend: 'normal',
+          material: effect.type === 'bevel-alpha' ? BEVEL_ALPHA_MATERIAL : BEVEL_EDGES_MATERIAL,
+          uniforms: packPerspective(
+            mvp, targetUv,
+            [effect.thickness, Math.cos(effect.lightRad), Math.sin(effect.lightRad), effect.intensity],
+            [1 / viewport.pixelSize.width, 1 / viewport.pixelSize.height, 0, 0],
+            fxBox,
+            effect.color,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'sphere') {
+        cmds.add({
+          batchKey: 'sphere', material: SPHERE_MATERIAL, blend: 'normal',
+          uniforms: packPerspective(
+            mvp, targetUv,
+            [effect.radius, effect.rotXRad, effect.rotYRad, effect.shading],
+            [effect.aspect, effect.rotZRad, 0, 0],
+            fxBox,
+            effect.color,
+          ),
+          // Clamped, not repeated: the shader wraps its own longitude with
+          // `fract`, so the sampled u never leaves [0,1) and the address mode
+          // is never reached. Repeating here would MASK a wrap bug instead of
+          // letting it show as a seam.
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'cylinder') {
+        cmds.add({
+          batchKey: 'cylinder', material: CYLINDER_MATERIAL, blend: 'normal',
+          uniforms: packPerspective(
+            mvp, targetUv,
+            [effect.radius, effect.rotRad, effect.shading, 0],
+            [0, 0, 0, 0],
+            fxBox,
+            effect.color,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'spotlight') {
+        cmds.add({
+          batchKey: 'spotlight', material: SPOTLIGHT_MATERIAL, blend: 'normal',
+          uniforms: packSpotlight(
+            mvp, targetUv,
+            effect.fromX, effect.fromY, effect.toX, effect.toY,
+            effect.coneHalfRad, effect.softness, effect.intensity, effect.ambient,
+            effect.aspect, effect.lightOnly, effect.reach,
+            fxBox,
+            effect.color,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'arithmetic') {
+        cmds.add({
+          batchKey: 'arithmetic', material: ARITHMETIC_MATERIAL, blend: 'normal',
+          uniforms: packArithmetic(mvp, targetUv, effect.operator, effect.r, effect.g, effect.b, effect.clip),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'bend') {
+        cmds.add({
+          batchKey: 'bend', material: BEND_MATERIAL, blend: 'normal',
+          uniforms: packBend(
+            mvp, targetUv,
+            effect.angleRad, effect.style, effect.aspect, effect.holdOutside ? 1 : 0,
+            effect.topX, effect.topY, effect.baseX, effect.baseY,
+            // The LAYER's box within the chain buffer. On the 2D route that
+            // buffer is SCREEN SPACE and the layer is a sub-rect of it, so
+            // bending against `targetUv` bends the whole screen — which is
+            // what it did. Same quantity the Beam branch resolves against,
+            // for the same reason.
+            fxBox,
+          ),
+          // Clamped, not repeated: the shader already returns transparent for
+          // samples off the layer, so the address mode never comes into play —
+          // and a repeat here would tile the layer into the empty region if the
+          // bounds check were ever relaxed.
+          texture: curTex, sampler: clampSampler(),
+        });
       } else if (effect.type === 'motion-tile') {
         cmds.add({
           batchKey: 'motiontile', material: MOTION_TILE_MATERIAL, blend: 'normal',
@@ -562,19 +873,199 @@ export class CompositionPass extends RenderPass {
           uniforms: packSharpen(mvp, targetUv, 1 / viewport.pixelSize.width, 1 / viewport.pixelSize.height, effect.amount),
           texture: curTex, sampler: clampSampler(),
         });
+      } else if (effect.type === 'beam') {
+        /*
+          Endpoints are fractions of the LAYER's box, so they resolve against
+          `fxBox` — the same quantity the gradient ramp uses, and for the same
+          reason: on the 2D route the chain's buffer is screen space and the
+          layer is a sub-rect of it, so a fraction of the BUFFER would put the
+          beam somewhere else entirely.
+
+          Radii are comp px and convert through kx/ky. Non-square scaling would
+          make a round cap elliptical, so the shader measures one distance and
+          takes the mean scale — a beam at 45 degrees on a stretched buffer is
+          a fraction of a texel off, which is invisible, where an elliptical
+          cap is not.
+        */
+        const bx0 = fxBox.x + effect.startX * fxBox.width;
+        const by0 = fxBox.y + effect.startY * fxBox.height;
+        const bx1 = fxBox.x + effect.endX * fxBox.width;
+        const by1 = fxBox.y + effect.endY * fxBox.height;
+        // The head, and the tail trailing 35% of the path behind it — the
+        // travelling pulse `applyBeam` draws.
+        const t0 = Math.max(0, effect.length - BEAM_TAIL);
+        const k = (kx / viewport.pixelSize.width + ky / viewport.pixelSize.height) / 2;
+        const coreR = Math.max(0.5, effect.thickness) * 0.5 * k;
+        cmds.add({
+          batchKey: 'beam', material: BEAM_MATERIAL, blend: 'normal',
+          uniforms: packBeam(
+            mvp, targetUv,
+            bx0 + (bx1 - bx0) * t0, by0 + (by1 - by0) * t0,
+            bx0 + (bx1 - bx0) * effect.length, by0 + (by1 - by0) * effect.length,
+            coreR, coreR * (1 + effect.softness * 3),
+            k, // one comp px of antialiasing, in target UV
+            effect.color,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
       } else if (effect.type === 'noise') {
         cmds.add({
           batchKey: 'noise', material: NOISE_MATERIAL, blend: 'normal',
           uniforms: packNoise(mvp, targetUv, effect.amount, effect.evolution, effect.monochrome),
           texture: curTex, sampler: clampSampler(),
         });
+      } else if (effect.type === 'plugin') {
+        /*
+          A plugin effect is just another material, and this branch knows
+          nothing about plugins: it takes a registered shader name and a
+          pre-packed parameter block, and writes the transform header underneath.
+
+          `batchKey` carries the shader NAME rather than a literal. Every other
+          branch here names ONE material, so a constant is correct for them;
+          this one names a family, and a shared key would batch two different
+          plugin effects into one draw with one pipeline.
+        */
+        /*
+          The optional second texture, resolved exactly as displacement-map's
+          is: same helper, same borrow of MATTE_TARGET, same fallback.
+
+          Falling back to `curTex` rather than to nothing matters. The material
+          for an effect that DECLARED a layer parameter carries a fourth
+          binding, and a declared binding with nothing bound is an invalid
+          pipeline — a dead viewport, not a missing map. Self-sampling is the
+          honest degradation and it is what the author sees before they have
+          chosen a layer.
+        */
+        const canUseMap = !pool.includes(MATTE_TARGET);
+        const pluginMapTex =
+          (canUseMap ? this.displacementMapTexture(ctx, byId, effect.mapLayerId, selfId) : null)
+          ?? curTex;
+        /*
+          The pass-0 input, for a pass that composites against it.
+
+          Falls back to `curTex` if the snapshot is somehow unavailable, for
+          exactly the reason the map binding does: the layout declares binding
+          4 as soon as the shader asks for it, and a declared binding with
+          nothing bound is an invalid pipeline — a dead viewport rather than a
+          wrong picture. Self-sampling is the honest degradation.
+        */
+        const originTex = effect.readsOrigin ? (texOf(PLUGIN_ORIGIN) ?? curTex) : null;
+        cmds.add({
+          batchKey: `plugin:${effect.shader}`,
+          material: pluginMaterial(effect.shader, effect.readsMap === true, effect.readsOrigin === true),
+          blend: 'normal',
+          /*
+            The host pass block, written per draw.
+
+            A multi-pass effect arrives as several of these entries in order and
+            this loop already ping-pongs them, so nothing above needs to know a
+            chain exists. What each pass DOES need is its own texel size — and
+            for a downsampled pass that is the size of the SCALED target it is
+            about to be drawn into, not the viewport.
+
+            Getting this wrong is the quiet failure the whole feature turns on:
+            a quarter-scale blur handed full-size texels steps a quarter as far
+            as it should in target space, so it renders a blur a quarter the
+            requested radius and looks merely "a bit soft" rather than broken.
+          */
+          uniforms: packPluginEffect(
+            mvp,
+            targetUv,
+            effect.params,
+            Math.max(1, Math.floor(viewport.pixelSize.width * pluginPassScale)),
+            Math.max(1, Math.floor(viewport.pixelSize.height * pluginPassScale)),
+            pluginPassScale,
+            effect.passIndex ?? 0,
+          ),
+          texture: curTex, sampler: clampSampler(),
+          // Keyed off `readsMap`, the SAME predicate the layout uses — never
+          // off `mapLayerId`. Binding 3 is declared as soon as the shader asks
+          // for it, so it must be filled then too, even with no layer chosen
+          // (self-sampling via the `?? curTex` above).
+          ...(effect.readsMap ? { maskTexture: pluginMapTex } : {}),
+          // Same rule as `maskTexture`: keyed off what the SHADER declared, so
+          // a declared binding is never left unfilled.
+          ...(originTex ? { originTexture: originTex } : {}),
+        });
       }
       if (cmds.length === 0) continue;
-      const enc = beginViewportPass(ctx, 'fx', writeAttachment(ctx, f0, Color.transparent()));
-      services.quad.execute(enc, cmds);
-      enc.end();
-      const outTex = texOf(f0);
-      if (outTex) { curTex = outTex; curName = f0; }
+      /*
+        Bracket the submit for device-loss attribution.
+
+        This is the only place that knows a plugin effect is about to be drawn,
+        and `onDraw` is injected by the app so this package still does not have
+        to know what a plugin is. If the GPU dies inside `execute`, the handler
+        the app registered names the effect that was in flight.
+
+        `end` runs in a `finally`: a throw that skipped it would leave the marker
+        set, and the NEXT device loss — possibly minutes later and caused by
+        something else entirely — would be blamed on this effect.
+      */
+      /*
+        FAIL-SAFE: an effect that produced no draw must not erase the layer.
+
+        Every branch above ends in `cmds.add(...)`, and the pass below CLEARS
+        its destination before executing them — so a step that added nothing
+        leaves a transparent target, `curTex` becomes that, and the layer is
+        gone. Not hypothetical; it has happened twice. Once when a duplicate
+        effects chain did not recognise a type (a plugin effect erased the
+        layer on both backends), and once when a WGSL validation error stopped
+        the pipeline being created at all (Bend / Sphere / Cylinder sampling in
+        non-uniform control flow — see wgslUniformControlFlow.test.ts).
+
+        Skipping the pass leaves `curTex` on the previous step's output, so a
+        broken effect degrades to a NO-OP. That is the right failure: the user
+        sees an effect that does nothing and can remove it, rather than watching
+        their artwork vanish with no clue which of ten stacked effects ate it.
+        The cost is one integer compare per effect per frame.
+
+        A backstop, not a licence — reaching here with no draw is still a bug,
+        and the guards above exist to catch the known causes before they ship.
+      */
+      if (cmds.length === 0) continue;
+
+      const marker = effect.type === 'plugin' ? effect.onDraw : undefined;
+      marker?.begin();
+
+      /*
+        Where this draw lands, and how big it is.
+
+        A plugin pass declaring `scale` renders into its own smaller pool
+        instead of the chain's full-size one. `beginSizedPass` sets the
+        viewport to the target's real dimensions — without it the draw would
+        cover a quarter of a quarter-size target and the rest would stay
+        transparent, which reads as the effect having eaten the layer.
+
+        `dest` avoids the texture being READ this draw. Within a scaled pair
+        that is the only constraint; the pair is two targets precisely so
+        consecutive passes at one scale can alternate.
+      */
+      const pair = scaledPluginTargets(pluginPassScale);
+      const dest = pair ? (pair[0] === curName ? pair[1] : pair[0]) : f0;
+      const enc = pair
+        ? beginSizedPass(
+          ctx, 'fx', writeAttachment(ctx, dest, Color.transparent()),
+          Math.max(1, Math.floor(viewport.pixelSize.width * pluginPassScale)),
+          Math.max(1, Math.floor(viewport.pixelSize.height * pluginPassScale)),
+        )
+        : beginViewportPass(ctx, 'fx', writeAttachment(ctx, dest, Color.transparent()));
+      try {
+        services.quad.execute(enc, cmds);
+      } finally {
+        enc.end();
+        marker?.end();
+      }
+      /*
+        The upsample is free and this is where it happens — by not happening.
+
+        `curTex` becomes the smaller texture, and the next draw samples it
+        through `clampSampler`, which is linear. A full-scale pass reading a
+        quarter-scale one therefore magnifies it on the way in, at no extra
+        pass and no extra bandwidth. The same reason the backdrop blur can
+        composite its half-size result straight over the scene.
+      */
+      const outTex = texOf(dest);
+      if (outTex) { curTex = outTex; curName = dest; }
     }
 
     return { tex: curTex, name: curName };
@@ -897,6 +1388,15 @@ export class CompositionPass extends RenderPass {
         specular: camera3d.eye ? s.specular : 0,
         shininess: s.shininess,
         ...(s.metal ? { metal: s.metal } : {}),
+        // Carried explicitly, like `metal` above. This object is built
+        // field-by-field from `r.threeD.shade`, so a field added to that type
+        // and not named here is silently dropped — and for a depth-eligible
+        // face the SHADER does the lighting, so dropping it means the layer
+        // renders exactly as it did before, with the CPU-side gain that is
+        // only a fallback still showing the new value. That is precisely how
+        // `oneSided` came to be plumbed end-to-end, asserted at the snapshot,
+        // and visible in no pixel.
+        ...(s.oneSided ? { oneSided: true } : {}),
         lights,
       };
     };
@@ -1315,7 +1815,11 @@ export class CompositionPass extends RenderPass {
       // the layer normally; it simply will not frost.
     }
 
-    if (r.advancedBlend && r.advancedBlend > 0) {
+    // Preserve Underlying Transparency needs the same backdrop-sampling route,
+    // and needs it even when the blend mode is Normal (advancedBlend 0) — which
+    // is the common case for it. `bChan` falls through to `return cs` for mode
+    // 0, so Normal composites correctly through the combine.
+    if ((r.advancedBlend && r.advancedBlend > 0) || r.preserveTransparency) {
       // Advanced blend (overlay/hard-light/HSL/…): fixed-function GL can't do
       // these — composite the layer against the accumulated backdrop through
       // the BLEND_COMBINE shader. Needs a samplable out target
@@ -1341,7 +1845,12 @@ export class CompositionPass extends RenderPass {
         const backdropTex = ctx.services.backend.renderTargetTexture(ctx.target(MATTE_TARGET)!);
         // 3. combine (src=layer, dst=backdrop) → OVERWRITE the out target.
         if (backdropTex && layerTex) {
-          const mode = { m: [r.advancedBlend, 0, 0, 0, 0, 0, 0, 0, 0], offset: [0, 0, 0] };
+          // m[0] -> cr0.x = blend id; m[1] -> cr0.y = preserve-transparency flag.
+          // Two independent inputs, because the two features compose.
+          const mode = {
+            m: [r.advancedBlend ?? 0, r.preserveTransparency ? 1 : 0, 0, 0, 0, 0, 0, 0, 0],
+            offset: [0, 0, 0],
+          };
           const combineCmds = new CommandBuffer();
           emitBlendCombine(combineCmds, fullMvp, 'none', layerTex, clampSampler(), backdropTex, mode, full);
           const encOut = beginViewportPass(ctx, 'blend-combine', writeAttachment(ctx, st.out));
@@ -1444,238 +1953,69 @@ export class CompositionPass extends RenderPass {
       return;
     }
 
-    // Now process each effect
-    for (const effect of r.effects!) {
-      if (effect.type === 'blur' || effect.type === 'glow' || effect.type === 'drop-shadow') {
-        // Mid kernel slightly wider for glow; wide lobe uses BLUR_TARGET3.
-        const rPx = effect.type === 'glow' ? effect.radiusPx * 1.15 : effect.radiusPx;
-        // Zero radius/softness: the un-blurred layer IS the source (a hard
-        // glow ring / hard-edged shadow). `continue`-ing here skipped the
-        // WHOLE composite, so a layer whose only effect had softness 0
-        // disappeared entirely on the GPU backend.
-        let blur2Tex = layerTex;
-        let wideTex: TextureHandle | null = null;
-        if (rPx > 0) {
-          // Horizontal blur (LAYER_TARGET -> BLUR_TARGET1)
-          const blur1Cmds = new CommandBuffer();
-          blur1Cmds.add({
-            batchKey: 'blur|normal',
-            material: BLUR_MATERIAL,
-            blend: 'normal',
-            uniforms: packBlur(
-              screenMvp(),
-              targetUv,
-              1.0 / viewport.pixelSize.width, 0, rPx
-            ),
-            texture: layerTex,
-            sampler: clampSampler(),
-          });
-          const encBlur1 = beginViewportPass(ctx, 'blurH', writeAttachment(ctx, BLUR_TARGET1, Color.transparent()));
-          services.quad.execute(encBlur1, blur1Cmds);
-          encBlur1.end();
+    /*
+      One effects chain, not two.
 
-          const blur1Tex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET1)!);
-          if (!blur1Tex) continue;
+      This route — an ordinary 2D layer with effects and/or motion blur — used
+      to carry its OWN copy of the effect switch: a second `for (const effect of
+      r.effects)` with its own branch per effect type, its own compositing
+      conventions, and its own set of supported types. `runEffectsChain` was
+      the other copy, reached only from the matte, advanced-blend and 3D routes.
 
-          // Vertical blur (BLUR_TARGET1 -> BLUR_TARGET2)
-          const blur2Cmds = new CommandBuffer();
-          blur2Cmds.add({
-            batchKey: 'blur|normal',
-            material: BLUR_MATERIAL,
-            blend: 'normal',
-            uniforms: packBlur(
-              screenMvp(),
-              targetUv,
-              0, 1.0 / viewport.pixelSize.height, rPx
-            ),
-            texture: blur1Tex,
-            sampler: clampSampler(),
-          });
-          const encBlur2 = beginViewportPass(ctx, 'blurV', writeAttachment(ctx, BLUR_TARGET2, Color.transparent()));
-          services.quad.execute(encBlur2, blur2Cmds);
-          encBlur2.end();
+      Two consequences, both of which shipped:
 
-          const blurred = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET2)!);
-          if (!blurred) continue;
-          blur2Tex = blurred;
+        1. **An effect type the duplicate did not know about ERASED the layer.**
+           The branch chain matched nothing, so nothing was ever composited back
+           out of LAYER_TARGET and the layer simply vanished — not "the effect
+           did nothing", which is what a skipped effect should look like. That
+           is what a plugin effect did on every 2D layer, on BOTH backends,
+           while `runEffectsChain` had a correct `plugin` branch that no 2D
+           layer ever reached. `set-matte` was in the same position.
+        2. **Effects did not chain.** Every branch here sampled `layerTex` — the
+           layer as drawn, never the previous effect's output — so a blur under
+           a fill applied the fill to the UNBLURRED layer, and each pass writing
+           straight to `st.out` overwrote the one before it.
 
-          if (effect.type === 'glow' && rPx >= 6) {
-            const wideR = rPx * 2.2;
-            const wH = new CommandBuffer();
-            wH.add({
-              batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
-              uniforms: packBlur(screenMvp(), targetUv, 1.0 / viewport.pixelSize.width, 0, wideR),
-              texture: layerTex, sampler: clampSampler(),
-            });
-            const encWH = beginViewportPass(ctx, 'glowWideH', writeAttachment(ctx, BLUR_TARGET1, Color.transparent()));
-            services.quad.execute(encWH, wH);
-            encWH.end();
-            const whTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET1)!);
-            if (whTex) {
-              const wV = new CommandBuffer();
-              wV.add({
-                batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
-                uniforms: packBlur(screenMvp(), targetUv, 0, 1.0 / viewport.pixelSize.height, wideR),
-                texture: whTex, sampler: clampSampler(),
-              });
-              const encWV = beginViewportPass(ctx, 'glowWideV', writeAttachment(ctx, BLUR_TARGET3, Color.transparent()));
-              services.quad.execute(encWV, wV);
-              encWV.end();
-              wideTex = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET3)!) ?? null;
-            }
-          }
-        }
+      Both are properties of the duplicate rather than of the effects, and
+      neither can be fixed twice. `applyLayerEffects` ping-pongs the same four
+      targets this code used, settles the result back into LAYER_TARGET, and is
+      already the path a matted or 3D copy of this same layer takes.
+    */
+    /*
+      `runEffectsChain` directly, not `applyLayerEffects`.
 
-        // Composite to the out target
-        if (effect.type === 'blur') {
-          emitTextured(
-            mainCmds,
-            screenMvp(),
-            Color.white(), r.opacity, r.blend, blur2Tex,
-            clampSampler(),
-            targetUv
-          );
-        } else if (effect.type === 'glow') {
-          // Two-lobe optical bloom — a wide soft pedestal under the mid halo.
-          // The mid lobe is emitted ONCE; see the twin in runEffectsChain for
-          // why the second "bright core" draw of the same texture was wrong.
-          const glowColor = effect.color ?? Color.fromHex('rgba(120,180,255,0.9)');
-          if (wideTex) {
-            emitSilhouette(
-              mainCmds, screenMvp(),
-              glowColor, r.opacity * 0.4, 'screen', wideTex,
-              clampSampler(), targetUv
-            );
-          }
-          emitSilhouette(
-            mainCmds, screenMvp(),
-            glowColor, r.opacity, 'screen', blur2Tex,
-            clampSampler(), targetUv
-          );
-          // Add original layer
-          emitTextured(
-            mainCmds,
-            screenMvp(),
-            Color.white(), r.opacity, r.blend, layerTex,
-            clampSampler(),
-            targetUv
-          );
-        } else if (effect.type === 'drop-shadow') {
-          // Add shadow
-          const offX = effect.offsetX;
-          const offY = effect.offsetY;
-          const rect = {
-            x: viewport.visibleWorldRect.x + offX,
-            y: viewport.visibleWorldRect.y + offY,
-            width: viewport.visibleWorldRect.width,
-            height: viewport.visibleWorldRect.height,
-          };
-          // Silhouette fill — black shadows were a fixed point of the old
-          // multiply, so this changes nothing for the default and fixes every
-          // other colour.
-          emitSilhouette(
-            mainCmds,
-            mvpFor(viewport, modelFromRect(rect)),
-            effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), r.opacity, 'normal', blur2Tex,
-            clampSampler(),
-            targetUv
-          );
-          // Add original layer
-          emitTextured(
-            mainCmds,
-            screenMvp(),
-            Color.white(), r.opacity, r.blend, layerTex,
-            clampSampler(),
-            targetUv
-          );
-        }
-      } else if (effect.type === 'gradient-ramp') {
-        const rampCmds = new CommandBuffer();
-        rampCmds.add({
-          batchKey: 'ramp', material: GRADIENT_RAMP_MATERIAL, blend: r.blend,
-          uniforms: packGradientRamp(screenMvp(), targetUv, [effect.colorA || Color.white(), effect.colorB || Color.black()], rampPoints(effect.angle, targetUv, renderableBox(ctx, r), viewport.pixelSize), effect.blend),
-          texture: layerTex, sampler: clampSampler(),
-        });
-        const enc = beginViewportPass(ctx, 'ramp', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, rampCmds);
-        enc.end();
-      } else if (effect.type === 'fractal-noise') {
-        const fnCmds = new CommandBuffer();
-        fnCmds.add({
-          batchKey: 'noise', material: FRACTAL_NOISE_MATERIAL, blend: r.blend,
-          uniforms: packFractalNoise(screenMvp(), targetUv, effect.scale, 0, 0, 4),
-          texture: layerTex, sampler: clampSampler(),
-        });
-        const enc = beginViewportPass(ctx, 'noise', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, fnCmds);
-        enc.end();
-      } else if (effect.type === 'displacement-map') {
-        // Displacement source: the referenced layer's content rendered into
-        // MATTE_TARGET (both it and layerTex are offscreen targets, so both
-        // sample through the same backend-correct targetUv). Falls back to
-        // self-displacement when mapLayerId is unset or unresolvable.
-        const mapTex = this.displacementMapTexture(ctx, byId, effect.mapLayerId, r.id) ?? layerTex;
-        const dmCmds = new CommandBuffer();
-        dmCmds.add({
-          batchKey: 'displace', material: DISPLACEMENT_MAP_MATERIAL, blend: r.blend,
-          uniforms: packDisplacementMap(screenMvp(), targetUv, effect.amount / viewport.pixelSize.width, effect.amount / viewport.pixelSize.height),
-          texture: layerTex, sampler: clampSampler(),
-          maskTexture: mapTex,
-        });
-        const enc = beginViewportPass(ctx, 'displace', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, dmCmds);
-        enc.end();
-      } else if (effect.type === 'motion-tile') {
-        const mtCmds = new CommandBuffer();
-        mtCmds.add({
-          batchKey: 'motiontile', material: MOTION_TILE_MATERIAL, blend: r.blend,
-          uniforms: packMotionTile(screenMvp(), targetUv, effect.scale, effect.scale, 0, 0),
-          texture: layerTex, sampler: services.resources.sampler('linear-repeat', { min: 'linear', mag: 'linear', addressU: 'repeat', addressV: 'repeat' }),
-        });
-        const enc = beginViewportPass(ctx, 'motiontile', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, mtCmds);
-        enc.end();
-      } else if (effect.type === 'fill') {
-        const fillCmds = new CommandBuffer();
-        fillCmds.add({
-          batchKey: 'fill', material: FILL_MATERIAL, blend: r.blend,
-          uniforms: packFill(screenMvp(), targetUv, effect.color),
-          texture: layerTex, sampler: clampSampler(),
-        });
-        const enc = beginViewportPass(ctx, 'fill', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, fillCmds);
-        enc.end();
-      } else if (effect.type === 'stroke') {
-        const strokeCmds = new CommandBuffer();
-        strokeCmds.add({
-          batchKey: 'stroke', material: STROKE_MATERIAL, blend: r.blend,
-          uniforms: packStroke(screenMvp(), targetUv, effect.color, effect.widthPx, 1 / viewport.pixelSize.width, 1 / viewport.pixelSize.height),
-          texture: layerTex, sampler: clampSampler(),
-        });
-        const enc = beginViewportPass(ctx, 'stroke', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, strokeCmds);
-        enc.end();
-      } else if (effect.type === 'sharpen') {
-        const sharpCmds = new CommandBuffer();
-        sharpCmds.add({
-          batchKey: 'sharpen', material: SHARPEN_MATERIAL, blend: r.blend,
-          uniforms: packSharpen(screenMvp(), targetUv, 1 / viewport.pixelSize.width, 1 / viewport.pixelSize.height, effect.amount),
-          texture: layerTex, sampler: clampSampler(),
-        });
-        const enc = beginViewportPass(ctx, 'sharpen', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, sharpCmds);
-        enc.end();
-      } else if (effect.type === 'noise') {
-        const noiseCmds = new CommandBuffer();
-        noiseCmds.add({
-          batchKey: 'noise', material: NOISE_MATERIAL, blend: r.blend,
-          uniforms: packNoise(screenMvp(), targetUv, effect.amount, effect.evolution, effect.monochrome),
-          texture: layerTex, sampler: clampSampler(),
-        });
-        const enc = beginViewportPass(ctx, 'noise', writeAttachment(ctx, st.out));
-        services.quad.execute(enc, noiseCmds);
-        enc.end();
-      }
-    }
+      The difference is one full-screen blit. `applyLayerEffects` SETTLES the
+      result back into the target it was handed, because its callers (the matte
+      and 3D routes) promise "the final texture lives in `dest`" and hand the
+      scratch targets straight on to the next thing. This route makes no such
+      promise: it composites once and is done, so it can read the chain's own
+      output wherever it landed.
+
+      Measured: dropping it changes no pixel in any scene in the suite, which is
+      what a settle blit should do and is the reason it is safe to skip rather
+      than a reason to keep it.
+    */
+    const effectTex = this.runEffectsChain(
+      ctx, r.effects!, layerTex,
+      [LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3],
+      byId, r.id,
+    ).tex;
+    /*
+      Composited ONCE, here, at the layer's own opacity and blend.
+
+      The chain runs in a neutral space — every pass writes `normal` into a
+      scratch target — because an intermediate result blended against the scene
+      is not an intermediate result. `r.opacity` rather than 1 even when the
+      layer is motion-blurred: the per-sample opacity baked into the buffer is
+      the SHUTTER weighting, and the layer's own opacity is a separate factor
+      that the duplicate applied here too.
+    */
+    emitTextured(
+      mainCmds,
+      screenMvp(),
+      Color.white(), r.opacity, r.blend, effectTex,
+      clampSampler(),
+      targetUv,
+    );
   }
 }

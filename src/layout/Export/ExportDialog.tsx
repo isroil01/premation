@@ -171,20 +171,20 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
 
       <div className={styles.section}>
         <div className={styles.label}>Format</div>
-        <div className={styles.presets}>
+        <select
+          value={format}
+          disabled={busy}
+          className={styles.selectInput}
+          onChange={(e) => setFormat(e.target.value as ExportFormat)}
+          aria-label="Export format"
+        >
           {presets.map((p) => (
-            <button
-              key={p.format}
-              type="button"
-              disabled={busy}
-              className={cn(styles.preset, format === p.format && styles.presetOn)}
-              onClick={() => setFormat(p.format)}
-            >
-              <span className={styles.presetLabel}>{p.label}</span>
-              <span className={styles.presetHint}>{p.hint}</span>
-            </button>
+            <option key={p.format} value={p.format}>
+              {p.label} — {p.hint}
+            </option>
           ))}
-        </div>
+        </select>
+        {activePreset ? <div className={styles.formatHint}>{activePreset.hint}</div> : null}
       </div>
 
       {format !== 'json' && format !== 'lottie' ? (
@@ -266,7 +266,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
           <Button
             variant="secondary"
             size="md"
-            leftIcon={<Icon name="queue" size={14} />}
+            leftIcon={<Icon name="queue" size="md" />}
             onClick={queueJob}
             disabled={busy}
             title="Queue this render in the Render Queue (F6) instead of exporting now"
@@ -277,7 +277,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         <Button
           variant="primary"
           size="md"
-          leftIcon={<Icon name="export" size={14} />}
+          leftIcon={<Icon name="export" size="md" />}
           onClick={doExport}
           disabled={busy}
           title={activePreset?.hint}

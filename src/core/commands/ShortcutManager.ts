@@ -101,6 +101,9 @@ export class ShortcutManager {
     const chord = chordFromEvent(e);
     const key = chordKey(chord);
 
+    // A focused surface may CLAIM particular chords — see `isClaimed`.
+    if (t && this.isClaimed(t, key)) return;
+
     // ── Double-tap UU = Reveal Modified Properties (AE exact) ─────────────
     // Single U dispatches 'timeline.revealAnimated' via the registry binding.
     // A second U within DOUBLE_TAP_MS upgrades to 'timeline.revealModified'.
@@ -154,6 +157,10 @@ export class ShortcutManager {
     }
   }
 
+  private isClaimed(el: HTMLElement, key: string): boolean {
+    return claimsChord(el, key);
+  }
+
   private isEditable(el: HTMLElement): boolean {
     if (!el) return false;
     const tag = el.tagName;
@@ -161,6 +168,49 @@ export class ShortcutManager {
     if (el.isContentEditable) return true;
     return false;
   }
+}
+
+/**
+ * Does a focused surface claim this chord for itself?
+ *
+ * WHY THIS EXISTS. `ShortcutManager` listens on `window` in the CAPTURE phase
+ * and calls `stopPropagation()` whenever a binding matches, so a global chord
+ * reaches its command before any panel's own handler is offered the event at
+ * all. That is right for most of them — Space should play from wherever you
+ * are — but it silently breaks the chords whose meaning depends on what has
+ * focus. Delete is the case that forced this: it is bound to "delete the
+ * selected LAYERS", so the Assets panel could not implement Delete for a
+ * selection of files. Its handler was correct and simply never ran, which is
+ * the worst shape of bug this codebase keeps finding — code that reads right,
+ * ships, and does nothing.
+ *
+ * The escape hatch that already existed, `isEditable`, is all-or-nothing and
+ * covers only form elements. This is deliberately the narrow version: a
+ * surface names the chords it wants, as `data-shortcut-claim` on any ancestor
+ * of the focused element, and every OTHER chord still reaches the global
+ * command. A surface that opted out of everything would be one where Space
+ * stops playing, which is why claiming is per-chord rather than a boolean.
+ *
+ *   <div tabIndex={0} data-shortcut-claim="delete backspace Ctrl+a Meta+a">
+ *
+ * Values are `chordKey` strings, matched case-insensitively so a claim cannot
+ * fail on a capital letter. Exported — and pure — so the behaviour is testable
+ * without standing up the window listener that made it hard to see in the
+ * first place.
+ */
+export function claimsChord(el: EventTarget | null, key: string): boolean {
+  // `EventTarget`, not `Element`: a keydown's target is `window` or `document`
+  // whenever nothing focusable has focus, and those have no `closest`. Typing
+  // the parameter as `Element` did not prevent that — the call site casts —
+  // it only moved the failure to runtime, where it took out every global
+  // shortcut at once.
+  if (!el || typeof (el as Element).closest !== 'function') return false;
+  const owner = (el as Element).closest('[data-shortcut-claim]');
+  if (!owner) return false;
+  const wanted = key.toLowerCase();
+  return (owner.getAttribute('data-shortcut-claim') ?? '')
+    .split(/\s+/)
+    .some((c) => c.length > 0 && c.toLowerCase() === wanted);
 }
 
 let shortcutInstance: ShortcutManager | null = null;

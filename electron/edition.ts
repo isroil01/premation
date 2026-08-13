@@ -115,11 +115,27 @@ export function __setEditionForTests(next: Edition | null): void {
  * registered", which is the correct answer — not a soft refusal that a caller
  * could mistake for a transient failure and retry.
  *
- * This is also what preserves the local edition's network story: `aiProxy` is the
- * only code in this app that contacts a third-party host, and it is unreachable
- * when this is false.
+ * This is one of the two things preserving the local edition's network story:
+ * `aiProxy` and `pluginNet` are the only code in this process that contacts a
+ * third-party host, and each is unreachable when its gate is false.
  */
 export const aiEnabled = (): boolean => isServerEdition();
+
+/**
+ * Plugins, in this process.
+ *
+ * Mirrors `pluginsEnabled()` on the renderer side, and gates the same thing
+ * from the privileged end. When false, `registerPluginNetIpc` and
+ * `installPluginPublishIpc` are never called, so `pluginNet:*` and the publish
+ * channels do not exist. An `ipcRenderer.invoke` against them rejects with "No
+ * handler registered", which is the correct answer rather than a soft refusal a
+ * caller could mistake for a transient failure and retry.
+ *
+ * `pluginNet` is the other half of the network story above: it is the second
+ * channel here that reaches a host we do not control, and unlike `aiProxy` the
+ * host is chosen by a third party's manifest.
+ */
+export const pluginsEnabled = (): boolean => isServerEdition();
 
 /**
  * Shout if the renderer's edition disagrees with this process's.

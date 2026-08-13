@@ -196,7 +196,7 @@ describe('local transport', () => {
     const stream = streamProviderBytes({ provider: 'openai', model: 'gpt-4o', body: {} }, new AbortController().signal);
 
     const run = (async () => {
-      for await (const _c of stream) break; // eslint-disable-line @typescript-eslint/no-unused-vars
+      for await (const _c of stream) break;
     })();
 
     await tick();

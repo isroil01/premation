@@ -11,13 +11,15 @@ import type { Effect } from './effects';
 
 describe('bake predicates', () => {
   it('flags only the effects the GPU cannot draw at all', () => {
-    for (const t of ['four-color-gradient', 'beam', 'keylight', 'wave-warp', 'turbulent-displace',
+    for (const t of ['four-color-gradient', 'keylight', 'wave-warp', 'turbulent-displace',
       'inner-shadow', 'inner-glow', 'satin', 'bevel', 'directional-blur', 'linear-wipe', 'transform']) {
       expect(isGpuUnbakeableEffect(t)).toBe(true);
     }
-    // These have GPU forms → they never FORCE a bake.
+    // These have GPU forms → they never FORCE a bake. `beam` joined them when
+    // it gained a shader (2026-08-12); it kept its Canvas2D pass, so it is
+    // still `hasCanvas2dImplementation`, which is the pairing asserted below.
     for (const t of ['blur', 'glow', 'brightness', 'levels', 'curves', 'tint', 'gradient-ramp',
-      'fractal-noise', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise']) {
+      'fractal-noise', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise', 'beam']) {
       expect(isGpuUnbakeableEffect(t)).toBe(false);
     }
   });

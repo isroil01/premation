@@ -1,14 +1,17 @@
-import { app, BrowserWindow, shell, ipcMain, dialog, Menu, protocol, net, type MenuItemConstructorOptions, type WebContents } from 'electron';
+import { app, BrowserWindow, shell, dialog, Menu, protocol, net, type MenuItemConstructorOptions, type WebContents } from 'electron';
+import { handle, on } from './ipcGuard';
 import path from 'node:path';
 import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
-import { registerCredentialIpc } from './credentialStore';
 import { registerAiKeyIpc } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
-import { aiEnabled, assertRendererEditionMatches } from './edition';
+import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
+import { installPluginPublishIpc } from './pluginPublish';
+import { registerPluginNetIpc } from './pluginNet';
+import { aiEnabled, pluginsEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
 
@@ -43,7 +46,21 @@ function findDeepLink(argv: string[]): string | undefined {
   return argv.find((a) => a.startsWith(`${OAUTH_SCHEME}://`));
 }
 
-/** Parse a premation://oauth deep link and forward its code/error to the renderer. */
+/**
+ * A plugin id that may be routed on.
+ *
+ * A deep link is the least trusted input this process handles: anyone can put
+ * one in a web page, a chat message or an email, and the OS hands it straight
+ * to us. The id is therefore validated HERE, before it is forwarded anywhere —
+ * the renderer validates it again, because IPC is its own boundary, but a
+ * malformed id has no business travelling that far.
+ *
+ * Same shape the registry issues: reverse-DNS and lowercase, which leaves no
+ * room for traversal characters, a scheme, or a path.
+ */
+const PLUGIN_ID_RE = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9][a-z0-9-]*)+$/;
+
+/** Parse a premation:// deep link and route it to the renderer. */
 function handleDeepLink(url: string | undefined): void {
   if (!url || !url.startsWith(`${OAUTH_SCHEME}://`)) return;
   let parsed: URL;
@@ -52,16 +69,30 @@ function handleDeepLink(url: string | undefined): void {
   } catch {
     return;
   }
-  if (parsed.host !== 'oauth') return;
-  const code = parsed.searchParams.get('code') ?? undefined;
-  const error = parsed.searchParams.get('error') ?? undefined;
-  if (!code && !error) return;
 
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
-  win.webContents.send('oauth:result', { code, error });
+
+  if (parsed.host === 'oauth') {
+    const code = parsed.searchParams.get('code') ?? undefined;
+    const error = parsed.searchParams.get('error') ?? undefined;
+    if (!code && !error) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    win.webContents.send('oauth:result', { code, error });
+    return;
+  }
+
+  // premation://plugin/<id> — open that plugin's page in the editor.
+  if (parsed.host === 'plugin') {
+    const id = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+    // Refused silently rather than forwarded or reported. A link with a
+    // malformed id is a typo or a probe, and neither earns a dialog.
+    if (id.length > 200 || !PLUGIN_ID_RE.test(id)) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    win.webContents.send('deeplink:plugin', { id });
+  }
 }
 
 // Only one instance may run: on Windows a premation:// link launches a SECOND
@@ -119,7 +150,7 @@ const PROJECT_FILTERS = [
  * The renderer reaches these through the preload bridge (project:*, file:*).
  */
 function registerFileIpc(): void {
-  ipcMain.handle('project:open', async () => {
+  handle('project:open', async () => {
     const res = await dialog.showOpenDialog({ properties: ['openFile'], filters: PROJECT_FILTERS });
     const filePath = res.filePaths[0];
     if (res.canceled || !filePath) return null;
@@ -131,12 +162,12 @@ function registerFileIpc(): void {
     }
   });
 
-  ipcMain.handle('project:chooseSavePath', async (_event, defaultName: string) => {
+  handle('project:chooseSavePath', async (_event, defaultName: string) => {
     const res = await dialog.showSaveDialog({ defaultPath: defaultName, filters: PROJECT_FILTERS });
     return res.canceled ? null : res.filePath ?? null;
   });
 
-  ipcMain.handle('file:read', async (_event, filePath: string) => {
+  handle('file:read', async (_event, filePath: string) => {
     try {
       return await readFile(filePath, 'utf8');
     } catch {
@@ -144,16 +175,16 @@ function registerFileIpc(): void {
     }
   });
 
-  ipcMain.handle('file:write', async (_event, filePath: string, contents: string) => {
+  handle('file:write', async (_event, filePath: string, contents: string) => {
     await writeFile(filePath, contents, 'utf8');
   });
 
-  ipcMain.handle('window:minimize', (event) => {
+  handle('window:minimize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.minimize();
   });
 
-  ipcMain.handle('window:maximize', (event) => {
+  handle('window:maximize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win) {
       if (win.isMaximized()) win.unmaximize();
@@ -161,13 +192,13 @@ function registerFileIpc(): void {
     }
   });
 
-  ipcMain.handle('window:close', (event) => {
+  handle('window:close', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.close();
   });
 
-  ipcMain.handle('app:version', () => app.getVersion());
-  ipcMain.handle('app:quit', () => app.quit());
+  handle('app:version', () => app.getVersion());
+  handle('app:quit', () => app.quit());
 }
 
 /**
@@ -185,7 +216,7 @@ function registerBundleIpc(): void {
     return target;
   };
 
-  ipcMain.handle('bundle:read', async (_event, root: string, name: string) => {
+  handle('bundle:read', async (_event, root: string, name: string) => {
     const target = contained(root, name);
     if (!target) return null;
     try {
@@ -195,7 +226,7 @@ function registerBundleIpc(): void {
     }
   });
 
-  ipcMain.handle('bundle:writeAtomic', async (_event, root: string, name: string, contents: string) => {
+  handle('bundle:writeAtomic', async (_event, root: string, name: string, contents: string) => {
     const target = contained(root, name);
     if (!target) throw new Error('bundle:writeAtomic path escapes bundle root');
     await mkdir(path.dirname(target), { recursive: true });
@@ -204,7 +235,7 @@ function registerBundleIpc(): void {
     await rename(tmp, target); // atomic on the same filesystem
   });
 
-  ipcMain.handle('bundle:remove', async (_event, root: string, name: string) => {
+  handle('bundle:remove', async (_event, root: string, name: string) => {
     const target = contained(root, name);
     if (!target) return;
     try {
@@ -214,7 +245,7 @@ function registerBundleIpc(): void {
     }
   });
 
-  ipcMain.handle('bundle:list', async (_event, root: string) => {
+  handle('bundle:list', async (_event, root: string) => {
     try {
       const entries = await readdir(path.resolve(root), { withFileTypes: true });
       return entries.filter((e) => e.isFile()).map((e) => e.name);
@@ -224,7 +255,7 @@ function registerBundleIpc(): void {
   });
 
   // Native directory dialog for opening a `.motion` bundle (a directory).
-  ipcMain.handle('project:openBundleDir', async () => {
+  handle('project:openBundleDir', async () => {
     const res = await dialog.showOpenDialog({ properties: ['openDirectory'] });
     return res.canceled ? null : res.filePaths[0] ?? null;
   });
@@ -242,7 +273,7 @@ function registerBlobIpc(): void {
     return path.resolve(root, 'blobs', hash.slice(0, 2), hash);
   };
 
-  ipcMain.handle('blob:has', async (_event, root: string, hash: string) => {
+  handle('blob:has', async (_event, root: string, hash: string) => {
     const target = blobPath(root, hash);
     if (!target) return false;
     try {
@@ -253,7 +284,7 @@ function registerBlobIpc(): void {
     }
   });
 
-  ipcMain.handle('blob:read', async (_event, root: string, hash: string) => {
+  handle('blob:read', async (_event, root: string, hash: string) => {
     const target = blobPath(root, hash);
     if (!target) return null;
     try {
@@ -263,7 +294,7 @@ function registerBlobIpc(): void {
     }
   });
 
-  ipcMain.handle('blob:write', async (_event, root: string, hash: string, bytes: Uint8Array) => {
+  handle('blob:write', async (_event, root: string, hash: string, bytes: Uint8Array) => {
     const target = blobPath(root, hash);
     if (!target) throw new Error('blob:write invalid hash');
     await mkdir(path.dirname(target), { recursive: true });
@@ -272,7 +303,7 @@ function registerBlobIpc(): void {
     await rename(tmp, target);
   });
 
-  ipcMain.handle('blob:remove', async (_event, root: string, hash: string) => {
+  handle('blob:remove', async (_event, root: string, hash: string) => {
     const target = blobPath(root, hash);
     if (!target) return;
     try {
@@ -282,7 +313,7 @@ function registerBlobIpc(): void {
     }
   });
 
-  ipcMain.handle('blob:list', async (_event, root: string) => {
+  handle('blob:list', async (_event, root: string) => {
     const out: string[] = [];
     try {
       const base = path.resolve(root, 'blobs');
@@ -427,7 +458,7 @@ function registerRenderIpc(): void {
       proc.on('close', (code) => resolve(code === 0 ? out : err || null));
     });
 
-  ipcMain.handle('media:probe', async (_e, bytes: Uint8Array, ext: string) => {
+  handle('media:probe', async (_e, bytes: Uint8Array, ext: string) => {
     const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : 'bin';
     const tmp = path.join(
       app.getPath('temp'),
@@ -470,7 +501,7 @@ function registerRenderIpc(): void {
    */
   const proxyJobs = new Map<string, ReturnType<typeof spawn>>();
 
-  ipcMain.handle(
+  handle(
     'proxy:generate',
     async (_e, assetId: string, bytes: Uint8Array, ext: string, args: string[], outExt: string) => {
       const safeExt = /^[a-z0-9]{1,5}$/i.test(ext) ? ext : 'bin';
@@ -512,7 +543,7 @@ function registerRenderIpc(): void {
     },
   );
 
-  ipcMain.handle('proxy:cancel', (_e, assetId: string) => {
+  handle('proxy:cancel', (_e, assetId: string) => {
     const proc = proxyJobs.get(assetId);
     if (!proc) return false;
     proc.kill();
@@ -525,7 +556,7 @@ function registerRenderIpc(): void {
     proxyJobs.clear();
   });
 
-  ipcMain.handle('render:beginJob', async () => {
+  handle('render:beginJob', async () => {
     const jobId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     const dir = path.join(app.getPath('temp'), `motion-render-${jobId}`);
     await mkdir(dir, { recursive: true });
@@ -533,7 +564,7 @@ function registerRenderIpc(): void {
     return jobId;
   });
 
-  ipcMain.handle(
+  handle(
     'render:stageFrame',
     async (_e, jobId: string, index: number, bytes: Uint8Array, ext: 'jpg' | 'png' = 'jpg') => {
       const dir = jobs.get(jobId);
@@ -547,7 +578,7 @@ function registerRenderIpc(): void {
     },
   );
 
-  ipcMain.handle('render:stageAudio', async (_e, jobId: string, bytes: Uint8Array) => {
+  handle('render:stageAudio', async (_e, jobId: string, bytes: Uint8Array) => {
     const dir = jobs.get(jobId);
     if (!dir) throw new Error('unknown render job');
     await writeFile(path.join(dir, 'audio.wav'), Buffer.from(bytes));
@@ -557,7 +588,7 @@ function registerRenderIpc(): void {
    * Encode the staged frames into one file. `format` picks the codec/container;
    * everything else is derived so the renderer never has to know ffmpeg flags.
    */
-  ipcMain.handle(
+  handle(
     'render:encode',
     async (
       _e,
@@ -633,6 +664,11 @@ function registerRenderIpc(): void {
             '-c:v', 'libx264',
             '-preset', opts.quality === 'draft' ? 'veryfast' : 'medium',
             '-crf', crf,
+            // H.264 carries no alpha. A transparent comp stages as RGBA PNG and
+            // this conversion flattens it over BLACK — ffmpeg's own behaviour,
+            // relied on deliberately rather than stumbled into, and now stated
+            // in the composition settings dialog so nobody first discovers it
+            // in a delivered file. mov (ProRes 4444) and webm (VP9) keep alpha.
             '-pix_fmt', 'yuv420p',
             // Streaming-friendly: without faststart the moov atom lands at the
             // end and browsers refuse to play the file until it fully downloads.
@@ -649,7 +685,7 @@ function registerRenderIpc(): void {
   );
 
   /** Kill a running encode (the queue's Pause / the dialog's Cancel). */
-  ipcMain.handle('render:cancel', async (_e, jobId: string) => {
+  handle('render:cancel', async (_e, jobId: string) => {
     running.get(jobId)?.kill();
     running.delete(jobId);
   });
@@ -677,7 +713,7 @@ function registerRenderIpc(): void {
     }
   };
 
-  ipcMain.handle('render:save', async (_e, jobId: string, defaultName: string) => {
+  handle('render:save', async (_e, jobId: string, defaultName: string) => {
     const ext = path.extname(defaultName).replace('.', '') || 'mp4';
     const res = await dialog.showSaveDialog({
       defaultPath: defaultName,
@@ -698,7 +734,7 @@ function registerRenderIpc(): void {
    * Never overwrites — an existing name gets ` (2)`, ` (3)` and so on, because
    * silently replacing a previous render is not recoverable.
    */
-  ipcMain.handle('render:saveTo', async (_e, jobId: string, dir: string, filename: string) => {
+  handle('render:saveTo', async (_e, jobId: string, dir: string, filename: string) => {
     const ext = path.extname(filename).replace('.', '') || 'mp4';
     const stem = path.basename(filename, `.${ext}`);
     let target = path.join(dir, filename);
@@ -708,12 +744,12 @@ function registerRenderIpc(): void {
   });
 
   /** Directory picker for the render queue's output folder. */
-  ipcMain.handle('render:chooseOutputDir', async () => {
+  handle('render:chooseOutputDir', async () => {
     const res = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] });
     return res.canceled ? null : (res.filePaths[0] ?? null);
   });
 
-  ipcMain.handle('render:cleanJob', async (_e, jobId: string) => {
+  handle('render:cleanJob', async (_e, jobId: string) => {
     const dir = jobs.get(jobId);
     if (!dir) return;
     running.get(jobId)?.kill();
@@ -831,9 +867,30 @@ function createMainWindow(): BrowserWindow {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // sandbox: false is required for WebGPU adapter creation in Electron.
-      // Security is maintained by contextIsolation + nodeIntegration: false.
-      sandbox: false,
+      /*
+        The OS-level renderer sandbox. ON.
+
+        It was off, with a comment stating that `sandbox: true` breaks WebGPU
+        adapter creation. That was measured and is not true here: on Electron
+        32.3.3 / Chromium 128, a sandboxed renderer reports `navigator.gpu`
+        defined, `requestAdapter()` resolving to an adapter, `requestDevice()`
+        succeeding, and WebGL2 available — over both `file://` (the packaged
+        build's load path) and `http://` (the dev server's). Whatever was true
+        when that comment was written, Chromium's GPU sandboxing has moved.
+
+        It matters more here than in most Electron apps. This renderer embeds
+        third-party plugin panels, and `contextIsolation` + `nodeIntegration:
+        false` bound what a compromised renderer can ASK for — the sandbox
+        bounds what the process itself can DO if one of those is ever escaped.
+
+        The preload is sandbox-compatible: it imports only `contextBridge` and
+        `ipcRenderer`, and reads `process.platform` / `process.versions`, all of
+        which a sandboxed preload is given.
+
+        Re-measure at the next Electron upgrade rather than trusting this note:
+        `electron/sandboxSupport.test.ts` records what was checked and how.
+      */
+      sandbox: true,
       webgl: true,
       // DevTools only in development. A shipped build has no inspector, so no
       // "Inspect", no console, and no "allow pasting" prompt for end users.
@@ -862,7 +919,10 @@ function createMainWindow(): BrowserWindow {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
-            sandbox: false,
+            // Same as the main window — see the note there. A pop-out running
+            // less sandboxed than the window it came from is the kind of gap
+            // nobody looks for.
+            sandbox: true,
             webgl: true,
             devTools: isDev,
           },
@@ -898,7 +958,7 @@ function createMainWindow(): BrowserWindow {
  * bite — premation: itself, re-entering our own deep-link handler).
  */
 function registerOAuthIpc(): void {
-  ipcMain.handle('oauth:openExternal', async (_event, url: string) => {
+  handle('oauth:openExternal', async (_event, url: string) => {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -913,7 +973,7 @@ function registerOAuthIpc(): void {
 }
 
 function registerPopoutIpc(): void {
-  ipcMain.handle('popout:spawnWindow', (event, panelId: string) => {
+  handle('popout:spawnWindow', (event, panelId: string) => {
     const parentWin = BrowserWindow.fromWebContents(event.sender);
     const popoutWin = new BrowserWindow({
       width: 1000,
@@ -929,7 +989,8 @@ function registerPopoutIpc(): void {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        // Same as the main window — see the note there.
+        sandbox: true,
         webgl: true,
       },
     });
@@ -970,7 +1031,7 @@ app.on('web-contents-created', (_event, contents) => hardenWebContents(contents)
 // The renderer's ground-truth WebGPU probe result (adapter/device/configure +
 // any error), appended to the same log the main process writes. This is what
 // actually answers "is WebGPU working" on a packaged build with no DevTools.
-ipcMain.on('diag:gpuReport', (_event, report: unknown) => {
+on('diag:gpuReport', (_event, report: unknown) => {
   try {
     const line = `${new Date().toISOString()} [renderer] ${JSON.stringify(report)}\n`;
     const logPath = path.join(app.getPath('userData'), 'gpu-diagnostics.log');
@@ -1037,14 +1098,39 @@ app.whenReady().then(() => {
   registerFileIpc();
   registerBundleIpc();
   registerBlobIpc();
-  registerIndexIpc(ipcMain, app);
+  registerIndexIpc(app);
   registerRenderIpc();
   registerPopoutIpc();
   registerOAuthIpc();
-  // The session's refresh token, encrypted with the OS keystore and held in
-  // this process — never in renderer localStorage, where DevTools can read and
-  // edit it. See credentialStore.ts.
-  registerCredentialIpc();
+  // A plugin's outbound requests. Here rather than in the renderer because the
+  // app shell's `connect-src` does not name a plugin's hosts, and widening it
+  // to cover them would widen the whole renderer rather than the plugin.
+  //
+  // GATED, for exactly the reason the assistant below is. The local edition
+  // ships no plugins, and "the renderer never calls it" is not a gate on the
+  // privileged side of this boundary. It is also the second of the two channels
+  // in this process that reach a third-party host — the other is aiProxy — so
+  // leaving it registered would hold an outbound path open in a build whose
+  // whole claim is that it has none.
+  if (pluginsEnabled()) registerPluginNetIpc();
+  // The account session, and every authenticated call that uses it.
+  //
+  // Both tokens live in this process. There is no `credentials:get` any more:
+  // the renderer asks for a REQUEST to be made and never for the credential
+  // that makes it possible, so a compromised renderer can spend the session but
+  // cannot take it somewhere else. See apiSession.ts for the full argument, and
+  // apiBase.ts for why this is `api.request(path)` and not `fetch(url)`.
+  registerApiProxyIpc();
+
+  // Publishing a plugin. Both secrets involved — the session above and the
+  // publisher's private signing key — stay in this process; the renderer sends
+  // bytes and a visibility choice and gets a result back. See pluginPublish.ts
+  // for why the key is picked per publish rather than remembered.
+  //
+  // Gated with the rest. Publishing needs an account and a registry, neither of
+  // which the local edition has, and the channel opens a file picker — a UI
+  // affordance appearing in a build with no way to use what it produces.
+  if (pluginsEnabled()) installPluginPublishIpc();
 
   // The assistant. Provider keys live here rather than in the renderer —
   // encrypted with the OS keystore, with NO read-back verb (aiKeyVault.ts) — and
@@ -1067,7 +1153,7 @@ app.whenReady().then(() => {
 
   // The renderer reports its own edition on first paint so a build whose two
   // halves disagree says so. Not authoritative — see preload's `reportEdition`.
-  ipcMain.handle('edition:report', (_event, reported: unknown) => {
+  handle('edition:report', (_event, reported: unknown) => {
     const result = assertRendererEditionMatches(reported);
     if (!result.ok) console.error(result.message);
     return result;
@@ -1111,7 +1197,9 @@ app.on('window-all-closed', () => {
 // Ensure the managed server is torn down on every exit path.
 app.on('before-quit', () => {
   stopBackend();
-  // Otherwise a fetch to a provider can outlive the window that asked for it and
-  // hold the process open after every window is gone.
+  // Otherwise a fetch to a provider — or to our own backend — can outlive the
+  // window that asked for it and hold the process open after every window is
+  // gone.
   abortAllStreams();
+  abortAllApiStreams();
 });

@@ -25,8 +25,19 @@ export class RecentProjects {
     return this.settings.get<RecentProjectEntry[]>(KEY, []);
   }
 
+  /**
+   * Record an open/save, most recent first.
+   *
+   * Deduped on id AND path. Id alone was not enough in either direction: a
+   * project ref gets a FRESH id on every open, so opening the same file twice
+   * left two rows for one path — and `saveAs` used to REUSE the id, so saving a
+   * copy overwrote the source project's row and dropped it off the start screen
+   * while it was still sitting on disk.
+   */
   add(entry: RecentProjectEntry): void {
-    const existing = this.list().filter((e) => e.id !== entry.id);
+    const existing = this.list().filter(
+      (e) => e.id !== entry.id && !(entry.path != null && e.path === entry.path),
+    );
     const next = [entry, ...existing].slice(0, this.max);
     this.settings.set(KEY, next);
   }

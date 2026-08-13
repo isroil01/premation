@@ -139,6 +139,19 @@ export interface TechniqueDef {
   /** e.g. 'kinetic_type.hard_cut_stack'. Category prefix is load-bearing. */
   id: string;
   category: TechniqueCategory;
+  /**
+   * Which motion discipline this technique belongs to. Absent means `'editorial'`.
+   *
+   * `TechniqueCategory` is shared across both vocabularies and the meaning of a
+   * category is not: an editorial `transition` is a full-frame wipe, a product
+   * `transition` is a row growing into a detail view. A pack that refused the
+   * category to keep out the first was also refusing the second — see
+   * `packPermits`, which is where this field is read.
+   *
+   * Optional rather than required so every technique in THIS package keeps its
+   * declaration unchanged; `@motion/product-motion` sets it explicitly.
+   */
+  vocabulary?: 'editorial' | 'product';
   displayName: string;
   /** Cast-time metadata. Short and evocative — this is what the LLM sees. */
   intent: string;
@@ -165,6 +178,27 @@ export interface TechniqueDef {
    * someone adds the sixth technique.
    */
   exclusiveResource?: string;
+  /**
+   * This technique only reads as intentional across a STRONG beat boundary.
+   *
+   * The sequencer's continuity contract classifies every boundary: `persist`,
+   * `transform_into` and `match_cut` mean the two beats genuinely share an
+   * element, while `carry_motion` is the auto-inserted weakest bridge — added
+   * precisely BECAUSE the beats share nothing, so that a run does not fail over
+   * a boundary a drawn mark can span.
+   *
+   * `camera.match_move` is the first technique that cares. It deliberately does
+   * not settle: it carries one continuous move through the cut so two beats read
+   * as one shot. Over a real bridge that is a match cut. Over `carry_motion` —
+   * where every element leaves and a new set arrives — the camera is the only
+   * thing that continued, and a camera still travelling while the whole frame
+   * changes underneath it reads as a mistake rather than as a match.
+   *
+   * Declared rather than special-cased in the caster, so the next technique with
+   * the same dependency inherits the guard instead of needing its id hardcoded
+   * beside this one's.
+   */
+  requiresBridge?: boolean;
   /** Registry tool names it needs. Validated against the live registry at boot. */
   requires: readonly string[];
   minDurationMs: number;

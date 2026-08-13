@@ -63,7 +63,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
           trigger={
             <button type="button" className={styles.blendTrigger}>
               {blendLabel}
-              <Icon name="chevron-down" size={12} />
+              <Icon name="chevron-down" size="sm" />
             </button>
           }
           items={blendItems}
@@ -77,7 +77,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
           trigger={
             <button type="button" className={styles.blendTrigger}>
               {matteLabel}
-              <Icon name="chevron-down" size={12} />
+              <Icon name="chevron-down" size="sm" />
             </button>
           }
           items={matteItems}
@@ -92,7 +92,7 @@ export function CompositingControls({ nodeId }: { nodeId: string }): JSX.Element
             trigger={
               <button type="button" className={styles.blendTrigger} style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={sourceLabel}>
                 {sourceLabel}
-                <Icon name="chevron-down" size={12} />
+                <Icon name="chevron-down" size="sm" />
               </button>
             }
             items={sourceItems}

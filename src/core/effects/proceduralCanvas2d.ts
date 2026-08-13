@@ -13,8 +13,32 @@
 import type { Effect } from './effects';
 import { effectNumber, paramsOf } from './effects';
 
+/**
+ * The procedural generators, mapped to their draw functions.
+ *
+ * One table rather than a membership predicate beside a dispatch chain. These
+ * used to be two separate `if` chains both hardcoding the same two type names,
+ * the second with no `else`: a third generator added to the predicate but not
+ * the dispatch would force every layer carrying it through the CPU bake and
+ * then draw nothing — the same silent-fallthrough shape as
+ * `COLOR_EFFECTS`/`effectToMatrix` and `LUT_EFFECTS`/`tableFor`.
+ *
+ * Low risk at two entries ten lines apart, which is exactly why it was cheap to
+ * fix now rather than after it grew.
+ *
+ * Declared AFTER the functions it names — `function` declarations hoist, so the
+ * initialiser sees them; an arrow-function refactor here would not.
+ */
+const PROCEDURAL: ReadonlyMap<
+  string,
+  (oc: CanvasRenderingContext2D, w: number, h: number, e: Effect) => void
+> = new Map([
+  ['gradient-ramp', applyGradientRamp],
+  ['fractal-noise', applyFractalNoise],
+]);
+
 export function isCanvas2dProcedural(type: string): boolean {
-  return type === 'gradient-ramp' || type === 'fractal-noise';
+  return PROCEDURAL.has(type);
 }
 
 export function applyProceduralEffect(
@@ -23,8 +47,7 @@ export function applyProceduralEffect(
   h: number,
   e: Effect,
 ): void {
-  if (e.type === 'gradient-ramp') applyGradientRamp(oc, w, h, e);
-  else if (e.type === 'fractal-noise') applyFractalNoise(oc, w, h, e);
+  PROCEDURAL.get(e.type)?.(oc, w, h, e);
 }
 
 function applyGradientRamp(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {

@@ -211,7 +211,19 @@ describe('EFFECT_DEFS', () => {
   //
   // GPU spatial effects with empty CSS (CompositionPass materials) — Fill,
   // Stroke, Sharpen, Noise used to be Canvas2D-only; they now run as shaders.
-  const GPU_SPATIAL_NO_CSS = new Set<string>(['fill', 'stroke', 'sharpen', 'noise']);
+  //
+  // `apply-color-lut` joined them when it gained a strip texture and a shader:
+  // it left the forces-a-bake list (so it no longer answers to
+  // `isCanvas2dOnlyEffect`) while KEEPING its Canvas2D pass for layers baked
+  // for other reasons — exactly the position the four above are in.
+  const GPU_SPATIAL_NO_CSS = new Set<string>([
+    'fill', 'stroke', 'sharpen', 'noise', 'apply-color-lut',
+    // Ported 2026-08-12, the first of the CPU population to move. Same
+    // position as the five above: a shader in CompositionPass, no CSS form,
+    // and its Canvas2D pass retained as the reference the GPU one is diffed
+    // against.
+    'beam',
+  ]);
   // Temporal effects (Echo, Posterize Time) are resolved in buildSnapshot's
   // time plumbing, not as a per-layer pass. Read the REAL predicate — this was
   // a second private list beside the Canvas2D one, and it went stale for the

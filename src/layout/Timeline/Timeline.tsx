@@ -47,8 +47,6 @@ import type {
 import { Dropdown } from '@components/Dropdown';
 import { type LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from '@layout/Inspector/blendMenu';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSelectionStore } from '@stores/selectionStore';
 import { eligibleParents, parentOfNode } from '@core/scene/parenting';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import {
@@ -62,12 +60,12 @@ import {
 import { audioEngine } from '@core/audio/AudioEngine';
 import { waveformPath, peaksInRange } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
-import { LABEL_COLORS } from '@core/scene/labelColor';
+import { ColorPicker } from '@components/ColorPicker';
 import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
 
-const RULER_HEIGHT_DEFAULT = 26;
+const RULER_HEIGHT_DEFAULT = 36;
 const TRACK_HEIGHT_DEFAULT = 30;
-const TRACK_HEADER_WIDTH_DEFAULT = 460;
+const TRACK_HEADER_WIDTH_DEFAULT = 490;
 
 /** A virtualized row is either a track summary row, a category accordion row, or a property sub-row. */
 type Row =
@@ -147,7 +145,7 @@ export interface TimelineProps {
   onTrackBlendModeChange?: (trackId: string, mode: LayerBlendMode) => void;
   onTrackMatteChange?: (trackId: string, matte: any) => void;
   onTrackParentChange?: (trackId: string, parentId: string | null) => void;
-  onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
+  onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   /** Rename a layer (confirmed on blur/Enter). */
   onTrackRename?: (trackId: string, newName: string) => void;
   onKeyframeSeek?: (keyframeId: string) => void;
@@ -322,22 +320,22 @@ function Timeline({
       }
       const trackName = (track.name ?? '').toLowerCase();
       const hasProps = (track.properties?.length ?? 0) > 0 || track.isGroup === true;
-      
+
       const layerMatches = !query || trackName.includes(query);
       const matchingProps = query && track.properties
         ? track.properties.filter(
-            (p) =>
-              p.prop.toLowerCase().includes(query) ||
-              (p.label ?? '').toLowerCase().includes(query)
-          )
+          (p) =>
+            p.prop.toLowerCase().includes(query) ||
+            (p.label ?? '').toLowerCase().includes(query)
+        )
         : [];
-      
+
       const hasMatchingProps = matchingProps.length > 0;
-      
+
       if (!query || layerMatches || hasMatchingProps) {
         const isExpanded = hasProps && (expanded.has(track.id) || hasMatchingProps);
         out.push({ type: 'track', track, expanded: isExpanded, hasProps });
-        
+
         if (track.properties) {
           let shownProps = track.properties;
           if (query) {
@@ -359,7 +357,7 @@ function Timeline({
               shownProps = [];
             }
           }
-          
+
           if (shownProps.length > 0) {
             // Group shownProps by category
             const catMap = new Map<string, { key: string; label: string; icon: IconName; order: number; props: TimelinePropertyTrack[] }>();
@@ -556,12 +554,12 @@ function Timeline({
       const deltaX = moveEvent.clientX - startX;
       const deltaSec = deltaX / pps;
       const newDuration = Math.max(0.1, startDuration + deltaSec);
-      
+
       // Snap to frames
       const fps = model.frameRate || 30;
       const frameIndex = Math.round(newDuration * fps);
       const snappedDuration = Math.max(1 / fps, frameIndex / fps);
-      
+
       onDurationChange?.(snappedDuration);
     };
 
@@ -767,7 +765,7 @@ function Timeline({
 
   const onKeyframeDown = useCallback((kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
-    
+
     // Compute next selection synchronously to avoid stale closure in drag start
     const nextSel = new Set(selectedKfIds);
     if (e.shiftKey) {
@@ -894,9 +892,9 @@ function Timeline({
         row.type === 'prop'
           ? { keyframes: row.prop.keyframes }
           : // Collapsed summary rows stand in for their property keyframes
-            // (track.keyframes is the flat union, same ids); expanded rows
-            // defer to the property sub-rows that follow them.
-            { keyframes: row.expanded ? [] : (row.track.keyframes ?? []) },
+          // (track.keyframes is the flat union, same ids); expanded rows
+          // defer to the property sub-rows that follow them.
+          { keyframes: row.expanded ? [] : (row.track.keyframes ?? []) },
       ),
     [rows],
   );
@@ -1034,9 +1032,15 @@ function Timeline({
       >
         <div className={styles.ruler} style={{ height: rulerHeight }}>
           {/* Column heads for the switches and modes (AE layout). */}
-          <div className={styles.colHeads} aria-hidden>
-            <span className={styles.colHeadLayer} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span>Layer Name</span>
+          <div className={styles.colHeads}>
+            <div className={styles.colHeadPreInfo} aria-hidden>
+              <span className={styles.colHeadItem}><Icon name="eye" size="sm" title="Video Visibility" /></span>
+              <span className={styles.colHeadItem}><Icon name="circle" size="sm" title="Solo" /></span>
+              <span className={styles.colHeadItem}><Icon name="lock" size="sm" title="Lock" /></span>
+            </div>
+            <span className={styles.colHeadLayer}>
+              <span style={{ color: '#888888', marginRight: 4 }} aria-hidden>#</span>
+              <span>Source Name</span>
               <button
                 type="button"
                 onClick={() => {
@@ -1044,25 +1048,29 @@ function Timeline({
                   window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
                 }}
                 title="Pop Out Timeline into Separate Window"
-                style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, display: 'inline-flex' }}
+                aria-label="Pop out timeline into a separate window"
+                style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, marginLeft: 6, display: 'inline-flex' }}
               >
-                <Icon name="export" size={12} />
+                <Icon name="export" size="sm" />
               </button>
             </span>
-            <span className={styles.colHeadMode}>Mode</span>
-            <span className={styles.colHeadMatte}>Track Matte</span>
-            <span className={styles.colHeadParent}>Parent & Link</span>
-            <span className={styles.colHeadAeSwitches}>
-              {/* Legend for the per-layer switch column below (AE shows the
-                  same glyphs in its column head — five unlabeled dots were
-                  unguessable for new users). */}
-              <Icon name="shy" size={9} title="Shy" />
-              <span className={styles.fxText} title="Effects" style={{ fontSize: 10 }}>fx</span>
-              <Icon name="motion-blur" size={9} title="Motion Blur" />
-              <Icon name="adjustment" size={9} title="Adjustment Layer" />
-              <Icon name="3d" size={9} title="3D Layer" />
+            {/* Legend for the per-layer switch column below — one glyph per
+                switch that actually exists on the rows, in ROW ORDER. The
+                guide-layer glyph is not optional: `data-kind="guide"` ships on
+                every row between adjustment and 3D, and a legend that skips a
+                live switch is worse than no legend. */}
+            <span className={styles.colHeadAeSwitches} aria-hidden>
+              <span className={styles.colHeadItem}><Icon name="shy" size="sm" title="Shy" /></span>
+              <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects" style={{ fontSize: 'var(--font-size-sm)' }}>fx</span></span>
+              <span className={styles.colHeadItem}><Icon name="motion-blur" size="sm" title="Motion Blur" /></span>
+              <span className={styles.colHeadItem}><Icon name="adjustment" size="sm" title="Adjustment Layer" /></span>
+              <span className={styles.colHeadItem}><Icon name="frame" size="sm" title="Guide Layer (not rendered)" /></span>
+              <span className={styles.colHeadItem}><span className={styles.fxText} title="Preserve Underlying Transparency" style={{ fontSize: 'var(--font-size-sm)' }}>T</span></span>
+              <span className={styles.colHeadItem}><Icon name="3d" size="sm" title="3D Layer" /></span>
             </span>
-            <span className={styles.colHeadSwitches}>Switches</span>
+            <span className={styles.colHeadMode}>Mode</span>
+            <span className={styles.colHeadMatte}>T</span>
+            <span className={styles.colHeadParent}>Parent & Link</span>
           </div>
         </div>
         <div
@@ -1307,8 +1315,8 @@ function Timeline({
               const key = row.type === 'track'
                 ? `bg_${row.track.id}`
                 : row.type === 'category'
-                ? `bg_${row.track.id}_cat_${row.categoryKey}`
-                : `bg_${row.track.id}_${row.prop.prop}`;
+                  ? `bg_${row.track.id}_cat_${row.categoryKey}`
+                  : `bg_${row.track.id}_${row.prop.prop}`;
               return (
                 <div
                   key={key}
@@ -1402,7 +1410,7 @@ function Timeline({
                 aria-hidden
               >
                 <span className={styles.markerFlag} title={m.label}>
-                  <Icon name="marker" size={12} />
+                  <Icon name="marker" size="sm" />
                 </span>
               </div>
             ))}
@@ -1608,7 +1616,7 @@ const TrackHeader = memo(function TrackHeader({
   onBlendModeChange?: (mode: LayerBlendMode) => void;
   onMatteChange?: (matte: any) => void;
   onParentChange?: (parentId: string | null) => void;
-  onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD') => void;
+  onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   onRename?: (newName: string) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
   onReorderStart?: (e: ReactPointerEvent<HTMLDivElement>) => void;
@@ -1687,15 +1695,62 @@ const TrackHeader = memo(function TrackHeader({
       aria-label={track.name}
       title="Enter to select · F2 to focus"
     >
-      <div className={styles.layerInfoCol} style={{ paddingLeft: track.depth ? track.depth * 16 : undefined }}>
+      <div className={styles.preInfoCol}>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="visible"
+          data-on={!hidden || undefined}
+          aria-label={hidden ? 'Show track' : 'Hide track'}
+          title={hidden ? 'Hide' : 'Show (Video)'}
+          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
+        >
+          <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="solo"
+          data-on={solo || undefined}
+          aria-label={solo ? 'Unsolo track' : 'Solo track'}
+          title={solo ? 'Unsolo' : 'Solo'}
+          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
+        >
+          <Icon name="circle" size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="lock"
+          data-on={locked || undefined}
+          aria-label={locked ? 'Unlock track' : 'Lock track'}
+          title={locked ? 'Unlock' : 'Lock'}
+          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
+        >
+          <Icon name="lock" size="sm" />
+        </button>
+      </div>
+
+      <div className={styles.layerInfoCol} style={{ paddingLeft: track.depth ? track.depth * 14 : undefined }}>
         <div
           className={styles.dragHandle}
           title="Drag to reorder"
           onPointerDown={onReorderStart}
         >
-          <Icon name="grip-vertical" size={11} />
+          <Icon name="grip-vertical" size="sm" />
         </div>
         <span className={styles.trackIndex}>{index}</span>
+        {typeof track.nodeColor === 'string' && (
+          <div onClick={(e) => e.stopPropagation()} style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <ColorPicker
+              value={track.nodeColor || '#5282b8'}
+              onChange={(hex) => onTrackColorChange?.(track.id, hex)}
+              compact
+              alpha={false}
+              aria-label="Layer label color"
+            />
+          </div>
+        )}
         <button
           type="button"
           className={cn(styles.disclosure, !hasProps && styles.disclosureHidden)}
@@ -1707,78 +1762,15 @@ const TrackHeader = memo(function TrackHeader({
             if (hasProps) onToggleExpand();
           }}
         >
-          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} />
+          <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size="sm" />
         </button>
         <span
           className={styles.trackIcon}
           style={{ color: track.color ?? 'var(--color-accent)' }}
           title={track.kind}
         >
-          <Icon name={(track.icon as IconName) ?? 'layers'} size={14} />
+          <Icon name={(track.icon as IconName) ?? 'layers'} size="sm" />
         </span>
-        {typeof track.nodeColor === 'string' && (
-          <div onClick={(e) => e.stopPropagation()} style={{ marginRight: 'var(--space-2)', display: 'inline-flex', alignItems: 'center' }}>
-            <Dropdown
-              placement="bottom-start"
-              trigger={
-                <button
-                  type="button"
-                  style={{
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '2px',
-                    backgroundColor: track.nodeColor,
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    cursor: 'pointer',
-                    padding: 0,
-                  }}
-                  aria-label="Layer label color"
-                  title="Change layer color / Select label group"
-                />
-              }
-              items={[
-                ...LABEL_COLORS.map((color) => ({
-                  type: 'item' as const,
-                  id: `color-${color.id}`,
-                  label: (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ width: '12px', height: '12px', borderRadius: '2px', backgroundColor: color.color }} />
-                      <span>{color.label}</span>
-                    </div>
-                  ),
-                  onSelect: () => onTrackColorChange?.(track.id, color.color),
-                })),
-                { type: 'separator' as const },
-                {
-                  type: 'item' as const,
-                  id: 'select-label-group',
-                  label: 'Select Label Group',
-                  onSelect: () => {
-                    const findSameColorNodes = (): string[] => {
-                      const result: string[] = [];
-                      const traverse = (nodeId: string) => {
-                        const node = defaultSceneGraph.getNode(nodeId);
-                        if (!node) return;
-                        if ((node as any).color === track.nodeColor) {
-                          result.push(node.id);
-                        }
-                        const kids = defaultSceneGraph.getChildren(nodeId);
-                        for (const k of kids) traverse(k.id);
-                      };
-                      const roots = defaultSceneGraph.getRoots();
-                      for (const r of roots) traverse(r.id);
-                      return result;
-                    };
-                    const sameColorNodeIds = findSameColorNodes();
-                    if (sameColorNodeIds.length > 0) {
-                      useSelectionStore.getState().set(sameColorNodeIds);
-                    }
-                  },
-                },
-              ]}
-            />
-          </div>
-        )}
         {editing ? (
           <input
             ref={inputRef}
@@ -1802,6 +1794,94 @@ const TrackHeader = memo(function TrackHeader({
             {track.name}
           </span>
         )}
+      </div>
+
+      <div className={styles.aeSwitchesCol}>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="shy"
+          data-on={(track as any).shy || undefined}
+          title="Toggle Shy Layer"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
+        >
+          <Icon name="shy" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="fx"
+          data-on={track.fxEnabled !== false || undefined}
+          title="Toggle Effects (fx)"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
+        >
+          <span className={styles.fxText}>fx</span>
+        </button>
+
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="motionBlur"
+          data-on={track.motionBlur || undefined}
+          title="Toggle Motion Blur"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
+        >
+          <Icon name="motion-blur" size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="adjustment"
+          data-on={track.adjustment || undefined}
+          title="Toggle Adjustment Layer"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
+        >
+          <Icon name="adjustment" size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="guide"
+          data-on={track.guide || undefined}
+          aria-pressed={track.guide === true}
+          title={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
+        >
+          {/* NOT `eye-off`. That is the glyph the VISIBILITY switch shows when
+              a layer is hidden, so every row carried two eyes doing unrelated
+              jobs — visibility over in the pre-info column, guide-layer here —
+              and the pair read as one control duplicated. A guide layer is
+              reference framing the render skips, which is what `frame` says. */}
+          <Icon name="frame" size="sm" />
+        </button>
+        {/* Preserve Underlying Transparency — AE's "T" switch. A glyph rather
+            than an icon because that is what it is called and what AE draws;
+            the column legend carries the same T in the same position. */}
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="preserveTransparency"
+          data-on={track.preserveTransparency || undefined}
+          aria-pressed={track.preserveTransparency === true}
+          aria-label="Preserve Underlying Transparency"
+          title={track.preserveTransparency
+            ? 'Preserve Underlying Transparency — visible only where layers beneath are opaque'
+            : 'Preserve Underlying Transparency'}
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('preserveTransparency'); }}
+        >
+          <span className={styles.fxText}>T</span>
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="threeD"
+          data-on={track.threeD || undefined}
+          title="Toggle 3D Layer"
+          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
+        >
+          <Icon name="3d" size="sm" />
+        </button>
       </div>
 
       <div className={styles.modeCol} onClick={(e) => e.stopPropagation()}>
@@ -1832,8 +1912,6 @@ const TrackHeader = memo(function TrackHeader({
             id: m.id,
             label: MATTE_SHORT_LABEL[m.id] ?? m.label,
             icon: m.id === currentMatteOption ? ('check' as const) : undefined,
-            // Carries an explicit matte source across a mode change; dropping it
-            // would silently re-point the matte at the layer above.
             onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
           }))}
         />
@@ -1849,95 +1927,6 @@ const TrackHeader = memo(function TrackHeader({
           }
           items={parentItems}
         />
-      </div>
-
-      <div className={styles.aeSwitchesCol}>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="shy"
-          data-on={(track as any).shy || undefined}
-          title="Toggle Shy Layer"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
-        >
-          <Icon name="shy" size={10} />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="fx"
-          data-on={track.fxEnabled !== false || undefined}
-          title="Toggle Effects (fx)"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
-        >
-          <span className={styles.fxText}>fx</span>
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="motionBlur"
-          data-on={track.motionBlur || undefined}
-          title="Toggle Motion Blur"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
-        >
-          <Icon name="motion-blur" size={10} />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="adjustment"
-          data-on={track.adjustment || undefined}
-          title="Toggle Adjustment Layer"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
-        >
-          <Icon name="adjustment" size={10} />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="threeD"
-          data-on={track.threeD || undefined}
-          title="Toggle 3D Layer"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
-        >
-          <Icon name="3d" size={11} />
-        </button>
-      </div>
-
-      <div className={styles.trackHeaderActions}>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="visible"
-          data-on={hidden || undefined}
-          aria-label={hidden ? 'Show track' : 'Hide track'}
-          title={hidden ? 'Show' : 'Hide'}
-          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
-        >
-          <Icon name={hidden ? 'eye-off' : 'eye'} size={12} />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="solo"
-          data-on={solo || undefined}
-          aria-label={solo ? 'Unsolo track' : 'Solo track'}
-          title={solo ? 'Unsolo' : 'Solo (only soloed layers render)'}
-          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
-        >
-          <Icon name="circle" size={11} />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="lock"
-          data-on={locked || undefined}
-          aria-label={locked ? 'Unlock track' : 'Lock track'}
-          title={locked ? 'Unlock' : 'Lock'}
-          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
-        >
-          <Icon name="lock" size={12} />
-        </button>
       </div>
     </div>
   );
@@ -2111,11 +2100,8 @@ const TrackContent = memo(function TrackContent({
               transform: `translateX(${8 + view.start * pps}px)`,
               width,
               height,
-              // Category color as a subtle fill; the solid hue forms the border.
-              background: clip.color
-                ? `color-mix(in srgb, ${clip.color} 26%, transparent)`
-                : 'var(--color-primary-subtle)',
-              borderColor: clip.color ?? 'var(--color-primary)',
+              background: clip.color ?? 'var(--color-primary)',
+              border: 'none',
               cursor: onClipDown ? 'grab' : undefined,
             }}
             title={clip.label ?? clip.id}
@@ -2123,9 +2109,9 @@ const TrackContent = memo(function TrackContent({
             onContextMenu={
               onClipContextMenu
                 ? (e) => {
-                    e.preventDefault();
-                    onClipContextMenu(clip.id, e.clientX, e.clientY);
-                  }
+                  e.preventDefault();
+                  onClipContextMenu(clip.id, e.clientX, e.clientY);
+                }
                 : undefined
             }
             onDoubleClick={onActivate ? () => onActivate(track.id) : undefined}
@@ -2174,7 +2160,7 @@ const TrackContent = memo(function TrackContent({
                   onClipMuteToggle(clip.nodeId);
                 }}
               >
-                <Icon name={clipMuted ? 'audio-off' : 'audio'} size={11} />
+                <Icon name={clipMuted ? 'audio-off' : 'audio'} size="sm" />
               </button>
             )}
             <span className={styles.clipLabel}>{clip.label ?? clip.id}</span>
@@ -2262,9 +2248,8 @@ const Keyframes = memo(function Keyframes({
               e.preventDefault();
               onKeyframeContextMenu?.(kf.id, e.clientX, e.clientY);
             }}
-            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options${
-              scaleGripIds.has(kf.id) ? ', Alt+drag to scale the selection in time' : ''
-            }`}
+            title={`${time.toFixed(2)}s · ${describeShapes(shapes.left, shapes.right)} — drag to move, Shift+click to multi-select, right-click for options${scaleGripIds.has(kf.id) ? ', Alt+drag to scale the selection in time' : ''
+              }`}
           >
             {!kf.roving && (
               <svg className={styles.keyframeGlyph} viewBox="0 0 12 12" aria-hidden focusable="false">
@@ -2297,10 +2282,10 @@ function TrackCategoryHeader({
   return (
     <div className={styles.categoryHeader} style={style} onClick={onToggle}>
       <span className={styles.disclosure}>
-        <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={10} />
+        <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size="sm" />
       </span>
       <span className={styles.categoryIcon}>
-        <Icon name={icon} size={11} />
+        <Icon name={icon} size="sm" />
       </span>
       <span className={styles.categoryName}>{label}</span>
       <span className={styles.categoryBadge}>{count}</span>

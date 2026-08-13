@@ -56,11 +56,11 @@ getEventBus().on('EngineError', (payload) => {
   if (payload.role !== 'viewport') return;
   const store = useRenderBackendStore.getState();
   if (payload.engine === 'motion-webgpu') {
-    // eslint-disable-next-line no-console
+
     console.warn('[renderBackendStore] WebGPU init failed, noting WebGL2 tier.');
     store._setTier('webgl2');
   } else if (payload.engine === 'motion-webgl2') {
-    // eslint-disable-next-line no-console
+
     console.warn('[renderBackendStore] WebGL2 init failed, showing software badge.');
     store._setTier('software');
   }

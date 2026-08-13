@@ -4,20 +4,17 @@
   gap: var(--space-2);
 }
 
-/* The stage is sized by aspect-ratio from the output dimensions, so the preview
-   is always framed exactly like the exported file. */
 .stage,
 .stageTransparent {
   position: relative;
   width: 100%;
+  max-height: 240px;
   overflow: hidden;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
-  background: #000;
+  background: #000000;
 }
 
-/* A checkerboard makes real alpha visible — on a flat backdrop a transparent
-   export and a black one look identical. */
 .stageTransparent {
   background-color: var(--color-surface-2);
   background-image:
@@ -39,30 +36,33 @@
 .overlayMuted {
   position: absolute;
   inset: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-4);
+  padding: var(--space-3);
   text-align: center;
   font-size: var(--font-size-xs);
-  line-height: 1.45;
-  backdrop-filter: blur(2px);
+  line-height: 1.4;
+  backdrop-filter: blur(4px);
 }
 
 .overlayMuted {
-  color: var(--color-text-tertiary);
-  background: rgba(0, 0, 0, 0.35);
+  color: var(--color-text-secondary);
+  background: rgba(0, 0, 0, 0.6);
 }
 
 .overlayWarn {
-  color: var(--color-text-primary);
-  background: rgba(120, 80, 0, 0.55);
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, #000 85%);
+  border: 1px solid var(--color-warning);
 }
 
 .overlayError {
-  color: var(--color-text-primary);
-  background: rgba(120, 20, 20, 0.6);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 15%, #000 85%);
+  border: 1px solid var(--color-error);
 }
 
 .scrubRow {
@@ -75,6 +75,8 @@
   flex: 1;
   min-width: 0;
   accent-color: var(--color-primary);
+  height: 4px;
+  cursor: pointer;
 }
 
 .timecode {
@@ -83,3 +85,5 @@
   color: var(--color-text-muted);
   white-space: nowrap;
 }
+
+

@@ -8,9 +8,11 @@
  *
  * Here instead:
  *
- *  • The bytes live in the **main** process. The renderer never holds the
- *    refresh token in a place it can be inspected from — it asks for it over
- *    IPC and holds only the short-lived access token in memory.
+ *  • The bytes live in the **main** process, and STAY there. This module
+ *    exposes no IPC at all any more: it used to answer `credentials:get`, which
+ *    handed the refresh token to the renderer on request and made every other
+ *    protection here beside the point (see `apiSession.ts` for the argument).
+ *    Its only caller is now `apiSession`, in the same process.
  *  • They are encrypted with Electron's `safeStorage`, which is a wrapper over
  *    the OS keystore: DPAPI on Windows (keyed to the Windows account), the
  *    Keychain on macOS, and libsecret/kwallet on Linux. Copying the file to
@@ -26,7 +28,7 @@
  * would look identical while offering no protection at all.
  */
 
-import { app, ipcMain, safeStorage } from 'electron';
+import { app, safeStorage } from 'electron';
 import path from 'node:path';
 import { readFile, writeFile, rename, unlink, chmod } from 'node:fs/promises';
 
@@ -87,48 +89,51 @@ async function write(credentials: StoredCredentials | null): Promise<boolean> {
   return true;
 }
 
-/**
- * IPC surface. Three verbs, no more: the renderer can save the session, read
- * it back, and drop it. It cannot enumerate, cannot read arbitrary paths, and
- * cannot ask where the file is.
- */
-export function registerCredentialIpc(): void {
-  ipcMain.handle('credentials:get', async (): Promise<StoredCredentials | null> => {
-    const stored = await read();
-    if (!stored) return null;
+/** Read the stored session, dropping it if the refresh token has expired. */
+export async function readStoredCredentials(): Promise<StoredCredentials | null> {
+  const stored = await read();
+  if (!stored) return null;
 
-    // Drop an expired refresh token here rather than handing the renderer a
-    // credential we already know the server will refuse.
-    if (stored.refreshExpiresAt && new Date(stored.refreshExpiresAt).getTime() <= Date.now()) {
-      await write(null);
-      return null;
-    }
-    return stored;
-  });
-
-  ipcMain.handle(
-    'credentials:set',
-    async (_event, credentials: StoredCredentials): Promise<{ persisted: boolean }> => {
-      // Validate rather than trust: this is the one IPC channel whose payload
-      // is written to disk, and a renderer bug should not be able to store an
-      // arbitrary object shape that fails to parse on the next launch.
-      if (!credentials || typeof credentials.refreshToken !== 'string') {
-        return { persisted: false };
-      }
-      const persisted = await write({
-        refreshToken: credentials.refreshToken,
-        refreshExpiresAt:
-          typeof credentials.refreshExpiresAt === 'string' ? credentials.refreshExpiresAt : undefined,
-        email: typeof credentials.email === 'string' ? credentials.email : undefined,
-        userId: typeof credentials.userId === 'string' ? credentials.userId : undefined,
-      });
-      return { persisted };
-    },
-  );
-
-  ipcMain.handle('credentials:clear', async (): Promise<void> => {
+  // Drop an expired refresh token here rather than keeping a credential we
+  // already know the server will refuse.
+  if (stored.refreshExpiresAt && new Date(stored.refreshExpiresAt).getTime() <= Date.now()) {
     await write(null);
-  });
+    return null;
+  }
+  return stored;
+}
 
-  ipcMain.handle('credentials:available', () => safeStorage.isEncryptionAvailable());
+/**
+ * Persist a session. Returns false when there was no keystore to encrypt with.
+ *
+ * Validates rather than trusts, even though the caller is now in-process: this
+ * is the one value written to disk, and a bug upstream should not be able to
+ * store a shape that fails to parse on the next launch and silently signs the
+ * user out.
+ */
+export async function writeStoredCredentials(credentials: StoredCredentials): Promise<boolean> {
+  if (!credentials || typeof credentials.refreshToken !== 'string') return false;
+  return write({
+    refreshToken: credentials.refreshToken,
+    refreshExpiresAt:
+      typeof credentials.refreshExpiresAt === 'string' ? credentials.refreshExpiresAt : undefined,
+    email: typeof credentials.email === 'string' ? credentials.email : undefined,
+    userId: typeof credentials.userId === 'string' ? credentials.userId : undefined,
+  });
+}
+
+export async function clearStoredCredentials(): Promise<void> {
+  await write(null);
+}
+
+/**
+ * Whether a session can survive a restart at all.
+ *
+ * False on a machine with no OS keystore. Surfaced to the UI through
+ * `auth.status()` because it changes what the user should expect — not as a
+ * silent degradation to plaintext, which would look identical and protect
+ * nothing.
+ */
+export function isCredentialStoreAvailable(): boolean {
+  return safeStorage.isEncryptionAvailable();
 }

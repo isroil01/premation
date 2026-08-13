@@ -39,10 +39,10 @@ interface Loaded {
 function loadStore(): Loaded {
   let loaded!: Loaded;
   jest.isolateModules(() => {
-    /* eslint-disable @typescript-eslint/no-var-requires */
+
     const client = require('@core/api/client') as { setToken: (t: string | null) => void };
     const mod = require('./aiProviderStore') as { useAiProviderStore: Store };
-    /* eslint-enable @typescript-eslint/no-var-requires */
+
     loaded = { store: mod.useAiProviderStore, setToken: client.setToken };
   });
   return loaded;

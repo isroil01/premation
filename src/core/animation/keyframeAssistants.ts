@@ -10,6 +10,10 @@
  *   • Typewriter (text) — builds a text animator + keyframes so characters
  *                            appear one-by-one (a whole rig from one click)
  *
+ * Bounce is NOT here: it grew parameters, presets, a from-zero mode and
+ * squash & stretch, which is a panel's worth of surface rather than one action.
+ * It lives in `bounce.ts` and its home in the UI is the Graph panel.
+ *
  * The track transforms are pure functions (tested); the exported actions wrap
  * them in runAnimEdit so undo restores the exact previous keyframes.
  */
@@ -308,33 +312,4 @@ export function applyEasingToKeyframes(
     }
   });
 }
-
-/**
- * Apply custom asymmetric Bezier influence to a set of keyframes.
- * inflOut affects the outgoing curve (x1), inflIn affects the incoming curve (x2).
- */
-export function applyVelocityToKeyframes(
-  kfIds: ReadonlyArray<string>,
-  inflOut: number,
-  inflIn: number,
-  engine: AnimationEngine = defaultAnimation,
-): void {
-  if (!kfIds.length) return;
-  const outVal = Math.max(0.01, Math.min(0.99, inflOut / 100));
-  const inVal = Math.max(0.01, Math.min(0.99, inflIn / 100));
-  const bezier: [number, number, number, number] = [outVal, 0, 1 - inVal, 1];
-  runAnimEdit(`Set keyframe velocity (Out: ${inflOut}%, In: ${inflIn}%)`, () => {
-    for (const kfId of kfIds) {
-      const ref = parseKeyframeId(kfId);
-      if (!ref) continue;
-      const { nodeId, t } = ref;
-      for (const prop of expandKeyframeProp(ref.prop)) {
-        const kfs = engine.getTrackKeyframes(nodeId, prop);
-        const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-        if (!kf) continue;
-        engine.setKeyframe(nodeId, prop, t, kf.value, 'bezier');
-        engine.setBezier(nodeId, prop, t, bezier);
-      }
-    }
-  });
-}
+

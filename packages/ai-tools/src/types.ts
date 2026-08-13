@@ -96,7 +96,15 @@ export interface SceneFacade {
    *  parent-relative (e.g. Lottie). */
   reparent(nodeId: string, parentId: string | null, options?: { preserveWorld?: boolean }): void;
   setProp(nodeId: string, prop: string, value: unknown): boolean;
-  addEffect(nodeId: string, type: string): string;
+  /**
+   * Add an effect, returning its id.
+   *
+   * `id` requests a specific one. A deterministic emitter cannot read a return
+   * value — it produces a flat `ToolCall[]` with no execution between calls — so
+   * without this it has no way to keyframe `effect.<id>.<param>` on an effect it
+   * just added. Ignored if the node already carries an effect with that id.
+   */
+  addEffect(nodeId: string, type: string, id?: string): string;
   updateEffect(nodeId: string, effectId: string, amount: number): void;
   /**
    * Set a **named** effect parameter.
@@ -170,6 +178,15 @@ export interface AnimFacade {
   setRoving(nodeId: string, prop: string, t: number, roving: boolean): void;
   setExpression(nodeId: string, prop: string, src: string): void;
   getExpressionError(nodeId: string, prop: string): string | null;
+  /**
+   * Does the expression currently DRIVE the property?
+   *
+   * The engine preserves a disabled expression's enabled state across a
+   * rewrite, so `setExpression` succeeding stopped being the same claim as
+   * "this now overrides the keyframes". The tool has to ask, or it reports a
+   * change the user will not see.
+   */
+  isExpressionEnabled(nodeId: string, prop: string): boolean;
   tracks(nodeId: string): readonly { prop: string; keyframes: readonly KeyframeView[] }[];
   evaluate(nodeId: string, t: number): Record<string, number>;
   applyPreset(nodeId: string, name: string, atTime: number): boolean;

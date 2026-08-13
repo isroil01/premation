@@ -1,19 +1,20 @@
-/* eslint-disable no-restricted-syntax -- TODO(F11): SUSPECTED DEFECT, NOT YET VERIFIED.
- * Same shape as toolHandlers.ts — getNode() then in-place `.props` writes and
- * `components.push()`, both of which land in a throwaway copy
- * (SceneGraph.ts:154). Pending F11's audit. Fix = writeProp(). */
 /**
  * Motion recipes (Phase B & C) — After Effects-level 3D animation procedures, encoded.
  *
  * Each recipe is a pure procedure that lays out and animates an element with real 3D depth,
  * 3D camera sweeps, staggered entrances, overshoot easings, glow, and 3D rotations —
  * using the design tokens (design.ts).
+ *
+ * Rule 0 from `toolHandlers.ts` applies here too and for the same reason: a
+ * write goes through a `SceneGraph` setter, never into `getNode(id).components`,
+ * which is a copy rebuilt for that read. The radial burst and the path morph
+ * were both written the wrong way and both produced nothing.
  */
 
 import type { ToolContext } from '@motion/ai-tools';
-import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { set3DEnabled } from '@core/scene/threeD';
 import { PHYSICS, type Bezier, type MotionStyle } from './design';
+import { addPathOp, defaultPathOp, newPathOpId, updateRepeaterOp } from '@core/scene/pathOps';
 import { activeSceneWindow, nextSceneElementStart, beginSceneWindow } from './sceneWindow';
 import { applyEntrance, nonUniformStagger, type EntranceArchetype } from './archetypes';
 
@@ -662,22 +663,24 @@ export function recipeRadialBurst(
   ctx.scene.setProp(id, 'fill', s.palette.accent);
   set3DEnabled(id, true);
 
-  // Add repeater component
-  const node = defaultSceneGraph.getNode(id);
-  if (node) {
-    const fx = node.components.find((c: any) => c.type === 'fx') ?? { id: `${id}_fx`, type: 'fx', props: {} };
-    if (!node.components.includes(fx)) node.components.push(fx);
-    fx.props.repeater = {
-      copies,
-      positionX: 42,
-      positionY: 0,
-      rotation: Math.round(360 / copies),
-      scaleX: 1,
-      scaleY: 1,
-      startOpacity: 100,
-      endOpacity: 100,
-    };
-  }
+  // A ring, not a stack. Three things have to be true at once and only one of
+  // them used to be: the write has to reach the engine (`updateRepeaterOp`, not
+  // a `.props` assignment into a copy `getNode` rebuilt for this read), the
+  // field names have to be the ones the repeater OPERATOR reads
+  // (`offsetRotation`, not `rotation`), and the per-copy rotation has to pivot
+  // about a RADIUS — at anchorX 0 every copy spins about its own origin and all
+  // N land on the same 16px dot.
+  const radius = 42;
+  updateRepeaterOp(id, {
+    copies,
+    offsetX: 0,
+    offsetY: 0,
+    offsetRotation: 360 / copies,
+    offsetScale: 1,
+    offsetOpacity: 1,
+    anchorX: radius,
+    anchorY: 0,
+  });
 
   kf(ctx, id, 'scale', [
     { t: t0, value: 0.2, easing: 'bezier', bezier: PHYSICS.overshoot },
@@ -716,12 +719,17 @@ export function recipePathMorph(
   ctx.scene.setProp(id, 'strokeWidth', 3);
   set3DEnabled(id, true);
 
-  const node = defaultSceneGraph.getNode(id);
-  if (node) {
-    const fx = node.components.find((c: any) => c.type === 'fx') ?? { id: `${id}_fx`, type: 'fx', props: {} };
-    if (!node.components.includes(fx)) node.components.push(fx);
-    fx.props.pathOp = { type: opType, amount };
-  }
+  // `fx.pathOps` is the operator CHAIN that replaced the single `fx.pathOp` slot
+  // in document version 1.3.0, and the reader deliberately does not accept the
+  // old shape. 'puckerBloat' is this recipe's public name for it; the engine
+  // operator is 'pucker', and passing the alias straight through failed
+  // `isPathOpType` and coerced the whole operator to 'none'.
+  addPathOp(id, {
+    ...defaultPathOp(),
+    id: newPathOpId(),
+    type: opType === 'puckerBloat' ? 'pucker' : 'zigzag',
+    amount,
+  });
 
   kf(ctx, id, 'rotation', [
     { t: t0, value: 0, easing: 'bezier', bezier: PHYSICS.smooth },

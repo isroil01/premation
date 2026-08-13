@@ -169,7 +169,29 @@ export function centreAnchorInContent(nodeId: string): void {
   );
 }
 
-/** Centre a layer in the frame. Used by auto-fit on import. */
+/**
+ * Centre a layer in the frame.
+ *
+ * ★ NOTHING CALLS THIS. The comment here used to say "used by auto-fit on
+ * import", which was never true and sent a reader looking for a caller that
+ * does not exist.
+ *
+ * Import auto-fit is `insertMedia` in `scene/sceneInsert.ts`, and it does the
+ * two halves separately and WITHOUT this: `computeFit(source, frame, 'contain')`
+ * decides the size, and `placeInComp` decides the position — under the pointer
+ * when the drop had one, at the comp centre otherwise. The image-sequence path
+ * beside it writes `comp.width / 2` onto the Transform component directly.
+ *
+ * All three of those run BEFORE the node is added to the graph, which is the
+ * structural reason this function cannot be the one they use: it resolves a
+ * node by id out of `defaultSceneGraph` and routes through `writeTransformProps`
+ * (an undoable command). An insert has neither a node to look up nor an edit to
+ * undo — the position is part of creating the layer, not a change to it.
+ *
+ * Kept as a candidate for the menu command it reads like ("Layer ▸ Centre in
+ * Comp", which AE has and this does not). If that is not wanted, delete it —
+ * see the dead-export list.
+ */
 export function centreInFrame(nodeId: string, frame: Size): void {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return;

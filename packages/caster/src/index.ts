@@ -37,6 +37,7 @@ export {
   fitCriticPrompt,
   layoutCastPrompts,
   motionCastPrompts,
+  motionCastScope,
   validateCasting,
   type CastProblem,
   type LayoutCastPrompt,

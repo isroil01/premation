@@ -1,0 +1,254 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  max-width: 900px;
+  margin: 0 auto;
+  color: var(--color-text-primary);
+}
+
+.head { display: flex; gap: var(--space-3); align-items: flex-start; }
+
+.icon {
+  width: 56px; height: 56px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.icon img { width: 100%; height: 100%; object-fit: cover; }
+
+.headText { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.name { font-size: var(--font-size-heading); font-weight: var(--font-weight-semibold); }
+.byline { display: flex; align-items: center; gap: var(--space-1); color: var(--color-text-secondary); font-size: var(--font-size-label); }
+.verified { display: inline-flex; align-items: center; gap: 2px; color: var(--color-primary); }
+.meta { color: var(--color-text-tertiary); font-size: var(--font-size-label); }
+.desc { color: var(--color-text-secondary); }
+
+.actions { display: flex; gap: var(--space-2); align-items: center; margin-left: auto; flex: 0 0 auto; }
+
+.primary {
+  padding: 6px 14px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+}
+.primary:hover:not(:disabled) { background: var(--color-primary-hover); }
+.primary:disabled { opacity: 0.55; cursor: default; }
+
+.secondary {
+  padding: 6px 12px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+}
+.secondary:hover { background: var(--color-hover); }
+
+.primary:focus-visible, .secondary:focus-visible {
+  outline: 2px solid var(--color-focus-ring); outline-offset: 1px;
+}
+
+.section { display: flex; flex-direction: column; gap: var(--space-2); }
+.sectionTitle {
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.permList { display: flex; flex-direction: column; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.permItem { display: flex; gap: var(--space-2); align-items: flex-start; }
+.permText { color: var(--color-text-secondary); font-size: var(--font-size-label); }
+.permText strong { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+
+/* The reassurance, stated once and plainly — not as a warning. */
+.sandboxNote {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-label);
+  border-left: 2px solid var(--color-border);
+  padding-left: var(--space-2);
+}
+
+.shots { display: flex; gap: var(--space-2); overflow-x: auto; padding-bottom: var(--space-1); }
+.shot {
+  border-radius: var(--radius-md, 6px);
+  border: 1px solid var(--color-border);
+  max-height: 260px;
+  flex: 0 0 auto;
+}
+
+.readme { line-height: var(--line-height-normal, 1.55); color: var(--color-text-secondary); }
+.readme h2, .readme h3, .readme h4 { color: var(--color-text-primary); margin: var(--space-3) 0 var(--space-1); }
+.readme code {
+  font-family: var(--font-family-mono);
+  font-size: 0.92em;
+  background: var(--color-surface-2);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.readme pre {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 4px);
+  padding: var(--space-2);
+  overflow-x: auto;
+}
+.readme pre code { background: none; padding: 0; }
+.readme a { color: var(--color-primary); }
+.readme blockquote {
+  margin: 0; padding-left: var(--space-2);
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+.versions { display: flex; flex-direction: column; gap: 2px; font-size: var(--font-size-label); }
+.versionRow { display: flex; gap: var(--space-2); color: var(--color-text-secondary); }
+.versionNum { color: var(--color-text-primary); min-width: 80px; font-family: var(--font-family-mono); }
+
+.state {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+.stateTitle { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+
+.skeleton { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-5) var(--space-6); }
+.skelLine {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--color-surface-1), var(--color-surface-2), var(--color-surface-1));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.skelLine:nth-child(1) { width: 40%; height: 22px; }
+.skelLine:nth-child(2) { width: 70%; }
+.skelLine:nth-child(3) { width: 55%; }
+.skelLine:nth-child(4) { width: 85%; }
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+
+/* Motion is decoration here; a user who asked for less must get less. */
+@media (prefers-reduced-motion: reduce) {
+  .skelLine { animation: none; }
+}
+
+.blocked {
+  display: flex; gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-md, 4px);
+  color: var(--color-danger);
+  font-size: var(--font-size-label);
+}
+
+/* ── absorbed from the retired manager modal ─────────────────────────────
+   Log, permission editing and the folder reload used to live in a separate
+   modal over the same plugin. They are the machine's view of it, and they
+   belong on the page that already shows everything else about it. */
+
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.linkBtn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+.linkBtn:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+
+.note { font-size: var(--font-size-label); color: var(--color-text-muted); margin-right: auto; }
+
+.hiddenInput { display: none; }
+
+/* A withheld permission is shown, not hidden. Removing the row would leave the
+   user reading a shorter list with no way to tell it was ever longer. */
+.permWithheld { opacity: 0.6; }
+.withheldTag { color: var(--color-warning); font-style: normal; }
+
+.permEdit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md, 4px);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+}
+
+.permEditActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+.permCheck {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+}
+.permCheck strong { color: var(--color-text-primary); font-weight: var(--font-weight-medium); }
+.permCheck input { margin-top: 2px; flex: 0 0 auto; accent-color: var(--color-primary); }
+
+.logBox {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-md, 4px);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro, 11px);
+  color: var(--color-text-secondary);
+}
+
+.logEmpty { margin: 0; color: var(--color-text-muted); font-family: var(--font-family-base); }
+.logLine { display: flex; gap: var(--space-2); }
+.logTime { color: var(--color-text-muted); flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.log_warn { color: var(--color-warning); }
+.log_error { color: var(--color-danger); }
+
+/*
+ * The plugin's security history on this machine.
+ *
+ * Deliberately plain and not alarming. Most entries are "a key rotated to one
+ * registered before anyone installed this" — a normal event that happened
+ * without a prompt, and the point of showing it is findability, not warning.
+ */
+.securityLog {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  margin: 0; padding: 0; list-style: none;
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-secondary);
+}
+.securityLog li { display: flex; gap: var(--space-2); align-items: baseline; }
+.securityLog time {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+}

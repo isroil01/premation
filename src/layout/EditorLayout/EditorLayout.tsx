@@ -28,6 +28,8 @@ import { SplitPane } from '@components/SplitPane';
 import { LeftSidebar } from '@layout/LeftSidebar';
 import { RightInspector } from '@layout/RightInspector';
 import { WorkspaceViewport, type WorkspaceViewportProps } from '@layout/Workspace';
+import { EditorTabs } from '@layout/Tabs/EditorTabs';
+import { PluginDetailTab } from '@layout/Plugins/PluginDetailTab';
 import { Icon } from '@components/Icon';
 import { useLayoutStore } from '@stores/layoutStore';
 import styles from './EditorLayout.module.css';
@@ -108,14 +110,21 @@ export function EditorLayout({
     <div className={styles.workspacePane} key="viewport">
       {isViewportExternal ? (
           <div className={styles.detached}>
-            <Icon name="export" size={24} />
+            <Icon name="export" size="lg" />
             <span className={styles.detachedLabel}>Preview Canvas is open in an external window</span>
             <button className={styles.detachedAction} onClick={() => dockPanel('viewport')}>
               Re-dock preview
             </button>
           </div>
         ) : (
-          <WorkspaceViewport {...(workspaceExtras ?? {})} />
+          // The viewport is handed to the tab strip as its permanent
+          // background rather than rendered beside it. `EditorTabs` keeps it
+          // mounted at all times and hides it with CSS — see the note there,
+          // because rendering it conditionally destroys the GPU context.
+          <EditorTabs
+            scene={<WorkspaceViewport {...(workspaceExtras ?? {})} />}
+            renderTab={(tab) => <PluginDetailTab pluginId={tab.ref} />}
+          />
         )}
     </div>
   );
@@ -139,6 +148,7 @@ export function EditorLayout({
       size={right.collapsed ? 44 : right.size}
       collapsed={right.collapsed}
       storageKey="rightInspector"
+      onResize={(s) => setRightSize('rightInspector', s)}
       onResizeEnd={(s) => setRightSize('rightInspector', s)}
     >
       {inspectorRow}
@@ -149,7 +159,7 @@ export function EditorLayout({
     <div className={styles.timelinePane} key="timeline">
       {isTimelineExternal ? (
           <div className={`${styles.detached} ${styles.detachedRow}`}>
-            <Icon name="export" size={16} />
+            <Icon name="export" size="md" />
             <span className={styles.detachedLabel}>Timeline is open in an external window</span>
             <button className={styles.detachedAction} onClick={() => dockPanel('timeline')}>
               Re-dock timeline
@@ -178,6 +188,7 @@ export function EditorLayout({
       size={bottom.collapsed ? 44 : bottom.size}
       collapsed={bottom.collapsed}
       storageKey="bottomTimeline"
+      onResize={(s) => setBottomSize('bottomTimeline', s)}
       onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
     >
       {timelineColumn}
@@ -205,6 +216,7 @@ export function EditorLayout({
           size={left.collapsed ? 44 : left.size}
           collapsed={left.collapsed}
           storageKey="leftSidebar"
+          onResize={(s) => setLeftSize('leftSidebar', s)}
           onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
         >
           {bodyRow}

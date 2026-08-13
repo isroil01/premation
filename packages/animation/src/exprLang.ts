@@ -336,7 +336,58 @@ function truthy(v: unknown): boolean {
   return Boolean(v);
 }
 
+/**
+ * How many AST nodes one evaluation may visit before it is abandoned.
+ *
+ * An expression's cost is normally bounded by its own source length — the
+ * grammar has no loops and no recursion. Two things break that assumption, and
+ * both are reachable by a plugin and both persist in a saved document:
+ *
+ *   • A very large pasted expression. A generated 100 KB formula is a legal
+ *     one, and it is evaluated per property, per frame.
+ *   • Cross-layer reads. `thisComp.layer('A','x')` re-enters this evaluator for
+ *     another property's expression, which may read a third, and so on.
+ *
+ * 200k is far above any expression a person writes and far below anything a
+ * viewer would perceive as a freeze.
+ */
+export const MAX_EVAL_STEPS = 200_000;
+
+/**
+ * How deeply nested an expression may be.
+ *
+ * A SEPARATE limit from `MAX_EVAL_STEPS`, because the two bound different
+ * things and neither implies the other. Steps bound total work; depth bounds
+ * the JS call stack, and `evalNode` recurses once per level.
+ *
+ * Without this, `1+1+1+…` a few thousand times parses fine and then overflows
+ * the stack during evaluation — a `RangeError` from inside the renderer rather
+ * than the typed, catchable failure every other bad expression produces. The
+ * step budget cannot catch it: 200k steps is far more than the ~10k stack
+ * frames V8 allows, so the stack always loses first.
+ */
+export const MAX_EVAL_DEPTH = 512;
+
+let steps = 0;
+let depth = 0;
+let nodeDepth = 0;
+
 function evalNode(node: ExprNode, scope: ReadonlyMap<string, unknown>): unknown {
+  if ((steps += 1) > MAX_EVAL_STEPS) {
+    throw new ExprRuntimeError('This expression is too expensive to evaluate.');
+  }
+  if (nodeDepth >= MAX_EVAL_DEPTH) {
+    throw new ExprRuntimeError('This expression is nested too deeply.');
+  }
+  nodeDepth += 1;
+  try {
+    return evalNodeInner(node, scope);
+  } finally {
+    nodeDepth -= 1;
+  }
+}
+
+function evalNodeInner(node: ExprNode, scope: ReadonlyMap<string, unknown>): unknown {
   switch (node.kind) {
     case 'num':
     case 'str':
@@ -425,8 +476,8 @@ function applyBinary(op: BinaryOp, l: unknown, r: unknown): unknown {
     case '<=': return a <= b;
     case '>': return a > b;
     case '>=': return a >= b;
-    case '==': return a == b; // eslint-disable-line eqeqeq
-    case '!=': return a != b; // eslint-disable-line eqeqeq
+    case '==': return a == b;
+    case '!=': return a != b;
     case '===': return a === b;
     case '!==': return a !== b;
   }
@@ -434,5 +485,16 @@ function applyBinary(op: BinaryOp, l: unknown, r: unknown): unknown {
 
 /** Evaluate a parsed expression against a name→value scope. */
 export function evaluateExpression(node: ExprNode, scope: ReadonlyMap<string, unknown>): unknown {
-  return evalNode(node, scope);
+  // The budget resets only at the OUTERMOST entry, so a cross-layer read shares
+  // its caller's allowance instead of being handed a fresh one. A per-call
+  // budget would be no budget at all: a chain of individually cheap expressions
+  // could still spend unbounded total time on a single frame.
+  const outermost = depth === 0;
+  if (outermost) { steps = 0; nodeDepth = 0; }
+  depth += 1;
+  try {
+    return evalNode(node, scope);
+  } finally {
+    depth -= 1;
+  }
 }

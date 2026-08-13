@@ -29,9 +29,9 @@ describe('save/open route through storage', () => {
     const files = { chooseSavePath: async () => '/x/My.motion' } as never;
 
     const pm = new ProjectManager({ service: {} as never, files, recent, logger, io, storage });
-    const ok = await pm.saveAs('My');
+    const outcome = await pm.saveAs('My');
 
-    expect(ok).toBe(true);
+    expect(outcome.status).toBe('saved');
     expect(saved).toEqual([{ path: '/x/My.motion', doc: DOC }]);
   });
 

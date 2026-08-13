@@ -459,6 +459,9 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         }
         try {
           localStorage.removeItem(LAYOUT_PERSIST_KEY);
+          // MUST stay lazy. A static import evaluates coreServices at module scope,
+          // where getSettingsManager() throws because the app has not booted yet.
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
           const { getSettingsManager } = require('@core/services/coreServices') as typeof import('@core/services/coreServices');
           getSettingsManager().delete(PANEL_ORDER_SETTINGS_KEY);
         } catch { /* noop */ }
@@ -493,6 +496,9 @@ useLayoutStore.subscribe((state) => {
   if (state.panelOrder === _lastPanelOrder) return;
   _lastPanelOrder = state.panelOrder;
   try {
+    // MUST stay lazy. A static import evaluates coreServices at module scope,
+    // where getSettingsManager() throws because the app has not booted yet.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { getSettingsManager } = require('@core/services/coreServices') as typeof import('@core/services/coreServices');
     getSettingsManager().set(PANEL_ORDER_SETTINGS_KEY, state.panelOrder);
   } catch {

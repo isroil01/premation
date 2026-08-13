@@ -392,7 +392,12 @@ export async function rigLogoForAnimation(deps: RigLogoDeps = {}): Promise<void>
   const setActiveTool = deps.setActiveTool ?? ((t: Tool) => useUIStore.getState().setActiveTool(t));
   const notify = deps.notify ?? ((n) => useUIStore.getState().notify(n));
   const rasterize = deps.rasterize ?? rasterizeSelection;
-  const addAsset = deps.addAsset ?? ((f: File) => useAssetStore.getState().addAsset(f));
+  // `'derived'` — this is a RASTERIZED COPY of something already in the
+  // scene, not media the user brought in. Filed as a library import it
+  // showed up on the Assets shelf next to their footage, which is what
+  // made the panel fill with copies nobody imported.
+  const addAsset =
+    deps.addAsset ?? ((f: File) => useAssetStore.getState().addAsset(f, null, { source: 'derived' }));
   const doInsertMedia = deps.insertMedia ?? insertMedia;
   const toFile = deps.toFile ?? dataUrlToFile;
 

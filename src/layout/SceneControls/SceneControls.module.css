@@ -2,29 +2,29 @@
 .sceneControls {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   user-select: none;
 }
 
 .divider {
   width: 1px;
   height: var(--space-6);
-  background: var(--color-border-subtle);
-  margin: 0 var(--space-4);
+  background: var(--color-border);
+  margin: 0;
 }
 
+/* Matches TopNav .tool exactly */
 .button {
   width: var(--control-height-lg);
   height: var(--control-height-lg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
   border-radius: var(--radius-md);
   color: var(--color-text-secondary);
-  transition: var(--motion-hover-transition);
+  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
   outline: none;
 }
 
@@ -37,18 +37,39 @@
   transform: scale(0.92);
 }
 
+.button:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* Matches TopNav .toolActive exactly */
 .buttonActive {
   width: var(--control-height-lg);
   height: var(--control-height-lg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   cursor: pointer;
   border-radius: var(--radius-md);
   background: var(--color-primary-subtle);
-  color: var(--color-primary) !important;
-  border: 1px solid transparent;
-  box-shadow: none;
+  color: var(--color-primary);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
+  outline: none;
+}
+
+.buttonActive:hover {
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  color: var(--color-primary-hover);
+  border-color: var(--color-primary);
+}
+
+.buttonActive:active {
+  transform: scale(0.92);
+}
+
+.buttonActive:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 .softwareBadge {
@@ -67,9 +88,17 @@
 
 /* Local / World / View axis space. A letter rather than an icon: the three
    differ only in orientation, and three near-identical axis glyphs would be
-   harder to tell apart than L / W / V. */
+   harder to tell apart than L / W / V.
+
+   Sized against the ICON next door, not against the type scale. These sit in
+   the same 28px buttons as the gizmo modes, so what matters is that the letter
+   carries the same weight on the bar as an 18px glyph does — at
+   `--font-size-micro` it read as a caption that had lost its icon. Cap height
+   at 16px lands just under the glyph's ink height, which is where a letter
+   wants to be: matching it exactly makes the letter look bigger, because a
+   stroke-filled letterform reads heavier than an outline at equal height. */
 .axisGlyph {
-  font-size: var(--font-size-micro);
+  font-size: var(--font-size-xl);
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.02em;

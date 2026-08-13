@@ -319,10 +319,10 @@ export function TreeView<T = unknown>({
               }
             >
               {row.hasChildren ? (
-                <Icon name={row.expanded ? 'chevron-down' : 'chevron-right'} size={12} />
+                <Icon name={row.expanded ? 'chevron-down' : 'chevron-right'} size="sm" />
               ) : null}
             </span>
-            {row.node.icon ? <Icon name={row.node.icon} size={14} className={styles.icon} /> : null}
+            {row.node.icon ? <Icon name={row.node.icon} size="md" className={styles.icon} /> : null}
             {row.node.labelColor ? (
               <span
                 className={styles.labelDot}

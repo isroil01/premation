@@ -13,6 +13,7 @@ import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import { bumpScene } from '@stores/sceneStore';
+import { clamp01 } from '@utils/lang';
 
 export type PaintMode = 'paint' | 'erase';
 
@@ -74,9 +75,6 @@ export function strokeBounds(stroke: PaintStroke): { x: number; y: number; width
   return { x: minX - r, y: minY - r, width: maxX - minX + stroke.size, height: maxY - minY + stroke.size };
 }
 
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v;
-}
 
 // ── Mutations (write to the layer's fx + notify) ──────────────────────
 
@@ -108,9 +106,3 @@ export function removeLastStroke(nodeId: string): void {
   bumpScene();
 }
 
-/** Clear all paint on a layer. */
-export function clearPaint(nodeId: string): void {
-  defaultSceneGraph.setPaint(nodeId, undefined);
-  getEventBus().emit('AnimationChanged', { nodeId });
-  bumpScene();
-}

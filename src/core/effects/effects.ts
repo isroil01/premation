@@ -7,6 +7,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
+import { pluginEffectDef } from './pluginEffectDefs';
 import type { SceneNode } from '@core/types';
 
 export type EffectType =
@@ -29,7 +30,17 @@ export type EffectType =
   | 'gradient-ramp'
   | 'fractal-noise'
   | 'displacement-map'
+  | 'compound-blur'
   | 'motion-tile'
+  | 'bend'
+  | 'wide-time'
+  | 'force-motion-blur'
+  | 'bevel-alpha'
+  | 'bevel-edges'
+  | 'spotlight'
+  | 'sphere'
+  | 'cylinder'
+  | 'arithmetic'
   | 'fill'
   | 'four-color-gradient'
   | 'stroke'
@@ -60,6 +71,28 @@ export type EffectType =
   | 'exposure'
   | 'vibrance'
   | 'colorama'
+  | 'lumetri'
+  | 'selective-color'
+  | 'shadow-highlight'
+  // ── Distort family ──
+  | 'bulge'
+  | 'twirl'
+  | 'spherize'
+  | 'corner-pin'
+  // Corner Pin's generalisation: four edges as cubic Beziers, interior filled
+  // by a Coons patch. See `bezierWarp.ts`.
+  | 'bezier-warp'
+  // ── Generate family, round two ──
+  | 'checkerboard'
+  | 'grid'
+  | 'cell-pattern'
+  // The one whose geometry comes from the LAYER rather than from a formula:
+  // Vegas runs lights along the alpha contour. See `vegas.ts`.
+  | 'vegas'
+  // ── Noise family ──
+  | 'turbulent-noise'
+  | 'add-grain'
+  | 'median'
   // ── Matte / keying family ──
   | 'set-matte'
   | 'simple-choker'
@@ -73,7 +106,122 @@ export type EffectType =
   | 'lens-flare'
   | 'numbers'
   | 'timecode'
-  | 'audio-spectrum';
+  | 'audio-spectrum'
+  // ── Utility family ──
+  // AE's Apply Color LUT. The one colour tool per-channel curves cannot stand
+  // in for: a 3D LUT can rotate one hue while its neighbour holds still, which
+  // is most of what a film emulation actually does.
+  | 'apply-color-lut'
+  // ── Round three: the AE families with the largest remaining gaps ──
+  //
+  // Filed by the PATH each one renders on, because that is the decision that
+  // costs something if it is made wrong (see `colorLut.ts` and `aeColor.ts`):
+  //
+  //   LUT path      per-channel transfer, both backends, no bake
+  //   pixel pass    reads neighbours or other channels, forces a CPU bake
+  //
+  // Colour — the two that are per-channel transfers, so they stay free.
+  | 'color-balance'
+  | 'gamma-pedestal-gain'
+  // Colour — the four that read all three channels and cannot be tables.
+  | 'photo-filter'
+  | 'black-and-white'
+  | 'tritone'
+  | 'threshold'
+  // Distort — inverse-map resamples, like the four already above.
+  | 'polar-coordinates'
+  | 'optics-compensation'
+  | 'mesh-warp'
+  | 'liquify'
+  | 'mirror'
+  | 'offset'
+  // Stylize — a directional derivative and a randomised resample.
+  | 'emboss'
+  | 'scatter'
+  // Transition — alpha-only reveals, like the three already above.
+  | 'radial-wipe'
+  | 'block-dissolve'
+  // Keying / Matte — a luminance key, and the morphology every matte needs.
+  | 'luma-key'
+  | 'minimax'
+  // Blur & Sharpen — per-channel radii, and a real scale-aware sharpen.
+  | 'channel-blur'
+  | 'unsharp-mask'
+  // ── Round four ────────────────────────────────────────────────────
+  //
+  // Fifty effects, every one a Canvas2D pixel pass or generator. None is a
+  // `LUT_BUILDERS` candidate: the colour eight either need the HISTOGRAM
+  // (Equalize, the three Autos) or read all three channels to produce each one
+  // (Change Color, Change To Color, Leave Color, Toner), and a per-channel
+  // table can express neither. Filing one there would render silently wrong.
+  //
+  // Blur — none of these is separable, which is exactly why they are not in
+  // `blurs.ts`: the kernel varies per pixel (Bilateral), gates on a threshold
+  // (Smart Blur), or convolves with an iris shape in boosted intensity
+  // (Camera Lens Blur).
+  | 'bilateral-blur'
+  | 'smart-blur'
+  | 'camera-lens-blur'
+  // Distort — inverse-map resamples, like every other member of the family.
+  | 'ripple'
+  | 'magnify'
+  | 'warp'
+  | 'page-turn'
+  | 'split'
+  | 'slant'
+  | 'smear'
+  | 'rolling-shutter'
+  // Perspective — a shadow cast from a POINT light, so it projects and scales
+  // with distance rather than offsetting uniformly like Drop Shadow.
+  | 'radial-shadow'
+  // Generate — these DRAW, like Beam and Lens Flare.
+  | 'circle'
+  | 'ellipse'
+  | 'radio-waves'
+  | 'lightning'
+  | 'light-rays'
+  | 'light-sweep'
+  | 'audio-waveform'
+  // Stylize. Strobe Light is the only new TIME_DEPENDENT member — see the note
+  // on that map for why membership is kept rare.
+  | 'cartoon'
+  | 'brush-strokes'
+  | 'strobe-light'
+  | 'color-emboss'
+  | 'halftone'
+  | 'kaleidoscope'
+  | 'vignette'
+  | 'burn-film'
+  // Colour Correction — the eight that need the pixels. See the note above.
+  | 'equalize'
+  | 'auto-levels'
+  | 'auto-contrast'
+  | 'auto-color'
+  | 'change-color'
+  | 'change-to-color'
+  | 'leave-color'
+  | 'toner'
+  // Keying & Matte — three keys that select on different axes, a despill, and
+  // the spread-then-choke every noisy matte needs.
+  | 'color-key'
+  | 'color-range'
+  | 'extract'
+  | 'spill-suppressor'
+  | 'matte-choker'
+  // Channel — these treat the four channels as data rather than as a picture.
+  | 'alpha-levels'
+  | 'solid-composite'
+  | 'channel-combiner'
+  | 'remove-color-matting'
+  // Transition — alpha-only reveals, with Light Wipe the one exception that
+  // also writes RGB (its leading edge glows, which is the effect).
+  | 'iris-wipe'
+  | 'light-wipe'
+  | 'line-sweep'
+  | 'grid-wipe'
+  // Noise & Grain — a thresholded median, and noise in COVERAGE not colour.
+  | 'dust-scratches'
+  | 'noise-alpha';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -135,7 +283,27 @@ export interface EffectParamDef {
    * value is derived from another layer every frame, so an editor for it would
    * be a field whose input is overwritten before it is ever read.
    */
-  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved';
+  /**
+   * `'enum'` is a NAMED choice stored as a NUMBER — AE's "Echo Operator: Add",
+   * "Bend Style: Marilyn". Deliberately numeric rather than a string so it
+   * keyframes, reads through `effectNumber` and packs into a uniform exactly
+   * like every other numeric param; only the CONTROL differs. Requires
+   * `options`, which `effectRegistryComplete.test.ts` enforces.
+   */
+  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum';
+  /** The choices for an `'enum'` param, in menu order. Ignored for other types. */
+  options?: ReadonlyArray<{ value: number; label: string }>;
+  /**
+   * The collapsible section this param belongs to — Colorama's "Output Cycle",
+   * Bend's "Distortion". Absent = a top-level param, which is most of them.
+   *
+   * A flat list could not express AE's grouped effects at all: Colorama alone
+   * has five sections, and drawing its controls as one undivided column is the
+   * difference between a panel you can read and a wall. Consecutive params
+   * sharing a name form ONE section — order in `params` is order on screen, so
+   * a group is a contiguous run and needs no separate ordering field.
+   */
+  group?: string;
   unit?: string;
   min?: number;
   max?: number;
@@ -160,10 +328,17 @@ export interface EffectDef {
   /** Build the CSS filter function. Empty for GPU-only effects. */
   css: (p: EffectParams) => string;
   /**
-   * Renders only on the GPU backend (a real WGSL/GLSL shader pass), with no
-   * CSS-filter equivalent. On Canvas2D — the DEFAULT backend — adding one of
-   * these does nothing at all, so the UI must say so rather than offering it
-   * as if it worked.
+   * Renders only as a real shader pass (WGSL or GLSL), with no CSS-filter
+   * equivalent — so the UI marks it rather than offering it as if it were free.
+   *
+   * This used to read "on Canvas2D — the DEFAULT backend — adding one of these
+   * does nothing at all". That stopped being true in Phase 5, when
+   * `Canvas2DBackend` was removed: the tiering is WebGPU → WebGL2 with no CPU
+   * tier at all, and `'software'` means the viewport cannot paint rather than
+   * "slower but working" (see `renderBackendStore.ts`). Corrected because a
+   * comment pointing at a deleted backend is worse than none — anyone reasoning
+   * about what a `gpuOnly` effect does on a weak machine would have reasoned
+   * from a fallback that does not exist.
    */
   gpuOnly?: boolean;
 }
@@ -267,9 +442,11 @@ export function primaryParamKey(type: EffectType): string | undefined {
  * have no CSS form and no shader — and, unlike the Canvas2D-only family, must
  * NOT be routed through the pixel chain, where they would do nothing at all.
  * Echo emits ghost copies at past/future times; Posterize Time quantizes the
- * layer's clock.
+ * layer's clock; Wide Time emits copies in BOTH directions (Echo's mechanism,
+ * a different step pattern — see temporalGhosts.ts); Force Motion Blur widens
+ * the shutter the transform is sampled across.
  */
-const TEMPORAL = new Set<string>(['echo', 'posterize-time']);
+const TEMPORAL = new Set<string>(['echo', 'posterize-time', 'wide-time', 'force-motion-blur']);
 
 export function isTemporalEffect(type: string): boolean {
   return TEMPORAL.has(type);
@@ -300,6 +477,20 @@ export function isTemporalEffect(type: string): boolean {
 const TIME_DEPENDENT: ReadonlyMap<string, string> = new Map<string, string>([
   // type → the param the resolved layer time is written into.
   ['timecode', 'time'],
+  /*
+    Strobe Light. Earns its place by the test above: its output genuinely
+    differs frame to frame, because differing frame to frame IS the effect —
+    a strobe that cached would simply not strobe.
+
+    Note what is NOT here. Every other time-varying effect in round four —
+    Ripple's phase, Radio Waves' phase, Noise Alpha's phase, the wipes'
+    completion — is driven by an ordinary KEYFRAMED parameter instead. That
+    keeps them cacheable (the hash varies only when the keyframed value does)
+    and, more importantly, keeps them under the animator's control rather than
+    bound to the wall clock. Reach for a keyframed phase first; this set is for
+    effects that cannot be expressed that way.
+  */
+  ['strobe-light', 'time'],
 ]);
 
 export function isTimeDependentEffect(type: string): boolean {
@@ -488,6 +679,224 @@ export const EFFECT_DEFS: EffectDef[] = [
     ],
     css: () => '',
   },
+  {
+    /*
+      Wide Time — AE's CC Wide Time. Copies from BOTH directions, evenly
+      weighted, which reads as a temporal smear rather than as Echo's trailing
+      wake. Shares Echo's ghost emission entirely (see temporalGhosts.ts); only
+      the step pattern differs.
+
+      No `css` and no Canvas2D case, like Echo, because it is not a pixel pass
+      at all — it resolves in buildSnapshot into ordinary render layers, so it
+      works on both backends and needs no shader.
+    */
+    type: 'wide-time',
+    label: 'Wide Time',
+    params: [
+      { key: 'forwardSteps', label: 'Forward Steps', type: 'number', min: 0, max: 64, default: 2 },
+      { key: 'backwardSteps', label: 'Backward Steps', type: 'number', min: 0, max: 64, default: 2 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      Force Motion Blur — AE's CC Force Motion Blur. Overrides the composition
+      and layer motion-blur SWITCHES for this layer, with its own shutter.
+
+      The sampling itself is the comp's existing `sampleMotion`; this only
+      decides whether it runs and how wide the shutter is, so there is no second
+      motion-blur implementation to drift. See forceMotionBlur.ts for why it
+      does not also override "does the layer actually move".
+    */
+    type: 'force-motion-blur',
+    label: 'Force Motion Blur',
+    params: [
+      { key: 'shutterAngle', label: 'Shutter Angle', type: 'number', unit: '°', min: 0, max: 720, default: 180 },
+      { key: 'samples', label: 'Samples', type: 'number', min: 2, max: 32, default: 12 },
+    ],
+    css: () => '',
+  },
+
+  // ── Perspective family (GPU shaders, packages/renderer builtin.ts) ──
+  //
+  // Flat layers made to look like lit surfaces. All `gpuOnly`: each is a
+  // per-pixel shader with no Canvas2D twin, so on a layer baked for another
+  // reason `extractSpatialEffects(layer, true)` carries them to the GPU.
+  {
+    /*
+      Bevel Alpha — chisels the ALPHA boundary, so the bevel follows the
+      artwork's silhouette. AE's default light comes from the upper left, which
+      is why the angle defaults where it does rather than to 0.
+    */
+    type: 'bevel-alpha',
+    label: 'Bevel Alpha',
+    gpuOnly: true,
+    params: [
+      { key: 'thickness', label: 'Edge Thickness', type: 'number', min: 0, max: 40, default: 4, precision: 1 },
+      { key: 'lightAngle', label: 'Light Angle', type: 'number', unit: '°', min: -180, max: 180, default: -135 },
+      { key: 'lightColor', label: 'Light Color', type: 'color', default: '#ffffff' },
+      { key: 'intensity', label: 'Light Intensity', type: 'number', unit: '%', min: 0, max: 200, default: 50 },
+    ],
+    css: () => '',
+  },
+  {
+    /* Bevel Edges — the same chisel on the layer's rectangular FRAME. */
+    type: 'bevel-edges',
+    label: 'Bevel Edges',
+    gpuOnly: true,
+    params: [
+      { key: 'thickness', label: 'Edge Thickness', type: 'number', min: 0, max: 40, default: 4, precision: 1 },
+      { key: 'lightAngle', label: 'Light Angle', type: 'number', unit: '°', min: -180, max: 180, default: -135 },
+      { key: 'lightColor', label: 'Light Color', type: 'color', default: '#ffffff' },
+      { key: 'intensity', label: 'Light Intensity', type: 'number', unit: '%', min: 0, max: 200, default: 50 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      Spotlight — a cone thrown across the layer. MULTIPLIES rather than adds,
+      so outside the cone the picture goes dark: a spotlight reveals what is
+      already there. `ambient` is how much survives outside it, which is the
+      control that stops the effect being an on/off mask.
+    */
+    type: 'spotlight',
+    label: 'Spotlight',
+    gpuOnly: true,
+    params: [
+      /*
+        From and To are AE's point controls, and they carry the light's
+        position, its aim AND its reach between them — the beam dims out at To.
+        A centre-plus-angle-plus-radius form (which this effect shipped with
+        first) cannot express "shine in from off-frame at that corner" without
+        the user solving for the angle themselves.
+
+        Offsets from rest, per effectHandles.ts. Rest puts the lamp at the top
+        edge aiming at the layer's middle.
+      */
+      { key: 'fromX', label: 'From X', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'From' },
+      { key: 'fromY', label: 'From Y', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'From' },
+      { key: 'toX', label: 'To X', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'To' },
+      { key: 'toY', label: 'To Y', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'To' },
+      { key: 'coneAngle', label: 'Cone Angle', type: 'number', unit: '°', min: 1, max: 180, default: 60, group: 'Cone' },
+      { key: 'edgeSoftness', label: 'Edge Softness', type: 'number', unit: '%', min: 0, max: 100, default: 40, group: 'Cone' },
+      /*
+        How far the beam reaches, as a percentage of the layer's HEIGHT — AE's
+        Height, and its own control rather than the From→To distance.
+
+        Welding reach to the handles is what made this effect look like it
+        deleted the layer: at rest the points sit half a layer-height apart, so
+        everything beyond that fell to Ambient (15%), and a layer at 15%
+        brightness on a dark composition is indistinguishable from one that is
+        not there. The default now covers the whole layer and then some.
+      */
+      { key: 'reach', label: 'Reach', type: 'number', unit: '%', min: 1, max: 400, default: 150, group: 'Cone' },
+      { key: 'lightColor', label: 'Light Color', type: 'color', default: '#ffffff' },
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 400, default: 150 },
+      { key: 'ambient', label: 'Ambient', type: 'number', unit: '%', min: 0, max: 100, default: 15 },
+      {
+        // AE's Render menu. Light Only drops the layer's colour and keeps the
+        // beam, which is how the effect is used to build a visible light cone
+        // over other footage.
+        key: 'render',
+        label: 'Render',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Layer + Light' },
+          { value: 1, label: 'Light Only' },
+        ],
+      },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      Sphere — wrap the layer around a sphere. Radius is a fraction of the
+      layer's SHORT side, so 100% touches the nearer pair of edges whatever the
+      aspect ratio; above that the sphere is cropped, which is a legitimate
+      look and not a clamp.
+
+      Shading is separate from the light colour because they answer different
+      questions: shading is how spherical it reads, colour is what it is lit
+      by. Folding them together makes an unlit sphere impossible to tint.
+    */
+    type: 'sphere',
+    label: 'Sphere',
+    gpuOnly: true,
+    params: [
+      { key: 'radius', label: 'Radius', type: 'number', unit: '%', min: 1, max: 200, default: 100 },
+      // All three axes, as AE has. Z spins the map in the plane of the screen
+      // and was simply missing; without it a globe cannot be tilted off its
+      // pole, which is most of what the effect is used for.
+      { key: 'rotateX', label: 'Rotate X', type: 'number', unit: '°', min: -3600, max: 3600, default: 0, group: 'Rotation' },
+      { key: 'rotateY', label: 'Rotate Y', type: 'number', unit: '°', min: -3600, max: 3600, default: 0, group: 'Rotation' },
+      { key: 'rotateZ', label: 'Rotate Z', type: 'number', unit: '°', min: -3600, max: 3600, default: 0, group: 'Rotation' },
+      { key: 'shading', label: 'Shading', type: 'number', unit: '%', min: 0, max: 100, default: 70, group: 'Light' },
+      { key: 'lightColor', label: 'Light Color', type: 'color', default: '#ffffff', group: 'Light' },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      Cylinder — the same cast with one axis left flat, so the layer wraps
+      horizontally and passes straight through vertically. Rotation spins the
+      texture past the viewer; the full image maps across the visible front
+      half, which is what makes a 360° rotation a complete loop.
+    */
+    type: 'cylinder',
+    label: 'Cylinder',
+    gpuOnly: true,
+    params: [
+      { key: 'radius', label: 'Radius', type: 'number', unit: '%', min: 1, max: 200, default: 100 },
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', min: -3600, max: 3600, default: 0 },
+      { key: 'shading', label: 'Shading', type: 'number', unit: '%', min: 0, max: 100, default: 70, group: 'Light' },
+      { key: 'lightColor', label: 'Light Color', type: 'color', default: '#ffffff', group: 'Light' },
+    ],
+    css: () => '',
+  },
+
+  // ── Channel family ────────────────────────────────────────────────
+  {
+    /*
+      Arithmetic — AE's Channel ▸ Arithmetic. One operator applied per channel
+      against a constant.
+
+      Values are authored 0..255 rather than as percentages because three of the
+      operators are BITWISE: And/Or/Xor on a normalised float means nothing, and
+      AE's own controls are 8-bit for exactly that reason.
+    */
+    type: 'arithmetic',
+    label: 'Arithmetic',
+    gpuOnly: true,
+    params: [
+      {
+        key: 'operator',
+        label: 'Operator',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Add' },
+          { value: 1, label: 'Subtract' },
+          { value: 2, label: 'Multiply' },
+          { value: 3, label: 'Difference' },
+          { value: 4, label: 'Max' },
+          { value: 5, label: 'Min' },
+          { value: 6, label: 'Block Above' },
+          { value: 7, label: 'Block Below' },
+          { value: 8, label: 'And' },
+          { value: 9, label: 'Or' },
+          { value: 10, label: 'Xor' },
+        ],
+      },
+      { key: 'red', label: 'Red Value', type: 'number', min: 0, max: 255, precision: 0, default: 0 },
+      { key: 'green', label: 'Green Value', type: 'number', min: 0, max: 255, precision: 0, default: 0 },
+      { key: 'blue', label: 'Blue Value', type: 'number', min: 0, max: 255, precision: 0, default: 0 },
+      // AE's "Clip Result Values". Off keeps out-of-range results, which is
+      // what lets an Add and a Subtract round-trip losslessly.
+      { key: 'clip', label: 'Clip Result Values', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
 
   // ── Blur family ────────────────────────────────────────────────────
   //
@@ -614,14 +1023,26 @@ export const EFFECT_DEFS: EffectDef[] = [
     type: 'colorama',
     label: 'Colorama',
     params: [
+      /*
+        Grouped the way AE groups Colorama — Input Phase, then Output Cycle,
+        with Blend With Original loose at the bottom. AE has three further
+        sections (Modify, Pixel Selection, Masking); they are absent here
+        because their PARAMETERS are, and an empty section is a twisty that
+        opens onto nothing.
+
+        `palette` was labelled "Output Cycle", which in AE names the section
+        this param sits INSIDE, not the param itself — so the panel put a
+        group's name on a single slider. The `key` is deliberately untouched:
+        renaming it would reset the palette on every saved project.
+      */
+      // The signature control: one keyframe here cycles the palette through the
+      // image. The cycle wraps, so the animation loops seamlessly.
+      { key: 'phaseShift', label: 'Phase Shift', type: 'number', unit: '°', min: -36000, max: 36000, default: 0, group: 'Input Phase' },
       // Index into COLORAMA_PALETTES. A number so it can be keyframed, and the
       // indices are STABLE — new palettes go on the end, because inserting into
       // the middle would silently re-map every saved project.
-      { key: 'palette', label: 'Output Cycle', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
-      // The signature control: one keyframe here cycles the palette through the
-      // image. The cycle wraps, so the animation loops seamlessly.
-      { key: 'phaseShift', label: 'Phase Shift', type: 'number', unit: '°', min: -36000, max: 36000, default: 0 },
-      { key: 'cycleRepetitions', label: 'Cycle Repetitions', type: 'number', min: 0.1, max: 20, precision: 2, default: 1 },
+      { key: 'palette', label: 'Use Preset Palette', type: 'number', min: 0, max: 4, precision: 0, default: 0, group: 'Output Cycle' },
+      { key: 'cycleRepetitions', label: 'Cycle Repetitions', type: 'number', min: 0.1, max: 20, precision: 2, default: 1, group: 'Output Cycle' },
       { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
     ],
     css: () => '',
@@ -836,6 +1257,28 @@ export const EFFECT_DEFS: EffectDef[] = [
     css: () => '',
   },
   {
+    // AE's Apply Color LUT (Utility). See core/effects/cubeLut.ts.
+    type: 'apply-color-lut',
+    label: 'Apply Color LUT',
+    params: [
+      /**
+       * The parsed `.cube` file, stored as a plain object (see `StoredLut`) so
+       * it survives the JSON round-trip a `.motion` document makes. `resolved`
+       * rather than a number type because there is no inspector control that
+       * edits a LUT — you load a file; the panel renders a file picker for this
+       * key specifically.
+       */
+      { key: 'lut', label: 'LUT file', type: 'resolved', default: [] },
+      /**
+       * Blends against the ORIGINAL, so 0 is exactly a no-op and 50 is the
+       * halfway look — matching AE and every grading tool. A number, so it
+       * keyframes: fading a look in is the common request.
+       */
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
     type: 'hue-saturation',
     label: 'Hue/Saturation',
     params: [
@@ -877,7 +1320,328 @@ export const EFFECT_DEFS: EffectDef[] = [
   {
     type: 'curves',
     label: 'Curves',
-    params: [{ key: 'points', label: 'Curve', type: 'curve', default: [[0, 0], [255, 255]] }],
+    // Composite first, then the three channels — the order `curvesTables`
+    // composes them in, and the order the inspector should read top to bottom.
+    // A channel left at its identity ramp is skipped, so the common case (an
+    // RGB curve and nothing else) costs exactly what it did before.
+    params: [
+      { key: 'points', label: 'RGB', type: 'curve', default: [[0, 0], [255, 255]] },
+      { key: 'redPoints', label: 'Red', type: 'curve', default: [[0, 0], [255, 255]] },
+      { key: 'greenPoints', label: 'Green', type: 'curve', default: [[0, 0], [255, 255]] },
+      { key: 'bluePoints', label: 'Blue', type: 'curve', default: [[0, 0], [255, 255]] },
+    ],
+    css: () => '',
+  },
+
+  // Lumetri Basic Correction: the eight controls a colourist reaches for first,
+  // in one effect. A per-channel LUT (see colorLut.ts for why all eight qualify),
+  // so it costs no bake on either backend — which matters for this one more than
+  // most, because it is switched on for the whole comp and left there.
+  {
+    type: 'lumetri',
+    label: 'Lumetri Color',
+    params: [
+      { key: 'exposure', label: 'Exposure', type: 'number', unit: 'stops', min: -5, max: 5, precision: 2, default: 0 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'highlights', label: 'Highlights', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'shadows', label: 'Shadows', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'whites', label: 'Whites', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'blacks', label: 'Blacks', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'temperature', label: 'Temperature', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'tint', label: 'Tint', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // Selective Colour: shift the CMYK make-up of ONE colour range per instance.
+  //
+  // AE keeps all nine ranges inside one effect behind a dropdown that swaps the
+  // visible sliders. This param model is flat and the inspector generates rows
+  // straight from `params`, so nine ranges in one effect would mean 36 sliders
+  // stacked in a column — every one of them live, only four of them meaningful.
+  // One range per instance instead: stack two copies to grade two ranges, which
+  // is also what makes each range's four values independently keyframeable.
+  {
+    type: 'selective-color',
+    label: 'Selective Color',
+    params: [
+      // 0 reds, 1 yellows, 2 greens, 3 cyans, 4 blues, 5 magentas,
+      // 6 whites, 7 neutrals, 8 blacks. A number so it keyframes.
+      { key: 'range', label: 'Colors', type: 'number', min: 0, max: 8, precision: 0, default: 0 },
+      { key: 'cyan', label: 'Cyan', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'magenta', label: 'Magenta', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'yellow', label: 'Yellow', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'black', label: 'Black', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'absolute', label: 'Absolute', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+
+  // Shadow/Highlight: a LOCAL tone correction — how far a pixel moves depends
+  // on its neighbourhood's brightness, not its own. Spatial, so it can never be
+  // a LUT and always forces the bake.
+  {
+    type: 'shadow-highlight',
+    label: 'Shadow/Highlight',
+    params: [
+      { key: 'shadowAmount', label: 'Shadow Amount', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'highlightAmount', label: 'Highlight Amount', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 200, default: 30 },
+      { key: 'tonalWidth', label: 'Tonal Width', type: 'number', unit: '%', min: 1, max: 100, default: 50 },
+    ],
+    css: () => '',
+  },
+
+  // ── Distort family ─────────────────────────────────────────────────
+  //
+  // Radii are in LAYER pixels, not percentages, and are declared `px` so
+  // `scaleEffectLengths` carries them through the raster-scale bake. A
+  // percentage radius would resize with the layer, which is wrong for a control
+  // meant to sit over a fixed feature of the image.
+  //
+  // Centres are OFFSETS FROM THE LAYER CENTRE, for the same reason Corner Pin's
+  // corners are offsets — see the long note there. The static default table
+  // cannot see the layer, so an absolute centre would default to 0,0, putting
+  // every new Bulge in the top-left corner with most of its disc off the layer.
+  // Offsetting from the centre makes the default the useful one.
+  {
+    type: 'bulge',
+    label: 'Bulge',
+    params: [
+      { key: 'centerX', label: 'Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 120 },
+      // Negative pinches. The pair in one control is how AE presents it, and it
+      // keyframes through zero cleanly — which two separate controls would not.
+      { key: 'height', label: 'Bulge Height', type: 'number', unit: '%', min: -100, max: 100, default: 50 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'twirl',
+    label: 'Twirl',
+    params: [
+      { key: 'centerX', label: 'Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 120 },
+      // Beyond ±360 deliberately: a multi-turn twirl is a real look, and
+      // clamping at one turn would make the keyframed spin stop dead.
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', min: -1440, max: 1440, default: 90 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'spherize',
+    label: 'Spherize',
+    params: [
+      { key: 'centerX', label: 'Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 120 },
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: -100, max: 100, default: 60 },
+    ],
+    css: () => '',
+  },
+  // Corner Pin: a PROJECTIVE map, which is what separates it from the Transform
+  // effect — that one is affine and can never produce perspective.
+  //
+  // ── Why these are OFFSETS and not absolute positions ──────────────────────
+  //
+  // AE states corner pins as absolute points, which it can do because it seeds
+  // them from the layer's size when you apply the effect. This param model has
+  // a STATIC default table that cannot see the layer, so absolute positions
+  // would all have to default to 0 — a quad collapsed to a point, i.e. a layer
+  // that vanishes the instant the effect is added.
+  //
+  // The obvious patch is a sentinel ("all eight zero means untouched"), and it
+  // is a trap: the moment the user drags ONE corner off zero the other seven
+  // are still zero, the sentinel stops applying, and the layer collapses
+  // anyway. Worse, it makes 0 mean two different things depending on its
+  // neighbours.
+  //
+  // Offsets from the natural rectangle remove the problem rather than manage
+  // it. Zero is genuinely the identity, every value means exactly one thing,
+  // and each corner is independently keyframeable from a resting state — which
+  // absolute positions seeded at apply time never would be.
+  {
+    type: 'corner-pin',
+    label: 'Corner Pin',
+    params: [
+      { key: 'topLeftX', label: 'Top Left X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topLeftY', label: 'Top Left Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightX', label: 'Top Right X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightY', label: 'Top Right Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightX', label: 'Bottom Right X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightY', label: 'Bottom Right Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftX', label: 'Bottom Left X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftY', label: 'Bottom Left Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // Bezier Warp — Corner Pin with curved edges.
+  //
+  // Twelve control points: the four vertices plus two tangent handles per edge,
+  // named around the perimeter clockwise from the top-left so the inspector
+  // rows read in the order you would drag them.
+  //
+  // OFFSETS from the rest rectangle, all defaulting to 0, exactly as Corner Pin
+  // does — which makes the default effect the identity and lets the dispatch
+  // skip the resample entirely rather than paying a bilinear pass to reproduce
+  // its own input.
+  {
+    type: 'bezier-warp',
+    label: 'Bezier Warp',
+    params: [
+      { key: 'topLeftX', label: 'Top Left Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topLeftY', label: 'Top Left Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top1X', label: 'Top Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top1Y', label: 'Top Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top2X', label: 'Top Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'top2Y', label: 'Top Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightX', label: 'Top Right Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'topRightY', label: 'Top Right Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right1X', label: 'Right Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right1Y', label: 'Right Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right2X', label: 'Right Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'right2Y', label: 'Right Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightX', label: 'Bottom Right Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomRightY', label: 'Bottom Right Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom1X', label: 'Bottom Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom1Y', label: 'Bottom Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom2X', label: 'Bottom Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottom2Y', label: 'Bottom Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftX', label: 'Bottom Left Vertex X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'bottomLeftY', label: 'Bottom Left Vertex Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left1X', label: 'Left Tangent 1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left1Y', label: 'Left Tangent 1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left2X', label: 'Left Tangent 2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'left2Y', label: 'Left Tangent 2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+    ],
+    css: () => '',
+  },
+  // ── Generate family, round two ──────────────────────────────────────
+  //
+  // All three composite with 'source-atop', so the pattern fills the layer's
+  // own alpha rather than covering it with a rectangle — a checkerboard inside
+  // your text, not over it. Same choice `proceduralCanvas2d` made for Gradient
+  // Ramp, matched deliberately so the family behaves alike.
+  {
+    type: 'checkerboard',
+    label: 'Checkerboard',
+    params: [
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 1, max: 2000, default: 32 },
+      { key: 'height', label: 'Height', type: 'number', unit: 'px', min: 1, max: 2000, default: 32 },
+      // Shifts the lattice, not the layer — keyframe it to slide the pattern
+      // underneath static content.
+      { key: 'anchorX', label: 'Anchor X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'anchorY', label: 'Anchor Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'colorA', label: 'Color A', type: 'color', default: '#000000' },
+      { key: 'colorB', label: 'Color B', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'grid',
+    label: 'Grid',
+    params: [
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 1, max: 2000, default: 48 },
+      { key: 'height', label: 'Height', type: 'number', unit: 'px', min: 1, max: 2000, default: 48 },
+      { key: 'anchorX', label: 'Anchor X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'anchorY', label: 'Anchor Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'thickness', label: 'Border', type: 'number', unit: 'px', min: 0, max: 200, default: 2 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  // Vegas — the one generator whose geometry comes from the LAYER. Its params
+  // are all defined in ARC LENGTH around the alpha contour, which is why
+  // `rotation` is a full lap per 360 degrees regardless of the shape: a linear
+  // keyframe on it is a constant-speed chase around anything.
+  {
+    type: 'vegas',
+    label: 'Vegas',
+    params: [
+      { key: 'segments', label: 'Segments', type: 'number', unit: '', min: 1, max: 200, default: 3 },
+      // Percent of each light's own SLOT, not of the whole perimeter, so
+      // changing the count does not also change how long each light is.
+      { key: 'length', label: 'Length', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+      // The animated one. A full lap per 360 degrees.
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', min: -3600, max: 3600, default: 0 },
+      { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 0.1, max: 200, default: 6 },
+      { key: 'hardness', label: 'Hardness', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      // Where the contour is cut. Clamped away from both ends in `drawVegas`:
+      // at 0 every pixel counts as inside and there is no edge to trace, at 255
+      // an antialiased shape contours along its own interior.
+      { key: 'threshold', label: 'Threshold', type: 'number', unit: '', min: 1, max: 254, default: 128 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  // Cell Pattern: Worley (cellular) noise. `membrane` switches between the two
+  // readings of the same field — F1 gives blobs, F2−F1 gives the crystalline
+  // look. They look nothing alike, so exposing one without the other would ship
+  // half the effect.
+  {
+    type: 'cell-pattern',
+    label: 'Cell Pattern',
+    params: [
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 2, max: 500, default: 40 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: -1000, max: 1000, precision: 2, default: 0 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 1, max: 500, default: 100 },
+      { key: 'membrane', label: 'Crystalline', type: 'checkbox', default: false },
+      { key: 'invert', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+
+  // ── Noise family ─────────────────────────────────────────────────────
+  //
+  // Turbulent Noise is NOT a preset of Fractal Noise: it sums the ABSOLUTE
+  // value of each octave, and folding at zero creases the field wherever it
+  // changes sign. Those creases are the wispy filaments, and no Fractal Noise
+  // setting produces them.
+  {
+    type: 'turbulent-noise',
+    label: 'Turbulent Noise',
+    params: [
+      { key: 'scale', label: 'Scale', type: 'number', unit: 'px', min: 1, max: 2000, default: 80 },
+      { key: 'complexity', label: 'Complexity', type: 'number', min: 1, max: 8, precision: 0, default: 4 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: -1000, max: 1000, precision: 2, default: 0 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 1, max: 500, default: 120 },
+      { key: 'brightness', label: 'Brightness', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'invert', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  // Add Grain is not the existing `noise` effect with a new label: grain is
+  // luminance-dependent (peaking in the midtones, vanishing at both ends) and
+  // has a SIZE. Uniform noise has neither, which is why it reads as digital
+  // dirt rather than film.
+  {
+    type: 'add-grain',
+    label: 'Add Grain',
+    params: [
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 30 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 0.1, max: 20, precision: 2, default: 1 },
+      // 0 = monochrome grain (the film default); 100 = independent per channel.
+      { key: 'saturation', label: 'Saturation', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'seed', label: 'Seed', type: 'number', min: 0, max: 10000, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  // Median is a RANK filter, which is why it sits beside the blurs rather than
+  // among them: it removes speckle while leaving edges sharp, and no linear
+  // filter can do both. Radius capped at 8 (17×17, 289 samples/pixel) so it
+  // cannot lock up the bake.
+  {
+    type: 'median',
+    label: 'Median',
+    params: [
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 8, precision: 0, default: 2 },
+    ],
     css: () => '',
   },
 
@@ -963,10 +1727,98 @@ export const EFFECT_DEFS: EffectDef[] = [
     css: () => '',
   },
   {
+    type: 'compound-blur',
+    label: 'Compound Blur',
+    // GPU-only for the same reason Displace is: it reads a SECOND layer's
+    // pixels, which the Canvas2D bake chain has no way to resolve.
+    gpuOnly: true,
+    params: [
+      { key: 'maxBlur', label: 'Max Blur', type: 'number', unit: 'px', min: 0, max: 200, default: 20 },
+      // The layer whose LUMINANCE scales the radius (AE's Blur Layer). '' =
+      // unset → the layer blurs by its own luminance, which is visibly wrong
+      // and debuggable rather than a silent no-op.
+      { key: 'blurLayerId', label: 'Blur Layer', type: 'layer', default: '' },
+      { key: 'invert', label: 'Invert Blur', type: 'checkbox', default: 0 },
+    ],
+    css: () => '',
+  },
+  {
     type: 'motion-tile',
     label: 'Motion Tile',
     gpuOnly: true,
     params: [{ key: 'scale', label: 'Scale', type: 'number', unit: 'x', min: 0.1, max: 10, default: 2, precision: 1 }],
+    css: () => '',
+  },
+  {
+    /*
+      Bend — AE's CC Bender, curling the layer around an axis.
+
+      `gpuOnly` like Motion Tile and Displace: it is a warp with a closed-form
+      inverse (see the BEND shader) and no Canvas2D twin, so on a layer baked
+      for some other reason `extractSpatialEffects(layer, true)` carries it
+      through to the GPU rather than dropping it.
+
+      Style is the first `'enum'` param outside Echo — the three profiles differ
+      in how the bend RAMPS IN across the span, and each has an exact analytic
+      inverse, which is what keeps this one texture sample per pixel.
+    */
+    type: 'bend',
+    label: 'Bend',
+    gpuOnly: true,
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: '°', min: -3600, max: 3600, default: 60 },
+      {
+        key: 'style',
+        label: 'Style',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Marilyn' },
+          { value: 1, label: 'Sharp' },
+          { value: 2, label: 'Circular' },
+        ],
+      },
+      /*
+        Top and Base are AE's two POINT controls, and between them they carry
+        everything about the bend line: where it starts, which way it runs, and
+        how far the bend takes to complete. An earlier version of this effect
+        reduced them to an angle plus two percentages along it — which cannot
+        place the line off-centre at all, and silently ties the axis to the
+        layer's middle. Points are strictly more expressive AND fewer controls.
+
+        Stored as OFFSETS from a rest position, the convention every handled
+        effect here uses (see effectHandles.ts): it makes the defaults zero,
+        the identity state expressible, and the controls survive a resize.
+        Rest is the top-centre and bottom-centre of the layer, as in AE.
+      */
+      { key: 'topX', label: 'Top X', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'Top' },
+      { key: 'topY', label: 'Top Y', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'Top' },
+      { key: 'baseX', label: 'Base X', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'Base' },
+      { key: 'baseY', label: 'Base Y', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'Base' },
+      {
+        /*
+          What happens to the part of the layer PAST Base — the control that
+          decides whether this bends a region or the whole object.
+
+          Carry is AE's CC Bender: the object hinges at the bend and everything
+          below the hinge swings with it. That is right for bending a whole
+          arm, and wrong when you wanted to put a kink in the middle of
+          something and leave the rest alone — with Carry there is no way to do
+          the latter, because the remainder always moves.
+
+          Hold confines the deformation to the Top→Base band. Both are useful
+          and they are not derivable from each other, so it is a control.
+        */
+        key: 'outside',
+        label: 'Past Base',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Carry (hinge)' },
+          { value: 1, label: 'Hold (bend band only)' },
+        ],
+      },
+    ],
     css: () => '',
   },
 
@@ -1088,6 +1940,29 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'numEchoes', label: 'Number of Echoes', type: 'number', min: 0, max: 64, default: 6 },
       { key: 'startIntensity', label: 'Starting Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 80 },
       { key: 'decay', label: 'Decay', type: 'number', unit: '%', min: 0, max: 100, default: 70 },
+      /*
+        AE's Echo Operator. The ghosts are ordinary render layers (see echo.ts),
+        so "how do the echoes combine" is exactly their BLEND MODE — this maps
+        onto compositing that already exists rather than adding a second one.
+
+        Add is AE's default and the one that reads as a light trail. Composite
+        In Front / In Back are `normal` differing only in z-order, which is why
+        they are two entries against one mode.
+      */
+      {
+        key: 'echoOperator',
+        label: 'Echo Operator',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Add' },
+          { value: 1, label: 'Maximum' },
+          { value: 2, label: 'Minimum' },
+          { value: 3, label: 'Screen' },
+          { value: 4, label: 'Composite In Back' },
+          { value: 5, label: 'Composite In Front' },
+        ],
+      },
     ],
     css: () => '',
   },
@@ -1112,9 +1987,1080 @@ export const EFFECT_DEFS: EffectDef[] = [
     ],
     css: () => '',
   },
+
+  // ── Round three ───────────────────────────────────────────────────
+  //
+  // Every `css` below is empty, which is the norm for everything past the first
+  // dozen effects: a CSS filter can express a handful of colour adjustments and
+  // nothing else, so anything spatial, per-channel or generative renders through
+  // the LUT path or the Canvas2D pixel chain instead. See `colorLut.ts` and
+  // `aeColor.ts` for which, and why the choice is load-bearing.
+
+  {
+    // LUT path — nine per-channel pushes, free on both backends.
+    type: 'color-balance',
+    label: 'Color Balance',
+    params: [
+      { key: 'shadowRed', label: 'Shadow Red', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'shadowGreen', label: 'Shadow Green', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'shadowBlue', label: 'Shadow Blue', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'midtoneRed', label: 'Midtone Red', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'midtoneGreen', label: 'Midtone Green', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'midtoneBlue', label: 'Midtone Blue', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'highlightRed', label: 'Highlight Red', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'highlightGreen', label: 'Highlight Green', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'highlightBlue', label: 'Highlight Blue', type: 'number', min: -100, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    // LUT path. Gamma defaults to 1 and gain to 1 so an added effect is exactly
+    // the identity — a grading control that changes the picture the moment it
+    // is dropped on a layer is one people stop trusting.
+    type: 'gamma-pedestal-gain',
+    label: 'Gamma / Pedestal / Gain',
+    params: [
+      { key: 'gamma', label: 'Master Gamma', type: 'number', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'pedestal', label: 'Master Pedestal', type: 'number', min: -1, max: 1, precision: 3, default: 0 },
+      { key: 'gain', label: 'Master Gain', type: 'number', min: 0, max: 10, precision: 2, default: 1 },
+      { key: 'redGamma', label: 'Red Gamma', type: 'number', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'redPedestal', label: 'Red Pedestal', type: 'number', min: -1, max: 1, precision: 3, default: 0 },
+      { key: 'redGain', label: 'Red Gain', type: 'number', min: 0, max: 10, precision: 2, default: 1 },
+      { key: 'greenGamma', label: 'Green Gamma', type: 'number', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'greenPedestal', label: 'Green Pedestal', type: 'number', min: -1, max: 1, precision: 3, default: 0 },
+      { key: 'greenGain', label: 'Green Gain', type: 'number', min: 0, max: 10, precision: 2, default: 1 },
+      { key: 'blueGamma', label: 'Blue Gamma', type: 'number', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'bluePedestal', label: 'Blue Pedestal', type: 'number', min: -1, max: 1, precision: 3, default: 0 },
+      { key: 'blueGain', label: 'Blue Gain', type: 'number', min: 0, max: 10, precision: 2, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'photo-filter',
+    label: 'Photo Filter',
+    params: [
+      // AE's Warming Filter (85) as the default, because a photo filter set to
+      // white is a no-op and gives no clue what the effect does.
+      { key: 'color', label: 'Filter Color', type: 'color', default: '#ec8a00' },
+      { key: 'density', label: 'Density', type: 'number', unit: '%', min: 0, max: 100, default: 25 },
+      // On by default, matching AE — and it is the whole reason this is a pixel
+      // pass rather than a colour matrix. See `photoFilterData`.
+      { key: 'preserveLuminosity', label: 'Preserve Luminosity', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'black-and-white',
+    label: 'Black & White',
+    params: [
+      // Photoshop/AE's default mix, which is a neutral-looking starting point
+      // rather than a flat luma conversion.
+      { key: 'reds', label: 'Reds', type: 'number', unit: '%', min: -200, max: 300, default: 40 },
+      { key: 'yellows', label: 'Yellows', type: 'number', unit: '%', min: -200, max: 300, default: 60 },
+      { key: 'greens', label: 'Greens', type: 'number', unit: '%', min: -200, max: 300, default: 40 },
+      { key: 'cyans', label: 'Cyans', type: 'number', unit: '%', min: -200, max: 300, default: 60 },
+      { key: 'blues', label: 'Blues', type: 'number', unit: '%', min: -200, max: 300, default: 20 },
+      { key: 'magentas', label: 'Magentas', type: 'number', unit: '%', min: -200, max: 300, default: 80 },
+      { key: 'tint', label: 'Tint', type: 'checkbox', default: false },
+      { key: 'tintColor', label: 'Tint Color', type: 'color', default: '#d8b48a' },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'tritone',
+    label: 'Tritone',
+    params: [
+      { key: 'highlights', label: 'Highlights', type: 'color', default: '#ffffff' },
+      { key: 'midtones', label: 'Midtones', type: 'color', default: '#808080' },
+      { key: 'shadows', label: 'Shadows', type: 'color', default: '#000000' },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'threshold',
+    label: 'Threshold',
+    params: [
+      { key: 'level', label: 'Level', type: 'number', min: 0, max: 255, default: 128 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'polar-coordinates',
+    label: 'Polar Coordinates',
+    params: [
+      { key: 'interpolation', label: 'Interpolation', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      // A number rather than a checkbox so it keyframes, matching how the other
+      // menu-style params in this file (blur dimensions, card wipe direction)
+      // are stored. 0 = Rect to Polar, 1 = Polar to Rect.
+      { key: 'conversion', label: 'Type of Conversion', type: 'number', min: 0, max: 1, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'liquify',
+    label: 'Liquify',
+    /*
+      One brush, not a stroke history. See `liquifyData` — AE's Liquify stores
+      an opaque distortion MESH built from freehand strokes, and a mesh cannot
+      travel through a parameter system whose values are numbers. Numbers are
+      what ride the keyframe path, so a stored-mesh version would be a Liquify
+      that cannot animate. Stack several of these for several strokes.
+    */
+    params: [
+      { key: 'centerX', label: 'Brush Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Brush Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'brushSize', label: 'Brush Size', type: 'number', unit: 'px', min: 0, max: 2000, default: 120 },
+      // The Warp tool, and the only one of the three with no equivalent
+      // elsewhere in this registry.
+      { key: 'pushX', label: 'Push X', type: 'number', unit: 'px', min: -1000, max: 1000, default: 0 },
+      { key: 'pushY', label: 'Push Y', type: 'number', unit: 'px', min: -1000, max: 1000, default: 0 },
+      { key: 'twirl', label: 'Twirl', type: 'number', unit: '°', min: -720, max: 720, default: 0 },
+      // Negative bloats, which is why the range is signed rather than two
+      // controls that would have to be kept mutually exclusive.
+      { key: 'pinch', label: 'Pinch', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'mesh-warp',
+    label: 'Mesh Warp',
+    /*
+      A FIXED 4×4 lattice — 16 vertices, 32 offsets.
+
+      AE exposes Rows and Columns; this cannot, and the reason is the
+      parameter system rather than the maths. Effect parameters here are
+      NUMBERS because that is what rides the keyframe path, and the distortion
+      mesh is the thing users animate. A variable-size mesh would have to be
+      stored as an opaque blob, which cannot keyframe at all — so an
+      adjustable row count would be bought by freezing the whole mesh, which
+      is the wrong trade for what this effect is for.
+
+      Sixteen is also where a parameter list stops being navigable: Bezier
+      Warp's twelve already fill a panel.
+    */
+    params: [
+      { key: 'v0X', label: 'Vertex 1,1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v0Y', label: 'Vertex 1,1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v1X', label: 'Vertex 2,1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v1Y', label: 'Vertex 2,1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v2X', label: 'Vertex 3,1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v2Y', label: 'Vertex 3,1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v3X', label: 'Vertex 4,1 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v3Y', label: 'Vertex 4,1 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v4X', label: 'Vertex 1,2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v4Y', label: 'Vertex 1,2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v5X', label: 'Vertex 2,2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v5Y', label: 'Vertex 2,2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v6X', label: 'Vertex 3,2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v6Y', label: 'Vertex 3,2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v7X', label: 'Vertex 4,2 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v7Y', label: 'Vertex 4,2 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v8X', label: 'Vertex 1,3 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v8Y', label: 'Vertex 1,3 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v9X', label: 'Vertex 2,3 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v9Y', label: 'Vertex 2,3 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v10X', label: 'Vertex 3,3 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v10Y', label: 'Vertex 3,3 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v11X', label: 'Vertex 4,3 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v11Y', label: 'Vertex 4,3 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v12X', label: 'Vertex 1,4 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v12Y', label: 'Vertex 1,4 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v13X', label: 'Vertex 2,4 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v13Y', label: 'Vertex 2,4 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v14X', label: 'Vertex 3,4 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v14Y', label: 'Vertex 3,4 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v15X', label: 'Vertex 4,4 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'v15Y', label: 'Vertex 4,4 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'optics-compensation',
+    label: 'Optics Compensation',
+    params: [
+      // Defaults to 0 — the IDENTITY. An effect that warps the moment it is
+      // added would have to be undone before it could be dialled in, and this
+      // one is normally matched to a measured lens rather than eyeballed.
+      { key: 'fieldOfView', label: 'Field of View', type: 'number', unit: '°', min: 0, max: 180, default: 0 },
+      // A checkbox rather than a signed field of view: the two directions are a
+      // MODE, and the workflow is a matched pair — remove on the plate,
+      // re-apply on the comp — so the value must stay identical while only this
+      // flips. A signed control would invite two different magnitudes.
+      { key: 'reverse', label: 'Reverse Lens Distortion', type: 'checkbox', default: 0 },
+      // Offsets from the layer's middle, for the reason Bulge's are: an
+      // EffectDef cannot see the layer, so an absolute default would be 0,0.
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    // Centre as an OFFSET from the layer's middle, for the reason Bulge's is —
+    // an EffectDef cannot see the layer, so an absolute default would be 0,0.
+    type: 'mirror',
+    label: 'Mirror',
+    params: [
+      { key: 'centerX', label: 'Reflection Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Reflection Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      // The full 360°: the angle names the normal's direction, so 0 and 180 keep
+      // opposite halves. Clamping to 180 would make half the mirrors unreachable.
+      { key: 'angle', label: 'Reflection Angle', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'offset',
+    label: 'Offset',
+    params: [
+      { key: 'shiftX', label: 'Shift Centre To X', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'shiftY', label: 'Shift Centre To Y', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'emboss',
+    label: 'Emboss',
+    params: [
+      { key: 'angle', label: 'Direction', type: 'number', unit: '°', min: -360, max: 360, default: 135 },
+      { key: 'relief', label: 'Relief', type: 'number', unit: 'px', min: 0, max: 50, precision: 1, default: 1 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 0, max: 1000, default: 100 },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'scatter',
+    label: 'Scatter',
+    params: [
+      { key: 'amount', label: 'Scatter Amount', type: 'number', unit: 'px', min: 0, max: 200, default: 10 },
+      // 0 = both, 1 = horizontal, 2 = vertical — the same encoding blur
+      // dimensions uses, so the two menus read the same way.
+      { key: 'grain', label: 'Grain', type: 'number', min: 0, max: 2, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 10000, default: 1 },
+      // Separate from the seed on purpose: the seed picks WHICH pattern, and
+      // evolution animates within it. Keyframing the seed jump-cuts.
+      { key: 'evolution', label: 'Evolution', type: 'number', min: 0, max: 10000, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'radial-wipe',
+    label: 'Radial Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'startAngle', label: 'Start Angle', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      // 0 = clockwise, 1 = counterclockwise, 2 = both.
+      { key: 'wipe', label: 'Wipe', type: 'number', min: 0, max: 2, default: 0 },
+      { key: 'centerX', label: 'Centre X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'centerY', label: 'Centre Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      // In DEGREES, not pixels — see `radialWipeData` for why a pixel feather
+      // would be wide at the pivot and invisible at the rim.
+      { key: 'feather', label: 'Feather', type: 'number', unit: '°', min: 0, max: 90, precision: 1, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'block-dissolve',
+    label: 'Block Dissolve',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'blockWidth', label: 'Block Width', type: 'number', unit: 'px', min: 1, max: 500, default: 20 },
+      { key: 'blockHeight', label: 'Block Height', type: 'number', unit: 'px', min: 1, max: 500, default: 20 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 100, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 10000, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'luma-key',
+    label: 'Luma Key',
+    params: [
+      // 0 = brighter, 1 = darker, 2 = similar, 3 = dissimilar.
+      { key: 'keyType', label: 'Key Type', type: 'number', min: 0, max: 3, default: 0 },
+      { key: 'threshold', label: 'Threshold', type: 'number', min: 0, max: 255, default: 128 },
+      { key: 'tolerance', label: 'Tolerance', type: 'number', min: 0, max: 255, default: 10 },
+      { key: 'softness', label: 'Edge Softness', type: 'number', min: 0, max: 255, default: 10 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'minimax',
+    label: 'Minimax',
+    params: [
+      // 0 = maximum, 1 = minimum, 2 = max then min, 3 = min then max.
+      { key: 'operation', label: 'Operation', type: 'number', min: 0, max: 3, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 100, default: 2 },
+      // 0 = alpha, 1 = colour, 2 = red, 3 = green, 4 = blue. Alpha leads because
+      // matte repair is what the effect is for.
+      { key: 'channel', label: 'Channel', type: 'number', min: 0, max: 4, default: 0 },
+      { key: 'direction', label: 'Direction', type: 'number', min: 0, max: 2, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'channel-blur',
+    label: 'Channel Blur',
+    params: [
+      { key: 'redBlurriness', label: 'Red Blurriness', type: 'number', unit: 'px', min: 0, max: 200, default: 0 },
+      { key: 'greenBlurriness', label: 'Green Blurriness', type: 'number', unit: 'px', min: 0, max: 200, default: 0 },
+      { key: 'blueBlurriness', label: 'Blue Blurriness', type: 'number', unit: 'px', min: 0, max: 200, default: 0 },
+      { key: 'alphaBlurriness', label: 'Alpha Blurriness', type: 'number', unit: 'px', min: 0, max: 200, default: 0 },
+      { key: 'dimensions', label: 'Blur Dimensions', type: 'number', min: 0, max: 2, default: 0 },
+      { key: 'repeatEdge', label: 'Repeat Edge Pixels', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'unsharp-mask',
+    label: 'Unsharp Mask',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 500, default: 50 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 100, precision: 1, default: 2 },
+      // 0 = sharpen everything. Raising it is how grain is protected; see
+      // `unsharpMaskData`.
+      { key: 'threshold', label: 'Threshold', type: 'number', min: 0, max: 255, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ══ Round four ═════════════════════════════════════════════════════
+  //
+  // Every def below is `css: () => ''` and every one is in `CANVAS2D_ONLY`.
+  // That pairing is asserted by `canvas2dEffects.test.ts` and is not decoration:
+  // a non-empty `css` would make the effect ALSO apply as a CSS filter, so it
+  // would render twice on any layer that did not bake.
+
+  // ── Blur & Sharpen ────────────────────────────────────────────────
+  {
+    type: 'bilateral-blur',
+    label: 'Bilateral Blur',
+    params: [
+      // Capped at 24 in the kernel too — this is O(r²) per pixel and an
+      // unclamped radius is a hang, not a slow frame.
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 24, default: 6 },
+      { key: 'colorSigma', label: 'Threshold', type: 'number', min: 1, max: 255, default: 40 },
+      { key: 'preserveAlpha', label: 'Preserve Alpha', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'smart-blur',
+    label: 'Smart Blur',
+    params: [
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 24, default: 8 },
+      { key: 'threshold', label: 'Threshold', type: 'number', min: 0, max: 255, default: 24 },
+      // 0 normal · 1 edge only · 2 overlay edge.
+      { key: 'mode', label: 'Mode', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'camera-lens-blur',
+    label: 'Camera Lens Blur',
+    params: [
+      { key: 'radius', label: 'Blur Radius', type: 'number', unit: 'px', min: 0, max: 24, default: 8 },
+      // < 3 = circular iris. The polygon is what makes bokeh read as a lens.
+      { key: 'blades', label: 'Iris Blades', type: 'number', min: 0, max: 12, precision: 0, default: 6 },
+      { key: 'irisRotation', label: 'Iris Rotation', type: 'number', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'gain', label: 'Highlight Gain', type: 'number', min: 1, max: 12, precision: 1, default: 3 },
+      { key: 'highlightThreshold', label: 'Highlight Threshold', type: 'number', unit: '%', min: 0, max: 100, default: 70 },
+    ],
+    css: () => '',
+  },
+
+  // ── Distort ───────────────────────────────────────────────────────
+  {
+    type: 'ripple',
+    label: 'Ripple',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 0 },
+      { key: 'amplitude', label: 'Amplitude', type: 'number', unit: 'px', min: -200, max: 200, default: 12 },
+      { key: 'frequency', label: 'Frequency', type: 'number', min: 0, max: 40, precision: 1, default: 6 },
+      // Keyframe this linearly to send rings travelling outward.
+      { key: 'phase', label: 'Phase', type: 'number', unit: '°', min: -3600, max: 3600, default: 0 },
+      { key: 'decay', label: 'Decay', type: 'number', min: 0, max: 8, precision: 1, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'magnify',
+    label: 'Magnify',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'magnification', label: 'Magnification', type: 'number', unit: '%', min: 1, max: 800, default: 200 },
+      { key: 'radius', label: 'Size', type: 'number', unit: 'px', min: 0, max: 4000, default: 150 },
+      { key: 'shape', label: 'Shape', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 500, default: 20 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'warp',
+    label: 'Warp',
+    params: [
+      // 0 Arc · 1 Arch · 2 Flag · 3 Wave · 4 Fisheye · 5 Rise · 6 Bulge.
+      { key: 'style', label: 'Warp Style', type: 'number', min: 0, max: 6, precision: 0, default: 0 },
+      { key: 'bend', label: 'Bend', type: 'number', unit: '%', min: -200, max: 200, default: 50 },
+      { key: 'horizontalDistortion', label: 'Horizontal Distortion', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'verticalDistortion', label: 'Vertical Distortion', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'warpAxis', label: 'Warp Axis', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'page-turn',
+    label: 'Page Turn',
+    params: [
+      { key: 'amount', label: 'Turn Amount', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'angle', label: 'Fold Angle', type: 'number', unit: '°', min: -180, max: 180, default: 45 },
+      { key: 'curlRadius', label: 'Curl Radius', type: 'number', unit: 'px', min: 1, max: 500, default: 60 },
+      { key: 'backOpacity', label: 'Back Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'shading', label: 'Shading', type: 'number', unit: '%', min: 0, max: 100, default: 55 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'split',
+    label: 'Split',
+    params: [
+      { key: 'splitOffset', label: 'Split', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'slant',
+    label: 'Slant',
+    params: [
+      { key: 'slant', label: 'Slant', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'slantAxis', label: 'Axis', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+      // Where the shear hinges: 0 top/left, 1 bottom/right, 0.5 centre.
+      { key: 'floor', label: 'Floor', type: 'number', min: 0, max: 1, precision: 2, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'smear',
+    label: 'Smear',
+    params: [
+      { key: 'fromX', label: 'From X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'fromY', label: 'From Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'toX', label: 'To X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 40 },
+      { key: 'toY', label: 'To Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 2000, default: 120 },
+      { key: 'elasticity', label: 'Elasticity', type: 'number', unit: '%', min: 10, max: 400, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'rolling-shutter',
+    label: 'Rolling Shutter',
+    params: [
+      { key: 'sweep', label: 'Sweep', type: 'number', unit: 'px', min: -1000, max: 1000, default: 30 },
+      // The non-linear part. Without it this is just a shear.
+      { key: 'wobble', label: 'Wobble', type: 'number', unit: 'px', min: -500, max: 500, default: 0 },
+      { key: 'scanDirection', label: 'Scan Direction', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+      { key: 'verticalScan', label: 'Vertical Scan', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+
+  // ── Perspective ───────────────────────────────────────────────────
+  {
+    type: 'radial-shadow',
+    label: 'Radial Shadow',
+    params: [
+      { key: 'lightX', label: 'Light Source X', type: 'number', unit: 'px', min: -4000, max: 4000, default: -120 },
+      { key: 'lightY', label: 'Light Source Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: -120 },
+      { key: 'projection', label: 'Projection Distance', type: 'number', unit: '%', min: 0, max: 400, default: 30 },
+      { key: 'shadowColor', label: 'Shadow Color', type: 'color', default: '#000000' },
+      { key: 'shadowOpacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 100, default: 8 },
+      { key: 'renderMode', label: 'Render', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Generate ──────────────────────────────────────────────────────
+  {
+    type: 'circle',
+    label: 'Circle',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 120 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 1000, default: 0 },
+      // 0 = filled disc; > 0 = a ring of this thickness.
+      { key: 'thickness', label: 'Edge Thickness', type: 'number', unit: 'px', min: 0, max: 1000, default: 0 },
+      { key: 'invertCircle', label: 'Invert Circle', type: 'checkbox', default: false },
+      { key: 'composite', label: 'Composite', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'ellipse',
+    label: 'Ellipse',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'ellipseWidth', label: 'Width', type: 'number', unit: 'px', min: 0, max: 8000, default: 320 },
+      { key: 'ellipseHeight', label: 'Height', type: 'number', unit: 'px', min: 0, max: 8000, default: 200 },
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'thickness', label: 'Thickness', type: 'number', unit: 'px', min: 0, max: 500, default: 6 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 200, default: 0 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'composite', label: 'Composite', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'radio-waves',
+    label: 'Radio Waves',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'waveCount', label: 'Wave Count', type: 'number', min: 1, max: 64, precision: 0, default: 5 },
+      { key: 'maxRadius', label: 'Max Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 0 },
+      // Keyframe linearly for a steady pulse; the ring set wraps seamlessly.
+      { key: 'phase', label: 'Phase', type: 'number', unit: '°', min: -3600, max: 3600, default: 0 },
+      { key: 'thickness', label: 'Thickness', type: 'number', unit: 'px', min: 0, max: 200, default: 3 },
+      { key: 'color', label: 'Color', type: 'color', default: '#7dd3fc' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'fadeOut', label: 'Fade Out', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'composite', label: 'Composite', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'lightning',
+    label: 'Lightning',
+    params: [
+      { key: 'startX', label: 'Start X', type: 'number', unit: 'px', min: -4000, max: 4000, default: -200 },
+      { key: 'startY', label: 'Start Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: -150 },
+      { key: 'endX', label: 'End X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 200 },
+      { key: 'endY', label: 'End Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 150 },
+      { key: 'detail', label: 'Detail', type: 'number', min: 1, max: 9, precision: 0, default: 6 },
+      { key: 'amplitude', label: 'Amplitude', type: 'number', unit: 'px', min: 0, max: 1000, default: 120 },
+      { key: 'branches', label: 'Branches', type: 'number', min: 0, max: 12, precision: 0, default: 3 },
+      { key: 'thickness', label: 'Thickness', type: 'number', unit: 'px', min: 0, max: 100, precision: 1, default: 2.5 },
+      { key: 'color', label: 'Color', type: 'color', default: '#cfe8ff' },
+      { key: 'glow', label: 'Glow', type: 'number', unit: 'px', min: 0, max: 200, default: 8 },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      // Deterministic: re-rendering a frame must give the same bolt, or the
+      // content hash is useless and the export flickers. Keyframe to re-strike.
+      { key: 'seed', label: 'Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+      { key: 'composite', label: 'Composite', type: 'number', min: 0, max: 4, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'light-rays',
+    label: 'Light Rays',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'rayCount', label: 'Ray Count', type: 'number', min: 1, max: 256, precision: 0, default: 48 },
+      { key: 'rayLength', label: 'Length', type: 'number', unit: 'px', min: 0, max: 6000, default: 600 },
+      { key: 'spread', label: 'Spread', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'color', label: 'Color', type: 'color', default: '#fff3c4' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 70 },
+      { key: 'falloff', label: 'Falloff', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+      { key: 'seed', label: 'Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+      { key: 'composite', label: 'Composite', type: 'number', min: 0, max: 4, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'light-sweep',
+    label: 'Light Sweep',
+    params: [
+      // −100..200 so the band starts and ends fully off-frame. See the kernel.
+      { key: 'position', label: 'Position', type: 'number', unit: '%', min: -100, max: 200, default: 50 },
+      { key: 'sweepWidth', label: 'Width', type: 'number', unit: 'px', min: 0, max: 4000, default: 200 },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 70 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      // Defaults to source-atop so the shine is clipped to the layer.
+      { key: 'composite', label: 'Composite', type: 'number', min: 0, max: 4, precision: 0, default: 4 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'audio-waveform',
+    label: 'Audio Waveform',
+    params: [
+      { key: 'audioLayerId', label: 'Audio Layer', type: 'layer', default: '' },
+      { key: 'displayMode', label: 'Display Mode', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'maxHeight', label: 'Maximum Height', type: 'number', unit: 'px', min: 1, max: 4000, default: 200 },
+      { key: 'thickness', label: 'Thickness', type: 'number', unit: 'px', min: 1, max: 200, default: 3 },
+      { key: 'insideColor', label: 'Inside Colour', type: 'color', default: '#7dd3fc' },
+      { key: 'outsideColor', label: 'Outside Colour', type: 'color', default: '#1d4ed8' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'composite', label: 'Composite', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+      // RESOLVED, like Audio Spectrum's `magnitudes`: written by `buildSnapshot`
+      // from the referenced layer every frame, so no inspector control could
+      // meaningfully edit it.
+      { key: 'samples', label: 'Samples (resolved)', type: 'resolved', default: [] },
+    ],
+    css: () => '',
+  },
+
+  // ── Stylize ───────────────────────────────────────────────────────
+  {
+    type: 'cartoon',
+    label: 'Cartoon',
+    params: [
+      { key: 'smoothness', label: 'Smoothness', type: 'number', unit: 'px', min: 0, max: 12, precision: 0, default: 3 },
+      { key: 'levels', label: 'Shading Steps', type: 'number', min: 2, max: 64, precision: 0, default: 6 },
+      { key: 'edgeThreshold', label: 'Edge Threshold', type: 'number', min: 0, max: 255, default: 25 },
+      { key: 'edgeWidth', label: 'Edge Width', type: 'number', unit: 'px', min: 1, max: 10, precision: 0, default: 1 },
+      { key: 'edgeOpacity', label: 'Edge Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'brush-strokes',
+    label: 'Brush Strokes',
+    params: [
+      { key: 'strokeAngle', label: 'Stroke Angle', type: 'number', unit: '°', min: -360, max: 360, default: 45 },
+      { key: 'strokeLength', label: 'Stroke Length', type: 'number', unit: 'px', min: 1, max: 32, precision: 0, default: 8 },
+      { key: 'randomness', label: 'Randomness', type: 'number', unit: '%', min: 0, max: 100, default: 25 },
+      { key: 'cellSize', label: 'Brush Size', type: 'number', unit: 'px', min: 1, max: 200, precision: 0, default: 12 },
+      { key: 'density', label: 'Density', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'strobe-light',
+    label: 'Strobe Light',
+    params: [
+      { key: 'strobePeriod', label: 'Strobe Period', type: 'number', unit: 's', min: 0.01, max: 30, precision: 2, default: 0.5 },
+      { key: 'strobeDuty', label: 'Strobe Duration', type: 'number', unit: '%', min: 1, max: 100, default: 20 },
+      // 0 colour · 1 invert · 2 opacity.
+      { key: 'strobeOperation', label: 'Operation', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'strobeColor', label: 'Strobe Color', type: 'color', default: '#ffffff' },
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      // RESOLVED from the clock — see `TIME_DEPENDENT`. This is what makes the
+      // strobe fire; it is not a control.
+      { key: 'time', label: 'Time (resolved)', type: 'resolved', default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'color-emboss',
+    label: 'Color Emboss',
+    params: [
+      { key: 'direction', label: 'Direction', type: 'number', unit: '°', min: -360, max: 360, default: 45 },
+      { key: 'relief', label: 'Relief', type: 'number', unit: 'px', min: 1, max: 50, precision: 0, default: 1 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 0, max: 500, default: 100 },
+      { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'halftone',
+    label: 'Halftone',
+    params: [
+      { key: 'cellSize', label: 'Cell Size', type: 'number', unit: 'px', min: 2, max: 200, precision: 0, default: 8 },
+      // 45° by default: an unrotated screen moirés against any detail.
+      { key: 'screenAngle', label: 'Screen Angle', type: 'number', unit: '°', min: -180, max: 180, default: 45 },
+      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 1, max: 400, default: 100 },
+      { key: 'inkColor', label: 'Ink', type: 'color', default: '#000000' },
+      { key: 'paperColor', label: 'Paper', type: 'color', default: '#ffffff' },
+      { key: 'colorize', label: 'Use Source Colour', type: 'checkbox', default: false },
+      { key: 'blendWithOriginal', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'kaleidoscope',
+    label: 'Kaleidoscope',
+    params: [
+      { key: 'segments', label: 'Segments', type: 'number', min: 1, max: 64, precision: 0, default: 6 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', min: -3600, max: 3600, default: 0 },
+      { key: 'sourceAngle', label: 'Source Angle', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'zoom', label: 'Zoom', type: 'number', unit: '%', min: 1, max: 800, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'vignette',
+    label: 'Vignette',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: -100, max: 100, default: 55 },
+      { key: 'size', label: 'Size', type: 'number', unit: '%', min: 0, max: 200, default: 55 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: '%', min: 1, max: 200, default: 60 },
+      // 0 = follows the frame's aspect, 100 = circular.
+      { key: 'roundness', label: 'Roundness', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'burn-film',
+    label: 'Burn Film',
+    params: [
+      { key: 'burn', label: 'Burn', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'burnColor', label: 'Burn Color', type: 'color', default: '#fff6e0' },
+      { key: 'charColor', label: 'Char Color', type: 'color', default: '#3d1f0a' },
+      { key: 'randomness', label: 'Randomness', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'seed', label: 'Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+
+  // ── Colour Correction ─────────────────────────────────────────────
+  {
+    type: 'equalize',
+    label: 'Equalize',
+    params: [
+      // 0 RGB (shifts hue — that is the look) · 1 Brightness (hue-preserving).
+      { key: 'equalizeMode', label: 'Equalize', type: 'number', min: 0, max: 1, precision: 0, default: 1 },
+      { key: 'amount', label: 'Amount To Equalize', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'auto-levels',
+    label: 'Auto Levels',
+    params: [
+      { key: 'blackClip', label: 'Black Clip', type: 'number', unit: '%', min: 0, max: 20, precision: 2, default: 0.1 },
+      { key: 'whiteClip', label: 'White Clip', type: 'number', unit: '%', min: 0, max: 20, precision: 2, default: 0.1 },
+      // The control that stops an auto grade breathing frame to frame.
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'auto-contrast',
+    label: 'Auto Contrast',
+    params: [
+      { key: 'blackClip', label: 'Black Clip', type: 'number', unit: '%', min: 0, max: 20, precision: 2, default: 0.1 },
+      { key: 'whiteClip', label: 'White Clip', type: 'number', unit: '%', min: 0, max: 20, precision: 2, default: 0.1 },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'auto-color',
+    label: 'Auto Color',
+    params: [
+      { key: 'blackClip', label: 'Black Clip', type: 'number', unit: '%', min: 0, max: 20, precision: 2, default: 0.1 },
+      { key: 'whiteClip', label: 'White Clip', type: 'number', unit: '%', min: 0, max: 20, precision: 2, default: 0.1 },
+      // The midtone pull — what a stretch alone cannot fix.
+      { key: 'snapNeutral', label: 'Snap Neutral Midtones', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'change-color',
+    label: 'Change Color',
+    params: [
+      { key: 'targetColor', label: 'Color To Change', type: 'color', default: '#ff0000' },
+      { key: 'hueTolerance', label: 'Hue Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 12 },
+      { key: 'satTolerance', label: 'Saturation Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'lightTolerance', label: 'Lightness Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'hueShift', label: 'Hue Transform', type: 'number', unit: '°', min: -360, max: 360, default: 60 },
+      { key: 'satScale', label: 'Lightness Transform', type: 'number', unit: '%', min: -100, max: 200, default: 0 },
+      { key: 'lightScale', label: 'Saturation Transform', type: 'number', unit: '%', min: -100, max: 200, default: 0 },
+      { key: 'invertSelection', label: 'Invert Selection', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'change-to-color',
+    label: 'Change To Color',
+    params: [
+      { key: 'fromColor', label: 'From', type: 'color', default: '#ff0000' },
+      { key: 'toColor', label: 'To', type: 'color', default: '#0055ff' },
+      { key: 'hueTolerance', label: 'Hue Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 12 },
+      { key: 'satTolerance', label: 'Saturation Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'lightTolerance', label: 'Lightness Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      // Off, this flattens the shading to the destination's own lightness.
+      { key: 'preserveLightness', label: 'Preserve Lightness', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'leave-color',
+    label: 'Leave Color',
+    params: [
+      { key: 'targetColor', label: 'Color To Leave', type: 'color', default: '#ff0000' },
+      { key: 'tolerance', label: 'Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 15 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'amount', label: 'Amount To Decolor', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'toner',
+    label: 'Toner',
+    params: [
+      { key: 'blackTone', label: 'Black', type: 'color', default: '#000000' },
+      { key: 'shadowTone', label: 'Shadows', type: 'color', default: '#2a2a45' },
+      { key: 'midTone', label: 'Midtones', type: 'color', default: '#8a7a63' },
+      { key: 'highlightTone', label: 'Highlights', type: 'color', default: '#e8d9b8' },
+      { key: 'whiteTone', label: 'White', type: 'color', default: '#ffffff' },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Keying & Matte ────────────────────────────────────────────────
+  {
+    type: 'color-key',
+    label: 'Color Key',
+    params: [
+      { key: 'keyColor', label: 'Key Color', type: 'color', default: '#00ff00' },
+      { key: 'tolerance', label: 'Color Tolerance', type: 'number', unit: '%', min: 0, max: 100, default: 15 },
+      { key: 'edgeSoftness', label: 'Edge Feather', type: 'number', unit: '%', min: 0, max: 100, default: 5 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'color-range',
+    label: 'Color Range',
+    params: [
+      { key: 'keyColor', label: 'Key Color', type: 'color', default: '#00ff00' },
+      // 0 Lab · 1 YUV · 2 RGB. The space choice IS the effect — see the kernel.
+      { key: 'colorSpace', label: 'Color Space', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'minTolerance', label: 'Min', type: 'number', unit: '%', min: 0, max: 100, default: 10 },
+      { key: 'maxTolerance', label: 'Max', type: 'number', unit: '%', min: 0, max: 100, default: 30 },
+      // Low by default: chroma separates a lit cyclorama, luminance does not.
+      { key: 'lumaWeight', label: 'Luma Weight', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'extract',
+    label: 'Extract',
+    params: [
+      // 0 luminance · 1 red · 2 green · 3 blue · 4 alpha.
+      { key: 'extractChannel', label: 'Channel', type: 'number', min: 0, max: 4, precision: 0, default: 0 },
+      { key: 'blackPoint', label: 'Black Point', type: 'number', min: 0, max: 255, default: 0 },
+      { key: 'whitePoint', label: 'White Point', type: 'number', min: 0, max: 255, default: 255 },
+      { key: 'blackSoftness', label: 'Black Softness', type: 'number', min: 0, max: 255, default: 10 },
+      { key: 'whiteSoftness', label: 'White Softness', type: 'number', min: 0, max: 255, default: 10 },
+      { key: 'invertExtract', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'spill-suppressor',
+    label: 'Spill Suppressor',
+    params: [
+      { key: 'keyColor', label: 'Color To Suppress', type: 'color', default: '#00ff00' },
+      { key: 'amount', label: 'Suppression', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+      // Without this the despilled edge reads as a dark outline.
+      { key: 'preserveLuma', label: 'Preserve Luminosity', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'matte-choker',
+    label: 'Matte Choker',
+    params: [
+      { key: 'spread', label: 'Geometric Softness 1', type: 'number', unit: 'px', min: 0, max: 50, precision: 0, default: 4 },
+      { key: 'choke', label: 'Choke', type: 'number', unit: 'px', min: 0, max: 50, precision: 0, default: 4 },
+      { key: 'softness', label: 'Gray Level Softness', type: 'number', unit: 'px', min: 0, max: 50, precision: 0, default: 2 },
+      { key: 'iterations', label: 'Iterations', type: 'number', min: 1, max: 5, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+
+  // ── Channel ───────────────────────────────────────────────────────
+  {
+    type: 'alpha-levels',
+    label: 'Alpha Levels',
+    params: [
+      { key: 'inBlack', label: 'Input Black', type: 'number', min: 0, max: 255, default: 0 },
+      { key: 'inWhite', label: 'Input White', type: 'number', min: 0, max: 255, default: 255 },
+      // The control that fattens a soft edge WITHOUT hardening it.
+      { key: 'gamma', label: 'Gamma', type: 'number', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'outBlack', label: 'Output Black', type: 'number', min: 0, max: 255, default: 0 },
+      { key: 'outWhite', label: 'Output White', type: 'number', min: 0, max: 255, default: 255 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'solid-composite',
+    label: 'Solid Composite',
+    params: [
+      { key: 'solidColor', label: 'Color', type: 'color', default: '#000000' },
+      // Fades the LAYER toward the solid — the solid sits under it.
+      { key: 'sourceOpacity', label: 'Source Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'solidOpacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'compositeMode', label: 'Blending Mode', type: 'number', min: 0, max: 3, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'channel-combiner',
+    label: 'Channel Combiner',
+    params: [
+      // 0 RGB→HSL · 1 HSL→RGB · 2 RGB→YUV · 3 YUV→RGB · 4 Lightness→Alpha ·
+      // 5 Alpha→Luminance · 6 Max RGB · 7 Min RGB. The round-trip pairs are the
+      // point: convert, grade the channel with Curves, convert back.
+      { key: 'combinerMode', label: 'From', type: 'number', min: 0, max: 7, precision: 0, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'remove-color-matting',
+    label: 'Remove Color Matting',
+    params: [
+      { key: 'backgroundColor', label: 'Background Color', type: 'color', default: '#000000' },
+      // Low alpha amplifies the unmultiply's error — this is the floor below
+      // which pixels are left alone. See the kernel.
+      { key: 'threshold', label: 'Coverage Floor', type: 'number', unit: '%', min: 0, max: 100, default: 2 },
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+
+  // ── Transition ────────────────────────────────────────────────────
+  {
+    type: 'iris-wipe',
+    label: 'Iris Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      // < 3 = circular.
+      { key: 'irisPoints', label: 'Points', type: 'number', min: 0, max: 32, precision: 0, default: 0 },
+      { key: 'rotation', label: 'Rotation', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'innerRadius', label: 'Inner Radius', type: 'number', unit: 'px', min: 0, max: 4000, default: 0 },
+      { key: 'useInnerRadius', label: 'Use Inner Radius', type: 'checkbox', default: false },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 500, default: 2 },
+      { key: 'invertIris', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'light-wipe',
+    label: 'Light Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'wipeShape', label: 'Shape', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+      { key: 'angle', label: 'Direction', type: 'number', unit: '°', min: -180, max: 180, default: 90 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'lightWidth', label: 'Width', type: 'number', unit: 'px', min: 0, max: 2000, default: 60 },
+      { key: 'lightColor', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 80 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 500, default: 2 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'line-sweep',
+    label: 'Line Sweep',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'lineCount', label: 'Lines', type: 'number', min: 1, max: 512, precision: 0, default: 24 },
+      { key: 'angle', label: 'Direction', type: 'number', unit: '°', min: -180, max: 180, default: 0 },
+      // 0 = every line clears together (a plain wipe); 100 = fully sequential.
+      { key: 'stagger', label: 'Stagger', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: '%', min: 0, max: 100, default: 2 },
+      { key: 'invertSweep', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'grid-wipe',
+    label: 'Grid Wipe',
+    params: [
+      { key: 'completion', label: 'Transition Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'columns', label: 'Columns', type: 'number', min: 1, max: 256, precision: 0, default: 12 },
+      { key: 'rows', label: 'Rows', type: 'number', min: 1, max: 256, precision: 0, default: 8 },
+      // 0 rectangle · 1 diamond · 2 circle.
+      { key: 'tileShape', label: 'Shape', type: 'number', min: 0, max: 2, precision: 0, default: 0 },
+      { key: 'randomSeed', label: 'Randomness', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+      { key: 'feather', label: 'Feather', type: 'number', unit: '%', min: 0, max: 100, default: 5 },
+      { key: 'invertGrid', label: 'Invert', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+
+  // ── Noise & Grain ─────────────────────────────────────────────────
+  {
+    type: 'dust-scratches',
+    label: 'Dust & Scratches',
+    params: [
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 1, max: 8, precision: 0, default: 2 },
+      // 0 degrades to a plain Median. Raising it is what preserves texture.
+      { key: 'threshold', label: 'Threshold', type: 'number', min: 0, max: 255, default: 20 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'noise-alpha',
+    label: 'Noise Alpha',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'uniformNoise', label: 'Uniform Noise', type: 'checkbox', default: true },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+      // Keyframe to boil the grain; leave static for a fixed texture.
+      { key: 'noisePhase', label: 'Noise Phase', type: 'number', min: 0, max: 100000, precision: 0, default: 0 },
+      { key: 'clipResult', label: 'Clip Result', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
 ];
 
-const DEF = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
+const BUILTIN_DEF = new Map(EFFECT_DEFS.map((d) => [d.type, d]));
+
+/**
+ * One effect's definition, built-in or from a plugin.
+ *
+ * ★ Every reader goes through here rather than through the map.
+ *
+ * The map is built at module load from a fixed array, which is correct for
+ * built-ins and cannot describe a plugin's effect — that set is whatever is
+ * installed and changes while the app runs. A reader that consulted only the
+ * map would return `undefined` for a plugin effect, and every call site treats
+ * `undefined` as "unknown effect": no parameters, no CSS, no label, silently
+ * skipped. A document with a plugin effect on a layer would open with the
+ * effect present in the data and absent from every surface.
+ *
+ * Resolved lazily rather than by adding plugin effects to `EFFECT_DEFS`,
+ * because that array is a module-level constant several things capture at load.
+ */
+export function effectDefFor(type: EffectType | string): EffectDef | undefined {
+  return BUILTIN_DEF.get(type as EffectType)
+    // Only consulted on a miss, so the common path is one map lookup.
+    ?? (typeof type === 'string' && type.includes('.') ? pluginEffectDef(type) : undefined);
+}
+
+/**
+ * Kept for the call sites below, which now all read through `effectDefFor`.
+ * Shaped as a `get` so the diff is a rename rather than a rewrite of each.
+ */
+const DEF = {
+  get: (type: EffectType | string) => effectDefFor(type),
+  has: (type: EffectType | string) => effectDefFor(type) !== undefined,
+};
 
 /** Effects that need the GPU backend to render at all. */
 export const GPU_ONLY_EFFECTS: ReadonlySet<EffectType> = new Set(
@@ -1367,11 +3313,27 @@ export function writeNodeEffects(nodeId: string, effects: Effect[]): void {
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 
-export function addEffect(nodeId: string, type: EffectType): void {
+/**
+ * `id` lets a caller NAME the effect instead of discovering its generated id.
+ *
+ * The generated `fx_<n>` is only knowable by reading the return value, and a
+ * deterministic emitter cannot read one: `@motion/technique-library` builds a
+ * flat `ToolCall[]` with no execution and no feedback, so a technique that wants
+ * to keyframe `effect.<id>.<param>` must know the id before the effect exists.
+ * Two techniques solved that by inventing one — and because `isAnimatableProp`
+ * accepts any `effect.*` path, both wrote tracks onto effects that never
+ * existed. The calls succeeded, the keyframes were stored, and nothing rendered.
+ *
+ * A supplied id already taken on the node falls back to a generated one, so this
+ * can never produce two effects sharing an id.
+ */
+export function addEffect(nodeId: string, type: EffectType, id?: string): void {
   const def = DEF.get(type);
   if (!def) return;
   const effects = getNodeEffects(nodeId);
-  writeNodeEffects(nodeId, [...effects, { id: `fx_${(seq += 1)}`, type, params: defaultParams(def) }]);
+  const taken = new Set(effects.map((e) => e.id));
+  const useId = id && !taken.has(id) ? id : `fx_${(seq += 1)}`;
+  writeNodeEffects(nodeId, [...effects, { id: useId, type, params: defaultParams(def) }]);
 }
 
 /** Set one of an effect's parameters. */
@@ -1387,6 +3349,55 @@ export function updateEffectParam(
       e.id === effectId ? { ...e, params: { ...e.params, [key]: value } } : e,
     ),
   );
+}
+
+/**
+ * Restore every parameter of one effect to its declared default — AE's `Reset`
+ * link in the Effect Controls header.
+ *
+ * ONE write, not one per parameter. Looping `updateEffectParam` over a def would
+ * emit an `AnimationChanged` per key, and history records per edit — resetting
+ * Bevel (nine params) would cost nine undo steps to walk back.
+ *
+ * Deliberately does NOT touch keyframes. A reset in AE restores the value the
+ * property rests at; removing the user's animation as a side effect of a control
+ * labelled "Reset" is the kind of surprise that costs work. The stopwatch is
+ * still the one thing that deletes tracks.
+ */
+export function resetEffectParams(nodeId: string, effectId: string): void {
+  const effects = getNodeEffects(nodeId);
+  const target = effects.find((e) => e.id === effectId);
+  const def = target ? DEF.get(target.type) : undefined;
+  if (!target || !def) return;
+  writeNodeEffects(
+    nodeId,
+    // `amount` goes too: it is the legacy scalar `paramsOf` folds in ahead of
+    // the defaults, so leaving it would make a reset effect keep its old look.
+    effects.map((e) => (e.id === effectId ? { ...e, params: defaultParams(def), amount: undefined } : e)),
+  );
+}
+
+/**
+ * Display names for a stack, AE-style: the second Gaussian Blur on a layer is
+ * "Gaussian Blur 2", the third "Gaussian Blur 3".
+ *
+ * Four identically-labelled rows is not a list, it is a guess — the AE
+ * screenshot users compare against reads "CC Smear / CC Smear 2 / CC Smear 3 /
+ * CC Smear 4", and stacking two blurs is ordinary practice, not a corner case.
+ *
+ * Numbering follows STACK ORDER and only starts at the second instance, so the
+ * first of a kind keeps its plain name whatever else is on the layer.
+ */
+export function effectDisplayNames(effects: ReadonlyArray<Effect>): Map<string, string> {
+  const seen = new Map<string, number>();
+  const out = new Map<string, string>();
+  for (const e of effects) {
+    const label = DEF.get(e.type)?.label ?? e.type;
+    const n = (seen.get(e.type) ?? 0) + 1;
+    seen.set(e.type, n);
+    out.set(e.id, n === 1 ? label : `${label} ${n}`);
+  }
+  return out;
 }
 
 /** Set an effect's primary parameter (what the old single-scalar API meant). */

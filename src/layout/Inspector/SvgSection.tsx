@@ -39,7 +39,7 @@ function Warning({ text }: { text: string }): JSX.Element {
         padding: '6px 8px',
       }}
     >
-      <Icon name="warning" size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+      <Icon name="warning" size="sm" style={{ flexShrink: 0, marginTop: 1 }} />
       <span>{text}</span>
     </div>
   );
@@ -136,7 +136,7 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
 export function RevertSvgRow({ onRevert }: { onRevert: () => void }): JSX.Element {
   return (
     <div style={{ marginTop: 10 }}>
-      <p style={{ margin: '0 0 6px', fontSize: 10, lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>
+      <p style={{ margin: '0 0 6px', fontSize: 'var(--font-size-micro)', lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>
         Converted from an SVG. The original file is still stored on this group.
       </p>
       <button

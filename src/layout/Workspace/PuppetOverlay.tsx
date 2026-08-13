@@ -2,12 +2,16 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { layerScreenMapping } from './layerScreen';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { readGeometry, worldMatrix } from '@core/workspace/geometry';
+import { readGeometry } from '@core/workspace/geometry';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, PuppetPin } from '@core/rig/puppet';
+import { resolveLivePins } from '@core/rig/livePins';
+import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
 import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { useAssetStore } from '@stores/assetStore';
@@ -30,22 +34,6 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands';
 import { upsertDataKeyframe, dataPathTangents, setDataSpatialTangent } from '@motion/animation';
 import { bumpScene } from '@stores/sceneStore';
-
-// Invert 2D affine matrix mapping
-function worldToLocal(m: any, w: { x: number; y: number }): { x: number; y: number } {
-  const det = m.a * m.d - m.b * m.c;
-  if (Math.abs(det) < 1e-6) return { x: 0, y: 0 };
-  const invA = m.d / det;
-  const invB = -m.b / det;
-  const invC = -m.c / det;
-  const invD = m.a / det;
-  const invE = (m.c * m.f - m.d * m.e) / det;
-  const invF = (m.b * m.e - m.a * m.f) / det;
-  return {
-    x: invA * w.x + invC * w.y + invE,
-    y: invB * w.x + invD * w.y + invF,
-  };
-}
 
 /** Radius (screen px) of the advanced-pin gizmo ring. */
 const GIZMO_R = 26;
@@ -79,6 +67,7 @@ export function PuppetOverlay(): JSX.Element | null {
   const selectedNodeId = useSelectionStore((s) => s.ids[0]);
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
+  const comp = useCompositionStore((s) => s.comp());
 
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [hoveredPinId, setHoveredPinId] = useState<string | null>(null);
@@ -156,20 +145,21 @@ export function PuppetOverlay(): JSX.Element | null {
     paint: node.components.find((c) => c.type === 'Paint')?.props.paint,
   };
   const pad = rasterPadding(dummyLayer);
-  const m = worldMatrix(geom);
   const controller = getWorkspaceController();
   const camera = controller.ws.camera;
 
-  const localToScreen = (lx: number, ly: number) => {
-    const wx = m.a * lx + m.c * ly + m.e;
-    const wy = m.b * lx + m.d * ly + m.f;
-    return camera.worldToScreen({ x: wx, y: wy });
-  };
-
-  const screenToLocal = (sx: number, sy: number) => {
-    const world = camera.screenToWorld({ x: sx, y: sy });
-    return worldToLocal(m, world);
-  };
+  // ONE projection, shared with BoneOverlay and the effect-handle overlay.
+  //
+  // This was a local pair built on `worldMatrix(geom)`, byte-identical to
+  // BoneOverlay's, and it composed only THIS node's transform — so on a
+  // parented layer the pins drew at the unparented position while the artwork
+  // rendered at the parented one (F23). `layerScreenMapping` goes through
+  // `layerSpaceAt`, which walks the chain and handles 3D.
+  const mapping = layerScreenMapping(node.id, time, comp, camera);
+  const localToScreen = (lx: number, ly: number) =>
+    mapping ? mapping.localToScreen(lx, ly) : { x: lx, y: ly };
+  const screenToLocal = (sx: number, sy: number) =>
+    mapping ? mapping.screenToLocal(sx, sy) : { x: sx, y: sy };
 
   // Canonical keyframe axis — the same forward map buildSnapshot samples.
   const layerT = compToKeyframeTime(node.id, time);
@@ -206,30 +196,9 @@ export function PuppetOverlay(): JSX.Element | null {
     coverage,
   );
 
-  const animatedPins = pins.map((pin) => {
-    const livePos = defaultAnimation.sampleData(node.id, `puppet.${pin.id}.position`, layerT);
-    let px = pin.x;
-    let py = pin.y;
-    if (Array.isArray(livePos) && livePos.length > 0 && livePos[0] && typeof livePos[0] === 'object' && 'x' in livePos[0]) {
-      const pt = livePos[0] as { x: number; y: number };
-      px = pt.x;
-      py = pt.y;
-    }
-    const liveRot = defaultAnimation.sample(node.id, `puppet.${pin.id}.rotation`, layerT);
-    const liveStiff = defaultAnimation.sample(node.id, `puppet.${pin.id}.stiffness`, layerT);
-    const liveScale = defaultAnimation.sample(node.id, `puppet.${pin.id}.scale`, layerT);
-    const liveOverlap = defaultAnimation.sample(node.id, `puppet.${pin.id}.overlap`, layerT);
-    return {
-      id: pin.id,
-      x: px,
-      y: py,
-      rotation: typeof liveRot === 'number' ? liveRot : pin.rotation,
-      stiffness: typeof liveStiff === 'number' ? liveStiff : pin.stiffness,
-      scale: typeof liveScale === 'number' ? liveScale : pin.scale,
-      overlap: typeof liveOverlap === 'number' ? liveOverlap : pin.overlap,
-      overlapExtent: pin.overlapExtent,
-    };
-  });
+  // Shared with buildSnapshot — see `livePins.ts` for why this is not written
+  // out here a second time.
+  const animatedPins = resolveLivePins(pins, node.id, layerT, defaultAnimation);
 
   let deformedVertices = deform(
     animatedPins, restMesh, puppetRig?.solver ?? 'arap', puppetRig?.maxRotationDeg,
@@ -254,18 +223,9 @@ export function PuppetOverlay(): JSX.Element | null {
         y: typeof liveY === 'number' ? liveY : b.y,
       };
     });
-    const activeIk: IkTargetResolved[] = (skel.ikTargets ?? [])
-      .filter((tg) => tg.enabled !== false)
-      .map((tg) => {
-        const liveX = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.x`, layerT);
-        const liveY = defaultAnimation.sample(node.id, `ikTarget.${tg.boneId}.y`, layerT);
-        return {
-          boneId: tg.boneId,
-          x: typeof liveX === 'number' ? liveX : tg.x,
-          y: typeof liveY === 'number' ? liveY : tg.y,
-          chainLength: tg.chainLength,
-        };
-      });
+    // Shared resolver. This copy had DRIFTED — it never sampled the pole, so a
+    // keyframed pole previewed here differently from how it rendered.
+    const activeIk: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
     const posedBones = applyIk(animatedBones, activeIk);
     skelPoseWorld = computeWorldTransforms({ bones: posedBones });
     skelBinding = getSkeletonBinding(restMesh, skel.bones);
@@ -348,6 +308,29 @@ export function PuppetOverlay(): JSX.Element | null {
     );
   }
 
+  /**
+   * The point a pin's rotation gesture turns about, in the same local space the
+   * pointer is mapped into.
+   *
+   * For an advanced pin that is its own live position. For a bend pin it is the
+   * DERIVED centre — read out of the solved mesh — because that is where the
+   * pin visibly is and where its rotation is actually applied. Measuring the
+   * drag angle from the rest anchor instead would put the gesture's origin
+   * somewhere the user cannot see, and the further the drivers carried the pin
+   * the more the rotation would lag the pointer.
+   */
+  const pinRotationCenter = (pinId: string): { x: number; y: number } => {
+    const pin = pins.find((p) => p.id === pinId);
+    const animPin = animatedPins.find((p) => p.id === pinId);
+    if (pin?.kind === 'bend') {
+      const k = restMesh.pinVertexIndices[pinId];
+      if (k !== undefined && deformedVertices.length >= k * 4 + 2) {
+        return { x: deformedVertices[k * 4 + 0]!, y: deformedVertices[k * 4 + 1]! };
+      }
+    }
+    return { x: animPin?.x ?? 0, y: animPin?.y ?? 0 };
+  };
+
   // Pointer drag operations
   const onPointerDownPin = (e: React.PointerEvent, pinId: string) => {
     e.stopPropagation();
@@ -360,15 +343,19 @@ export function PuppetOverlay(): JSX.Element | null {
 
     // Ctrl/Cmd = Puppet Sketch (record in real time during playback).
     // Alt = rotate the deformation around the pin. Plain drag = move.
-    const mode: 'move' | 'rotate' | 'sketch' =
+    let mode: 'move' | 'rotate' | 'sketch' =
       e.ctrlKey || e.metaKey ? 'sketch' : e.altKey ? 'rotate' : 'move';
+    // A bend pin has no position of its own to move or record — the solve
+    // derives one from the pins around it. Dragging it rotates instead, which
+    // is the one spatial thing it does own, rather than doing nothing at all.
+    const isBend = pins.find((p) => p.id === pinId)?.kind === 'bend';
+    if (isBend && mode !== 'rotate') mode = 'rotate';
     const animPin = animatedPins.find((p) => p.id === pinId);
     let startAngleDeg = 0;
     let startRotationDeg = 0;
     if (mode === 'rotate') {
       const local = toRestSpace(screenToLocal(startScreen.x, startScreen.y));
-      const cx = animPin?.x ?? 0;
-      const cy = animPin?.y ?? 0;
+      const { x: cx, y: cy } = pinRotationCenter(pinId);
       startAngleDeg = (Math.atan2(local.y - cy, local.x - cx) * 180) / Math.PI;
       startRotationDeg = animPin?.rotation ?? 0;
     }
@@ -394,6 +381,7 @@ export function PuppetOverlay(): JSX.Element | null {
     const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const animPin = animatedPins.find((p) => p.id === pinId);
     const local = toRestSpace(screenToLocal(startScreen.x, startScreen.y));
+    const c = pinRotationCenter(pinId);
     dragInfoRef.current = {
       pinId,
       startScreen,
@@ -401,7 +389,7 @@ export function PuppetOverlay(): JSX.Element | null {
       mode: 'scale',
       startAngleDeg: 0,
       startRotationDeg: 0,
-      startDist: Math.max(1e-3, Math.hypot(local.x - (animPin?.x ?? 0), local.y - (animPin?.y ?? 0))),
+      startDist: Math.max(1e-3, Math.hypot(local.x - c.x, local.y - c.y)),
       startScale: animPin?.scale ?? 1,
     };
     capturePointer(svg, e.pointerId);
@@ -460,9 +448,7 @@ export function PuppetOverlay(): JSX.Element | null {
 
     if (drag.mode === 'rotate') {
       // Live update the pin rotation (scalar keyframe track) directly.
-      const animPin = animatedPins.find((p) => p.id === drag.pinId);
-      const cx = animPin?.x ?? 0;
-      const cy = animPin?.y ?? 0;
+      const { x: cx, y: cy } = pinRotationCenter(drag.pinId);
       const angleDeg = (Math.atan2(localCoords.y - cy, localCoords.x - cx) * 180) / Math.PI;
       let rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
       // Shift constrains rotation to 15° increments, matching AE's gizmo.
@@ -473,8 +459,8 @@ export function PuppetOverlay(): JSX.Element | null {
     }
 
     if (drag.mode === 'scale') {
-      const animPin = animatedPins.find((p) => p.id === drag.pinId);
-      const d = Math.hypot(localCoords.x - (animPin?.x ?? 0), localCoords.y - (animPin?.y ?? 0));
+      const c = pinRotationCenter(drag.pinId);
+      const d = Math.hypot(localCoords.x - c.x, localCoords.y - c.y);
       let scale = (drag.startScale ?? 1) * (d / (drag.startDist ?? 1));
       // Shift constrains scale to 5% steps, matching AE's gizmo.
       if (e.shiftKey) scale = Math.round(scale * 20) / 20;
@@ -708,6 +694,7 @@ export function PuppetOverlay(): JSX.Element | null {
       {/* Render pin dots */}
       {pins.map((pin) => {
         const animPin = animatedPins.find((p) => p.id === pin.id) ?? pin;
+        const isBendPin = pin.kind === 'bend';
         // Draw the handle where the mesh actually IS, not where it rests.
         //
         // Pin positions are stored in REST space (the puppet solve runs before
@@ -715,9 +702,20 @@ export function PuppetOverlay(): JSX.Element | null {
         // off the mesh it controls. `skinPointAt` exists for exactly this — its
         // docstring says "so a puppet pin's dot lands on the composed mesh" —
         // and it had no callers.
+        //
+        // A bend pin has no rest position worth drawing: its whole point is that
+        // it sits wherever the other pins carried it. Read that back out of the
+        // solved mesh at the vertex the pin is bound to, so the dot travels with
+        // the deformation. Drawn at its rest anchor it would sit off the artwork
+        // the moment anything moved, and the control would read as broken.
+        const bendVertex = isBendPin ? restMesh.pinVertexIndices[pin.id] : undefined;
+        const anchor =
+          bendVertex !== undefined && deformedVertices.length >= bendVertex * 4 + 2
+            ? { x: deformedVertices[bendVertex * 4 + 0]!, y: deformedVertices[bendVertex * 4 + 1]! }
+            : { x: animPin.x, y: animPin.y };
         const posed = skelBinding && skelPoseWorld
-          ? skinPointAt({ x: animPin.x, y: animPin.y }, { x: animPin.x, y: animPin.y }, skelBinding, skelPoseWorld)
-          : { x: animPin.x, y: animPin.y };
+          ? skinPointAt(anchor, anchor, skelBinding, skelPoseWorld)
+          : anchor;
         const screen = localToScreen(posed.x, posed.y);
         const isSelected = selectedPinId === pin.id;
         const isHovered = hoveredPinId === pin.id;
@@ -754,14 +752,16 @@ export function PuppetOverlay(): JSX.Element | null {
                 strokeWidth={2}
               />
             )}
-            {/* Core dot */}
+            {/* Core dot. A bend pin is HOLLOW and green — it has to be tellable
+                apart from an advanced pin at a glance, because the two respond
+                to the same drag in different ways. */}
             <circle
               cx={screen.x}
               cy={screen.y}
               r={5}
-              fill={isSelected ? '#ffc107' : '#00bfff'}
-              stroke="#ffffff"
-              strokeWidth={1.5}
+              fill={isBendPin ? 'none' : isSelected ? '#ffc107' : '#00bfff'}
+              stroke={isBendPin ? (isSelected ? '#ffc107' : '#7ee787') : '#ffffff'}
+              strokeWidth={isBendPin ? 2.5 : 1.5}
             />
 
             {/* ── Advanced-pin gizmo (3B) ────────────────────────────────

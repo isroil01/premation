@@ -21,18 +21,21 @@ import { FakeWorker, useFakeWorkers, testPackage, bootPlugin } from './fakeWorke
 import type { PluginPackage } from './pluginPackage';
 
 /** Records the show/hide calls the host makes into the dock. */
-const panelCalls: Array<{ op: 'show' | 'hide'; id: string }> = [];
+const panelCalls: Array<{ op: 'show' | 'hide'; id: string; panelId: string }> = [];
 
 const pkg = testPackage;
 const boot = (p: PluginPackage): FakeWorker => bootPlugin(p);
 
-beforeAll(() => {
+beforeAll(async () => {
   seedDefaultScene();
   useFakeWorkers();
+    // Payloads live in IndexedDB, so the store must be hydrated before the
+    // host will start anything — `configure()` throws otherwise.
+    await usePluginStore.getState().hydrate();
   pluginHost.configure({
     getSelection: () => useSelectionStore.getState().ids,
-    showPanel: (id) => { panelCalls.push({ op: 'show', id }); },
-    hidePanel: (id) => { panelCalls.push({ op: 'hide', id }); },
+    showPanel: (id, panelId) => { panelCalls.push({ op: 'show', id, panelId }); },
+    hidePanel: (id, panelId) => { panelCalls.push({ op: 'hide', id, panelId }); },
   });
 });
 
@@ -197,13 +200,15 @@ describe('contributed commands', () => {
     expect(registry.get('plugin.com.vendor.b.apply' as never)).toBeDefined();
   });
 
-  it('invoking the command sends it to the plugin with the live selection', () => {
+  it('invoking the command sends it to the plugin with the live selection', async () => {
     const w = boot(pkg([], 'com.vendor.a'));
     w.callAndWait('commands.register', { id: 'apply', label: 'Apply' });
     insertPrimitive('shape', 'Selected');
     const id = useSelectionStore.getState().ids[0]!;
 
-    void getCommandRegistry().get('plugin.com.vendor.a.apply' as never)!.execute({} as never);
+    // Awaited, because invoking now goes through activation first — a command
+    // may be dispatched at a plugin that is not running yet.
+    await getCommandRegistry().get('plugin.com.vendor.a.apply' as never)!.execute({} as never);
     expect(w.sent.at(-1)).toEqual({ k: 'invoke', commandId: 'apply', selection: [id] });
   });
 
@@ -292,7 +297,7 @@ describe('panels', () => {
   it('opens the dock panel when the plugin asks for it', () => {
     const w = boot(pkg([], 'com.test.plugin', { panel: 'panel.html' }));
     expect(w.callAndWait('ui.openPanel').ok).toBe(true);
-    expect(panelCalls).toContainEqual({ op: 'show', id: 'com.test.plugin' });
+    expect(panelCalls).toContainEqual({ op: 'show', id: 'com.test.plugin', panelId: 'main' });
   });
 
   it('refuses openPanel from a plugin whose manifest declares no panel', () => {
@@ -307,24 +312,26 @@ describe('panels', () => {
     boot(pkg([], 'com.test.plugin', { panel: 'panel.html' }));
     panelCalls.length = 0;
     pluginHost.setEnabled('com.test.plugin', false);
-    expect(panelCalls).toContainEqual({ op: 'hide', id: 'com.test.plugin' });
+    expect(panelCalls).toContainEqual({ op: 'hide', id: 'com.test.plugin', panelId: 'main' });
   });
 
-  it('gives a plugin with a panel an Open Panel command, and takes it away again', () => {
+  it('gives each declared panel an Open command, and takes it away again', async () => {
+    // The id carries the PANEL id now — a plugin may contribute several, and
+    // one `….panel` command could only ever open one of them.
     boot(pkg([], 'com.vendor.p', { panel: 'panel.html' }));
-    const cmd = getCommandRegistry().get('plugin.com.vendor.p.panel' as never);
+    const cmd = getCommandRegistry().get('plugin.com.vendor.p.panel.main' as never);
     expect(cmd).toBeDefined();
 
-    void cmd!.execute({} as never);
-    expect(panelCalls).toContainEqual({ op: 'show', id: 'com.vendor.p' });
+    await cmd!.execute({} as never);
+    expect(panelCalls).toContainEqual({ op: 'show', id: 'com.vendor.p', panelId: 'main' });
 
     pluginHost.uninstall('com.vendor.p');
-    expect(getCommandRegistry().get('plugin.com.vendor.p.panel' as never)).toBeUndefined();
+    expect(getCommandRegistry().get('plugin.com.vendor.p.panel.main' as never)).toBeUndefined();
   });
 
   it('does not invent a panel command for a plugin without a panel', () => {
     boot(pkg([], 'com.vendor.n'));
-    expect(getCommandRegistry().get('plugin.com.vendor.n.panel' as never)).toBeUndefined();
+    expect(getCommandRegistry().get('plugin.com.vendor.n.panel.main' as never)).toBeUndefined();
   });
 
   it('counts only the plugin s OWN commands, not the host s panel command', () => {

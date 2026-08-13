@@ -73,6 +73,14 @@ export const CAMERA_PROPS = [
   'focalLength', // zoom
   'orbitYaw',
   'orbitPitch',
+  // IN-PLACE rotation — a tripod pan / tilt / roll. Distinct from the orbit
+  // pair above, which swings the EYE along an arc: without these the AI layer
+  // can dolly-arc but cannot pan, and a pan is one of the most common camera
+  // moves in motion design. `orientationZ` shipped keyframeable and inspectable
+  // while being absent from this list, so a dutch angle was equally undrivable.
+  'orientationX', // tilt
+  'orientationY', // pan
+  'orientationZ', // roll
   'poiX', // look-at target
   'poiY',
   'poiZ',
@@ -321,9 +329,9 @@ export function createSceneFacade(): SceneFacade {
       return ok;
     },
 
-    addEffect: (nodeId, type) => {
+    addEffect: (nodeId, type, id) => {
       const before = new Set(getNodeEffects(nodeId).map((e) => e.id));
-      addEffect(nodeId, type as EffectType);
+      addEffect(nodeId, type as EffectType, id);
       const added = getNodeEffects(nodeId).find((e) => !before.has(e.id));
       return added?.id ?? '';
     },
@@ -406,6 +414,7 @@ export function createAnimFacade(): AnimFacade {
     setRoving: (nodeId, prop, t, roving) => defaultAnimation.setRoving(nodeId, prop, t, roving),
     setExpression: (nodeId, prop, src) => defaultAnimation.setExpression(nodeId, prop, src),
     getExpressionError: (nodeId, prop) => defaultAnimation.getExpressionError(nodeId, prop),
+    isExpressionEnabled: (nodeId, prop) => defaultAnimation.isExpressionEnabled(nodeId, prop),
     tracks: (nodeId) =>
       defaultAnimation.tracksFor(nodeId).map((tr) => ({
         prop: tr.prop,

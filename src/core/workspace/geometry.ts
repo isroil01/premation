@@ -68,6 +68,14 @@ export interface NodeGeometry {
  * branch converts to real keyframed SHAPE layers, which were always allowed.
  */
 export function isDrawableKind(kind: string): boolean {
+  // A plugin's own layer kind — recognised by the dot, since every native kind
+  // is a bare word. Included for exactly the reason `null` is: a `render:
+  // 'none'` controller has no art of its own but must still be grabbable on
+  // canvas, and this list is the FIRST gate in `readGeometry`. A kind missing
+  // from it drops out of `toWorkspaceNode` entirely — no bounds, no hit test,
+  // no marquee — so the layer would appear in the tree and be unclickable in
+  // the viewport, which is precisely how `svg` was broken.
+  if (kind.includes('.')) return true;
   return kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video'
     || kind === 'svg'
     || kind === 'light' || kind === 'camera'

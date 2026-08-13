@@ -28,7 +28,10 @@
  *                returns something, so there is no reason to.
  */
 
-import { EFFECT_DEFS, getNodeEffects, type EffectParamDef } from '@core/effects/effects';
+import {
+  EFFECT_DEFS, effectDefFor, getNodeEffects, type EffectParamDef,
+} from '@core/effects/effects';
+import { pluginEffectDefs } from '@core/effects/pluginEffectDefs';
 import {
   LAYER_STYLE_EFFECT_TYPE,
   LAYER_STYLE_LABEL,
@@ -224,22 +227,67 @@ const STATIC: Record<string, MetaSpec> = {
 
   // Stroke
   strokeWidth: { ...PX('Stroke Width', 'stroke', ORDER.stroke), min: 0, defaultValue: 4 },
+  // Arc length along the path, in the same px the dash pattern is measured in.
+  // No min and no max on purpose: a negative offset slides the pattern the other
+  // way, and drawing-on runs the offset across the whole path length, which
+  // depends on the shape rather than on any bound expressible here.
+  strokeDashOffset: { ...PX('Dash Offset', 'stroke', ORDER.stroke), defaultValue: 0 },
 
-  // Trim paths (percent of path length; offset wraps, so it is unbounded)
-  'trim.start': PCT('Trim Start', 'trim', ORDER.trim),
-  'trim.end': PCT('Trim End', 'trim', ORDER.trim),
-  'trim.offset': { ...DEG('Trim Offset', 'trim', ORDER.trim), unit: '%', type: 'percent' },
-
-  // Repeater
-  'rep.copies': {
-    label: 'Copies', group: 'repeater', type: 'number', unit: '',
-    min: 1, max: 200, step: 1, precision: 0, defaultValue: 6, resettable: true, order: ORDER.repeater,
+  // ── Taper and Wave (AE's Stroke group, CC 2018) ──
+  //
+  // Registered ONLY because `buildSnapshot` folds every one of them into the
+  // resolved stroke. Registering a keyframeable property the renderer does not
+  // sample is F34/F35, twice on this same board — and `animatablePropertyReaders`
+  // now fails the build for it rather than leaving it to be found later.
+  //
+  // Stored as FRACTIONS with `displayScale: 100`, like `fillRadius`: the model
+  // works in 0..1 and only the inspector says "%".
+  strokeTaperStartWidth: {
+    label: 'Taper Start Width', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 1, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
   },
-  'rep.offsetX': PX('Repeater Position X', 'repeater', ORDER.repeater),
-  'rep.offsetY': PX('Repeater Position Y', 'repeater', ORDER.repeater),
-  'rep.offsetRotation': DEG('Repeater Rotation', 'repeater', ORDER.repeater),
-  'rep.offsetScale': { ...MULT('Repeater Scale', 'repeater', ORDER.repeater), min: 0, step: 0.02 },
-  'rep.offsetOpacity': { ...MULT('Repeater Opacity', 'repeater', ORDER.repeater), min: 0, max: 1, step: 0.02 },
+  strokeTaperEndWidth: {
+    label: 'Taper End Width', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 1, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperStartLength: {
+    label: 'Taper Start Length', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperEndLength: {
+    label: 'Taper End Length', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperStartEase: {
+    label: 'Taper Start Ease', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  strokeTaperEndEase: {
+    label: 'Taper End Ease', group: 'stroke', type: 'percent', unit: '%',
+    min: 0, max: 1, step: 0.01, precision: 0, defaultValue: 0, resettable: true,
+    displayScale: 100, order: ORDER.stroke,
+  },
+  // Wave amplitude and wavelength are ARC-LENGTH px, not fractions — a period
+  // that scaled with the path would change the look on resize.
+  strokeWaveAmount: { ...PX('Wave Amount', 'stroke', ORDER.stroke), defaultValue: 0 },
+  strokeWaveWavelength: { ...PX('Wavelength', 'stroke', ORDER.stroke), min: 0, defaultValue: 0 },
+  // The one that animates.
+  strokeWavePhase: { ...DEG('Wave Phase', 'stroke', ORDER.stroke), defaultValue: 0 },
+
+  // Trim paths — matched by the `pathop.<id>.<param>` resolver below, not by a
+  // literal key, since document version 1.4.0 made trim a chain entry with an
+  // id-scoped keyframe path. Listing `trim.start` here would be a label for a
+  // property path nothing writes any more.
+
+  // Repeater — same story as trim, one version later. Document 1.5.0 made it a
+  // chain entry with an id-scoped keyframe path, so it is matched by the
+  // `pathop.<id>.<param>` resolver below. The five literal `rep.*` keys that
+  // used to live here were labels for property paths nothing writes any more.
 
   // Time
   timeRemap: {
@@ -366,11 +414,16 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
     const styleKey = styleKeyFromEffectId(effectId);
     if (styleKey) {
       const type = LAYER_STYLE_EFFECT_TYPE[styleKey];
-      return type ? EFFECT_DEFS.find((d) => d.type === type) : undefined;
+      return type ? effectDefFor(type) : undefined;
     }
     if (!nodeId) return undefined;
     const fx = getNodeEffects(nodeId).find((e) => e.id === effectId);
-    return fx ? EFFECT_DEFS.find((d) => d.type === fx.type) : undefined;
+    // `effectDefFor`, not a scan of `EFFECT_DEFS` — that array is the built-ins
+    // and a plugin's effect is not in it. Left as a scan, every parameter of a
+    // plugin effect fell through to the key-matching fallback below and was
+    // described by whichever BUILT-IN effect happened to declare the same key
+    // first: a plugin's `radius` labelled and ranged as some other effect's.
+    return fx ? effectDefFor(fx.type) : undefined;
   })();
 
   // `effect.<id>` with no key is the legacy "primary scalar" track.
@@ -403,13 +456,115 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
   }
 
   // No node context (or a stale effect id): match the key across all effects.
-  for (const d of EFFECT_DEFS) {
+  // Built-ins first, so a plugin cannot change how an existing property is
+  // labelled by declaring a param that collides with one — but plugin defs are
+  // searched, because without them a plugin effect's keyframe track in the
+  // timeline is labelled by `titleCase(key)` with no unit, range or precision.
+  for (const d of [...EFFECT_DEFS, ...pluginEffectDefs()]) {
     const p = d.params.find((q) => q.key === key);
     if (p) return fromEffectParam(path, d.label, p);
   }
   return {
     path, label: titleCase(key), group: 'effects', type: 'number', unit: '',
     step: 1, precision: 0, defaultValue: 0, resettable: true, order: ORDER.effects,
+  };
+}
+
+/**
+ * `pathop.<opId>.<param>` — one path-operator parameter.
+ *
+ * Operators are id-scoped, so their keyframe paths carry an opaque id and the
+ * static table cannot name them. Without this every path-op row in the timeline
+ * and the graph editor read as "Pathop Op3 K4Xn Amount". Trim made it matter:
+ * it used to have literal `trim.start` / `trim.end` / `trim.offset` entries and
+ * proper labels, and folding it into the chain would have TAKEN THOSE AWAY.
+ *
+ * The label follows the operator's TYPE, so a Round Corners card's `amount`
+ * reads "Radius" in the timeline exactly as it does in the inspector.
+ */
+const PATHOP_TYPE_LABEL: Record<string, string> = {
+  zigzag: 'Zig-Zag', roundCorners: 'Round Corners', pucker: 'Pucker & Bloat',
+  twist: 'Twist', offset: 'Offset Paths', roughen: 'Wiggle Paths', trim: 'Trim Paths',
+  repeater: 'Repeater', none: 'Path Operator',
+};
+const PATHOP_PARAM_LABEL: Record<string, Record<string, string>> = {
+  roundCorners: { amount: 'Radius', detail: 'Steps' },
+  pucker: { amount: 'Amount' },
+  twist: { amount: 'Angle' },
+  offset: { amount: 'Offset' },
+  roughen: { amount: 'Size', detail: 'Detail' },
+  zigzag: { amount: 'Amount', detail: 'Ridges' },
+  // The repeater's, matching the labels the inspector card shows — a timeline
+  // row reading "Repeater Offsetrotation" is what titleCase would have given.
+  repeater: {
+    copies: 'Copies', offset: 'Offset', anchorX: 'Anchor X', anchorY: 'Anchor Y',
+    offsetX: 'Position X', offsetY: 'Position Y', offsetRotation: 'Rotation',
+    offsetScale: 'Scale', offsetOpacity: 'Opacity',
+  },
+};
+const PATHOP_PERCENT_PARAMS = new Set(['start', 'end', 'offset']);
+
+/**
+ * Bounds and granularity for the repeater's parameters, carried over from the
+ * `rep.*` table this replaced.
+ *
+ * Without them a Scale row steps by 1 — from 1 straight to 2, skipping every
+ * value anyone would use — and Opacity would drag past its own range. The
+ * defaults matter too: a reset has to land on the no-op value (scale and
+ * opacity 1), not on 0, which would make "reset" mean "make it disappear".
+ */
+const REPEATER_PARAM_META: Record<string, { unit?: string; min?: number; max?: number; step?: number; precision?: number; defaultValue?: number }> = {
+  copies: { min: 1, max: 200, step: 1, precision: 0, defaultValue: 6 },
+  offset: { step: 0.1, precision: 2, defaultValue: 0 },
+  anchorX: { unit: 'px' },
+  anchorY: { unit: 'px' },
+  offsetX: { unit: 'px', defaultValue: 80 },
+  offsetY: { unit: 'px' },
+  offsetRotation: { unit: '°' },
+  offsetScale: { min: 0, step: 0.02, precision: 2, defaultValue: 1 },
+  offsetOpacity: { min: 0, max: 1, step: 0.02, precision: 2, defaultValue: 1 },
+};
+
+function resolvePathOpParam(path: string, nodeId?: string): PropertyMeta | null {
+  const m = /^pathop\.([^.]+)\.(.+)$/.exec(path);
+  if (!m) return null;
+  const [, opId, param] = m;
+  if (!opId || !param) return null;
+
+  let type = 'none';
+  if (nodeId) {
+    const node = defaultSceneGraph.getNode(nodeId);
+    const ops = (node?.components.find((c) => c.type === 'fx')?.props as
+      | { pathOps?: Array<{ id?: string; type?: string }> }
+      | undefined)?.pathOps;
+    type = ops?.find((o) => o.id === opId)?.type ?? 'none';
+  }
+  const label = PATHOP_PARAM_LABEL[type]?.[param] ?? titleCase(param);
+  // Trim's three are percentages of path length; `offset` wraps, so the range
+  // is deliberately wider than 0..100 — that is how a chase runs past the end.
+  const pct = type === 'trim' && PATHOP_PERCENT_PARAMS.has(param);
+  // The repeater's rows keep the bounds they had as `rep.*` entries. Spread
+  // LAST so they win over the generic defaults below, which is the whole point.
+  const rep = type === 'repeater' ? REPEATER_PARAM_META[param] : undefined;
+  return {
+    path,
+    label: `${PATHOP_TYPE_LABEL[type] ?? 'Path Operator'} ${label}`,
+    // The existing 'trim' group is the shape-geometry bucket — it was named for
+    // its only occupant. Every path operator belongs in it now that trim is one
+    // of them; renaming the group would be churn in every consumer for nothing.
+    // The repeater keeps its OWN group, which it already had as `rep.*`: it
+    // fans a shape into copies rather than deforming one outline, and the two
+    // read as different sections of the inspector.
+    group: type === 'repeater' ? 'repeater' : 'trim',
+    type: pct ? 'percent' : 'number',
+    unit: pct ? '%' : '',
+    ...(pct ? { min: -100, max: 200 } : {}),
+    step: 1,
+    precision: pct ? 1 : 2,
+    defaultValue: param === 'end' ? 100 : 0,
+    resettable: true,
+    order: type === 'repeater' ? ORDER.repeater : ORDER.trim,
+    ...rep,
   };
 }
 
@@ -614,6 +769,7 @@ const RESOLVERS: ReadonlyArray<(path: string, nodeId?: string) => PropertyMeta |
   resolveColorChannel,
   resolveTextAnimator,
   resolveEffectParam,
+  resolvePathOpParam,
 ];
 
 // ── Public API ──────────────────────────────────────────────────────

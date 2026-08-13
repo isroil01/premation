@@ -6,9 +6,9 @@
  * CommandSystem history ALREADY APPLIED (push does not re-execute). One command
  * per user gesture = one undo step.
  *
- * A pin delete also removes the pin's animation tracks
- * (`puppet.<pinId>.position|rotation|stiffness`) — those track changes are
- * captured as a nested AnimEditCommand so undo restores keyframes too.
+ * A pin delete also removes the pin's animation tracks — its `position` data
+ * track plus every scalar in PIN_SCALAR_TRACKS — captured as a nested
+ * AnimEditCommand so undo restores the keyframes too.
  */
 
 import { asCommandId } from '@app-types/common';
@@ -20,6 +20,7 @@ import { captureAnimEdit, type AnimEditCommand } from '@core/animation/animation
 import { bumpScene } from '@stores/sceneStore';
 import type { ID } from '@core/types';
 import type { PuppetPin, PuppetRig } from './puppet';
+import { PIN_SCALAR_TRACKS, pinPropPath } from './livePins';
 
 export const PUPPET_EDIT_COMMAND = asCommandId('puppet.edit');
 
@@ -102,10 +103,19 @@ export function deletePuppetPin(nodeId: ID, pinId: string): void {
   if (!rig) return;
   const after: PuppetRig = { ...rig, pins: (rig.pins ?? []).filter((p) => p.id !== pinId) };
   // Capture the track removals as a nested (already-applied) anim edit.
+  //
+  // The scalar list comes from PIN_SCALAR_TRACKS — the same constant
+  // `resolveLivePins` reads to decide what to SAMPLE — rather than being spelled
+  // out again here. It was spelled out here, and it had gone stale: `rotation`
+  // and `stiffness` were removed but `scale` and `overlap` were not, so both
+  // survived their own pin. A later pin at the same index then inherited a dead
+  // pin's animation. Anything added to the sampled set is now deleted with the
+  // pin automatically, which is the only version of this that stays correct.
   const trackEdit = captureAnimEdit(`Delete Puppet Pin ${pinId} tracks`, () => {
-    defaultAnimation.setDataTrack(nodeId, `puppet.${pinId}.position`, null);
-    defaultAnimation.removeTrack(nodeId, `puppet.${pinId}.rotation`);
-    defaultAnimation.removeTrack(nodeId, `puppet.${pinId}.stiffness`);
+    defaultAnimation.setDataTrack(nodeId, pinPropPath(pinId, 'position'), null);
+    for (const prop of PIN_SCALAR_TRACKS) {
+      defaultAnimation.removeTrack(nodeId, pinPropPath(pinId, prop));
+    }
   });
   applyAndRecord(nodeId, after, `Delete Puppet Pin ${pinId}`, trackEdit);
 }
@@ -122,12 +132,20 @@ export function updatePuppetSettings(
   applyAndRecord(nodeId, after, 'Edit Puppet Mesh');
 }
 
-/** Update one pin's static properties (rotation / stiffness). One undo step. */
+/**
+ * Update one pin's static properties (rotation / stiffness / kind). One undo step.
+ *
+ * Switching a pin to `bend` leaves any position track it already has in place
+ * rather than deleting it: the solve ignores the track while the pin is a bend
+ * pin, and switching back restores the animation intact. Deleting it here would
+ * make a two-click round trip destroy work, which is a worse trade than a track
+ * that lies dormant.
+ */
 export function updatePuppetPin(
   nodeId: ID,
   pinId: string,
   patch: Partial<
-    Pick<PuppetPin, 'rotation' | 'stiffness' | 'name' | 'scale' | 'overlap' | 'overlapExtent'>
+    Pick<PuppetPin, 'rotation' | 'stiffness' | 'name' | 'scale' | 'overlap' | 'overlapExtent' | 'kind'>
   >,
 ): void {
   const rig = currentRig(nodeId);

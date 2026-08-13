@@ -140,7 +140,7 @@ export function BillingSection(): JSX.Element | null {
       {summary && !summary.emailVerified && !isBeta && (
         <div className={styles.callout}>
           {/* No `mail` glyph in the set; `info` is the closest honest one. */}
-          <Icon name="info" size={13} className={styles.calloutIcon} />
+          <Icon name="info" size="sm" className={styles.calloutIcon} />
           <div className={styles.calloutBody}>
             <strong>Confirm your email to start your {summary.trialDays}-day trial.</strong>
             <span>
@@ -185,7 +185,7 @@ export function BillingSection(): JSX.Element | null {
                   <ul className={styles.features}>
                     {p.features.map((f) => (
                       <li key={f} className={styles.feature}>
-                        <Icon name="check" size={11} className={styles.featureTick} />
+                        <Icon name="check" size="sm" className={styles.featureTick} />
                         <span>{f}</span>
                       </li>
                     ))}

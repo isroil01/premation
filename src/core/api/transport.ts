@@ -10,7 +10,7 @@
  * directory needs to know the split exists.
  */
 
-import { API_URL } from './env';
+import { API_URL, IS_ELECTRON } from './env';
 import { isLocalEdition } from '@core/config/edition';
 import {
   accessTokenExpired,
@@ -27,11 +27,14 @@ const BASE_URL: string = API_URL || 'http://localhost:4000/api';
 export const apiBaseUrl = (): string => BASE_URL;
 
 /**
- * The current bearer.
+ * The current bearer, in the BROWSER build only.
  *
- * Kept as a function (rather than the old localStorage read) because the
- * access token now lives in memory and is rotated behind the caller's back —
- * anything that caches the string will eventually send an expired one.
+ * Always null on desktop, where the token lives in the main process and is
+ * attached there. Callers that used to build an `Authorization` header from
+ * this go through `send` instead; the two remaining direct consumers (the AI
+ * gateway stream and the sync transport) each pick a path by capability. A
+ * caller that requires this to be non-null on desktop is a caller that has
+ * reintroduced the problem Track A removed.
  */
 export function getToken(): string | null {
   return getAccessToken();
@@ -202,6 +205,45 @@ async function toError(res: Response): Promise<ApiError> {
  * session problem, it is a genuine authorization failure, and retrying it
  * forever is how a client turns one bad request into a request loop.
  */
+/**
+ * Rebuild a real `Response` from what main sent back.
+ *
+ * Worth the small ceremony: everything downstream — `toError`, the 204 case,
+ * the 304 case, the ETag read — keeps working against a genuine `Response`, so
+ * this migration changed one function instead of every call site.
+ */
+function responseFrom(proxied: { status: number; headers: Record<string, string>; body: string }): Response {
+  // 204 and 304 must be constructed with a null body; `new Response('')` with
+  // either status throws.
+  const bodyless = proxied.status === 204 || proxied.status === 304;
+  return new Response(bodyless ? null : proxied.body, {
+    status: proxied.status,
+    headers: proxied.headers,
+  });
+}
+
+/** Encode a body for IPC. FormData is serialised HERE — main stays format-blind. */
+async function encodeBody(body: BodyInit | null | undefined): Promise<{
+  body?: string | Uint8Array;
+  contentType?: string;
+}> {
+  if (body === null || body === undefined) return {};
+  if (typeof body === 'string') return { body };
+  if (body instanceof FormData) {
+    // `Response` does the multipart encoding, boundary and all, and hands back
+    // the exact `Content-Type` that goes with it. Doing this on the renderer
+    // side keeps the File objects where they already are.
+    const encoded = new Response(body);
+    const bytes = new Uint8Array(await encoded.arrayBuffer());
+    return { body: bytes, contentType: encoded.headers.get('Content-Type') ?? undefined };
+  }
+  if (body instanceof Uint8Array) return { body };
+  if (body instanceof ArrayBuffer) return { body: new Uint8Array(body) };
+  // A Blob, a stream, a URLSearchParams. Read it as text rather than silently
+  // dropping it — an unsent body is a much worse failure than a re-encoded one.
+  return { body: await new Response(body as BodyInit).text() };
+}
+
 async function send(path: string, init: RequestInit, headers: Record<string, string>) {
   // The local edition has no backend. Every UI surface that used to call one is
   // gated off, so reaching here means a path was missed — fail here, at the one
@@ -217,6 +259,38 @@ async function send(path: string, init: RequestInit, headers: Record<string, str
     throw err;
   }
 
+  /*
+    Desktop: the whole request happens in main.
+    The bearer is attached there and never comes back here, so there is nothing
+    on this side to expire, refresh or race — main serialises its own refresh,
+    which is also what fixed the concurrent-401 stampede this function used to
+    guard against by hand.
+  */
+  const bridge = typeof window !== 'undefined' ? window.motionEditor?.api : undefined;
+  if (IS_ELECTRON && bridge?.request) {
+    const encoded = await encodeBody(init.body as BodyInit | null | undefined);
+    const result = await bridge.request({
+      path,
+      method: (init.method ?? 'GET') as string,
+      headers: {
+        ...headers,
+        ...(encoded.contentType ? { 'Content-Type': encoded.contentType } : {}),
+      },
+      ...(encoded.body === undefined ? {} : { body: encoded.body }),
+    });
+
+    if (result.status === 0) {
+      // Never reached the network: a refused path, or a dead socket. Thrown as
+      // a network error rather than returned as a Response, because there is no
+      // response — and a fabricated 502 would look like the server answered.
+      const err = new Error((result as { error?: string }).error || 'Request failed.') as ApiError;
+      err.status = 0;
+      throw err;
+    }
+    return responseFrom(result as { status: number; headers: Record<string, string>; body: string });
+  }
+
+  // Browser build: this realm holds the token, because there is nowhere else.
   if (accessTokenExpired() && isAuthenticated()) await refreshSession();
 
   let res = await fetch(`${BASE_URL}${path}`, { ...init, headers: withAuth(headers) });

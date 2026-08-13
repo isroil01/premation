@@ -255,24 +255,48 @@ function emitPass(o: EmitOptions, pack: ResolvedPack, repairs: readonly string[]
     // ── Stage the beat ────────────────────────────────────────────────────
     // Depth first. A camera technique cast onto a beat whose every layer sits at
     // z=0 produces a move with no parallax — the frame slides as one plane,
-    // which reads as a slide transition rather than a camera. The library has
-    // shipped `camera.push_in_slow` and `camera.drift_parallax` all along with
-    // nothing arranged for them to work on.
+    // which reads as a slide transition rather than a camera.
     //
     // Back-to-front order is media → support → headline: imagery is the
     // furthest thing away and the headline is closest to the viewer, which is
     // both the physical reading and the one that keeps type sharp under a push.
-    // …unless a camera technique cast on this beat owns the depth. Those
-    // techniques write their own z TRACK on their targets with their own role
-    // scheme and spread, and a track beats a static prop — so emitting both
-    // leaves one beat carrying two disagreeing depth systems, and whichever
-    // layers the technique did not claim keep the other one.
-    const cameraOwnsDepth = o.casting.motion.some(
-      (m) => m.beatIndex === beat.index && anyTechnique(m.techniqueId)?.category === 'camera',
-    );
+    //
+    // ## Per LAYER, not per beat
+    //
+    // This used to skip the whole pass whenever a camera technique was cast on
+    // the beat, because those techniques write their own z track and a track
+    // beats a static prop. The premise was right and the conclusion inverted: a
+    // camera technique stages only the roles it DECLARES, and no camera
+    // technique declares `overline`, `subhead`, `support` or `cta`. So the pass
+    // that would have staged them was disabled on their behalf and nothing
+    // replaced it.
+    //
+    // Measured before the change, 3-beat piece, camera on beat 0: the camera's
+    // beat had a depth spread of **0** on five of the six camera techniques
+    // (106 on the sixth), while every beat WITHOUT a camera sat at 378. The beat
+    // holding the camera was the flattest beat in the composition, so an orbit
+    // orbited a flat plane and a dolly was a uniform scale.
+    //
+    // `skip` keeps each staged layer's slot in the ladder while emitting nothing
+    // for it, so the two systems never write the same layer and the ordering
+    // still agrees.
+    const cameraStaged = new Set<string>();
+    for (const m of o.casting.motion) {
+      if (m.beatIndex !== beat.index) continue;
+      const def = anyTechnique(m.techniqueId);
+      if (def?.category !== 'camera') continue;
+      for (const role of def.roles) {
+        for (const id of result.slots[role as SlotRole] ?? []) cameraStaged.add(id);
+      }
+    }
     const depthOrder = DEPTH_ORDER.flatMap((role) => result.slots[role] ?? []);
-    if (depthOrder.length >= 2 && !cameraOwnsDepth) {
-      pass.calls.push(...emitDepth(ctx, depthOrder));
+    if (depthOrder.length >= 2) {
+      // The repair: stage every layer regardless of the technique's claim. Its
+      // own z tracks still win on the layers it animates (an animated value beats
+      // a static prop — `buildSnapshot` reads `av.get('z') ?? readNode3D(n).z`),
+      // so this adds planes without contradicting the ones already there.
+      const forced = forcedDepthBeats(repairs).has(beat.index);
+      pass.calls.push(...emitDepth(ctx, depthOrder, forced ? {} : { skip: cameraStaged }));
     }
 
     // A mask on the headline, so a technique can uncover it rather than fade it.
@@ -320,10 +344,28 @@ function emitPass(o: EmitOptions, pack: ResolvedPack, repairs: readonly string[]
     const calls = def.emit(ctx, params.value, cast.seed);
     pass.calls.push(...calls);
 
+    /**
+     * A layer is a UI layer because of the PACK, not because of what animated it.
+     *
+     * This read `PRODUCT_BY_ID.has(cast.techniqueId)` alone, which made the UI
+     * linter's input set a function of the very thing that was broken. The loop
+     * closed on itself: `motionCastPrompts` never offered a product technique to
+     * a product pack, so no product technique was ever cast, so `uiLayerIds`
+     * stayed empty, so `lintAll` skipped `lintUiMotion` entirely, so
+     * `uiMotionScore` came back 1.000 from zero findings — and both product packs
+     * reported perfect UI motion across 24 corpus runs while casting
+     * `entrance.rise_settle` and `entrance.wipe_columns` at a dashboard.
+     *
+     * `BEZIER_ON_UI` is precisely the rule that would have caught it. It never
+     * ran. Deriving the set from `pack.vocabulary` means an editorial technique
+     * landing on a product composition is visible to the rule written for it,
+     * whatever route it arrived by.
+     */
+    const isUiComposition = pack.pack.vocabulary === 'product';
     for (const ids of Object.values(targets)) {
       for (const id of ids ?? []) {
         pass.techniqueLayerIds.add(id);
-        if (PRODUCT_BY_ID.has(cast.techniqueId)) pass.uiLayerIds.add(id);
+        if (isUiComposition || PRODUCT_BY_ID.has(cast.techniqueId)) pass.uiLayerIds.add(id);
         if (OFF_FRAME_TECHNIQUES.has(cast.techniqueId)) pass.offFrameLayerIds.add(id);
       }
     }
@@ -608,6 +650,35 @@ const REPAIRS: Record<string, (params: Record<string, unknown>) => Record<string
   UI_STAGGER_TOO_WIDE: (p) => ({ ...p, staggerMs: 35 }),
 };
 
+/**
+ * Repair entries scoped to a BEAT rather than to a technique instance.
+ *
+ * The existing repair channel keys on a technique id because every repair in
+ * `REPAIRS` is a parameter change. `CAMERA_WITHOUT_PARALLAX` is not: no value of
+ * any parameter puts two layers on different planes, and the beat is the unit
+ * the rule measures.
+ */
+const BEAT_REPAIR_PREFIX = 'beat:';
+
+/** Beat indices named by a `CAMERA_WITHOUT_PARALLAX` message. */
+function flatCameraBeats(message: string): number[] {
+  const m = /^Beat (\d+) /.exec(message);
+  return m ? [Number(m[1])] : [];
+}
+
+/** Beats whose depth staging must ignore the camera technique's claim. */
+function forcedDepthBeats(repairs: readonly string[]): Set<number> {
+  const out = new Set<number>();
+  for (const r of repairs) {
+    if (!r.startsWith(BEAT_REPAIR_PREFIX)) continue;
+    const [head, rule] = r.split('::');
+    if (rule !== 'CAMERA_WITHOUT_PARALLAX') continue;
+    const n = Number(head!.slice(BEAT_REPAIR_PREFIX.length));
+    if (Number.isFinite(n)) out.add(n);
+  }
+  return out;
+}
+
 function applyRepairs(
   params: Record<string, unknown>,
   techniqueId: string,
@@ -651,13 +722,77 @@ export function sceneFromCalls(
           // Carried so `RECT_ONLY` can tell a box from an arc. Dropping it here
           // was what made that rule unwritable in the first place.
           ...(a.shape !== undefined ? { shape: String(a.shape) } : {}),
+          // Kind-derived flags. A light and a particle emitter are both real
+          // layers with live readers in `buildSnapshot`, and both were counted
+          // here as ordinary shapes — so a lit composition and a flat one were
+          // indistinguishable to every rule.
+          ...(a.kind === 'light' ? { isLight: true } : {}),
+          ...(a.kind === 'particle' ? { isParticle: true } : {}),
           effects: [],
         });
         break;
       }
       case 'add_repeater': {
         const l = byId.get(String(a.nodeId ?? ''));
-        if (l) l.hasRepeater = true;
+        if (!l) break;
+        l.hasRepeater = true;
+        // The geometry, not just the flag. A boolean cannot tell a ring of
+        // twelve marks from twelve copies stacked on one dot — which is the
+        // exact bug `add_repeater` shipped with, and this rule would have passed
+        // it. `anchorX` is the pivot radius: at 0 every copy rotates about its
+        // own origin and the ring has no radius at all.
+        l.repeater = {
+          copies: Math.max(1, Math.round(Number(a.copies ?? 3))),
+          offsetX: Number(a.positionX ?? 0),
+          offsetY: Number(a.positionY ?? 0),
+          offsetRotation: Number(a.rotation ?? 0),
+          anchorX: Number(a.anchorX ?? 0),
+        };
+        break;
+      }
+      case 'set_trim_path': {
+        const l = byId.get(String(a.nodeId ?? ''));
+        if (!l) break;
+        // Patch semantics, matching the handler: a second call naming one field
+        // is an edit. Defaults are the full window, which is what `defaultTrim`
+        // returns and therefore what an un-set field actually means.
+        l.trim = {
+          start: Number(a.start ?? l.trim?.start ?? 0),
+          end: Number(a.end ?? l.trim?.end ?? 100),
+          offset: Number(a.offset ?? l.trim?.offset ?? 0),
+        };
+        break;
+      }
+      case 'add_path_operator': {
+        const l = byId.get(String(a.nodeId ?? ''));
+        if (!l) break;
+        // A CHAIN, appended — the tool stacks operators and so does this.
+        l.pathOps = [...(l.pathOps ?? []), String(a.op ?? '')];
+        break;
+      }
+      case 'create_mask': {
+        const l = byId.get(String(a.nodeId ?? ''));
+        if (l) l.hasMask = true;
+        break;
+      }
+      case 'text_animator': {
+        const l = byId.get(String(a.nodeId ?? ''));
+        if (!l) break;
+        l.textAnimators = [...(l.textAnimators ?? []), String(a.type ?? a.animator ?? 'animator')];
+        break;
+      }
+      case 'set_light': {
+        // A light is created by `create_layer { kind: 'light' }` and configured
+        // here. Flagged rather than counted as a drawn layer: it contributes no
+        // area and would otherwise inflate every count-based rule.
+        const l = byId.get(String(a.nodeId ?? ''));
+        if (l) l.isLight = true;
+        break;
+      }
+      case 'apply_layer_style': {
+        const l = byId.get(String(a.nodeId ?? ''));
+        if (!l) break;
+        l.layerStyles = [...(l.layerStyles ?? []), String(a.styleType ?? '')];
         break;
       }
       case 'import_svg': {
@@ -783,7 +918,9 @@ export function emitAndValidate(o: EmitOptions): { calls: ToolCall[]; report: Ca
   let findings = lintAll(pass, o, pack);
 
   for (let round = 0; round < maxRepairs; round++) {
-    const fixable = findings.filter((f) => f.severity === 'error' && f.rule in REPAIRS);
+    const fixable = findings.filter(
+      (f) => f.severity === 'error' && (f.rule in REPAIRS || f.rule === 'CAMERA_WITHOUT_PARALLAX'),
+    );
     if (!fixable.length) break;
 
     // Attribute each fixable error to the technique instance whose parameters can
@@ -791,6 +928,21 @@ export function emitAndValidate(o: EmitOptions): { calls: ToolCall[]; report: Ca
     // technique in the piece to fix one.
     let added = false;
     for (const f of fixable) {
+      // A flat camera beat is not a parameter problem — no value of `amount` or
+      // `spanMs` puts two layers on different planes. The correction is to stage
+      // the beat unconditionally, overriding the technique's own claim on those
+      // layers, and it is scoped to the BEAT rather than to a technique id
+      // because that is the unit the rule measures.
+      if (f.rule === 'CAMERA_WITHOUT_PARALLAX') {
+        for (const beatIndex of flatCameraBeats(f.message)) {
+          const entry = `${BEAT_REPAIR_PREFIX}${beatIndex}::CAMERA_WITHOUT_PARALLAX`;
+          if (!repairs.includes(entry)) {
+            repairs.push(entry);
+            added = true;
+          }
+        }
+        continue;
+      }
       for (const inst of pass.instances) {
         const entry = `${inst.id}::${f.rule}`;
         if (!repairs.includes(entry)) {
@@ -854,6 +1006,20 @@ function lintAll(pass: EmitPass, o: EmitOptions, pack: ResolvedPack): Finding[] 
     out.push({ source: 'design', rule: f.rule, severity: f.severity, message: f.message });
   }
 
+  // Which beats carry a camera, and the static z the staging pass wrote. Both
+  // are known here and nowhere else — the linter cannot re-derive beat
+  // membership from a flat call list, which is why CAMERA_WITHOUT_PARALLAX
+  // could not have been written before `groupOf` existed.
+  const cameraBeats = o.casting.motion
+    .filter((m) => anyTechnique(m.techniqueId)?.category === 'camera')
+    .map((m) => m.beatIndex);
+  const staticZ = new Map<string, number>();
+  for (const c of pass.calls) {
+    if (c.name === 'update_layer' && typeof c.args.z === 'number') {
+      staticZ.set(String(c.args.nodeId ?? ''), c.args.z);
+    }
+  }
+
   for (const f of lintTiming({
     calls: pass.calls,
     fps: o.fps,
@@ -862,6 +1028,9 @@ function lintAll(pass: EmitPass, o: EmitOptions, pack: ResolvedPack): Finding[] 
     beatBoundaries: o.sequence.boundaries,
     heroNodeIds: [...pass.heroLayerIds],
     uiNodeIds: [...pass.uiLayerIds],
+    beatOf: new Map([...groupOf].map(([id, g]) => [id, Number(g.slice(1))])),
+    cameraBeats,
+    staticZ,
   })) {
     out.push({ source: 'timing', rule: f.rule, severity: f.severity, message: f.message });
   }

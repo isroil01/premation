@@ -136,6 +136,45 @@ export class RenderGraph {
     return result;
   }
 
+  /**
+   * Declared targets whose ONLY declared writers are disabled passes.
+   *
+   * `MaskPass` is `enabled = false` and nothing ever turns it on, yet
+   * `MASK_TARGET` — a full-viewport `rgba8unorm` — was created every frame,
+   * because target resolution walked the declarations and never asked whether
+   * anything could still write to them. At 1920×1080 that is ~8 MB of VRAM held
+   * for a pass that cannot run.
+   *
+   * ── Why this is narrow, and deliberately so ─────────────────────────────
+   *
+   * The obvious rule — "allocate only what an active pass reads or writes" —
+   * would break the renderer. `CompositionPass` uses `LAYER_TARGET`,
+   * `BLUR_TARGET*`, the backdrop chain and the plugin scale pools as SCRATCH,
+   * and most of those appear in no `writes` list at all; the declaration
+   * comment in `passes/index.ts` says so explicitly ("Always declared, never
+   * allocated on demand… a pool that appeared only when some plugin happened to
+   * want one would allocate mid-frame").
+   *
+   * So a target is skipped only when it HAS declared writers and every one of
+   * them is disabled. A target nobody claims to write keeps its allocation,
+   * which is exactly the scratch-pool case. `EffectPass` toggles at runtime and
+   * calls `invalidate()`, and this is recomputed per frame, so a target coming
+   * back into use is allocated on the frame its writer is switched on.
+   */
+  private orphanedTargets(): ReadonlySet<string> {
+    const declared = new Set<string>();
+    const writable = new Set<string>();
+    for (const p of this.passes) {
+      for (const w of p.writes) {
+        declared.add(w);
+        if (p.enabled) writable.add(w);
+      }
+    }
+    const out = new Set<string>();
+    for (const name of declared) if (!writable.has(name)) out.add(name);
+    return out;
+  }
+
   /** Allocate declared transient targets for this frame (deduped by name+size). */
   private resolveTargets(
     backend: RenderBackend,
@@ -151,7 +190,11 @@ export class RenderGraph {
     const HDR_INTERMEDIATES = true;
     const map = new Map<string, RenderTargetHandle>();
     const { width, height } = viewport.pixelSize;
+    const orphaned = this.orphanedTargets();
     for (const decl of this.targets.values()) {
+      // Declared for a pass that is switched off — allocating it buys a
+      // full-viewport surface nothing can write to. See orphanedTargets.
+      if (orphaned.has(decl.name)) continue;
       const desc = decl.descriptor(viewport);
       // A target opts into float precision by declaring `rgba16float`; anything
       // else (matte/mask coverage buffers) shares the surface format as before.

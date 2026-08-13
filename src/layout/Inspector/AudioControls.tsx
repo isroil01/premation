@@ -26,6 +26,7 @@ import { useClipRevision } from '@hooks/useClipRevision';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { audioComponent, isAudioNode, readAudioClipTimings } from '@core/audio/audioScene';
+import { AudioEffectsSection } from './AudioEffectsSection';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import {
   convertAudioToKeyframes,
@@ -226,6 +227,9 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
           {spanSec.toFixed(2)}s <span className={styles.muted}>of {duration.toFixed(2)}s</span>
         </span>
       </InspectorRow>
+
+      <div className={styles.sectionLabel}>Effects</div>
+      <AudioEffectsSection nodeId={nodeId} />
 
       <div className={styles.sectionLabel}>Keyframes</div>
       <AudioToKeyframes nodeId={nodeId} />

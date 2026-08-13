@@ -283,7 +283,7 @@ export function CommandPalette(): JSX.Element | null {
         aria-label="Command palette"
       >
         <div className={styles.searchRow}>
-          <Icon name="search" size={16} className={styles.searchIcon} />
+          <Icon name="search" size="md" className={styles.searchIcon} />
           <input
             ref={inputRef}
             className={styles.input}
@@ -322,7 +322,7 @@ export function CommandPalette(): JSX.Element | null {
                   >
                     <Icon
                       name={item.icon}
-                      size={15}
+                      size="md"
                       className={styles.rowIcon}
                       style={item.color ? { color: item.color } : undefined}
                     />

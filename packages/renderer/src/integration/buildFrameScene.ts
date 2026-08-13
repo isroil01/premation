@@ -75,8 +75,7 @@ export function toRenderable(item: SceneItemInput): Renderable {
 export function buildFrameScene(
   composition: { id: string; size: Size; background?: Color },
   items: SceneItemInput[],
-  selection?: string[],
 ): FrameScene {
   const info: CompositionInfo = { id: composition.id, size: composition.size, background: composition.background };
-  return { composition: info, renderables: items.map(toRenderable), selection };
+  return { composition: info, renderables: items.map(toRenderable) };
 }

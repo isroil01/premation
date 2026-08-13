@@ -106,7 +106,7 @@
 .presetCard:active { cursor: grabbing; transform: translateY(0); }
 
 .cardLabel {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--color-text-primary);
   white-space: nowrap;
@@ -129,7 +129,7 @@
   padding: 0 4px 2px;
 }
 .aspectBadge {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--color-text-secondary);
@@ -148,12 +148,12 @@
   border-bottom: 1px solid var(--color-border);
 }
 .templateName {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 700;
   color: var(--color-text-primary);
 }
 .templateHint {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   margin-top: 2px;
 }
@@ -164,7 +164,7 @@
   gap: 8px;
 }
 .groupLabel {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -177,7 +177,7 @@
   gap: 4px;
 }
 .fieldLabel {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
 }
 .colorTrigger {
@@ -228,7 +228,7 @@
   gap: 6px;
 }
 .kindBadge {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;

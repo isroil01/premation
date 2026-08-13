@@ -14,9 +14,21 @@
 
 import { rasterPadding } from './vectorDraw';
 import type { RenderLayer } from '../RenderBackend';
+import { corner } from '../../../../packages/workspace/src/math/BezierPoint';
 
+/**
+ * A point in the SAME convention production uses.
+ *
+ * Handles are ABSOLUTE positions: `corner()` sets `inX === outX === x`
+ * (BezierPoint.ts:15), and `shapePath` passes them straight to
+ * `bezierCurveTo`. This helper used to default them to literal `0`, which is
+ * not a corner — it is a handle pinned at the origin — and every expectation
+ * below was fitted to `rasterPadding`'s matching misreading of `x + inX`. A
+ * test double modelling a different system than production: it pinned the bug
+ * instead of catching it (F17).
+ */
 const pt = (x: number, y: number, h: Partial<Record<'inX' | 'inY' | 'outX' | 'outY', number>> = {}) =>
-  ({ x, y, inX: 0, inY: 0, outX: 0, outY: 0, ...h });
+  ({ ...corner(x, y), ...h });
 
 function shape(over: Partial<RenderLayer> = {}): RenderLayer {
   return {
@@ -52,9 +64,20 @@ describe('rasterPadding — path escape', () => {
   });
 
   it('counts BEZIER HANDLES, not just anchors', () => {
-    // An anchor inside the box whose handle reaches out still bulges out.
-    const pad = rasterPadding(shape({ pathPoints: [pt(-50, -50), pt(50, -50), pt(40, 0, { outX: 30 })] as never }));
+    // Every ANCHOR is inside the −50..50 box; the handle at x=70 is not. The
+    // curve bulges toward it, so the raster has to cover it.
+    const pad = rasterPadding(shape({ pathPoints: [pt(-50, -50), pt(50, -50), pt(40, 0, { outX: 70 })] as never }));
     expect(pad).toBeGreaterThanOrEqual(20);
+  });
+
+  it('reads handles as ABSOLUTE, the way shapePath draws them', () => {
+    // The regression this pins: a corner's handles equal its anchor, so a shape
+    // that fits its box needs NO padding. Read as offsets, `x + inX` doubles
+    // every coordinate and a 100×100 layer whose points sit exactly on the edge
+    // pads 50px for geometry that never left.
+    expect(rasterPadding(shape({ pathPoints: [pt(-50, -50), pt(50, -50), pt(50, 50)] as never }))).toBe(0);
+    // And an INWARD handle cannot manufacture escape either.
+    expect(rasterPadding(shape({ pathPoints: [pt(-50, -50), pt(50, -50), pt(45, 0, { outX: 10 })] as never }))).toBe(0);
   });
 
   it('is bounded — an absurd path clips rather than allocating without limit', () => {

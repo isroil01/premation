@@ -6,6 +6,7 @@ import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
 import { parseEdition, setEdition } from '@core/config/edition';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
+import { installPluginNetBridge } from '@core/plugins/pluginNetBridge';
 import './styles/global.css';
 
 // FIRST, before any store hydrates or any plugin host boots: remove plaintext
@@ -28,6 +29,16 @@ setEdition(edition);
 // Optional-chained throughout: there is no bridge in a browser build.
 void window.motionEditor?.reportEdition?.(edition);
 
+// Turn on the DNS-rebinding check for plugin network requests. It needs a
+// resolver, the renderer has no way to resolve a name, and without one the
+// check does not run at all — a declared host pointing at 127.0.0.1 would pass
+// every check that reads the name as text. Installed here, before any plugin
+// host boots, for the same reason the key purge above is first: a protection
+// installed after the thing it protects is already running is theatre. No-ops
+// in a browser build, and `netGuardStatus()` reports that rather than implying
+// a guard that is not running.
+installPluginNetBridge();
+
 // Read the LOCAL_FIRST build flag once, here at the entry — `import.meta.env` is
 // a Vite construct, and keeping it out of shared modules avoids Jest's CJS
 // `import.meta` breakage. Enables `.motion` directory-bundle save/open.
@@ -40,6 +51,27 @@ setLocalFirst(
     import.meta.env.VITE_LOCAL_FIRST === '1' ||
     import.meta.env.VITE_LOCAL_FIRST === 'true',
 );
+
+/**
+ * Apply the async document-font stylesheet.
+ *
+ * index.html parks it at `media="print"` so it does not block first paint; this
+ * flips it to `all` once it has loaded. It lives here rather than in an inline
+ * `onload` attribute because the app's own CSP (`script-src 'self'`) refuses
+ * inline event handlers — which it did, on every boot, so `media` stayed
+ * `print` and every user-selectable font silently fell back.
+ *
+ * `sheet` is non-null once a stylesheet has loaded, which covers the race where
+ * it finished before this module ran; otherwise wait for `load`. Failure is
+ * deliberately silent: a missing webfont costs a fallback face, and the local
+ * edition may have no network at all by design.
+ */
+const docFonts = document.getElementById('doc-fonts') as HTMLLinkElement | null;
+if (docFonts) {
+  const apply = (): void => { docFonts.media = 'all'; };
+  if (docFonts.sheet) apply();
+  else docFonts.addEventListener('load', apply, { once: true });
+}
 
 const rootEl = document.getElementById('root');
 if (!rootEl) {

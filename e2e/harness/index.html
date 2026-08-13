@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>ipc frame guard harness</title></head>
+  <body>
+    <h1>top frame</h1>
+
+    <!--
+      Same-origin child. The case a URL comparison waves through: its URL has
+      the same file:// prefix as the document that embedded it, so only frame
+      IDENTITY can tell them apart.
+    -->
+    <iframe id="same-origin" name="same-origin" src="./child.html"></iframe>
+
+    <!--
+      The plugin panel, as the app actually creates it: `allow-scripts` WITHOUT
+      `allow-same-origin`, so the frame has an opaque origin. This is the shape
+      hostile plugin markup runs in.
+    -->
+    <iframe
+      id="sandboxed"
+      name="sandboxed"
+      sandbox="allow-scripts"
+      src="./child.html"
+    ></iframe>
+  </body>
+</html>

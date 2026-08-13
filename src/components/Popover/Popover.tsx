@@ -64,14 +64,13 @@ export function Popover({
     const pop = popRef.current;
     if (!trigger || !pop) return;
     
-    let rafId: number;
     const updatePosition = () => {
       setCoords(positionPopover(trigger, pop, placement, offset));
     };
 
     updatePosition();
     // Schedule on next frame to catch any rendering height/width updates
-    rafId = requestAnimationFrame(updatePosition);
+    const rafId = requestAnimationFrame(updatePosition);
 
     const onScroll = (): void => updatePosition();
     window.addEventListener('scroll', onScroll, true);

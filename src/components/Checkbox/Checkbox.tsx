@@ -60,9 +60,9 @@ function CheckboxInner(
           {...rest}
         />
         {indeterminate ? (
-          <Icon name="minus" size={12} className={styles.indicator} />
+          <Icon name="minus" size="sm" className={styles.indicator} />
         ) : checked ? (
-          <Icon name="check" size={12} className={styles.indicator} />
+          <Icon name="check" size="sm" className={styles.indicator} />
         ) : null}
       </span>
       {label ? <span className={styles.label}>{label}</span> : null}

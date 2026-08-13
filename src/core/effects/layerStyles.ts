@@ -43,6 +43,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { parseHex } from '@core/paint/fill';
 import type { Effect, EffectType } from '@core/effects/effects';
 import type { SceneNode } from '@core/types';
+import { clamp01 } from '@utils/lang';
 
 export interface DropShadowStyle {
   enabled: boolean;
@@ -371,6 +372,26 @@ export const LAYER_STYLE_LABEL: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Layer styles that do NOT compile to an effect, and their labels.
+ *
+ * Glass is a function of what is composited BEHIND the layer, so it resolves
+ * straight onto the renderable and is drawn by the renderer's backdrop branch
+ * (see glassResolve.ts). That is why it cannot appear in `LAYER_STYLE_LABEL`,
+ * which is keyed by style → effect.
+ *
+ * It exists as a registry rather than living only in the counting script
+ * because it WAS a hardcoded `+ 1` in `scripts/featureCounts.cjs` — a
+ * hand-written number inside the script written to eliminate hand-written
+ * numbers. A second backdrop-resolved style would have left the documented
+ * count wrong while the guard test stayed green.
+ *
+ * The full set of layer styles is the two registries together.
+ */
+export const BACKDROP_STYLES: Readonly<Record<string, string>> = {
+  glass: 'Glass',
+};
+
+/**
  * Effect param key → the STYLE field it was compiled from (`softness` → `blur`,
  * `radius` → `size`, `blend` → `opacity`). The inverse of the two param maps.
  *
@@ -629,9 +650,6 @@ function mixHex(a: string, b: string, t: number): string {
 }
 
 /** Styles store opacity 0..1; the effect params want 0..100. */
-function clamp01(v: number): number {
-  return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
-}
 
 export const DEFAULT_DROP_SHADOW: DropShadowStyle = {
   enabled: true, color: '#000000', opacity: 0.5, distance: 8, angle: 90, blur: 8,

@@ -86,7 +86,87 @@ function dofExtentPair(): Scene[] {
   ];
 }
 
+/**
+ * Shadow catcher — does `Accepts Shadows` actually catch anything?
+ *
+ * ── Why this exists ─────────────────────────────────────────────────────────
+ *
+ * "Shadow catcher" sat on a backlog as something still to build, on the
+ * strength of a comment in `scene/material.ts` saying `acceptsShadows` was
+ * "read/persisted for AE-parity but unconsumed". That was true when cast
+ * shadows were a CSS drop-shadow on the CASTER — which never landed on another
+ * layer — and it stopped being true when real projected shadows arrived. The
+ * comment survived the change that falsified it, and nothing in the suite could
+ * contradict it, because no scene rendered a shadow onto a receiver.
+ *
+ * So this is not a scene for a new feature. It is the measurement that decides
+ * whether an item on a backlog is real, and then keeps that answer true.
+ *
+ * ── Why a pair, and what the pair isolates ──────────────────────────────────
+ *
+ * A light also emits a comp-sized ambient WASH, and a lit plane is shaded
+ * per-fragment; both are large effects next to one soft shadow, and both would
+ * dominate any single-frame check. The two frames here differ in exactly one
+ * property — the floor's `acceptsShadows` — so wash, shading, projection and
+ * geometry cancel and the DIFFERENCE is the caught shadow and nothing else.
+ *
+ * The `-off` frame is committed as a reference of its own, so a change to the
+ * floor or the light shows up as its own failure instead of silently moving the
+ * baseline the pair is measured against.
+ *
+ * ── The geometry is chosen to satisfy the projection, not by eye ────────────
+ *
+ * `buildSnapshot` projects a caster onto the NEAREST accepting plane behind it
+ * and refuses the degenerate cases: the receiver must be more than 1 unit
+ * behind the caster, the caster must not share the light's plane, and the
+ * scale factor `t = (receiverZ − lightZ) / (casterZ − lightZ)` must be finite,
+ * positive and ≤ 8 (a runaway projection would smear black over the frame).
+ * Light at z −400, caster at 0, floor at 400 gives t = 2 — comfortably inside
+ * every bound, and a shadow twice the caster's size, which is large enough to
+ * measure and small enough to stay in frame.
+ *
+ * The floor is `castsShadows: false` so it cannot throw a shadow of its own
+ * onto anything, and bright, so a dark shadow on it is a large delta rather
+ * than a few levels above the near-black comp background.
+ */
+function shadowCatcherPair(): Scene[] {
+  const build = (accepts: boolean): Scene['build'] => (graph) => {
+    graph.addNode(node('floor', {
+      kind: 'shape',
+      position: CENTER,
+      transform: {
+        width: 440, height: 340, shapeType: 'rect', z: 400,
+        castsShadows: false,
+        acceptsShadows: accepts,
+      },
+      style: { fill: '#c8ccd8' },
+    }));
+    // Off-centre, so the projection moves the shadow away from the caster
+    // rather than hiding it directly behind — a shadow that landed exactly
+    // under its own caster would be invisible in both frames.
+    graph.addNode(node('caster', {
+      kind: 'shape',
+      position: { x: 200, y: 150 },
+      transform: { width: 110, height: 90, shapeType: 'rect', z: 0 },
+      style: { fill: '#4ad0a0' },
+    }));
+    graph.addNode(node('L', {
+      kind: 'light',
+      position: CENTER,
+      transform: { z: -400, intensity: 100, lightType: 'point', castShadows: true, shadowDiffusion: 0 },
+      style: { fill: '#ffffff' },
+    }));
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: { z: -1000, focalLength: 1000 } }));
+  };
+  return [
+    scene('shadow-catcher', 'A 3D caster throwing a real shadow onto an ACCEPTING plane behind it.', build(true)),
+    scene('shadow-catcher-off', 'The same scene with the floor refusing shadows — the control the pair is measured against.', build(false)),
+  ];
+}
+
 export const threeDScenes: Scene[] = [
+  ...shadowCatcherPair(),
+
   scene('three-d-rotated', 'Layer rotated in 3D (rotationY) — perspective foreshortening.', (graph) => {
     panel(graph, 'p', { z: 0, rotationY: 45 });
   }),

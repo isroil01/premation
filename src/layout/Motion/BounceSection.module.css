@@ -1,0 +1,131 @@
+/* Bounce section — lives inside the Graph panel's scrolling column.
+ *
+ * It carries almost no chrome of its own on purpose. The section label, the
+ * chip, the field and the focus ring are all the panel's, imported by
+ * `composes` from MotionEditorPanel.module.css, so this section cannot drift
+ * into looking like a different tool docked in the same column. What is local
+ * here is only what is genuinely local: the preview well, the parameter grid
+ * and the two action buttons. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* The generated curve, drawn from the same tracks the buttons apply.
+   A well at the same radius and recession as the main graph below it, at a
+   third of the height: this is a thumbnail of a curve, not a second editor. */
+.preview {
+  width: 100%;
+  height: 72px;
+  flex: none;
+  display: block;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-surface);
+}
+
+.previewRest {
+  stroke: var(--color-border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.previewCurve {
+  fill: none;
+  stroke: var(--color-selection);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* Style / direction chips — the panel's chip, in a four-up row.
+   `composes` rather than a copy, so the hover, focus, pressed and disabled
+   states can only ever be defined once. */
+.styles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-2);
+}
+
+.styleChip {
+  composes: propChip from './MotionEditorPanel.module.css';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 4px var(--space-2);
+  /* Names, not numbers: the panel's prop chips are mono because they carry
+     property paths. These carry words. */
+  font-family: var(--font-family-sans);
+  white-space: nowrap;
+}
+
+.styleChipOn {
+  composes: propChipOn from './MotionEditorPanel.module.css';
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* A switch reads as a control beside its name, not under it. */
+.fieldInline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fieldLabel {
+  composes: fieldLabel from './MotionEditorPanel.module.css';
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.rowLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
+/* The two commit buttons. Taller than a chip because they are the only
+   controls in this section that WRITE something; everything above them just
+   configures what they will write. That difference is carried by height and
+   by the primary's fill, not by a second shape language. */
+.action {
+  composes: actionChip from './MotionEditorPanel.module.css';
+  justify-content: center;
+  padding: 6px var(--space-3);
+  background: var(--color-surface-1);
+  border-color: var(--color-border);
+}
+
+.actionPrimary {
+  composes: actionChipOn from './MotionEditorPanel.module.css';
+}

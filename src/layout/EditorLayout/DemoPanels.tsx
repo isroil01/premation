@@ -15,14 +15,15 @@ import { ProjectPanel } from '@layout/Project/ProjectPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
-import { PluginsDockPanel } from '@layout/Plugins/PluginPanel';
+import { PluginsDockPanel, pluginPanelRenderers } from '@layout/Plugins/PluginPanel';
+import { PluginsMarketplacePanel } from '@layout/Plugins/PluginsMarketplacePanel';
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { EmptyState } from '@components/EmptyState';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
 import { customConfirm } from '@components/Modal';
-import { useAssetStore, type AssetFolder } from '@stores/assetStore';
+import { isLibraryAsset, useAssetStore, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
 import { ParentControl } from '@layout/Inspector/ParentControl';
 import { PrecompControl } from '@layout/Inspector/PrecompControl';
 import { TextAnimatorControls } from '@layout/Inspector/TextAnimatorControls';
@@ -42,9 +43,14 @@ import { aiEnabled } from '@core/config/edition';
 import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
 import { CameraSection } from '@layout/Inspector/CameraSection';
 import { LightSection } from '@layout/Inspector/LightSection';
+import { CustomLayerSection } from '@layout/Inspector/CustomLayerSection';
+import { findLayerKind, findKindFor } from '@core/plugins/layerKindRegistry';
+import { splitKind } from '@core/plugins/layerKindSchema';
+import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
 import { ActiveTemplateFields } from '@layout/Templates/TemplateFieldsPanel';
+import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
 import { useTemplateStore } from '@stores/templateStore';
 import { CompositingControls } from '@layout/Inspector/CompositingControls';
 import { PuppetControls } from '@layout/Inspector/PuppetControls';
@@ -60,6 +66,7 @@ import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { renameLayer } from '@core/scene/renameLayer';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import {
@@ -77,16 +84,17 @@ import {
 import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { MOGRAPH_ITEMS, insertMographItem, createMographPlayer, mographDuration, type MographItem, type MographCategory } from '@core/library/mographLibrary';
-import { TRANSITION_ITEMS, applyTransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
-import { SFX_ITEMS, insertSfxItem, type SfxCategory } from '@core/library/sfxLibrary';
+import { TRANSITION_ITEMS, applyTransitionItem, createTransitionPlayer, type TransitionItem, type TransitionCategory } from '@core/library/transitionLibrary';
+import { SFX_ITEMS, insertSfxItem, sfxWaveform, type SfxItem, type SfxCategory } from '@core/library/sfxLibrary';
 import { LOTTIE_ITEMS, insertLottieItem, importLottieFile, type LottieCategory } from '@core/library/lottieLibrary';
 import { prepareLottiePreview, drawLottiePreview } from '@core/library/lottiePreview';
+import { LibraryBrowser, FavoriteStar } from './LibraryBrowser';
 import type { LottieJson } from '@core/lottie/lottieImport';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
 import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
 import { componentThumb, onComponentThumbReady } from '@core/rendering/componentThumbs';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
+import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor, nodesWithLabelColor } from '@core/scene/labelColor';
 import { useComponentStore } from '@stores/componentStore';
 import { MotionPresetsPanel } from '@layout/Motion/MotionPresetsPanel';
 import { useUIStore } from '@stores/uiStore';
@@ -144,9 +152,48 @@ function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
     }
   }
 
+  /*
+    Two plugin markers, both read from the DOCUMENT rather than from what
+    happens to be installed.
+
+    A generated child needs one because it is about to be overwritten by its
+    plugin — or, once the user edits it, deliberately not. A user who cannot
+    tell a managed layer from their own will edit one and be surprised either
+    way, which is the whole reason the ownership mark is stored at all.
+
+    An inert custom layer needs one because it renders and is selectable and
+    behaves like a normal layer, and the one thing it will not do is respond to
+    its own properties.
+  */
+  const owner = ownerOf(node);
+  const custom = readCustomLayer(node);
+  const inert = custom ? !findKindFor(custom.pluginId, custom.kindId) : false;
+
+  let label: React.ReactNode = node.name ?? node.id;
+  if (owner) {
+    label = (
+      <span className={styles.pluginManagedRow} title={`Managed by ${owner}. Editing it takes it over.`}>
+        {label}
+        <Icon name="plugin" size="sm" />
+      </span>
+    );
+  } else if (inert) {
+    label = (
+      <span className={styles.pluginInertRow} title={`Needs the plugin "${custom!.pluginId}".`}>
+        {label}
+        <Icon name="warning" size="sm" />
+      </span>
+    );
+  }
+
+  if (custom) {
+    const registered = findLayerKind(custom.kind);
+    iconName = (registered?.kind.icon as IconName) ?? 'plugin';
+  }
+
   return {
     id: node.id,
-    label: node.name ?? node.id,
+    label,
     icon: iconName,
     labelColor: readNodeLabelColor(node),
     data: { type: kind },
@@ -207,6 +254,19 @@ function labelColorMenuItems(targetId: string): ContextMenuItem[] {
       icon: current === c.color ? 'check' : undefined,
       onSelect: () => setNodeLabelColor(ids, c.color),
     })),
+    { id: 'label-select-sep', separator: true },
+    {
+      id: 'label-select-same',
+      // The other half of what a label is FOR. Assigning colours only pays off
+      // if you can then act on the group; without this the palette is
+      // decoration. Matches the UNLABELLED set too, which is how you find the
+      // layers you forgot to tag.
+      label: 'Select All with This Label',
+      onSelect: () => {
+        const matches = nodesWithLabelColor(targetId);
+        if (matches.length) useSelectionStore.getState().set(matches);
+      },
+    },
   ];
 }
 
@@ -256,9 +316,46 @@ export function ScenePanel(): JSX.Element {
   };
 
   const commitRename = (id: string, name: string): void => {
-    const n = defaultSceneGraph.getNode(id);
-    if (n) { n.name = name; bumpScene(); }
     setRenamingId(null);
+
+    // Not a bare `node.name = name`. Expressions reference layers by NAME and
+    // resolve at evaluation time, so a plain rename silently zeroes every
+    // reference to this layer — with the symptom appearing nowhere near the
+    // rename that caused it. `renameLayer` follows the rename through those
+    // references in the SAME undo entry, and reports the two cases it will not
+    // guess at.
+    const result = renameLayer(id, name);
+    if (!result.ok) return;
+
+    if (result.repaired.length > 0) {
+      useUIStore.getState().notify({
+        level: 'info',
+        message:
+          result.repaired.length === 1
+            ? '1 expression updated to follow the new name.'
+            : `${result.repaired.length} expressions updated to follow the new name.`,
+        durationMs: 4000,
+      });
+    }
+
+    // The author's call, not ours — and worth saying out loud precisely because
+    // it breaks nothing visibly today.
+    if (result.captured.length > 0) {
+      const n = result.captured.length;
+      useUIStore.getState().notify({
+        level: 'warning',
+        message: `${n} expression${n === 1 ? '' : 's'} naming “${name.trim()}” now read this layer instead of the one they read before.`,
+        // Longer than the others: this one is a silent retarget the user cannot
+        // see anywhere else, and it is the only notice they will get.
+        durationMs: 10000,
+      });
+    } else if (result.nameAlreadyInUse) {
+      useUIStore.getState().notify({
+        level: 'warning',
+        message: `Another layer is already called “${name.trim()}”. An expression naming it can only reach one of them.`,
+        durationMs: 6000,
+      });
+    }
   };
 
   // Drag-to-reorder / reparent from the layer tree. The tree DISPLAYS front
@@ -369,7 +466,7 @@ export function ScenePanel(): JSX.Element {
                   aria-label={hidden ? 'Show layer' : 'Hide layer'}
                   onClick={(e) => { e.stopPropagation(); toggleVisible(node.id); }}
                 >
-                  <Icon name={hidden ? 'eye-off' : 'eye'} size={12} />
+                  <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
                 </button>
               );
             }}
@@ -400,37 +497,43 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * A video URL that a `<video>` element will actually show a frame for.
- *
- * A `<video>` with no poster paints nothing until it holds a decoded frame, and
- * `preload="metadata"` deliberately stops before decoding one — so a plain
- * `src` renders as a black box forever. A media fragment asks for a specific
- * time, which makes the browser decode that frame and present it as the poster.
- *
- * 0.1s rather than 0: the very first frame of a clip is often black (fades,
- * slates), and a thumbnail that is technically correct but visually black is no
- * better than no thumbnail. Skipped for sources that already carry a fragment or
- * a query string, where appending one could break the URL.
- */
-const VIDEO_THUMB_TIME = 0.1;
-
-function videoThumbSrc(src: string): string {
-  if (!src || src.includes('#')) return src;
-  return `${src}#t=${VIDEO_THUMB_TIME}`;
-}
-
-
-/**
  * AssetsPanel — an After Effects–style project bin: one unified media list
  * (images, video and audio together, no type tabs) organised into user folders.
  * Supports importing files or a whole folder (which mirrors its structure), and
  * dragging assets between folders.
  */
+/**
+ * Asset kind → the glyph and the word for it.
+ *
+ * Explorer's model: the icon says what KIND of thing this is, and the Type
+ * column says it in words for anyone who does not read the glyph. Neither is a
+ * preview — see the note on the asset row about why thumbnails came out.
+ */
+const ASSET_TYPE_ICON: Record<string, IconName> = {
+  image: 'image',
+  video: 'video',
+  audio: 'audio',
+};
+
+const ASSET_TYPE_LABEL: Record<string, string> = {
+  image: 'Image',
+  video: 'Video',
+  audio: 'Audio',
+};
+
+/** Per-kind colour class — see `.assetGlyphImage` and friends for the why. */
+const ASSET_TYPE_CLASS: Record<string, string> = {
+  image: styles.assetGlyphImage ?? '',
+  video: styles.assetGlyphVideo ?? '',
+  audio: styles.assetGlyphAudio ?? '',
+};
+
 export function AssetsPanel(): JSX.Element {
   const assets = useAssetStore((s) => s.assets);
   const folders = useAssetStore((s) => s.folders);
   const addAssetsBatch = useAssetStore((s) => s.addAssetsBatch);
   const removeAsset = useAssetStore((s) => s.removeAsset);
+  const removeAssets = useAssetStore((s) => s.removeAssets);
   const createFolder = useAssetStore((s) => s.createFolder);
   const renameFolder = useAssetStore((s) => s.renameFolder);
   const removeFolder = useAssetStore((s) => s.removeFolder);
@@ -442,24 +545,60 @@ export function AssetsPanel(): JSX.Element {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [dropFolderId, setDropFolderId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  // Multi-select: clicking asset rows toggles them into this set; the bulk bar
-  // then adds/deletes them together.
-  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
-
-  // Selection is folder/search-scoped — reset it whenever the view changes so a
-  // hidden asset can't be silently deleted by a bulk action.
-  const goToFolder = (id: string | null): void => {
-    setCurrentFolderId(id);
-    setSelectedAssetIds(new Set());
-  };
-  const toggleAssetSelected = (id: string, e: React.MouseEvent): void => {
-    e.stopPropagation();
-    setSelectedAssetIds((cur) => {
+  /** Which folders are open. The root has no row, so it is always open. */
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const toggleFolder = (id: string): void => {
+    setExpandedFolders((cur) => {
       const next = new Set(cur);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  };
+  // Multi-select: clicking asset rows toggles them into this set; the bulk bar
+  // then adds them together.
+  const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
+  /** Off by default: the shelf is the user's imports, not the app's output. */
+  const [showDerived, setShowDerived] = useState(false);
+
+  /** Anchor for Shift-range selection — the last row clicked without Shift. */
+  const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
+
+  /*
+   * Click semantics, as every file manager has them.
+   *
+   * A bare click used to TOGGLE into the set, so clicking one file and then
+   * another left both highlighted and nothing ever deselected except clicking
+   * the same row twice. That is multi-select as the default and single-select
+   * as the impossible case — backwards from what a click means everywhere else.
+   *
+   *   click            → select ONLY this one
+   *   Ctrl/Cmd + click → add or remove this one
+   *   Shift + click    → select the range from the anchor to here
+   */
+  const selectAsset = (id: string, e: React.MouseEvent, ordered: string[]): void => {
+    e.stopPropagation();
+    if (e.shiftKey && selectionAnchor) {
+      const a = ordered.indexOf(selectionAnchor);
+      const b = ordered.indexOf(id);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelectedAssetIds(new Set(ordered.slice(lo, hi + 1)));
+        return;
+      }
+    }
+    if (e.metaKey || e.ctrlKey) {
+      setSelectedAssetIds((cur) => {
+        const next = new Set(cur);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setSelectionAnchor(id);
+      return;
+    }
+    setSelectedAssetIds(new Set([id]));
+    setSelectionAnchor(id);
   };
 
   // Import loose files into the current folder and drop them on the canvas.
@@ -526,54 +665,59 @@ export function AssetsPanel(): JSX.Element {
     setRenamingId(created.id);
   };
 
-  // ── Navigation / breadcrumb ──────────────────────────────────────
-  const breadcrumb: AssetFolder[] = [];
-  {
-    let cursor = currentFolderId;
-    const byId = new Map(folders.map((f) => [f.id, f] as const));
-    while (cursor) {
-      const f = byId.get(cursor);
-      if (!f) break;
-      breadcrumb.unshift(f);
-      cursor = f.parentId;
-    }
-  }
-
-  const q = searchQuery.trim().toLowerCase();
-  const searching = q.length > 0;
-  // While searching, flatten every asset regardless of folder; otherwise show
-  // just this folder's subfolders + assets.
-  const subfolders = searching ? [] : folders.filter((f) => f.parentId === currentFolderId);
-  const visibleAssets = assets.filter((a) => {
-    const inFolder = searching || (a.folderId ?? null) === currentFolderId;
-    const matches = !searching || a.name.toLowerCase().includes(q);
-    return inFolder && matches;
-  });
-
-  const isEmpty = subfolders.length === 0 && visibleAssets.length === 0;
-
-  // Bulk actions operate only on selected assets that are actually visible.
-  const selectedInView = visibleAssets.filter((a) => selectedAssetIds.has(a.id));
-  const allVisibleSelected = visibleAssets.length > 0 && selectedInView.length === visibleAssets.length;
-  const toggleSelectAll = (): void => {
-    setSelectedAssetIds(allVisibleSelected ? new Set() : new Set(visibleAssets.map((a) => a.id)));
-  };
-  const bulkAdd = (): void => {
-    for (const a of selectedInView) insertMedia(a);
-    setSelectedAssetIds(new Set());
-  };
-  const bulkDelete = async (): Promise<void> => {
-    const n = selectedInView.length;
-    if (n === 0) return;
+  /*
+   * Confirmed deletes.
+   *
+   * Both are reached only from the right-click menu now, so a confirm is the
+   * one guard between "opened a menu" and "the file is gone" — there is no
+   * undo for an asset removal.
+   */
+  const deleteAsset = async (asset: ImportedAsset): Promise<void> => {
     const ok = await customConfirm(
-      'Delete assets',
-      `Delete ${n} selected asset${n === 1 ? '' : 's'}? This can’t be undone.`,
+      `Delete “${asset.name}”`,
+      'This removes the asset from the project. This can’t be undone.',
       { confirmLabel: 'Delete', isDanger: true },
     );
-    if (!ok) return;
-    for (const a of selectedInView) removeAsset(a.id);
-    setSelectedAssetIds(new Set());
+    if (ok) removeAsset(asset.id);
   };
+
+  /**
+   * Delete the whole selection.
+   *
+   * The panel has supported Ctrl- and Shift-click since it was written, so a
+   * user could always SELECT twenty files — there was just no way to act on
+   * that selection, and the only delete on offer removed the one row under the
+   * cursor. Selecting many and deleting one is the kind of gap that reads as
+   * the selection not having worked.
+   *
+   * Names are listed up to a point and then counted. A confirm that renders
+   * fifty filenames is a confirm nobody reads, and this is the dialog standing
+   * in front of an action with no undo.
+   */
+  const deleteSelectedAssets = async (): Promise<void> => {
+    const ids = [...selectedAssetIds];
+    if (ids.length === 0) return;
+    if (ids.length === 1) {
+      const only = assets.find((a) => a.id === ids[0]);
+      if (only) await deleteAsset(only);
+      return;
+    }
+    const names = ids
+      .map((id) => assets.find((a) => a.id === id)?.name)
+      .filter((n): n is string => Boolean(n));
+    const shown = names.slice(0, 5).map((n) => `• ${n}`).join('\n');
+    const rest = names.length - Math.min(names.length, 5);
+    const ok = await customConfirm(
+      `Delete ${ids.length} assets`,
+      `${shown}${rest > 0 ? `\n…and ${rest} more` : ''}\n\nThis removes them from the project. This can’t be undone.`,
+      { confirmLabel: `Delete ${ids.length}`, isDanger: true },
+    );
+    if (!ok) return;
+    removeAssets(ids);
+    setSelectedAssetIds(new Set());
+    setSelectionAnchor(null);
+  };
+
   const deleteFolder = async (folder: AssetFolder): Promise<void> => {
     const assetCount = assets.filter((a) => a.folderId === folder.id).length;
     const subCount = folders.filter((f) => f.parentId === folder.id).length;
@@ -586,6 +730,149 @@ export function AssetsPanel(): JSX.Element {
     );
     if (ok) removeFolder(folder.id);
   };
+
+  /*
+   * Right-click menus — these REPLACE the per-row buttons.
+   *
+   * Every row used to carry a trash icon (and each asset a plus as well), so
+   * there were two permanently-visible targets per line, one of them
+   * destructive, a few pixels from the row you click to select. A delete that
+   * always sits under the cursor is a delete that eventually gets hit by
+   * accident — and the pair cost the width the Type and Size columns now use.
+   * Right-click is where a file manager puts this, and where this editor's own
+   * layer tree already puts it.
+   */
+  const openAssetMenu = (asset: ImportedAsset, e: React.MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    /*
+      Right-clicking INSIDE a selection acts on the selection; right-clicking
+      outside one replaces it with the row under the cursor first. That is what
+      every file manager does, and the alternative — a menu that silently
+      targets one row while twenty look selected — is how a user loses the
+      other nineteen without noticing.
+    */
+    const inSelection = selectedAssetIds.has(asset.id);
+    if (!inSelection) {
+      setSelectedAssetIds(new Set([asset.id]));
+      setSelectionAnchor(asset.id);
+    }
+    const count = inSelection ? selectedAssetIds.size : 1;
+    const many = count > 1;
+    openContextMenu(e.clientX, e.clientY, [
+      {
+        id: 'add',
+        label: many ? `Add ${count} to Composition` : 'Add to Composition',
+        onSelect: () => {
+          if (!many) { insertMedia(asset); return; }
+          // In the panel's own row order, so what lands in the comp matches
+          // what the user sees rather than the order they happened to click.
+          for (const id of orderedAssetIds) {
+            if (!selectedAssetIds.has(id)) continue;
+            const a = assets.find((x) => x.id === id);
+            if (a) insertMedia(a);
+          }
+        },
+      },
+      { id: 'sep-a', separator: true },
+      {
+        id: 'delete',
+        label: many ? `Delete ${count} Assets` : 'Delete',
+        danger: true,
+        onSelect: () => { void (many ? deleteSelectedAssets() : deleteAsset(asset)); },
+      },
+    ]);
+  };
+
+  const openFolderMenu = (folder: AssetFolder, e: React.MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu(e.clientX, e.clientY, [
+      { id: 'rename', label: 'Rename', onSelect: () => setRenamingId(folder.id) },
+      {
+        id: 'new',
+        label: 'New Subfolder',
+        onSelect: () => {
+          const created = createFolder('New Folder', folder.id);
+          // Open the parent, or the folder just created is filed somewhere the
+          // user cannot see and the rename box appears attached to nothing.
+          setExpandedFolders((cur) => new Set(cur).add(folder.id));
+          setRenamingId(created.id);
+        },
+      },
+      { id: 'sep-f', separator: true },
+      { id: 'delete', label: 'Delete', danger: true, onSelect: () => { void deleteFolder(folder); } },
+    ]);
+  };
+
+  // ── The tree ─────────────────────────────────────────────────────
+  //
+  // Folders expand IN PLACE, the way Explorer and AE's project panel work,
+  // rather than replacing the view the way the old breadcrumb drill-down did.
+  // The difference is not cosmetic: drilling down shows you one folder at a
+  // time, so comparing two folders or dragging between them means navigating
+  // away from one of them. A tree shows the structure and the contents at once.
+  const childFolders = (parentId: string | null): AssetFolder[] =>
+    folders.filter((f) => f.parentId === parentId);
+  /*
+   * What the shelf shows.
+   *
+   * The library means "media I brought in". Operations that duplicate or
+   * rasterize scene content — a plugin repeater, Rig Logo — still have to
+   * create real assets, because the layers that use them reference them by id
+   * and those bytes have to persist. But filing them as ordinary imports put a
+   * row on this shelf per generated copy, mixed in with the user's own
+   * footage, with nothing to tell them apart. `source: 'derived'` is that
+   * distinction; see `AssetSource`.
+   *
+   * Hidden rather than removed, and revealable rather than hidden outright:
+   * they are still assets, and a category of asset with no way to see or
+   * delete it would be a storage leak the user cannot reach.
+   */
+  const shelfAssets = showDerived ? assets : assets.filter(isLibraryAsset);
+  const derivedCount = assets.length - assets.filter(isLibraryAsset).length;
+
+  const folderAssets = (folderId: string | null): ImportedAsset[] =>
+    shelfAssets.filter((a) => (a.folderId ?? null) === folderId);
+
+  /** One rendered line. `depth` drives only the indent. */
+  type AssetRow =
+    | { kind: 'folder'; key: string; depth: number; folder: AssetFolder }
+    | { kind: 'asset'; key: string; depth: number; asset: ImportedAsset };
+
+  const buildRows = (parentId: string | null, depth: number, out: AssetRow[]): void => {
+    for (const f of childFolders(parentId)) {
+      out.push({ kind: 'folder', key: f.id, depth, folder: f });
+      // Closed folders contribute nothing — that is what makes this a tree
+      // rather than an indented flat list.
+      if (expandedFolders.has(f.id)) buildRows(f.id, depth + 1, out);
+    }
+    for (const a of folderAssets(parentId)) {
+      out.push({ kind: 'asset', key: a.id, depth, asset: a });
+    }
+  };
+
+  const q = searchQuery.trim().toLowerCase();
+  const searching = q.length > 0;
+  // While searching, flatten every asset regardless of folder; otherwise show
+  // just this folder's subfolders + assets.
+  //
+  // Searching FLATTENS: a tree hides matches inside closed folders, and the one
+  // thing a search must not do is answer "no results" because the result was
+  // behind a disclosure triangle.
+  const visibleAssets = searching
+    ? shelfAssets.filter((a) => a.name.toLowerCase().includes(q))
+    : shelfAssets;
+  const rows: AssetRow[] = [];
+  if (searching) {
+    for (const a of visibleAssets) rows.push({ kind: 'asset', key: a.id, depth: 0, asset: a });
+  } else {
+    buildRows(null, 0, rows);
+  }
+
+  const isEmpty = rows.length === 0;
+  /** Asset ids in the order they are DRAWN — what Shift-range walks over. */
+  const orderedAssetIds = rows.filter((r) => r.kind === 'asset').map((r) => r.key);
 
   return (
     <Panel
@@ -609,14 +896,34 @@ export function AssetsPanel(): JSX.Element {
 
       <div className={styles.assetTools}>
         <button type="button" className={styles.toolBtnPrimary} onClick={() => fileInputRef.current?.click()} title="Import media files">
-          <Icon name="upload" size={13} /> Import
+          <Icon name="upload" size="sm" /> Import
         </button>
         <button type="button" className={styles.toolBtn} onClick={() => folderInputRef.current?.click()} title="Import a folder (keeps its structure)">
-          <Icon name="folder-open" size={13} /> Folder
+          <Icon name="folder-open" size="sm" /> Folder
         </button>
         <button type="button" className={styles.toolBtn} onClick={handleNewFolder} title="New folder">
-          <Icon name="folder-plus" size={13} /> New
+          <Icon name="folder-plus" size="sm" /> New
         </button>
+        {/*
+          Only rendered when there is something to reveal. A permanent toggle
+          for a category most projects never produce spends toolbar width
+          explaining a concept the user has not met — and once they have met it,
+          the count is the part that makes it make sense.
+        */}
+        {derivedCount > 0 && (
+          <button
+            type="button"
+            className={showDerived ? styles.toolBtnPrimary : styles.toolBtn}
+            onClick={() => setShowDerived((v) => !v)}
+            title={
+              showDerived
+                ? 'Hide generated images (duplicates and rasterized copies)'
+                : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
+            }
+          >
+            <Icon name="sparkles" size="sm" /> {derivedCount}
+          </button>
+        )}
         <input
           type="file"
           ref={fileInputRef}
@@ -637,193 +944,197 @@ export function AssetsPanel(): JSX.Element {
         />
       </div>
 
-      {!searching && (
-        <div className={styles.breadcrumb}>
+      {/*
+        The selection bar. Present only while something is selected.
+
+        This panel deliberately has no per-row delete — a destructive target
+        that sits permanently under the cursor eventually gets hit by accident,
+        which is why those were removed in favour of right-click. A bar that
+        appears only once a selection exists keeps that property: it is not
+        under any row, it cannot be reached without first selecting, and it
+        makes the count visible, which is the number the confirm is about.
+      */}
+      {selectedAssetIds.size > 0 && (
+        <div className={styles.assetSelectionBar}>
+          <span className={styles.assetSelectionCount}>
+            {selectedAssetIds.size} selected
+          </span>
           <button
             type="button"
-            className={currentFolderId === null ? styles.crumbCurrent : styles.crumb}
-            onClick={() => goToFolder(null)}
+            className={styles.toolBtn}
+            onClick={() => { setSelectedAssetIds(new Set()); setSelectionAnchor(null); }}
           >
-            Assets
+            Clear
           </button>
-          {breadcrumb.map((f, i) => (
-            <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center' }}>
-              <span className={styles.crumbSep}>/</span>
-              <button
-                type="button"
-                className={i === breadcrumb.length - 1 ? styles.crumbCurrent : styles.crumb}
-                onClick={() => goToFolder(f.id)}
-              >
-                {f.name}
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {selectedInView.length > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface-1)' }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', flex: 1 }}>
-            {selectedInView.length} selected
-          </span>
-          <button type="button" className={styles.toolBtn} title={allVisibleSelected ? 'Deselect all' : 'Select all'} onClick={toggleSelectAll}>
-            <Icon name={allVisibleSelected ? 'deselect' : 'select-all'} size={12} /> {allVisibleSelected ? 'None' : 'All'}
-          </button>
-          <button type="button" className={styles.toolBtn} title="Add selected to composition" onClick={bulkAdd}>
-            <Icon name="plus" size={12} /> Add
-          </button>
-          <button type="button" className={styles.toolBtnPrimary} title="Delete selected assets" style={{ background: 'var(--color-danger)' }} onClick={() => void bulkDelete()}>
-            <Icon name="trash" size={12} /> Delete
+          <button
+            type="button"
+            className={styles.toolBtnDanger}
+            onClick={() => { void deleteSelectedAssets(); }}
+            title={`Delete ${selectedAssetIds.size} selected asset${selectedAssetIds.size === 1 ? '' : 's'} (Del)`}
+          >
+            <Icon name="trash" size="sm" /> Delete
           </button>
         </div>
       )}
 
-      <div className={styles.body} style={{ padding: '4px 0' }}>
+      {/* Column headings, as in Explorer's details view and AE's project panel.
+          Rendered once above the list rather than repeated per row, which is
+          what lets Type and Size line up into columns you can scan down. */}
+      <div className={styles.assetHead}>
+        <span className={styles.assetHeadName}>Name</span>
+        <span className={styles.assetHeadType}>Type</span>
+        <span className={styles.assetHeadSize}>Size</span>
+      </div>
+
+      {/*
+        Del deletes the selection, Ctrl/Cmd+A takes all of it, Escape drops it.
+
+        `tabIndex` is what makes this reachable at all — the keys are bound
+        HERE rather than on the window because the app already binds Delete to
+        removing the selected LAYERS. A global handler would have to guess
+        which selection the user meant, and would guess wrong whenever both
+        have one; scoping it to the focused panel means the question never
+        arises.
+
+        `data-shortcut-claim` is what makes the binding actually FIRE.
+        `ShortcutManager` listens on window in the capture phase and stops
+        propagation on any chord it matches, so without this the handler below
+        is unreachable for Delete and Ctrl+A — correct code that never runs.
+        Only these three chords are claimed; everything else still reaches the
+        global command, so Space keeps playing from here.
+      */}
+      <div
+        className={styles.body}
+        style={{ padding: '2px 0' }}
+        tabIndex={0}
+        data-shortcut-claim="delete backspace Ctrl+a Meta+a"
+        onKeyDown={(e) => {
+          if (e.key === 'Delete' || e.key === 'Backspace') {
+            if (selectedAssetIds.size === 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            void deleteSelectedAssets();
+            return;
+          }
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+            e.preventDefault();
+            e.stopPropagation();
+            setSelectedAssetIds(new Set(orderedAssetIds));
+            return;
+          }
+          if (e.key === 'Escape' && selectedAssetIds.size > 0) {
+            e.preventDefault();
+            setSelectedAssetIds(new Set());
+            setSelectionAnchor(null);
+          }
+        }}
+      >
         {isEmpty ? (
           <div className={styles.empty}>
             <p style={{ margin: 0, color: 'var(--color-text-tertiary)', fontSize: '11px' }}>
               {searching
                 ? 'No matching assets found.'
-                : currentFolderId === null
-                  ? 'No media yet. Import files or a folder, or create a folder to organise them.'
-                  : 'This folder is empty. Import here, or drag assets in.'}
+                : 'No media yet. Import files or a folder, or create a folder to organise them.'}
             </p>
           </div>
         ) : (
-          <div className={styles.assetList}>
-            {/* Folders first */}
-            {subfolders.map((folder) => {
-              const count = assets.filter((a) => a.folderId === folder.id).length
-                + folders.filter((f) => f.parentId === folder.id).length;
-              return (
+          <div className={styles.assetTree} role="tree">
+            {rows.map((row) =>
+              row.kind === 'folder' ? (
                 <div
-                  key={folder.id}
-                  className={`${styles.folderItem}${dropFolderId === folder.id ? ` ${styles.dropActive}` : ''}`}
-                  title={folder.name}
-                  onClick={() => { if (renamingId !== folder.id) goToFolder(folder.id); }}
-                  onDragOver={(e) => { e.preventDefault(); setDropFolderId(folder.id); }}
-                  onDragLeave={() => setDropFolderId((cur) => (cur === folder.id ? null : cur))}
+                  key={row.key}
+                  role="treeitem"
+                  aria-expanded={expandedFolders.has(row.folder.id)}
+                  className={`${styles.assetRow}${dropFolderId === row.folder.id ? ` ${styles.dropActive}` : ''}${currentFolderId === row.folder.id ? ` ${styles.assetRowActive}` : ''}`}
+                  style={{ paddingLeft: 8 + row.depth * 16 }}
+                  title={row.folder.name}
+                  onClick={() => {
+                    if (renamingId === row.folder.id) return;
+                    setCurrentFolderId(row.folder.id);
+                    toggleFolder(row.folder.id);
+                    // Selecting a folder is still a selection change: leaving a
+                    // file highlighted while browsing elsewhere is what made the
+                    // old panel look like everything was selected at once.
+                    setSelectedAssetIds(new Set());
+                    setSelectionAnchor(null);
+                  }}
+                  onContextMenu={(e) => openFolderMenu(row.folder, e)}
+                  onDragOver={(e) => { e.preventDefault(); setDropFolderId(row.folder.id); }}
+                  onDragLeave={() => setDropFolderId((cur) => (cur === row.folder.id ? null : cur))}
                   onDrop={(e) => {
                     e.preventDefault();
                     const assetId = e.dataTransfer.getData('text/asset-id');
-                    if (assetId) moveAssetToFolder(assetId, folder.id);
+                    if (assetId) moveAssetToFolder(assetId, row.folder.id);
                     setDropFolderId(null);
                   }}
                 >
-                  <div className={styles.folderIcon}>
-                    <Icon name="folder" size={16} />
-                  </div>
-                  <div className={styles.assetInfo}>
-                    {renamingId === folder.id ? (
-                      <input
-                        autoFocus
-                        defaultValue={folder.name}
-                        className={styles.assetName}
-                        style={{ background: 'var(--color-surface-0)', border: '1px solid var(--color-primary)', borderRadius: 4, color: 'var(--color-text-primary)' }}
-                        onClick={(e) => e.stopPropagation()}
-                        onBlur={(e) => { renameFolder(folder.id, e.target.value); setRenamingId(null); }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') { renameFolder(folder.id, (e.target as HTMLInputElement).value); setRenamingId(null); }
-                          if (e.key === 'Escape') setRenamingId(null);
-                        }}
-                      />
-                    ) : (
-                      <span
-                        className={styles.assetName}
-                        onDoubleClick={(e) => { e.stopPropagation(); setRenamingId(folder.id); }}
-                      >
-                        {folder.name}
-                      </span>
-                    )}
-                    <span className={styles.assetMeta}>{count} item{count === 1 ? '' : 's'}</span>
-                  </div>
-                  <div className={styles.assetActions}>
-                    <button
-                      type="button"
-                      className={styles.actionButtonRemove}
-                      title="Delete folder and all its contents"
-                      onClick={(e) => { e.stopPropagation(); void deleteFolder(folder); }}
-                    >
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* Then assets (unified — images, video, audio together) */}
-            {visibleAssets.map((asset) => {
-              const selected = selectedAssetIds.has(asset.id);
-              return (
-              <div
-                key={asset.id}
-                className={styles.assetItem}
-                title={asset.name}
-                draggable
-                onClick={(e) => toggleAssetSelected(asset.id, e)}
-                style={selected ? { outline: '2px solid var(--color-primary)', outlineOffset: -2, background: 'var(--color-primary-soft, rgba(99,102,241,0.12))' } : undefined}
-                onDragStart={(e) => {
-                  // Folder-move (Assets panel) reads text/asset-id; canvas drop reads the typed payload.
-                  e.dataTransfer.setData('text/asset-id', asset.id);
-                  setCanvasDrag(e, { kind: 'asset', assetId: asset.id });
-                }}
-              >
-                <div className={styles.assetIcon}>
-                  {asset.type === 'image' ? (
-                    <img src={asset.thumbSrc ?? asset.src} alt="" className={styles.assetThumbImg} loading="lazy" decoding="async" />
-                  ) : asset.type === 'video' ? (
-                    // The `#t=0.1` media fragment is what makes this show a
-                    // PICTURE. With a bare src and `preload="metadata"` the
-                    // browser fetches the header and no frame, so the element
-                    // paints nothing and every clip in the library looked like a
-                    // black rectangle. Asking for a time makes it decode that
-                    // frame and display it as the poster.
-                    <video
-                      src={videoThumbSrc(asset.src)}
-                      className={styles.assetThumbVideo}
-                      preload="metadata"
-                      muted
-                      playsInline
+                  <Icon
+                    name={expandedFolders.has(row.folder.id) ? 'chevron-down' : 'chevron-right'}
+                    size="sm"
+                    className={styles.assetTwisty}
+                  />
+                  {/* No wrapper around the glyph. The bordered tile that used to
+                      sit here made every row look like a card in a list of
+                      cards; a file row is a line of text with an icon on it. */}
+                  <Icon name={expandedFolders.has(row.folder.id) ? 'folder-open' : 'folder'} size="md" className={styles.assetGlyphFolder} />
+                  {renamingId === row.folder.id ? (
+                    <input
+                      autoFocus
+                      defaultValue={row.folder.name}
+                      className={styles.assetRename}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={(e) => { renameFolder(row.folder.id, e.target.value); setRenamingId(null); }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { renameFolder(row.folder.id, (e.target as HTMLInputElement).value); setRenamingId(null); }
+                        if (e.key === 'Escape') setRenamingId(null);
+                      }}
                     />
                   ) : (
-                    <Icon name="audio" size={14} />
+                    <span className={styles.assetRowName}>{row.folder.name}</span>
                   )}
+                  {/* No item count. It was a number that changed as you worked
+                      and that nobody acts on — the contents are one click away
+                      and now visible in place. */}
+                  <span className={styles.assetRowType}>Folder</span>
+                  <span className={styles.assetRowSize} />
                 </div>
-                <div className={styles.assetInfo}>
-                  <span className={styles.assetName}>{asset.name}</span>
-                  <span className={styles.assetMeta}>
-                    {formatBytes(asset.size)}
-                    {asset.metadata?.width && asset.metadata?.height && (
-                      ` · ${asset.metadata.width}×${asset.metadata.height}`
-                    )}
-                  </span>
+              ) : (
+                <div
+                  key={row.key}
+                  role="treeitem"
+                  className={`${styles.assetRow}${selectedAssetIds.has(row.asset.id) ? ` ${styles.assetRowSelected}` : ''}`}
+                  style={{ paddingLeft: 8 + row.depth * 16 + (searching ? 0 : 16) }}
+                  title={row.asset.name}
+                  draggable
+                  onClick={(e) => selectAsset(row.asset.id, e, orderedAssetIds)}
+                  onDoubleClick={() => insertMedia(row.asset)}
+                  onContextMenu={(e) => openAssetMenu(row.asset, e)}
+                  onDragStart={(e) => {
+                    // Folder-move (this panel) reads text/asset-id; a canvas drop
+                    // reads the typed payload.
+                    e.dataTransfer.setData('text/asset-id', row.asset.id);
+                    setCanvasDrag(e, { kind: 'asset', assetId: row.asset.id });
+                  }}
+                >
+                  {/* A TYPE icon, not a thumbnail. Thumbnails made every row a
+                      different height's worth of visual weight, decoded media
+                      just to draw a 16px square, and told you least about the
+                      files that look alike — which is most of a real library.
+                      Explorer and AE both show the kind, and the kind is what
+                      you scan for. */}
+                  <Icon
+                    name={ASSET_TYPE_ICON[row.asset.type] ?? 'file'}
+                    size="md"
+                    className={`${styles.assetGlyph} ${ASSET_TYPE_CLASS[row.asset.type] ?? styles.assetGlyphFile}`}
+                  />
+                  <span className={styles.assetRowName}>{row.asset.name}</span>
+                  <span className={styles.assetRowType}>{ASSET_TYPE_LABEL[row.asset.type] ?? 'File'}</span>
+                  <span className={styles.assetRowSize}>{formatBytes(row.asset.size)}</span>
                 </div>
-                <div className={styles.assetActions}>
-                  <button
-                    type="button"
-                    className={styles.actionButtonAdd}
-                    title="Add to composition"
-                    onClick={(e) => { e.stopPropagation(); insertMedia(asset); }}
-                  >
-                    <Icon name="plus" size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.actionButtonRemove}
-                    title="Delete asset"
-                    onClick={(e) => { e.stopPropagation(); removeAsset(asset.id); }}
-                  >
-                    <Icon name="trash" size={13} />
-                  </button>
-                </div>
-              </div>
-              );
-            })}
+              ),
+            )}
           </div>
         )}
-      </div>
-      <div className={styles.footer}>
-        <span>{visibleAssets.length} asset{visibleAssets.length === 1 ? '' : 's'}{subfolders.length ? ` · ${subfolders.length} folder${subfolders.length === 1 ? '' : 's'}` : ''}</span>
       </div>
     </Panel>
   );
@@ -874,6 +1185,13 @@ export function PropertiesPanel(): JSX.Element {
         </div>
       )}
       <InspectorContent nodeId={primary} query={query} />
+      {/* An inserted Motion GFX element's own blanks — its text and colours.
+          Renders nothing unless the selection is inside one, and sits beside
+          the template fields below because it is the same idea scoped to one
+          element rather than the whole composition. */}
+      <div style={{ padding: '0 14px' }}>
+        <MographParamsSection />
+      </div>
       {/* Applied-template fields — the "fill in the blanks" surface. Shown only
           when a template is actually applied, so it costs nothing otherwise. */}
       <TemplateFieldsSection />
@@ -1027,6 +1345,29 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
       title: 'Align & Distribute',
       icon: 'align-center',
       content: <AlignSection />,
+    });
+  }
+
+  /*
+    A plugin's own layer kind.
+
+    Recognised by the dot: a native kind is a bare word, a custom one is always
+    `<pluginId>.<kindId>`. The section is rendered from the plugin's SCHEMA by
+    host components — and rendered even when the plugin is missing, where it
+    falls back to what the document stored and goes read-only. An empty panel
+    would read as a layer that had lost its settings.
+  */
+  const customKind = splitKind(kind);
+  if (customKind) {
+    const registered = findLayerKind(kind);
+    items.push({
+      id: 'custom',
+      // The plugin's own label when it is here; the kind id when it is not,
+      // which is still more use than "Custom Layer".
+      title: registered?.kind.label ?? customKind.kindId,
+      icon: (registered?.kind.icon as never) ?? 'plugin',
+      defaultOpen: true,
+      content: <CustomLayerSection nodeId={nodeId} />,
     });
   }
 
@@ -1207,10 +1548,10 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
         action={
           <>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('bone')}>
-              <Icon name="bone" size={13} /> Bone tool
+              <Icon name="bone" size="sm" /> Bone tool
             </Button>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
-              <Icon name="puppet-pin" size={13} /> Puppet pin tool
+              <Icon name="puppet-pin" size="sm" /> Puppet pin tool
             </Button>
           </>
         }
@@ -1317,7 +1658,7 @@ export function ComponentsPanel(): JSX.Element {
               title={hasSelection ? 'Save the current selection as a reusable component' : 'Select layer(s) first'}
               onClick={() => setShowSaveInput(true)}
             >
-              <Icon name="plus" size={14} /> Save selection as component
+              <Icon name="plus" size="md" /> Save selection as component
             </button>
           ) : (
             <div style={{ display: 'flex', gap: 6 }}>
@@ -1372,7 +1713,7 @@ export function ComponentsPanel(): JSX.Element {
                           style={{ objectFit: 'contain', borderRadius: 4, background: 'var(--color-surface-0)' }}
                         />
                       ) : (
-                        <Icon name="component" size={24} />
+                        <Icon name="component" size="lg" />
                       );
                     })()}
                     <span className={styles.libChipLabel}>{c.name}</span>
@@ -1382,7 +1723,7 @@ export function ComponentsPanel(): JSX.Element {
                     aria-label={`Delete ${c.name}`}
                     title="Delete component"
                     onClick={() => removeComponent(c.id)}
-                    style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: '50%', border: '1px solid var(--color-border)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 11, lineHeight: 1 }}
+                    style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, borderRadius: '50%', border: '1px solid var(--color-border)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 'var(--font-size-xs)', lineHeight: 1 }}
                   >✕</button>
                 </div>
               ))}
@@ -1516,41 +1857,38 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
         />
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ width: 3, height: 22, borderRadius: 2, background: item.color, flexShrink: 0 }} />
-          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
             <span style={{ fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</span>
             <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
               {item.cat} · {item.loop ? '∞ loop' : `${mographDuration(item).toFixed(1)}s`}
             </span>
           </span>
+          <FavoriteStar id={item.id} label={item.name} />
         </span>
       </span>
     </button>
   );
 }
 
+const MOGRAPH_CATEGORIES: readonly MographCategory[] =
+  ['lower-thirds', 'callouts', 'titles', 'data', 'shapes', 'loops'];
+
 function MotionGFXContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | MographCategory>('all');
-  const items = MOGRAPH_ITEMS.filter((m) => filter === 'all' || m.cat === filter);
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'lower-thirds', 'callouts', 'titles', 'data', 'shapes', 'loops'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f === 'lower-thirds' ? 'Lower 3rds' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
+    <LibraryBrowser
+      items={MOGRAPH_ITEMS}
+      categories={MOGRAPH_CATEGORIES}
+      categoryLabel={(c) => (c === 'lower-thirds' ? 'Lower 3rds' : c.charAt(0).toUpperCase() + c.slice(1))}
+      noun="preset"
+    >
+      {(items) => (
         <div className={styles.libList}>
           {items.map((item) => (
             <MographCard key={item.id} item={item} />
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} preset{items.length !== 1 ? 's' : ''}</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 
@@ -1559,10 +1897,58 @@ function MotionGFXContent(): JSX.Element {
 // selected layers at the playhead; otherwise a choreographed solid covers
 // the cut. Every write goes through the normal animation engine (undoable).
 
+/** A transition card that PLAYS ITS OWN RECIPE.
+ *
+ *  The card used to be two colour swatches, which made "Whip Pan" and "Cross
+ *  Fade" visually identical — you had to apply an item and undo it to find out
+ *  what it did. This replays the real recipe against an isolated engine, so the
+ *  card shows the move it will write. */
+function TransitionCard({ item, onApply }: { item: TransitionItem; onApply: () => void }): JSX.Element {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const player = createTransitionPlayer(canvas, item);
+    return () => player.stop();
+  }, [item]);
+
+  return (
+    <button
+      type="button"
+      className={styles.libMotionItem}
+      title={item.solidOnly
+        ? `${item.name} — inserts a choreographed solid at the playhead`
+        : `${item.name} — applies to the selected layers (or inserts a solid)`}
+      draggable
+      onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
+      onClick={onApply}>
+      <span style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
+        <canvas
+          ref={canvasRef}
+          width={320}
+          height={180}
+          style={{ width: '100%', aspectRatio: '16 / 9', borderRadius: 6, background: '#101016', display: 'block' }}
+        />
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 3, height: 22, borderRadius: 2, background: item.a, flexShrink: 0 }} />
+          <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+            <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{item.name}</span>
+            <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontFamily: 'var(--font-family-mono)' }}>
+              {item.cat} · {item.duration.toFixed(1)}s{item.solidOnly ? ' · solid' : ''}
+            </span>
+          </span>
+          <FavoriteStar id={item.id} label={item.name} />
+        </span>
+      </span>
+    </button>
+  );
+}
+
+const TRANSITION_CATEGORIES: readonly TransitionCategory[] =
+  ['fade', 'slide', 'zoom', 'whip', 'glitch', 'wipe'];
+
 function TransitionsContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | TransitionCategory>('all');
   const notify = useUIStore((s) => s.notify);
-  const items = TRANSITION_ITEMS.filter((t) => filter === 'all' || t.cat === filter);
   const apply = (id: string, name: string): void => {
     const result = applyTransitionItem(id);
     if (!result) {
@@ -1578,47 +1964,15 @@ function TransitionsContent(): JSX.Element {
     }
   };
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'fade', 'slide', 'zoom', 'whip', 'glitch', 'wipe'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
+    <LibraryBrowser items={TRANSITION_ITEMS} categories={TRANSITION_CATEGORIES} noun="transition">
+      {(items) => (
         <div className={styles.libList}>
           {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={styles.libMotionItem}
-              title={item.solidOnly
-                ? `${item.name} — inserts a choreographed solid at the playhead`
-                : `${item.name} — applies to the selected layers (or inserts a solid)`}
-              draggable
-              onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
-              onClick={() => apply(item.id, item.name)}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                <span style={{ display: 'flex', width: 28, height: 20, borderRadius: 4, overflow: 'hidden', flexShrink: 0 }}>
-                  <span style={{ flex: 1, background: item.a, opacity: 0.85 }} />
-                  <span style={{ flex: 1, background: item.b, opacity: 0.85 }} />
-                </span>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{item.name}</span>
-                  <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontFamily: 'var(--font-family-mono)' }}>
-                    {item.cat} · {item.duration.toFixed(1)}s{item.solidOnly ? ' · solid' : ''}
-                  </span>
-                </span>
-              </span>
-            </button>
+            <TransitionCard key={item.id} item={item} onApply={() => apply(item.id, item.name)} />
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} transition{items.length !== 1 ? 's' : ''}</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 
@@ -1626,11 +1980,64 @@ function TransitionsContent(): JSX.Element {
 // Deterministic synthesized SFX — every item renders a real WAV through the
 // normal asset pipeline and lands as a real audio layer at the playhead.
 
+/** The item's REAL peak envelope, not a decorative bar pattern.
+ *  Memoised per id: the synth is deterministic, so this is computed once and
+ *  the same shape is reused for the life of the session. */
+const waveformCache = new Map<string, number[]>();
+function sfxBars(id: string): number[] {
+  let bars = waveformCache.get(id);
+  if (!bars) {
+    bars = sfxWaveform(id, 26) ?? [];
+    waveformCache.set(id, bars);
+  }
+  return bars;
+}
+
+function SfxCard({ item, busy, onInsert }: { item: SfxItem; busy: string | null; onInsert: () => void }): JSX.Element {
+  const bars = sfxBars(item.id);
+  return (
+    <button
+      type="button"
+      className={styles.libMotionItem}
+      disabled={busy !== null}
+      style={busy === item.id ? { opacity: 0.6 } : undefined}
+      title={`${item.name} — synthesized ${item.duration.toFixed(2)}s WAV, added as an audio layer`}
+      draggable
+      onDragStart={(e) => setCanvasDrag(e, { kind: 'sfx', sfxId: item.id, name: item.name })}
+      onClick={onInsert}>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+        {/* The envelope of the actual audio — a click reads as a spike, an
+            ambient pad as a slow swell. Every item used to draw the same
+            seven bars. */}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 1, height: 26, width: 72, flexShrink: 0 }} aria-hidden>
+          {bars.map((v, i) => (
+            <span key={i} style={{
+              flex: 1,
+              height: `${Math.max(8, v * 100)}%`,
+              borderRadius: 1,
+              background: item.color,
+              opacity: 0.45 + v * 0.55,
+              display: 'block',
+            }} />
+          ))}
+        </span>
+        <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{busy === item.id ? 'Rendering…' : item.name}</span>
+          <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
+            {item.cat} · {item.duration.toFixed(2)}s
+          </span>
+        </span>
+        <FavoriteStar id={item.id} label={item.name} />
+      </span>
+    </button>
+  );
+}
+
+const SFX_CATEGORIES: readonly SfxCategory[] = ['click', 'whoosh', 'impact', 'ambient'];
+
 function SoundFXContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | SfxCategory>('all');
   const [busy, setBusy] = useState<string | null>(null);
   const notify = useUIStore((s) => s.notify);
-  const items = SFX_ITEMS.filter((s) => filter === 'all' || s.cat === filter);
   const insert = async (id: string, name: string): Promise<void> => {
     if (busy) return;
     setBusy(id);
@@ -1643,49 +2050,16 @@ function SoundFXContent(): JSX.Element {
     }
   };
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'click', 'whoosh', 'impact', 'ambient'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
+    <LibraryBrowser items={SFX_ITEMS} categories={SFX_CATEGORIES} noun="sound">
+      {(items) => (
         <div className={styles.libList}>
           {items.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={styles.libMotionItem}
-              disabled={busy !== null}
-              style={busy === item.id ? { opacity: 0.6 } : undefined}
-              title={`${item.name} — synthesized ${item.duration.toFixed(2)}s WAV, added as an audio layer`}
-              draggable
-              onDragStart={(e) => setCanvasDrag(e, { kind: 'sfx', sfxId: item.id, name: item.name })}
-              onClick={() => { void insert(item.id, item.name); }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 1.5, width: 24, height: 20, flexShrink: 0 }}>
-                  {[4, 7, 5, 9, 6, 8, 5].map((h, i) => (
-                    <span key={i} style={{ width: 2, height: `${h * 2}px`, borderRadius: 1,
-                      background: item.color, opacity: 0.7 + i * 0.04, display: 'block' }} />
-                  ))}
-                </span>
-                <span style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{busy === item.id ? 'Rendering…' : item.name}</span>
-                  <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
-                    {item.cat} · {item.duration.toFixed(2)}s
-                  </span>
-                </span>
-              </span>
-            </button>
+            <SfxCard key={item.id} item={item} busy={busy}
+              onInsert={() => { void insert(item.id, item.name); }} />
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} sound{items.length !== 1 ? 's' : ''} · synthesized offline</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 
@@ -1742,12 +2116,12 @@ function LottieCardPreview({ doc, playing }: { doc: LottieJson; playing: boolean
   return <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />;
 }
 
+const LOTTIE_CATEGORIES: readonly LottieCategory[] = ['micro-ui', 'widgets', 'controls'];
+
 function LottieContent(): JSX.Element {
-  const [filter, setFilter] = useState<'all' | LottieCategory>('all');
   const notify = useUIStore((s) => s.notify);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
-  const items = LOTTIE_ITEMS.filter((l) => filter === 'all' || l.cat === filter);
 
   const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
@@ -1760,26 +2134,27 @@ function LottieContent(): JSX.Element {
     }
   };
 
+  const importButton = (
+    <div style={{ padding: '6px 8px 2px' }}>
+      <Button size="sm" variant="secondary" style={{ width: '100%', fontWeight: 600 }}
+        leftIcon={<Icon name="download" size="sm" />}
+        onClick={() => fileRef.current?.click()}>
+        Import .json / .lottie File…
+      </Button>
+      <input ref={fileRef} type="file" accept=".json,.lottie,application/json,application/x-lottie" style={{ display: 'none' }}
+        onChange={(e) => { void onPickFile(e); }} />
+    </div>
+  );
+
   return (
-    <>
-      <div className={styles.libTabs}>
-        {(['all', 'micro-ui', 'widgets', 'controls'] as const).map((f) => (
-          <button key={f} type="button"
-            className={`${styles.libTab} ${filter === f ? styles.libTabActive : ''}`}
-            onClick={() => setFilter(f)}>
-            {f === 'all' ? 'All' : f === 'micro-ui' ? 'Micro UI' : f.charAt(0).toUpperCase() + f.slice(1)}
-          </button>
-        ))}
-      </div>
-      <div className={styles.libBody}>
-        <div style={{ padding: '6px 8px 2px' }}>
-          <Button size="sm" variant="secondary" style={{ width: '100%', fontWeight: 600 }}
-            onClick={() => fileRef.current?.click()}>
-            📥 Import .json / .lottie File…
-          </Button>
-          <input ref={fileRef} type="file" accept=".json,.lottie,application/json,application/x-lottie" style={{ display: 'none' }}
-            onChange={(e) => { void onPickFile(e); }} />
-        </div>
+    <LibraryBrowser
+      items={LOTTIE_ITEMS}
+      categories={LOTTIE_CATEGORIES}
+      categoryLabel={(c) => (c === 'micro-ui' ? 'Micro UI' : c.charAt(0).toUpperCase() + c.slice(1))}
+      noun="animation"
+      toolbar={importButton}
+    >
+      {(items) => (
         <div className={styles.libGrid}>
           {items.map((item) => (
             <button
@@ -1801,14 +2176,16 @@ function LottieContent(): JSX.Element {
                 <LottieCardPreview doc={item.doc} playing={hovered === item.id} />
                 <span style={{ position: 'absolute', bottom: 2, right: 3, fontSize: '0.52rem', fontWeight: 800,
                   color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em' }}>LOTTIE</span>
+                <span className={styles.libChipStar}>
+                  <FavoriteStar id={item.id} label={item.name} />
+                </span>
               </span>
               <span className={styles.libChipLabel}>{item.name}</span>
             </button>
           ))}
         </div>
-      </div>
-      <div className={styles.footer}>{items.length} high-level UI animation{items.length !== 1 ? 's' : ''}</div>
-    </>
+      )}
+    </LibraryBrowser>
   );
 }
 
@@ -1838,13 +2215,21 @@ export function LibraryPanel(): JSX.Element {
   return (
     <Panel id="library" title="Library" icon="sparkles" hideHeader
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'library' })}>
-      <div className={styles.libTabs} style={{ borderBottom: '1px solid var(--color-border, rgba(255,255,255,0.08))' }}>
+      {/* The bottom rule lives in `.libTabs`. The inline copy that was here
+          drew a SECOND hairline under the stylesheet's, and carried a
+          `var(--color-border, rgba(255,255,255,0.08))` fallback for a token
+          that has always been defined — a white-ish line hardcoded for dark. */}
+      <div className={styles.libTabs} role="tablist">
         {LIBRARY_SECTIONS.map((s) => (
           <button key={s.id} type="button"
-            className={`${styles.libTab} ${section === s.id ? styles.libTabActive : ''}`}
+            role="tab"
+            aria-selected={section === s.id}
+            // Was `libTab` PLUS `libTabActive`, but `libTabActive` already
+            // `composes: libTab` — so the base class landed twice.
+            className={section === s.id ? styles.libTabActive : styles.libTab}
             title={s.label}
             onClick={() => setSection(s.id)}>
-            <Icon name={s.icon} size={12} style={{ marginRight: 4, verticalAlign: -2 }} />
+            <Icon name={s.icon} size="sm" />
             {s.label}
           </button>
         ))}
@@ -1906,6 +2291,13 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
     plugins: () => <PluginsDockPanel />,
+    marketplace: () => <PluginsMarketplacePanel />,
+    // Plugin panels that earned a rail tab of their own. Spread rather than
+    // listed, because which ones exist depends on what the user installed —
+    // the only entries in this map not known at build time. Both sidebars and
+    // `PopoutRoute` read this map, so a plugin panel detached into its own
+    // window resolves here exactly like Scene does.
+    ...pluginPanelRenderers(),
     // ── Asset Library (one tab, sections inside) ─────────────────────────
     library: () => <LibraryPanel />,
   };

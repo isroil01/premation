@@ -220,7 +220,7 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
             <>
               <h4 className={styles.title} style={{ marginTop: 12 }}>Audio</h4>
               {speedAltered ? (
-                <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-warning, #d08a3a)', lineHeight: 1.5 }}>
+                <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-warning, #d08a3a)', lineHeight: 1.5 }}>
                   Audio is muted because this layer&rsquo;s speed is changed. Time stretch, reverse and
                   time remap retime the picture only &mdash; nothing resamples the sound, so it would
                   drift out of sync. Trim the clip bar instead of changing speed to keep its audio.
@@ -247,7 +247,7 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
                       aria-label="Mute this video's audio track"
                     />
                   </InspectorRow>
-                  <p style={{ margin: '2px 0 6px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                  <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
                     {decodeState === 'pending'
                       ? 'Decoding the audio track…'
                       : "Plays and exports with the layer's timeline bar — keyframe Level to duck under a voiceover."}

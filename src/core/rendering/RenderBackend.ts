@@ -13,10 +13,85 @@ import type { Effect } from '@core/effects/effects';
 import type { LayerMask } from '@core/effects/mask';
 import type { TrackMatte } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
+import type { ShaderLight } from '@core/scene/lightShading';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
 
 export type LayerKind = 'shape' | 'text' | 'image' | 'video';
+
+/**
+ * One continuous run of a layer's path geometry.
+ *
+ * A shape used to be exactly one polyline — `pathPoints` — which is why Trim
+ * Paths could only ever annotate the STROKE: cutting a path into two visible
+ * arcs produces two runs, and the contract had nowhere to put the second one.
+ * `trimPolyline` has returned `Pt[][]` since it was written; the list simply
+ * died inside `strokeTrimmed` instead of reaching the renderer.
+ *
+ * `open` is per-subpath, not per-layer, because it differs between the two
+ * operations that consume it: a trimmed arc must NOT be closed by the stroke
+ * (that would draw a chord back to the start), while the fill closes it
+ * implicitly — which is exactly what Canvas2D does for a path with no
+ * `closePath`, and exactly what AE draws.
+ */
+export interface Subpath {
+  points: ReadonlyArray<BezierPoint>;
+  /** Stroke leaves this run open; fill still closes it implicitly. */
+  open?: boolean;
+  /**
+   * PER-RUN PAINT. Absent means "paint with the layer's own fill/stroke", which
+   * is what every existing writer produces and what keeps this field free.
+   *
+   * ── Why a run needs its own paint ───────────────────────────────────────
+   *
+   * The repeater emits its copies as N `RenderLayer`s that share one geometry
+   * and differ by transform deltas, which is why it cannot fold into
+   * `fx.pathOps` (F16): folding means baking the copies into geometry — now
+   * expressible as N subpaths — but per-copy `offsetOpacity` is keyframeable
+   * TODAY and would have nowhere to live. Dropping a parameter users already
+   * animate is worse than an inert control, because the control still moves.
+   *
+   * ── What `paint` being present COSTS, and why it is opt-in ──────────────
+   *
+   * Runs are normally drawn as ONE Canvas path so `fill()` sees them as a
+   * single nonzero-winding region — that is what makes a reverse-wound run cut
+   * a HOLE rather than paint over the shape. A run with its own paint cannot
+   * share that path; it has to be filled separately, and separately-filled runs
+   * cannot cut holes in each other.
+   *
+   * So the two behaviours are genuinely exclusive, and the resolution is that
+   * paint is opt-in per run: runs without it stay batched (holes intact, output
+   * byte-identical to before this field existed), runs with it are drawn
+   * individually. See `drawSubpathBatches` in vectorDraw.ts, which is the one
+   * place that grouping happens.
+   *
+   * Both cache keys — the content hash and the texture signature — must digest
+   * this. Two structurally identical paths differing only in run paint are
+   * different pictures, and without it the second silently reuses the first's
+   * texture.
+   */
+  paint?: SubpathPaint;
+}
+
+/**
+ * A single run's paint override. Every field is optional and falls back to the
+ * layer's own value, so `{ opacity: 0.5 }` means "this run, at half opacity,
+ * otherwise exactly like the layer" rather than "this run, unpainted".
+ */
+export interface SubpathPaint {
+  /** Overrides the layer's fill. */
+  fill?: FillPaint;
+  /** Overrides the layer's stroke. */
+  stroke?: Stroke;
+  /**
+   * 0..1, multiplied into BOTH fill and stroke for this run only.
+   *
+   * The field the repeater fold-in actually needs: `offsetOpacity` ramps each
+   * copy, and it multiplies whatever paint the copy already has rather than
+   * replacing it.
+   */
+  opacity?: number;
+}
 
 /** One sub-frame transform sample used for motion-blur accumulation. */
 export interface MotionSample {
@@ -39,6 +114,12 @@ export interface RenderLayer {
   kind: LayerKind;
   /** Compositing mode against the layers beneath (defaults to 'normal'). */
   blend?: LayerBlendMode;
+  /**
+   * Preserve Underlying Transparency — the layer is clipped to the alpha
+   * already accumulated beneath it. Orthogonal to `blend`, not a member of it:
+   * "Multiply AND preserve transparency" is a state users want.
+   */
+  preserveTransparency?: boolean;
   /** Vector mask clipping the layer (local space). Omitted when unmasked. */
   mask?: LayerMask;
   /** Track matte: the explicit sourceId (or the layer above) defines this layer's alpha. */
@@ -58,9 +139,11 @@ export interface RenderLayer {
    *  offscreen texture, then this layer composites that texture as one unit
    *  (its opacity / blend / filter / mask apply to the whole nested result). */
   precompLayers?: ReadonlyArray<RenderLayer>;
-  /** Point light: a radial glow (colour, intensity 0..100, radius px) drawn at
-   *  x,y with a screen blend to brighten the layers beneath. */
-  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number };
+  /** A light layer's 2D wash: a glow drawn at x,y and screen-blended to brighten
+   *  the layers beneath. A SPOT is shaped by `angle`/`cone`/`coneFeather`; every
+   *  other type is a plain radial falloff. `coneFeather` is a PERCENT of the
+   *  half-cone (AE's Cone Feather) — absent ⇒ 20 %, matching `shadeLayer`. */
+  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number; coneFeather?: number };
   /** Particle emitter config. When present, the layer draws a particle system
    *  (simulated deterministically at the current time) instead of its content. */
   particles?: import('@core/particles/particleSim').ParticleConfig;
@@ -124,7 +207,14 @@ export interface RenderLayer {
    *  snapshot's `lights3d`/camera eye) to renderables that take the depth path,
    *  where the shader replaces the per-quad tint fold with real per-fragment
    *  Lambert + specular. */
-  shade3d?: { specular: number; shininess: number; metal?: number };
+  shade3d?: {
+    specular: number;
+    shininess: number;
+    metal?: number;
+    /** Light this surface from one side. Set only by an extrusion's walls and
+     *  back cap, which bound a volume — see `lightShading.ndotl`. */
+    oneSided?: boolean;
+  };
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */
   depth?: number;
@@ -177,14 +267,28 @@ export interface RenderLayer {
    * still antialiased by the pass's multisampling.
    */
   flatFacet?: boolean;
-  /** Vector path points in LOCAL space (only present if primitive === 'path') */
+  /**
+   * Vector path points in LOCAL space (only present if primitive === 'path').
+   *
+   * The single-subpath shorthand. `subpaths` is the general form; this field is
+   * the overwhelmingly common one-run case kept in place so every existing
+   * writer (SVG import, audio waveform, path operators, the pen tool) is
+   * untouched. **The two are mutually exclusive** — see `layerSubpaths`, which
+   * is the ONLY reader of either, so a consumer cannot pick the wrong one.
+   */
   pathPoints?: ReadonlyArray<BezierPoint>;
+  /**
+   * Path geometry as a LIST of runs — the general form of `pathPoints`.
+   *
+   * Set only when the geometry genuinely has more than one run (a trim whose
+   * window wraps past the end of the path yields two arcs). Writers must set
+   * this OR `pathPoints`, never both; `assertSinglePathSource` pins that.
+   */
+  subpaths?: ReadonlyArray<Subpath>;
   /** True for open strokes (freehand pencil / line) that must NOT be closed or
-   *  filled — the backend draws them as an open polyline instead of a loop. */
+   *  filled — the backend draws them as an open polyline instead of a loop.
+   *  Applies to `pathPoints`; `subpaths` carry their own per-run `open`. */
   pathOpen?: boolean;
-  /** Trim-path visible arcs [lo,hi] (0..1 of the outline length). When present
-   *  the backend strokes only these portions of the shape outline (MG-C). */
-  trim?: ReadonlyArray<readonly [number, number]>;
   /** For text. */
   text?: string;
   fontSize?: number;
@@ -378,22 +482,17 @@ export interface RenderSnapshot {
     /** Camera world position — the eye for Blinn-Phong specular. */
     eye?: readonly [number, number, number];
   };
-  /** Scene lights in shader terms (per-fragment Accepts-Lights shading on the
-   *  depth path). Emitted only when the frame has 3D layers AND lights. Colors
-   *  are linear 0..1 RGB; `gain` = intensity/100; `aimX/aimY` = cos/sin of the
-   *  light's 2D aim angle; `halfConeRad` is the spot half-cone in radians. */
-  lights3d?: ReadonlyArray<{
-    type: 'ambient' | 'point' | 'spot' | 'parallel';
-    color: { r: number; g: number; b: number };
-    gain: number;
-    x: number;
-    y: number;
-    z: number;
-    radius: number;
-    aimX: number;
-    aimY: number;
-    halfConeRad: number;
-  }>;
+  /**
+   * Scene lights in shader terms (per-fragment Accepts-Lights shading on the
+   * depth path). Emitted only when the frame has 3D layers AND lights.
+   *
+   * Refers to `ShaderLight` rather than restating its shape. This was a third
+   * structural copy of the same DTO, and copies are how `coneFeather`,
+   * `falloff` and `poi` came to be honoured on the CPU and silently dropped on
+   * the GPU — a field added to one declaration and not the others still
+   * typechecks everywhere.
+   */
+  lights3d?: ReadonlyArray<ShaderLight>;
 }
 
 export interface RenderBackend {

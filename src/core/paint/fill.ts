@@ -21,6 +21,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode } from '@core/types';
 import { bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
+import { clamp01 } from '@utils/lang';
 
 export interface ColorStop {
   id: string;
@@ -103,9 +104,6 @@ export function radialFill(color = '#ffffff'): RadialFill {
   return { type: 'radial', cx: 0.5, cy: 0.5, radius: 0.5, stops: defaultStops(color, '#000000') };
 }
 
-function clamp01(n: number): number {
-  return n < 0 ? 0 : n > 1 ? 1 : n;
-}
 
 // ── Gradient colour sampling (pure — the tested core) ────────────────
 

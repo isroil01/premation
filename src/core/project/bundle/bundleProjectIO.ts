@@ -97,9 +97,25 @@ export async function restoreProjectVersion(
 }
 
 /**
+ * Whether a native `.motion` bundle picker exists in this build at all.
+ *
+ * Separate from `chooseBundleDir` because that call cannot distinguish its two
+ * nulls: "the user cancelled" and "there is no folder picker here". The Open
+ * command treated both as "fall through to the file dialog", so cancelling the
+ * folder picker on the desktop immediately opened a SECOND dialog — cancel has
+ * to mean cancel.
+ */
+export function bundleDirPickerAvailable(): boolean {
+  const bridge = typeof window !== 'undefined' ? window.motionEditor : undefined;
+  return typeof bridge?.project?.openBundleDir === 'function';
+}
+
+/**
  * Prompt for a `.motion` bundle directory to open (desktop only). Returns the
- * chosen path, or null if cancelled / not on desktop. The caller then hands the
- * path to `ProjectManager.openPath`, which routes to the bundle loader.
+ * chosen path, or null if cancelled / not on desktop — check
+ * `bundleDirPickerAvailable()` first when you need to tell those apart. The
+ * caller then hands the path to `ProjectManager.openPath`, which routes to the
+ * bundle loader.
  */
 export async function chooseBundleDir(): Promise<string | null> {
   const bridge = typeof window !== 'undefined' ? window.motionEditor : undefined;

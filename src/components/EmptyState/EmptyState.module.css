@@ -29,7 +29,7 @@
 
 .compact .tile {
   width: 28px;
-  height: 28px;
+  height: var(--control-height-lg);
 }
 
 .tile {

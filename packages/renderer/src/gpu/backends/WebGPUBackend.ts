@@ -1,3 +1,6 @@
+// Ambient global declarations. An `import` of a globals-only .d.ts is elided
+// by tsc, so the reference directive is the only spelling that works here.
+/* eslint-disable-next-line @typescript-eslint/triple-slash-reference */
 /// <reference path="./webgpu.d.ts" />
 /**
  * WebGPU backend (primary). Maps the backend-independent descriptors to WebGPU
@@ -109,6 +112,12 @@ export class WebGPUBackend implements RenderBackend {
   private context!: GPUCanvasContext;
   private surfaceFormat = 'bgra8unorm';
   private encoder: GPUCommandEncoder | null = null;
+  private deviceLostHandler: ((reason: string) => void) | null = null;
+
+  /** See `RenderBackend.onDeviceLost`. Attach before `initialize`. */
+  onDeviceLost(handler: (reason: string) => void): void {
+    this.deviceLostHandler = handler;
+  }
 
   async initialize(surface?: RenderSurface): Promise<void> {
     const gpu = (globalThis.navigator as Navigator | undefined)?.gpu;
@@ -120,6 +129,40 @@ export class WebGPUBackend implements RenderBackend {
     }
     if (!adapter) throw new Error('No WebGPU adapter');
     this.device = await adapter.requestDevice();
+
+    /*
+      `device.lost` RESOLVES on a device reset — it does not reject. A `.catch`
+      here would never fire, and the handler would look wired while being dead.
+
+      Attached immediately after the device is acquired and before anything is
+      created on it: a device lost during initialisation is exactly the case a
+      later attachment would miss.
+    */
+    void this.device.lost.then((info: { reason?: string; message?: string }) => {
+      const reason = `${info?.reason ?? 'unknown'}: ${info?.message ?? ''}`.trim();
+      this.deviceLostHandler?.(reason);
+    });
+
+    /*
+      Surface validation errors instead of letting them be swallowed.
+
+      WebGPU reports a bad pipeline, bind group or draw ASYNCHRONOUSLY: the call
+      returns an object, the draw becomes a no-op, and nothing throws. The
+      visible result is a target that stayed cleared — which reads as "the
+      effect erased my layer" rather than as an error, and is indistinguishable
+      from the layer legitimately rendering nothing.
+
+      `addEventListener` rather than `onuncapturederror`, so this cannot silently
+      replace a handler set elsewhere. Optional-chained because the property is
+      absent on implementations predating the event, where the browser's own
+      console reporting is the only channel.
+    */
+    (this.device as unknown as {
+      addEventListener?: (t: string, f: (e: { error?: { message?: string } }) => void) => void;
+    }).addEventListener?.('uncapturederror', (e) => {
+      console.error(`[webgpu] validation error: ${e.error?.message ?? 'unknown'}`);
+    });
+
     this.surfaceFormat = gpu.getPreferredCanvasFormat();
     if (surface) {
       const ctx = surface.canvas.getContext('webgpu') as unknown as GPUCanvasContext | null;
@@ -220,6 +263,24 @@ export class WebGPUBackend implements RenderBackend {
     return h('shader', this.device.createShaderModule({ label: desc.label, code: desc.wgsl }));
   }
   destroyShaderModule(_shader: ShaderModuleHandle): void {}
+
+  /**
+   * Compile a source now and hand back what the driver complained about.
+   *
+   * Errors only. A warning is the driver's opinion about a shader it accepted,
+   * and refusing a plugin's effect over one would make the set of effects that
+   * work depend on which GPU vendor the user happens to have.
+   */
+  async shaderDiagnostics(label: string, wgsl: string): Promise<string[]> {
+    const module = this.device.createShaderModule({ label, code: wgsl });
+    // Absent on an implementation predating the method. "Nothing to report" is
+    // the only honest answer there, and matches the optional-method contract.
+    if (!module.getCompilationInfo) return [];
+    const info = await module.getCompilationInfo();
+    return info.messages
+      .filter((m) => m.type === 'error')
+      .map((m) => `line ${m.lineNum}: ${m.message.trim()}`);
+  }
 
   createPipeline(desc: PipelineDescriptor): PipelineHandle {
     const bgl = this.device.createBindGroupLayout({

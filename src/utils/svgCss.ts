@@ -65,12 +65,14 @@ interface StyleRule {
   selector: string;
   decls: Decls;
   /**
-   * The rule declares something this module reads.
+   * The rule declares something the ANIMATION reader uses.
    *
-   * Icon stylesheets are mostly `fill`/`stroke`; matching those against the
-   * document is work with no possible outcome.
+   * Matching a rule that says nothing about animation against the document is
+   * work with no possible outcome.
    */
   animationRelevant: boolean;
+  /** The rule declares a presentation property the GEOMETRY parser reads. */
+  presentationRelevant: boolean;
 }
 
 /** Does this declaration block say anything about animation or its origin? */
@@ -79,6 +81,28 @@ function hasAnimationDecl(decls: Decls): boolean {
     if (key.startsWith('animation') || key === '-webkit-animation') return true;
     if (key === 'transform-origin' || key === 'transform-box') return true;
   }
+  return false;
+}
+
+/**
+ * Presentation properties the GEOMETRY parser reads off an element.
+ *
+ * A stylesheet inside an SVG is not decoration the importer can skip: an icon
+ * exported from a web tool routinely puts every fill, stroke and hidden state
+ * in a `<style>` block and leaves the elements bare. `svgParser` only ever read
+ * presentation ATTRIBUTES and inline `style`, so those files imported as a pile
+ * of default-black shapes with `fill:none` outlines filled in solid — and
+ * because only ANIMATED SVGs go through the parser at all, it looked like a bug
+ * that struck animated files specifically.
+ */
+const PRESENTATION_PROPS = new Set([
+  'fill', 'stroke', 'stroke-width', 'opacity', 'fill-opacity', 'stroke-opacity',
+  'color', 'display', 'visibility',
+  'font-size', 'font-family', 'font-weight', 'font-style', 'text-anchor',
+]);
+
+function hasPresentationDecl(decls: Decls): boolean {
+  for (const key of decls.keys()) if (PRESENTATION_PROPS.has(key)) return true;
   return false;
 }
 
@@ -187,6 +211,27 @@ interface Stylesheet {
   keyframes: Map<string, KeyframeBlock[]>;
 }
 
+/**
+ * One collected stylesheet per document.
+ *
+ * The document is read twice per import — once for presentation properties
+ * (before traversal, since they decide what the geometry even looks like) and
+ * once for animation — and re-tokenising a megabyte of CSS for the second pass
+ * is pure waste. Keyed on the Document, so it dies with it.
+ */
+const SHEET_CACHE = new WeakMap<Document, Stylesheet>();
+
+function stylesheetOf(doc: Document): Stylesheet {
+  const cached = SHEET_CACHE.get(doc);
+  if (cached) return cached;
+  const css = Array.from(doc.getElementsByTagName('style'))
+    .map((s) => s.textContent ?? '')
+    .join('\n');
+  const sheet = collectStylesheet(css);
+  SHEET_CACHE.set(doc, sheet);
+  return sheet;
+}
+
 function collectStylesheet(css: string): Stylesheet {
   const rules: StyleRule[] = [];
   const keyframes = new Map<string, KeyframeBlock[]>();
@@ -215,8 +260,9 @@ function collectStylesheet(css: string): Stylesheet {
       if (rule.prelude.startsWith('@')) continue; // @font-face, @import…
       const decls = parseDecls(rule.body);
       const animationRelevant = hasAnimationDecl(decls);
+      const presentationRelevant = hasPresentationDecl(decls);
       for (const selector of splitTopLevel(rule.prelude, ',')) {
-        rules.push({ selector, decls, animationRelevant });
+        rules.push({ selector, decls, animationRelevant, presentationRelevant });
       }
     }
   };
@@ -380,9 +426,20 @@ function readAnimationSpecs(decls: Decls, knownNames: ReadonlySet<string>): Anim
 /** `[tx, ty, rotationDeg, scaleX, scaleY]` — the identity. */
 const IDENTITY: number[] = [0, 0, 0, 1, 1];
 
-function lengthPx(v: string): number {
+/**
+ * A CSS length in user units, or null when it does not resolve to one.
+ *
+ * Null rather than 0, because the two are not the same answer. A
+ * `translateX(100%)` resolves against a box this module does not have, and
+ * silently calling it zero produced a track whose every value equalled the
+ * base — which `meaningful()` then discarded, so the file imported with NO
+ * animation and a toast that said the animation had converted.
+ */
+function lengthPx(v: string): number | null {
   const m = /^(-?[\d.]+)(px|)$/.exec(v.trim());
-  return m ? Number(m[1]) || 0 : 0;
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
 }
 
 function angleDeg(v: string): number {
@@ -407,10 +464,20 @@ function angleDeg(v: string): number {
  * translate-then-rotate; the ordered form is what authored SVG animation
  * overwhelmingly uses, and the alternative loses whole spins.
  */
-function parseTransformList(value: string): number[] {
+function parseTransformList(value: string, unsupported: Set<string>): number[] {
   const out = [...IDENTITY];
   const re = /([a-zA-Z]+)\s*\(([^)]*)\)/g;
   let m: RegExpExecArray | null;
+  // A length we cannot resolve is REPORTED, not silently zeroed — see lengthPx.
+  const px = (raw: string, fn: string): number => {
+    if (raw === '') return 0;
+    const n = lengthPx(raw);
+    if (n === null) {
+      unsupported.add(`CSS ${fn}(${raw}) — only px and unitless lengths convert`);
+      return 0;
+    }
+    return n;
+  };
   while ((m = re.exec(value)) !== null) {
     const fn = m[1]!.toLowerCase();
     const args = m[2]!.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
@@ -418,11 +485,11 @@ function parseTransformList(value: string): number[] {
     const a1 = args[1] ?? '';
     switch (fn) {
       case 'translate':
-        out[0]! += lengthPx(a0);
-        out[1]! += lengthPx(a1);
+        out[0]! += px(a0, 'translate');
+        out[1]! += px(a1, 'translate');
         break;
-      case 'translatex': out[0]! += lengthPx(a0); break;
-      case 'translatey': out[1]! += lengthPx(a0); break;
+      case 'translatex': out[0]! += px(a0, 'translateX'); break;
+      case 'translatey': out[1]! += px(a0, 'translateY'); break;
       case 'rotate':
       case 'rotatez': out[2]! += angleDeg(a0); break;
       case 'scale': {
@@ -434,7 +501,11 @@ function parseTransformList(value: string): number[] {
       }
       case 'scalex': { const s = Number(a0); if (Number.isFinite(s)) out[3]! *= s; break; }
       case 'scaley': { const s = Number(a0); if (Number.isFinite(s)) out[4]! *= s; break; }
-      default: break; // matrix()/skew()/3-D — left at identity
+      default:
+        // matrix()/skew()/3-D — left at identity, and named so the user is not
+        // told an animation converted when a whole function of it was dropped.
+        unsupported.add(`CSS transform ${fn}()`);
+        break;
     }
   }
   return out;
@@ -576,6 +647,53 @@ export interface CssAnimationScan {
 }
 
 /**
+ * Resolve a stylesheet's matching rules onto elements, rule-first.
+ *
+ * Asking every element whether it matches every rule is the obvious shape and
+ * the wrong one: it is one scripted `matches` call per pair, so a 200-path icon
+ * with 200 class rules was 40,000 of them. Running each selector once through
+ * `querySelectorAll` pushes the same work into the DOM's own matcher and visits
+ * only elements a rule actually reached. Source order — not specificity — is
+ * what decides ties, which is all a flat icon stylesheet ever needs.
+ */
+function resolveCascade(
+  doc: Document,
+  rules: readonly StyleRule[],
+  wanted: (r: StyleRule) => boolean,
+): Map<Element, Decls> {
+  const declsFor = new Map<Element, Decls>();
+  for (const rule of rules) {
+    if (!wanted(rule)) continue;
+    let matched: ArrayLike<Element>;
+    try {
+      matched = doc.querySelectorAll(rule.selector);
+    } catch {
+      continue; // unsupported selector syntax — skip it, don't crash the import
+    }
+    for (let i = 0; i < matched.length; i++) {
+      const el = matched[i]!;
+      let decls = declsFor.get(el);
+      if (!decls) { decls = new Map(); declsFor.set(el, decls); }
+      for (const [k, v] of rule.decls) decls.set(k, v);
+    }
+  }
+  return declsFor;
+}
+
+/**
+ * Every `<style>`-declared PRESENTATION property, resolved onto its elements.
+ *
+ * Stylesheet declarations only — presentation attributes and inline `style` are
+ * applied by the caller, which is the one place that knows their relative
+ * priority (attribute < stylesheet < inline).
+ */
+export function readCssPresentation(doc: Document): Map<Element, ReadonlyMap<string, string>> {
+  const sheet = stylesheetOf(doc);
+  if (sheet.rules.length === 0) return new Map();
+  return resolveCascade(doc, sheet.rules, (r) => r.presentationRelevant);
+}
+
+/**
  * Read every CSS animation in the document and resolve it onto its elements.
  *
  * Cascade handling is source order, not specificity — a stylesheet inside an
@@ -593,7 +711,7 @@ export function readCssAnimations(doc: Document, unrollSeconds = MAX_UNROLL_SECO
   const inlineAnimated = Array.from(doc.querySelectorAll('[style*="animation"]'));
   if (!css.trim() && inlineAnimated.length === 0) return { anims, unsupported };
 
-  const sheet = collectStylesheet(css);
+  const sheet = stylesheetOf(doc);
   if (sheet.keyframes.size === 0) {
     // `animation:` naming a `@keyframes` we never saw (an external sheet, or a
     // name defined outside this file) is unresolvable, not absent.
@@ -605,38 +723,13 @@ export function readCssAnimations(doc: Document, unrollSeconds = MAX_UNROLL_SECO
   const viewBox = viewBoxOf(doc);
   const knownNames = new Set(sheet.keyframes.keys());
 
-  // Resolve the cascade RULE-first, and only for rules that could matter.
-  //
-  // Asking every element whether it matches every rule is the obvious shape and
-  // the wrong one: it is one scripted `matches` call per pair, so a 200-path
-  // icon with 200 class rules was 40,000 of them. Running each selector once
-  // through `querySelectorAll` pushes the same work into the DOM's own matcher
-  // and visits only elements a rule actually reached. Source order is preserved
-  // because the rules are still applied in order.
-  const declsFor = new Map<Element, Decls>();
-  const declsOf = (el: Element): Decls => {
-    let d = declsFor.get(el);
-    if (!d) { d = new Map(); declsFor.set(el, d); }
-    return d;
-  };
-  for (const rule of sheet.rules) {
-    if (!rule.animationRelevant) continue;
-    let matched: ArrayLike<Element>;
-    try {
-      matched = doc.querySelectorAll(rule.selector);
-    } catch {
-      continue; // unsupported selector syntax — skip it, don't crash the import
-    }
-    for (let i = 0; i < matched.length; i++) {
-      const decls = declsOf(matched[i]!);
-      for (const [k, v] of rule.decls) decls.set(k, v);
-    }
-  }
+  const declsFor = resolveCascade(doc, sheet.rules, (r) => r.animationRelevant);
   // Inline styles win over any rule, and can declare an animation on their own.
   for (const el of Array.from(doc.querySelectorAll('[style]'))) {
     const inline = parseDecls(el.getAttribute('style') ?? '');
     if (!hasAnimationDecl(inline) && !declsFor.has(el)) continue;
-    const decls = declsOf(el);
+    let decls = declsFor.get(el);
+    if (!decls) { decls = new Map(); declsFor.set(el, decls); }
     for (const [k, v] of inline) decls.set(k, v);
   }
 
@@ -645,13 +738,26 @@ export function readCssAnimations(doc: Document, unrollSeconds = MAX_UNROLL_SECO
       const blocks = sheet.keyframes.get(spec.name);
       if (!blocks) continue;
       const timing = parseTiming(spec.timing);
-      const active = Math.min(
-        Number.isFinite(spec.iterations) ? spec.dur * spec.iterations : unroll,
-        unroll,
-      );
+      // The unroll budget is measured from t=0, so a DELAYED animation gets
+      // less of it — keyframes past the end of the composition are cost with no
+      // possible benefit. A negative delay consumes none of it.
+      const budget = Math.max(0, unroll - Math.max(0, spec.delay));
+      const wanted = Number.isFinite(spec.iterations) ? spec.dur * spec.iterations : budget;
+      // A finite animation running past the composition is genuinely cut short;
+      // an `infinite` one hitting the same ceiling is the loop being baked.
+      if (Number.isFinite(spec.iterations) && wanted > budget + 1e-4) {
+        unsupported.add('the end of an animation longer than the composition');
+      }
+      const active = Math.min(wanted, budget);
       const base = {
         target: el,
-        begin: Math.max(0, spec.delay),
+        // A NEGATIVE `animation-delay` is not "starts at zero" — it means the
+        // animation is ALREADY that far into its first cycle at t=0. Clamping it
+        // erased the one thing it is used for: three loader dots delayed
+        // 0 / −0.3s / −0.6s produced three IDENTICAL tracks and bounced in
+        // unison instead of as a wave. The sampler reads `t - begin`, so a
+        // negative begin gives exactly the pre-rolled phase.
+        begin: spec.delay,
         dur: spec.dur,
         active,
         origin: resolveOrigin(el, decls, viewBox),
@@ -668,7 +774,7 @@ export function readCssAnimations(doc: Document, unrollSeconds = MAX_UNROLL_SECO
         ['opacity', 'opacity'],
         ['stroke-dashoffset', 'dashoffset'],
       ] as const) {
-        const track = buildTrack(blocks, prop);
+        const track = buildTrack(blocks, prop, unsupported);
         if (track) anims.push({ ...base, kind, values: track.values, keyTimes: track.keyTimes });
       }
 
@@ -694,6 +800,7 @@ export function readCssAnimations(doc: Document, unrollSeconds = MAX_UNROLL_SECO
 function buildTrack(
   blocks: readonly KeyframeBlock[],
   prop: 'transform' | 'opacity' | 'stroke-dashoffset',
+  unsupported: Set<string>,
 ): { values: number[][]; keyTimes: number[] } | null {
   // `stroke-dashoffset`'s neutral value is 0 (nothing hidden) — the draw-on
   // convention keyframes AWAY from it, so an absent endpoint means "drawn".
@@ -703,7 +810,7 @@ function buildTrack(
     const raw = block.decls.get(prop);
     if (raw === undefined) continue;
     if (prop === 'transform') {
-      knots.push({ offset: block.offset, value: parseTransformList(raw) });
+      knots.push({ offset: block.offset, value: parseTransformList(raw, unsupported) });
     } else {
       // Opacity is unitless; dashoffset may carry px.
       const n = Number(/^(-?[\d.]+)/.exec(raw.trim())?.[1]);

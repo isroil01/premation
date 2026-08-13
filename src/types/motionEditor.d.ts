@@ -37,15 +37,6 @@ export interface MediaProbeResult {
   } | null;
 }
 
-export interface StoredCredentials {
-  /** The long-lived, single-use refresh token. Rotated on every exchange. */
-  refreshToken: string;
-  refreshExpiresAt?: string;
-  /** For "continue as …" on the sign-in screen. Not a secret. */
-  email?: string;
-  userId?: string;
-}
-
 /** Providers the desktop key vault will hold a key for. */
 export type AiVaultProvider = 'openai' | 'anthropic' | 'gemini';
 
@@ -71,34 +62,91 @@ export type AiStreamEvent =
   | { requestId: string; type: 'done' }
   | { requestId: string; type: 'error'; code: string; message: string };
 
+export interface ApiProxyRequest {
+  path: string;
+  method?: string;
+  headers?: Record<string, string>;
+  /** Text, or bytes for a body the renderer already encoded (multipart). */
+  body?: string | Uint8Array;
+}
+
+export interface ApiProxyResponse {
+  ok: boolean;
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/** A request that never reached the network: a refused path, or a dead socket. */
+export interface ApiProxyFailure {
+  ok: false;
+  status: 0;
+  error: string;
+  reason?: string;
+}
+
+export type ApiStreamStart =
+  | { ok: true; requestId: string; status: number; headers: Record<string, string> }
+  | { ok: false; status: number; error: string; body?: string };
+
+export type ApiStreamEvent =
+  | { requestId: string; type: 'chunk'; text: string }
+  | { requestId: string; type: 'done' }
+  | { requestId: string; type: 'error'; message: string };
+
+/** What the UI may know about the session. Never any part of a credential. */
+export interface AuthStatus {
+  signedIn: boolean;
+  userId?: string;
+  email?: string;
+  /** Epoch ms. Lets the UI show an expiry without holding a token. */
+  accessExpiresAt?: number;
+  plan?: string | null;
+  /** False when the OS has no keystore: the session dies with the app. */
+  persisted: boolean;
+}
+
 export interface MotionEditorApi {
   readonly platform: string;
   readonly version: string;
   /**
-   * OS-keystore-backed session storage, held in the main process.
+   * Authenticated calls to our own backend, made from the main process.
    *
-   * The refresh token is a 90-day credential, so it does not belong in
-   * renderer `localStorage` — a plaintext file the user (and anything running
-   * as them) can read and edit from DevTools. Encrypted here with DPAPI /
-   * Keychain / libsecret via Electron's `safeStorage`.
+   * There is deliberately no way to read the session token — the same shape as
+   * `ai.keys` below, and for the same reason. The renderer asks for a REQUEST
+   * to be made; the `Authorization` header is attached in main and never
+   * crosses back. `path` is a path, not a URL: main resolves the base itself,
+   * so this cannot be turned into a general relay carrying the user's bearer.
    */
-  credentials?: {
-    get?(): Promise<StoredCredentials | null>;
-    set?(credentials: StoredCredentials): Promise<{ persisted: boolean }>;
-    clear?(): Promise<void>;
-    /** False when the OS has no keystore — sessions then last only as long as the app runs. */
-    available?(): Promise<boolean>;
+  api?: {
+    request?(req: ApiProxyRequest): Promise<ApiProxyResponse | ApiProxyFailure>;
+    stream?(req: ApiProxyRequest): Promise<ApiStreamStart>;
+    cancel?(requestId: string): Promise<boolean>;
+    /** Returns an unsubscribe function. Filter events by `requestId`. */
+    onStreamEvent?(handler: (event: ApiStreamEvent) => void): () => void;
+  };
+  /**
+   * Session state, and the two operations that change it.
+   *
+   * `status` returns claims and never a credential. There is no `getToken`, and
+   * adding one would undo the whole arrangement above.
+   */
+  auth?: {
+    status?(): Promise<AuthStatus>;
+    signIn?(payload: { path: string; body?: unknown; clientName?: string }):
+      Promise<{ ok: true; status: AuthStatus } | { ok: false; status: number; body?: unknown }>;
+    signOut?(): Promise<AuthStatus>;
+    /** One-way migration of a pre-Track-A `localStorage` refresh token. */
+    adoptLegacy?(refreshToken: string): Promise<AuthStatus>;
   };
   /**
    * The assistant, for the local edition — the shell holds the provider keys and
    * makes the calls (electron/aiKeyVault.ts, electron/aiProxy.ts).
    *
    * There is deliberately no way to read a key back. `set` and `clear` write;
-   * `status` returns presence and a masked tail. That asymmetry with
-   * `credentials` above — which DOES expose `get`, because the renderer has to
-   * put the refresh token in a request to our own API — is the point: nothing in
-   * the renderer needs a provider key, because nothing in the renderer talks to a
-   * provider.
+   * `status` returns presence and a masked tail. Nothing in the renderer needs a
+   * provider key, because nothing in the renderer talks to a provider — and the
+   * session token now has exactly the same shape, for exactly the same reason.
    */
   ai?: {
     keys?: {
@@ -254,6 +302,8 @@ export interface MotionEditorApi {
   };
   /** Subscribe to native menu command ids. Returns an unsubscribe fn. */
   onMenuCommand?(handler: (commandId: string) => void): () => void;
+  /** `premation://plugin/<id>` — validated in main, re-validated by the renderer. */
+  onPluginDeepLink?(handler: (payload: { id: string }) => void): () => void;
   /**
    * Report the RENDERER's edition to the shell, which resolved its own from a
    * different build input. Diagnostic only — main compares and logs, and never

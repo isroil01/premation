@@ -1,0 +1,4 @@
+{
+  "payload": "{\"seq\":1754500000000,\"issuedAt\":\"2026-08-06T12:00:00.000Z\",\"expiresAt\":\"2026-08-07T12:00:00.000Z\",\"entries\":[{\"id\":\"studio.acme.exfiltrator\",\"reason\":\"Uploaded project contents to an undisclosed host.\"}]}",
+  "signature": "Ju/nRdGsnQjDzknxgBAF1eTuivuJEWgP7j5OXXV00TG51777Ji0/9ZZ20sH1vOGWfE59CQqbBwla5jWXSTV+Wg=="
+}

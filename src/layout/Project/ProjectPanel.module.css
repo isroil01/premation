@@ -98,7 +98,7 @@
 }
 
 .rowMeta {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;

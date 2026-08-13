@@ -15,12 +15,15 @@ import { cn } from '@utils/cn';
 import { ValueField } from '@components/ValueField';
 import { EmptyState } from '@components/EmptyState';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useWorkspaceStore } from '@stores/projectStore';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useSceneRevision } from '@stores/sceneStore';
 import { defaultAnimation, sampleTrack, sampleSpeed, makeKeyframeId, EASY_EASE_BEZIER, type EasingKind, type PropertyTrack } from '@motion/animation';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { Icon } from '@components/Icon';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { ExpressionEditor } from './ExpressionEditor';
+import { BounceSection } from './BounceSection';
 import { MotionControls } from '@layout/Inspector/MotionControls';
 import styles from './MotionEditorPanel.module.css';
 
@@ -32,9 +35,7 @@ import styles from './MotionEditorPanel.module.css';
 function MotionPathBlock({ nodeId }: { nodeId: string }): JSX.Element {
   return (
     <>
-      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>
-        Motion Path &amp; Orientation
-      </div>
+      <h3 className={styles.sectionLabel}>Motion Path &amp; Orientation</h3>
       <MotionControls nodeId={nodeId} />
     </>
   );
@@ -73,6 +74,19 @@ const EASE_PREVIEW: Record<EasingKind, string> = {
 };
 
 const DEFAULT_BEZIER: [number, number, number, number] = [0.25, 0.1, 0.25, 1];
+
+/**
+ * Axis extent, short enough to sit in the graph's margin.
+ *
+ * Positions run to four figures and opacity to three, so a fixed decimal count
+ * either truncates the first or pads the second with noise.
+ */
+function formatAxis(v: number): string {
+  const abs = Math.abs(v);
+  if (abs >= 1000) return v.toFixed(0);
+  if (abs >= 10) return v.toFixed(1);
+  return v.toFixed(2);
+}
 
 interface Bounds {
   t0: number; t1: number; vmin: number; vmax: number;
@@ -113,6 +127,8 @@ function computeSpeedBounds(track: PropertyTrack): Bounds {
 
 export function MotionEditorPanel(): JSX.Element {
   const primary = useSelectionStore((s) => s.primary);
+  const activeTabId = useWorkspaceStore((s) => s.activeTabId);
+  const playhead = useWorkspaceStore((s) => (activeTabId ? s.tabs[activeTabId]?.time : 0) ?? 0);
   // The engine mutates keyframes in place, so `track` keeps the same reference.
   // Bump-driven `rev` is what tells the curve/bounds memos to recompute.
   const rev = useSceneRevision((s) => s.rev);
@@ -158,6 +174,14 @@ export function MotionEditorPanel(): JSX.Element {
 
   const selectedKf = track?.keyframes.find((k) => k.t === selT) ?? null;
   const { copyEase, pasteEase, copied: hasCopiedEase } = useEaseClipboardStore();
+
+  /** Where the playhead falls on this curve, or null when it is off-graph. */
+  const playheadX = useMemo(() => {
+    if (!bounds || !primary || !prop) return null;
+    const layerT = compToKeyframeTime(primary, playhead, prop);
+    if (layerT < bounds.t0 || layerT > bounds.t1) return null;
+    return PAD + ((layerT - bounds.t0) / (bounds.t1 - bounds.t0)) * (VIEW_W - 2 * PAD);
+  }, [bounds, primary, prop, playhead]);
 
   // ── Keyframe drag (value = vertical, time = horizontal) ──────────
   const onPointGrab = (t: number, e: ReactPointerEvent<SVGCircleElement>): void => {
@@ -304,6 +328,10 @@ export function MotionEditorPanel(): JSX.Element {
     return (
       <div className={styles.root}>
         <MotionPathBlock nodeId={primary} />
+        {/* Bounce comes BEFORE the empty state, because "this layer has no
+            animation" is precisely the case Drop In & Bounce exists for. The
+            graph below has nothing to draw; this section still works. */}
+        <BounceSection nodeId={primary} />
         {/* "above" used to mean the PresetsBar that sat here. That bar was a
             duplicate of the Presets panel — which also saves, deletes, searches
             and previews — so it was removed and this points at the real home. */}
@@ -315,6 +343,7 @@ export function MotionEditorPanel(): JSX.Element {
   return (
     <div className={styles.root}>
       <MotionPathBlock nodeId={primary} />
+      <BounceSection nodeId={primary} />
       {/* Property picker + graph-mode toggle */}
       <div className={styles.topRow}>
         <div className={styles.props}>
@@ -374,6 +403,28 @@ export function MotionEditorPanel(): JSX.Element {
         </g>
         {/* frame */}
         <rect x={PAD} y={PAD} width={VIEW_W - 2 * PAD} height={VIEW_H - 2 * PAD} className={styles.frame} />
+        {/* Axis extents. A curve with no numbers on it shows a shape but not a
+            magnitude — you could see the value rise without seeing what it rose
+            to, which is most of what a graph editor is for. */}
+        <text className={styles.axisLabel} x={2} y={PAD + 4} textAnchor="start">
+          {formatAxis(bounds.vmax)}
+        </text>
+        <text className={styles.axisLabel} x={2} y={VIEW_H - PAD} textAnchor="start">
+          {formatAxis(bounds.vmin)}
+        </text>
+        <text className={styles.axisLabel} x={PAD} y={VIEW_H - 4} textAnchor="start">
+          {bounds.t0.toFixed(2)}s
+        </text>
+        <text className={styles.axisLabel} x={VIEW_W - PAD} y={VIEW_H - 4} textAnchor="end">
+          {bounds.t1.toFixed(2)}s
+        </text>
+        {/* The playhead, converted out of comp time into this track's own time
+            so a trimmed or stretched layer marks the frame it actually renders.
+            The graph and the timeline were showing the same moment and nothing
+            on either said so. */}
+        {playheadX !== null && (
+          <line className={styles.playhead} x1={playheadX} y1={PAD} x2={playheadX} y2={VIEW_H - PAD} />
+        )}
         {/* curve */}
         {path ? <path d={path} className={styles.curve} /> : null}
         {/* Bezier handles for the selected segment (custom easing) */}
@@ -385,21 +436,34 @@ export function MotionEditorPanel(): JSX.Element {
             <circle className={styles.bezierHandle} cx={handlePts.h2.x} cy={handlePts.h2.y} r={5} onPointerDown={(e) => onHandleGrab(1, e)} />
           </g>
         ) : null}
-        {/* keyframes */}
+        {/* Keyframes. Each is drawn small and grabbed large: the visible dot is
+            5px, the hit target behind it is 11px. A 5px target in a control
+            people drag all day is a miss-click generator. */}
         {track.keyframes.map((k) => (
-          <circle
-            key={k.t}
-            cx={xOf(k.t)}
-            cy={yOf(kfY(k))}
-            r={k.t === selT ? 6 : 5}
-            className={cn(styles.point, k.t === selT && styles.pointSel, k.roving && styles.pointRoving)}
-            onPointerDown={(e) => onPointGrab(k.t, e)}
-          />
+          <g key={k.t}>
+            <circle
+              cx={xOf(k.t)}
+              cy={yOf(kfY(k))}
+              r={11}
+              className={styles.pointHit}
+              onPointerDown={(e) => onPointGrab(k.t, e)}
+            />
+            <circle
+              cx={xOf(k.t)}
+              cy={yOf(kfY(k))}
+              r={k.t === selT ? 6 : 5}
+              className={cn(styles.point, k.t === selT && styles.pointSel, k.roving && styles.pointRoving)}
+              onPointerDown={(e) => onPointGrab(k.t, e)}
+            />
+          </g>
         ))}
       </svg>
 
       {/* Easing Presets (Always Visible) */}
-      <div className={styles.sectionTitle} style={{ marginTop: 8, fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--color-text-tertiary)' }}>Easing Presets</div>
+      <h3 className={styles.sectionLabel}>
+        Easing
+        {!selectedKf && <span className={styles.sectionNote}>select a keyframe</span>}
+      </h3>
       <div className={styles.easings} role="radiogroup" aria-label="Easing">
         {EASINGS.map((e) => {
           const isActive = selectedKf && (selectedKf.easing ?? 'linear') === e.kind;
@@ -425,7 +489,7 @@ export function MotionEditorPanel(): JSX.Element {
 
       {/* Selected keyframe controls */}
       {selectedKf && (
-        <div className={styles.controls} style={{ marginTop: 8 }}>
+        <div className={styles.controls}>
           <div className={styles.numeric}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Value</span>
@@ -464,10 +528,14 @@ export function MotionEditorPanel(): JSX.Element {
             </label>
           </div>
 
-          {/* Quick actions: Easy Ease (F9) + Roving toggle. */}
+          {/* Everything you do TO the selected keyframe, in one row.
+              These were three rows in two different button treatments: Easy
+              Ease + Roving here, Copy/Paste Ease in a second `.actions` block
+              below the expression editor, several hundred pixels away from the
+              keyframe they act on. */}
           <div className={styles.actions}>
             <button type="button" className={styles.actionChip} onClick={applyEasyEase} title="Easy Ease (F9)">
-              Easy Ease
+              <Icon name="ease" size="sm" /> Easy Ease
             </button>
             <button
               type="button"
@@ -477,7 +545,24 @@ export function MotionEditorPanel(): JSX.Element {
               onClick={toggleRoving}
               title="Rove across time for constant speed"
             >
-              Roving
+              <Icon name="stopwatch" size="sm" /> Roving
+            </button>
+            <button
+              type="button"
+              className={styles.actionChip}
+              onClick={() => copyEase(makeKeyframeId(primary, prop, selectedKf.t))}
+              title="Copy this keyframe's easing"
+            >
+              <Icon name="copy" size="sm" /> Copy Ease
+            </button>
+            <button
+              type="button"
+              className={styles.actionChip}
+              disabled={!hasCopiedEase}
+              onClick={() => pasteEase([makeKeyframeId(primary, prop, selectedKf.t)])}
+              title={hasCopiedEase ? 'Paste the copied easing here' : 'Nothing copied yet'}
+            >
+              <Icon name="download" size="sm" /> Paste Ease
             </button>
           </div>
 
@@ -511,32 +596,11 @@ export function MotionEditorPanel(): JSX.Element {
         <div className={styles.hint}>No keyframes on “{prop}” — drive it with an expression below.</div>
       )}
 
-      {/* Copy/paste an easing curve between keyframes. Moved here from the
-          left-sidebar Flow panel, which was a SECOND full bezier editor for the
-          same keyframes — it wrote through a different path and only re-synced
-          its handles when `easing === 'bezier'`, so it showed a stale curve
-          after any preset applied from here. This was its one unique action. */}
-      {selectedKf && (
-        <div className={styles.actions}>
-          <button
-            type="button"
-            className={styles.actionChip}
-            onClick={() => copyEase(makeKeyframeId(primary, prop, selectedKf.t))}
-            title="Copy this keyframe's easing"
-          >
-            <Icon name="copy" size={12} /> Copy Ease
-          </button>
-          <button
-            type="button"
-            className={styles.actionChip}
-            disabled={!hasCopiedEase}
-            onClick={() => pasteEase([makeKeyframeId(primary, prop, selectedKf.t)])}
-            title={hasCopiedEase ? 'Paste the copied easing here' : 'Nothing copied yet'}
-          >
-            <Icon name="download" size={12} /> Paste Ease
-          </button>
-        </div>
-      )}
+      {/* Copy/paste an easing curve between keyframes moved UP into the
+          selected-keyframe action row. It came from the deleted left-sidebar
+          Flow panel and landed here, below the expression editor — a control
+          acting on the selected keyframe, placed past the section that has
+          nothing to do with keyframes. */}
 
       {/* Expression editor — drives this property with a formula each frame. */}
       <ExpressionEditor nodeId={primary} prop={prop} />

@@ -9,6 +9,7 @@ import solidFill from './solidFill';
 import linearGradientFill from './linearGradientFill';
 import { shapeScenes } from './shapes';
 import { strokeScenes } from './strokes';
+import { strokeProfileScenes } from './strokeProfile';
 import { blendModeScenes, matteModeScenes, alphaAddSeamScene } from './blendModes';
 import { effectScenes } from './effects';
 import { compositedScenes } from './composited';
@@ -24,6 +25,8 @@ import { glassScenes } from './glass';
 import { rigScenes } from './rig';
 import { alphaInterpScenes } from './alphaInterp';
 import { keyframeFamilyScenes } from './keyframeFamilies';
+import { pluginEffectScenes } from './pluginEffects';
+import { extrusionScenes } from './extrusion';
 
 export const SCENES: Scene[] = [
   // Anchors + fill probes.
@@ -33,6 +36,7 @@ export const SCENES: Scene[] = [
   // Feature families.
   ...shapeScenes,
   ...strokeScenes,
+  ...strokeProfileScenes,
   ...blendModeScenes,
   // Registered as of the F10/F12 fix. Both families produce partial alpha in
   // the final composite, which is precisely what used to accumulate.
@@ -43,6 +47,11 @@ export const SCENES: Scene[] = [
   ...interiorStyleScenes,
   ...textScenes,
   ...threeDScenes,
+  // Extrusion. Separate from the 3D family because the subject is a real
+  // multi-face SOLID rather than a plane in space, and the question these ask
+  // — which of the synthesized faces an effect reached — has no meaning for a
+  // single-quad 3D layer.
+  ...extrusionScenes,
   ...motionScenes,
   ...precompScenes,
   ...rigScenes,
@@ -52,4 +61,7 @@ export const SCENES: Scene[] = [
   ...glassScenes,
   ...alphaInterpScenes,
   ...keyframeFamilyScenes,
+  // Plugin effects. The only scenes that render a shader the host did not
+  // write, and the only place the plugin path is exercised end to end.
+  ...pluginEffectScenes,
 ];

@@ -194,7 +194,13 @@ export const blurResolve: TechniqueDef = {
     ids.forEach((id, i) => {
       const at = ctx.startMs + staggerAt(ctx, i, ids.length, spanMs);
       const fx = `${ctx.idPrefix}_blur_${i}`;
-      calls.push(mk('add_effect', { nodeId: id, type: 'blur', amount: blur }));
+      // `id: fx` is load-bearing rather than tidiness. `add_effect` used to
+      // generate its own `fx_<n>`, and a flat emitter cannot read a return
+      // value — so the track below named an effect that never existed. The
+      // keyframes validated, stored, and were never sampled. This entrance's
+      // whole subject is a blur resolving, and it never resolved because it
+      // never blurred.
+      calls.push(mk('add_effect', { nodeId: id, type: 'blur', amount: blur, id: fx }));
       // The blur ramp is NOT symmetric with the fade: it resolves faster, so the
       // element is sharp before it is fully opaque. The other order looks like a
       // rendering delay.

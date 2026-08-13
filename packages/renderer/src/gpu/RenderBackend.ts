@@ -82,6 +82,26 @@ export interface RenderBackend {
   /** Acquire the GPU device/context. Idempotent; resolves when ready. */
   initialize(surface?: RenderSurface): Promise<void>;
 
+  /**
+   * Called once if the GPU device is lost, with whatever the driver said.
+   *
+   * Optional because only WebGPU can report it this way: `GPUDevice.lost` is a
+   * promise that resolves on a device reset. WebGL2's `webglcontextlost` is a
+   * different mechanism that this interface does not currently model, and
+   * pretending otherwise would mean a handler that silently never fires on one
+   * backend.
+   *
+   * Exists so a device reset can be ATTRIBUTED. Plugin effects run arbitrary
+   * WGSL, a GPU cannot be preempted, and a shader that hangs it takes down
+   * every context in the process. Without a hook here the app learns that the
+   * viewport died and nothing about why — see `core/plugins/pluginEffects.ts`,
+   * which turns "something was drawing" into "this effect, from this plugin".
+   *
+   * Attach BEFORE `initialize`, or the device may already be gone by the time
+   * the handler is registered.
+   */
+  onDeviceLost?(handler: (reason: string) => void): void;
+
   // ── Resource creation ───────────────────────────────────────────
   createBuffer(desc: BufferDescriptor): BufferHandle;
   writeBuffer(buffer: BufferHandle, byteOffset: number, data: ArrayBufferView): void;
@@ -96,6 +116,19 @@ export interface RenderBackend {
 
   createShaderModule(desc: ShaderModuleDescriptor): ShaderModuleHandle;
   destroyShaderModule(shader: ShaderModuleHandle): void;
+
+  /**
+   * Compile a source now and return the driver's error messages, if the backend
+   * can ask. An empty array means it compiled cleanly.
+   *
+   * Optional, and the absence is meaningful: a backend that cannot report
+   * diagnostics returns nothing here, and a caller must read that as "not
+   * checked" rather than "fine". It exists for host-supplied shaders — a
+   * plugin effect's WGSL is untrusted text, and without this the first news of
+   * a bad one is a pipeline failing inside a frame, where the error is
+   * unattributable and the frame is already lost.
+   */
+  shaderDiagnostics?(label: string, wgsl: string): Promise<string[]>;
 
   createPipeline(desc: PipelineDescriptor): PipelineHandle;
   destroyPipeline(pipeline: PipelineHandle): void;

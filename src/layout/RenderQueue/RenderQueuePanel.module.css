@@ -4,7 +4,7 @@
   height: 100%;
   background: var(--color-panel);
   font-family: var(--font-family-sans);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
 
@@ -30,7 +30,7 @@
   border: 1px solid var(--color-border-strong);
   border-radius: 4px;
   color: var(--color-text-primary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
   letter-spacing: 0.02em;
@@ -68,7 +68,7 @@
 
 .statusBadge {
   padding: 2px 8px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   background: var(--color-surface-raised);
@@ -101,7 +101,7 @@
   gap: 8px;
   height: 140px;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   text-align: center;
   padding: 20px;
 }
@@ -143,14 +143,14 @@
 
 .jobIndex {
   color: var(--color-text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
 }
 
 .compName {
   color: var(--color-text-primary);
   font-weight: 500;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .cardHeaderRight {
@@ -192,7 +192,7 @@
 
 .outputPath {
   color: var(--color-text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   word-break: break-all;
   line-height: 1.2;
 }
@@ -201,7 +201,7 @@
 .jobSpec {
   color: var(--color-text-tertiary);
   font-family: var(--font-family-mono);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.2;
 }
 
@@ -222,7 +222,7 @@
   background: color-mix(in srgb, var(--color-danger) 12%, transparent);
   border: 1px solid var(--color-danger);
   color: var(--color-text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   line-height: 1.35;
 }
 
@@ -291,7 +291,7 @@
   padding: 6px 10px;
   background: var(--color-statusbar);
   border-top: 1px solid var(--color-border-strong);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   color: var(--color-text-muted);
   flex-shrink: 0;
 }

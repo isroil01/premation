@@ -1,5 +1,6 @@
 import type { BezierPoint } from '@motion/workspace';
 import { scanSvgAnimations, buildShapeAnimation, type SvgShapeAnimation, type SvgAnimationOptions } from './svgAnimation';
+import { readCssPresentation } from './svgCss';
 
 export interface ParsedShape {
   name: string;
@@ -9,6 +10,15 @@ export interface ParsedShape {
   strokeWidth?: number;
   /** false for open outlines (polyline / line / paths without Z). */
   closed: boolean;
+  /**
+   * The path's runs, centred like `points`, when there is more than one.
+   *
+   * A `d` with several `M` commands is several outlines — the hole in a donut,
+   * the counter in an "o". Flattening them into `points` filled the hole and
+   * drew a stray segment from one ring to the next, so the shape came out as a
+   * blob that did not resemble the file.
+   */
+  subpaths?: SubPath[];
   // Bounding box centering offsets
   width: number;
   height: number;
@@ -16,6 +26,28 @@ export interface ParsedShape {
   centerY: number;
   textContent?: string;
   fontSize?: number;
+  /**
+   * `<image>` source — this shape is an embedded bitmap.
+   *
+   * It used to be dropped outright, so any animated SVG built around a photo
+   * imported with a hole where the photo was.
+   */
+  imageHref?: string;
+  /** Resolved (inherited) text style — undefined for non-text shapes. */
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+  /**
+   * The element's own `opacity`, times every ancestor group's (0..1).
+   *
+   * Groups are flattened into independent layers, so a `<g opacity="0.5">` has
+   * nowhere else to go — dropping it, which is what used to happen, rendered
+   * every faded element at full strength.
+   */
+  opacity: number;
+  /** Inherited `fill-opacity` / `stroke-opacity` (0..1). */
+  fillOpacity: number;
+  strokeOpacity: number;
   /**
    * Keyframes translated from the element's SMIL animation, if any. Present
    * only when the SVG actually animates — see `svgAnimation.ts`.
@@ -30,6 +62,97 @@ export interface ParsedShape {
 // ---------------------------------------------------------------------------
 export type Mat = readonly [number, number, number, number, number, number];
 const IDENTITY: Mat = [1, 0, 0, 1, 0, 0];
+
+/**
+ * One factor of a shape's baked matrix, in composition order (outermost first).
+ *
+ * The animation translator has to rebuild the shape's matrix at time `t` and
+ * compare it against the baked one (`D = A(t)·S⁻¹`). It used to do that from
+ * the chain's `transform` ATTRIBUTES alone — but `S` also contains coordinate
+ * systems that are not attributes: the root `viewBox`→pixel-box mapping,
+ * `<use x/y>` offsets, and nested `<svg>`/`<symbol>` viewports. Every one of
+ * those survived into `D` as a residual `R⁻¹`, i.e. a CONSTANT offset and scale
+ * welded onto every animated shape.
+ *
+ * It cancels exactly when the root matrix is the identity, which is why files
+ * whose `width`/`height` match their `viewBox` always looked right and
+ * everything else did not: a `width="200" viewBox="0 0 50 50"` file gave every
+ * animated part `scaleX = scaleY = 0.25` and a hundred-unit jump, while its
+ * un-animated siblings stayed put. Recording the fixed factors alongside the
+ * animatable ones is what lets `A(t)` be assembled in the SAME space as `S`.
+ */
+/** The style a text run is measured with — SVG units, not scene units. */
+export interface SvgTextStyle {
+  content: string;
+  fontSize: number;
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+}
+
+/** What a measurer must report about a text run. */
+export interface SvgTextMetrics {
+  /** Advance width of the widest line — what `text-anchor` is measured against. */
+  advance: number;
+  /** The layer's render box, centred on the draw origin. */
+  width: number;
+  height: number;
+  /**
+   * How far the run's alphabetic BASELINE sits below its block centre.
+   *
+   * SVG pins text by its baseline and the scene positions a layer by its
+   * centre, so this is the whole of the vertical correction. It is NOT the
+   * font box's offset from the draw origin — that is ~0, because the origin is
+   * the `middle` baseline, and using it applied 1.88px where 9.62px was needed
+   * on 32px Inter.
+   */
+  baselineOffset: number;
+}
+
+/**
+ * Measures a text run, or null when it cannot.
+ *
+ * Injected rather than imported: measuring needs a canvas, which lives in
+ * `@core/text/measureText`, and nothing else in `src/utils` reaches into
+ * `@core`. It also makes the geometry testable with exact numbers instead of
+ * whatever the test runner's canvas stub happens to return.
+ */
+export type SvgTextMeasurer = (style: SvgTextStyle) => SvgTextMetrics | null;
+
+/**
+ * Intersects a shape's runs with a clip region, or null when it cannot.
+ *
+ * `clip-path` has no representation in the scene — the shape layer cannot clip
+ * at draw time — so the only faithful translation is to CUT THE GEOMETRY at
+ * import, which is exactly a boolean intersect. That lives in `@core` (it needs
+ * `polygon-clipping`), hence the injection, same as the text measurer.
+ *
+ * Curves are flattened by the intersect, which is the honest cost: a clipped
+ * circle becomes a fine polygon. Merge Paths already makes that trade for the
+ * same reason.
+ */
+export type SvgPathIntersector = (
+  subject: readonly SubPath[],
+  clip: readonly SubPath[],
+) => SubPath[] | null;
+
+/**
+ * Where a run's visual CENTRE sits relative to its `text-anchor` point.
+ *
+ * SVG pins the run at `x` by its anchor; the scene positions a layer by its
+ * centre. `start` (the default) therefore has to move RIGHT by half the run —
+ * not doing so drew every left-aligned label half its own width too far left.
+ */
+export function textAnchorOffsetX(anchor: 'start' | 'middle' | 'end', advance: number): number {
+  if (anchor === 'middle') return 0;
+  return anchor === 'end' ? -advance / 2 : advance / 2;
+}
+
+export type MatrixFactor =
+  /** A coordinate system: root viewBox map, `<use>` offset, nested viewport. */
+  | { readonly fixed: Mat }
+  /** An element whose `transform` attribute may be animated. */
+  | { readonly el: Element };
 
 /** Compose two matrices: result applies `n` first, then `m` (m * n). */
 export function matMul(m: Mat, n: Mat): Mat {
@@ -277,20 +400,49 @@ function arcToCubics(
   return segments;
 }
 
+/** One run of a path — everything between two `M` commands. */
+export interface SubPath {
+  points: BezierPoint[];
+  closed: boolean;
+}
+
 /**
  * Parse an SVG path `d` attribute into BezierPoints (user space).
  * Supports M/L/H/V/C/S/Q/T/A/Z in absolute and relative forms.
- * Returns the points plus whether the path contained a close command.
+ *
+ * Returns the runs (`subpaths`) as well as the flat point list, because a `d`
+ * with more than one `M` is not one outline: a donut, a letter with a counter
+ * and every icon with a hole in it are two runs, and flattening them into a
+ * single array both fills the hole and draws a stray segment between the rings.
+ * `points`/`closed` stay for callers that only ever want a rough outline.
  */
-export function parseSvgPathEx(d: string): { points: BezierPoint[]; closed: boolean } {
+export function parseSvgPathEx(d: string): { points: BezierPoint[]; closed: boolean; subpaths: SubPath[] } {
   const tokens = parsePathTokens(d);
-  const points: BezierPoint[] = [];
+  const subpaths: SubPath[] = [];
+  let points: BezierPoint[] = [];
+  let closedRun = false;
 
   let cx = 0;
   let cy = 0;
   let startX = 0;
   let startY = 0;
   let closed = false;
+
+  /** Bank the run in progress. */
+  const flushRun = (): void => {
+    if (points.length > 0) subpaths.push({ points, closed: closedRun });
+    points = [];
+    closedRun = false;
+  };
+  /**
+   * A drawing command AFTER a `Z` with no `M` between starts a fresh subpath at
+   * the closed one's initial point (SVG 1.1 §8.3.1) — it does not reopen it.
+   */
+  const breakAfterClose = (): void => {
+    if (!closedRun) return;
+    flushRun();
+    points.push({ x: cx, y: cy, inX: cx, inY: cy, outX: cx, outY: cy });
+  };
 
   // Reflection state for S / T smoothing.
   let lastCubicCtrlX = 0;
@@ -306,6 +458,7 @@ export function parseSvgPathEx(d: string): { points: BezierPoint[]; closed: bool
     // Z takes no args but must run once.
     if (upperCmd === 'Z') {
       closed = true;
+      closedRun = true;
       cx = startX;
       cy = startY;
       prevType = 'Z';
@@ -315,7 +468,7 @@ export function parseSvgPathEx(d: string): { points: BezierPoint[]; closed: bool
     // Per-command handling (relative args accumulate against the running point).
     let i = 0;
     if (upperCmd === 'M') {
-      // First pair = moveto, subsequent pairs = lineto.
+      // First pair = moveto (a NEW subpath), subsequent pairs = lineto.
       let first = true;
       while (i + 1 < args.length) {
         const x = args[i++]! + (isRelative ? cx : 0);
@@ -323,6 +476,7 @@ export function parseSvgPathEx(d: string): { points: BezierPoint[]; closed: bool
         cx = x;
         cy = y;
         if (first) {
+          flushRun();
           startX = x;
           startY = y;
           first = false;
@@ -330,7 +484,12 @@ export function parseSvgPathEx(d: string): { points: BezierPoint[]; closed: bool
         points.push({ x, y, inX: x, inY: y, outX: x, outY: y });
       }
       prevType = 'M';
-    } else if (upperCmd === 'L') {
+      continue;
+    }
+
+    breakAfterClose();
+
+    if (upperCmd === 'L') {
       while (i + 1 < args.length) {
         const x = args[i++]! + (isRelative ? cx : 0);
         const y = args[i++]! + (isRelative ? cy : 0);
@@ -446,13 +605,103 @@ export function parseSvgPathEx(d: string): { points: BezierPoint[]; closed: bool
       prevType = upperCmd;
     }
   }
+  flushRun();
 
-  return { points, closed };
+  return { points: subpaths.flatMap((s) => s.points), closed, subpaths };
 }
 
 /** Back-compat: parse a path `d` attribute into BezierPoints. */
 export function parseSvgPath(d: string): BezierPoint[] {
   return parseSvgPathEx(d).points;
+}
+
+/** Twice the signed area of a run — sign gives its winding direction. */
+function signedArea(pts: readonly BezierPoint[]): number {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i]!;
+    const q = pts[(i + 1) % pts.length]!;
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a;
+}
+
+/**
+ * Is `p` inside the ring `pts`? Ray casting on the anchors.
+ *
+ * Containment used to be tested with bounding boxes, which is only a proxy: two
+ * runs can nest by bbox without nesting at all (an L-shape's box swallows a
+ * neighbour), and a hole placed so its box escapes its parent's is missed
+ * entirely. The anchors alone are a coarse polygon, but a hole's anchors are
+ * unambiguously inside or outside the outline that contains it.
+ */
+function pointInRing(pts: readonly BezierPoint[], px: number, py: number): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[i]!;
+    const b = pts[j]!;
+    if ((a.y > py) !== (b.y > py)
+      && px < ((b.x - a.x) * (py - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/** A point on the ring's interior side, for the containment test. */
+function representativePoint(pts: readonly BezierPoint[]): { x: number; y: number } {
+  let x = 0;
+  let y = 0;
+  for (const p of pts) { x += p.x; y += p.y; }
+  return { x: x / pts.length, y: y / pts.length };
+}
+
+/**
+ * Re-wind the inner runs of an `fill-rule="evenodd"` path so NONZERO cuts the
+ * same holes.
+ *
+ * The renderer fills every run as one nonzero region — a hole only appears when
+ * the inner run winds against the outer one, which is what design tools emit
+ * and what `evenodd` files do NOT bother to do (the rule already handles it).
+ * Reversing a contained run is the whole translation: the picture is identical
+ * under evenodd and now correct under nonzero, so no fill rule has to be
+ * plumbed through the renderer to get a donut with a hole in it.
+ */
+function windForNonZero(subpaths: readonly SubPath[]): SubPath[] {
+  if (subpaths.length < 2) return [...subpaths];
+  const areas = subpaths.map((s) => signedArea(s.points));
+  const centres = subpaths.map((s) => representativePoint(s.points));
+  return subpaths.map((s, i) => {
+    const c = centres[i]!;
+    // Nesting depth by real containment. Odd depth = a hole under even-odd.
+    let depth = 0;
+    let container = -1;
+    let containerArea = Infinity;
+    for (let j = 0; j < subpaths.length; j++) {
+      if (j === i) continue;
+      if (!pointInRing(subpaths[j]!.points, c.x, c.y)) continue;
+      depth += 1;
+      // The IMMEDIATE container is the smallest ring that contains this one —
+      // with three nested rings, winding against the outermost would leave the
+      // middle one and this one turning the same way.
+      const a = Math.abs(areas[j]!);
+      if (a < containerArea) {
+        containerArea = a;
+        container = j;
+      }
+    }
+    if (depth % 2 === 0 || container < 0) return s;
+    const outer = areas[container]!;
+    const own = areas[i]!;
+    // Already wound against its container — nonzero cuts the hole as it stands.
+    if (outer === 0 || own === 0 || Math.sign(own) !== Math.sign(outer)) return s;
+    return { closed: s.closed, points: reversePoints(s.points) };
+  });
+}
+
+/** Reverse a run, swapping each point's in/out handles with it. */
+function reversePoints(pts: readonly BezierPoint[]): BezierPoint[] {
+  return pts.map((p) => ({ x: p.x, y: p.y, inX: p.outX, inY: p.outY, outX: p.inX, outY: p.inY })).reverse();
 }
 
 // ---------------------------------------------------------------------------
@@ -532,61 +781,284 @@ interface StyleCtx {
   fill?: string;
   stroke?: string;
   strokeWidth?: number;
+  /** The `color` property, so `currentColor` resolves the way a browser does. */
+  color?: string;
+  /**
+   * Group and element `opacity`, already multiplied down the tree (0..1).
+   *
+   * `opacity` is NOT an inherited property — it applies to the element (or the
+   * group's whole rendered result) as one unit. Flattening a group into
+   * independent shape layers is exactly the case where multiplying it down is
+   * the faithful translation.
+   */
+  opacity: number;
+  /** Inherited `fill-opacity` / `stroke-opacity` (0..1). */
+  fillOpacity: number;
+  strokeOpacity: number;
+  /** `visibility` — inherited, and a descendant may turn it back on. */
+  visible: boolean;
+  /**
+   * Inherited text properties.
+   *
+   * All of these are ordinary inherited CSS properties, so a `<g font-family>`
+   * around a label is the normal way to author one — reading them off the
+   * `<text>` element alone (which is what this used to do for `font-size`, and
+   * not at all for the rest) rendered every imported label in the app's default
+   * face at a guessed size.
+   */
+  fontSize: number;
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+  textAnchor: 'start' | 'middle' | 'end';
 }
 
-function parseInlineStyle(style: string | null): Partial<StyleCtx> {
-  const out: Partial<StyleCtx> = {};
+/** Declarations from an element's inline `style` attribute. */
+function parseInlineStyle(style: string | null): Map<string, string> {
+  const out = new Map<string, string>();
   if (!style) return out;
   for (const decl of style.split(';')) {
     const idx = decl.indexOf(':');
     if (idx < 0) continue;
-    const key = decl.slice(0, idx).trim();
-    const val = decl.slice(idx + 1).trim();
-    if (key === 'fill') out.fill = val;
-    else if (key === 'stroke') out.stroke = val;
-    else if (key === 'stroke-width') out.strokeWidth = parseFloat(val);
+    out.set(decl.slice(0, idx).trim().toLowerCase(), decl.slice(idx + 1).trim());
   }
   return out;
 }
 
-/** Merge presentation attributes + inline style over an inherited style. */
-function resolveStyle(el: Element, inherited: StyleCtx): StyleCtx {
-  const styleAttr = parseInlineStyle(el.getAttribute('style'));
-  const attrFill = el.getAttribute('fill');
-  const attrStroke = el.getAttribute('stroke');
-  const attrStrokeW = el.getAttribute('stroke-width');
+/** Presentation properties read off an element, in cascade order. */
+const PRESENTATION_ATTRS = [
+  'fill', 'stroke', 'stroke-width', 'opacity', 'fill-opacity', 'stroke-opacity',
+  'color', 'display', 'visibility',
+  'font-size', 'font-family', 'font-weight', 'font-style', 'text-anchor',
+] as const;
+
+/** The root font size `rem` resolves against — CSS's initial value. */
+const ROOT_FONT_SIZE = 16;
+
+/**
+ * A `font-size` declaration in user units, or undefined to keep the inherited
+ * one.
+ *
+ * `em` and `%` are relative to the PARENT's computed size and `rem` to the
+ * root's, which is the entire font-size cascade and cheap to run here. Treating
+ * them as unresolvable (which is what `absoluteLength` does) left `1.5em`
+ * labels at the inherited size — a common way for an exported icon to declare
+ * type, and a silent one to get wrong.
+ */
+function fontSizeOf(raw: string | undefined, inherited: number): number | undefined {
+  if (!raw) return undefined;
+  const s = raw.trim();
+  const rel = /^(-?\d*\.?\d+(?:[eE][-+]?\d+)?)\s*(em|rem|%)$/i.exec(s);
+  if (rel) {
+    const n = Number.parseFloat(rel[1]!);
+    if (!Number.isFinite(n)) return undefined;
+    const unit = rel[2]!.toLowerCase();
+    if (unit === '%') return (inherited * n) / 100;
+    return unit === 'rem' ? ROOT_FONT_SIZE * n : inherited * n;
+  }
+  return absoluteLength(s);
+}
+
+/** An alpha-ish declaration as 0..1, or null when it isn't a number. */
+function parseAlpha(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  const s = raw.trim();
+  const pct = /^(-?[\d.]+)%$/.exec(s);
+  const n = pct ? Number(pct[1]) / 100 : Number(s);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null;
+}
+
+/**
+ * Everything declared on an element, in CSS cascade order.
+ *
+ * Presentation attributes sit BELOW any stylesheet rule (they behave like an
+ * author rule of specificity zero), and inline `style` sits above both. Reading
+ * only the attributes and the inline style — which is all this did — meant a
+ * `<style>`-driven file imported with none of its colours.
+ */
+function declaredOn(el: Element, css: ReadonlyMap<string, string> | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const name of PRESENTATION_ATTRS) {
+    const v = el.getAttribute(name);
+    if (v != null) out.set(name, v);
+  }
+  if (css) for (const [k, v] of css) out.set(k, v);
+  for (const [k, v] of parseInlineStyle(el.getAttribute('style'))) out.set(k, v);
+  return out;
+}
+
+/** Merge an element's declarations over an inherited style. */
+function resolveStyle(
+  el: Element,
+  inherited: StyleCtx,
+  cssFor?: ReadonlyMap<Element, ReadonlyMap<string, string>>,
+): StyleCtx {
+  const d = declaredOn(el, cssFor?.get(el));
   const next: StyleCtx = { ...inherited };
-  if (styleAttr.fill != null) next.fill = styleAttr.fill;
-  else if (attrFill != null) next.fill = attrFill;
-  if (styleAttr.stroke != null) next.stroke = styleAttr.stroke;
-  else if (attrStroke != null) next.stroke = attrStroke;
-  if (styleAttr.strokeWidth != null && Number.isFinite(styleAttr.strokeWidth)) next.strokeWidth = styleAttr.strokeWidth;
-  else if (attrStrokeW != null) next.strokeWidth = parseFloat(attrStrokeW);
+
+  // `color` first: `currentColor` on the SAME element resolves against it.
+  const color = d.get('color');
+  if (color && color !== 'inherit' && color !== 'currentColor') next.color = color;
+
+  const paint = (raw: string | undefined): string | undefined => {
+    if (raw === undefined || raw === 'inherit') return undefined;
+    // `currentColor` used to reach the renderer verbatim, where it is not a
+    // valid `fillStyle`/`strokeStyle` — Canvas2D IGNORES an invalid assignment,
+    // so the shape was painted with whatever colour happened to be set last
+    // (black, for a fresh context). Resolving it here makes the outcome the
+    // one the browser would give: the inherited `color`, black by default.
+    if (raw.trim() === 'currentColor') return next.color ?? '#000000';
+    return raw;
+  };
+  const f = paint(d.get('fill'));
+  if (f !== undefined) next.fill = f;
+  const s = paint(d.get('stroke'));
+  if (s !== undefined) next.stroke = s;
+
+  const sw = d.get('stroke-width');
+  if (sw != null) {
+    const n = parseFloat(sw);
+    if (Number.isFinite(n)) next.strokeWidth = n;
+  }
+
+  // Group opacity MULTIPLIES down; fill/stroke opacity are inherited outright.
+  const op = parseAlpha(d.get('opacity'));
+  if (op !== null) next.opacity = inherited.opacity * op;
+  const fo = parseAlpha(d.get('fill-opacity'));
+  if (fo !== null) next.fillOpacity = fo;
+  const so = parseAlpha(d.get('stroke-opacity'));
+  if (so !== null) next.strokeOpacity = so;
+
+  // `visibility` is inherited and a descendant may set it back to `visible`.
+  const vis = d.get('visibility')?.trim().toLowerCase();
+  if (vis === 'hidden' || vis === 'collapse') next.visible = false;
+  else if (vis === 'visible') next.visible = true;
+
+  // Text properties, all inherited. `em`/`%` resolve against the INHERITED
+  // size, which is the whole of the font-size cascade — `rem` against the root,
+  // for which 16 is the initial value this parser starts from.
+  const fs = fontSizeOf(d.get('font-size'), inherited.fontSize);
+  if (fs !== undefined && fs > 0) next.fontSize = fs;
+  const ff = d.get('font-family');
+  if (ff && ff !== 'inherit') next.fontFamily = ff.trim();
+  const fw = d.get('font-weight');
+  if (fw && fw !== 'inherit') next.fontWeight = fw.trim();
+  const fst = d.get('font-style');
+  if (fst && fst !== 'inherit') next.fontStyle = fst.trim();
+  const anchor = d.get('text-anchor')?.trim().toLowerCase();
+  if (anchor === 'start' || anchor === 'middle' || anchor === 'end') next.textAnchor = anchor;
+
   return next;
+}
+
+/** One styled span of a `<text>` — a `<tspan>`, or the text between them. */
+export interface TextRun {
+  content: string;
+  style: StyleCtx;
+}
+
+/**
+ * Split a `<text>` into its styled runs, or null when it is all one style.
+ *
+ * A `<tspan>` exists to restyle part of a label — usually to recolour a word —
+ * and the parser used to take `textContent` of the whole element, so a
+ * two-colour label imported in one colour. Returning null for the ordinary case
+ * keeps every single-style label on exactly the path it took before.
+ */
+function textRunsOf(
+  el: Element,
+  base: StyleCtx,
+  css?: ReadonlyMap<Element, ReadonlyMap<string, string>>,
+): TextRun[] | null {
+  const runs: TextRun[] = [];
+  let styled = false;
+  const walk = (node: Node, style: StyleCtx): void => {
+    for (let i = 0; i < node.childNodes.length; i++) {
+      const child = node.childNodes[i]!;
+      if (child.nodeType === 3 /* text */) {
+        const text = child.nodeValue ?? '';
+        if (text.trim()) runs.push({ content: text, style });
+        continue;
+      }
+      if (child.nodeType !== 1 /* element */) continue;
+      const childEl = child as Element;
+      const tag = childEl.tagName.toLowerCase().replace(/^svg:/, '');
+      // A nested <textPath> is reported separately; its text still counts.
+      if (tag !== 'tspan' && tag !== 'textpath') continue;
+      const childStyle = resolveStyle(childEl, style, css);
+      if (childStyle.fill !== style.fill || childStyle.fontWeight !== style.fontWeight
+        || childStyle.fontSize !== style.fontSize || childStyle.fontStyle !== style.fontStyle) {
+        styled = true;
+      }
+      walk(childEl, childStyle);
+    }
+  };
+  walk(el, base);
+  return styled && runs.length > 1 ? runs : null;
+}
+
+/** The initial style — CSS initial values, and the root of every cascade. */
+const DEFAULT_STYLE: StyleCtx = {
+  fill: '#000000',
+  opacity: 1,
+  fillOpacity: 1,
+  strokeOpacity: 1,
+  visible: true,
+  fontSize: 16,
+  textAnchor: 'start',
+};
+
+/** `display: none` removes the element AND its subtree from the rendering. */
+function isDisplayNone(el: Element, cssFor?: ReadonlyMap<Element, ReadonlyMap<string, string>>): boolean {
+  const d = declaredOn(el, cssFor?.get(el));
+  return d.get('display')?.trim().toLowerCase() === 'none';
 }
 
 interface RawShape {
   name: string;
   points: BezierPoint[];
   closed: boolean;
+  /** Present only for a path with more than one run — see `SubPath`. */
+  subpaths?: SubPath[];
+  /** Clip regions from this element and its ancestors, outermost first. */
+  clips?: SubPath[][];
   style: StyleCtx;
   textContent?: string;
   fontSize?: number;
-  /** This element and its ancestors (root last) — SMIL on a <g> affects it too. */
-  chain: Element[];
+  /** `<image>` source — this shape is a bitmap, not an outline. */
+  imageHref?: string;
+  /** Differently-styled spans of one `<text>` — see `textRunsOf`. */
+  textRuns?: TextRun[];
+  /**
+   * Every factor of `matrix`, outermost first — see `MatrixFactor`.
+   *
+   * The element factors are this element and its ancestors (SMIL on a <g>
+   * affects it too); the fixed ones are the coordinate systems between them.
+   */
+  factors: MatrixFactor[];
   /** The fully composed static matrix baked into `points`. */
   matrix: Mat;
 }
 
 /** Extract user-space geometry for a single shape element (null if none). */
-function elementGeometry(el: Element): { points: BezierPoint[]; closed: boolean; textContent?: string; fontSize?: number } | null {
+function elementGeometry(el: Element, style: StyleCtx): { points: BezierPoint[]; closed: boolean; subpaths?: SubPath[]; textContent?: string; fontSize?: number; imageHref?: string } | null {
   const tag = el.tagName.toLowerCase().replace(/^svg:/, '');
   switch (tag) {
     case 'path': {
       const d = el.getAttribute('d');
       if (!d) return null;
-      const { points, closed } = parseSvgPathEx(d);
-      return points.length ? { points, closed } : null;
+      const { points, closed, subpaths } = parseSvgPathEx(d);
+      if (points.length === 0) return null;
+      if (subpaths.length < 2) return { points, closed };
+      // `fill-rule` may be a presentation attribute or a style declaration; the
+      // stylesheet form is rare enough on a path that the two direct spellings
+      // cover it, and getting it wrong only costs the hole a rewind it does not
+      // need (`windForNonZero` leaves correctly-wound runs alone).
+      const rule = (el.getAttribute('fill-rule')
+        ?? /(?:^|;)\s*fill-rule\s*:\s*([^;]+)/i.exec(el.getAttribute('style') ?? '')?.[1]
+        ?? '').trim().toLowerCase();
+      const runs = rule === 'evenodd' ? windForNonZero(subpaths) : subpaths;
+      return { points: runs.flatMap((r) => r.points), closed, subpaths: runs };
     }
     case 'rect': {
       const w = num(el, 'width');
@@ -634,18 +1106,39 @@ function elementGeometry(el: Element): { points: BezierPoint[]; closed: boolean;
         closed: false,
       };
     }
+    case 'image': {
+      // An embedded bitmap, which becomes a real image layer rather than being
+      // dropped. Its `href` is the source: after sanitizing, a remote one is
+      // already gone, so what survives is a `data:` URI the scene can hold.
+      const w = num(el, 'width');
+      const h = num(el, 'height');
+      if (w <= 0 || h <= 0) return null;
+      const href = el.getAttribute('href')
+        ?? el.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
+        ?? el.getAttribute('xlink:href');
+      if (!href) return null;
+      const x = num(el, 'x');
+      const y = num(el, 'y');
+      return {
+        points: rectPoints(x, y, w, h, 0, 0),
+        closed: true,
+        imageHref: href.trim(),
+      };
+    }
     case 'text':
     case 'tspan': {
       const txt = (el.textContent || '').trim();
       if (!txt) return null;
       const x = num(el, 'x');
       const y = num(el, 'y');
-      const fs = num(el, 'font-size', 14);
+      // The single point is the ANCHOR, not the box: `x` is where `text-anchor`
+      // pins the run and `y` is its BASELINE. Both are resolved into a real box
+      // later, once something has measured the glyphs (see `measureText`).
       return {
         points: [{ x, y, inX: x, inY: y, outX: x, outY: y }],
         closed: false,
         textContent: txt,
-        fontSize: fs,
+        fontSize: style.fontSize,
       };
     }
     default:
@@ -663,7 +1156,7 @@ function transformPoints(points: BezierPoint[], m: Mat): BezierPoint[] {
   });
 }
 
-const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'tspan']);
+const SHAPE_TAGS = new Set(['path', 'rect', 'circle', 'ellipse', 'polygon', 'polyline', 'line', 'text', 'tspan', 'image']);
 const SKIP_TAGS = new Set(['defs', 'clippath', 'mask', 'symbol', 'lineargradient', 'radialgradient', 'filter', 'metadata', 'title', 'desc', 'style', 'marker', 'pattern']);
 
 /** How deep `<use>` may chain before we call it a reference cycle. */
@@ -676,7 +1169,7 @@ const MAX_USE_DEPTH = 12;
  * still emit both, and `getAttribute('xlink:href')` works without namespace
  * awareness because the attribute's qualified name is literally that string.
  */
-function useTarget(el: Element): Element | null {
+function resolveUseTarget(el: Element): Element | null {
   const raw = el.getAttribute('href')
     ?? el.getAttributeNS('http://www.w3.org/1999/xlink', 'href')
     ?? el.getAttribute('xlink:href');
@@ -723,35 +1216,138 @@ function nestedViewportMatrix(el: Element, fallbackW?: number, fallbackH?: numbe
   return matMul(translate, [s, 0, 0, s, tx, ty]);
 }
 
+/** Everything a traversal needs that does not change as it descends. */
+interface TraverseCtx {
+  out: RawShape[];
+  /** `<style>`-declared presentation properties, resolved per element. */
+  css?: ReadonlyMap<Element, ReadonlyMap<string, string>>;
+  /** Names of features that were recognised but could not be reproduced. */
+  unsupported: Set<string>;
+}
+
+/** The `url(#id)` an attribute references, or null. */
+function urlRef(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const m = /^url\(\s*['"]?#([^'")\s]+)['"]?\s*\)/i.exec(raw.trim());
+  return m ? m[1]! : null;
+}
+
+/** An element by id, without relying on the document registering ID types. */
+function byId(doc: Document, id: string): Element | null {
+  const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+    ? CSS.escape(id)
+    : id.replace(/["\\]/g, '\\$&');
+  try {
+    return doc.querySelector(`[id="${escaped}"]`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The runs a `<clipPath>` describes, in the referencing element's space.
+ *
+ * `clipPathUnits` defaults to `userSpaceOnUse`, i.e. the same coordinates the
+ * clipped element is drawn in — so the caller's matrix is the right one to bake
+ * with. `objectBoundingBox` resolves against the clipped element's own bounds,
+ * which are not known until it has been built, and is reported instead.
+ */
+function clipRunsOf(
+  clipEl: Element,
+  matrix: Mat,
+  ctx: TraverseCtx,
+): SubPath[] {
+  const units = (clipEl.getAttribute('clipPathUnits') ?? 'userSpaceOnUse').trim();
+  if (units === 'objectBoundingBox') {
+    ctx.unsupported.add('clipPathUnits="objectBoundingBox"');
+    return [];
+  }
+  const runs: SubPath[] = [];
+  const walk = (el: Element, m: Mat): void => {
+    const tag = el.tagName.toLowerCase().replace(/^svg:/, '');
+    const local = matMul(m, parseTransform(el.getAttribute('transform')));
+    if (tag === 'use') {
+      const target = resolveUseTarget(el);
+      if (target) walk(target, local);
+      return;
+    }
+    if (SHAPE_TAGS.has(tag)) {
+      // A clip region is pure geometry: text inside one clips by its glyphs,
+      // which this cannot reproduce, so it is reported rather than approximated
+      // by the text's box.
+      if (tag === 'text' || tag === 'tspan') {
+        ctx.unsupported.add('text inside clip-path');
+        return;
+      }
+      const geom = elementGeometry(el, DEFAULT_STYLE);
+      if (!geom) return;
+      const source = geom.subpaths ?? [{ points: geom.points, closed: geom.closed }];
+      for (const r of source) runs.push({ points: transformPoints(r.points, local), closed: true });
+      return;
+    }
+    for (let i = 0; i < el.children.length; i++) walk(el.children[i]!, local);
+  };
+  for (let i = 0; i < clipEl.children.length; i++) walk(clipEl.children[i]!, matrix);
+  return runs;
+}
+
 /** Recursively collect shapes with accumulated transform + inherited style. */
 function traverse(
   el: Element,
   matrix: Mat,
   style: StyleCtx,
-  out: RawShape[],
+  ctx: TraverseCtx,
   ancestors: Element[] = [],
   useDepth = 0,
+  factors: readonly MatrixFactor[] = [],
+  clips: readonly SubPath[][] = [],
 ): void {
   const tag = el.tagName.toLowerCase().replace(/^svg:/, '');
   if (SKIP_TAGS.has(tag)) return;
+  // `display: none` takes the whole subtree out of the rendering, so an
+  // exporter's hidden guide layer must not import as a visible shape.
+  if (isDisplayNone(el, ctx.css)) return;
 
+  const out = ctx.out;
   const localMatrix = matMul(matrix, parseTransform(el.getAttribute('transform')));
-  const localStyle = resolveStyle(el, style);
+  const localStyle = resolveStyle(el, style, ctx.css);
   const chain = [el, ...ancestors];
+  const localFactors: MatrixFactor[] = [...factors, { el }];
+
+  // `clip-path` clips the element AND its whole subtree, and nested clips
+  // compound — so they accumulate down the tree like a transform does, and a
+  // shape is cut by every one of them in turn.
+  let localClips = clips;
+  const clipId = urlRef(el.getAttribute('clip-path')
+    ?? declaredOn(el, ctx.css?.get(el)).get('clip-path'));
+  if (clipId) {
+    const clipEl = byId(el.ownerDocument, clipId);
+    const clipTag = clipEl?.tagName.toLowerCase().replace(/^svg:/, '');
+    if (clipEl && clipTag === 'clippath') {
+      const runs = clipRunsOf(clipEl, localMatrix, ctx);
+      // An empty clip region hides everything it is applied to — that IS the
+      // rendering, so honour it rather than treating it as "no clip".
+      if (runs.length > 0) localClips = [...clips, runs];
+      else return;
+    }
+  }
 
   // <use>: instantiate the referenced element here. Icon sets, sprite sheets and
   // most "one artboard, many copies" exports are built entirely out of these, so
   // dropping them silently meant whole parts of the file simply never appeared.
   if (tag === 'use') {
     if (useDepth >= MAX_USE_DEPTH) return;
-    const target = useTarget(el);
+    const target = resolveUseTarget(el);
     if (!target) return;
     // A <use> may not reference itself or an ancestor — that is an infinite
     // expansion, and a hostile or merely broken file should not hang the import.
     if (chain.includes(target)) return;
     const ux = Number.parseFloat(el.getAttribute('x') ?? '0') || 0;
     const uy = Number.parseFloat(el.getAttribute('y') ?? '0') || 0;
-    const placed = ux !== 0 || uy !== 0 ? matMul(localMatrix, [1, 0, 0, 1, ux, uy]) : localMatrix;
+    const offset: Mat = [1, 0, 0, 1, ux, uy];
+    const shifted = ux !== 0 || uy !== 0;
+    const placed = shifted ? matMul(localMatrix, offset) : localMatrix;
+    const placedFactors = shifted ? [...localFactors, { fixed: offset }] : localFactors;
     const targetTag = target.tagName.toLowerCase().replace(/^svg:/, '');
     if (targetTag === 'symbol' || targetTag === 'svg') {
       // <symbol>/<svg> targets take their viewport from the <use>'s own
@@ -762,11 +1358,12 @@ function traverse(
         absoluteLength(el.getAttribute('height')),
       );
       const inner = matMul(placed, vp);
+      const innerFactors = [...placedFactors, { fixed: vp }];
       for (let i = 0; i < target.children.length; i++) {
-        traverse(target.children[i]!, inner, localStyle, out, chain, useDepth + 1);
+        traverse(target.children[i]!, inner, localStyle, ctx, chain, useDepth + 1, innerFactors, localClips);
       }
     } else {
-      traverse(target, placed, localStyle, out, chain, useDepth + 1);
+      traverse(target, placed, localStyle, ctx, chain, useDepth + 1, placedFactors, localClips);
     }
     return;
   }
@@ -774,25 +1371,45 @@ function traverse(
   // A nested <svg> establishes a new viewport; the ROOT one is handled by
   // `rootMatrixFromSvg` before traversal, so only descendants apply it here.
   if (tag === 'svg' && ancestors.length > 0) {
-    const inner = matMul(localMatrix, nestedViewportMatrix(el));
+    const vp = nestedViewportMatrix(el);
+    const inner = matMul(localMatrix, vp);
+    const innerFactors = [...localFactors, { fixed: vp }];
     for (let i = 0; i < el.children.length; i++) {
-      traverse(el.children[i]!, inner, localStyle, out, chain, useDepth);
+      traverse(el.children[i]!, inner, localStyle, ctx, chain, useDepth, innerFactors, localClips);
     }
     return;
   }
 
   if (SHAPE_TAGS.has(tag)) {
-    const geom = elementGeometry(el);
+    // Text laid along a curve. The run still imports — as a straight baseline,
+    // because that is the only kind of text layer the scene has — but the curve
+    // is genuinely lost, and saying so beats letting the user discover it.
+    if ((tag === 'text' || tag === 'tspan') && el.getElementsByTagName('textPath').length > 0) {
+      ctx.unsupported.add('textPath (text on a curve imports straight)');
+    }
+    // `visibility: hidden` hides the element but keeps its box; there is no
+    // "invisible but present" shape layer to import it as, and a fully
+    // transparent one is the same picture with a layer the user can un-hide.
+    if (!localStyle.visible) return;
+    const geom = elementGeometry(el, localStyle);
     if (geom) {
       out.push({
         name: el.getAttribute('id') || (geom.textContent ? `Text: ${geom.textContent.slice(0, 15)}` : `SVG ${tag} ${out.length + 1}`),
         points: transformPoints(geom.points, localMatrix),
         closed: geom.closed,
+        ...(geom.subpaths
+          ? { subpaths: geom.subpaths.map((r) => ({ points: transformPoints(r.points, localMatrix), closed: r.closed })) }
+          : {}),
         style: localStyle,
         textContent: geom.textContent,
         fontSize: geom.fontSize,
-        chain,
+        imageHref: geom.imageHref,
+        ...(geom.textContent !== undefined && tag === 'text'
+          ? { textRuns: textRunsOf(el, localStyle, ctx.css) ?? undefined }
+          : {}),
+        factors: localFactors,
         matrix: localMatrix,
+        ...(localClips.length > 0 ? { clips: localClips.map((c) => [...c]) } : {}),
       });
     }
     return;
@@ -800,7 +1417,7 @@ function traverse(
 
   // Containers (svg, g, a, switch,...) — recurse into children.
   for (let i = 0; i < el.children.length; i++) {
-    traverse(el.children[i]!, localMatrix, localStyle, out, chain, useDepth);
+    traverse(el.children[i]!, localMatrix, localStyle, ctx, chain, useDepth, localFactors, localClips);
   }
 }
 
@@ -856,8 +1473,15 @@ function rootMatrixFromSvg(svg: Element): Mat {
   return IDENTITY;
 }
 
+export interface SvgParseOptions extends SvgAnimationOptions {
+  /** Resolves a text run's real box. Without it text keeps its 10×10 stand-in. */
+  measureText?: SvgTextMeasurer;
+  /** Cuts geometry at `clip-path`. Without it a clipped shape draws in full. */
+  intersectPaths?: SvgPathIntersector;
+}
+
 /** Parses XML string of SVG and returns list of parsed shapes with centered bounding boxes. */
-export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions): ParsedShape[] {
+export function parseSvgToShapes(svgContent: string, opts?: SvgParseOptions): ParsedShape[] {
   const parser = new DOMParser();
   const doc = parser.parseFromString(svgContent, 'image/svg+xml');
   const svg = doc.documentElement;
@@ -868,7 +1492,14 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions)
   }
 
   const rootMatrix = rootMatrixFromSvg(svg);
-  const rootStyle: StyleCtx = { fill: '#000000' };
+  const rootStyle: StyleCtx = { ...DEFAULT_STYLE };
+  /** Features the TRAVERSAL could not reproduce (the animation scan has its own). */
+  const parseUnsupported = new Set<string>();
+
+  // `<style>` rules, resolved onto elements BEFORE traversal — they decide what
+  // the geometry looks like, and for a CSS-animated file they are usually the
+  // only place the colours are declared at all.
+  const cssPresentation = readCssPresentation(doc);
 
   // Gradients/patterns can't be reproduced as vector fills — approximate each
   // `url(#id)` paint with the referenced gradient's FIRST stop colour so a
@@ -890,15 +1521,98 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions)
 
   const raw: RawShape[] = [];
   // The <svg> element itself may carry a transform; start traversal from it.
-  traverse(svg, rootMatrix, rootStyle, raw);
+  // The root viewBox→pixel-box mapping goes in as a FIXED factor so the
+  // animation translator can rebuild the matrix in the same space (MatrixFactor).
+  traverse(svg, rootMatrix, rootStyle, { out: raw, css: cssPresentation, unsupported: parseUnsupported }, [], 0, [{ fixed: rootMatrix }]);
 
   // Animation, read once for the whole document and attached per shape.
   const scan = scanSvgAnimations(doc, opts);
+
+  // An element's own `opacity` still applies while an opacity animation is
+  // running somewhere else on its chain, so the sampler needs to see it.
+  const staticOpacityOf = (el: Element): number => {
+    const raw = declaredOn(el, cssPresentation.get(el)).get('opacity');
+    return parseAlpha(raw) ?? 1;
+  };
 
   let keyframeBudget = MAX_IMPORT_KEYFRAMES;
 
   const shapes: ParsedShape[] = [];
   for (const r of raw) {
+    // CUT THE GEOMETRY at every clip region that reaches this shape. There is
+    // no draw-time clip in the scene, so the alternative is what used to
+    // happen: the clip is dropped and the shape draws in full, spilling past
+    // the boundary the file drew it inside.
+    if (r.clips && r.clips.length > 0 && opts?.intersectPaths && r.textContent === undefined) {
+      let runs: SubPath[] = r.subpaths ?? [{ points: r.points, closed: r.closed }];
+      for (const clip of r.clips) {
+        const cut = opts.intersectPaths(runs, clip);
+        if (!cut) break; // the intersector gave up — keep the unclipped shape
+        runs = cut;
+        if (runs.length === 0) break;
+      }
+      // Clipped away entirely: the file does not draw this, so nor do we.
+      if (runs.length === 0) continue;
+      r.points = runs.flatMap((run) => run.points);
+      r.subpaths = runs.length > 1 ? runs : undefined;
+      r.closed = runs.every((run) => run.closed);
+    }
+
+    // A `<text>` whose `<tspan>`s restyle part of it becomes ONE LAYER PER RUN,
+    // laid out left to right by measured advance. Taking `textContent` of the
+    // whole element (which is what happens without this) renders a two-colour
+    // label in one colour — the tspan exists precisely to say otherwise.
+    // Needs a measurer to know where each run ends; without one it falls
+    // through to the single combined run, exactly as before.
+    if (r.textRuns && opts?.measureText && r.points.length > 0) {
+      const measured = r.textRuns.map((run) => ({
+        run,
+        m: opts.measureText!({
+          content: run.content,
+          fontSize: run.style.fontSize,
+          ...(run.style.fontFamily ? { fontFamily: run.style.fontFamily } : {}),
+          ...(run.style.fontWeight ? { fontWeight: run.style.fontWeight } : {}),
+          ...(run.style.fontStyle ? { fontStyle: run.style.fontStyle } : {}),
+        }),
+      }));
+      if (measured.every((x) => x.m && x.m.width > 0)) {
+        const anchor = r.points[0]!;
+        const total = measured.reduce((sum, x) => sum + x.m!.advance, 0);
+        // The anchor applies to the WHOLE label; the runs then divide it up.
+        let cursor = anchor.x + textAnchorOffsetX(r.style.textAnchor, total) - total / 2;
+        for (const { run, m } of measured) {
+          const cx = cursor + m!.advance / 2;
+          const cy = anchor.y - m!.baselineOffset;
+          cursor += m!.advance;
+          const runFill = resolvePaint(run.style.fill);
+          const anim = scan.anims.length > 0 && keyframeBudget > 0
+            ? buildShapeAnimation(r.factors, scan, r.matrix, { x: cx, y: cy }, { staticOpacityOf }) ?? undefined
+            : undefined;
+          if (anim) keyframeBudget -= countKeyframes(anim);
+          shapes.push({
+            name: `Text: ${run.content.trim().slice(0, 15)}`,
+            points: [{ x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 }],
+            fill: runFill && runFill !== 'none' ? runFill : runFill === 'none' ? 'none' : '#000000',
+            closed: false,
+            width: m!.width,
+            height: m!.height,
+            centerX: cx,
+            centerY: cy,
+            opacity: run.style.opacity,
+            fillOpacity: run.style.fillOpacity,
+            strokeOpacity: run.style.strokeOpacity,
+            textContent: run.content,
+            fontSize: run.style.fontSize,
+            ...(run.style.fontFamily ? { fontFamily: run.style.fontFamily } : {}),
+            ...(run.style.fontWeight ? { fontWeight: run.style.fontWeight } : {}),
+            ...(run.style.fontStyle ? { fontStyle: run.style.fontStyle } : {}),
+            ...(anim ? { animation: anim } : {}),
+          });
+        }
+        continue;
+      }
+    }
+
     const points = r.points;
     if (points.length === 0) continue;
 
@@ -910,12 +1624,38 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions)
       maxY = Math.max(maxY, p.y, p.inY, p.outY);
     }
 
-    const width = Math.max(10, maxX - minX);
-    const height = Math.max(10, maxY - minY);
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
+    let width = Math.max(10, maxX - minX);
+    let height = Math.max(10, maxY - minY);
+    let centerX = (minX + maxX) / 2;
+    let centerY = (minY + maxY) / 2;
 
-    const centeredPoints = points.map((p) => ({
+    // A text run has no geometry — its one point is the ANCHOR on the BASELINE,
+    // which the bbox above turns into a 10×10 box sitting at the wrong place.
+    // Given a measurement both resolve exactly:
+    //   x  — the anchor is start/middle/end of the run, so the centre is offset
+    //        by half the advance (`start` is the SVG default, and it was the
+    //        case being drawn half a label too far left).
+    //   y  — SVG's y is the BASELINE; the scene draws from the block's centre,
+    //        and `offsetY` is precisely the distance between the two.
+    // Without a measurer nothing changes, so a caller that cannot measure keeps
+    // the old behaviour rather than getting invented numbers.
+    if (r.textContent !== undefined && opts?.measureText) {
+      const m = opts.measureText({
+        content: r.textContent,
+        fontSize: r.style.fontSize,
+        ...(r.style.fontFamily ? { fontFamily: r.style.fontFamily } : {}),
+        ...(r.style.fontWeight ? { fontWeight: r.style.fontWeight } : {}),
+        ...(r.style.fontStyle ? { fontStyle: r.style.fontStyle } : {}),
+      });
+      if (m && m.width > 0 && m.height > 0) {
+        width = m.width;
+        height = m.height;
+        centerX += textAnchorOffsetX(r.style.textAnchor, m.advance);
+        centerY -= m.baselineOffset;
+      }
+    }
+
+    const centre = (list: readonly BezierPoint[]): BezierPoint[] => list.map((p) => ({
       x: p.x - centerX,
       y: p.y - centerY,
       inX: p.inX - centerX,
@@ -923,6 +1663,8 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions)
       outX: p.outX - centerX,
       outY: p.outY - centerY,
     }));
+    const centeredPoints = centre(points);
+    const centeredRuns = r.subpaths?.map((run) => ({ points: centre(run.points), closed: run.closed }));
 
     const fillRaw = resolvePaint(r.style.fill);
     const fill = fillRaw && fillRaw !== 'none' ? fillRaw : fillRaw === 'none' ? 'none' : '#000000';
@@ -934,9 +1676,15 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions)
     // artwork must not be able to generate work the app cannot absorb. Past the
     // ceiling the remaining shapes still import — they just import static.
     const animation = scan.anims.length > 0 && keyframeBudget > 0
-      ? buildShapeAnimation(r.chain, scan, r.matrix, { x: centerX, y: centerY }) ?? undefined
+      ? buildShapeAnimation(r.factors, scan, r.matrix, { x: centerX, y: centerY }, { staticOpacityOf }) ?? undefined
       : undefined;
     if (animation) keyframeBudget -= countKeyframes(animation);
+    // Running out of budget is not a neutral outcome — the remaining shapes
+    // import STATIC while the toast still says the animation converted. Say it
+    // once, through the same channel every other lost feature is reported on.
+    else if (scan.anims.length > 0 && keyframeBudget <= 0) {
+      scan.unsupported.add('some parts (this file exceeds the keyframe budget)');
+    }
 
     shapes.push({
       name: r.name,
@@ -945,14 +1693,31 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgAnimationOptions)
       strokeColor,
       strokeWidth,
       closed: r.closed,
+      ...(centeredRuns ? { subpaths: centeredRuns } : {}),
       width,
       height,
       centerX,
       centerY,
+      opacity: r.style.opacity,
+      fillOpacity: r.style.fillOpacity,
+      strokeOpacity: r.style.strokeOpacity,
       textContent: r.textContent,
       fontSize: r.fontSize,
+      ...(r.imageHref ? { imageHref: r.imageHref } : {}),
+      ...(r.textContent !== undefined
+        ? {
+          ...(r.style.fontFamily ? { fontFamily: r.style.fontFamily } : {}),
+          ...(r.style.fontWeight ? { fontWeight: r.style.fontWeight } : {}),
+          ...(r.style.fontStyle ? { fontStyle: r.style.fontStyle } : {}),
+        }
+        : {}),
       ...(animation ? { animation } : {}),
     });
+  }
+
+  if (opts?.unsupportedOut) {
+    for (const name of scan.unsupported) opts.unsupportedOut.add(name);
+    for (const name of parseUnsupported) opts.unsupportedOut.add(name);
   }
 
   return shapes;

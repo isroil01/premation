@@ -42,7 +42,7 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
     <div className={styles.section}>
       <h4 className={styles.title}>Audio Waveform</h4>
       <div className={styles.inlineRows}>
-        <p style={{ margin: '0 0 4px', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '0 0 4px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Draws the amplitude <strong>envelope</strong> of an audio layer (not a frequency spectrum).
         </p>
 
@@ -63,12 +63,12 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
         </div>
 
         {audioLayers.length === 0 && (
-          <p style={{ margin: '2px 0 4px', fontSize: 10, color: '#ffb703', lineHeight: 1.5 }}>
+          <p style={{ margin: '2px 0 4px', fontSize: 'var(--font-size-micro)', color: '#ffb703', lineHeight: 1.5 }}>
             No audio layers in this scene — import an audio file first.
           </p>
         )}
         {sourceMissing && (
-          <p style={{ margin: '2px 0 4px', fontSize: 10, color: '#ffb703', lineHeight: 1.5 }}>
+          <p style={{ margin: '2px 0 4px', fontSize: 'var(--font-size-micro)', color: '#ffb703', lineHeight: 1.5 }}>
             The linked audio layer no longer exists — pick another source.
           </p>
         )}
@@ -123,7 +123,7 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
           Remove Audio Waveform
         </button>
 
-        <p style={{ margin: '6px 0 0', fontSize: 10, color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+        <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           Deterministic — driven by the source's precomputed peaks; scrubbing is stable. Nothing draws until the audio has decoded.
         </p>
       </div>

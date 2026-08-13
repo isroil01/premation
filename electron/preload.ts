@@ -99,19 +99,103 @@ const bridge = {
   },
 
   /**
-   * The signed-in session, kept in the main process and encrypted with the OS
-   * keystore (see electron/credentialStore.ts).
+   * Authenticated calls to our own backend.
    *
-   * Only the long-lived refresh token goes through here. The access token
-   * stays in renderer memory and is never written anywhere — it lives an hour,
-   * so persisting it would add risk and save nothing.
+   * Note what is NOT here, and note that it matches `ai.keys` exactly: there is
+   * no way to read the session token. There used to be — `credentials.get` —
+   * and it made every other protection around that token beside the point, for
+   * the same reason a read-back verb would make the AI key vault pointless. A
+   * renderer that can ask for the secret is a renderer that holds the secret.
+   *
+   * So the renderer asks for OPERATIONS. `request` takes a PATH, not a URL:
+   * main resolves the base itself and refuses anything that would land
+   * elsewhere (electron/apiBase.ts). A general `fetch(url, init)` bridge would
+   * be an open relay with the user's bearer attached, callable by anything in
+   * the renderer, which is the hole this replaced.
    */
-  credentials: {
-    get: () => ipcRenderer.invoke('credentials:get'),
-    set: (credentials: unknown) => ipcRenderer.invoke('credentials:set', credentials),
-    clear: () => ipcRenderer.invoke('credentials:clear'),
-    /** False when the OS has no keystore — the app then never persists a session. */
-    available: () => ipcRenderer.invoke('credentials:available'),
+  api: {
+    /** Buffered. Resolves `{ok, status, headers, body}` — never a token. */
+    request: (req: unknown) => ipcRenderer.invoke('api:request', req),
+    /** Resolves once the response headers are in; body follows as events. */
+    stream: (req: unknown) => ipcRenderer.invoke('api:stream', req),
+    /** Aborts the UPSTREAM request, not just our interest in it. */
+    cancel: (requestId: string) => ipcRenderer.invoke('api:cancel', requestId),
+    /**
+     * Body chunks, in order, for every in-flight stream. Callers filter by
+     * `requestId` — one channel rather than one per request, so a stream that
+     * ends without a `done` cannot leak a listener.
+     */
+    onStreamEvent: (handler: (event: unknown) => void) => {
+      const listener = (_event: unknown, payload: unknown): void => handler(payload);
+      ipcRenderer.on('api:stream:event', listener);
+      return () => ipcRenderer.removeListener('api:stream:event', listener);
+    },
+  },
+
+  /**
+   * A plugin's outbound requests.
+   *
+   * Deliberately NOT the general `fetch(url, init)` bridge the comment above
+   * refuses, and the distinction is what rides along. `api.request` is
+   * dangerous because main attaches the user's bearer to it, so an open relay
+   * would spend that credential on any URL. These verbs attach nothing — no
+   * token, no cookie, no key. They exist because the app shell's CSP does not
+   * name a plugin's hosts, and the alternative was widening `connect-src` for
+   * the whole renderer.
+   *
+   * What still needs defending is the user's own network, and main defends it
+   * at the socket: https only, the RESOLVED address refused if it is private,
+   * one hop per call, a byte cap and a timeout. `ipcGuard` keeps both verbs out
+   * of reach of a plugin panel, which is a subframe.
+   */
+  pluginNet: {
+    /** One hop. A 3xx comes back as a 3xx — main never follows a redirect. */
+    request: (req: unknown) => ipcRenderer.invoke('plugin:net-request', req),
+    /**
+     * Every address a name resolves to.
+     *
+     * The renderer cannot resolve DNS, and without this the rebinding check
+     * cannot run there at all — a declared host pointing at `127.0.0.1` would
+     * pass every check that reads the name as text.
+     */
+    resolve: (hostname: string) => ipcRenderer.invoke('plugin:net-resolve', hostname),
+  },
+
+  /**
+   * Publish a package the user chose, signed with a key the app never keeps.
+   *
+   * The renderer hands over BYTES and a visibility choice and receives a
+   * result. Main picks the key file, signs, attaches the session and uploads, so
+   * the two secrets involved — the private signing key and the access token —
+   * are never in the renderer beside the payload.
+   *
+   * Note what is absent and stays absent: there is no verb for "give me the
+   * key" and none for "remember the key". Both would move the one secret whose
+   * theft cannot be undone by blocking a version.
+   */
+  pluginPublish: (req: unknown) => ipcRenderer.invoke('plugin:publish', req),
+
+  /**
+   * Session state and the two operations that change it.
+   *
+   * `status` returns claims — signed in, who, when the access token expires,
+   * whether it will survive a restart — and never a credential. `persisted` is
+   * false when the OS has no keystore: the session then works until the app
+   * closes, which is stated rather than silently degrading to plaintext.
+   */
+  auth: {
+    status: () => ipcRenderer.invoke('auth:status'),
+    signIn: (payload: unknown) => ipcRenderer.invoke('auth:signIn', payload),
+    signOut: () => ipcRenderer.invoke('auth:signOut'),
+    /**
+     * One-way migration for a session created before Track A, when the refresh
+     * token lived in renderer `localStorage`.
+     *
+     * Note the direction: the renderer hands a credential IN and gets a status
+     * back. It still cannot ask for one out, which is the difference between
+     * this and the `credentials.get` it replaced.
+     */
+    adoptLegacy: (refreshToken: string) => ipcRenderer.invoke('auth:adoptLegacy', refreshToken),
   },
 
   /**
@@ -166,6 +250,20 @@ const bridge = {
       ipcRenderer.on('oauth:result', listener);
       return () => ipcRenderer.removeListener('oauth:result', listener);
     },
+  },
+
+  /**
+   * `premation://plugin/<id>` — open a plugin's page.
+   *
+   * The id was validated in the main process before it was sent, and the
+   * renderer validates it AGAIN before using it. That is not belt-and-braces
+   * for its own sake: IPC is its own boundary, and the receiving side is about
+   * to put the value into a fetch and a store lookup.
+   */
+  onPluginDeepLink: (handler: (payload: { id: string }) => void) => {
+    const listener = (_event: unknown, payload: { id: string }): void => handler(payload);
+    ipcRenderer.on('deeplink:plugin', listener);
+    return () => ipcRenderer.removeListener('deeplink:plugin', listener);
   },
 
   onMenuCommand: (handler: (commandId: string) => void) => {

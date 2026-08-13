@@ -1,0 +1,251 @@
+.root { display: flex; flex-direction: column; height: 100%; min-height: 0; position: relative; }
+
+.rootDropping { outline: 2px dashed var(--color-primary); outline-offset: -3px; }
+
+.dropHint {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  pointer-events: none;
+  background: var(--color-surface-0);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.search {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
+  background: var(--color-surface-0, #121217);
+  color: var(--color-text-primary, #ffffff);
+  font-size: 0.82rem;
+  outline: none;
+  transition: border-color 140ms ease;
+}
+
+.search:focus {
+  border-color: var(--color-primary, #2988ff);
+}
+
+.publishBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: none;
+  background: linear-gradient(135deg, var(--color-primary, #2988ff) 0%, #1d75e0 100%);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 120ms cubic-bezier(0.23, 1, 0.32, 1), filter 120ms ease;
+  user-select: none;
+}
+
+.publishBtn:hover {
+  filter: brightness(1.08);
+}
+
+.publishBtn:active {
+  transform: scale(0.97);
+}
+
+.publishBtnCompact {
+  padding: 7px 10px;
+}
+
+.hiddenInput { display: none; }
+
+.list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  width: 100%;
+  padding: var(--space-2) 12px;
+  border: none;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row:hover { background: var(--color-hover); }
+.row:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; }
+
+.rowIcon {
+  width: 28px; height: 28px; flex: 0 0 auto;
+  display: grid; place-items: center;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+.rowIcon img { width: 100%; height: 100%; object-fit: cover; }
+
+.rowBody { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.rowTop { display: flex; align-items: baseline; gap: var(--space-1); min-width: 0; }
+.rowName {
+  font-size: var(--font-size-label);
+  color: var(--color-text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rowPublisher {
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rowVerified { color: var(--color-primary); flex: 0 0 auto; display: inline-flex; }
+.rowDesc {
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rowMeta { display: flex; gap: var(--space-2); font-size: var(--font-size-micro, 10px); color: var(--color-text-tertiary); }
+
+.rowTakedown {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 2px;
+  font-size: var(--font-size-micro, 10px);
+  line-height: 1.4;
+  color: var(--color-danger);
+  white-space: normal;
+}
+.rowTakedownAck {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-text-secondary);
+  font-size: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.rowTakedownAck:hover { color: var(--color-text-primary); }
+
+/* A plugin whose effects cannot draw on this renderer tier. Muted, not red:
+   the plugin is fine and the effects are saved with the project — this is a
+   fact about the machine, not a fault in the plugin. */
+.rowInert {
+  margin-top: 2px;
+  font-size: var(--font-size-micro, 10px);
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+  white-space: normal;
+}
+
+.rowActions { display: flex; gap: 4px; flex: 0 0 auto; align-items: center; }
+.mini {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm, 3px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro, 10px);
+  cursor: pointer;
+}
+.mini:hover { background: var(--color-hover); }
+.miniPrimary { background: var(--color-primary); border-color: var(--color-primary); color: var(--color-primary-foreground); }
+.mini:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+
+/* Status must be legible at a glance and never contradict the toggle. */
+.status { display: inline-flex; align-items: center; gap: 3px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+.statusRunning { color: var(--color-success); }
+.statusInactive { color: var(--color-text-tertiary); }
+.statusStopped { color: var(--color-text-muted); }
+.statusError { color: var(--color-danger); }
+.statusStarting { color: var(--color-warning); }
+
+/* Empty and failure states say what happened and what to do. */
+.state {
+  display: flex; flex-direction: column; gap: var(--space-1);
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+}
+.stateTitle { color: var(--color-text-primary); }
+.stateAction {
+  margin-top: var(--space-2);
+  align-self: center;
+  padding: 4px 10px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+}
+
+.skelRow { display: flex; gap: var(--space-2); padding: var(--space-2) 12px; align-items: center; }
+.skelIcon, .skelText {
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--color-surface-1), var(--color-surface-2), var(--color-surface-1));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.skelIcon { width: 28px; height: 28px; flex: 0 0 auto; }
+.skelText { height: 10px; flex: 1 1 auto; }
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skelIcon, .skelText { animation: none; } }
+
+/* A footnote under the results, never in place of them. */
+.listNote {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-tertiary);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Listing editor fields. Restored with the editor, not left over from the
+   removed filter chips — these are pressable toggles, not links. */
+.filters { display: flex; gap: var(--space-1); flex-wrap: wrap; padding-block: var(--space-1); }
+.chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro, 10px);
+  cursor: pointer;
+}
+.chipActive { background: var(--color-primary-subtle); border-color: var(--color-primary); color: var(--color-text-primary); }
+.chip:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+
+.textarea {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-field-border);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro, 10px);
+  resize: vertical;
+}
+.textarea:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -1px; }

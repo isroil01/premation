@@ -63,6 +63,7 @@ export {
 } from './registry';
 
 export {
+  MIN_PARALLAX_SPREAD_PX,
   craftScore,
   formatTimingFindings,
   lintTiming,

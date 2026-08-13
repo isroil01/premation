@@ -34,23 +34,68 @@ import type { Effect } from './effects';
 import { effectNumber, paramsOf } from './effects';
 import { applyKeyData, chokeAlpha, softenAlpha } from './keylight';
 import { waveWarpData, turbulentDisplaceData } from './warp';
-import { blurRgba, radialBlurData, blurDimensions } from './blurs';
-import { mosaicData, findEdgesData, roughenEdgesData } from './stylize';
+import { blurRgba, radialBlurData, blurDimensions, channelBlurData, unsharpMaskData } from './blurs';
+import { mosaicData, findEdgesData, roughenEdgesData, embossData, scatterData } from './stylize';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
+import { selectiveColorData, selectiveRange, shadowHighlightData } from './toneEffects';
+import {
+  bulgeData, twirlData, spherizeData, cornerPinData, defaultCorners,
+  polarCoordinatesData, polarConversion, opticsCompensationData, meshWarpData, MESH_WARP_N, liquifyData, mirrorData, offsetData,
+} from './distort';
+import { photoFilterData, blackAndWhiteData, tritoneData, thresholdData } from './aeColor';
+import { drawCheckerboard, drawGrid, cellPatternData } from './generatePatterns';
+import { drawVegas } from './vegas';
+import { defaultWarpPoints, bezierWarpData, isRestWarp, type WarpPoints } from './bezierWarp';
+import { turbulentNoiseData, addGrainData, medianData } from './noiseEffects';
+import { applyLutToImageData, fromStoredLut } from './cubeLut';
 import {
   simpleChokerData, linearColorKeyData, shiftChannelsData, colorMatchMode, channelSource,
+  lumaKeyData, lumaKeyType, minimaxData, minimaxOp, minimaxChannel,
 } from './keyingEffects';
 import {
   venetianBlindsData, gradientWipeData, cardWipeData, cardWipeDirection, luminanceMapFrom,
+  radialWipeData, radialWipeDirection, blockDissolveData,
 } from './transitions';
 import { drawLensFlare, formatNumber, formatTimecode, drawTextReadout, drawAudioSpectrum } from './generateText';
+import { clamp01 } from '@utils/lang';
+// ── Round four kernels ──
+import { bilateralBlurData, smartBlurData, cameraLensBlurData } from './aeBlurAdvanced';
+import {
+  rippleData, magnifyData, warpData, pageTurnData, splitData, slantData, smearData,
+  rollingShutterData, radialShadowData,
+} from './aeDistortAdvanced';
+import {
+  drawCircle, drawEllipse, drawRadioWaves, drawLightning, drawLightRays, drawLightSweep,
+  drawAudioWaveform,
+} from './generateAdvanced';
+import {
+  cartoonData, brushStrokesData, strobeLightData, colorEmbossData, halftoneData,
+  kaleidoscopeData, vignetteData, burnFilmData,
+} from './aeStylizeAdvanced';
+import {
+  equalizeData, autoLevelsData, autoContrastData, autoColorData, changeColorData,
+  changeToColorData, leaveColorData, tonerData,
+} from './aeColorAdvanced';
+import {
+  colorKeyData, colorRangeData, extractData, spillSuppressorData, matteChokerData,
+} from './aeKeyingAdvanced';
+import {
+  alphaLevelsData, solidCompositeData, channelCombinerData, removeColorMattingData,
+} from './aeChannel';
+import {
+  irisWipeData, lightWipeData, lineSweepData, gridWipeData, dustAndScratchesData, noiseAlphaData,
+} from './aeTransitionsAdvanced';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
  *  shaders — gradient-ramp / fractal-noise render on both backends.) */
 const CANVAS2D_ONLY = new Set<string>([
   'four-color-gradient',
-  'beam',
+  // 'beam' PORTED 2026-08-12 — it has a shader (builtin.ts BEAM), so it no
+  // longer forces a bake. Its Canvas2D pass stays below and stays in
+  // CANVAS2D_IMPLEMENTED, for layers baked for other reasons: that is the
+  // position `apply-color-lut` and Fill/Stroke/Sharpen/Noise are in, and it is
+  // what keeps the CPU version as the reference the GPU one is diffed against.
   'keylight',
   'wave-warp',
   'turbulent-displace',
@@ -78,6 +123,35 @@ const CANVAS2D_ONLY = new Set<string>([
   // per-channel table can express.
   'vibrance',
   'colorama',
+  // Both for the same reason as the two above, one step further. `lumetri` is
+  // deliberately ABSENT beside `exposure` — all eight of its controls are
+  // channel-independent, so it is a LUT.
+  'selective-color',
+  // And this one is the strongest case of all: it reads the pixel's NEIGHBOURS,
+  // so it is spatial and could not be a transfer function of any kind.
+  'shadow-highlight',
+  // Distort family — inverse-map resamples, no shader form. `transform` and
+  // `wave-warp` above are the same class.
+  'bulge',
+  'twirl',
+  'spherize',
+  'corner-pin',
+  // Same class as the four above: an inverse-map resample with no shader form.
+  'bezier-warp',
+  // Generate family, round two — these DRAW, like `beam` and `lens-flare`.
+  'checkerboard',
+  'grid',
+  'cell-pattern',
+  // Vegas READS the layer's alpha per pixel to find its contour, so there is
+  // no shader form for it any more than there is for Median. It also DRAWS,
+  // like the three above.
+  'vegas',
+  // Noise family. Turbulent Noise generates a field, Add Grain disturbs the
+  // pixels, Median is a rank filter over the neighbourhood — no shader form for
+  // any of the three.
+  'turbulent-noise',
+  'add-grain',
+  'median',
   // Keying family. `set-matte` is deliberately ABSENT: it reads another layer's
   // pixels, which this chain's per-layer signature cannot express, so it lives
   // on the GPU path beside displacement-map instead.
@@ -93,6 +167,115 @@ const CANVAS2D_ONLY = new Set<string>([
   'numbers',
   'timecode',
   'audio-spectrum',
+  // ── Round three ──
+  //
+  // `color-balance` and `gamma-pedestal-gain` are deliberately ABSENT: both are
+  // per-channel transfer functions, so they live in `LUT_BUILDERS` and render on
+  // both backends with no bake, beside Exposure and Lumetri. Listing them here
+  // would drag every layer carrying a grade onto the CPU to do something the GPU
+  // already does — the exact mistake `colorLut.ts` documents at length.
+  //
+  // Colour — the four that read all three channels. See `aeColor.ts` for why
+  // none of them can be a table.
+  'photo-filter',
+  'black-and-white',
+  'tritone',
+  'threshold',
+  // Distort — inverse-map resamples, like the five above.
+  'polar-coordinates',
+  // Optics Compensation is one too. It has no GPU shader, so without this entry
+  // it would not force a bake and `extractSpatialEffects` would drop it — the
+  // effect would be addable, keyframeable and completely inert, which is the
+  // failure `effectRegistryComplete.test.ts` was written after.
+  'optics-compensation',
+  // Mesh Warp is a resample too, and has no GPU form.
+  'mesh-warp',
+  'liquify',
+  'mirror',
+  'offset',
+  // Stylize — a directional derivative and a randomised resample.
+  'emboss',
+  'scatter',
+  // Transition — alpha-only reveals, like the three above.
+  'radial-wipe',
+  'block-dissolve',
+  // Keying / Matte. Minimax reads a whole neighbourhood per pixel, so it is
+  // spatial in the same sense Median is.
+  'luma-key',
+  'minimax',
+  // Blur family — per-channel radii and a scale-aware sharpen, neither of which
+  // a CSS filter can express, exactly like the three blurs above.
+  'channel-blur',
+  'unsharp-mask',
+  // ── Round four ──
+  //
+  // All fifty. None is a LUT candidate and none has a GPU material, so each one
+  // forces a bake and each one needs a `case` below — the dispatch guard in
+  // `canvas2dEffects.test.ts` reads this list from SOURCE and fails naming any
+  // member that has no case, because the failure is otherwise silent: the layer
+  // pays for the whole CPU round trip and nothing is drawn.
+  //
+  // Blur — non-separable, so no shader form. See `aeBlurAdvanced.ts`.
+  'bilateral-blur',
+  'smart-blur',
+  'camera-lens-blur',
+  // Distort — inverse-map resamples, like every other member of the family.
+  'ripple',
+  'magnify',
+  'warp',
+  'page-turn',
+  'split',
+  'slant',
+  'smear',
+  'rolling-shutter',
+  // Perspective — projects a silhouette, then blurs and composites it.
+  'radial-shadow',
+  // Generate — these DRAW, like Beam, Lens Flare and Checkerboard.
+  'circle',
+  'ellipse',
+  'radio-waves',
+  'lightning',
+  'light-rays',
+  'light-sweep',
+  'audio-waveform',
+  // Stylize — neighbourhood and cell operations, none expressible as a filter.
+  'cartoon',
+  'brush-strokes',
+  'strobe-light',
+  'color-emboss',
+  'halftone',
+  'kaleidoscope',
+  'vignette',
+  'burn-film',
+  // Colour — the eight that need the HISTOGRAM or read all three channels.
+  // Deliberately NOT in `LUT_BUILDERS`: a table is built from params alone and
+  // cannot see the image, so none of these could be expressed there.
+  'equalize',
+  'auto-levels',
+  'auto-contrast',
+  'auto-color',
+  'change-color',
+  'change-to-color',
+  'leave-color',
+  'toner',
+  // Keying & Matte, and the four Channel effects that work on coverage.
+  'color-key',
+  'color-range',
+  'extract',
+  'spill-suppressor',
+  'matte-choker',
+  'alpha-levels',
+  'solid-composite',
+  'channel-combiner',
+  'remove-color-matting',
+  // Transition — alpha-only reveals, like the wipes above.
+  'iris-wipe',
+  'light-wipe',
+  'line-sweep',
+  'grid-wipe',
+  // Noise — a thresholded median, and noise in coverage rather than colour.
+  'dust-scratches',
+  'noise-alpha',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -114,6 +297,23 @@ const CANVAS2D_IMPLEMENTED: ReadonlySet<string> = new Set<string>([
   'stroke',
   'sharpen',
   'noise',
+  // Ported to a shader, so it left CANVAS2D_ONLY above — but a layer baked for
+  // some OTHER reason still runs its whole chain through the bake, and dropping
+  // beam from this list would make it vanish on exactly those layers. Named
+  // here for the same reason the four above are.
+  'beam',
+  /*
+    Apply Color LUT moved OFF the forces-a-bake list when it gained a GPU
+    shader — a 3D LUT is a texture lookup, which is what the strip in
+    `AppTextureProvider.setCubeLut` and the `apply-color-lut` material do now.
+
+    It stays here, and that is the whole point of these being two lists. A layer
+    baked for some OTHER reason has its GPU effect list dropped wholesale, so
+    without this entry a creative LUT would vanish the moment someone added an
+    inner shadow beside it. The same reasoning as Fill / Stroke / Sharpen /
+    Noise above, and the same failure if it were collapsed to one predicate.
+  */
+  'apply-color-lut',
 ]);
 
 export function hasCanvas2dImplementation(type: string): boolean {
@@ -235,6 +435,36 @@ export function applyCanvas2dEffect(
       return applyVibrance(oc, w, h, e);
     case 'colorama':
       return applyColorama(oc, w, h, e);
+    case 'bulge':
+      return applyBulge(oc, w, h, e);
+    case 'twirl':
+      return applyTwirl(oc, w, h, e);
+    case 'spherize':
+      return applySpherize(oc, w, h, e);
+    case 'corner-pin':
+      return applyCornerPin(oc, w, h, e);
+    case 'bezier-warp':
+      return applyBezierWarp(oc, w, h, e);
+    case 'checkerboard':
+      return drawCheckerboard(oc, w, h, e);
+    case 'grid':
+      return drawGrid(oc, w, h, e);
+    case 'cell-pattern':
+      return applyCellPattern(oc, w, h, e);
+    case 'vegas':
+      return drawVegas(oc, w, h, e);
+    case 'turbulent-noise':
+      return applyTurbulentNoise(oc, w, h, e);
+    case 'add-grain':
+      return applyAddGrain(oc, w, h, e);
+    case 'median':
+      return applyMedian(oc, w, h, e);
+    case 'selective-color':
+      return applySelectiveColor(oc, w, h, e);
+    case 'apply-color-lut':
+      return applyColorLut(oc, w, h, e);
+    case 'shadow-highlight':
+      return applyShadowHighlight(oc, w, h, e);
     case 'simple-choker':
       return applySimpleChoker(oc, w, h, e);
     case 'linear-color-key':
@@ -255,6 +485,145 @@ export function applyCanvas2dEffect(
       return applyTimecode(oc, w, h, e);
     case 'audio-spectrum':
       return applyAudioSpectrum(oc, w, h, e);
+    // ── Round three ──
+    case 'photo-filter':
+      return applyPhotoFilter(oc, w, h, e);
+    case 'black-and-white':
+      return applyBlackAndWhite(oc, w, h, e);
+    case 'tritone':
+      return applyTritone(oc, w, h, e);
+    case 'threshold':
+      return applyThreshold(oc, w, h, e);
+    case 'liquify':
+      return applyLiquify(oc, w, h, e);
+    case 'mesh-warp':
+      return applyMeshWarp(oc, w, h, e);
+    case 'optics-compensation':
+      return applyOpticsCompensation(oc, w, h, e);
+    case 'polar-coordinates':
+      return applyPolarCoordinates(oc, w, h, e);
+    case 'mirror':
+      return applyMirror(oc, w, h, e);
+    case 'offset':
+      return applyOffset(oc, w, h, e);
+    case 'emboss':
+      return applyEmboss(oc, w, h, e);
+    case 'scatter':
+      return applyScatter(oc, w, h, e);
+    case 'radial-wipe':
+      return applyRadialWipe(oc, w, h, e);
+    case 'block-dissolve':
+      return applyBlockDissolve(oc, w, h, e);
+    case 'luma-key':
+      return applyLumaKey(oc, w, h, e);
+    case 'minimax':
+      return applyMinimax(oc, w, h, e);
+    case 'channel-blur':
+      return applyChannelBlur(oc, w, h, e);
+    case 'unsharp-mask':
+      return applyUnsharpMask(oc, w, h, e);
+
+    // ── Round four ──
+    case 'bilateral-blur':
+      return applyBilateralBlur(oc, w, h, e);
+    case 'smart-blur':
+      return applySmartBlur(oc, w, h, e);
+    case 'camera-lens-blur':
+      return applyCameraLensBlur(oc, w, h, e);
+    case 'ripple':
+      return applyRipple(oc, w, h, e);
+    case 'magnify':
+      return applyMagnify(oc, w, h, e);
+    case 'warp':
+      return applyWarp(oc, w, h, e);
+    case 'page-turn':
+      return applyPageTurn(oc, w, h, e);
+    case 'split':
+      return applySplit(oc, w, h, e);
+    case 'slant':
+      return applySlant(oc, w, h, e);
+    case 'smear':
+      return applySmear(oc, w, h, e);
+    case 'rolling-shutter':
+      return applyRollingShutter(oc, w, h, e);
+    case 'radial-shadow':
+      return applyRadialShadow(oc, w, h, e);
+    case 'circle':
+      return applyCircle(oc, w, h, e);
+    case 'ellipse':
+      return applyEllipse(oc, w, h, e);
+    case 'radio-waves':
+      return applyRadioWaves(oc, w, h, e);
+    case 'lightning':
+      return applyLightning(oc, w, h, e);
+    case 'light-rays':
+      return applyLightRays(oc, w, h, e);
+    case 'light-sweep':
+      return applyLightSweep(oc, w, h, e);
+    case 'audio-waveform':
+      return applyAudioWaveform(oc, w, h, e);
+    case 'cartoon':
+      return applyCartoon(oc, w, h, e);
+    case 'brush-strokes':
+      return applyBrushStrokes(oc, w, h, e);
+    case 'strobe-light':
+      return applyStrobeLight(oc, w, h, e);
+    case 'color-emboss':
+      return applyColorEmboss(oc, w, h, e);
+    case 'halftone':
+      return applyHalftone(oc, w, h, e);
+    case 'kaleidoscope':
+      return applyKaleidoscope(oc, w, h, e);
+    case 'vignette':
+      return applyVignette(oc, w, h, e);
+    case 'burn-film':
+      return applyBurnFilm(oc, w, h, e);
+    case 'equalize':
+      return applyEqualize(oc, w, h, e);
+    case 'auto-levels':
+      return applyAutoLevels(oc, w, h, e);
+    case 'auto-contrast':
+      return applyAutoContrast(oc, w, h, e);
+    case 'auto-color':
+      return applyAutoColor(oc, w, h, e);
+    case 'change-color':
+      return applyChangeColor(oc, w, h, e);
+    case 'change-to-color':
+      return applyChangeToColor(oc, w, h, e);
+    case 'leave-color':
+      return applyLeaveColor(oc, w, h, e);
+    case 'toner':
+      return applyToner(oc, w, h, e);
+    case 'color-key':
+      return applyColorKey(oc, w, h, e);
+    case 'color-range':
+      return applyColorRange(oc, w, h, e);
+    case 'extract':
+      return applyExtract(oc, w, h, e);
+    case 'spill-suppressor':
+      return applySpillSuppressor(oc, w, h, e);
+    case 'matte-choker':
+      return applyMatteChoker(oc, w, h, e);
+    case 'alpha-levels':
+      return applyAlphaLevels(oc, w, h, e);
+    case 'solid-composite':
+      return applySolidComposite(oc, w, h, e);
+    case 'channel-combiner':
+      return applyChannelCombiner(oc, w, h, e);
+    case 'remove-color-matting':
+      return applyRemoveColorMatting(oc, w, h, e);
+    case 'iris-wipe':
+      return applyIrisWipe(oc, w, h, e);
+    case 'light-wipe':
+      return applyLightWipe(oc, w, h, e);
+    case 'line-sweep':
+      return applyLineSweep(oc, w, h, e);
+    case 'grid-wipe':
+      return applyGridWipe(oc, w, h, e);
+    case 'dust-scratches':
+      return applyDustAndScratches(oc, w, h, e);
+    case 'noise-alpha':
+      return applyNoiseAlpha(oc, w, h, e);
   }
 }
 
@@ -435,6 +804,220 @@ function applyVibrance(oc: CanvasRenderingContext2D, w: number, h: number, e: Ef
   oc.putImageData(img, 0, 0);
 }
 
+// ── Distort family (kernels in distort.ts) ─────────────────────────
+//
+// Every one of these resolves its centre as an OFFSET from the layer centre —
+// see the note on the Bulge definition in effects.ts for why the params are
+// offsets rather than absolute points. Resolved HERE, in one place, because
+// this is the only layer that knows `w` and `h`.
+
+function applyRemapEffect(
+  oc: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  kernel: (data: Uint8ClampedArray) => Uint8ClampedArray,
+): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const out = kernel(img.data);
+  // The kernels return a NEW buffer — a resample cannot be done in place, since
+  // a destination pixel may read a source pixel that an earlier destination has
+  // already overwritten. Copy it back into the ImageData we already own rather
+  // than constructing a second one: `new ImageData(buf, w, h)` needs the buffer
+  // to be ArrayBuffer-backed, which `Uint8ClampedArray` does not guarantee.
+  img.data.set(out);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyBulge(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const height = effectNumber(e, 'height');
+  const radius = effectNumber(e, 'radius');
+  if (height === 0 || radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => bulgeData(
+    d, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    radius, height,
+  ));
+}
+
+function applyTwirl(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const angle = effectNumber(e, 'angle');
+  const radius = effectNumber(e, 'radius');
+  if (angle === 0 || radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => twirlData(
+    d, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    radius, angle,
+  ));
+}
+
+function applySpherize(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  const radius = effectNumber(e, 'radius');
+  if (amount === 0 || radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => spherizeData(
+    d, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    radius, amount,
+  ));
+}
+
+function applyCornerPin(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const base = defaultCorners(w, h);
+  const offsets = [
+    effectNumber(e, 'topLeftX'), effectNumber(e, 'topLeftY'),
+    effectNumber(e, 'topRightX'), effectNumber(e, 'topRightY'),
+    effectNumber(e, 'bottomRightX'), effectNumber(e, 'bottomRightY'),
+    effectNumber(e, 'bottomLeftX'), effectNumber(e, 'bottomLeftY'),
+  ];
+  // All eight at rest is the identity map. Skipping it is not just an
+  // optimisation — running the resample anyway would cost a full bilinear pass
+  // and lose a fraction of a pixel of sharpness for no visible change.
+  if (offsets.every((v) => v === 0)) return;
+  const corners = base.map((v, i) => v + offsets[i]!) as unknown as
+    readonly [number, number, number, number, number, number, number, number];
+  applyRemapEffect(oc, w, h, (d) => cornerPinData(d, w, h, corners));
+}
+
+/**
+ * Bezier Warp — the twelve offsets, applied to the rest patch.
+ *
+ * Identical shape to `applyCornerPin`: params are offsets, so all-zero is the
+ * identity and is skipped rather than resampled. Skipping is not just an
+ * optimisation here — a bilinear pass that reproduces its own input still
+ * costs a fraction of a pixel of sharpness, which compounds if two warps stack.
+ */
+function applyBezierWarp(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const rest = defaultWarpPoints(w, h);
+  const pts = [
+    { x: rest[0]!.x + effectNumber(e, 'topLeftX'), y: rest[0]!.y + effectNumber(e, 'topLeftY') },
+    { x: rest[1]!.x + effectNumber(e, 'top1X'), y: rest[1]!.y + effectNumber(e, 'top1Y') },
+    { x: rest[2]!.x + effectNumber(e, 'top2X'), y: rest[2]!.y + effectNumber(e, 'top2Y') },
+    { x: rest[3]!.x + effectNumber(e, 'topRightX'), y: rest[3]!.y + effectNumber(e, 'topRightY') },
+    { x: rest[4]!.x + effectNumber(e, 'right1X'), y: rest[4]!.y + effectNumber(e, 'right1Y') },
+    { x: rest[5]!.x + effectNumber(e, 'right2X'), y: rest[5]!.y + effectNumber(e, 'right2Y') },
+    { x: rest[6]!.x + effectNumber(e, 'bottomRightX'), y: rest[6]!.y + effectNumber(e, 'bottomRightY') },
+    { x: rest[7]!.x + effectNumber(e, 'bottom1X'), y: rest[7]!.y + effectNumber(e, 'bottom1Y') },
+    { x: rest[8]!.x + effectNumber(e, 'bottom2X'), y: rest[8]!.y + effectNumber(e, 'bottom2Y') },
+    { x: rest[9]!.x + effectNumber(e, 'bottomLeftX'), y: rest[9]!.y + effectNumber(e, 'bottomLeftY') },
+    { x: rest[10]!.x + effectNumber(e, 'left1X'), y: rest[10]!.y + effectNumber(e, 'left1Y') },
+    { x: rest[11]!.x + effectNumber(e, 'left2X'), y: rest[11]!.y + effectNumber(e, 'left2Y') },
+  ] as unknown as WarpPoints;
+  if (isRestWarp(pts, w, h)) return;
+  applyRemapEffect(oc, w, h, (d) => bezierWarpData(d, w, h, pts));
+}
+
+// ── Generate / Noise, round two (kernels in generatePatterns.ts, noiseEffects.ts) ──
+
+function applyCellPattern(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const p = paramsOf(e);
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  cellPatternData(
+    img.data, w, h,
+    effectNumber(e, 'size'),
+    effectNumber(e, 'evolution'),
+    effectNumber(e, 'contrast'),
+    p.invert === true,
+    p.membrane === true,
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyTurbulentNoise(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  turbulentNoiseData(
+    img.data, w, h,
+    effectNumber(e, 'scale'),
+    effectNumber(e, 'complexity'),
+    effectNumber(e, 'evolution'),
+    effectNumber(e, 'contrast'),
+    effectNumber(e, 'brightness'),
+    paramsOf(e).invert === true,
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyAddGrain(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'intensity') === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  addGrainData(
+    img.data, w, h,
+    effectNumber(e, 'intensity'),
+    effectNumber(e, 'size'),
+    effectNumber(e, 'saturation'),
+    effectNumber(e, 'seed'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyMedian(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = Math.round(effectNumber(e, 'radius'));
+  if (radius <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  // A rank filter cannot run in place — a sorted window must see the ORIGINAL
+  // neighbours, not ones this pass already replaced.
+  img.data.set(medianData(img.data, w, h, radius));
+  oc.putImageData(img, 0, 0);
+}
+
+function applySelectiveColor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const cyan = effectNumber(e, 'cyan');
+  const magenta = effectNumber(e, 'magenta');
+  const yellow = effectNumber(e, 'yellow');
+  const black = effectNumber(e, 'black');
+  if (cyan === 0 && magenta === 0 && yellow === 0 && black === 0) return;
+  const range = selectiveRange(effectNumber(e, 'range'));
+  const absolute = paramsOf(e).absolute === true;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  selectiveColorData(img.data, range, cyan, magenta, yellow, black, !absolute);
+  oc.putImageData(img, 0, 0);
+}
+
+/**
+ * Apply Color LUT.
+ *
+ * The LUT is rehydrated per call rather than cached: `fromStoredLut` validates
+ * as it goes, and a cache keyed on anything less than the whole payload is how
+ * you grade frame 200 with frame 1's file. If this ever shows on a profile, key
+ * it on the effect id AND the stored object's identity, not on the id alone.
+ *
+ * NOTE the pipeline caveat in `cubeLut.ts`: this samples in whatever space the
+ * pixels arrive in, and the renderer is not linear-light, so a log-space LUT
+ * will not match its author's intent until that work lands.
+ */
+function applyColorLut(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const intensity = effectNumber(e, 'intensity') / 100;
+  if (!(intensity > 0)) return;
+  const lut = fromStoredLut(paramsOf(e).lut);
+  if (!lut) return; // no file loaded, or an unreadable one — render unchanged
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  applyLutToImageData(img.data, lut, intensity);
+  oc.putImageData(img, 0, 0);
+}
+
+function applyShadowHighlight(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const shadowAmount = effectNumber(e, 'shadowAmount');
+  const highlightAmount = effectNumber(e, 'highlightAmount');
+  if (shadowAmount === 0 && highlightAmount === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  shadowHighlightData(
+    img.data, w, h,
+    shadowAmount, highlightAmount,
+    effectNumber(e, 'radius'), effectNumber(e, 'tonalWidth'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
 function applyColorama(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
   const idx = Math.max(0, Math.min(COLORAMA_PALETTES.length - 1, Math.round(effectNumber(e, 'palette'))));
   const palette = COLORAMA_PALETTES[idx]!;
@@ -603,7 +1186,6 @@ function applyTurbulentDisplace(oc: CanvasRenderingContext2D, w: number, h: numb
 
 // ── helpers ──────────────────────────────────────────────────────────
 
-const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const clamp255 = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v);
 const str = (e: Effect, k: string, fb: string): string => {
   const v = paramsOf(e)[k];
@@ -1541,4 +2123,737 @@ function applyTransformEffect(oc: CanvasRenderingContext2D, w: number, h: number
   oc.scale(scale, scale);
   oc.drawImage(src, -w / 2, -h / 2);
   oc.restore();
+}
+
+// ── Round three ───────────────────────────────────────────────────
+//
+// Wrappers only: every kernel lives in its family's file (`aeColor.ts`,
+// `distort.ts`, `stylize.ts`, `transitions.ts`, `keyingEffects.ts`, `blurs.ts`)
+// so the arithmetic stays testable without a DOM. What happens here is reading
+// params, converting units, and choosing between `putImageData` and
+// `applyRemapEffect` — the latter for the ones that RESAMPLE and so must return
+// a new buffer rather than mutate in place.
+
+function applyPhotoFilter(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const density = effectNumber(e, 'density');
+  if (density <= 0) return;
+  const [r, g, b] = parseHex(str(e, 'color', '#ec8a00'));
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  photoFilterData(img.data, r, g, b, density, bool(e, 'preserveLuminosity', true));
+  oc.putImageData(img, 0, 0);
+}
+
+function applyBlackAndWhite(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  blackAndWhiteData(
+    img.data,
+    {
+      // Percentages at the boundary, fractions in the kernel — the same split
+      // the rest of this file uses, so the inspector shows AE's own numbers.
+      reds: effectNumber(e, 'reds') / 100,
+      yellows: effectNumber(e, 'yellows') / 100,
+      greens: effectNumber(e, 'greens') / 100,
+      cyans: effectNumber(e, 'cyans') / 100,
+      blues: effectNumber(e, 'blues') / 100,
+      magentas: effectNumber(e, 'magentas') / 100,
+    },
+    bool(e, 'tint', false) ? parseHex(str(e, 'tintColor', '#d8b48a')) : null,
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyTritone(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const blend = effectNumber(e, 'blend');
+  if (blend >= 100) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  tritoneData(
+    img.data,
+    parseHex(str(e, 'shadows', '#000000')),
+    parseHex(str(e, 'midtones', '#808080')),
+    parseHex(str(e, 'highlights', '#ffffff')),
+    blend,
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyThreshold(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  thresholdData(img.data, effectNumber(e, 'level'));
+  oc.putImageData(img, 0, 0);
+}
+
+function applyPolarCoordinates(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const interpolation = effectNumber(e, 'interpolation');
+  if (interpolation <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => polarCoordinatesData(
+    d, w, h, interpolation, polarConversion(effectNumber(e, 'conversion')),
+  ));
+}
+
+function applyLiquify(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => liquifyData(
+    d, w, h,
+    // Centre as an OFFSET from the layer's middle, matching Bulge and Twirl —
+    // an EffectDef cannot see the layer, so an absolute default would be 0,0.
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    effectNumber(e, 'brushSize'),
+    effectNumber(e, 'pushX'),
+    effectNumber(e, 'pushY'),
+    effectNumber(e, 'twirl'),
+    effectNumber(e, 'pinch'),
+  ));
+}
+
+function applyMeshWarp(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  // Read the whole lattice, in the row-major order `meshWarpData` expects.
+  // Built by index rather than spelled out: 32 hand-written `effectNumber`
+  // calls is 32 chances to transpose a row and a column, and the resulting warp
+  // would look like a plausible mesh with the wrong vertex moving.
+  const offsets: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < MESH_WARP_N * MESH_WARP_N; i++) {
+    offsets.push({ x: effectNumber(e, `v${i}X`), y: effectNumber(e, `v${i}Y`) });
+  }
+  if (offsets.every((o) => o.x === 0 && o.y === 0)) return;
+  applyRemapEffect(oc, w, h, (d) => meshWarpData(d, w, h, offsets));
+}
+
+function applyOpticsCompensation(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const fov = effectNumber(e, 'fieldOfView');
+  // Zero is the identity, and skipping keeps it EXACTLY so — a resample at
+  // k = 0 still costs a bilinear tap of softening for a control left off.
+  if (fov <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => opticsCompensationData(
+    d, w, h, fov,
+    // Read as a BOOLEAN, not through `effectNumber`: that returns 0 for a
+    // checkbox param, so `n('reverse') > 0.5` would be unconditionally false
+    // and the control would persist, keyframe and do nothing.
+    paramsOf(e).reverse === true,
+    effectNumber(e, 'centerX'),
+    effectNumber(e, 'centerY'),
+  ));
+}
+
+function applyMirror(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => mirrorData(
+    d, w, h,
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    effectNumber(e, 'angle'),
+  ));
+}
+
+function applyOffset(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const blend = effectNumber(e, 'blend');
+  if (blend >= 100) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  // `offsetData` writes back into the buffer it was handed (its wrapping
+  // sampler owns its own scratch), so this is a putImageData case rather than
+  // an applyRemapEffect one.
+  offsetData(
+    img.data, w, h,
+    w / 2 + effectNumber(e, 'shiftX'),
+    h / 2 + effectNumber(e, 'shiftY'),
+    blend,
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyEmboss(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const blend = effectNumber(e, 'blend');
+  if (blend >= 100) return;
+  applyRemapEffect(oc, w, h, (d) => embossData(
+    d, w, h,
+    effectNumber(e, 'angle'),
+    effectNumber(e, 'relief'),
+    effectNumber(e, 'contrast'),
+    blend,
+  ));
+}
+
+function applyScatter(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  if (amount <= 0) return;
+  const grain = effectNumber(e, 'grain');
+  applyRemapEffect(oc, w, h, (d) => scatterData(
+    d, w, h, amount,
+    // The same 0/1/2 encoding as Blur Dimensions, deliberately.
+    grain >= 2 ? 'vertical' : grain >= 1 ? 'horizontal' : 'both',
+    effectNumber(e, 'seed'),
+    effectNumber(e, 'evolution'),
+  ));
+}
+
+function applyRadialWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  radialWipeData(
+    img.data, w, h,
+    completion / 100,
+    effectNumber(e, 'startAngle'),
+    radialWipeDirection(effectNumber(e, 'wipe')),
+    w / 2 + effectNumber(e, 'centerX'),
+    h / 2 + effectNumber(e, 'centerY'),
+    effectNumber(e, 'feather'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyBlockDissolve(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  blockDissolveData(
+    img.data, w, h,
+    completion / 100,
+    effectNumber(e, 'blockWidth'),
+    effectNumber(e, 'blockHeight'),
+    effectNumber(e, 'feather'),
+    effectNumber(e, 'seed'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyLumaKey(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  lumaKeyData(
+    img.data,
+    lumaKeyType(effectNumber(e, 'keyType')),
+    effectNumber(e, 'threshold'),
+    effectNumber(e, 'tolerance'),
+    effectNumber(e, 'softness'),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyMinimax(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = effectNumber(e, 'radius');
+  if (radius <= 0) return;
+  const direction = effectNumber(e, 'direction');
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  minimaxData(
+    img.data, w, h,
+    minimaxOp(effectNumber(e, 'operation')),
+    radius,
+    minimaxChannel(effectNumber(e, 'channel')),
+    direction >= 2 ? 'vertical' : direction >= 1 ? 'horizontal' : 'both',
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyChannelBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radii = {
+    red: effectNumber(e, 'redBlurriness'),
+    green: effectNumber(e, 'greenBlurriness'),
+    blue: effectNumber(e, 'blueBlurriness'),
+    alpha: effectNumber(e, 'alphaBlurriness'),
+  };
+  // All four at zero is the state of a freshly added effect, and each pass
+  // would be a no-op anyway — skip the getImageData round trip entirely.
+  if (radii.red <= 0 && radii.green <= 0 && radii.blue <= 0 && radii.alpha <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  channelBlurData(
+    img.data, w, h, radii,
+    blurDimensions(effectNumber(e, 'dimensions')),
+    bool(e, 'repeatEdge', false),
+  );
+  oc.putImageData(img, 0, 0);
+}
+
+function applyUnsharpMask(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  const radius = effectNumber(e, 'radius');
+  if (amount <= 0 || radius <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  unsharpMaskData(img.data, w, h, amount, radius, effectNumber(e, 'threshold'));
+  oc.putImageData(img, 0, 0);
+}
+
+// ══ Round four ═══════════════════════════════════════════════════════
+//
+// Marshalling only, as everywhere above: read the params, call the kernel.
+//
+// Two shapes appear here and the difference matters. Kernels that MUTATE take
+// `img.data` and are followed by `putImageData`. Kernels that RESAMPLE return a
+// new buffer and go through `applyRemapEffect`, because a resample cannot be
+// done in place — a destination pixel may read a source pixel that an earlier
+// destination has already overwritten.
+//
+// Every param key below appears in quoted form, which is what the dead-control
+// scanner looks for. A param declared in `EFFECT_DEFS` and never read here is a
+// control the user can set, keyframe and save while nothing consumes it.
+
+/** Read an in-place kernel's ImageData, run it, write it back. */
+function applyInPlace(
+  oc: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  kernel: (data: Uint8ClampedArray) => void,
+): void {
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  kernel(img.data);
+  oc.putImageData(img, 0, 0);
+}
+
+// ── Blur ──
+function applyBilateralBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = effectNumber(e, 'radius');
+  if (radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => bilateralBlurData(
+    d, w, h, radius, effectNumber(e, 'colorSigma'), bool(e, 'preserveAlpha', true),
+  ));
+}
+
+function applySmartBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = effectNumber(e, 'radius');
+  if (radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => smartBlurData(
+    d, w, h, radius, effectNumber(e, 'threshold'), effectNumber(e, 'mode'),
+  ));
+}
+
+function applyCameraLensBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const radius = effectNumber(e, 'radius');
+  if (radius <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => cameraLensBlurData(
+    d, w, h, radius,
+    effectNumber(e, 'blades'), effectNumber(e, 'irisRotation'),
+    effectNumber(e, 'gain'), effectNumber(e, 'highlightThreshold'),
+  ));
+}
+
+// ── Distort ──
+function applyRipple(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amplitude') === 0) return;
+  applyRemapEffect(oc, w, h, (d) => rippleData(
+    d, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'radius'), effectNumber(e, 'amplitude'),
+    effectNumber(e, 'frequency'), effectNumber(e, 'phase'), effectNumber(e, 'decay'),
+  ));
+}
+
+function applyMagnify(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => magnifyData(
+    d, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'magnification'), effectNumber(e, 'radius'),
+    effectNumber(e, 'shape'), effectNumber(e, 'feather'),
+  ));
+}
+
+function applyWarp(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => warpData(
+    d, w, h,
+    effectNumber(e, 'style'), effectNumber(e, 'bend'),
+    effectNumber(e, 'horizontalDistortion'), effectNumber(e, 'verticalDistortion'),
+    effectNumber(e, 'warpAxis'),
+  ));
+}
+
+function applyPageTurn(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  if (amount <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => pageTurnData(
+    d, w, h, amount,
+    effectNumber(e, 'angle'), effectNumber(e, 'curlRadius'),
+    effectNumber(e, 'backOpacity'), effectNumber(e, 'shading'),
+  ));
+}
+
+function applySplit(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'splitOffset') === 0) return;
+  applyRemapEffect(oc, w, h, (d) => splitData(
+    d, w, h,
+    effectNumber(e, 'splitOffset'), effectNumber(e, 'angle'),
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+  ));
+}
+
+function applySlant(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'slant') === 0) return;
+  applyRemapEffect(oc, w, h, (d) => slantData(
+    d, w, h, effectNumber(e, 'slant'), effectNumber(e, 'slantAxis'), effectNumber(e, 'floor'),
+  ));
+}
+
+function applySmear(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => smearData(
+    d, w, h,
+    effectNumber(e, 'fromX'), effectNumber(e, 'fromY'),
+    effectNumber(e, 'toX'), effectNumber(e, 'toY'),
+    effectNumber(e, 'radius'), effectNumber(e, 'elasticity'),
+  ));
+}
+
+function applyRollingShutter(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'sweep') === 0 && effectNumber(e, 'wobble') === 0) return;
+  applyRemapEffect(oc, w, h, (d) => rollingShutterData(
+    d, w, h,
+    effectNumber(e, 'sweep'), effectNumber(e, 'wobble'),
+    effectNumber(e, 'scanDirection'), bool(e, 'verticalScan', false),
+  ));
+}
+
+function applyRadialShadow(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'shadowOpacity') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => radialShadowData(
+    d, w, h,
+    effectNumber(e, 'lightX'), effectNumber(e, 'lightY'),
+    effectNumber(e, 'projection'),
+    parseHex(str(e, 'shadowColor', '#000000')),
+    effectNumber(e, 'shadowOpacity'), effectNumber(e, 'softness'),
+    effectNumber(e, 'renderMode'),
+  ));
+}
+
+// ── Generate ──
+function applyCircle(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawCircle(
+    oc, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'), effectNumber(e, 'radius'),
+    str(e, 'color', '#ffffff'), effectNumber(e, 'opacity'), effectNumber(e, 'feather'),
+    effectNumber(e, 'thickness'), bool(e, 'invertCircle', false), effectNumber(e, 'composite'),
+  );
+}
+
+function applyEllipse(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawEllipse(
+    oc, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'ellipseWidth'), effectNumber(e, 'ellipseHeight'),
+    effectNumber(e, 'rotation'), effectNumber(e, 'thickness'), effectNumber(e, 'softness'),
+    str(e, 'color', '#ffffff'), effectNumber(e, 'opacity'), effectNumber(e, 'composite'),
+  );
+}
+
+function applyRadioWaves(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawRadioWaves(
+    oc, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'waveCount'), effectNumber(e, 'maxRadius'), effectNumber(e, 'phase'),
+    effectNumber(e, 'thickness'), str(e, 'color', '#7dd3fc'), effectNumber(e, 'opacity'),
+    effectNumber(e, 'fadeOut'), effectNumber(e, 'composite'),
+  );
+}
+
+function applyLightning(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawLightning(
+    oc, w, h,
+    effectNumber(e, 'startX'), effectNumber(e, 'startY'),
+    effectNumber(e, 'endX'), effectNumber(e, 'endY'),
+    effectNumber(e, 'detail'), effectNumber(e, 'amplitude'), effectNumber(e, 'branches'),
+    effectNumber(e, 'thickness'), str(e, 'color', '#cfe8ff'), effectNumber(e, 'glow'),
+    effectNumber(e, 'opacity'), effectNumber(e, 'seed'), effectNumber(e, 'composite'),
+  );
+}
+
+function applyLightRays(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawLightRays(
+    oc, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'rayCount'), effectNumber(e, 'rayLength'), effectNumber(e, 'spread'),
+    effectNumber(e, 'rotation'), str(e, 'color', '#fff3c4'), effectNumber(e, 'opacity'),
+    effectNumber(e, 'falloff'), effectNumber(e, 'seed'), effectNumber(e, 'composite'),
+  );
+}
+
+function applyLightSweep(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  drawLightSweep(
+    oc, w, h,
+    effectNumber(e, 'position'), effectNumber(e, 'sweepWidth'), effectNumber(e, 'angle'),
+    str(e, 'color', '#ffffff'), effectNumber(e, 'intensity'), effectNumber(e, 'softness'),
+    effectNumber(e, 'composite'),
+  );
+}
+
+function applyAudioWaveform(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  // `samples` is RESOLVED — written by `buildSnapshot` from `audioLayerId`. An
+  // unwired or silent source leaves it empty and the kernel draws nothing,
+  // which is deliberately distinguishable from a flat line.
+  const raw = paramsOf(e).samples;
+  const samples = Array.isArray(raw) ? (raw as number[]) : [];
+  drawAudioWaveform(
+    oc, w, h, samples,
+    effectNumber(e, 'displayMode'), effectNumber(e, 'maxHeight'), effectNumber(e, 'thickness'),
+    str(e, 'insideColor', '#7dd3fc'), str(e, 'outsideColor', '#1d4ed8'),
+    effectNumber(e, 'opacity'), effectNumber(e, 'composite'),
+  );
+}
+
+// ── Stylize ──
+function applyCartoon(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => cartoonData(
+    d, w, h,
+    effectNumber(e, 'smoothness'), effectNumber(e, 'levels'),
+    effectNumber(e, 'edgeThreshold'), effectNumber(e, 'edgeWidth'), effectNumber(e, 'edgeOpacity'),
+  ));
+}
+
+function applyBrushStrokes(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'density') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => brushStrokesData(
+    d, w, h,
+    effectNumber(e, 'strokeAngle'), effectNumber(e, 'strokeLength'),
+    effectNumber(e, 'randomness'), effectNumber(e, 'cellSize'), effectNumber(e, 'density'),
+  ));
+}
+
+function applyStrobeLight(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => strobeLightData(
+    d,
+    // Resolved from the clock — see `TIME_DEPENDENT`.
+    effectNumber(e, 'time'),
+    effectNumber(e, 'strobePeriod'), effectNumber(e, 'strobeDuty'),
+    effectNumber(e, 'strobeOperation'), parseHex(str(e, 'strobeColor', '#ffffff')),
+    effectNumber(e, 'intensity'),
+  ));
+}
+
+function applyColorEmboss(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => colorEmbossData(
+    d, w, h,
+    effectNumber(e, 'direction'), effectNumber(e, 'relief'),
+    effectNumber(e, 'contrast'), effectNumber(e, 'blendWithOriginal'),
+  ));
+}
+
+function applyHalftone(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => halftoneData(
+    d, w, h,
+    effectNumber(e, 'cellSize'), effectNumber(e, 'screenAngle'), effectNumber(e, 'contrast'),
+    parseHex(str(e, 'inkColor', '#000000')), parseHex(str(e, 'paperColor', '#ffffff')),
+    bool(e, 'colorize', false), effectNumber(e, 'blendWithOriginal'),
+  ));
+}
+
+function applyKaleidoscope(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => kaleidoscopeData(
+    d, w, h,
+    effectNumber(e, 'segments'), effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'rotation'), effectNumber(e, 'sourceAngle'), effectNumber(e, 'zoom'),
+  ));
+}
+
+function applyVignette(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') === 0) return;
+  applyInPlace(oc, w, h, (d) => vignetteData(
+    d, w, h,
+    effectNumber(e, 'amount'), effectNumber(e, 'size'), effectNumber(e, 'feather'),
+    effectNumber(e, 'roundness'), effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+  ));
+}
+
+function applyBurnFilm(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'burn') <= 0) return;
+  applyInPlace(oc, w, h, (d) => burnFilmData(
+    d, w, h,
+    effectNumber(e, 'burn'), effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    parseHex(str(e, 'burnColor', '#fff6e0')), parseHex(str(e, 'charColor', '#3d1f0a')),
+    effectNumber(e, 'randomness'), effectNumber(e, 'seed'),
+  ));
+}
+
+// ── Colour ──
+function applyEqualize(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyInPlace(oc, w, h, (d) => equalizeData(
+    d, effectNumber(e, 'equalizeMode'), effectNumber(e, 'amount'), effectNumber(e, 'blend'),
+  ));
+}
+
+function applyAutoLevels(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => autoLevelsData(
+    d, effectNumber(e, 'blackClip'), effectNumber(e, 'whiteClip'), effectNumber(e, 'blend'),
+  ));
+}
+
+function applyAutoContrast(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => autoContrastData(
+    d, effectNumber(e, 'blackClip'), effectNumber(e, 'whiteClip'), effectNumber(e, 'blend'),
+  ));
+}
+
+function applyAutoColor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => autoColorData(
+    d, effectNumber(e, 'blackClip'), effectNumber(e, 'whiteClip'),
+    effectNumber(e, 'snapNeutral'), effectNumber(e, 'blend'),
+  ));
+}
+
+function applyChangeColor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => changeColorData(
+    d, parseHex(str(e, 'targetColor', '#ff0000')),
+    effectNumber(e, 'hueTolerance'), effectNumber(e, 'satTolerance'), effectNumber(e, 'lightTolerance'),
+    effectNumber(e, 'softness'), effectNumber(e, 'hueShift'),
+    effectNumber(e, 'satScale'), effectNumber(e, 'lightScale'),
+    bool(e, 'invertSelection', false),
+  ));
+}
+
+function applyChangeToColor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => changeToColorData(
+    d, parseHex(str(e, 'fromColor', '#ff0000')), parseHex(str(e, 'toColor', '#0055ff')),
+    effectNumber(e, 'hueTolerance'), effectNumber(e, 'satTolerance'), effectNumber(e, 'lightTolerance'),
+    effectNumber(e, 'softness'), bool(e, 'preserveLightness', true),
+  ));
+}
+
+function applyLeaveColor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyInPlace(oc, w, h, (d) => leaveColorData(
+    d, parseHex(str(e, 'targetColor', '#ff0000')),
+    effectNumber(e, 'tolerance'), effectNumber(e, 'softness'), effectNumber(e, 'amount'),
+  ));
+}
+
+function applyToner(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => tonerData(
+    d,
+    parseHex(str(e, 'blackTone', '#000000')),
+    parseHex(str(e, 'shadowTone', '#2a2a45')),
+    parseHex(str(e, 'midTone', '#8a7a63')),
+    parseHex(str(e, 'highlightTone', '#e8d9b8')),
+    parseHex(str(e, 'whiteTone', '#ffffff')),
+    effectNumber(e, 'blend'),
+  ));
+}
+
+// ── Keying & Channel ──
+function applyColorKey(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => colorKeyData(
+    d, parseHex(str(e, 'keyColor', '#00ff00')),
+    effectNumber(e, 'tolerance'), effectNumber(e, 'edgeSoftness'),
+  ));
+}
+
+function applyColorRange(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => colorRangeData(
+    d, parseHex(str(e, 'keyColor', '#00ff00')), effectNumber(e, 'colorSpace'),
+    effectNumber(e, 'minTolerance'), effectNumber(e, 'maxTolerance'), effectNumber(e, 'lumaWeight'),
+  ));
+}
+
+function applyExtract(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => extractData(
+    d, effectNumber(e, 'extractChannel'),
+    effectNumber(e, 'blackPoint'), effectNumber(e, 'whitePoint'),
+    effectNumber(e, 'blackSoftness'), effectNumber(e, 'whiteSoftness'),
+    bool(e, 'invertExtract', false),
+  ));
+}
+
+function applySpillSuppressor(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyInPlace(oc, w, h, (d) => spillSuppressorData(
+    d, parseHex(str(e, 'keyColor', '#00ff00')),
+    effectNumber(e, 'amount'), bool(e, 'preserveLuma', true),
+  ));
+}
+
+function applyMatteChoker(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => matteChokerData(
+    d, w, h,
+    effectNumber(e, 'spread'), effectNumber(e, 'choke'),
+    effectNumber(e, 'softness'), effectNumber(e, 'iterations'),
+  ));
+}
+
+function applyAlphaLevels(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => alphaLevelsData(
+    d, effectNumber(e, 'inBlack'), effectNumber(e, 'inWhite'), effectNumber(e, 'gamma'),
+    effectNumber(e, 'outBlack'), effectNumber(e, 'outWhite'),
+  ));
+}
+
+function applySolidComposite(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => solidCompositeData(
+    d, parseHex(str(e, 'solidColor', '#000000')),
+    effectNumber(e, 'sourceOpacity'), effectNumber(e, 'solidOpacity'),
+    effectNumber(e, 'compositeMode'),
+  ));
+}
+
+function applyChannelCombiner(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyInPlace(oc, w, h, (d) => channelCombinerData(d, effectNumber(e, 'combinerMode')));
+}
+
+function applyRemoveColorMatting(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyInPlace(oc, w, h, (d) => removeColorMattingData(
+    d, parseHex(str(e, 'backgroundColor', '#000000')),
+    effectNumber(e, 'threshold'), effectNumber(e, 'amount'),
+  ));
+}
+
+// ── Transition & Noise ──
+function applyIrisWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0 && !bool(e, 'invertIris', false)) return;
+  applyInPlace(oc, w, h, (d) => irisWipeData(
+    d, w, h, completion,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'irisPoints'), effectNumber(e, 'rotation'),
+    effectNumber(e, 'innerRadius'), bool(e, 'useInnerRadius', false),
+    effectNumber(e, 'feather'), bool(e, 'invertIris', false),
+  ));
+}
+
+function applyLightWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0) return;
+  applyInPlace(oc, w, h, (d) => lightWipeData(
+    d, w, h, completion,
+    effectNumber(e, 'wipeShape'), effectNumber(e, 'angle'),
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'lightWidth'), parseHex(str(e, 'lightColor', '#ffffff')),
+    effectNumber(e, 'intensity'), effectNumber(e, 'feather'),
+  ));
+}
+
+function applyLineSweep(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0 && !bool(e, 'invertSweep', false)) return;
+  applyInPlace(oc, w, h, (d) => lineSweepData(
+    d, w, h, completion,
+    effectNumber(e, 'lineCount'), effectNumber(e, 'angle'), effectNumber(e, 'stagger'),
+    effectNumber(e, 'feather'), bool(e, 'invertSweep', false),
+  ));
+}
+
+function applyGridWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const completion = effectNumber(e, 'completion');
+  if (completion <= 0 && !bool(e, 'invertGrid', false)) return;
+  applyInPlace(oc, w, h, (d) => gridWipeData(
+    d, w, h, completion,
+    effectNumber(e, 'columns'), effectNumber(e, 'rows'), effectNumber(e, 'tileShape'),
+    effectNumber(e, 'randomSeed'), effectNumber(e, 'feather'), bool(e, 'invertGrid', false),
+  ));
+}
+
+function applyDustAndScratches(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => dustAndScratchesData(
+    d, w, h, effectNumber(e, 'radius'), effectNumber(e, 'threshold'),
+  ));
+}
+
+function applyNoiseAlpha(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyInPlace(oc, w, h, (d) => noiseAlphaData(
+    d, w, effectNumber(e, 'amount'), bool(e, 'uniformNoise', true),
+    effectNumber(e, 'seed'), effectNumber(e, 'noisePhase'), bool(e, 'clipResult', true),
+  ));
 }

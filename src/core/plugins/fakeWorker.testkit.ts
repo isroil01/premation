@@ -16,7 +16,7 @@
 import pluginHost from './PluginHost';
 import type { HostMessage, WorkerMessage } from './protocol';
 import type { PluginPackage } from './pluginPackage';
-import type { PluginPermission } from './manifest';
+import { parseManifest, type PluginPermission } from './manifest';
 
 export class FakeWorker {
   /** The most recently constructed worker — i.e. the one just started. */
@@ -28,7 +28,6 @@ export class FakeWorker {
 
   constructor() { FakeWorker.last = this; }
 
-  postMessage(msg: HostMessage): void { this.sent.push(msg); }
   terminate(): void { this.terminated = true; }
 
   /** Simulate the plugin sending something to the host. */
@@ -36,13 +35,53 @@ export class FakeWorker {
     this.onmessage?.({ data: msg } as MessageEvent<WorkerMessage>);
   }
 
-  /** Reply to the last `call` and return the host's answer. */
+  postMessage(msg: HostMessage, _transfer?: Transferable[]): void { this.sent.push(msg); }
+
+  /**
+   * Call a SYNCHRONOUS method and return the host's answer.
+   *
+   * Throws rather than returning undefined when no reply arrived, because the
+   * commonest cause is that the method is actually async — and a test that
+   * silently got `undefined` back would assert nothing and pass. Use
+   * `callAsync` for those.
+   */
   callAndWait(method: string, ...args: unknown[]): Extract<HostMessage, { k: 'result' }> {
-    const id = Math.floor(Math.random() * 1e6);
+    const id = this.nextId();
     this.emit({ k: 'call', id, method, args });
-    const reply = [...this.sent].reverse().find((m) => m.k === 'result' && m.id === id);
-    if (!reply) throw new Error(`host never answered ${method}`);
-    return reply as Extract<HostMessage, { k: 'result' }>;
+    const reply = this.replyTo(id);
+    if (!reply) {
+      throw new Error(
+        `host never answered ${method} synchronously — if it is async, use callAsync().`,
+      );
+    }
+    return reply;
+  }
+
+  /**
+   * Call a method that resolves later.
+   *
+   * The asset methods decode and encode, so they answer on a microtask rather
+   * than in the same turn. This polls the sent log across turns instead of
+   * awaiting a promise the fake worker never sees.
+   */
+  async callAsync(method: string, ...args: unknown[]): Promise<Extract<HostMessage, { k: 'result' }>> {
+    const id = this.nextId();
+    this.emit({ k: 'call', id, method, args });
+    for (let i = 0; i < 50; i++) {
+      const reply = this.replyTo(id);
+      if (reply) return reply;
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    throw new Error(`host never answered ${method}`);
+  }
+
+  private nextId(): number { return (FakeWorker.seq += 1); }
+  private static seq = 0;
+
+  private replyTo(id: number): Extract<HostMessage, { k: 'result' }> | undefined {
+    return [...this.sent].reverse().find((m) => m.k === 'result' && m.id === id) as
+      | Extract<HostMessage, { k: 'result' }>
+      | undefined;
   }
 }
 
@@ -52,28 +91,59 @@ export function useFakeWorkers(): { restore: () => void } {
   return { restore: () => pluginHost.setWorkerFactory(null) };
 }
 
-/** A minimal valid package. */
+/**
+ * A minimal valid package.
+ *
+ * The manifest is built by running the REAL `parseManifest`, not by writing a
+ * `PluginManifest` literal. Hand-writing one lets a test set up a shape the
+ * validator would never produce — a missing `contributes`, an unnormalised
+ * legacy `panel` — and then pass against a host that never sees such a thing in
+ * production. Anything this helper cannot express is something a plugin cannot
+ * declare, which is the property worth having.
+ */
 export function testPackage(
   permissions: PluginPermission[],
   id = 'com.test.plugin',
-  extra: { panel?: string; name?: string } = {},
+  extra: {
+    /** Legacy API-1 single panel. Normalised to `contributes.panels[main]`. */
+    panel?: string;
+    name?: string;
+    apiVersion?: number;
+    contributes?: unknown;
+    activationEvents?: string[];
+    /** Capabilities the plugin cannot run without. Refused at install if absent. */
+    requires?: string[];
+    /** Capabilities it uses when present. Never gates anything. */
+    optional?: string[];
+  } = {},
 ): PluginPackage {
+  const { manifest, errors } = parseManifest({
+    id,
+    name: extra.name ?? 'Test Plugin',
+    version: '1.0.0',
+    description: 'A plugin used by the tests.',
+    apiVersion: extra.apiVersion ?? 1,
+    main: 'main.js',
+    ...(extra.panel ? { panel: extra.panel } : {}),
+    ...(extra.contributes !== undefined ? { contributes: extra.contributes } : {}),
+    ...(extra.activationEvents ? { activationEvents: extra.activationEvents } : {}),
+    ...(extra.requires ? { requires: extra.requires } : {}),
+    ...(extra.optional ? { optional: extra.optional } : {}),
+    permissions,
+  });
+  if (!manifest) throw new Error(`testPackage built an invalid manifest: ${errors.join(' ')}`);
+
+  const panelFiles: Record<string, string> = {};
+  for (const p of manifest.contributes.panels) panelFiles[p.entry] = `<p>${p.id} panel</p>`;
+
   return {
-    manifest: {
-      id,
-      name: extra.name ?? 'Test Plugin',
-      version: '1.0.0',
-      description: 'A plugin used by the tests.',
-      apiVersion: 1,
-      main: 'main.js',
-      ...(extra.panel ? { panel: extra.panel } : {}),
-      permissions,
-    },
+    manifest,
     files: {
       'main.js': 'export function activate() {}',
       'plugin.json': '{}',
-      ...(extra.panel ? { [extra.panel]: '<p>panel</p>' } : {}),
+      ...panelFiles,
     },
+    binaries: {},
   };
 }
 

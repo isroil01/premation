@@ -16,7 +16,7 @@ import type { RenderBackend } from '@core/rendering/RenderBackend';
 import { buildSnapshot, type SnapshotComp } from '@core/rendering/buildSnapshot';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
-import { exportView } from './offlineRenderer';
+import { exportView, exportComp } from './offlineRenderer';
 
 export interface PreviewFrameRequest {
   /** Output size of the real export — the preview keeps its aspect ratio. */
@@ -163,7 +163,7 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         undefined,
         exportView(width, height, request.comp),
         undefined, // motion blur is a per-frame accumulation; not worth it here
-        request.comp,
+        exportComp(request.comp),
       );
       backend.renderFrame(snapshot);
       // Converge async media (image decodes, video seeks) exactly like the

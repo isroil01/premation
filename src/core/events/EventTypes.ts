@@ -113,8 +113,15 @@ export interface AppEventPayloads {
 
   UndoStackChanged: { canUndo: boolean; canRedo: boolean };
 
-  /** Emitted by the U / UU shortcut; Timeline subscribes to expand/filter tracks. */
-  RevealAnimatedProps: { nodeIds: string[]; mode: 'animated' | 'modified' };
+  /**
+   * Emitted by the U / UU shortcut; Timeline subscribes to expand/filter tracks.
+   *
+   * `force` reveals without toggling, and reads the engine rather than the
+   * timeline model — for a generator that has just written keyframes and needs
+   * them SEEN. U toggles because the user pressed it twice on purpose; an
+   * assistant re-emitting it would collapse the very rows it just filled.
+   */
+  RevealAnimatedProps: { nodeIds: string[]; mode: 'animated' | 'modified'; force?: boolean };
 
   EngineReady: { engine: string; role?: 'viewport' | 'auxiliary' };
   EngineError: { engine: string; error: Error; role?: 'viewport' | 'auxiliary' };

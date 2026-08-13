@@ -5,10 +5,10 @@
  * manipulates, it does not create.
  *
  * Deliberately NOT here (each had exactly one other, better home):
- *  - Free/Fixed workspace lock → ViewportHeader, next to the canvas it locks.
+ *  - Free/Fixed workspace lock → ViewportTools, in the timeline's tool row.
  *  - Insert camera / light / cube / sphere / cylinder / 3D text → the TopNav
  *    "New layer" dropdown, the single home for creating layers.
- *  - "CPU fallback" badge → ViewportHeader, beside the comp it describes.
+ *  - "CPU fallback" badge → ViewportTools, in the timeline's tool row.
  *
  * Icon note: orbit/pan/dolly and the ground plane use dedicated glyphs
  * (`orbit`, `hand-grab`, `perspective`, `ground-grid`) instead of borrowing
@@ -75,7 +75,7 @@ export function SceneControls(): JSX.Element {
           aria-pressed={cameraTool === id}
           title={`${label} — hold Alt to use temporarily, C to cycle`}
         >
-          <Icon name={icon} size={16} />
+          <Icon name={icon} size="md" />
         </button>
       ))}
 
@@ -91,7 +91,7 @@ export function SceneControls(): JSX.Element {
           aria-pressed={gizmo3dState === id}
           title={label}
         >
-          <Icon name={icon} size={16} />
+          <Icon name={icon} size="md" />
         </button>
       ))}
 
@@ -124,7 +124,7 @@ export function SceneControls(): JSX.Element {
             : 'Draft 3D OFF — full 3D shading. Click to preview faster.'
         }
       >
-        <Icon name="zap" size={16} />
+        <Icon name="zap" size="md" />
       </button>
 
       <button
@@ -134,7 +134,7 @@ export function SceneControls(): JSX.Element {
         aria-pressed={groundGridVisible}
         title={groundGridVisible ? 'Hide 3D ground plane' : 'Show 3D ground plane'}
       >
-        <Icon name="ground-grid" size={16} />
+        <Icon name="ground-grid" size="md" />
       </button>
 
       {/*
@@ -150,7 +150,7 @@ export function SceneControls(): JSX.Element {
         aria-pressed={layerBoxesVisible}
         title={layerBoxesVisible ? 'Hide layer bounding boxes' : 'Show layer bounding boxes'}
       >
-        <Icon name="frame" size={16} />
+        <Icon name="frame" size="md" />
       </button>
     </div>
   );

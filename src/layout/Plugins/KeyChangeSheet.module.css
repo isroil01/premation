@@ -1,0 +1,110 @@
+/*
+ * The key-change prompt's styles.
+ *
+ * Same shapes as `ConsentSheet` and `ReportPluginDialog`: these three are the
+ * dialogs that ask a user to decide something about a plugin, and a security
+ * prompt that looked like a different product from the consent screen would
+ * read as less serious than it is.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 380px;
+  padding: var(--space-1) 0 var(--space-2);
+}
+
+.lede {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+.disclosure {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.disclosure:hover {
+  color: var(--color-text-primary);
+}
+
+/*
+ * Monospace and wrapping. A fingerprint the user cannot select and compare
+ * character by character is decoration — which is most of what it would be
+ * anyway, so the least this can do is be usable by the people who do check.
+ */
+.keys {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+.keys dt {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.keys dd {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  word-break: break-all;
+  user-select: text;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+
+.primary,
+.secondary {
+  flex: none;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+/* "Keep version I have" — the low-risk choice, and the emphasised one. */
+.primary {
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: 1px solid transparent;
+}
+
+/* Accepting the new key is available, and deliberately not the loud button. */
+.secondary {
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.secondary:hover {
+  color: var(--color-text-primary);
+}

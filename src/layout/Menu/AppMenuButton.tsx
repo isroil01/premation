@@ -13,6 +13,7 @@ import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import { useAppMenuGroups } from './useAppMenuGroups';
+import { anchorMenuTo } from './menuAnchor';
 import { formatChord } from './formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import styles from './AppMenuBar.module.css';
@@ -48,7 +49,10 @@ export function AppMenuButton(): JSX.Element {
   const toggle = (e: React.MouseEvent<HTMLElement>): void => {
     if (open) { setOpen(false); return; }
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setAnchor({ left: r.right - 220, top: r.bottom + 4 });
+    // Was `left: r.right - 220` — right-aligned to the trigger, which put the
+    // whole menu at left: -186px given where TopNav mounts this button. See
+    // anchorMenuTo.
+    setAnchor(anchorMenuTo(r));
     setOpen(true);
   };
 
@@ -60,7 +64,7 @@ export function AppMenuButton(): JSX.Element {
   return (
     <div ref={ref} style={{ display: 'inline-flex' }}>
       <IconButton aria-label="Menu" size="md" active={open} onClick={toggle}>
-        <Icon name="menu" size={14} />
+        <Icon name="menu" size="md" />
       </IconButton>
       {open && anchor
         ? createPortal(
@@ -74,6 +78,12 @@ export function AppMenuButton(): JSX.Element {
                       // An unregistered/unknown command renders disabled — an
                       // enabled item whose click silently no-ops reads as broken.
                       const enabled = cmd ? (cmd.enabled ? cmd.enabled() : true) : false;
+                      // A toggle's CURRENT state. `Command.isChecked` was declared
+                      // on the interface and read by nothing, so "Show Grid" looked
+                      // identical whether the grid was on or off — the menu could
+                      // tell you an action existed but not what it would do.
+                      // `undefined` for a non-toggle keeps role="menuitem".
+                      const checked = cmd?.isChecked?.();
                       const label = it.label ?? cmd?.label ?? it.commandId ?? '';
                       const resolvedChord = cmd ? resolveChord(cmd.id as unknown as string, cmd.shortcut, getShortcutOverrides()) : undefined;
                       const shortcut = resolvedChord ? formatChord(resolvedChord) : undefined;
@@ -84,6 +94,7 @@ export function AppMenuButton(): JSX.Element {
                           label={label}
                           shortcut={shortcut}
                           disabled={!enabled}
+                      checked={checked}
                           onSelect={() => it.commandId && run(it.commandId)}
                         />
                       );

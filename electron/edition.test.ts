@@ -29,6 +29,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   aiEnabled,
+  pluginsEnabled,
   getEdition,
   isLocalEdition,
   parseEdition,
@@ -70,6 +71,28 @@ describe('the main process resolves its own edition', () => {
     // handler", which is the honest answer — not a soft refusal a caller could
     // mistake for a transient failure and retry.
     expect(aiEnabled()).toBe(false);
+  });
+
+  it('turns plugins off in the local edition', () => {
+    process.env.MOTION_EDITION = 'local';
+    __setEditionForTests(null);
+    /*
+      What this controls: main.ts calls `registerPluginNetIpc` and
+      `installPluginPublishIpc` only when it is true, so `pluginNet:*` and the
+      publish channels do not exist. Renderer-side hiding is not a gate here —
+      this is the privileged end of the boundary, and `pluginNet` is one of only
+      two channels in this process that reach a host we do not control. Unlike
+      the assistant's, that host is chosen by a third party's manifest.
+    */
+    expect(pluginsEnabled()).toBe(false);
+  });
+
+  it('leaves plugins on by default, like every other capability', () => {
+    // An unconfigured build behaves as it always did. A typo in a deploy env
+    // must not silently ship a paying customer a build with no plugins.
+    delete process.env.MOTION_EDITION;
+    __setEditionForTests(null);
+    expect(pluginsEnabled()).toBe(true);
   });
 
   it('survives an unreadable packaged manifest', () => {

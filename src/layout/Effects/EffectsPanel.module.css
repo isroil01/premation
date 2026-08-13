@@ -24,14 +24,16 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  height: 22px;
+  padding: 0 var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
   cursor: pointer;
-  min-width: 96px;
+  min-width: 88px;
   justify-content: space-between;
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
@@ -40,13 +42,21 @@
   border-color: var(--color-border-strong);
 }
 
+/* Section heading. Uppercase micro is the app's chrome-label convention and the
+   one place --font-size-micro is legitimate: caps height plus tracking carry it
+   where lowercase at this size would not (see tokens/typography.css). */
 .sectionTitle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-top: var(--space-3);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-secondary);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
 }
 
 .maskControls {
@@ -111,24 +121,52 @@
   gap: var(--space-2);
 }
 
+/* Action chip. 26px and 12px type to sit level with the browser rows and the
+   search field above them — at 11px in a 20px box these read as a toolbar
+   crammed under a heading rather than as buttons. */
 .addChip {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.addChip:hover {
+.addChip:hover:not(:disabled) {
   border-color: var(--color-primary);
+  background: var(--color-hover);
   color: var(--color-text-primary);
+}
+
+.addChip:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.addChip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* The mask card's leading glyph, occupying the column the effect card's `fx`
+   mark does so the two card headers align. */
+.maskMark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  margin-left: var(--space-2);
+  color: var(--color-primary);
 }
 
 /* GPU-only effect on the Canvas2D renderer: it would render nothing, so it
@@ -165,19 +203,23 @@
   justify-content: space-between;
 }
 
-.itemLabel {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
+.itemLabel,
+.itemLabelOff {
   flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.005em;
+  color: var(--color-text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Label of a disabled effect — dimmed. */
 .itemLabelOff {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
   color: var(--color-text-muted);
-  flex: 1;
   text-decoration: line-through;
 }
 
@@ -263,13 +305,6 @@
   background: var(--color-primary-subtle);
 }
 
-.effectRowsList {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-}
-
 /* ── Active Applied Effects Accordion Stack ────────────────────── */
 .stackList {
   display: flex;
@@ -294,10 +329,120 @@
 .effectCardHead {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 6px 4px 2px;
   background: color-mix(in srgb, var(--color-surface-2) 65%, transparent);
   user-select: none;
+}
+
+/* The effect whose handles are on the canvas. AE bands the selected effect in
+   the Effect Controls list, and that band is the ONLY thing on screen that says
+   which of four Corner Pins the four draggable points belong to. */
+.effectCardHeadSelected {
+  background: var(--color-selected);
+  box-shadow: inset 2px 0 0 0 var(--color-primary);
+}
+
+/* AE's `fx` mark, matching the browser rows below so an applied effect and its
+   entry in the library read as the same thing. */
+.fxMark {
+  flex: none;
+  width: 14px;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-style: italic;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  color: var(--color-primary);
+  text-align: center;
+}
+
+/* AE's Reset link: quiet until the header is under the pointer, because it is
+   reached for rarely and destroys every value in the effect when it is. */
+.resetLink {
+  flex: none;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  color: var(--color-primary);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.effectCardHead:hover .resetLink,
+.effectCardHead:focus-within .resetLink {
+  opacity: 1;
+}
+
+.resetLink:hover {
+  color: var(--color-primary-hover);
+  text-decoration: underline;
+}
+
+.resetLink:focus-visible {
+  opacity: 1;
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* ── Parameter lines (AE's disclosure gutter) ─────────────────────── */
+
+.paramLine {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.paramLineHead {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Reserved even when the parameter has no slider, so every label in the effect
+   shares one left edge. */
+.paramGutter,
+.paramExpander {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.paramExpander {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-xs);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.paramExpander:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.paramExpander:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.paramLineBody {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The revealed slider sits under its row, indented past the gutter so it reads
+   as belonging to the parameter above rather than as a row of its own. */
+.paramSlider {
+  padding: 2px 6px 6px 16px;
 }
 
 .disclosureBtn {
@@ -319,106 +464,72 @@
   background: var(--color-hover);
 }
 
+/**
+ * An effect's parameters, directly under its header — the accordion body.
+ *
+ * Indented past the header's grip + twisty so the parameters read as belonging
+ * to the effect above rather than as a sibling list, and `--prop-*` are set
+ * here so PropertyRow's shared grid runs at panel scale without every other
+ * consumer of that grid (the timeline especially) moving with it.
+ */
 .effectParamsBody {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px 12px 28px;
+  gap: 2px;
+  padding: 8px 10px 10px 22px;
   border-top: 1px solid var(--color-border-subtle);
   background: transparent;
+
+  --prop-nav-col: 0px;
+  --prop-value-col: 92px;
+  --prop-field-width: 60px;
 }
 
-.effectRowCard {
+/*
+ * A collapsible parameter section — AE's "▸ Output Cycle".
+ *
+ * The head is deliberately quieter than the effect header above it (no rule, no
+ * background, secondary text): it divides one effect's controls, and drawing it
+ * with the same weight as the effect title makes a grouped effect read as
+ * several effects.
+ */
+.paramGroup {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+}
+
+.paramGroupHead {
+  display: flex;
   align-items: center;
-  gap: 12px;
-  background: transparent;
-  border: 1px solid var(--color-border-subtle);
-  padding: 8px 10px;
-  border-radius: 6px;
-  cursor: pointer;
+  gap: 4px;
   width: 100%;
-  font-family: inherit;
-  transition: var(--motion-hover-transition);
+  padding: 3px 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
   text-align: left;
 }
 
-.effectRowCard:hover:not(:disabled) {
-  background: var(--color-surface-3);
-  border-color: var(--color-primary);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
-}
-
-.effectRowCardUnavailable {
-  opacity: 0.45;
-  cursor: not-allowed;
-  border-style: dashed;
-}
-
-.effectIconWrapper {
-  width: 24px;
-  height: 24px;
-  background: var(--color-surface-1);
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-subtle);
-  flex-shrink: 0;
-}
-
-.effectInfo {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-.effectLabelText {
-  font-size: 11px;
+.paramGroupHead:hover {
   color: var(--color-text-primary);
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.gpuBadge {
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  text-transform: uppercase;
-  background: rgba(0, 136, 255, 0.12);
-  color: var(--color-primary);
-  border: 1px solid rgba(0, 136, 255, 0.24);
-  padding: 1px 4px;
-  border-radius: var(--radius-sm);
-  letter-spacing: 0.05em;
+/* Indented to the same left edge the group's own params would have had, so
+   opening a section shifts nothing horizontally. */
+.paramGroupBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
 }
 
-.effectAddIcon {
-  color: var(--color-text-tertiary);
-  transition: color 150ms ease;
-  margin-left: auto;
-}
-
-.effectRowCard:hover:not(:disabled) .effectAddIcon {
-  color: var(--color-primary);
-}
-
-.catBadge {
-  margin-left: auto;
-  padding: 1px 6px;
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  background: var(--color-surface-3);
-  border-radius: var(--radius-full);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border);
-}
+/* The browser's own chrome — rows, folders, the `fx` mark — lives in
+   BrowserTree.module.css, shared with the Presets tab. The card treatment that
+   used to live here (bordered rows, 24px icon tiles, hover lift, drop shadow,
+   pill count badges) is gone with it: it fit nine of ninety effects on screen. */
 
 /* ── Effect stack drag-reorder ───────────────────────────────────── */
 /* Order is semantically meaningful in an effect stack — a blur before a glow

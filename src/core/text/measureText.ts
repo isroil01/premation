@@ -59,7 +59,8 @@ import type { SceneNode } from '@core/types';
 /** Padding so antialiasing has somewhere to land (px each side). */
 const PAD_X = 12;
 const PAD_Y = 8;
-const DEFAULT_LINE_HEIGHT = 1.2;
+/** Line height a text node uses when it declares none — the measuring default. */
+export const DEFAULT_LINE_HEIGHT = 1.2;
 
 /**
  * A measured box, in px, relative to the draw origin (see the file docblock).
@@ -83,6 +84,19 @@ export interface MeasuredText {
   ink: TextBox;
   /** Widest line's advance width (NOT its ink width — italics overhang it). */
   advance: number;
+  /**
+   * How far the FIRST line's alphabetic baseline sits BELOW the block centre.
+   *
+   * The rasterizer draws on the `middle` baseline at the block centre, and
+   * `middle` is by definition near the middle of the em box — so `font.offsetY`
+   * is ~0 and says nothing about where the baseline is. Anything that has to
+   * place text by its BASELINE (an SVG `<text y>`, say) needs this instead:
+   * measured 9.62px for 32px Inter, i.e. 0.30em, where `offsetY` was 1.88.
+   *
+   * Zero on a runtime that reports no baseline metric (jsdom), which leaves the
+   * caller drawing centred on the baseline exactly as it did before.
+   */
+  baselineOffset: number;
 }
 
 // ── Shared measuring context ────────────────────────────────────────
@@ -287,10 +301,21 @@ export function measureTextBoxes(input: MeasuredTextStyle, strokeWidth = 0): Mea
 
   let inkTop = Infinity, inkBottom = -Infinity, inkHalfW = 0;
   let fontTop = Infinity, fontBottom = -Infinity, advance = 0;
+  /** First line's alphabetic baseline, relative to the block centre. */
+  let baselineOffset = 0;
 
   for (let i = 0; i < n; i++) {
     const line = lines[i] ?? '';
     const m = g.measureText(line);
+    if (i === 0) {
+      // `alphabeticBaseline` is the distance from the CURRENT baseline (middle)
+      // to the alphabetic one, positive UP — so negating it gives the downward
+      // offset, and adding this line's own `dy` puts it in block-centre space.
+      const ab = m.alphabeticBaseline;
+      if (typeof ab === 'number' && Number.isFinite(ab)) {
+        baselineOffset = (i - (n - 1) / 2) * gap - ab;
+      }
+    }
     const chars = [...line].length;
     const spacing = chars > 0 ? (chars - 1) * s.letterSpacing : 0;
 
@@ -343,6 +368,7 @@ export function measureTextBoxes(input: MeasuredTextStyle, strokeWidth = 0): Mea
     font: box(fontTop - half, fontBottom + half, advance / 2 + half),
     ink: box(inkTop - half, inkBottom + half, inkHalfW + half),
     advance,
+    baselineOffset,
   };
 
   if (boxCache.size >= MAX_CACHE) boxCache.clear();

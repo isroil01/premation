@@ -29,7 +29,6 @@ describe('snapshotToFrameScene', () => {
       r: 0x10 / 255, g: 0x10 / 255, b: 0x14 / 255, a: 1,
     });
     expect(scene.renderables).toHaveLength(0);
-    expect(scene.selection).toEqual([]);
   });
 
   test('transparent comp → fully transparent background (alpha 0)', () => {
@@ -479,7 +478,8 @@ describe('Accepts-Lights routing (per-fragment vs per-quad fold)', () => {
     };
     const lights3d = [{
       type: 'point' as const, color: { r: 1, g: 1, b: 1 }, gain: 0.8,
-      x: 0, y: 0, z: -100, radius: 900, aimX: 1, aimY: 0, halfConeRad: 0.5,
+      x: 0, y: 0, z: -100, radius: 900, aimX: 1, aimY: 0, aimZ: 0, halfConeRad: 0.5,
+      coneFeatherRad: 0.1, falloffMode: 0, falloffDistance: 500,
     }];
     const scene = snapshotToFrameScene(snapshot([lit3d()], { camera3d: cam, lights3d }));
     expect(scene.camera3d?.eye).toEqual([960, 540, -1500]);

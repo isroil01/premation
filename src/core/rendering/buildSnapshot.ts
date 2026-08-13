@@ -17,6 +17,7 @@ const LAYER_STYLE_TRACK_PREFIX = `effect.${layerStyleEffectId('dropShadow')}`.re
 import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
+import { readNodePreserveTransparency } from '@core/effects/preserveTransparency';
 import { readNodeMaskAt } from '@core/effects/mask';
 import { readNodeMatte, readMatte } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
@@ -26,28 +27,30 @@ import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
 import { localMatrix, worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
+import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import { isAutoOrientedToCamera, readNodeAutoOrient } from '@core/scene/autoOrient';
 import { autoOrientAngleDeg } from '@core/motion/motionPath';
-import { resolveRepeater, repeaterCopies } from '@core/scene/repeater';
-import { resolveTrim, trimSegments } from '@core/scene/trimPath';
+
 import { nearestPrecompRoot, precompAncestorChain } from '@core/scene/precomp';
 import { readNodeAnchor } from '@core/scene/anchor';
 import { readNodeLight } from '@core/scene/light';
 import { readNodeParticle, resolveParticleConfig } from '@core/particles/particleSim';
 import { measureTextNodeSize, readMeasuredTextStyle } from '@core/text/measureText';
 import { readGeometry } from '@core/workspace/geometry';
-import { readEchoConfig } from '@core/effects/echo';
+import { readGhostSpec } from '@core/effects/temporalGhosts';
+import { readForceMotionBlur } from '@core/effects/forceMotionBlur';
 import { readPosterizeTimeFps } from '@core/effects/posterizeTime';
 import { readNodeQuality } from '@core/effects/layerQuality';
 import { resolveAudioSpectrum } from '@core/audio/audioSpectrum';
 import { readNodeMaterial } from '@core/scene/material';
-import { extrusionFaces, clampBevel, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS } from '@core/scene/extrusion';
+import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
+import { faceEffectsFor } from '@core/scene/faceEffects';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
-import { resolvePathOps, applyPathOpChain, shapeOutline } from '@core/scene/pathOps';
+import { resolvePathOps, applyPathOpChain, shapeOutline, type PolyRun } from '@core/scene/pathOps';
 import { corner } from '../../../packages/workspace/src/math/BezierPoint';
 import { resolveAnimators, evaluateTextAnimators } from '@core/text/textAnimators';
 import { layoutPerChar3D } from '@core/text/perChar3D';
@@ -59,6 +62,7 @@ import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
+import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides } from '@core/scene/compInstanceOverrides';
 import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
@@ -72,10 +76,12 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 const DEG = Math.PI / 180;
 import type { MotionSample } from './RenderBackend';
 import type { AnimationEngine } from '@motion/animation';
-import type { RenderSnapshot, RenderLayer, LayerKind } from './RenderBackend';
+import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint } from './RenderBackend';
 import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
+import { resolveLivePins } from '../rig/livePins';
+import { resolveActiveIkTargets } from '../rig/liveIkTargets';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
@@ -100,6 +106,25 @@ export interface SnapshotComp {
    *  this over the flat `background`. Undefined = plain solid `background`. */
   backgroundPaint?: FillPaint;
   transparent?: boolean;
+  /**
+   * This frame is being built for DELIVERY, not for the editor — so guide
+   * layers are dropped from it.
+   *
+   * Carried on the comp rather than on `RenderView` or as its own parameter,
+   * and the reason is nested compositions. `buildSnapshot` recurses for a comp
+   * instance and spreads `{...comp}` into that call while deliberately passing
+   * `view` and `overlays` as `undefined` (a nested comp renders at its own size
+   * with none of the editor's chrome). A purpose flag on the view would
+   * therefore be LOST one level down, and a guide layer inside a precomp would
+   * render into an export — the exact bug this flag exists to prevent, hidden
+   * one level deeper than anyone would look. Riding on `comp` means the
+   * propagation is the existing spread rather than a line someone must
+   * remember to add.
+   *
+   * Set in exactly one place per export path, and every export path builds its
+   * geometry through `exportView` — so if you are adding a fifth, set this too.
+   */
+  forExport?: boolean;
   camera3dMode?: 'active' | Project3D.OrthoView;
   /**
    * View-camera override (AE custom views): when set (and the mode is not an
@@ -159,6 +184,13 @@ export interface SnapshotComp {
    * absurd nesting. Set by the renderer itself; callers never pass it.
    */
   compStack?: readonly string[];
+  /**
+   * INTERNAL — Essential Properties handed down by the comp instance whose
+   * recursive pass this is (see `compInstanceOverrides.ts`). Keyed by the
+   * referenced comp's OWN node ids, because this pass walks the real nodes
+   * rather than clones. Set by the renderer itself; callers never pass it.
+   */
+  compOverrides?: ReadonlyMap<string, number>;
 }
 
 /** Nesting cap for recursive composition rendering. */
@@ -182,7 +214,7 @@ function prefixLayerIds(layers: ReadonlyArray<RenderLayer>, prefix: string): Ren
   }));
 }
 
-const DEFAULT_COMP: SnapshotComp = { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG };
+export const DEFAULT_COMP: SnapshotComp = { width: COMP_WIDTH, height: COMP_HEIGHT, background: COMP_BG };
 
 function num(v: unknown): number | undefined {
   return typeof v === 'number' ? v : undefined;
@@ -293,6 +325,45 @@ export const SIZE: Record<LayerKind, { w: number; h: number }> = {
   video: { w: 480, h: 270 },
 };
 
+/**
+ * Per-run paint for a chain's output, or null when no run needs any.
+ *
+ * ── Why this is all-or-nothing ─────────────────────────────────────────
+ *
+ * `subpathBatches` groups every UNPAINTED run into one batch and draws that
+ * batch FIRST, then each painted run in order. So the moment one run carries
+ * paint, an unpainted neighbour jumps to the front of the paint order. A
+ * repeater fading its copies leaves copy 0 at exactly opacity 1 — and under
+ * `composite: 'below'`, copy 0 is the one that must paint LAST. Giving it an
+ * explicit `{ opacity: 1 }` costs nothing and keeps paint order equal to run
+ * order, which is the only thing the ladder's ordering can rely on.
+ *
+ * Returning null when nothing needs paint is equally deliberate: without it,
+ * every path-operator layer in every existing project would move onto the
+ * batched draw path, where separately-filled runs can no longer cut holes in
+ * each other.
+ */
+function runPaints(
+  runs: ReadonlyArray<PolyRun>,
+  layer: RenderLayer,
+): Array<SubpathPaint | undefined> | null {
+  const needs = runs.some((r) => (r.opacity ?? 1) !== 1 || (r.strokeScale ?? 1) !== 1);
+  if (!needs) return null;
+  // A single stroke override REPLACES the layer's whole stack (RenderBackend's
+  // contract), so scaling is only expressible for a layer that has exactly one
+  // stroke. A multi-stroke layer keeps its authored widths — logged in
+  // COMPOSITING_PLAN rather than silently half-applied.
+  const stack = layer.strokes && layer.strokes.length > 0 ? layer.strokes : layer.stroke ? [layer.stroke] : [];
+  const soleStroke = stack.length === 1 ? stack[0]! : null;
+  return runs.map((r) => {
+    const opacity = r.opacity ?? 1;
+    const ss = r.strokeScale ?? 1;
+    const stroke =
+      soleStroke && ss !== 1 ? { ...soleStroke, width: soleStroke.width * ss } : undefined;
+    return stroke ? { opacity, stroke } : { opacity };
+  });
+}
+
 /** First numeric value of `prop` across a node's components, or undefined. */
 function readNumProp(node: SceneNode, prop: string): number | undefined {
   for (const c of node.components) {
@@ -359,7 +430,17 @@ function materializeForFrame(n: SceneNode): SceneNode {
     //     children that are already in the referenced comp's own space.
     ...(instanceSourceOf(n) !== null ? { __instanceSource: instanceSourceOf(n) } : {}),
     ...(isCompInstanceRoot(n) ? { __compInstanceRoot: true } : {}),
+    //   • `__overriddenProps` is the Essential Properties set. It MUST be named
+    //     here for the same reason as the two above: this list is a whitelist,
+    //     and a dropped field turns the override into a value that patches the
+    //     static prop and is then outvoted by the source's track every frame.
+    ...(overriddenPropsOf(n) ? { __overriddenProps: overriddenPropsOf(n) } : {}),
   } as SceneNode;
+}
+
+/** The Essential Properties set attached to a clone by `expandCompInstances`. */
+function overriddenPropsOf(n: SceneNode): ReadonlySet<string> | undefined {
+  return (n as unknown as { __overriddenProps?: ReadonlySet<string> }).__overriddenProps;
 }
 
 export function buildSnapshot(
@@ -387,9 +468,35 @@ export function buildSnapshot(
   // `comp` node and is rendered below by its own recursive pass, so that it
   // resolves ITS camera, its depth of field and its own 3D sort rather than
   // borrowing the host's.
+  // Essential Properties on a SEALED instance. A collapsed instance expands
+  // inline and its clones are patched by `expandCompInstances`; a sealed one is
+  // rendered by the recursive pass below, over the referenced comp's REAL
+  // nodes, where no clone exists to carry an override. So the owning instance
+  // hands its overrides down through `comp.compOverrides` and they are applied
+  // here — the same two halves (patch the Transform, mark the prop overridden),
+  // just keyed by the node's own id rather than by `__instanceSource`.
+  //
+  // Without this, overrides worked on collapsed instances and silently did
+  // nothing on sealed ones, which is the default. The test that caught it is
+  // `overrides a KEYFRAMED property` in compInstanceOverrides.test.ts.
+  const ownOverrides = comp.compOverrides;
+  const applyOwnOverrides = (n: SceneNode): SceneNode => {
+    if (!ownOverrides || ownOverrides.size === 0) return n;
+    const ovProps = overriddenPropsFor(ownOverrides, n.id);
+    if (!ovProps) return n;
+    return {
+      ...(n as unknown as Record<string, unknown>),
+      components: applyOverridesToComponents(n.components, ownOverrides, n.id),
+      __overriddenProps: ovProps,
+    } as unknown as SceneNode;
+  };
   const nodes = expandCompInstances(
     graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
-  ).map(materializeForFrame);
+  // AFTER `materializeForFrame`, never before: a graph node view exposes
+  // `transform` and friends through prototype getters, and the spread in
+  // `applyOwnOverrides` drops them — `readBase` then died on an undefined
+  // transform. A materialized node is a plain object, so the spread is safe.
+  ).map(materializeForFrame).map(applyOwnOverrides);
   const anySolo = nodes.some((n) => n.solo === true);
 
   const rawController = getTimelineController();
@@ -405,10 +512,31 @@ export function buildSnapshot(
   // Comp-instance id indirection: a clone samples the ORIGINAL node's
   // animation tracks and timeline clips. Real nodes map to themselves.
   const srcId = (id: string): string => instanceSourceOf(nodeById.get(id)) ?? id;
+  /**
+   * Essential Properties: props this clone overrides (see
+   * `compInstanceOverrides.ts`). Attached to the clone by `expandCompInstances`.
+   *
+   * This is the half that makes an override actually mean something. The static
+   * value is already patched onto the clone's Transform, but every consumer
+   * reads `a?.has(p) ? a.get(p) : base.p` — so on a KEYFRAMED layer the
+   * original's track would outvote the patch on every frame, silently, and the
+   * inspector control would look wired while changing nothing. Dropping the
+   * prop here is what makes the override REPLACE the animation, as AE does.
+   */
+  const overriddenOf = (id: string): ReadonlySet<string> | null =>
+    (nodeById.get(id) as unknown as { __overriddenProps?: ReadonlySet<string> })?.__overriddenProps ?? null;
   const anim: AnimationEngine = {
-    sample: (id, prop, tt) => rawAnim.sample(srcId(id), prop, tt),
-    evaluateNode: (id, tt) => rawAnim.evaluateNode(srcId(id), tt),
-    isAnimated: (id, prop) => rawAnim.isAnimated(srcId(id), prop),
+    sample: (id, prop, tt) =>
+      overriddenOf(id)?.has(prop) ? undefined : rawAnim.sample(srcId(id), prop, tt),
+    evaluateNode: (id, tt) => {
+      const values = rawAnim.evaluateNode(srcId(id), tt);
+      const ov = overriddenOf(id);
+      // `evaluateNode` builds a fresh Map per call, so deleting is safe here.
+      if (ov) for (const p of ov) values.delete(p);
+      return values;
+    },
+    isAnimated: (id, prop) =>
+      overriddenOf(id)?.has(prop) ? false : rawAnim.isAnimated(srcId(id), prop),
     timeSpan: (id) => rawAnim.timeSpan(srcId(id)),
     sampleData: (id: string, prop: string, tt: number) => rawAnim.sampleData(srcId(id), prop, tt),
   } as AnimationEngine;
@@ -757,6 +885,7 @@ export function buildSnapshot(
       id: groupNode.id,
       kind: 'shape',
       blend: readNodeBlend(groupNode),
+      ...(readNodePreserveTransparency(groupNode) ? { preserveTransparency: true } : {}),
       mask: frameMask,
       matte: readNodeMatte(groupNode),
       x: gWorld ? gWorld.x : comp.width / 2,
@@ -1134,6 +1263,11 @@ export function buildSnapshot(
         width: size.width,
         height: size.height,
         rootId: ref,
+        // Essential Properties belong to THIS instance, so they must replace
+        // (never inherit) whatever the host pass was carrying — `...comp` would
+        // otherwise leak an outer instance's overrides into every comp nested
+        // below it, keyed by ids that happen to match.
+        compOverrides: readCompOverrides(node),
         // A nested comp contributes content, not a backdrop — its own
         // background must not paint over the host.
         transparent: true,
@@ -1220,6 +1354,9 @@ export function buildSnapshot(
           type: lt.type,
           angle: av?.get('lightAngle') ?? lt.angle,
           cone: av?.get('lightCone') ?? lt.cone,
+          // Without this the wash had no feather to apply and a spot's soft
+          // edge was unreachable from the inspector — see rasterizeLight.
+          coneFeather: av?.get('lightConeFeather') ?? lt.coneFeather,
         },
       }, node);
       continue;
@@ -1255,6 +1392,7 @@ export function buildSnapshot(
           opacity: pOpacity, width: pW, height: pH,
           fill: '#000', visible: node.visible !== false,
           blend: readNodeBlend(node),
+      ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
           particles: cfg,
         }, node);
       }
@@ -1310,13 +1448,31 @@ export function buildSnapshot(
     // overrides below. DataPoint handles are optional; a corner collapses them
     // onto the vertex, matching BezierPoint's absolute-handle contract.
     const livePathPts = anim.sampleData(node.id, 'path.points', remapOf(node.id)(t));
-    let pathPoints =
+    const liveOutline =
       Array.isArray(livePathPts) && livePathPts.length > 1 &&
       typeof livePathPts[0] === 'object' && livePathPts[0] !== null && 'x' in (livePathPts[0] as object)
         ? (livePathPts as Array<{ x: number; y: number; inX?: number; inY?: number; outX?: number; outY?: number }>).map(
             (p) => ({ x: p.x, y: p.y, inX: p.inX ?? p.x, inY: p.inY ?? p.y, outX: p.outX ?? p.x, outY: p.outY ?? p.y }),
           )
-        : staticPathPoints;
+        : undefined;
+    /**
+     * Stored RUNS — a path that is several outlines rather than one.
+     *
+     * The SVG importer writes these for any `d` with more than one `M`: the
+     * hole in a donut, the counter in an "o", any icon with a gap. `points` is
+     * the single-run shorthand, and the two are mutually exclusive (see
+     * raster/subpaths.ts), so a node carrying runs must not carry the flat list.
+     * A live `path.points` track still wins — it is one animated outline.
+     */
+    const staticSubpaths = liveOutline
+      ? undefined
+      : (geomComponent?.props.subpaths as Array<{ points: typeof staticPathPoints; open?: boolean }> | undefined);
+    let pathPoints = liveOutline
+      ?? staticPathPoints
+      // The first run stands in wherever a single outline is wanted (the
+      // `primitive` choice, the rig silhouette). The full set is installed on
+      // the layer below, and is what actually gets drawn.
+      ?? staticSubpaths?.[0]?.points;
     // Open strokes (line / freehand pencil) must not be closed into a loop.
     const pathOpen = geomComponent?.props.open === true;
     // Explicit shape type set at insert time; falls back to the legacy
@@ -1589,12 +1745,75 @@ export function buildSnapshot(
 
     const baseStroke = readNodeStroke(node);
     let finalStroke = baseStroke;
-    if (baseStroke && a?.has('stroke_r')) {
+    // Dash offset folds in exactly the way the stroke colour does — sampled off
+    // the animated-value map and written into the RESOLVED stroke rather than
+    // read from the stored object.
+    if (baseStroke && a?.has('strokeDashOffset')) {
+      finalStroke = { ...baseStroke, dashOffset: a.get('strokeDashOffset') ?? 0 };
+    }
+    // F34, FIXED. `strokeWidth` was registered as keyframeable in
+    // `propertyMeta`, offered a stopwatch by the inspector and the timeline, and
+    // sampled by NOTHING for a shape stroke — a 6→40 ramp rendered 5296 stroke
+    // pixels at both ends. The comment that used to sit here cited that as the
+    // reason dash offset did NOT copy its shape; the honest fix is to make
+    // `strokeWidth` behave like dash offset rather than to keep a second
+    // pattern alive as a warning.
+    //
+    // Chained off `finalStroke` for the reason stated below it: width, colour
+    // and dash offset can all be animated on one layer.
+    if (finalStroke && a?.has('strokeWidth')) {
+      const w = a.get('strokeWidth');
+      // A negative width is not a thinner stroke, it is a Canvas2D exception —
+      // and the property's own `min: 0` says so. Clamp rather than trust the
+      // curve, since an overshooting ease can undershoot zero between keys.
+      if (typeof w === 'number' && Number.isFinite(w)) {
+        finalStroke = { ...finalStroke, width: Math.max(0, w) };
+      }
+    }
+    // Taper and Wave. Nine tracks, folded HERE for the same reason every other
+    // stroke track is: `propertyMeta` gives them a stopwatch, and a stopwatch
+    // the renderer never samples is F34/F35 — twice on this board already.
+    //
+    // Each falls back to the STORED profile rather than to a constant, so a
+    // taper authored statically survives when only one of its nine is animated.
+    if (finalStroke && a) {
+      const t = finalStroke.taper;
+      const num = (k: string, fallback: number): number => {
+        const v = a.get(k);
+        return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+      };
+      if (
+        a.has('strokeTaperStartWidth') || a.has('strokeTaperEndWidth') ||
+        a.has('strokeTaperStartLength') || a.has('strokeTaperEndLength') ||
+        a.has('strokeTaperStartEase') || a.has('strokeTaperEndEase')
+      ) {
+        finalStroke = { ...finalStroke, taper: {
+          startWidth: num('strokeTaperStartWidth', t?.startWidth ?? 1),
+          endWidth: num('strokeTaperEndWidth', t?.endWidth ?? 1),
+          startLength: num('strokeTaperStartLength', t?.startLength ?? 0),
+          endLength: num('strokeTaperEndLength', t?.endLength ?? 0),
+          startEase: num('strokeTaperStartEase', t?.startEase ?? 0),
+          endEase: num('strokeTaperEndEase', t?.endEase ?? 0),
+        } };
+      }
+      const wv = finalStroke.wave;
+      if (a.has('strokeWaveAmount') || a.has('strokeWaveWavelength') || a.has('strokeWavePhase')) {
+        finalStroke = { ...finalStroke, wave: {
+          amount: num('strokeWaveAmount', wv?.amount ?? 0),
+          wavelength: num('strokeWaveWavelength', wv?.wavelength ?? 0),
+          phase: num('strokeWavePhase', wv?.phase ?? 0),
+        } };
+      }
+    }
+    // Chained off `finalStroke`, not `baseStroke`: colour and dash offset can be
+    // animated on the same layer, and rebuilding from `baseStroke` here would
+    // silently drop whichever was applied first.
+    if (finalStroke && a?.has('stroke_r')) {
       const r = a.get('stroke_r') ?? 0;
       const g = a.get('stroke_g') ?? 0;
       const b = a.get('stroke_b') ?? 0;
       const alpha = a.get('stroke_a') ?? 1;
-      finalStroke = { ...baseStroke, color: Color.toHex({ r, g, b, a: alpha }) };
+      finalStroke = { ...finalStroke, color: Color.toHex({ r, g, b, a: alpha }) };
     }
 
     // Multi-fill / multi-stroke stacks. Animated tracks (fill_* / stroke_* /
@@ -1628,6 +1847,7 @@ export function buildSnapshot(
       id: node.id,
       kind: layerKind,
       blend: readNodeBlend(node),
+      ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
       mask: readNodeMaskAt(node, remapOf(node.id)(t)),
       matte: readNodeMatte(node),
       isAdjustment: readNodeAdjustment(node) || undefined,
@@ -1706,7 +1926,15 @@ export function buildSnapshot(
       stroke: finalStroke,
       strokes,
       color: finalColor,
-      visible: node.visible !== false && (!anySolo || node.solo === true),
+      // Guide layers fold into the SAME visibility decision as the eye toggle
+      // and solo, rather than filtering the node list earlier. Three rules,
+      // one expression, so there is no second place for them to disagree —
+      // and the layer is still BUILT either way, just marked invisible, so
+      // every downstream consumer takes the path it already takes for a hidden
+      // layer instead of meeting a gap in the list.
+      visible: node.visible !== false
+        && (!anySolo || node.solo === true)
+        && !(comp.forExport === true && readIsGuideLayer(node)),
       primitive: pathPoints
         ? 'path'
         : isSolid
@@ -1714,7 +1942,20 @@ export function buildSnapshot(
           : (shapeType === 'ellipse' || (!shapeType && /circle|ellip|dot|orb/.test(name)))
             ? 'ellipse'
             : 'rect',
-      cornerRadius: base.cornerRadius,
+      // F35, FIXED. `cornerRadius` was registered keyframeable in `propertyMeta`
+      // and its animated track was folded NOWHERE — the STATIC value is read by
+      // the component scan, so a rounded rect drew correctly and a keyframed
+      // corner radius simply did not move. Found by the derived sweep added with
+      // F34 (`animatablePropertyReaders.test.ts`): same class, and the same
+      // one-line shape as the `backdropBlur` fold immediately below.
+      //
+      // Clamped at 0 for the reason `strokeWidth` is: an overshooting ease
+      // undershoots between keys, and a negative radius is a Canvas2D exception
+      // rather than a sharper corner. The property's own `min: 0` agrees.
+      cornerRadius: (() => {
+        const r = a?.get('cornerRadius');
+        return typeof r === 'number' && Number.isFinite(r) ? Math.max(0, r) : base.cornerRadius;
+      })(),
       // Keyframeable like any numeric prop: an animated track wins over the base,
       // so a panel can frost in over time.
       // Glass owns the backdrop blur when it is on — one control, not two that
@@ -1853,33 +2094,10 @@ export function buildSnapshot(
       let overlapDepth: Float32Array | null = null;
 
       if (hasPuppet) {
-        const animatedPins = puppetRig!.pins.map((pin) => {
-          // Sample dynamic position from data track, falling back to static pin position
-          const livePos = anim.sampleData(node.id, `puppet.${pin.id}.position`, rigT);
-          let px = pin.x;
-          let py = pin.y;
-          if (Array.isArray(livePos) && livePos.length > 0 && livePos[0] && typeof livePos[0] === 'object' && 'x' in livePos[0]) {
-            const pt = livePos[0] as { x: number; y: number };
-            px = pt.x;
-            py = pt.y;
-          }
-          // Rotation / stiffness: scalar keyframe tracks (puppet.<pinId>.rotation
-          // and.stiffness), falling back to the pin's static values.
-          const liveRot = anim.sample(node.id, `puppet.${pin.id}.rotation`, rigT);
-          const liveStiff = anim.sample(node.id, `puppet.${pin.id}.stiffness`, rigT);
-          const liveScale = anim.sample(node.id, `puppet.${pin.id}.scale`, rigT);
-          const liveOverlap = anim.sample(node.id, `puppet.${pin.id}.overlap`, rigT);
-          return {
-            id: pin.id,
-            x: px,
-            y: py,
-            rotation: typeof liveRot === 'number' ? liveRot : pin.rotation,
-            stiffness: typeof liveStiff === 'number' ? liveStiff : pin.stiffness,
-            scale: typeof liveScale === 'number' ? liveScale : pin.scale,
-            overlap: typeof liveOverlap === 'number' ? liveOverlap : pin.overlap,
-            overlapExtent: pin.overlapExtent,
-          };
-        });
+        // Static pin values folded with their keyframe tracks. Shared with
+        // PuppetOverlay so the canvas and the render cannot drift — see
+        // `livePins.ts`.
+        const animatedPins = resolveLivePins(puppetRig!.pins, node.id, rigT, anim);
         deformedVertices = deform(
           animatedPins,
           restMesh,
@@ -1914,26 +2132,10 @@ export function buildSnapshot(
         });
         // IK: each enabled target overrides its chain's rotations so the end
         // bone's tip reaches the (keyframeable) target position.
-        const ikTargets: IkTargetResolved[] = (skelRig!.ikTargets ?? [])
-          .filter((tg) => tg.enabled !== false)
-          .map((tg) => {
-            const liveX = anim.sample(node.id, `ikTarget.${tg.boneId}.x`, rigT);
-            const liveY = anim.sample(node.id, `ikTarget.${tg.boneId}.y`, rigT);
-            const poleX = anim.sample(node.id, `ikPole.${tg.boneId}.x`, rigT);
-            const poleY = anim.sample(node.id, `ikPole.${tg.boneId}.y`, rigT);
-            const pole =
-              typeof poleX === 'number' || typeof poleY === 'number'
-                ? { x: typeof poleX === 'number' ? poleX : (tg.pole?.x ?? 0),
-                    y: typeof poleY === 'number' ? poleY : (tg.pole?.y ?? 0) }
-                : tg.pole;
-            return {
-              boneId: tg.boneId,
-              x: typeof liveX === 'number' ? liveX : tg.x,
-              y: typeof liveY === 'number' ? liveY : tg.y,
-              chainLength: tg.chainLength,
-              ...(pole ? { pole } : {}),
-            };
-          });
+        // Live positions, live poles, and the per-chain IK/FK mode — resolved
+        // in ONE place shared with both overlays, so a chain cannot be FK here
+        // and IK on canvas. See `liveIkTargets.ts`.
+        const ikTargets: IkTargetResolved[] = resolveActiveIkTargets(skelRig!, node.id, rigT, anim);
         const posedBones = applyIk(animatedBones, ikTargets);
         const poseWorld = computeWorldTransforms({ bones: posedBones });
         // Weights bound once per (mesh × rest skeleton) and cached — not
@@ -1955,10 +2157,37 @@ export function buildSnapshot(
       };
     }
 
-    // Path operators (MG Phase C): deform the shape outline into a new path
-    // (zig-zag / round corners), keyframeable. Replaces the primitive with the
-    // deformed polyline so the renderer draws (and trims/repeats) the result.
+    // The shape geometry chain (`fx.pathOps`): deform, trim, deform again — an
+    // ORDERED stack evaluated top-down, exactly as AE evaluates shape contents.
+    //
+    // Trim is an entry in this chain rather than a fixed stage after it (v1.4.0).
+    // That is what makes its position meaningful: at a 37% trim, moving it past
+    // any of the six deformers changes the geometry, because trimming by ARC
+    // LENGTH cuts a ruffled outline somewhere quite different from where it cuts
+    // the smooth one. Round Corners then Trim is not Trim then Round Corners.
+    //
+    // Trim CUTS the path, so the fill follows it (F14). It used to write an
+    // annotation the rasterizer read inside its stroke loop and nowhere else,
+    // leaving the fill to trace the whole shape above it.
     if (layerKind === 'shape') {
+      // Multi-run stored geometry becomes the layer's real path BEFORE the
+      // operator chain, so trim/offset/repeat all see every run and the
+      // rasterizer traces them as one region (which is what cuts the hole).
+      if (staticSubpaths && staticSubpaths.length > 1) {
+        layer.subpaths = staticSubpaths.map((r) => ({
+          // Stored runs are already BezierPoints; normalise a missing handle
+          // onto its vertex rather than trusting hand-edited project data.
+          points: (r.points ?? []).map((p) => ({
+            x: p.x, y: p.y,
+            inX: p.inX ?? p.x, inY: p.inY ?? p.y,
+            outX: p.outX ?? p.x, outY: p.outY ?? p.y,
+          })),
+          open: r.open === true,
+        }));
+        layer.pathPoints = undefined;
+        layer.pathOpen = undefined;
+        layer.primitive = 'path';
+      }
       const ops = resolvePathOps(node, a);
       if (ops.length > 0) {
         // Density is decided by whether ANY operator in the chain wants it. A
@@ -1973,21 +2202,100 @@ export function buildSnapshot(
         // sampled on (valuesOf → remapOf). Handing it comp `t` would leave the
         // noise running at wall-clock speed while the keyframes it animates
         // alongside obey time remapping and stretch.
-        layer.pathPoints = applyPathOpChain(base, true, ops, remapOf(node.id)(t)).map((p) => corner(p.x, p.y));
-        layer.primitive = 'path';
+        // Every stored run enters the chain, not just the first: trimming a
+        // donut has to trim both of its rings.
+        const seed = layer.subpaths && layer.subpaths.length > 0
+          ? layer.subpaths.map((sp) => ({ pts: sp.points.map((p) => ({ x: p.x, y: p.y })), closed: sp.open !== true }))
+          : [{ pts: base, closed: pathOpen !== true }];
+        const runs = applyPathOpChain(
+          seed,
+          ops,
+          remapOf(node.id)(t),
+        ).filter((r) => r.pts.length > 1);
+
+        // PER-RUN PAINT, which is what lets the repeater live in this chain at
+        // all: its copies are geometry now, and `offsetOpacity` needs somewhere
+        // to go. `runPaints` is all-or-nothing — see below.
+        const paints = runPaints(runs, layer);
+
+        if (runs.length === 0) {
+          // Every run was cut away — an empty trim window (start >= end) draws
+          // NOTHING. Not "the untrimmed shape", which is what the old annotation
+          // left on screen: the stroke drew no arcs and the fill drew the lot.
+          layer.visible = false;
+        } else if (runs.length === 1 && runs[0]!.closed && !paints) {
+          // The overwhelmingly common result — one closed run — takes the
+          // single-subpath shorthand, so nothing downstream sees a list it did
+          // not see before this change. A run carrying paint cannot: the
+          // shorthand has nowhere to put it.
+          layer.pathPoints = runs[0]!.pts.map((p) => corner(p.x, p.y));
+          // The two geometry fields are mutually exclusive — a chain that
+          // collapses stored runs down to one must drop the list with them.
+          layer.subpaths = undefined;
+          layer.primitive = 'path';
+        } else {
+          layer.subpaths = runs.map((r, i) => ({
+            points: r.pts.map((p) => corner(p.x, p.y)),
+            open: !r.closed,
+            ...(paints?.[i] ? { paint: paints[i] } : {}),
+          }));
+          // The invariant: one geometry field or the other, never both.
+          layer.pathPoints = undefined;
+          layer.pathOpen = undefined;
+          layer.primitive = 'path';
+        }
+
+        // GROW THE BOX to whatever the chain produced, but only for a chain
+        // containing a repeater.
+        //
+        // The raster is allocated from `layer.width/height` and `rasterPadding`
+        // measures how far the geometry escapes it — with a hard 512px-per-side
+        // ceiling, because padding costs quadratic texture memory. Every other
+        // operator displaces points by a bounded `amount`, so the ceiling is
+        // never near. The repeater is the one that multiplies the geometry's
+        // EXTENT: six copies at the default 80px offset already reach 400px, and
+        // ten at 150px would have their far copies silently sliced off at the
+        // texture edge. Copies vanishing is not an acceptable way to fold.
+        //
+        // Symmetric about the origin because the box is centred there
+        // (`drawPath` translates by bw/2, bh/2) — the geometry's own
+        // coordinates are untouched, so nothing moves; the box just stops
+        // cutting. It costs up to 2× in one axis for a ladder running one way,
+        // which is the same allocation padding would have made.
+        //
+        // Note this is what makes a GRADIENT fill span the whole repeated group
+        // rather than repeat per copy: gradients are built from the layer box.
+        // Consistent with the fold's model — the fill paints the chain's output
+        // — and part of the announced behaviour change.
+        if (runs.length > 0 && ops.some((o) => o.type === 'repeater')) {
+          let halfW = 0;
+          let halfH = 0;
+          for (const r of runs) {
+            for (const p of r.pts) {
+              if (Math.abs(p.x) > halfW) halfW = Math.abs(p.x);
+              if (Math.abs(p.y) > halfH) halfH = Math.abs(p.y);
+            }
+          }
+          if (halfW * 2 > layer.width) layer.width = halfW * 2;
+          if (halfH * 2 > layer.height) layer.height = halfH * 2;
+        }
       }
     }
 
-    // Trim path (MG Phase C): visible outline arcs, resolved with any animated
-    // start/end/offset. The backend strokes only these portions.
-    const trimCfg = resolveTrim(node, a);
-    if (trimCfg) {
-      const segs = trimSegments(trimCfg.start, trimCfg.end, trimCfg.offset);
-      if (!(segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1)) layer.trim = segs;
-    }
+    /*
+      Motion blur: sub-frame transform samples for a moving, opted-in layer.
 
-    // Motion blur: sub-frame transform samples for a moving, opted-in layer.
-    if (motionBlur?.enabled && readNodeMotionBlur(node) && moves(anim, node.id)) {
+      Force Motion Blur overrides the two OPT-INS — the comp switch and the
+      layer switch — but not `moves`: sampling a static layer returns the same
+      transform every time, so forcing it there costs N draws for an identical
+      image. See forceMotionBlur.ts.
+    */
+    const forcedBlur = readForceMotionBlur(resolvedEffects);
+    const blurCfg = forcedBlur && motionBlur
+      ? { ...motionBlur, enabled: true, shutterAngle: forcedBlur.shutterAngle, samples: forcedBlur.samples }
+      : motionBlur;
+    const blurOptIn = forcedBlur ? true : (motionBlur?.enabled === true && readNodeMotionBlur(node));
+    if (blurCfg && blurOptIn && moves(anim, node.id)) {
       // 3D layers need a matrix per sample (see affineAt). The sub-frame world
       // position is the layer's world position plus its own local delta over
       // the shutter — the parent chain is treated as static across the
@@ -2015,7 +2323,10 @@ export function buildSnapshot(
             ).matrix;
           }
         : undefined;
-      const samples = sampleMotion(anim, node.id, base, ghost, t, motionBlur, remapOf(node.id), matrixAt);
+      // `blurCfg`, not `motionBlur` — otherwise the forced shutter and sample
+      // count are computed above and then thrown away, and Force Motion Blur
+      // becomes a switch with two controls that do nothing.
+      const samples = sampleMotion(anim, node.id, base, ghost, t, blurCfg, remapOf(node.id), matrixAt);
       if (samples.length > 1) layer.motionSamples = samples;
     }
 
@@ -2096,22 +2407,38 @@ export function buildSnapshot(
       if (gpuFx.length > 0) layer.effects = [...(layer.effects ?? []), ...gpuFx];
     }
 
-    // Echo (temporal): emit decaying ghost copies at PAST (or future) sampled
-    // transforms, behind the main layer. Deterministic — a pure function of the
-    // animation, so scrubbing is stable and no frame cache is needed — and it
-    // renders on both backends because the ghosts are ordinary render layers.
-    const echo = readEchoConfig(resolvedEffects);
-    if (echo && echo.count > 0 && echo.time !== 0) {
+    /*
+      Temporal ghosts (Echo, Wide Time): draw the layer at OTHER points in time.
+
+      Which times and how bright is the effects' business — `readGhostSpec` —
+      and this is the emission they share. Deterministic, a pure function of the
+      animation, so scrubbing is stable and no frame cache is needed; and it
+      renders on both backends because the ghosts are ordinary render layers.
+
+      One emission for both effects deliberately. The alternative is a second
+      copy of these forty lines, which is the shape CompositionPass already got
+      burned by — a duplicate that silently dropped whatever the original had
+      learned since.
+    */
+    const ghosts = readGhostSpec(resolvedEffects, fps);
+    /*
+      Composite In Front holds the ghosts back until after the layer itself is
+      emitted — z-order here IS emission order, and that operator is the only
+      thing separating it from Composite In Back. Flushed at the bottom of this
+      node's iteration; every other operator emits inline exactly as before.
+    */
+    const echoesInFront: RenderLayer[] = [];
+    if (ghosts) {
       const eLocalX = (a?.get('x') as number | undefined) ?? base.x;
       const eLocalY = (a?.get('y') as number | undefined) ?? base.y;
       const eLocalRot = (a?.get('rotation') as number | undefined) ?? base.rotation;
-      // Oldest first (farthest back), so nearer echoes paint over them and the
-      // current layer lands on top.
-      for (let k = echo.count; k >= 1; k--) {
-        const ti = t + k * echo.time;
-        if (ti < 0) continue;
-        const op = layer.opacity * echo.startIntensity * Math.pow(echo.decay, k - 1);
-        if (op <= 0.002) continue;
+      // Farthest first (readGhostSpec orders them), so nearer copies paint over
+      // more distant ones and the current layer lands on top.
+      ghosts.steps.forEach((step, k) => {
+        const ti = t + step.dt;
+        if (ti < 0) return;
+        const op = layer.opacity * step.opacity;
+        if (op <= 0.002) return;
         const gx = px + ((anim.sample(node.id, 'x', ti) ?? eLocalX) - eLocalX);
         const gy = py + ((anim.sample(node.id, 'y', ti) ?? eLocalY) - eLocalY);
         const grot = rot + ((anim.sample(node.id, 'rotation', ti) ?? eLocalRot) - eLocalRot);
@@ -2119,6 +2446,11 @@ export function buildSnapshot(
           ...layer,
           id: `${layer.id}__echo${k}`,
           opacity: op,
+          // AE's Echo Operator. The ghosts are ordinary layers, so "how do the
+          // copies combine" is their blend mode — no second compositing path.
+          // All five operators are fixed-function blends, so none of them drags
+          // the ghosts onto the advanced-blend (BLEND_COMBINE) route.
+          blend: ghosts.blend,
           // Ghosts don't cast/consume mattes or motion-blur individually.
           matte: undefined,
           isMatteSource: undefined,
@@ -2142,411 +2474,469 @@ export function buildSnapshot(
               })()
             : { x: gx, y: gy, rotation: grot }),
         };
-        emitLayer(ghost, node);
-      }
+        if (ghosts.inFront) echoesInFront.push(ghost);
+        else emitLayer(ghost, node);
+      });
     }
 
-    // Shape repeater (MG Phase C): emit N cumulative copies. Copy 0 is the base
-    // layer; each further copy is a translated/rotated/scaled/faded clone. Pure
-    // visual duplicates — they don't participate in matte/adjustment ordering.
-    const rep = !isSolid && !is3D ? resolveRepeater(node, a) : null;
-    if (rep && rep.copies > 1) {
-      for (const c of repeaterCopies(rep)) {
-        if (c.index === 0) {
-          emitLayer(layer, node);
-          continue;
-        }
-        emitLayer({
-          ...layer,
-          id: `${layer.id}__rep${c.index}`,
-          x: px + c.dx,
-          y: py + c.dy,
-          rotation: rot + c.drot,
-          scaleX: sx * c.scaleMul,
-          scaleY: sy * c.scaleMul,
-          opacity: layer.opacity * c.opacityMul,
-          matte: undefined,
-          isMatteSource: undefined,
-          isAdjustment: undefined,
-        }, node);
-      }
-    } else {
-      // TRUE 3D extrusion: a 3D layer with extrusionDepth d > 0 is a real
-      // object — synthesize a back cap + side walls as extra RenderLayers
-      // ADJACENT in paint order (they share the front face's sort depth, so
-      // the painter sort — stable — keeps the run contiguous and
-      // CompositionPass groups all faces into ONE depth-tested pass; the
-      // depth buffer then resolves face occlusion automatically). Faces are
-      // snapshot-only: hit-testing / timeline read the scene graph, so the
-      // synthetic `::ext-*` ids are invisible to selection by construction.
-      // Front-cap inset (px per side) applied to the emitted front face when a
-      // bevel is active — the front face is the layer's own content (emitted
-      // below), which extrusionFaces cannot shrink, so we inset it here so the
-      // shrunk front edge meets the front chamfer ring. 0 = no bevel.
-      let frontInset = 0;
-      if (is3D && world3d && extrusionDepth > 0) {
-        const isComplexContent =
-          layer.kind === 'text' ||
-          (layer.kind === 'shape' && layer.primitive !== 'rect' && layer.primitive !== 'ellipse');
+    // TRUE 3D extrusion: a 3D layer with extrusionDepth d > 0 is a real
+    // object — synthesize a back cap + side walls as extra RenderLayers
+    // ADJACENT in paint order (they share the front face's sort depth, so
+    // the painter sort — stable — keeps the run contiguous and
+    // CompositionPass groups all faces into ONE depth-tested pass; the
+    // depth buffer then resolves face occlusion automatically). Faces are
+    // snapshot-only: hit-testing / timeline read the scene graph, so the
+    // synthetic `::ext-*` ids are invisible to selection by construction.
+    // Front-cap inset (px per side) applied to the emitted front face when a
+    // bevel is active — the front face is the layer's own content (emitted
+    // below), which extrusionFaces cannot shrink, so we inset it here so the
+    // shrunk front edge meets the front chamfer ring. 0 = no bevel.
+    let frontInset = 0;
+    if (is3D && world3d && extrusionDepth > 0) {
+      const isComplexContent =
+        layer.kind === 'text' ||
+        (layer.kind === 'shape' && layer.primitive !== 'rect' && layer.primitive !== 'ellipse');
 
-        const extMat = readNodeMaterial(node);
-        // Per-face materials (front / side / bevel / back). Absent → the previous
-        // single-colour behaviour, since resolveFaceMaterial falls back to the
-        // layer fill × the kind's original hardcoded gain.
-        const faceMats = readNodeFaceMaterials(node);
-        const extLit = extMat.acceptsLights && sceneLights.length > 0;
-        // Derived from the layer's STYLED surface colour, not its raw fill: a
-        // Colour/Gradient Overlay repaints the front face, and taking the raw
-        // fill here left every other face the old colour — one object in two
-        // colours, split exactly along the front edge. See styledSurfaceFill.
-        const extStyles = readNodeLayerStyles(node);
-        const wallFill = styledSurfaceFill(
-          extStyles,
-          typeof layer.fill === 'string' ? layer.fill : EXTRUSION_WALL_FALLBACK_FILL,
-        );
-        /**
-         * The wall colour AT one face's own position on the object.
-         *
-         * A synthesized wall is a flat strip, so it gets exactly one colour —
-         * but `layer.fill` is the layer's BASE colour, which a gradient fill
-         * never writes to (only a SOLID paint updates it). So a gradient-filled
-         * box drew its caps as the gradient and all four walls as the base
-         * blue. Every face already carries its centre in the layer's centred
-         * frame — the same space the gradient is built in — as the translation
-         * of its own matrix, so sampling the paint there needs no per-face
-         * special-casing and works for box walls, rounded-rect and cylinder
-         * segments, and the bevel chamfer rings alike.
-         */
-        // EXPERIMENT: the interior styles, for the synthesized faces. Exterior
-        // ones (drop shadow, outer glow) belong to the object's silhouette and
-        // would stack N times; the overlays already reached the faces via
-        // wallFill and would double-apply.
-        const FACE_SURFACE_IDS = new Set([
-          'layerstyle:innerShadow', 'layerstyle:innerGlow',
-          'layerstyle:satin', 'layerstyle:bevel', 'layerstyle:stroke',
-        ]);
-        const faceSurfaceFx = layerStylesToEffects(extStyles, globalLight.angle, globalLight.altitude)
-          .filter((e) => FACE_SURFACE_IDS.has(e.id));
-        const faceStyles = faceSurfaceFx.length > 0 ? faceSurfaceFx : undefined;
-        /**
-         * Interior styles belong on a face that is a whole SURFACE of the
-         * object — the four walls of a box — and not on a facet that only
-         * exists to approximate a curve.
-         *
-         * An inner shadow hugs the contour of whatever it is applied to. On a
-         * box wall that contour is a real edge of the object and the result
-         * reads as one softly-shaded solid. On a cylinder it is the edge of a
-         * chord strip, so each of the twenty facets drew its own dark band and
-         * you saw the tessellation instead of the cylinder. Same for the strips
-         * a wall is split into for a gradient, and for the narrow chamfer rings
-         * of a bevel.
-         *
-         * Suffixes: `r`/`l`/`t`/`b` are the undivided box walls, `back` the
-         * back cap; `w0…wN` are curve facets, `r0…`/`l0…` gradient
-         * subdivisions, and `cf*`/`cb*` chamfer rings.
-         */
-        const faceFxFor = (suffix: string): typeof faceStyles =>
-          (/^[rltb]$/.test(suffix) || suffix === 'back') ? faceStyles : undefined;
-        const wallFillAt = (m: import('@motion/scene').Matrix4): string =>
-          styledSurfaceFill(extStyles, sampleFillAt(layer.fillPaint, layerW, layerH, m[12]!, m[13]!) ?? wallFill);
+      const extMat = readNodeMaterial(node);
+      // Per-face materials (front / side / bevel / back). Absent → the previous
+      // single-colour behaviour, since resolveFaceMaterial falls back to the
+      // layer fill × the kind's original hardcoded gain.
+      const faceMats = readNodeFaceMaterials(node);
+      const extLit = extMat.acceptsLights && sceneLights.length > 0;
+      // Derived from the layer's STYLED surface colour, not its raw fill: a
+      // Colour/Gradient Overlay repaints the front face, and taking the raw
+      // fill here left every other face the old colour — one object in two
+      // colours, split exactly along the front edge. See styledSurfaceFill.
+      const extStyles = readNodeLayerStyles(node);
+      const wallFill = styledSurfaceFill(
+        extStyles,
+        typeof layer.fill === 'string' ? layer.fill : EXTRUSION_WALL_FALLBACK_FILL,
+      );
+      /**
+       * The wall colour AT one face's own position on the object.
+       *
+       * A synthesized wall is a flat strip, so it gets exactly one colour —
+       * but `layer.fill` is the layer's BASE colour, which a gradient fill
+       * never writes to (only a SOLID paint updates it). So a gradient-filled
+       * box drew its caps as the gradient and all four walls as the base
+       * blue. Every face already carries its centre in the layer's centred
+       * frame — the same space the gradient is built in — as the translation
+       * of its own matrix, so sampling the paint there needs no per-face
+       * special-casing and works for box walls, rounded-rect and cylinder
+       * segments, and the bevel chamfer rings alike.
+       */
+      // EXPERIMENT: the interior styles, for the synthesized faces. Exterior
+      // ones (drop shadow, outer glow) belong to the object's silhouette and
+      // would stack N times; the overlays already reached the faces via
+      // wallFill and would double-apply.
+      const FACE_SURFACE_IDS = new Set([
+        'layerstyle:innerShadow', 'layerstyle:innerGlow',
+        'layerstyle:satin', 'layerstyle:bevel', 'layerstyle:stroke',
+      ]);
+      const faceSurfaceFx = layerStylesToEffects(extStyles, globalLight.angle, globalLight.altitude)
+        .filter((e) => FACE_SURFACE_IDS.has(e.id));
+      const faceStyles = faceSurfaceFx.length > 0 ? faceSurfaceFx : undefined;
+      /**
+       * Interior styles belong on a face that is a whole SURFACE of the
+       * object — the four walls of a box — and not on a facet that only
+       * exists to approximate a curve.
+       *
+       * An inner shadow hugs the contour of whatever it is applied to. On a
+       * box wall that contour is a real edge of the object and the result
+       * reads as one softly-shaded solid. On a cylinder it is the edge of a
+       * chord strip, so each of the twenty facets drew its own dark band and
+       * you saw the tessellation instead of the cylinder. Same for the strips
+       * a wall is split into for a gradient, and for the narrow chamfer rings
+       * of a bevel.
+       *
+       * Suffixes: `r`/`l`/`t`/`b` are the undivided box walls, `back` the
+       * back cap; `w0…wN` are curve facets, `r0…`/`l0…` gradient
+       * subdivisions, and `cf*`/`cb*` chamfer rings.
+       */
+      const faceFxFor = (suffix: string): typeof faceStyles =>
+        (/^[rltb]$/.test(suffix) || suffix === 'back') ? faceStyles : undefined;
+      const wallFillAt = (m: import('@motion/scene').Matrix4): string =>
+        styledSurfaceFill(extStyles, sampleFillAt(layer.fillPaint, layerW, layerH, m[12]!, m[13]!) ?? wallFill);
 
-        if (isComplexContent) {
-          // Contour Volume Extrusion: For text and complex shapes, slice the
-          // depth axis (z ∈ [1, extrusionDepth]) into continuous slices matching the exact
-          // glyph/path silhouette so text extrudes as a solid 3D body without empty gaps.
-          const stepPx = 1.5;
-          const sliceCount = Math.min(45, Math.max(2, Math.ceil(extrusionDepth / stepPx)));
-          const sliceStep = extrusionDepth / sliceCount;
+      if (isComplexContent) {
+        // Contour Volume Extrusion: For text and complex shapes, slice the
+        // depth axis (z ∈ [1, extrusionDepth]) into continuous slices matching the exact
+        // glyph/path silhouette so text extrudes as a solid 3D body without empty gaps.
+        const stepPx = EXTRUSION_SLICE_STEP_PX;
+        const sliceCount = Math.min(MAX_EXTRUSION_SLICES, Math.max(2, Math.ceil(extrusionDepth / stepPx)));
+        const sliceStep = extrusionDepth / sliceCount;
 
-          // Emit BACK-TO-FRONT (i counts down), matching the geometric path and
-          // the painter order extrusion.ts documents.
-          //
-          // This loop used to run i = 1 → sliceCount, i.e. nearest slice FIRST,
-          // and the 3D materials use depth test LEQUAL with depthWrite ON. So the
-          // nearest slice wrote depth at every anti-aliased glyph fringe pixel
-          // with partial alpha, and all 44 slices behind it were then depth-
-          // rejected there — the volume never filled in. What you saw was a dark
-          // ragged outline around every glyph (the wall gain is 0.72, so the
-          // fringe is darker than the face) with the background leaking through
-          // it. That is the "dark dots / border inside the 3D object".
-          for (let i = sliceCount; i >= 1; i--) {
-            const zOffset = i * sliceStep;
-            const isBackCap = i === sliceCount;
-            const sliceMat = Matrix4Math.compose({
-              position: { x: 0, y: 0, z: zOffset },
-              rotation: { x: 0, y: 0, z: 0 },
-              scale: { x: 1, y: 1, z: 1 },
-              anchor: { x: 0, y: 0, z: 0 },
-            });
-            const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, sliceMat);
-            const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
-            // Behind the near plane ⇒ drop this slice, exactly as the layer
-            // origin is dropped above. `projectPoint` CLAMPS rather than
-            // rejects, so an unguarded slice resolves to focalLength/1 — a
-            // ~2666× scale on a 1920-wide comp, i.e. one slice smeared opaque
-            // across and far beyond the frame. The layer ORIGIN can sit safely
-            // in front while the extruded body sweeps through the near plane,
-            // so the origin's guard does not cover this.
-            if (O.clipped) continue;
-            const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
-            const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
-            const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
-
-            const sliceLayer: RenderLayer = {
-              ...layer,
-              id: `${layer.id}::ext-${isBackCap ? 'back' : `slice-${i}`}`,
-              x: O.x,
-              y: O.y,
-              rotation: Math.atan2(fm[1], fm[0]) / DEG,
-              scaleX: Math.hypot(fm[0], fm[1]),
-              scaleY: Math.hypot(fm[2], fm[3]),
-              matrix: fm,
-              world3d: M as readonly number[],
-              depth: O.depth,
-              width: layerW,
-              height: layerH,
-              // Scrub the per-layer passes, exactly as the geometric path does in
-              // `common` below. A bare `...layer` spread carried `effects` into
-              // every slice — and `castsShadows` defaults ON, so a scene with one
-              // shadow-casting light stacked up to 45 copies of the same 45%-black
-              // drop shadow inside the object's own bounds (the dark blob), and
-              // forced 45 full-viewport offscreen effect resolves PER FRAME.
-              // Carrying `matte`/`motionSamples` also disqualified the slices from
-              // the depth-tested 3D group, dropping them onto the painter path.
-              effects: undefined,
-              matte: undefined,
-              isMatteSource: undefined,
-              isAdjustment: undefined,
-              motionSamples: undefined,
-              deformedMesh: undefined,
-              frameBlend: undefined,
-              fill: resolveFaceMaterial(faceMats, isBackCap ? 'back' : 'side', wallFill).fill,
-            };
-
-            if (extLit) {
-              const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
-              if (lg) {
-                sliceLayer.lighting = lg;
-                sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess };
-              }
-            } else {
-              // Same rule as the geometric path: an explicit per-face colour is
-              // used as picked, only a derived one is dimmed by the gain.
-              const sliceKind = isBackCap ? 'back' as const : 'side' as const;
-              const sm = resolveFaceMaterial(faceMats, sliceKind, wallFill);
-              const g = faceMats[sliceKind]?.fill ? 1 : sm.gain;
-              sliceLayer.lighting = [g, g, g];
-            }
-            emitLayer(sliceLayer, node);
-          }
-        } else {
-          // Geometric Face Extrusion: For rect and ellipse primitives, use
-          // exact 3D wall planes + optional bevel chamfer rings.
-          const extShape = layer.kind === 'shape' && layer.primitive === 'ellipse' ? 'ellipse' : 'rect';
-          const bevelRequested = Math.max(0, a?.get('bevelDepth') ?? d3.bevelDepth);
-          const bevel = extShape === 'rect' ? clampBevel(layerW, layerH, extrusionDepth, bevelRequested) : 0;
-          frontInset = bevel;
-
-          // Corner radius drives the extruded OUTLINE too, so a rounded card
-          // is a rounded solid rather than a rounded face on a square block.
-          const extCorner = extShape === 'rect' ? (layer.cornerRadius ?? 0) : 0;
-          // A gradient varies ALONG a wall, and a wall is one flat colour — so
-          // split the straight walls into strips that can each sample their own
-          // position. Only for a gradient: a solid fill is already exact at one
-          // strip per side, and leaving it at 1 keeps that geometry untouched.
-          const wallSegments = layer.fillPaint && layer.fillPaint.type !== 'solid' ? GRADIENT_WALL_SEGMENTS : 1;
-          for (const f of extrusionFaces(layerW, layerH, extrusionDepth, extShape, undefined, { bevel: bevelRequested, bevelStyle: d3.bevelStyle, cornerRadius: extCorner, wallSegments })) {
-            const M = Matrix4Math.multiply(
-              world3d as import('@motion/scene').Matrix4,
-              f.m,
-            );
-            const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
-            // Same near-plane rule as the slices and the layer origin: a face
-            // whose own origin is behind the camera must not be drawn, or the
-            // clamped divide flings it across the frame at focal-length scale.
-            if (O.clipped) continue;
-            const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
-            const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
-            const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
-            const common = {
-              id: `${layer.id}::ext-${f.suffix}`,
-              x: O.x,
-              y: O.y,
-              rotation: Math.atan2(fm[1], fm[0]) / DEG,
-              scaleX: Math.hypot(fm[0], fm[1]),
-              scaleY: Math.hypot(fm[2], fm[3]),
-              matrix: fm,
-              world3d: M as readonly number[],
-              // Each face's OWN view depth, from its own projected origin.
-              //
-              // This was `layer.depth` — the parent layer's depth — so all six
-              // faces of a cube came out bit-identical (verified live: every face
-              // reported depth 5333.0051595167515). The painter sort
-              // `(q.depth ?? 0) - (p.depth ?? 0)` then had nothing to order them
-              // by, so the back cap and the walls drew in arbitrary array order
-              // and could land ON TOP of the front cap. That is the "dark patch
-              // inside the object with a border around it": you are seeing a
-              // darker back/side face (gain 0.55 / 0.72) punched over the front
-              // face. It also made the whole body sort as a single flat plane
-              // against other 3D layers, so nothing could interpenetrate it.
-              depth: O.depth,
-              width: f.w,
-              height: f.h,
-              matte: undefined,
-              isMatteSource: undefined,
-              isAdjustment: undefined,
-              motionSamples: undefined,
-              deformedMesh: undefined,
-              frameBlend: undefined,
-              effects: undefined,
-              lighting: undefined as RenderLayer['lighting'],
-              shade3d: undefined as RenderLayer['shade3d'],
-            };
-            const faceLayer: RenderLayer = f.role === 'back'
-              ? { ...layer, ...common, effects: faceFxFor(f.suffix), fill: resolveFaceMaterial(faceMats, 'back', wallFill).fill }
-              : {
-                  id: common.id,
-                  kind: 'shape',
-                  blend: layer.blend,
-                  x: common.x,
-                  y: common.y,
-                  rotation: common.rotation,
-                  scaleX: common.scaleX,
-                  scaleY: common.scaleY,
-                  matrix: common.matrix,
-                  world3d: common.world3d,
-                  depth: common.depth,
-                  opacity: layer.opacity,
-                  width: f.w,
-                  height: f.h,
-                  // Sampled at THIS wall's own position on the object, so a
-                  // gradient-filled solid keeps one continuous surface instead
-                  // of gradient caps bolted onto flat base-coloured walls.
-                  fill: resolveFaceMaterial(faceMats, faceKindOf(f.role, f.suffix), wallFillAt(f.m)).fill,
-                  visible: layer.visible,
-                  // Flat strips along the outline — no corner radius of their
-                  // own. (The back cap takes the branch above, which spreads
-                  // `layer` and so already carries the layer's radius.)
-                  primitive: 'rect',
-                  effects: faceFxFor(f.suffix),
-                  // Facets of one body: they tile against each other, so SDF
-                  // edge coverage would draw a dark hairline at every join —
-                  // twenty of them around a cylinder. See RenderLayer.flatFacet.
-                  flatFacet: true,
-                };
-            if (extLit) {
-              const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
-              if (lg) {
-                faceLayer.lighting = lg;
-                faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess };
-              }
-            } else {
-              // An explicit per-face fill is taken literally — dimming a colour
-              // the user picked would make the picker lie. Only a DERIVED fill
-              // gets the kind's gain.
-              const kind = faceKindOf(f.role, f.suffix);
-              const fm2 = resolveFaceMaterial(faceMats, kind, wallFill);
-              const g = faceMats[kind]?.fill ? 1 : fm2.gain;
-              faceLayer.lighting = [g, g, g];
-            }
-            emitLayer(faceLayer, node);
-          }
-        }
-      }
-      // Front face. With a bevel it shrinks by `frontInset` on each side
-      // (w−2b × h−2b), centred on the box so its edge meets the front chamfer
-      // ring; the depth-path bridge (model3dFor) re-centres the smaller quad on
-      // the same world3d origin, so it stays glued. No bevel ⇒ emitted verbatim
-      // (byte-identical).
-      // Per-character 3D: replace the single string plane with one plane per
-      // glyph, each carried by its own world matrix so glyphs depth-test,
-      // intersect, and light individually — and a text animator's z /
-      // rotationX / rotationY channels can tumble them in real 3D.
-      const perCharGlyphs =
-        is3D && world3d && layer.kind === 'text' && isPerChar3D(node)
-          ? layoutPerChar3D({
-              text: layer.text ?? '',
-              style: {
-                fontSize: layer.fontSize ?? 16,
-                fontFamily: layer.fontFamily,
-                fontWeight: layer.fontWeight,
-                fontStyle: layer.fontStyle,
-                letterSpacing: layer.letterSpacing,
-                fill: typeof layer.fill === 'string' ? layer.fill : undefined,
-                align: layer.align as ParagraphStyle['align'],
-                lineHeight: layer.lineHeight,
-                paragraphSpacing: layer.paragraphSpacing,
-              },
-              boxWidth: layerW,
-              transforms: layer.glyphs,
-              runs: layer.runs,
-            })
-          : [];
-
-      if (perCharGlyphs.length > 0 && world3d) {
-        const pcMat = readNodeMaterial(node);
-        const pcLit = pcMat.acceptsLights && sceneLights.length > 0;
-        for (const g of perCharGlyphs) {
-          // Glyph frame: offset within the text box, its own depth, tumble
-          // about its own axes, then the animator's uniform scale.
-          const gm = Matrix4Math.compose({
-            position: { x: g.offsetX, y: g.offsetY, z: g.offsetZ },
-            rotation: { x: g.rotationX * DEG, y: g.rotationY * DEG, z: g.rotation * DEG },
-            scale: { x: g.scale, y: g.scale, z: 1 },
+        // Emit BACK-TO-FRONT (i counts down), matching the geometric path and
+        // the painter order extrusion.ts documents.
+        //
+        // This loop used to run i = 1 → sliceCount, i.e. nearest slice FIRST,
+        // and the 3D materials use depth test LEQUAL with depthWrite ON. So the
+        // nearest slice wrote depth at every anti-aliased glyph fringe pixel
+        // with partial alpha, and all 44 slices behind it were then depth-
+        // rejected there — the volume never filled in. What you saw was a dark
+        // ragged outline around every glyph (the wall gain is 0.72, so the
+        // fringe is darker than the face) with the background leaking through
+        // it. That is the "dark dots / border inside the 3D object".
+        for (let i = sliceCount; i >= 1; i--) {
+          const zOffset = i * sliceStep;
+          const isBackCap = i === sliceCount;
+          const sliceMat = Matrix4Math.compose({
+            position: { x: 0, y: 0, z: zOffset },
+            rotation: { x: 0, y: 0, z: 0 },
+            scale: { x: 1, y: 1, z: 1 },
             anchor: { x: 0, y: 0, z: 0 },
           });
-          const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, gm);
+          const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, sliceMat);
           const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
-          // A per-character glyph is its OWN plane in depth: tumbling the text
-          // block, or animating glyph z, sends individual glyphs behind the
-          // camera while the text layer's origin stays comfortably in front.
-          // Unguarded, such a glyph came back at focal-length scale (2666× on a
-          // 1920 comp) and painted over the whole composition — the "3D text
-          // renders wrong while 2D text is fine" symptom.
+          // Behind the near plane ⇒ drop this slice, exactly as the layer
+          // origin is dropped above. `projectPoint` CLAMPS rather than
+          // rejects, so an unguarded slice resolves to focalLength/1 — a
+          // ~2666× scale on a 1920-wide comp, i.e. one slice smeared opaque
+          // across and far beyond the frame. The layer ORIGIN can sit safely
+          // in front while the extruded body sweeps through the near plane,
+          // so the origin's guard does not cover this.
           if (O.clipped) continue;
-          const GX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
-          const GY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
-          const gfm = [GX.x - O.x, GX.y - O.y, GY.x - O.x, GY.y - O.y, O.x, O.y] as const;
-          const glyphLayer: RenderLayer = {
+          const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+          const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+          const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
+
+          const sliceLayer: RenderLayer = {
             ...layer,
-            // Synthetic id: snapshot-only, so hit-testing / timeline / layer
-            // list (which read the scene graph) never see the glyph planes.
-            id: `${layer.id}::ch${g.index}`,
-            text: g.char,
-            // One glyph per plane — the string's own animators/runs already
-            // resolved into this glyph's placement and fill.
-            glyphs: undefined,
-            runs: undefined,
-            width: g.width,
-            height: g.height,
+            id: `${layer.id}::ext-${isBackCap ? 'back' : `slice-${i}`}`,
             x: O.x,
             y: O.y,
-            rotation: Math.atan2(gfm[1], gfm[0]) / DEG,
-            scaleX: Math.hypot(gfm[0], gfm[1]),
-            scaleY: Math.hypot(gfm[2], gfm[3]),
-            matrix: gfm,
+            rotation: Math.atan2(fm[1], fm[0]) / DEG,
+            scaleX: Math.hypot(fm[0], fm[1]),
+            scaleY: Math.hypot(fm[2], fm[3]),
+            matrix: fm,
             world3d: M as readonly number[],
-            depth: layer.depth,
-            opacity: layer.opacity * g.opacity,
-            ...(g.fill ? { fill: g.fill } : {}),
-            lighting: undefined,
-            shade3d: undefined,
+            depth: O.depth,
+            width: layerW,
+            height: layerH,
+            // Scrub the per-layer passes, exactly as the geometric path does in
+            // `common` below. A bare `...layer` spread carried `effects` into
+            // every slice — and `castsShadows` defaults ON, so a scene with one
+            // shadow-casting light stacked up to 45 copies of the same 45%-black
+            // drop shadow inside the object's own bounds (the dark blob), and
+            // forced 45 full-viewport offscreen effect resolves PER FRAME.
+            // Carrying `matte`/`motionSamples` also disqualified the slices from
+            // the depth-tested 3D group, dropping them onto the painter path.
+            //
+            // `effects` is now DECIDED per effect rather than dropped wholesale
+            // (see faceEffects.ts): the shadow-casting and CPU-baked ones — the
+            // two populations that reason describes — are still kept off the
+            // slices, and everything else reaches them. Losing the whole list
+            // also lost depth of field, which arrives as an ordinary `blur`
+            // entry appended a few lines above, so an extruded body never
+            // defocused with the layer it belongs to.
+            effects: faceEffectsFor(layer.effects, { faceCount: sliceCount }),
+            matte: undefined,
+            isMatteSource: undefined,
+            isAdjustment: undefined,
+            motionSamples: undefined,
+            deformedMesh: undefined,
+            frameBlend: undefined,
+            // Same scrub as the geometric path's `common` below, and for the
+            // same reason: these sample the backdrop, so a slice carrying one
+            // leaves the depth group while its siblings stay in it. A slice
+            // stack splitting that way is worse than a box doing it — there are
+            // up to 400 of them.
+            glass: undefined,
+            backdropBlur: undefined,
+            preserveTransparency: undefined,
+            fill: resolveFaceMaterial(faceMats, isBackCap ? 'back' : 'side', wallFill).fill,
           };
-          if (pcLit) {
-            const lg = shadeLayer(planeNormalOf(M), { x: O.x, y: O.y, z: z3 + g.offsetZ }, sceneLights);
+
+          if (extLit) {
+            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
             if (lg) {
-              glyphLayer.lighting = lg;
-              glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess };
+              sliceLayer.lighting = lg;
+              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess };
             }
+          } else {
+            // Same rule as the geometric path: an explicit per-face colour is
+            // used as picked, only a derived one is dimmed by the gain.
+            const sliceKind = isBackCap ? 'back' as const : 'side' as const;
+            const sm = resolveFaceMaterial(faceMats, sliceKind, wallFill);
+            const g = faceMats[sliceKind]?.fill ? 1 : sm.gain;
+            sliceLayer.lighting = [g, g, g];
           }
-          emitLayer(glyphLayer, node);
+          emitLayer(sliceLayer, node);
         }
-      } else if (frontInset > 0) {
-        emitLayer({ ...layer, width: layerW - 2 * frontInset, height: layerH - 2 * frontInset }, node);
       } else {
-        emitLayer(layer, node);
+        // Geometric Face Extrusion: For rect and ellipse primitives, use
+        // exact 3D wall planes + optional bevel chamfer rings.
+        const extShape = layer.kind === 'shape' && layer.primitive === 'ellipse' ? 'ellipse' : 'rect';
+        const bevelRequested = Math.max(0, a?.get('bevelDepth') ?? d3.bevelDepth);
+
+        // Corner radius drives the extruded OUTLINE too, so a rounded card
+        // is a rounded solid rather than a rounded face on a square block.
+        const extCorner = extShape === 'rect' ? (layer.cornerRadius ?? 0) : 0;
+        // A gradient varies ALONG a wall, and a wall is one flat colour — so
+        // split the straight walls into strips that can each sample their own
+        // position. Only for a gradient: a solid fill is already exact at one
+        // strip per side, and leaving it at 1 keeps that geometry untouched.
+        const wallSegments = layer.fillPaint && layer.fillPaint.type !== 'solid' ? GRADIENT_WALL_SEGMENTS : 1;
+        // Materialized rather than iterated lazily: the per-face effect decision
+        // needs to know how MANY faces there are before it can price a spatial
+        // effect (see SPATIAL_FACE_BUDGET), and a face cannot be told that by a
+        // loop it is already inside.
+        const extGeom = extrusionGeometry(layerW, layerH, extrusionDepth, extShape, undefined, { bevel: bevelRequested, bevelStyle: d3.bevelStyle, cornerRadius: extCorner, wallSegments });
+        const extFaces = extGeom.faces;
+        // The bevel the GEOMETRY emitted, not the one that was asked for.
+        //
+        // This was `clampBevel(layerW, layerH, extrusionDepth, bevelRequested)`,
+        // computed unconditionally for any rect — but the rounded-outline branch
+        // returns before the bevel path and emits no chamfer ring at all. So a
+        // rounded card with a bevel set had its front face shrunk by the full
+        // inset to meet a ring that was never drawn, leaving a rounded front
+        // face floating inside the outline with the darker back cap visible
+        // straight through the gap. Reading the emitted value cannot make that
+        // mistake, and does not require this module to know which shapes are
+        // rounded — which is the coupling that produced the bug.
+        frontInset = extGeom.bevel;
+        for (const f of extFaces) {
+          const M = Matrix4Math.multiply(
+            world3d as import('@motion/scene').Matrix4,
+            f.m,
+          );
+          const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+          // Same near-plane rule as the slices and the layer origin: a face
+          // whose own origin is behind the camera must not be drawn, or the
+          // clamped divide flings it across the frame at focal-length scale.
+          if (O.clipped) continue;
+          const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+          const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+          const fm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
+          // The layer's own effects, filtered for what a face may carry, plus
+          // the interior layer styles this particular face qualifies for. One
+          // decision, used by both branches below — they used to differ only by
+          // accident, and the back cap's `...layer` spread is exactly the kind
+          // of asymmetry that let a style reach one face and not the others.
+          const faceFx = faceEffectsFor(layer.effects, {
+            faceCount: extFaces.length,
+            extra: faceFxFor(f.suffix),
+          });
+          const common = {
+            id: `${layer.id}::ext-${f.suffix}`,
+            x: O.x,
+            y: O.y,
+            rotation: Math.atan2(fm[1], fm[0]) / DEG,
+            scaleX: Math.hypot(fm[0], fm[1]),
+            scaleY: Math.hypot(fm[2], fm[3]),
+            matrix: fm,
+            world3d: M as readonly number[],
+            // Each face's OWN view depth, from its own projected origin.
+            //
+            // This was `layer.depth` — the parent layer's depth — so all six
+            // faces of a cube came out bit-identical (verified live: every face
+            // reported depth 5333.0051595167515). The painter sort
+            // `(q.depth ?? 0) - (p.depth ?? 0)` then had nothing to order them
+            // by, so the back cap and the walls drew in arbitrary array order
+            // and could land ON TOP of the front cap. That is the "dark patch
+            // inside the object with a border around it": you are seeing a
+            // darker back/side face (gain 0.55 / 0.72) punched over the front
+            // face. It also made the whole body sort as a single flat plane
+            // against other 3D layers, so nothing could interpenetrate it.
+            depth: O.depth,
+            width: f.w,
+            height: f.h,
+            matte: undefined,
+            isMatteSource: undefined,
+            isAdjustment: undefined,
+            motionSamples: undefined,
+            deformedMesh: undefined,
+            frameBlend: undefined,
+            /*
+              Backdrop-sampling styles do not ride onto a synthesized face.
+
+              The back cap is built by spreading `...layer` while the walls are
+              built field-by-field, so anything outside this scrub list reached
+              the back cap ALONE. Glass and backdrop blur are the observed case
+              and were not the only candidates: both are excluded from the
+              depth-tested group (they read what is composited beneath, which
+              the depth pass cannot supply), so the object rendered its walls in
+              the depth group and its two caps on the affine painter path, and
+              the glass panel detached from the body.
+
+              Scrubbing them here is only half the answer, because the FRONT
+              face is the layer itself and legitimately keeps its glass. The
+              other half is `enforceExtrusionPathAgreement` in the snapshot
+              adapter, which keeps every face of one object on whichever path
+              the object as a whole takes. This half is what stops a wall and a
+              back cap disagreeing about what they are; that half is what stops
+              the object disagreeing with its own front face.
+            */
+            glass: undefined,
+            backdropBlur: undefined,
+            preserveTransparency: undefined,
+            effects: faceFx,
+            lighting: undefined as RenderLayer['lighting'],
+            shade3d: undefined as RenderLayer['shade3d'],
+          };
+          const faceLayer: RenderLayer = f.role === 'back'
+            ? { ...layer, ...common, fill: resolveFaceMaterial(faceMats, 'back', wallFill).fill }
+            : {
+                id: common.id,
+                kind: 'shape',
+                blend: layer.blend,
+                x: common.x,
+                y: common.y,
+                rotation: common.rotation,
+                scaleX: common.scaleX,
+                scaleY: common.scaleY,
+                matrix: common.matrix,
+                world3d: common.world3d,
+                depth: common.depth,
+                opacity: layer.opacity,
+                width: f.w,
+                height: f.h,
+                // Sampled at THIS wall's own position on the object, so a
+                // gradient-filled solid keeps one continuous surface instead
+                // of gradient caps bolted onto flat base-coloured walls.
+                fill: resolveFaceMaterial(faceMats, faceKindOf(f.role, f.suffix), wallFillAt(f.m)).fill,
+                visible: layer.visible,
+                // Flat strips along the outline — no corner radius of their
+                // own. (The back cap takes the branch above, which spreads
+                // `layer` and so already carries the layer's radius.)
+                primitive: 'rect',
+                effects: faceFx,
+                // Facets of one body: they tile against each other, so SDF
+                // edge coverage would draw a dark hairline at every join —
+                // twenty of them around a cylinder. See RenderLayer.flatFacet.
+                flatFacet: true,
+              };
+          if (extLit) {
+            /*
+              ONE-SIDED, and only here.
+
+              These faces bound a volume and are wound outward (extrusion.ts),
+              so a light behind a wall must not light it. Two-sided shading —
+              `abs(dot(N, L))`, which cannot tell a normal from its negation —
+              lit both walls of every pair identically, which is what "it
+              doesn't read as a solid" actually was.
+
+              Deliberately NOT applied to the front face (it is the layer
+              itself, and its outward direction is −Z, the opposite of the
+              convention `planeNormalOf` returns) nor to the text depth slices
+              above (their normals are all +Z, so clamping would black the whole
+              stack out under a front light).
+            */
+            const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, undefined, true);
+            if (lg) {
+              faceLayer.lighting = lg;
+              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true };
+            }
+          } else {
+            // An explicit per-face fill is taken literally — dimming a colour
+            // the user picked would make the picker lie. Only a DERIVED fill
+            // gets the kind's gain.
+            const kind = faceKindOf(f.role, f.suffix);
+            const fm2 = resolveFaceMaterial(faceMats, kind, wallFill);
+            const g = faceMats[kind]?.fill ? 1 : fm2.gain;
+            faceLayer.lighting = [g, g, g];
+          }
+          emitLayer(faceLayer, node);
+        }
       }
     }
+    // Front face. With a bevel it shrinks by `frontInset` on each side
+    // (w−2b × h−2b), centred on the box so its edge meets the front chamfer
+    // ring; the depth-path bridge (model3dFor) re-centres the smaller quad on
+    // the same world3d origin, so it stays glued. No bevel ⇒ emitted verbatim
+    // (byte-identical).
+    // Per-character 3D: replace the single string plane with one plane per
+    // glyph, each carried by its own world matrix so glyphs depth-test,
+    // intersect, and light individually — and a text animator's z /
+    // rotationX / rotationY channels can tumble them in real 3D.
+    const perCharGlyphs =
+      is3D && world3d && layer.kind === 'text' && isPerChar3D(node)
+        ? layoutPerChar3D({
+            text: layer.text ?? '',
+            style: {
+              fontSize: layer.fontSize ?? 16,
+              fontFamily: layer.fontFamily,
+              fontWeight: layer.fontWeight,
+              fontStyle: layer.fontStyle,
+              letterSpacing: layer.letterSpacing,
+              fill: typeof layer.fill === 'string' ? layer.fill : undefined,
+              align: layer.align as ParagraphStyle['align'],
+              lineHeight: layer.lineHeight,
+              paragraphSpacing: layer.paragraphSpacing,
+            },
+            boxWidth: layerW,
+            transforms: layer.glyphs,
+            runs: layer.runs,
+          })
+        : [];
+
+    if (perCharGlyphs.length > 0 && world3d) {
+      const pcMat = readNodeMaterial(node);
+      const pcLit = pcMat.acceptsLights && sceneLights.length > 0;
+      for (const g of perCharGlyphs) {
+        // Glyph frame: offset within the text box, its own depth, tumble
+        // about its own axes, then the animator's uniform scale.
+        const gm = Matrix4Math.compose({
+          position: { x: g.offsetX, y: g.offsetY, z: g.offsetZ },
+          rotation: { x: g.rotationX * DEG, y: g.rotationY * DEG, z: g.rotation * DEG },
+          scale: { x: g.scale, y: g.scale, z: 1 },
+          anchor: { x: 0, y: 0, z: 0 },
+        });
+        const M = Matrix4Math.multiply(world3d as import('@motion/scene').Matrix4, gm);
+        const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+        // A per-character glyph is its OWN plane in depth: tumbling the text
+        // block, or animating glyph z, sends individual glyphs behind the
+        // camera while the text layer's origin stays comfortably in front.
+        // Unguarded, such a glyph came back at focal-length scale (2666× on a
+        // 1920 comp) and painted over the whole composition — the "3D text
+        // renders wrong while 2D text is fine" symptom.
+        if (O.clipped) continue;
+        const GX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+        const GY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+        const gfm = [GX.x - O.x, GX.y - O.y, GY.x - O.x, GY.y - O.y, O.x, O.y] as const;
+        const glyphLayer: RenderLayer = {
+          ...layer,
+          // Synthetic id: snapshot-only, so hit-testing / timeline / layer
+          // list (which read the scene graph) never see the glyph planes.
+          id: `${layer.id}::ch${g.index}`,
+          text: g.char,
+          // One glyph per plane — the string's own animators/runs already
+          // resolved into this glyph's placement and fill.
+          glyphs: undefined,
+          runs: undefined,
+          width: g.width,
+          height: g.height,
+          x: O.x,
+          y: O.y,
+          rotation: Math.atan2(gfm[1], gfm[0]) / DEG,
+          scaleX: Math.hypot(gfm[0], gfm[1]),
+          scaleY: Math.hypot(gfm[2], gfm[3]),
+          matrix: gfm,
+          world3d: M as readonly number[],
+          depth: layer.depth,
+          opacity: layer.opacity * g.opacity,
+          ...(g.fill ? { fill: g.fill } : {}),
+          lighting: undefined,
+          shade3d: undefined,
+        };
+        if (pcLit) {
+          const lg = shadeLayer(planeNormalOf(M), { x: O.x, y: O.y, z: z3 + g.offsetZ }, sceneLights);
+          if (lg) {
+            glyphLayer.lighting = lg;
+            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess };
+          }
+        }
+        emitLayer(glyphLayer, node);
+      }
+    } else if (frontInset > 0) {
+      emitLayer({ ...layer, width: layerW - 2 * frontInset, height: layerH - 2 * frontInset }, node);
+    } else {
+      emitLayer(layer, node);
+    }
+
+    // Echo ▸ Composite In Front: the ghosts held back above, now that the layer
+    // they trail is on the canvas. Empty for every other operator.
+    for (const ghost of echoesInFront) emitLayer(ghost, node);
   }
 
   // ── Real cast shadows: project each caster onto the planes behind it ──────

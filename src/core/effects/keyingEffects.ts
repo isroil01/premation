@@ -210,3 +210,187 @@ export function shiftChannelsData(
   }
   return data;
 }
+
+/** Which side of the threshold Luma Key removes. */
+export type LumaKeyType = 'brighter' | 'darker' | 'similar' | 'dissimilar';
+
+const LUMA_KEY_TYPES: readonly LumaKeyType[] = ['brighter', 'darker', 'similar', 'dissimilar'];
+
+export function lumaKeyType(v: number): LumaKeyType {
+  return LUMA_KEY_TYPES[Math.round(v)] ?? 'brighter';
+}
+
+/**
+ * Luma Key — key on BRIGHTNESS rather than on a colour.
+ *
+ * The tool for material that was never shot against a screen: white product
+ * packshots, black-background smoke and fire plates, scanned line art, stock
+ * explosions. Linear Color Key above cannot do this job well — a smoke plate is
+ * every shade of grey at once, so there is no single key colour to name, but
+ * there is a very clear luminance threshold.
+ *
+ * The four key types are two pairs. `brighter`/`darker` are one-sided cuts
+ * either side of the threshold, which is what a black or white background needs;
+ * `similar`/`dissimilar` are two-sided, keying a BAND of luminance around the
+ * threshold, which is how a mid-grey card comes out.
+ *
+ * `tolerance` widens the fully-keyed region and `softness` is the ramp beyond
+ * it, giving the same linear falloff Linear Color Key uses — and for the same
+ * reason. A hard luminance cut on a smoke plate produces a contour-map edge that
+ * no amount of choking recovers.
+ *
+ * Alpha is MULTIPLIED, never assigned, so keying a layer that already carries a
+ * matte narrows it instead of resurrecting pixels the matte had removed.
+ */
+export function lumaKeyData(
+  data: Uint8ClampedArray,
+  type: LumaKeyType,
+  threshold: number,
+  tolerance: number,
+  softness: number,
+): Uint8ClampedArray {
+  // Everything on the 0..1 luminance scale, so the three controls are directly
+  // comparable to each other.
+  const cut = Math.max(0, Math.min(1, threshold / 255));
+  const tol = Math.max(0, tolerance / 255);
+  const soft = Math.max(0, softness / 255);
+
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] === 0) continue;
+    const l = luma(data[i]!, data[i + 1]!, data[i + 2]!) / 255;
+
+    // Signed distance INTO the region being removed. Positive means keyed.
+    let into: number;
+    switch (type) {
+      case 'brighter': into = l - cut; break;
+      case 'darker': into = cut - l; break;
+      // Two-sided: inside the band is keyed, and `tol` sets the band's radius.
+      case 'similar': into = tol - Math.abs(l - cut); break;
+      case 'dissimilar': into = Math.abs(l - cut) - tol; break;
+    }
+
+    // The one-sided types spend their tolerance widening the cut instead.
+    if (type === 'brighter' || type === 'darker') into += tol;
+
+    let alpha: number;
+    if (into <= 0) {
+      alpha = 1;
+    } else if (soft <= 0) {
+      alpha = 0;
+    } else {
+      alpha = Math.max(0, Math.min(1, 1 - into / soft));
+    }
+    data[i + 3] = data[i + 3]! * alpha;
+  }
+  return data;
+}
+
+/** Minimax operations, in AE's menu order. */
+export type MinimaxOp = 'maximum' | 'minimum' | 'max-then-min' | 'min-then-max';
+
+const MINIMAX_OPS: readonly MinimaxOp[] = ['maximum', 'minimum', 'max-then-min', 'min-then-max'];
+
+export function minimaxOp(v: number): MinimaxOp {
+  return MINIMAX_OPS[Math.round(v)] ?? 'maximum';
+}
+
+/** Which channels Minimax operates on. */
+export type MinimaxChannel = 'alpha' | 'color' | 'red' | 'green' | 'blue';
+
+const MINIMAX_CHANNELS: readonly MinimaxChannel[] = ['alpha', 'color', 'red', 'green', 'blue'];
+
+export function minimaxChannel(v: number): MinimaxChannel {
+  return MINIMAX_CHANNELS[Math.round(v)] ?? 'alpha';
+}
+
+/**
+ * Minimax — spread each pixel to the maximum (or minimum) of its neighbourhood.
+ *
+ * Dilate and erode, the two operations that every matte repair is built from.
+ * On alpha, Maximum GROWS the matte and Minimum SHRINKS it, which is how a key's
+ * fringe is pulled in or a matte spread to cover a seam. The compound
+ * operations are the reason the effect carries four rather than two:
+ *
+ *   max-then-min   (a morphological CLOSE) fills holes and gaps smaller than the
+ *                  radius while leaving the outer boundary where it was
+ *   min-then-max   (an OPEN) removes specks and hairs smaller than the radius,
+ *                  again without moving the boundary
+ *
+ * Neither compound is reachable by running the effect twice and tuning it — the
+ * point is that the second pass exactly undoes the first pass's boundary shift,
+ * which only holds when both use the same radius.
+ *
+ * ── Separability is why this is affordable ──────────────────────────────────
+ *
+ * A max over a square window is separable: the max over a w×h box equals a max
+ * over each row followed by a max over each column. That turns the cost from
+ * O(r²) per pixel into O(r), which at the radii matte work actually uses (10–40
+ * px) is the difference between interactive and not. It holds for a SQUARE
+ * structuring element and not for a circular one, which is why the window here
+ * is square — AE's is too.
+ */
+export function minimaxData(
+  src: Uint8ClampedArray,
+  w: number,
+  h: number,
+  op: MinimaxOp,
+  radius: number,
+  channel: MinimaxChannel,
+  direction: 'both' | 'horizontal' | 'vertical',
+): Uint8ClampedArray {
+  const r = Math.max(0, Math.round(radius));
+  if (r === 0) return src;
+
+  // Which byte offsets within a pixel this touches. Everything else is copied
+  // through untouched — an alpha-only Minimax must not disturb the colour, or
+  // a spread matte would drag smeared colour along its new edge.
+  const offsets =
+    channel === 'alpha' ? [3]
+      : channel === 'color' ? [0, 1, 2]
+        : channel === 'red' ? [0]
+          : channel === 'green' ? [1]
+            : [2];
+
+  // Ping-pong buffers: each pass reads one and writes the other. Doing it in
+  // place would let a pass read values the SAME pass already wrote, which turns
+  // a radius-r dilation into an unbounded flood along the scan direction.
+  let cur = new Uint8ClampedArray(src);
+  let scratch = new Uint8ClampedArray(src.length);
+
+  const pass = (takeMax: boolean, horizontal: boolean): void => {
+    scratch.set(cur);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * 4;
+        for (const c of offsets) {
+          let best = takeMax ? 0 : 255;
+          for (let k = -r; k <= r; k++) {
+            const sx = horizontal ? Math.min(w - 1, Math.max(0, x + k)) : x;
+            const sy = horizontal ? y : Math.min(h - 1, Math.max(0, y + k));
+            const v = cur[(sy * w + sx) * 4 + c]!;
+            if (takeMax ? v > best : v < best) best = v;
+          }
+          scratch[o + c] = best;
+        }
+      }
+    }
+    const t = cur;
+    cur = scratch;
+    scratch = t;
+  };
+
+  const separable = (takeMax: boolean): void => {
+    if (direction !== 'vertical') pass(takeMax, true);
+    if (direction !== 'horizontal') pass(takeMax, false);
+  };
+
+  switch (op) {
+    case 'maximum': separable(true); break;
+    case 'minimum': separable(false); break;
+    case 'max-then-min': separable(true); separable(false); break;
+    case 'min-then-max': separable(false); separable(true); break;
+  }
+
+  src.set(cur);
+  return src;
+}

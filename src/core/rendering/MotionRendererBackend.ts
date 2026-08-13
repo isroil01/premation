@@ -26,10 +26,14 @@ import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
+import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
 import { layerIsBaked } from '@core/effects/effectBake';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
+import { noteDeviceLoss } from '@core/plugins/pluginEffects';
+import { setWebgpuAvailable } from '@core/plugins/capabilities';
 import { markGpuOwned } from './canvasOwnership';
+import { attachPluginEffects } from './pluginEffectBridge';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
@@ -105,6 +109,8 @@ export class MotionRendererBackend implements RenderBackend {
 
   private canvas: HTMLCanvasElement | null = null;
   private renderer: Renderer | null = null;
+  /** Stops the plugin-effect subscription. Null until a renderer comes up. */
+  private detachPluginEffects: (() => void) | null = null;
   private viewport: Viewport | null = null;
   private textures: AppTextureProvider | null = null;
   private ready = false;
@@ -154,7 +160,7 @@ export class MotionRendererBackend implements RenderBackend {
     // it should never reject — but attach is sync and an escaped rejection here
     // would be an unhandled promise rejection with the spinner left spinning.
     this.init(canvas).catch((err) => {
-      // eslint-disable-next-line no-console
+
       console.error('[MotionRendererBackend] init threw unexpectedly:', err);
       this.initFailed = true;
       this.initErrorMessage = err instanceof Error ? err.message : String(err);
@@ -213,7 +219,7 @@ export class MotionRendererBackend implements RenderBackend {
         report.result = 'ok';
         return true;
       } catch (err) {
-        // eslint-disable-next-line no-console
+
         console.warn('[MotionRendererBackend] WebGPU probe failed, using WebGL2:', err);
         report.result = 'threw';
         report.error = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -231,7 +237,26 @@ export class MotionRendererBackend implements RenderBackend {
 
   private createGpuBackendFor(kind: RendererBackendKind): GpuBackend {
     if (kind === 'null') return new NullBackend();
-    if (kind === 'webgpu') return new WebGPUBackend();
+    if (kind === 'webgpu') {
+      const backend = new WebGPUBackend();
+      /*
+        Attached BEFORE `initialize`, which is where the device is acquired — a
+        handler registered afterwards would miss a device lost during startup,
+        which is a real case on a machine already in trouble.
+
+        This is the production caller for plugin-effect attribution. A GPU
+        cannot be preempted, so a plugin's fragment shader that hangs it causes
+        a device reset that destroys every GPU context in the process. Without
+        this the app learns the viewport died and nothing about why; with it,
+        the effect that was mid-draw is named and disabled.
+
+        `noteDeviceLoss` decides whether a plugin is implicated at all — a loss
+        with nothing plugin-owned drawing blames nobody, which is the common
+        case: driver updates, other applications, waking from sleep.
+      */
+      backend.onDeviceLost((reason) => { noteDeviceLoss(reason); });
+      return backend;
+    }
     return new WebGL2Backend();
   }
 
@@ -363,8 +388,11 @@ export class MotionRendererBackend implements RenderBackend {
       // The app-side texture provider decodes image assets to real GPU textures.
       // A finished decode fires onChange → we re-render so the pixels appear. The
       // `textures` factory runs synchronously inside the Renderer constructor.
+      // Held, not inlined: plugin effects need the backend itself to ask
+      // whether their WGSL compiles, and `Renderer` does not expose it.
+      const gpuBackend = this.createGpuBackendFor(attempt.kind);
       const renderer = new Renderer({
-        backend: this.createGpuBackendFor(attempt.kind),
+        backend: gpuBackend,
         textures: (resources) => (this.textures = new AppTextureProvider(resources)),
       });
       if (this.textures) {
@@ -384,7 +412,7 @@ export class MotionRendererBackend implements RenderBackend {
         MotionRendererBackend.noteBinding(canvas, attempt.kind);
         lastError = err;
         this.lastInitErrorText = err instanceof Error ? `${attempt.kind}: ${err.name}: ${err.message}` : `${attempt.kind}: ${String(err)}`;
-        // eslint-disable-next-line no-console
+
         console.warn(`[MotionRendererBackend] init failed for ${attempt.kind}:`, err);
         try {
           renderer.dispose();
@@ -405,11 +433,45 @@ export class MotionRendererBackend implements RenderBackend {
       // the element): without it, a later backend that preferred the other tier
       // would spend its rungs on getContext calls that can only return null.
       MotionRendererBackend.noteBinding(canvas, attempt.kind);
+
+      /*
+        Tell the plugin system which tier actually won.
+
+        Here, on the successful attempt, rather than from `preferred` at the top
+        of the ladder — `preferred` is a request and this is the answer. Asking
+        for WebGPU on a machine with no adapter steps down to WebGL2, and that
+        exact confusion is what made `kind` unreliable (see its comment above).
+
+        A plugin effect is WGSL; on WebGL2 it renders its input unchanged. So
+        this is not a performance hint — it is the difference between an effect
+        plugin working and being inert, and `capabilities.ts` turns it into an
+        install refusal rather than a silent no-op.
+      */
+      setWebgpuAvailable(attempt.kind === 'webgpu');
+
       if (this.disposed) {
         renderer.dispose();
         break;
       }
       this.renderer = renderer;
+
+      /*
+        Plugin effects, now that there is a device to compile them against.
+
+        Here rather than at plugin-enable time because the two events have no
+        fixed order: a plugin enabled during startup has no renderer yet, and a
+        renderer that comes up on a project with plugins already enabled has a
+        backlog. Attaching syncs the backlog and then follows every later
+        change, so neither order is the special case.
+
+        Not gated on the tier. On WebGL2 a plugin effect compiles to a
+        passthrough and draws its input unchanged — inert, but the effect still
+        has to reach `ready` for the layer to render at all, and refusing to
+        attach here would turn "does nothing" into "the layer disappears".
+      */
+      this.detachPluginEffects?.();
+      this.detachPluginEffects = attachPluginEffects(renderer, gpuBackend);
+
       this.viewport = renderer.createViewport({
         width: this.cssW,
         height: this.cssH,
@@ -628,11 +690,13 @@ export class MotionRendererBackend implements RenderBackend {
               this.textures!.setPath(key, layer);
             }
 
-            // A light layer feeds its radial-gradient texture regardless of kind.
+            // A light layer feeds its wash texture regardless of kind. The whole
+            // light goes through, not just its colour: a spot's cone is baked
+            // into the texture, so the cache key has to be able to see the cone.
             if (layer.light) {
               const key = `light:${layer.id}`;
               activeKeys.add(key);
-              this.textures!.setLight(key, layer.light.color);
+              this.textures!.setLight(key, layer.light);
             }
 
             // 2. Auxiliary alpha textures (masks/mattes)
@@ -657,10 +721,37 @@ export class MotionRendererBackend implements RenderBackend {
                 this.textures!.setLut(key, lut, sig);
               }
             }
+
+            /*
+              4. Apply Color LUT — a 3D `.cube` table, uploaded as a STRIP.
+
+              A SEPARATE key from the per-channel LUT above (`cubelut:` rather
+              than `lut:`), because the two are different textures with different
+              shapes and a layer can legitimately carry both — Levels and a
+              creative LUT are not alternatives. Sharing the key would have the
+              second registration silently replace the first, and the symptom
+              would be one of the two grades disappearing depending on effect
+              order.
+
+              Only the FIRST is uploaded. The shader binds one strip, so a second
+              Apply Color LUT on one layer would need a second pass; stacking two
+              is rare enough that the honest thing is to render the first and
+              leave the mechanism obvious rather than silently blend them.
+            */
+            const cubeFx = (layer.effects ?? [])
+              .find((e) => e.enabled !== false && e.type === 'apply-color-lut');
+            if (cubeFx) {
+              const cube = readCubeLutParam(cubeFx);
+              if (cube) {
+                const key = `cubelut:${layer.id}`;
+                activeKeys.add(key);
+                this.textures!.setCubeLut(key, cube, cubeLutSignature(cubeFx));
+              }
+            }
           } catch (err) {
             if (!this.warnedTextureLayers.has(layer.id)) {
               this.warnedTextureLayers.add(layer.id);
-              // eslint-disable-next-line no-console
+
               console.warn(`[MotionRendererBackend] texture feed failed for layer ${layer.id}:`, err);
             }
           }
@@ -794,6 +885,12 @@ export class MotionRendererBackend implements RenderBackend {
     // hidden <video> and frame canvases alive for the whole page lifetime.
     this.textures?.dispose();
     viewportVideoFrames.clear();
+    // Before the renderer goes. The subscription outlives this object
+    // otherwise — the effect registry is module state, so a stale listener
+    // would keep compiling shaders into a registry attached to a disposed
+    // device every time a plugin is enabled, for the rest of the session.
+    this.detachPluginEffects?.();
+    this.detachPluginEffects = null;
     this.renderer?.dispose();
     this.renderer = null;
     this.viewport = null;

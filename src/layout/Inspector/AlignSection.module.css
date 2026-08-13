@@ -1,39 +1,39 @@
 .root {
   margin-top: 16px;
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--color-border-subtle);
   padding-top: 16px;
 }
 
 .header {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-tertiary);
-  margin-bottom: 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
 }
 
 .grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  gap: 6px;
 }
 
 .button {
-  background: var(--color-hover);
-  border: 1px solid transparent;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
   color: var(--color-text-secondary);
-  border-radius: 4px;
-  height: 28px;
+  border-radius: var(--radius-md, 6px);
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: var(--motion-hover-transition);
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .button:hover:not(:disabled) {
-  background: var(--color-active);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
   color: var(--color-text-primary);
 }
 
@@ -50,7 +50,7 @@
 }
 
 .targetLabel {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.02em;
@@ -76,7 +76,7 @@
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 500;
   transition: var(--motion-hover-transition);
 }

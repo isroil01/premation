@@ -1,15 +1,18 @@
-/* eslint-disable no-restricted-syntax -- TODO(F11): SUSPECTED DEFECT, NOT YET VERIFIED.
- * These handlers do `defaultSceneGraph.getNode(id)` and then write into
- * `component.props` in place. SceneGraph returns a fresh copy per read
- * (SceneGraph.ts:154), so those writes are very likely discarded and these AI
- * tools may be silent no-ops. Deliberately not fixed here: establishing which
- * sites are live defects is F11's audit, and a blind rewrite of 10 call sites
- * with no test coverage would be worse than the bug. Fix = writeProp(). */
 /**
  * The handlers behind the tool schemas.
  *
- * Three rules run through all of them:
+ * Four rules run through all of them:
  *
+ * 0. **A write goes through a `SceneGraph` setter or `writeProp`, never through
+ *    `getNode(id).components.find(...).props`.** That getter rebuilds a fresh
+ *    copy on every read, so an in-place `.props` assignment lands in a throwaway
+ *    and is discarded — and the tool then reports success having changed
+ *    nothing. Five tools were written that way and every one was a silent
+ *    no-op, which is why three of the assistant panel's own quick presets had
+ *    never produced their headline effect. `propWriteSurvival.test.ts` asserts a
+ *    read-back per tool, and the `no-restricted-syntax` rule in
+ *    `eslint.config.js` fails the build on the pattern rather than relying on
+ *    anyone remembering this paragraph.
  * 1. **Every keyframe time converts through `ctx.time`.** The model speaks
  *    composition seconds; the engine stores layer time. Converting a value but
  *    not its easing is what made the old op path silently drop edits on any
@@ -24,7 +27,7 @@
 
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
 import { ALL_TOOL_DEFS, bindAlias } from '@motion/ai-tools';
-import { EFFECT_DEFS } from '@core/effects/effects';
+import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
 import { addTextAnimator, updateAnimator, readAnimatorData } from '@core/text/textAnimators';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -33,6 +36,11 @@ import { isRiggableKind } from '@core/scene/rigLogo';
 import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
 import { readNodePuppet } from '@core/rig/puppet';
 import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
+
+import {
+  addPathOp, defaultPathOp, newPathOpId, readPathOps, readTrimOp,
+  ensureTrimOp, updatePathOp, updateRepeaterOp, pathOpPropPath, type PathOp,
+} from '@core/scene/pathOps';
 
 import { is3DEnabled, set3DEnabled } from '@core/scene/threeD';
 import {
@@ -472,6 +480,35 @@ const setKeyframes: AiTool['handler'] = (input, ctx) => {
       bad.push(`keyframes[${i}]: '${k.prop}' is not animatable. Call list_capabilities for the real property paths.`);
       continue;
     }
+    /**
+     * An `effect.<id>.<param>` track whose effect does not exist is a SILENT
+     * no-op, and that is worse than an error.
+     *
+     * `isAnimatableProp` accepts any `effect.*` path by prefix, so the keyframes
+     * are validated, stored, and never sampled — the renderer has no effect with
+     * that id to read them into. Two authored techniques shipped exactly this:
+     * they invented `effect.<idPrefix>_flash_<i>.radius` because `add_effect`
+     * generated its own id and a flat emitter cannot read a return value. The
+     * glow they claimed to animate never animated, on every run, for as long as
+     * they existed.
+     *
+     * `isPuppetScalar` already excludes `puppet.<pin>.position` for precisely
+     * this reason, and its comment says so. The same care was simply never
+     * extended to effects. `add_effect { id }` is the other half of the fix —
+     * this makes the mistake loud instead of invisible.
+     */
+    if (k.prop.startsWith('effect.')) {
+      const effectId = k.prop.slice('effect.'.length).split('.')[0]!;
+      if (!ctx.scene.listEffects(k.nodeId).some((e) => e.id === effectId)) {
+        const have = ctx.scene.listEffects(k.nodeId).map((e) => `${e.id} (${e.type})`).join(', ');
+        bad.push(
+          `keyframes[${i}]: ${k.nodeId} has no effect '${effectId}', so '${k.prop}' would store ` +
+            `keyframes nothing ever reads. ${have ? `It has: ${have}.` : 'It has no effects.'} ` +
+            `Call add_effect first — pass its \`id\` if you need to know the name in advance.`,
+        );
+        continue;
+      }
+    }
     // A camera is 3D by nature — its z (dolly) needs no 3D switch, and it never
     // renders rotationX/Y (it uses orbitYaw/orbitPitch instead).
     const isCamera = ctx.scene.get(k.nodeId)?.kind === 'camera';
@@ -568,18 +605,35 @@ const setExpression: AiTool['handler'] = (input, ctx) => {
     ctx.anim.setExpression(nodeId, prop, '');
     return fail(`Expression rejected and not applied: ${err}. It must be a single expression returning a number — no 'return', no statements.`);
   }
+  // Presence stopped being the same question as enablement. `setExpression`
+  // preserves a disabled expression's state, so writing a formula onto a
+  // property the user switched off does NOT make it drive the value — and
+  // claiming otherwise sends the model hunting a rendering bug that is not there.
+  if (!ctx.anim.isExpressionEnabled(nodeId, prop)) {
+    return ok(
+      `Applied expression to ${nodeId}.${prop}, but the expression on that property is ` +
+        `DISABLED, so its keyframed or static value still applies. It can be re-enabled ` +
+        `from the expression editor.`,
+    );
+  }
   return ok(`Applied expression to ${nodeId}.${prop}. It now overrides any keyframed value.`);
 };
 
 // ── Write: effects + text ─────────────────────────────────────────
 
 const addEffectHandler: AiTool['handler'] = (input, ctx) => {
-  const { nodeId, type, amount } = input as { nodeId: string; type: string; amount?: number };
+  const { nodeId, type, amount, id: wantedId } = input as {
+    nodeId: string; type: string; amount?: number; id?: string;
+  };
   if (!ctx.scene.has(nodeId)) return fail(unknownNode(ctx, nodeId));
-  const id = ctx.scene.addEffect(nodeId, type);
+  const id = ctx.scene.addEffect(nodeId, type, wantedId);
   if (!id) return fail(`Could not add '${type}' to ${nodeId}.`);
   if (amount !== undefined) ctx.scene.updateEffect(nodeId, id, amount);
-  const d = EFFECT_DEFS.find((e) => e.type === type);
+  // `effectDefFor`, not a scan of the built-in array: `ctx.scene.addEffect`
+  // resolves plugin effects too, so a scan here would report an effect it had
+  // just successfully added as having no parameters — and the model would then
+  // have no key to keyframe.
+  const d = effectDefFor(type);
   const primary = d?.params.find((p) => p.type === 'number');
   const params = d?.params.map((p) => p.key).join(', ') ?? '';
   return ok(
@@ -1270,16 +1324,41 @@ const mergePathsHandler: AiTool['handler'] = (input, ctx) => {
 const setTrimPathHandler: AiTool['handler'] = (input, ctx) => {
   const i = input as { nodeId: string; start?: number; end?: number; offset?: number };
   if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-  const node = defaultSceneGraph.getNode(i.nodeId);
-  if (!node) return fail(`Node '${i.nodeId}' not found.`);
-  const geom = node.components.find((c) => c.type === 'Geometry');
-  if (!geom) return fail(`Node '${i.nodeId}' has no Geometry component.`);
-  if (i.start !== undefined) geom.props.trimStart = i.start;
-  if (i.end !== undefined) geom.props.trimEnd = i.end;
-  if (i.offset !== undefined) geom.props.trimOffset = i.offset;
-  bumpScene();
-  return ok(`Updated trim path on layer '${i.nodeId}'.`, { nodeId: i.nodeId });
+  // A PATCH, so naming one field is an edit rather than a reset. Trim is an
+  // entry in the `fx.pathOps` chain since document version 1.4.0 — the same
+  // ordered stack the deformers live in — so this creates the entry if the
+  // layer has none and then patches it by id.
+  const patch: Partial<PathOp> = {};
+  if (i.start !== undefined) patch.start = i.start;
+  if (i.end !== undefined) patch.end = i.end;
+  if (i.offset !== undefined) patch.offset = i.offset;
+  if (!Object.keys(patch).length) {
+    return fail(`Nothing to set — give at least one of start, end or offset (percentages, 0..100).`);
+  }
+  const opId = ensureTrimOp(i.nodeId);
+  updatePathOp(i.nodeId, opId, patch);
+  const t = readTrimOp(defaultSceneGraph.getNode(i.nodeId)!);
+  return ok(
+    `Trim path on '${i.nodeId}' is now start ${t?.start ?? 0}%, end ${t?.end ?? 100}%, offset ${t?.offset ?? 0}%. ` +
+      `Keyframe '${pathOpPropPath(opId, 'end')}' from 0 to 100 for a stroke draw-on. ` +
+      `Trim CUTS the path, so a filled shape's fill follows it.`,
+    { nodeId: i.nodeId, opId },
+  );
 };
+
+/**
+ * Per-copy opacity is a MULTIPLIER, not a pair of endpoints.
+ *
+ * The tool takes the first and last copy's opacity because that is how a person
+ * describes a fading array; the engine takes the ratio between one copy and the
+ * next. Deriving it here is the whole reason this is a translation layer:
+ * `endOpacity` used to be passed through under its own name and dropped.
+ */
+function perCopyOpacity(copies: number, startPct: number, endPct: number): number {
+  if (copies <= 1 || startPct <= 0) return 1;
+  const ratio = Math.max(0, Math.min(100, endPct)) / Math.max(1, startPct);
+  return ratio ** (1 / (copies - 1));
+}
 
 const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
   const i = input as {
@@ -1288,60 +1367,101 @@ const addRepeaterHandler: AiTool['handler'] = (input, ctx) => {
     positionX?: number;
     positionY?: number;
     rotation?: number;
-    scaleX?: number;
-    scaleY?: number;
+    scale?: number;
+    anchorX?: number;
+    anchorY?: number;
     startOpacity?: number;
     endOpacity?: number;
   };
   if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-  const node = defaultSceneGraph.getNode(i.nodeId);
-  if (!node) return fail(`Node '${i.nodeId}' not found.`);
-  let fx = node.components.find((c) => c.type === 'fx');
-  if (!fx) {
-    fx = { id: `${i.nodeId}_fx`, type: 'fx', props: {} };
-    node.components.push(fx);
-  }
-  fx.props.repeater = {
-    copies: i.copies ?? 3,
-    positionX: i.positionX ?? 100,
-    positionY: i.positionY ?? 0,
-    rotation: i.rotation ?? 0,
-    scaleX: i.scaleX ?? 1,
-    scaleY: i.scaleY ?? 1,
-    startOpacity: i.startOpacity ?? 100,
-    endOpacity: i.endOpacity ?? 100,
-  };
-  bumpScene();
-  return ok(`Added repeater to layer '${i.nodeId}'.`, { nodeId: i.nodeId });
+
+  const copies = Math.max(1, Math.round(i.copies ?? 3));
+  const start = i.startOpacity ?? 100;
+  const end = i.endOpacity ?? start;
+
+  // Field-for-field into the vocabulary the repeater OPERATOR actually reads.
+  // The old shape shared exactly ONE name with it (`copies`), so even a write
+  // that had landed would have produced N identical stacked copies.
+  const repOpId = updateRepeaterOp(i.nodeId, {
+    copies,
+    offsetX: i.positionX ?? 0,
+    offsetY: i.positionY ?? 0,
+    offsetRotation: i.rotation ?? 0,
+    offsetScale: i.scale ?? 1,
+    offsetOpacity: perCopyOpacity(copies, start, end),
+    ...(i.anchorX !== undefined ? { anchorX: i.anchorX } : {}),
+    ...(i.anchorY !== undefined ? { anchorY: i.anchorY } : {}),
+  });
+
+  const closes = Math.abs(copies * (i.rotation ?? 0) - 360) < 1;
+  return ok(
+    `Repeater on '${i.nodeId}': ${copies} copies, ${i.rotation ?? 0}° apart` +
+      (closes ? ' (a closed ring)' : '') +
+      // The REAL keyframe paths, id-scoped like every other operator's. This
+      // advertised 'repeater.copies' / 'repeater.offset', which were never
+      // property paths this app has understood — a caller following the advice
+      // wrote a track nothing samples. Same reason `set_path_op` returns
+      // `pathop.<id>.amount` rather than a friendly name.
+      `. Animate '${pathOpPropPath(repOpId, 'copies')}' or ` +
+      `'${pathOpPropPath(repOpId, 'offset')}' to build it on.` +
+      (closes && !i.anchorX
+        ? ` NOTE: anchorX is 0, so every copy pivots about its own origin and the ring has no radius — set anchorX to the radius you want.`
+        : ''),
+    { nodeId: i.nodeId },
+  );
+};
+
+/** Tool-facing operator names → the engine's `PathOpType`. */
+const PATH_OP_ALIASES: Record<string, PathOp['type']> = {
+  zigzag: 'zigzag',
+  pucker: 'pucker',
+  // The name in the system prompt and in the panel's quick presets. It is not an
+  // engine operator; passing it through failed `isPathOpType` and silently
+  // coerced the whole operator to `none`.
+  puckerBloat: 'pucker',
+  twist: 'twist',
+  roundCorners: 'roundCorners',
+  offset: 'offset',
+  roughen: 'roughen',
 };
 
 const addPathOperatorHandler: AiTool['handler'] = (input, ctx) => {
-  const i = input as { nodeId: string; op: 'zigzag' | 'puckerBloat' | 'twist' | 'roundCorners'; amount?: number };
+  const i = input as {
+    nodeId: string;
+    op: string;
+    amount?: number;
+    detail?: number;
+    wigglesPerSecond?: number;
+  };
   if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-  const node = defaultSceneGraph.getNode(i.nodeId);
-  if (!node) return fail(`Node '${i.nodeId}' not found.`);
-  let fx = node.components.find((c) => c.type === 'fx');
-  if (!fx) {
-    fx = { id: `${i.nodeId}_fx`, type: 'fx', props: {} };
-    node.components.push(fx);
-  }
-  fx.props.pathOp = { type: i.op, amount: i.amount ?? 20 };
-  bumpScene();
-  return ok(`Applied path operator '${i.op}' to layer '${i.nodeId}'.`, { nodeId: i.nodeId });
-};
 
-const setTextOnPathHandler: AiTool['handler'] = (input, ctx) => {
-  const i = input as { nodeId: string; pathNodeId: string; align?: string };
-  if (!ctx.scene.has(i.nodeId)) return fail(unknownNode(ctx, i.nodeId));
-  if (!ctx.scene.has(i.pathNodeId)) return fail(unknownNode(ctx, i.pathNodeId));
-  const node = defaultSceneGraph.getNode(i.nodeId);
-  if (!node) return fail(`Node '${i.nodeId}' not found.`);
-  const textComp = node.components.find((c) => c.type === 'Text');
-  if (!textComp) return fail(`Node '${i.nodeId}' is not a text layer.`);
-  textComp.props.pathNodeId = i.pathNodeId;
-  if (i.align) textComp.props.pathAlign = i.align;
-  bumpScene();
-  return ok(`Set text layer '${i.nodeId}' to follow path layer '${i.pathNodeId}'.`, { nodeId: i.nodeId });
+  const type = PATH_OP_ALIASES[i.op];
+  if (!type) {
+    return fail(
+      `Unknown path operator '${i.op}'. Use one of: ${Object.keys(PATH_OP_ALIASES).join(', ')}.`,
+    );
+  }
+
+  const base = defaultPathOp();
+  const op: PathOp = {
+    id: newPathOpId(),
+    type,
+    amount: i.amount ?? base.amount,
+    detail: i.detail ?? base.detail,
+    wigglesPerSecond: Math.max(0, i.wigglesPerSecond ?? 0),
+    seed: base.seed,
+  };
+  // Push onto the CHAIN. `fx.pathOp` — the single slot this used to write — was
+  // replaced by `fx.pathOps` in document version 1.3.0, and the reader
+  // deliberately does not accept the old shape.
+  addPathOp(i.nodeId, op);
+
+  const chain = readPathOps(defaultSceneGraph.getNode(i.nodeId)!);
+  return ok(
+    `Added '${type}' to '${i.nodeId}' (operator ${chain.length} in the chain, id '${op.id}'). ` +
+      `Keyframe 'pathop.${op.id}.amount' to animate the deformation.`,
+    { nodeId: i.nodeId, opId: op.id },
+  );
 };
 
 const createSkeletonRigHandler: AiTool['handler'] = (input, ctx) => {
@@ -1429,8 +1549,9 @@ const recolorLottieVectorHandler: AiTool['handler'] = (input, ctx) => {
     const kind = readNodeKind(node);
     if (kind === 'shape') {
       const style = node.components.find((c) => c.type === 'Style');
-      if (style) {
-        style.props.fill = color;
+      // `node.components` is a fresh copy per read, so `style.props.fill = …`
+      // recoloured a throwaway. `writeProp` reaches the engine component.
+      if (style && defaultSceneGraph.writeProp(id, style.id, 'fill', color)) {
         count++;
       }
     }
@@ -1496,7 +1617,6 @@ const HANDLERS: Record<string, AiTool['handler']> = {
   set_trim_path: setTrimPathHandler,
   add_repeater: addRepeaterHandler,
   add_path_operator: addPathOperatorHandler,
-  set_text_on_path: setTextOnPathHandler,
   create_skeleton_rig: createSkeletonRigHandler,
   pose_skeleton: poseSkeletonHandler,
   delete_layer: deleteLayer,

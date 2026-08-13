@@ -1,17 +1,27 @@
 /**
  * Per-layer 3D material options (AE's Material Options).
- *   • **Casts Shadows** gates whether this layer contributes to the 2.5D
- *     cast-shadow pass (a silhouette drop-shadow thrown away from the first
- *     shadow-casting light).
+ *   • **Casts Shadows** gates whether this layer throws a shadow. A 3D layer
+ *     under a shadow-casting light gets a REAL projected copy landing on the
+ *     nearest receiver plane behind it; a 2D layer keeps the screen-space
+ *     drop-shadow, because it has no depth to project through.
  *   • **Accepts Lights** opts a 3D layer into the real shading pass: per-quad
  *     Lambert on the CPU-affine fallback, per-FRAGMENT Lambert + Blinn-Phong
  *     specular on the depth-tested GPU path (see lightShading.ts and the
  *     solid3d/textured3d shaders).
  *   • **Specular / Shininess** shape the Blinn-Phong highlight on that GPU
  *     path; specular 0 (the default) reduces to plain Lambert.
- *   • **Accepts Shadows** remains reserved: cast shadows render as a filter on
- *     the CASTER, so per-receiver gating is not expressible in this
- *     architecture — the flag is read/persisted for AE-parity but unconsumed.
+ *   • **Accepts Shadows** selects which planes a cast shadow can land on. An
+ *     accepting 3D layer joins `shadowReceivers` in `buildSnapshot`, and each
+ *     caster is projected onto the nearest receiver behind it.
+ *
+ * ★ That last line used to read "remains reserved … read/persisted for
+ * AE-parity but UNCONSUMED", and it was true only while cast shadows were a
+ * CSS drop-shadow attached to the caster — which never landed on another layer,
+ * which is exactly why the flag had no consumer. Real projected shadows gave it
+ * one; the sentence survived the change that falsified it, and went on to put
+ * "shadow catcher" on a list of things still to build. It is recorded here
+ * rather than quietly deleted because a stale comment is the most expensive
+ * kind of wrong: it reads as evidence.
  */
 
 import type { SceneNode } from '@core/types';

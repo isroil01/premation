@@ -16,6 +16,16 @@ import type { ProjectFile } from '@core/types';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { defaultAnimation } from '@motion/animation';
+import { DEFAULT_COMP_SETTINGS } from '@stores/projectStore';
+import { DEFAULT_MOTION_BLUR_SETTINGS } from '@stores/motionBlurStore';
+import { DEFAULT_GUIDES_SETTINGS } from '@stores/guidesStore';
+
+/**
+ * The composition id `sceneProjectIO.createEmpty` gives the root node, and the
+ * one the default workspace tab points at. They must agree or a new project
+ * opens on a tab whose comp does not exist.
+ */
+const ROOT_COMP_ID = 'comp_root';
 
 /** True when the payload is a scene-only file rather than a full document. */
 function isLegacySceneFile(doc: EditorDocument | ProjectFile): doc is ProjectFile {
@@ -23,10 +33,28 @@ function isLegacySceneFile(doc: EditorDocument | ProjectFile): doc is ProjectFil
 }
 
 export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
+  /**
+   * A blank document — every subsystem, not just the scene.
+   *
+   * `restoreDocument` is deliberately tolerant of partial documents (an old
+   * file that predates a field must not have that field wiped), which meant a
+   * document carrying ONLY scene + animation left comps, motion blur and guides
+   * exactly as the previous project had them. So File ▸ New Project inherited
+   * the last project's resolution, frame rate, duration and shutter settings —
+   * a "new" project that silently exports at someone else's settings.
+   *
+   * Stating the defaults explicitly is what makes it a new project. Timelines
+   * and workspace tabs cannot be expressed as an empty document (an absent key
+   * means "keep", and there is no key that means "drop the ones I don't
+   * mention") — `resetProjectWorkspace` handles those alongside this.
+   */
   createEmpty: (name) => ({
     version: '1.1.0',
     scene: sceneProjectIO.createEmpty(name),
     animation: { tracks: {}, expressions: {} },
+    comps: { [ROOT_COMP_ID]: { id: ROOT_COMP_ID, name: 'Main Comp', ...DEFAULT_COMP_SETTINGS } },
+    motionBlur: { ...DEFAULT_MOTION_BLUR_SETTINGS },
+    guides: { ...DEFAULT_GUIDES_SETTINGS },
   }),
 
   capture: () => captureDocument(),

@@ -1,3 +1,4 @@
+import { notePluginPropWrite } from './pluginPropWrites';
 import { SceneNode, Transform, Component, ID } from '../types';
 import {
   Scene,
@@ -436,6 +437,19 @@ export class SceneGraph {
       if (dc.data[CID] === componentId) {
         dc.set(propName, value);
         e.touch(`prop:${propName}`);
+        /*
+          Plugin bookkeeping, hooked at the ONE place an authored property
+          write happens.
+
+          Two things follow from putting it here rather than in the inspector.
+          A user editing a plugin-generated layer detaches it from plugin
+          ownership wherever the edit came from — inspector, canvas, a menu
+          command — rather than only from the surfaces someone remembered to
+          instrument. And `onLayerChanged` cannot fire during playback as a
+          matter of STRUCTURE rather than discipline: animation samples tracks,
+          it never writes props, so it cannot reach this line at all.
+        */
+        notePluginPropWrite(nodeId, componentId, propName);
         return true;
       }
     }
@@ -527,14 +541,84 @@ export class SceneGraph {
     this.setFx(nodeId, 'autoOrient', on);
   }
 
-  /** Store the layer's shape-repeater config on its `fx` (undefined clears it). */
+  /**
+   * Set the layer's repeater by appending (or replacing) a `repeater` entry in
+   * the `fx.pathOps` chain.
+   *
+   * Kept as a named convenience — "give this layer a repeater" is a one-liner
+   * for seeds, tests and the render-test harness — but it writes the CHAIN, not
+   * the retired `fx.repeater` key. Passing `undefined` removes the entry. Same
+   * shape as `setTrimPath`, which folded the same way in 1.4.0. Document
+   * version 1.5.0.
+   */
   setRepeater(nodeId: ID, repeater: unknown): void {
-    this.setFx(nodeId, 'repeater', repeater);
+    const node = this.getNode(nodeId);
+    if (!node) return;
+    const ops = (node.components.find((c) => c.type === 'fx')?.props as
+      | { pathOps?: unknown[] }
+      | undefined)?.pathOps;
+    const rest = Array.isArray(ops) ? ops.filter((o) => (o as { type?: string })?.type !== 'repeater') : [];
+    if (repeater === undefined || repeater === null) {
+      this.setPathOps(nodeId, rest.length > 0 ? rest : undefined);
+      return;
+    }
+    const r = repeater as Record<string, unknown>;
+    const n = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
+    this.setPathOps(nodeId, [
+      ...rest,
+      {
+        id: `repop_${nodeId}`,
+        type: 'repeater',
+        amount: 0,
+        detail: 0,
+        copies: n(r.copies, 1),
+        offsetX: n(r.offsetX, 0),
+        offsetY: n(r.offsetY, 0),
+        offsetRotation: n(r.offsetRotation, 0),
+        offsetScale: n(r.offsetScale, 1),
+        offsetOpacity: n(r.offsetOpacity, 1),
+        offset: n(r.offset, 0),
+        anchorX: n(r.anchorX, 0),
+        anchorY: n(r.anchorY, 0),
+        composite: r.composite === 'below' ? 'below' : 'above',
+      },
+    ]);
   }
 
   /** Store the layer's trim-path config on its `fx` (undefined clears it). */
+  /**
+   * Set the layer's trim by appending (or replacing) a `trim` entry in the
+   * `fx.pathOps` chain.
+   *
+   * Kept as a named convenience because "give this layer a trim" is a common
+   * one-liner for seeds, tests and the render-test harness — but it writes the
+   * CHAIN, not the retired `fx.trim` key. Passing `undefined` removes the
+   * entry. Document version 1.4.0.
+   */
   setTrimPath(nodeId: ID, trim: unknown): void {
-    this.setFx(nodeId, 'trim', trim);
+    const node = this.getNode(nodeId);
+    if (!node) return;
+    const ops = (node.components.find((c) => c.type === 'fx')?.props as
+      | { pathOps?: unknown[] }
+      | undefined)?.pathOps;
+    const rest = Array.isArray(ops) ? ops.filter((o) => (o as { type?: string })?.type !== 'trim') : [];
+    if (trim === undefined || trim === null) {
+      this.setPathOps(nodeId, rest.length > 0 ? rest : undefined);
+      return;
+    }
+    const t = trim as { start?: number; end?: number; offset?: number };
+    this.setPathOps(nodeId, [
+      ...rest,
+      {
+        id: `trimop_${nodeId}`,
+        type: 'trim',
+        amount: 0,
+        detail: 0,
+        start: t.start ?? 0,
+        end: t.end ?? 100,
+        offset: t.offset ?? 0,
+      },
+    ]);
   }
 
   /**
@@ -601,6 +685,13 @@ export class SceneGraph {
   /** Store the layer's render quality ('draft' | undefined=best) on its `fx`. */
   setLayerQuality(nodeId: ID, quality: unknown): void {
     this.setFx(nodeId, 'quality', quality);
+  }
+
+  /** Mark the layer as a GUIDE (true | undefined=normal) on its `fx`. Guide
+   *  layers draw in the comp and are dropped when a frame is built for export
+   *  — the exclusion lives in `buildSnapshot`, keyed off `SnapshotComp.forExport`. */
+  setGuideLayer(nodeId: ID, guide: unknown): void {
+    this.setFx(nodeId, 'guide', guide);
   }
 
   /** Store an image-sequence config ({frames,fps}) on the layer's `fx`. */

@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { Icon } from '@components/Icon';
 import { Logo } from '@components/Logo';
 import { AppMenuBar } from '@layout/Menu';
+import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { IconButton } from '@components/IconButton';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -54,6 +55,8 @@ export function TitleBar(): JSX.Element | null {
           </>
         )}
       </div>
+      {/* The indicator this bar has always had styles for and never rendered. */}
+      {isEditor && <ProjectStatus />}
       <div className={styles.right}>
         {isEditor && (
           <div className={styles.editorControls}>
@@ -65,7 +68,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Left Sidebar"
               onClick={() => useLayoutStore.getState().toggleRegion('leftSidebar')}
             >
-              <Icon name="panel-left" size={16} />
+              <Icon name="panel-left" size="md" />
             </IconButton>
             <IconButton
               aria-label="Toggle Bottom Timeline"
@@ -75,7 +78,7 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Bottom Timeline"
               onClick={() => useLayoutStore.getState().toggleRegion('bottomTimeline')}
             >
-              <Icon name="panel-bottom" size={16} />
+              <Icon name="panel-bottom" size="md" />
             </IconButton>
             <IconButton
               aria-label="Toggle Right Inspector"
@@ -85,27 +88,27 @@ export function TitleBar(): JSX.Element | null {
               title="Toggle Right Inspector"
               onClick={() => useLayoutStore.getState().toggleRegion('rightInspector')}
             >
-              <Icon name="panel-right" size={16} />
+              <Icon name="panel-right" size="md" />
             </IconButton>
             <span className={styles.menuDivider} aria-hidden />
-            <IconButton
-              aria-label="Preview"
-              size="sm"
-              className={styles.layoutToggle}
-              title="Preview"
+            <button
+              type="button"
+              className={styles.previewBtn}
+              title="Preview presentation (Fullscreen)"
               onClick={() => enterPresentation()}
             >
-              <Icon name="eye" size={16} />
-            </IconButton>
-            <IconButton
-              aria-label="Export"
-              size="sm"
-              className={styles.layoutToggle}
-              title="Export"
+              <Icon name="play" size="sm" weight="fill" />
+              <span>Preview</span>
+            </button>
+            <button
+              type="button"
+              className={styles.exportBtn}
+              title="Export composition…"
               onClick={() => openExportDialog(compDuration, compFps)}
             >
-              <Icon name="export" size={16} />
-            </IconButton>
+              <Icon name="export" size="sm" weight="bold" />
+              <span>Export</span>
+            </button>
           </div>
         )}
         <div className={styles.windowActions}>

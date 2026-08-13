@@ -129,101 +129,37 @@
 }
 
 /* ── AssetsPanel Layout ─────────────────────────────────────────── */
-.assetList {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 4px;
-}
 
-.assetItem {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 6px 8px;
-  background: transparent;
-  border: 1px solid transparent;
-  transition: background 0.1s, border-color 0.1s;
-  cursor: default;
-  /* Near-virtualization: the browser skips layout/paint (and image decode) for
-     rows scrolled out of view, so a folder of hundreds of assets stays smooth
-     without restructuring the list. contain-intrinsic-size reserves each row's
-     height so the scrollbar stays accurate. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 46px;
-}
 
-.assetItem:hover {
-  background: var(--color-surface-2);
-  border-color: var(--color-border-subtle);
-}
 
-.assetIcon {
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 4px;
-  overflow: hidden;
-}
 
-.assetThumbImg,
-.assetThumbVideo {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
 
-.assetInfo {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1;
-}
 
-.assetName {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
-.assetMeta {
-  font-size: 10px;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-family-mono);
-  margin-top: 1px;
-}
 
-.assetActions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-}
 
+/**
+ * The per-asset row actions. Every colour here was a literal — `#888`, `#fff`,
+ * `#2988ff`, `#ff4d4d` and four `rgba()` tints of the last two — so these
+ * buttons alone kept a dark-mode palette in light mode: mid-grey glyphs going
+ * WHITE on hover against a light panel. Mapped onto the accent and danger
+ * tokens, which are the same colours in dark and correct in both.
+ */
 .actionButton {
   background: transparent;
   border: 1px solid var(--color-border);
-  color: #888;
+  color: var(--color-text-tertiary);
   cursor: pointer;
   width: 24px;
   height: 24px;
   display: grid;
   place-items: center;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: var(--motion-hover-transition);
 }
 
 .actionButton:hover {
-  color: #fff;
+  color: var(--color-text-primary);
   background: var(--color-surface-3);
   border-color: var(--color-border-strong);
 }
@@ -232,42 +168,51 @@
   composes: actionButton;
 }
 .actionButtonAdd:hover {
-  color: #2988ff;
-  background: rgba(41, 136, 255, 0.15);
-  border-color: rgba(41, 136, 255, 0.3);
+  color: var(--color-primary);
+  background: var(--color-primary-subtle);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
 }
 
 .actionButtonRemove {
   composes: actionButton;
-  color: #ff4d4d;
+  color: var(--color-danger);
 }
 .actionButtonRemove:hover {
-  color: #ff4d4d;
-  background: rgba(255, 77, 77, 0.15);
-  border-color: rgba(255, 77, 77, 0.3);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
 }
 
 .fileInput {
   display: none;
 }
 
+/**
+ * Raw `#2988ff` / `#fff`, with `!important` on every line, was the one control
+ * in these panels painted outside the theme — it kept the same blue on the same
+ * white in light mode, where every other primary button flips. Same colour in
+ * dark; this is a de-hardcode, not a restyle.
+ */
 .importBtn {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  padding: 4px 8px;
-  background: #2988ff !important;
-  color: #fff !important;
-  border: none !important;
-  font-size: 11px;
-  font-weight: 600;
+  height: 26px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   cursor: pointer;
-  transition: background 0.1s;
+  transition: var(--motion-hover-transition);
   white-space: nowrap;
 }
 .importBtn:hover {
-  background: #3a98ff !important;
+  background: var(--color-primary-hover);
 }
 
 /* ── Assets: folder toolbar / breadcrumb ─────────────────── */
@@ -289,7 +234,7 @@
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border-strong);
   border-radius: 4px;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -312,51 +257,56 @@
   border-color: transparent;
 }
 
-.breadcrumb {
+/* Danger sibling of .toolBtn. Tinted rather than solid-filled: this button
+   appears next to Import and New, and a solid red block reads as the loudest
+   thing in the panel — which is the wrong emphasis for the action you least
+   want clicked by reflex. It commits to red on hover, once deliberately
+   approached. */
+.toolBtnDanger {
+  composes: toolBtn;
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, var(--color-danger) 40%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+.toolBtnDanger:hover {
+  color: var(--color-primary-foreground);
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* Only rendered while a selection exists — see AssetsPanel. */
+.assetSelectionBar {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 2px;
-  padding: 2px 10px 6px;
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  border-bottom: 1px solid var(--color-border-subtle);
+  gap: var(--space-3);
+  padding: 4px 8px;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-primary) 7%, transparent);
 }
-.crumb {
-  background: none;
-  border: none;
+
+.assetSelectionCount {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
-  font: inherit;
-  cursor: pointer;
-  padding: 2px 4px;
-  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.crumb:hover { color: var(--color-text-primary); background: var(--color-hover); }
-.crumbCurrent { color: var(--color-text-primary); font-weight: 600; cursor: default; }
-.crumbSep { color: var(--color-text-tertiary); opacity: 0.6; }
+
 
 /* Folder rows share the asset-row look but with a folder glyph + open affordance. */
-.folderItem {
-  composes: assetItem;
-  cursor: pointer;
-}
-.folderItem.dropActive {
-  background: var(--color-primary-subtle);
-  border-color: var(--color-primary);
-}
-.folderIcon {
-  composes: assetIcon;
-  color: var(--color-primary);
-}
 
 /* ── Libraries panel ─────────────────────────────────────── */
 .libTabs {
   display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 6px 8px 0;
-  border-bottom: 1px solid var(--color-border-subtle);
-  background: transparent;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-panel-header);
   flex: none;
   overflow-x: auto;
   overflow-y: hidden;
@@ -371,28 +321,47 @@
   display: none; /* Chrome/Safari */
 }
 
+/**
+ * Library tabs — underline, not folder tabs.
+ *
+ * The old shape was a browser-chrome tab: `border-radius: 4px 4px 0 0`, a
+ * hairline on three sides, and an active fill of `--color-surface-0` — the
+ * DARKEST surface in the theme, so the selected tab read as a hole punched in
+ * the panel rather than as the raised one. Seven of them scroll horizontally,
+ * and seven outlined folder tabs is most of why this panel looked busy.
+ *
+ * An underline carries the same information with no box at all, and it is what
+ * the rest of the app's chrome does.
+ */
 .libTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   flex: 0 0 auto;
   white-space: nowrap;
-  padding: 5px 12px;
-  border-radius: 4px 4px 0 0;
+  height: 30px;
+  padding: 0 10px;
   background: transparent;
-  border: 1px solid transparent;
-  border-bottom: none;
-  color: var(--color-text-secondary);
-  font-size: 11px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
   font-family: inherit;
   cursor: pointer;
-  transition: color 0.12s, background 0.12s;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
   user-select: none;
 }
-.libTab:hover { color: var(--color-text-primary); background: var(--color-hover); }
+.libTab:hover { color: var(--color-text-primary); }
+.libTab:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
 .libTabActive {
   composes: libTab;
   color: var(--color-text-primary);
-  background: var(--color-surface-0);
-  border-color: var(--color-border-subtle);
-  font-weight: 500;
+  border-bottom-color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
 }
 .libBody {
   flex: 1 1 auto;
@@ -402,35 +371,54 @@
 }
 .libGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 6px;
   width: 100%;
   box-sizing: border-box;
 }
+
+/**
+ * A library tile. The THUMBNAIL carries the box; the tile does not.
+ *
+ * Every tile used to be outlined, so a grid of twenty drew twenty rectangles
+ * around content that is itself rectangular — boxes inside boxes, which is what
+ * made this panel read as cluttered. Here the border lives on the thumb (where
+ * it frames a picture and earns its keep) and the tile itself is transparent
+ * until hovered.
+ */
 .libChip {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  gap: 5px;
   min-width: 0;
-  padding: var(--sidebar-item-padding, 10px 4px);
-  border-radius: 6px;
+  padding: 5px 4px 7px;
+  border-radius: var(--radius-md);
   background: transparent;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid transparent;
   color: var(--color-text-secondary);
   cursor: pointer;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .libChip:hover {
-  background: var(--color-surface-3);
+  background: var(--color-hover);
   color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
+  border-color: var(--color-border-subtle);
+}
+.libChip:hover .libChipThumb {
+  border-color: color-mix(in srgb, var(--color-primary) 40%, transparent);
+}
+.libChip:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
 }
 .libChipLabel {
-  font-size: var(--sidebar-item-font-size, 10px);
+  /* 12px via the density preference; the 10px fallback here was below the
+     product's floor for text a user has to READ rather than recognise. */
+  font-size: var(--sidebar-item-font-size, 12px);
   font-family: inherit;
-  letter-spacing: 0.02em;
   text-align: center;
   line-height: 1.3;
   overflow: hidden;
@@ -441,14 +429,17 @@
 }
 .libChipThumb {
   width: 100%;
-  height: 40px;
-  border-radius: 4px;
+  height: 46px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
   position: relative;
   flex-shrink: 0;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .libChipPro {
   font-size: var(--font-size-micro);
@@ -465,41 +456,57 @@
 .libList {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
 }
-.libTextItem {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: transparent;
-  border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-primary);
-  cursor: pointer;
-  font-family: inherit;
-  transition: background 0.12s, border-color 0.12s;
-}
-.libTextItem:hover { background: var(--color-surface-3); border-color: var(--color-border-strong); }
-.libTextMeta { font-size: 10px; color: var(--color-text-muted); font-family: var(--font-family-mono); }
+
+/**
+ * List rows in the Library, at the same 28px/12px as the effects and presets
+ * browsers and the layer tree. They were bordered boxes stacked with a 4px gap
+ * — a column of outlines, each one a rectangle drawn around a single line of
+ * text. Selection and hover are bands now, which is what every other list in
+ * the app does.
+ */
+.libTextItem,
 .libMotionItem {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 10px;
-  border-radius: 6px;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-sm);
   background: transparent;
-  border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-secondary);
+  border: none;
   cursor: pointer;
-  font-size: 11px;
   font-family: inherit;
-  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  transition: background var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+.libTextItem {
+  justify-content: space-between;
+  color: var(--color-text-primary);
+}
+.libMotionItem {
+  color: var(--color-text-secondary);
+}
+.libTextItem:hover {
+  background: var(--color-hover);
 }
 .libMotionItem:hover {
-  background: var(--color-primary-subtle);
-  color: var(--color-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 30%, transparent);
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+.libTextItem:focus-visible,
+.libMotionItem:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+.libTextMeta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  font-family: var(--font-family-mono);
+  flex: none;
 }
 
 /* ── Motion Presets Visual Grid & Animations ────────────────────── */
@@ -570,7 +577,7 @@
 }
 
 .presetName {
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-primary);
   font-weight: 600;
   white-space: nowrap;
@@ -580,7 +587,7 @@
 }
 
 .presetDesc {
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   text-align: left;
   line-height: 1.25;
@@ -858,4 +865,293 @@
   0%, 100% { transform: rotateX(0deg) rotateY(0deg); }
   33% { transform: rotateX(20deg) rotateY(10deg); }
   66% { transform: rotateX(-10deg) rotateY(-20deg); }
+}
+
+/*
+ * Plugin markers in the layer tree.
+ *
+ * A generated child is about to be overwritten by its plugin — or, once the
+ * user edits it, deliberately not. A user who cannot tell a managed layer from
+ * their own will edit one and be surprised either way, which is the whole
+ * reason the ownership mark is stored in the document rather than inferred.
+ */
+.pluginManagedRow,
+.pluginInertRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Dimmed, not hidden: it is still the user's layer, it is just not theirs to
+   author while the plugin manages it. */
+.pluginManagedRow { color: var(--color-text-secondary); }
+.pluginManagedRow svg { color: var(--color-text-tertiary); flex: 0 0 auto; }
+
+/* The layer renders and is selectable; the one thing it will not do is respond
+   to its own properties. Worth a warning colour rather than a neutral one. */
+.pluginInertRow svg { color: var(--color-warning); flex: 0 0 auto; }
+
+/* ── Assets: an Explorer-style tree ─────────────────────────────────
+ *
+ * This replaced a list of thumbnail CARDS. Three things drove it, and all
+ * three came from the same place — a media library is a FILE list, and the
+ * card layout was answering a question nobody asks of one:
+ *
+ *  • Thumbnails told you least about the files that look alike, which in a
+ *    real project is most of them. A type glyph plus a Type column says what
+ *    the row IS, which is what you scan for, and costs no decode.
+ *  • The bordered tile around each icon made every line read as a card in a
+ *    list of cards. A file row is a line of text with an icon on it.
+ *  • Two action buttons per row — one destructive — sat beside the row you
+ *    click to select, and ate the width Type and Size now use. Both moved to
+ *    the right-click menu.
+ */
+
+.assetHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 10px 5px 8px;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  user-select: none;
+  flex: 0 0 auto;
+}
+
+.assetHeadName { flex: 1 1 auto; min-width: 0; }
+/* Same widths as the row cells below, so the headings sit over their column. */
+.assetHeadType { flex: 0 0 60px; }
+.assetHeadSize { flex: 0 0 70px; text-align: right; }
+
+.assetTree {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * One line per item. 22px so a folder and a file are the same height and the
+ * indent reads as structure rather than as items of different importance.
+ */
+.assetRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 26px;
+  padding-right: 10px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  cursor: default;
+  user-select: none;
+  border-radius: var(--radius-sm);
+}
+
+.assetRow:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.assetRowActive {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.assetRowSelected,
+.assetRowSelected:hover {
+  background: var(--color-primary-subtle);
+  color: var(--color-text-primary);
+}
+
+/* Drop target while dragging an asset onto a folder. */
+.assetRow.dropActive {
+  background: var(--color-primary-subtle);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+/* The disclosure triangle. Files get the same 11px of space from their row's
+   padding, so names line up whether or not a row can expand. */
+.assetTwisty {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+/*
+ * File-type COLOURS, the way a real file manager tints them.
+ *
+ * A monochrome list makes you read every filename to find the one video in it;
+ * colour lets the eye jump straight to a kind. That only works if each kind
+ * owns a hue, so these are literal values rather than the chrome tokens — the
+ * palette is semantic (this is what "video" looks like), not thematic, and
+ * pointing them all at --color-primary would defeat the whole point.
+ *
+ * Chosen to stay legible on both themes: mid-tone and saturated enough to read
+ * on the dark pasteboard, dark enough not to glare on the light one.
+ */
+.assetGlyph {
+  flex: 0 0 auto;
+}
+
+/* Amber — Explorer's folder, and the one kind that is structure not content. */
+.assetGlyphFolder {
+  flex: 0 0 auto;
+  color: #e0a92e;
+}
+
+.assetGlyphImage { color: #4aa96c; }
+.assetGlyphVideo { color: #7c6cf0; }
+.assetGlyphAudio { color: #d9578b; }
+/* Anything we have no kind for. The only grey glyph, so "unknown" reads as
+   unknown rather than as another type. */
+.assetGlyphFile { color: var(--color-text-tertiary); }
+
+.assetRowName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assetRowType {
+  flex: 0 0 60px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.assetRowSize {
+  flex: 0 0 70px;
+  text-align: right;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.assetRename {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 20px;
+  padding: 0 4px;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  outline: none;
+}
+
+.assetBulkBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  flex: 0 0 auto;
+}
+
+.assetBulkCount {
+  flex: 1 1 auto;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+/* ── Library browsing chrome ─────────────────────────────────────────
+   Search, the favourites filter, per-card stars and the empty state — shared
+   by every section of the Library tab so the four of them browse the same way
+   instead of each growing its own category strip. */
+
+.libSearchRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* The star is a control INSIDE a card that is itself a button. It has to stay
+   hit-testable without inheriting the card's padding or stretching its row. */
+.libStar,
+.libStarFilter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+/* The filter lives in the toolbar, not on a card — always visible. */
+.libStarFilter {
+  opacity: 1;
+  border: 1px solid var(--color-border);
+}
+
+.libStarOn {
+  composes: libStar;
+  opacity: 1;
+  color: var(--color-accent);
+}
+
+.libStarFilterOn {
+  composes: libStarFilter;
+  color: var(--color-accent);
+  background: var(--color-selected);
+  border-color: var(--color-accent);
+}
+
+/* An unstarred star stays hidden until the row is hovered or the button itself
+   is keyboard-focused — otherwise every row in the list carries a permanent
+   grey star, which reads as "already starred" and adds a column of noise. */
+.libMotionItem:hover .libStar,
+.libChip:hover .libStar,
+.libStar:focus-visible {
+  opacity: 1;
+}
+
+.libStar:hover,
+.libStarFilter:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.libStar:focus-visible,
+.libStarFilter:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+/* Grid tiles have no row to sit in, so their star overlays the thumbnail. */
+.libChipStar {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+}
+
+.libEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
 }

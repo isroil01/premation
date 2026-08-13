@@ -14,12 +14,12 @@ import { Icon } from '@components/Icon';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodePuppet } from '@core/rig/puppet';
+import { readNodePuppet, type PinKind } from '@core/rig/puppet';
 import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap';
 import { updatePuppetSettings, updatePuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
 import styles from './BoneControls.module.css';
 
-/** Shared <select> chrome — the two dropdowns here must look identical. */
+/** Shared <select> chrome — every dropdown here must look identical. */
 const selectStyle: React.CSSProperties = {
   padding: '3px 8px',
   fontSize: 11,
@@ -60,7 +60,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       {/* Puppet summary card */}
       <div className={styles.headerCard}>
         <div className={styles.headerTitle}>
-          <Icon name="puppet-pin" size={14} />
+          <Icon name="puppet-pin" size="md" />
           <span>Deformation Mesh</span>
           <span className={styles.badge}>{pins.length} pins</span>
         </div>
@@ -69,7 +69,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           variant="secondary"
           onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
         >
-          <Icon name="plus" size={12} /> Add Pin
+          <Icon name="plus" size="sm" /> Add Pin
         </Button>
       </div>
 
@@ -77,7 +77,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       <div className={styles.card}>
         <div className={styles.cardHeader}>
           <div className={styles.cardTitle}>
-            <Icon name="grid" size={13} style={{ opacity: 0.7 }} />
+            <Icon name="grid" size="sm" style={{ opacity: 0.7 }} />
             <span>Mesh Settings</span>
           </div>
         </div>
@@ -207,7 +207,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
             style={{ marginTop: 8 }}
           >
-            <Icon name="puppet-pin" size={12} /> Place Pins with Puppet Tool (Ctrl+P)
+            <Icon name="puppet-pin" size="sm" /> Place Pins with Puppet Tool (Ctrl+P)
           </Button>
         </div>
       )}
@@ -217,7 +217,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         <div key={pin.id} className={styles.card}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>
-              <Icon name="push-pin" size={13} style={{ opacity: 0.7 }} />
+              <Icon name="push-pin" size="sm" style={{ opacity: 0.7 }} />
               <span>{pin.name || pin.id}</span>
             </div>
             <Button
@@ -227,9 +227,32 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
               aria-label={`Delete pin ${pin.name || pin.id}`}
               title="Delete pin"
             >
-              <Icon name="trash" size={12} />
+              <Icon name="trash" size="sm" />
             </Button>
           </div>
+
+          <div className={styles.paramRow}>
+            <span className={styles.paramLabel}>Pin Type</span>
+            <select
+              value={pin.kind ?? 'advanced'}
+              aria-label={`${pin.name || pin.id} pin type`}
+              onChange={(e) =>
+                updatePuppetPin(nodeId, pin.id, { kind: e.target.value as PinKind })
+              }
+              style={selectStyle}
+            >
+              <option value="advanced">Advanced (owns position)</option>
+              <option value="bend">Bend (derives position)</option>
+            </select>
+          </div>
+
+          {pin.kind === 'bend' && (
+            <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+              Position is derived from the advanced pins around it. Rotation and
+              scale act on the motion they already produce — at 0° and 1× this
+              pin does nothing.
+            </div>
+          )}
 
           <div className={styles.paramRow}>
             <span className={styles.paramLabel}>Rotation</span>

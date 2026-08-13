@@ -26,8 +26,10 @@ import { bumpScene } from '@stores/sceneStore';
 import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
 import { defaultAnimation } from '@motion/animation';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
-import { addRoot, addText, addGradientShape, radialFill, linearFill, liveKf, choreographyDuration, type SetKf } from '@core/template/templates/builders';
+import { addRoot, addText, addGradientShape, radialFill, linearFill, liveKf, choreographyDuration, choreographyRestTime, type SetKf } from '@core/template/templates/builders';
 import { mountPreview } from '@core/template/previewController';
+import { previewChoreography } from './insertPreview';
+import { MOGRAPH_ID_PROP, nameMographParts } from './mographParams';
 import type { SceneNode, Transform } from '@core/types';
 
 export type MographCategory = 'lower-thirds' | 'callouts' | 'titles' | 'data' | 'shapes' | 'loops';
@@ -264,6 +266,30 @@ export const MOGRAPH_ITEMS: readonly MographItem[] = [
       fadeIn(set, `${id}_handle`, t0 + 0.34, 0.28);
     },
   },
+  {
+    id: 'mg-lower-avatar', name: 'Avatar Card', cat: 'lower-thirds', color: PAL.emerald,
+    build: (g, id, parent, x, y, u) => {
+      addRect(g, `${id}_card`, parent, x, y, 480 * u, 104 * u, PAL.glass, { radius: 52 * u });
+      addEllipse(g, `${id}_halo`, parent, x - 186 * u, y, 96 * u, 96 * u, 'rgba(16,185,129,0.28)');
+      addEllipse(g, `${id}_avatar`, parent, x - 186 * u, y, 78 * u, 78 * u, PAL.emerald);
+      addText(g, `${id}_initials`, parent, 'AB', x - 186 * u, y - 2 * u, 30 * u, 800, '#06281d');
+      addText(g, `${id}_name`, parent, 'Name Surname', x - 128 * u, y - 16 * u, 29 * u, 700, PAL.ink, 'left');
+      addText(g, `${id}_role`, parent, 'Title / Role', x - 128 * u, y + 20 * u, 17 * u, 500, PAL.sub, 'left');
+    },
+    animate: (set, id, x, y, t0, u) => {
+      // The card unrolls from behind the avatar, so the avatar reads as the
+      // anchor the whole thing hangs off.
+      growX(set, `${id}_card`, t0 + 0.18, 0.42, x - 240 * u, 480 * u, 1);
+      fadeIn(set, `${id}_card`, t0 + 0.18, 0.2);
+      pop(set, `${id}_avatar`, t0, 0.4, 1.16);
+      fadeIn(set, `${id}_initials`, t0 + 0.2, 0.22);
+      set(`${id}_halo`, 'scaleX', t0 + 0.1, 1, 'easeOut'); set(`${id}_halo`, 'scaleY', t0 + 0.1, 1, 'easeOut');
+      set(`${id}_halo`, 'scaleX', t0 + 0.8, 1.9, 'easeOut'); set(`${id}_halo`, 'scaleY', t0 + 0.8, 1.9, 'easeOut');
+      set(`${id}_halo`, 'opacity', t0 + 0.1, 85, 'easeOut'); set(`${id}_halo`, 'opacity', t0 + 0.8, 0, 'easeOut');
+      rise(set, `${id}_name`, t0 + 0.42, y - 16 * u, 20 * u, 0.4);
+      rise(set, `${id}_role`, t0 + 0.56, y + 20 * u, 16 * u, 0.4);
+    },
+  },
 
   // ═══ Callouts ══════════════════════════════════════════════════════
   {
@@ -364,6 +390,30 @@ export const MOGRAPH_ITEMS: readonly MographItem[] = [
       ([['_ca', 0], ['_cb', 1], ['_cc', 2], ['_cd', 3]] as const).forEach(([sfx, i]) => {
         pop(set, `${id}${sfx}`, t0 + 0.9 + i * 0.07, 0.24, 1.3);
       });
+    },
+  },
+  {
+    id: 'mg-callout-quote', name: 'Pull Quote', cat: 'callouts', color: PAL.amber,
+    build: (g, id, parent, x, y, u) => {
+      addRect(g, `${id}_card`, parent, x, y, 560 * u, 200 * u, PAL.glass, { radius: 16 * u });
+      addRect(g, `${id}_bar`, parent, x - 268 * u, y, 6 * u, 148 * u, PAL.amber, { radius: 3 * u });
+      addText(g, `${id}_mark`, parent, '“', x - 216 * u, y - 58 * u, 88 * u, 800, 'rgba(245,158,11,0.55)', 'left');
+      addText(g, `${id}_quote`, parent, 'A line worth pulling out.', x - 232 * u, y - 6 * u, 30 * u, 600, PAL.ink, 'left');
+      addText(g, `${id}_author`, parent, '— Name Surname', x - 232 * u, y + 52 * u, 18 * u, 500, PAL.sub, 'left');
+    },
+    animate: (set, id, x, y, t0, u) => {
+      pop(set, `${id}_card`, t0, 0.4, 1.04);
+      fadeIn(set, `${id}_card`, t0, 0.25);
+      growY(set, `${id}_bar`, t0 + 0.24, 0.3, y - 74 * u, 148 * u, 1);
+      // The quote mark drops in over the top rather than fading with the text,
+      // so it reads as a mark on the card and not as part of the sentence.
+      set(`${id}_mark`, 'y', t0 + 0.18, y - 96 * u, 'easeOut');
+      set(`${id}_mark`, 'y', t0 + 0.52, y - 58 * u, 'easeOut');
+      fadeIn(set, `${id}_mark`, t0 + 0.18, 0.3);
+      set(`${id}_quote`, 'x', t0 + 0.34, x - 258 * u, 'easeOut');
+      set(`${id}_quote`, 'x', t0 + 0.78, x - 232 * u, 'easeOut');
+      fadeIn(set, `${id}_quote`, t0 + 0.34, 0.32);
+      fadeIn(set, `${id}_author`, t0 + 0.62, 0.3);
     },
   },
 
@@ -530,6 +580,29 @@ export const MOGRAPH_ITEMS: readonly MographItem[] = [
       words.forEach((w, i) => ops.textKf(`${id}_word`, t0 + 0.2 + i * 0.75, w));
     },
   },
+  {
+    id: 'mg-title-curtain', name: 'Curtain Wipe', cat: 'titles', color: '#f472b6',
+    build: (g, id, parent, x, y, u) => {
+      addText(g, `${id}_title`, parent, 'HEADLINE', x, y, 76 * u, 900, PAL.ink);
+      addText(g, `${id}_kicker`, parent, 'SUPPORTING KICKER', x, y + 62 * u, 18 * u, 700, '#f472b6');
+      // Two panels meeting in the middle: they part to uncover the type, which
+      // is why the title needs no fade of its own.
+      addRect(g, `${id}_curtainL`, parent, x - 190 * u, y, 380 * u, 120 * u, '#f472b6');
+      addRect(g, `${id}_curtainR`, parent, x + 190 * u, y, 380 * u, 120 * u, '#0d0f18');
+    },
+    animate: (set, id, x, y, t0, u) => {
+      set(`${id}_title`, 'opacity', t0, 0, 'linear'); set(`${id}_title`, 'opacity', t0 + 0.01, 100, 'linear');
+      set(`${id}_curtainL`, 'x', t0, x - 190 * u, 'easeInOut');
+      set(`${id}_curtainL`, 'x', t0 + 0.62, x - 620 * u, 'easeInOut');
+      set(`${id}_curtainR`, 'x', t0, x + 190 * u, 'easeInOut');
+      set(`${id}_curtainR`, 'x', t0 + 0.62, x + 620 * u, 'easeInOut');
+      // The panels leave the frame rather than fading, so they end invisible
+      // by position — nothing lingers over the title.
+      set(`${id}_curtainL`, 'opacity', t0 + 0.62, 100, 'linear'); set(`${id}_curtainL`, 'opacity', t0 + 0.63, 0, 'linear');
+      set(`${id}_curtainR`, 'opacity', t0 + 0.62, 100, 'linear'); set(`${id}_curtainR`, 'opacity', t0 + 0.63, 0, 'linear');
+      rise(set, `${id}_kicker`, t0 + 0.5, y + 62 * u, 18 * u, 0.4);
+    },
+  },
 
   // ═══ Data / utility ════════════════════════════════════════════════
   {
@@ -577,6 +650,54 @@ export const MOGRAPH_ITEMS: readonly MographItem[] = [
         const u = i / steps;
         ops.textKf(`${id}_pct`, t0 + 0.25 + u * 1.2, `${Math.round(80 * u * (2 - u))}%`);
       }
+    },
+  },
+  {
+    id: 'mg-data-stat', name: 'Stat Card', cat: 'data', color: PAL.violet,
+    build: (g, id, parent, x, y, u) => {
+      addRect(g, `${id}_card`, parent, x, y, 300 * u, 200 * u, PAL.glass, { radius: 18 * u });
+      addRect(g, `${id}_accent`, parent, x, y - 94 * u, 300 * u, 6 * u, PAL.violet);
+      addText(g, `${id}_value`, parent, '0', x, y - 12 * u, 76 * u, 900, PAL.ink);
+      addText(g, `${id}_label`, parent, 'ACTIVE USERS', x, y + 48 * u, 16 * u, 700, PAL.sub);
+      addText(g, `${id}_delta`, parent, '▲ 12.4%', x, y + 78 * u, 15 * u, 700, PAL.emerald);
+    },
+    animate: (set, id, x, y, t0, u) => {
+      pop(set, `${id}_card`, t0, 0.42, 1.05);
+      fadeIn(set, `${id}_card`, t0, 0.24);
+      growX(set, `${id}_accent`, t0 + 0.2, 0.34, x - 150 * u, 300 * u, 1);
+      rise(set, `${id}_value`, t0 + 0.26, y - 12 * u, 26 * u, 0.45);
+      fadeIn(set, `${id}_label`, t0 + 0.55, 0.28);
+      rise(set, `${id}_delta`, t0 + 0.72, y + 78 * u, 12 * u, 0.34);
+    },
+    decorate: (ops, id, _x, _y, t0) => {
+      // The headline number counts up rather than appearing — the reason this
+      // is a motion graphic and not a static card.
+      counterKfs(ops, `${id}_value`, t0 + 0.26, 1.1, 48210, '', 26);
+    },
+  },
+  {
+    id: 'mg-data-bars', name: 'Bar Chart', cat: 'data', color: PAL.cyan,
+    build: (g, id, parent, x, y, u) => {
+      const heights = [64, 108, 86, 148, 120, 176];
+      addRect(g, `${id}_base`, parent, x, y + 96 * u, 400 * u, 3 * u, 'rgba(255,255,255,0.22)');
+      heights.forEach((h, i) => {
+        const bx = x - 165 * u + i * 66 * u;
+        // Anchored so the bar's BOTTOM sits on the baseline whatever its height.
+        addRect(g, `${id}_bar${i}`, parent, bx, y + 96 * u - (h * u) / 2, 44 * u, h * u,
+          i === 5 ? PAL.cyan : 'rgba(34,211,238,0.45)', { radius: 5 * u });
+      });
+      addText(g, `${id}_cap`, parent, 'WEEKLY GROWTH', x, y - 118 * u, 18 * u, 700, PAL.sub);
+    },
+    animate: (set, id, _x, y, t0, u) => {
+      const heights = [64, 108, 86, 148, 120, 176];
+      fadeIn(set, `${id}_cap`, t0, 0.3);
+      fadeIn(set, `${id}_base`, t0, 0.25);
+      heights.forEach((h, i) => {
+        // growY anchored at the baseline: the bar rises out of the axis rather
+        // than scaling about its own middle.
+        growY(set, `${id}_bar${i}`, t0 + 0.12 + i * 0.08, 0.42, y + 96 * u, h * u, -1);
+        fadeIn(set, `${id}_bar${i}`, t0 + 0.12 + i * 0.08, 0.18);
+      });
     },
   },
 
@@ -773,6 +894,30 @@ export const MOGRAPH_ITEMS: readonly MographItem[] = [
       ops.expr(`${id}_card`, 'rotation', 'wiggle(0.3, 1.5)');
     },
   },
+  {
+    id: 'mg-loop-pulse', name: 'Live Pulse', cat: 'loops', color: '#ef4444', loop: true, previewSeconds: 2,
+    build: (g, id, parent, x, y, u) => {
+      addRect(g, `${id}_pill`, parent, x, y, 168 * u, 56 * u, PAL.glassHi, { radius: 28 * u });
+      addEllipse(g, `${id}_wave`, parent, x - 50 * u, y, 22 * u, 22 * u, 'rgba(239,68,68,0.45)');
+      addEllipse(g, `${id}_dot`, parent, x - 50 * u, y, 16 * u, 16 * u, '#ef4444');
+      addText(g, `${id}_lbl`, parent, 'LIVE', x + 16 * u, y, 24 * u, 800, PAL.ink);
+    },
+    animate: (set, id, _x, _y, t0) => {
+      pop(set, `${id}_pill`, t0, 0.36, 1.06);
+      fadeIn(set, `${id}_dot`, t0 + 0.15, 0.2);
+      fadeIn(set, `${id}_lbl`, t0 + 0.25, 0.25);
+      // One ring cycle authored as keyframes; the expressions below make it
+      // repeat forever, so the finite span stays short.
+      set(`${id}_wave`, 'scaleX', t0 + 0.3, 1, 'easeOut'); set(`${id}_wave`, 'scaleY', t0 + 0.3, 1, 'easeOut');
+      set(`${id}_wave`, 'scaleX', t0 + 1.3, 2.6, 'easeOut'); set(`${id}_wave`, 'scaleY', t0 + 1.3, 2.6, 'easeOut');
+      set(`${id}_wave`, 'opacity', t0 + 0.3, 90, 'easeOut'); set(`${id}_wave`, 'opacity', t0 + 1.3, 0, 'easeOut');
+    },
+    decorate: (ops, id) => {
+      ops.expr(`${id}_wave`, 'scaleX', "loopOut('cycle')");
+      ops.expr(`${id}_wave`, 'scaleY', "loopOut('cycle')");
+      ops.expr(`${id}_wave`, 'opacity', "loopOut('cycle')");
+    },
+  },
 ] as const;
 
 export function getMographItem(id: string): MographItem | null {
@@ -784,6 +929,14 @@ export function getMographItem(id: string): MographItem | null {
  *  so this stays positive; their card shows "Loop" instead. */
 export function mographDuration(item: MographItem): number {
   return choreographyDuration((set) => item.animate(set, 'd', 0, 0, 0, 1));
+}
+
+/** Seconds into an item's choreography at which it shows the most of itself —
+ *  where the playhead rests after an insert. Usually the settled end, but a
+ *  burst / ripple / stinger deliberately finishes at opacity 0, and parking
+ *  there would show the user an empty comp. */
+export function mographRestTime(item: MographItem): number {
+  return choreographyRestTime((set) => item.animate(set, 'd', 0, 0, 0, 1));
 }
 
 // ── Insert into the live composition ─────────────────────────────────
@@ -807,10 +960,17 @@ export function insertMographItem(mgId: string, x?: number, y?: number): string 
     id: baseId, name: item.name, parent: rootId, children: [],
     transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
     visible: true, locked: false,
-    components: [{ id: `${baseId}_m`, type: 'group', props: { [SCENE_KIND_PROP]: 'group' } }],
+    // The catalog id rides on the group so the subtree stays recognisable as
+    // ONE inserted element afterwards — that is what lets the Inspector offer
+    // its text and colour blanks instead of leaving the user to hunt for the
+    // right child layer and guess which prop is safe to touch.
+    components: [{ id: `${baseId}_m`, type: 'group', props: { [SCENE_KIND_PROP]: 'group', [MOGRAPH_ID_PROP]: item.id } }],
   } as unknown as SceneNode;
   defaultSceneGraph.addChild(rootId, group);
   item.build(defaultSceneGraph, baseId, baseId, px, py, u);
+  // Builders default a node's name to its id; unrenamed, the Layers panel fills
+  // with `mg_3_kf9a_rule`. Name the parts after what the ids describe.
+  nameMographParts(baseId);
 
   const ws = useWorkspaceStore.getState();
   const t0 = (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
@@ -831,6 +991,15 @@ export function insertMographItem(mgId: string, x?: number, y?: number): string 
   useSelectionStore.getState().set([baseId]);
   getTimelineController().syncFromScene();
   bumpScene();
+
+  // The choreography starts HERE, so the frame the user is on is its opening
+  // keyframe — for most items every layer at opacity 0 / scale 0. Play it once
+  // and rest on a frame that shows the element, or the insert reads as a no-op.
+  // Loop items are expression-driven and already alive at rest, so they preview
+  // over their declared card window.
+  const span = item.loop ? item.previewSeconds ?? 4 : mographDuration(item);
+  previewChoreography({ from: t0, to: t0 + span, restAt: t0 + mographRestTime(item) });
+
   return baseId;
 }
 

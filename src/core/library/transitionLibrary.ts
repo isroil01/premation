@@ -27,17 +27,22 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { insertSolid } from '@core/scene/sceneInsert';
+import { makeNode } from '@core/scene/sceneInsert';
+import { activeCompRootId } from '@core/scene/activeComp';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { bumpScene } from '@stores/sceneStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { readGeometry } from '@core/workspace/geometry';
+import type { SceneNode } from '@core/types';
 import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
 import { addEffect, getNodeEffects, effectPropPath } from '@core/effects/effects';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
 import { addMaskPath, setMaskPoints, keyframeMask, ellipseMask, getNodeMask } from '@core/effects/mask';
-import { liveKf, type Ease } from '@core/template/templates/builders';
+import { liveKf, addRoot, addShape, type Ease } from '@core/template/templates/builders';
+import { mountPreview } from '@core/template/previewController';
+import { previewChoreography } from './insertPreview';
 
 export type TransitionCategory = 'fade' | 'slide' | 'zoom' | 'whip' | 'glitch' | 'wipe';
 export type TransitionPhase = 'enter' | 'exit';
@@ -82,6 +87,11 @@ export const TRANSITION_ITEMS: readonly TransitionItem[] = [
   { id: 'tr-wipe-up',      name: 'Wipe Up',        cat: 'wipe',   a: '#0f766e', b: '#14b8a6', duration: 0.8, solidOnly: true },
   { id: 'tr-venetian',     name: 'Venetian Bars',  cat: 'wipe',   a: '#fb7185', b: '#1a1a2e', duration: 0.9, solidOnly: true, solidCount: 5 },
   { id: 'tr-iris',         name: 'Iris Circle',    cat: 'wipe',   a: '#05060a', b: '#38bdf8', duration: 0.9, solidOnly: true, irisMask: true },
+  { id: 'tr-slide-diag',   name: 'Diagonal Slide', cat: 'slide',  a: '#a78bfa', b: '#1a1a2e', duration: 0.7 },
+  { id: 'tr-drop-settle',  name: 'Drop & Settle',  cat: 'slide',  a: '#facc15', b: '#1a1a2e', duration: 0.8 },
+  { id: 'tr-flip-card',    name: 'Card Flip',      cat: 'zoom',   a: '#34d399', b: '#1a1a2e', duration: 0.65 },
+  { id: 'tr-shake-cut',    name: 'Shake Cut',      cat: 'glitch', a: '#f87171', b: '#1a1a2e', duration: 0.45, motionBlur: true },
+  { id: 'tr-columns',      name: 'Column Wipe',    cat: 'wipe',   a: '#c084fc', b: '#1a1a2e', duration: 0.9, solidOnly: true, solidCount: 6 },
 ] as const;
 
 export function getTransitionItem(id: string): TransitionItem | null {
@@ -101,6 +111,7 @@ export interface RecipeKf {
 }
 
 export interface LayerPose {
+  /** The animated value — what a recipe restores to. */
   x: number;
   y: number;
   scaleX: number;
@@ -108,6 +119,15 @@ export interface LayerPose {
   rotation: number;
   width: number;
   height: number;
+  /**
+   * Where the layer APPEARS, relative to `x`/`y`. Zero for an ordinary layer,
+   * whose box is centred on its own position; non-zero for a group, which sits
+   * at its origin while its content is somewhere else entirely. Only the
+   * off-frame targets consult this — the restore targets stay `x`/`y`, or a
+   * group would be teleported onto its own content's centre.
+   */
+  offsetX?: number;
+  offsetY?: number;
 }
 
 export interface CompBox {
@@ -148,10 +168,18 @@ export function transitionRecipe(id: string, pose: LayerPose, comp: CompBox, pha
   const d = item.duration;
   const halfW = (pose.width * Math.abs(pose.scaleX)) / 2;
   const halfH = (pose.height * Math.abs(pose.scaleY)) / 2;
-  const offL = -(pose.x + halfW) - 40;           // fully left of frame
-  const offR = comp.width - pose.x + halfW + 40; // fully right of frame
-  const offU = -(pose.y + halfH) - 40;
-  const offD = comp.height - pose.y + halfH + 40;
+  // These are DISPLACEMENTS added to the animated value (`home + off`), so the
+  // frame edges have to be measured from where the layer APPEARS — its own
+  // position plus the content offset. For an ordinary layer the offset is 0 and
+  // these reduce to exactly what they were; for a group, whose position and
+  // content are in different places, ignoring it is what made "slide off left"
+  // resolve to a 90px nudge that never left the screen.
+  const cx = pose.x + (pose.offsetX ?? 0);
+  const cy = pose.y + (pose.offsetY ?? 0);
+  const offL = -(cx + halfW) - 40;           // fully left of frame
+  const offR = comp.width - cx + halfW + 40; // fully right of frame
+  const offU = -(cy + halfH) - 40;
+  const offD = comp.height - cy + halfH + 40;
   const enter = phase === 'enter';
 
   /** Directional slide with a small settle-overshoot on the way in. */
@@ -312,6 +340,92 @@ export function transitionRecipe(id: string, pose: LayerPose, comp: CompBox, pha
       ];
     }
 
+    case 'tr-slide-diag':
+      // Corner-to-corner: both axes move together, which reads as one diagonal
+      // rather than two separate slides.
+      if (enter) {
+        return [
+          K('x', 0, offL), K('x', d, pose.x),
+          K('y', 0, offU), K('y', d, pose.y),
+          K('opacity', 0, 0), K('opacity', d * 0.4, 100),
+        ];
+      }
+      return exitFrom(pose, d, [
+        K('x', 0, pose.x, 'easeIn'), K('x', d * 0.85, offR, 'easeIn'),
+        K('y', 0, pose.y, 'easeIn'), K('y', d * 0.85, offD, 'easeIn'),
+      ]);
+
+    case 'tr-drop-settle': {
+      // Falls in fast, overshoots past the pose, then settles — the squash on
+      // the landing beat is what sells the weight.
+      const over = Math.max(10, pose.height * Math.abs(pose.scaleY) * 0.07);
+      if (enter) {
+        return [
+          K('y', 0, offU, 'easeIn'),
+          K('y', d * 0.55, pose.y + over, 'easeIn'),
+          K('y', d * 0.78, pose.y - over * 0.4, 'easeOut'),
+          K('y', d, pose.y, 'easeInOut'),
+          K('scaleY', 0, pose.scaleY, 'linear'),
+          K('scaleY', d * 0.55, pose.scaleY * 0.86, 'easeOut'),
+          K('scaleY', d * 0.78, pose.scaleY * 1.06, 'easeOut'),
+          K('scaleY', d, pose.scaleY, 'easeInOut'),
+          K('opacity', 0, 0), K('opacity', d * 0.3, 100),
+        ];
+      }
+      return exitFrom(pose, d, [
+        K('y', 0, pose.y, 'easeIn'),
+        K('y', d * 0.2, pose.y - over * 1.6, 'easeOut'),
+        K('y', d * 0.85, offD, 'easeIn'),
+      ]);
+    }
+
+    case 'tr-flip-card':
+      // A card flip read through horizontal scale: the layer squeezes to zero
+      // width (edge-on), then opens out again. Negative scaleX would mirror the
+      // content, so the enter half stays positive on the way back out.
+      if (enter) {
+        return [
+          K('scaleX', 0, 0, 'easeIn'),
+          K('scaleX', d * 0.7, pose.scaleX * 1.08, 'easeOut'),
+          K('scaleX', d, pose.scaleX, 'easeInOut'),
+          K('scaleY', 0, pose.scaleY * 0.86, 'easeOut'),
+          K('scaleY', d, pose.scaleY, 'easeInOut'),
+          K('opacity', 0, 0), K('opacity', d * 0.25, 100),
+        ];
+      }
+      return exitFrom(pose, d, [
+        K('scaleX', 0, pose.scaleX, 'easeIn'),
+        K('scaleX', d * 0.85, 0, 'easeIn'),
+        K('scaleY', 0, pose.scaleY, 'easeIn'),
+        K('scaleY', d * 0.85, pose.scaleY * 0.86, 'easeIn'),
+      ], 0.85);
+
+    case 'tr-shake-cut': {
+      // A camera-knock: a decaying horizontal/rotational shake around the pose.
+      const amp = Math.max(14, comp.width * 0.016);
+      const beats = 7;
+      const shake: RecipeKf[] = [];
+      for (let i = 1; i <= beats; i++) {
+        const t = (d * i) / (beats + 1);
+        const decay = 1 - i / (beats + 1);
+        const dir = i % 2 === 0 ? 1 : -1;
+        shake.push(K('x', t, pose.x + dir * amp * decay, 'easeInOut'));
+        shake.push(K('rotation', t, pose.rotation + dir * 2.2 * decay, 'easeInOut'));
+      }
+      if (enter) {
+        return [
+          K('x', 0, pose.x, 'easeInOut'), K('rotation', 0, pose.rotation, 'easeInOut'),
+          K('opacity', 0, 0, 'linear'), K('opacity', d * 0.12, 100, 'linear'),
+          ...shake,
+          K('x', d, pose.x, 'easeInOut'), K('rotation', d, pose.rotation, 'easeInOut'),
+        ];
+      }
+      return exitFrom(pose, d, [
+        K('x', 0, pose.x, 'easeInOut'), K('rotation', 0, pose.rotation, 'easeInOut'),
+        ...shake,
+      ], 0.9);
+    }
+
     default:
       return null;
   }
@@ -326,6 +440,20 @@ export function solidRecipe(id: string, comp: CompBox, index = 0, count = 1): Re
   const d = item?.duration ?? 0.8;
   const W = comp.width;
   const H = comp.height;
+  // The panel is comp-SIZED and positioned by its CENTRE, in comp coordinates
+  // whose origin is the top-left. So `cx`/`cy` is "covering the frame", and one
+  // full width/height either side of that is "entirely off-frame".
+  //
+  // These offsets used to be written around 0 — `-W → 0 → W` — which is only
+  // right if the origin is the comp centre. It never showed, because the panel
+  // was inserted as a pinned `fx.solid` whose position the renderer discards.
+  // The moment the panel became a real moving layer, the old numbers put the
+  // "fully covering" moment at the LEFT EDGE and left the wipe still half
+  // across the frame when it was supposed to have gone: a wipe that covers half
+  // the screen and stops. Anchored properly, a wipe now enters clean, covers
+  // completely at the midpoint, and leaves clean.
+  const cx = W / 2;
+  const cy = H / 2;
   switch (id) {
     case 'tr-dip-black':
       return [
@@ -341,27 +469,47 @@ export function solidRecipe(id: string, comp: CompBox, index = 0, count = 1): Re
         K('opacity', d, 0, 'easeIn'),
       ];
     case 'tr-wipe-left':
-      return [K('x', 0, W, 'easeInOut'), K('x', d / 2, 0, 'easeInOut'), K('x', d, -W, 'easeInOut')];
+      return [K('x', 0, cx + W, 'easeInOut'), K('x', d / 2, cx, 'easeInOut'), K('x', d, cx - W, 'easeInOut')];
     case 'tr-wipe-down':
-      return [K('y', 0, -H, 'easeInOut'), K('y', d / 2, 0, 'easeInOut'), K('y', d, H, 'easeInOut')];
+      return [K('y', 0, cy - H, 'easeInOut'), K('y', d / 2, cy, 'easeInOut'), K('y', d, cy + H, 'easeInOut')];
     case 'tr-wipe-up':
-      return [K('y', 0, H, 'easeInOut'), K('y', d / 2, 0, 'easeInOut'), K('y', d, -H, 'easeInOut')];
+      return [K('y', 0, cy + H, 'easeInOut'), K('y', d / 2, cy, 'easeInOut'), K('y', d, cy - H, 'easeInOut')];
     case 'tr-venetian': {
       // `count` horizontal bars, each 1/count of the frame tall, sweeping in
       // with a stagger and back out the other side — a real venetian blind.
       const n = Math.max(1, count);
-      const barY = (index - (n - 1) / 2) * (H / n);
+      const barY = cy + (index - (n - 1) / 2) * (H / n);
       const stag = (index % 2 === 0 ? index : n - index) * (d * 0.06);
       const tIn = Math.min(d * 0.45, d * 0.28 + stag);
       const tOut = Math.min(d, d * 0.72 + stag);
       return [
         K('scaleY', 0, 1 / n, 'linear'), K('scaleY', d, 1 / n, 'linear'),
         K('y', 0, barY, 'linear'), K('y', d, barY, 'linear'),
-        K('x', 0, -W, 'easeInOut'),
-        K('x', tIn, 0, 'easeInOut'),
-        K('x', tOut * 0.98, 0, 'easeInOut'),
-        K('x', tOut, W * 0.02, 'easeIn'),
-        K('x', d, W, 'easeIn'),
+        K('x', 0, cx - W, 'easeInOut'),
+        K('x', tIn, cx, 'easeInOut'),
+        K('x', tOut * 0.98, cx, 'easeInOut'),
+        K('x', tOut, cx + W * 0.02, 'easeIn'),
+        K('x', d, cx + W, 'easeIn'),
+      ];
+    }
+    case 'tr-columns': {
+      // Venetian's vertical twin: `count` columns, each 1/count of the frame
+      // wide, dropping in with a stagger and continuing down out of frame.
+      const n = Math.max(1, count);
+      const colX = cx + (index - (n - 1) / 2) * (W / n);
+      // Alternating stagger so the columns interleave instead of sweeping in
+      // one direction like a wipe already does.
+      const stag = (index % 2 === 0 ? index : n - index) * (d * 0.05);
+      const tIn = Math.min(d * 0.45, d * 0.26 + stag);
+      const tOut = Math.min(d, d * 0.7 + stag);
+      return [
+        K('scaleX', 0, 1 / n, 'linear'), K('scaleX', d, 1 / n, 'linear'),
+        K('x', 0, colX, 'linear'), K('x', d, colX, 'linear'),
+        K('y', 0, cy - H, 'easeInOut'),
+        K('y', tIn, cy, 'easeInOut'),
+        K('y', tOut * 0.98, cy, 'easeInOut'),
+        K('y', tOut, cy + H * 0.02, 'easeIn'),
+        K('y', d, cy + H, 'easeIn'),
       ];
     }
     case 'tr-iris':
@@ -372,25 +520,183 @@ export function solidRecipe(id: string, comp: CompBox, index = 0, count = 1): Re
       // Wipe right (also the fallback for layer items with no selection):
       // sweep across the frame covering the cut at the midpoint.
       return [
-        K('x', 0, -W, 'easeInOut'),
-        K('x', d / 2, 0, 'easeInOut'),
-        K('x', d, W, 'easeInOut'),
+        K('x', 0, cx - W, 'easeInOut'),
+        K('x', d / 2, cx, 'easeInOut'),
+        K('x', d, cx + W, 'easeInOut'),
       ];
   }
 }
 
+/**
+ * The keyframes the inserted PANEL performs — for any item, solid-only or not.
+ *
+ * Solid-only items have a recipe of their own. Everything else used to fall
+ * through `solidRecipe`'s `default:` arm, which is a generic wipe-right: with
+ * no layer selected, Cross Fade, Glitch Cut, Zoom Through, Spin Whip and nine
+ * others all inserted the SAME sweeping rectangle, distinguishable only by
+ * duration. The cards kept showing their real, different motions — they call
+ * `transitionRecipe` — so the panel promised one thing and delivered another,
+ * which is "every transition does the same thing even though the previews are
+ * all different".
+ *
+ * So a layer-mode item drives the panel with its OWN recipe: its entrance over
+ * the first half of the window, its exit over the second. The panel arrives the
+ * way that item arrives, covers the cut at the midpoint, and leaves the way that
+ * item leaves — which is exactly what a transition solid is for, and is
+ * different for every item.
+ */
+export function panelRecipe(id: string, comp: CompBox, index = 0, count = 1): RecipeKf[] {
+  const item = getTransitionItem(id);
+  if (!item) return [];
+  if (item.solidOnly) return solidRecipe(id, comp, index, count);
+
+  // The panel IS the frame: comp-sized, centred, unrotated.
+  const pose: LayerPose = {
+    x: comp.width / 2, y: comp.height / 2,
+    scaleX: 1, scaleY: 1, rotation: 0,
+    width: comp.width, height: comp.height,
+  };
+  const half = item.duration / 2;
+  const enter = transitionRecipe(id, pose, comp, 'enter') ?? [];
+  const exit = transitionRecipe(id, pose, comp, 'exit') ?? [];
+  // Both halves are authored across the full duration, so compress each to half
+  // and butt them together at the midpoint — where both agree on the pose, so
+  // the seam is continuous.
+  return [
+    ...enter.map((k) => ({ ...k, t: k.t * 0.5 })),
+    ...exit.map((k) => ({ ...k, t: half + k.t * 0.5 })),
+  ];
+}
+
+/**
+ * Seconds into a solid transition at which it is most LEGIBLE: covering enough
+ * of the frame to be unmistakable, but not so much that the composition
+ * disappears behind it.
+ *
+ * There is no good static frame for a transition, and both obvious choices are
+ * actively bad. Resting at the midpoint parks the user in front of a full-frame
+ * block of colour ("it broke my scene"). Resting at the end leaves the panel
+ * off-frame or at opacity 0, so the canvas is unchanged and a layer has quietly
+ * appeared in the timeline doing nothing visible ("it added something but I
+ * don't see any effect"). Both were reported, in that order.
+ *
+ * So: aim for roughly half-covered. A wipe rests with its edge across the
+ * frame, which is unmistakably a wipe. A dip to black rests half-faded, which
+ * is unmistakably a dip. Pure geometry over the recipe — no engine, no render.
+ */
+export function solidRestTime(id: string, comp: CompBox): number {
+  const item = getTransitionItem(id);
+  const d = item?.duration ?? 0.8;
+  if (d <= 0) return 0;
+  // The iris reveals through an animated MASK that the recipe does not model,
+  // so coverage maths cannot see it. A third of the way in the aperture is
+  // partly open — the one description of it that is true.
+  if (item?.irisMask) return d * 0.33;
+
+  const count = item?.solidCount ?? 1;
+  const frameArea = comp.width * comp.height;
+  // Per-panel keyframe tables, read the same way the engine interpolates. Must
+  // be the SAME recipe apply writes, or the resting frame is chosen from a
+  // choreography that never runs.
+  const panels = Array.from({ length: count }, (_, i) => panelRecipe(id, comp, i, count));
+
+  const valueAt = (kfs: RecipeKf[], prop: string, t: number, fallback: number): number => {
+    const track = kfs.filter((k) => k.prop === prop).sort((a, b) => a.t - b.t);
+    if (track.length === 0) return fallback;
+    if (t <= track[0]!.t) return track[0]!.value;
+    if (t >= track[track.length - 1]!.t) return track[track.length - 1]!.value;
+    for (let i = 1; i < track.length; i++) {
+      const b = track[i]!;
+      if (t <= b.t) {
+        const a = track[i - 1]!;
+        const span = b.t - a.t;
+        return span <= 0 ? b.value : a.value + (b.value - a.value) * ((t - a.t) / span);
+      }
+    }
+    return track[track.length - 1]!.value;
+  };
+
+  let bestT = d / 2;
+  let bestScore = -1;
+  const STEPS = 48;
+  for (let s = 0; s <= STEPS; s++) {
+    const t = (s / STEPS) * d;
+    let covered = 0;
+    for (const kfs of panels) {
+      const x = valueAt(kfs, 'x', t, comp.width / 2);
+      const y = valueAt(kfs, 'y', t, comp.height / 2);
+      const sx = valueAt(kfs, 'scaleX', t, 1);
+      const sy = valueAt(kfs, 'scaleY', t, 1);
+      const op = valueAt(kfs, 'opacity', t, 100) / 100;
+      if (op <= 0.01) continue;
+      const w = comp.width * Math.abs(sx);
+      const h = comp.height * Math.abs(sy);
+      // The panel is comp-sized and centred on (x, y) — intersect with the frame.
+      const ix = Math.max(0, Math.min(comp.width, x + w / 2) - Math.max(0, x - w / 2));
+      const iy = Math.max(0, Math.min(comp.height, y + h / 2) - Math.max(0, y - h / 2));
+      covered += (ix * iy * op) / frameArea;
+    }
+    const cov = Math.min(1, covered);
+    // Peaks at half-covered; falls off towards "invisible" and "blocks everything".
+    const score = 1 - Math.abs(cov - 0.5) * 2;
+    // `>=` so a tie resolves to the LATER frame. A wipe is half-covered both on
+    // its way in and on its way out; resting on the later one means the playhead
+    // visibly advances and the transition reads as having progressed, rather
+    // than sitting at t=0 where nothing appears to have happened.
+    if (score >= bestScore) { bestScore = score; bestT = t; }
+  }
+  // A recipe that never puts anything on screen (shouldn't happen) keeps the
+  // midpoint rather than resting on a frame chosen by a flat score.
+  return bestScore <= 0 ? d / 2 : bestT;
+}
+
 // ── Apply against the live scene ───────────────────────────────────
 
+/**
+ * The pose a recipe is computed against.
+ *
+ * `x`/`y` are the values being ANIMATED (the node's own transform props, and
+ * therefore what the recipe must restore). `offsetX`/`offsetY` carry the gap
+ * between those and where the layer actually appears — which is zero for an
+ * ordinary layer and very much not zero for a GROUP.
+ *
+ * That distinction is the whole point. A group carries no Transform component:
+ * it sits at its own origin while its children are laid out in absolute comp
+ * coordinates. Reading it the old way gave `x=0, y=0, width=100, height=100`
+ * for a motion-graphics element spread across the middle of a 1920×1080 comp,
+ * so "slide off to the left" resolved to moving it 90px — a nudge, on screen
+ * the whole time — and every zoom/whip scaled the wrong box. Applying a
+ * transition to an inserted element therefore just displaced it slightly and
+ * left it there, which is the "I applied a transition to my scene component and
+ * it broke" report.
+ *
+ * `readGeometry` already unions a group's descendants into a real box (that is
+ * what `offsetX/offsetY/width/height` mean there), so this defers to it and
+ * only falls back to the raw props when the node has no drawable geometry.
+ */
 function readPose(nodeId: string, comp: CompBox): LayerPose | null {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const t = node.components.find((c) => c.type === 'Transform');
+  const x = (t?.props.x as number) ?? node.transform.position.x ?? comp.width / 2;
+  const y = (t?.props.y as number) ?? node.transform.position.y ?? comp.height / 2;
+  const scaleX = (t?.props.scaleX as number) ?? node.transform.scale.x ?? 1;
+  const scaleY = (t?.props.scaleY as number) ?? node.transform.scale.y ?? 1;
+  const rotation = (t?.props.rotation as number) ?? node.transform.rotation ?? 0;
+
+  const geo = readGeometry(node);
+  if (geo && geo.width > 0 && geo.height > 0) {
+    return {
+      x, y, scaleX, scaleY, rotation,
+      width: geo.width,
+      height: geo.height,
+      // Scaled, because the offset is content measured in the node's own space.
+      offsetX: geo.offsetX * scaleX,
+      offsetY: geo.offsetY * scaleY,
+    };
+  }
   return {
-    x: (t?.props.x as number) ?? node.transform.position.x ?? comp.width / 2,
-    y: (t?.props.y as number) ?? node.transform.position.y ?? comp.height / 2,
-    scaleX: (t?.props.scaleX as number) ?? node.transform.scale.x ?? 1,
-    scaleY: (t?.props.scaleY as number) ?? node.transform.scale.y ?? 1,
-    rotation: (t?.props.rotation as number) ?? node.transform.rotation ?? 0,
+    x, y, scaleX, scaleY, rotation,
     width: (t?.props.width as number) ?? 100,
     height: (t?.props.height as number) ?? 100,
   };
@@ -433,10 +739,68 @@ export interface ApplyTransitionResult {
 }
 
 /**
+ * Marks a layer as a transition's own covering panel.
+ *
+ * Applying a transition SELECTS what it produced, which is right — you want to
+ * nudge or retime it. But it meant the next transition you applied saw that
+ * panel sitting in the selection and took the layer path, keyframing itself
+ * onto the panel instead of inserting one. Apply three transitions in a row and
+ * you got ONE layer with three choreographies fighting over its x and opacity
+ * tracks: "only one is being added", and the first one quietly wrecked too.
+ * Moving the playhead never helped, because the behaviour keys off the
+ * selection, not the time.
+ *
+ * A panel is scenery for a cut, not content — nobody applies a transition to a
+ * transition. Excluded from auto-targeting so a second apply falls through to
+ * inserting its own panel, while a genuine layer stays targetable as before.
+ */
+const TRANSITION_PANEL_PROP = '__transitionPanel';
+
+/** True for a layer this library inserted to cover a cut. */
+function isTransitionPanel(node: SceneNode): boolean {
+  return node.components.some((c) => (c.props as Record<string, unknown>)[TRANSITION_PANEL_PROP] === true);
+}
+
+/**
+ * The moving panel a solid-mode transition choreographs: a comp-sized SHAPE
+ * layer, NOT an AE-style "solid".
+ *
+ * This used to call `insertSolid`, and that is why none of the wipes ever
+ * wiped. A layer carrying `fx.solid` is, in buildSnapshot's own words, "pinned
+ * to comp centre at comp size, REGARDLESS OF ITS TRANSFORM" — the flag exists
+ * for backgrounds and matte bases, which should ignore their transform. So
+ * every wipe, venetian bar, column and iris faithfully wrote x/y/scale
+ * keyframes onto a layer whose x/y/scale the renderer discards. The result was
+ * a full-frame block of colour sitting motionless over the composition at every
+ * frame — visible, undeniably "there", and doing nothing. Only the two
+ * opacity-driven items (dip to black, luma flash) ever worked, because opacity
+ * is the one channel a pinned solid still honours.
+ *
+ * A plain shape sized to the comp looks identical when it is centred and
+ * actually moves when it is animated. Returns the new node id, or null.
+ */
+function insertTransitionPanel(color: string, box: CompBox, name: string): string | null {
+  const rootId = activeCompRootId();
+  const node = makeNode('shape', name);
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (!t) return null;
+  const p = t.props as Record<string, unknown>;
+  p[TRANSITION_PANEL_PROP] = true;
+  p.x = box.width / 2;
+  p.y = box.height / 2;
+  p.width = box.width;
+  p.height = box.height;
+  node.transform.position = { x: box.width / 2, y: box.height / 2 };
+  defaultSceneGraph.addChild(rootId, node);
+  defaultSceneGraph.setFill(node.id, { type: 'solid', color });
+  return node.id;
+}
+
+/**
  * Apply a transition at the playhead. With a selection, layer-mode items
  * keyframe every selected content layer (entrance or exit picked from each
  * layer's clip edges); without one (or for solid-only wipes) choreographed
- * colour solids covering the cut are inserted and selected. Returns null for
+ * colour panels covering the cut are inserted and selected. Returns null for
  * an unknown id.
  */
 export function applyTransitionItem(transId: string): ApplyTransitionResult | null {
@@ -453,6 +817,10 @@ export function applyTransitionItem(transId: string): ApplyTransitionResult | nu
     const targets = useSelectionStore.getState().ids.filter((id) => {
       const n = defaultSceneGraph.getNode(id);
       if (!n) return false;
+      // A panel left selected by the PREVIOUS apply is not a target — see
+      // TRANSITION_PANEL_PROP. Without this, transitions stack onto each other
+      // instead of accumulating as separate covers.
+      if (isTransitionPanel(n)) return false;
       const k = readNodeKind(n);
       return k !== 'camera' && k !== 'light' && k !== 'audio';
     });
@@ -486,22 +854,38 @@ export function applyTransitionItem(transId: string): ApplyTransitionResult | nu
       }
       if (written.length > 0) {
         bumpScene();
+        // An entrance settles VISIBLE at the end; an exit settles invisible by
+        // definition, so it rests at its start instead. Resting an exit on its
+        // last frame would leave the user staring at the empty comp they were
+        // trying not to get.
+        const anyEnter = phases.some((p) => p === 'enter');
+        previewChoreography({
+          from: t0,
+          to: t0 + item.duration,
+          restAt: anyEnter ? t0 + item.duration : t0,
+        });
         return { mode: 'layer', nodeIds: written, phases };
       }
     }
   }
 
-  // Solid mode — insert full-comp solid(s) and choreograph them over the cut.
+  // Solid mode — insert comp-covering panel(s) and choreograph them over the cut.
   const count = item.solidCount ?? 1;
   const solidIds: string[] = [];
   for (let i = 0; i < count; i++) {
-    insertSolid(item.a);
-    const solidId = useSelectionStore.getState().ids[0];
+    const solidId = insertTransitionPanel(item.a, box, count > 1 ? `${item.name} ${i + 1}` : item.name);
     if (!solidId) continue;
-    const node = defaultSceneGraph.getNode(solidId);
-    if (node) node.name = count > 1 ? `${item.name} ${i + 1}` : item.name;
-    for (const kf of solidRecipe(transId, box, i, count)) {
-      liveKf(solidId, kf.prop, t0 + kf.t, kf.value, kf.ease);
+    let blurTrack: string | null | undefined;
+    for (const kf of panelRecipe(transId, box, i, count)) {
+      let prop = kf.prop;
+      // Same `@blur` resolution as layer mode — without it Blur Through would
+      // silently lose the one channel that makes it Blur Through.
+      if (prop === '@blur') {
+        if (blurTrack === undefined) blurTrack = ensureBlurTrack(solidId);
+        if (!blurTrack) continue;
+        prop = blurTrack;
+      }
+      liveKf(solidId, prop, t0 + kf.t, kf.value, kf.ease);
     }
     if (item.irisMask) applyIrisMask(solidId, box, t0, item.duration);
     solidIds.push(solidId);
@@ -509,7 +893,77 @@ export function applyTransitionItem(transId: string): ApplyTransitionResult | nu
   if (solidIds.length === 0) return null;
   useSelectionStore.getState().set(solidIds);
   bumpScene();
+  // Rest half-covered — see `solidRestTime`. The midpoint hides the comp behind
+  // a full-frame block; the end leaves nothing on screen at all. Both of those
+  // read as broken, in opposite directions.
+  previewChoreography({ from: t0, to: t0 + item.duration, restAt: t0 + solidRestTime(transId, box) });
   return { mode: 'solid', nodeIds: solidIds };
+}
+
+// ── Animated card preview (isolated; the SAME recipe apply writes) ───
+//
+// The cards used to be two colour swatches side by side, which said nothing
+// about what the item does: "Whip Pan" and "Cross Fade" were both a pair of
+// rectangles, and the only way to find out which transition you wanted was to
+// apply each one and undo. These replay the real recipe against an isolated
+// engine, so a card shows the motion it will write.
+
+const PREVIEW_W = 320, PREVIEW_H = 180;
+
+/** Props the isolated preview engine can drive. `@blur` resolves to an effect
+ *  track on a real layer and has no equivalent here — dropping it costs the
+ *  card a little softness, not the shape of the move. */
+const PREVIEWABLE = new Set(['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']);
+
+/**
+ * Play a transition onto `canvas` through the shared gallery ticker.
+ *
+ * Layer-mode items animate a "shot" card over a contrasting backdrop — the
+ * incoming frame — so a slide really slides across something. Solid-only items
+ * choreograph their own solids over that same backdrop, which is exactly what
+ * they do in the comp.
+ */
+export function createTransitionPlayer(canvas: HTMLCanvasElement, item: TransitionItem): { stop: () => void } {
+  const box: CompBox = { width: PREVIEW_W, height: PREVIEW_H };
+  const cx = PREVIEW_W / 2, cy = PREVIEW_H / 2;
+  const cardW = PREVIEW_W * 0.66, cardH = PREVIEW_H * 0.66;
+  const pose: LayerPose = { x: cx, y: cy, scaleX: 1, scaleY: 1, rotation: 0, width: cardW, height: cardH };
+
+  return mountPreview(canvas, {
+    build: (g) => {
+      addRoot(g, 'tpl_root', item.name);
+      // The incoming shot, always present underneath.
+      addShape(g, 'under', 'tpl_root', cx, cy, PREVIEW_W, PREVIEW_H, item.b);
+      if (item.solidOnly) {
+        const count = item.solidCount ?? 1;
+        for (let i = 0; i < count; i++) addShape(g, `sol${i}`, 'tpl_root', cx, cy, PREVIEW_W, PREVIEW_H, item.a);
+      } else {
+        addShape(g, 'card', 'tpl_root', cx, cy, cardW, cardH, item.a);
+      }
+    },
+    animate: (set) => {
+      if (item.solidOnly) {
+        const count = item.solidCount ?? 1;
+        for (let i = 0; i < count; i++) {
+          for (const kf of solidRecipe(item.id, box, i, count)) {
+            if (PREVIEWABLE.has(kf.prop)) set(`sol${i}`, kf.prop, kf.t, kf.value, kf.ease);
+          }
+        }
+        return;
+      }
+      // Entrance reads better on a card than the exit — it ends on the pose,
+      // so the loop returns to a stable frame rather than an empty one.
+      for (const kf of transitionRecipe(item.id, pose, box, 'enter') ?? []) {
+        if (PREVIEWABLE.has(kf.prop)) set('card', kf.prop, kf.t, kf.value, kf.ease);
+      }
+    },
+    // A beat of the settled pose before the loop restarts, so the card reads as
+    // "arrives and lands" rather than a stutter.
+    duration: item.duration + 0.45,
+    width: PREVIEW_W,
+    height: PREVIEW_H,
+    background: '#101016',
+  });
 }
 
 /**

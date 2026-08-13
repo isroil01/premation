@@ -61,12 +61,12 @@
 
 .timeReadout {
   font-family: var(--font-family-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-amber-500);
 }
 
 .badge {
-  font-size: 10px;
+  font-size: var(--font-size-micro);
   font-weight: 600;
   padding: 2px 8px;
   border-radius: var(--radius-full);

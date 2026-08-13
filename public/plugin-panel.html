@@ -26,11 +26,89 @@
 -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <style>
-  :root { color-scheme: dark; }
-  body { margin: 0; padding: 12px; font: 13px/1.45 system-ui, sans-serif; color: #e8e8ea; background: #17171a; }
-  button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid #3a3a40; background: #232329; color: inherit; cursor: pointer; }
-  button:hover { background: #2c2c33; }
-  input, select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid #3a3a40; background: #101014; color: inherit; }
+  /*
+    Defaults only. The host posts the editor's real values in as `--pm-*`
+    custom properties (see `panelTheme.ts`), on load and again on every theme
+    change, and everything below is written against those — so a panel that
+    links `motion-panel.css`, or just inherits from the body, follows the
+    editor into light mode without doing anything.
+
+    These literals are what shows for the few milliseconds before the first
+    theme message arrives, and if one never does.
+  */
+  :root {
+    --pm-bg: #17171a;
+    --pm-surface: #232329;
+    --pm-fg: #e8e8ea;
+    --pm-muted: #9a9aa2;
+    --pm-accent: #3b82f6;
+    --pm-accent-fg: #ffffff;
+    --pm-border: #3a3a40;
+    --pm-hover: rgba(255,255,255,0.06);
+    --pm-danger: #ef4444;
+    --pm-radius: 6px;
+    --pm-font: system-ui, sans-serif;
+    --pm-font-mono: ui-monospace, monospace;
+    --pm-font-size: 13px;
+    --pm-space-1: 4px;
+    --pm-space-2: 8px;
+    --pm-space-3: 12px;
+    --pm-space-4: 16px;
+    color-scheme: dark;
+  }
+  :root[data-pm-theme="light"] { color-scheme: light; }
+  body {
+    margin: 0; padding: var(--pm-space-3);
+    font: var(--pm-font-size)/1.45 var(--pm-font);
+    color: var(--pm-fg); background: var(--pm-bg);
+  }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: var(--pm-radius);
+    border: 1px solid var(--pm-border); background: var(--pm-surface);
+    color: inherit; cursor: pointer;
+  }
+  button:hover { background: var(--pm-hover); }
+  input, select {
+    font: inherit; padding: 5px 8px; border-radius: var(--pm-radius);
+    border: 1px solid var(--pm-border); background: var(--pm-bg); color: inherit;
+  }
+
+  /*
+    The `pm-*` component classes — the "motion-panel.css" an author would
+    otherwise have to link.
+
+    They are INLINE here rather than a separate stylesheet on purpose, and the
+    reason is the policy above: `default-src 'none'` with only
+    `style-src 'unsafe-inline'` means a `<link rel="stylesheet">` is never
+    fetched, and the frame's opaque origin makes `'self'` unmatchable even if
+    it were added. Shipping a linkable file would have shipped a file that
+    silently does nothing. Inlining costs a couple of KB per panel frame, needs
+    no CSP change, and means an author writes `class="pm-button"` with no link
+    tag and no setup at all.
+
+    Everything reads from a `--pm-*` variable and hardcodes no colour, which is
+    what makes a panel follow the editor into light mode for free. Override any
+    of it freely — this is a starting point, not a framework.
+  */
+  .pm-section { display: flex; flex-direction: column; gap: var(--pm-space-2); padding-block: var(--pm-space-3); border-bottom: 1px solid var(--pm-border); }
+  .pm-section:last-child { border-bottom: none; }
+  .pm-section-title { margin: 0; font-size: calc(var(--pm-font-size) - 1px); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--pm-muted); }
+  .pm-row { display: flex; align-items: center; justify-content: space-between; gap: var(--pm-space-2); }
+  /* A label that wraps mid-row is what makes a narrow docked panel look
+     broken; the control keeps its width and the label ellipsises instead. */
+  .pm-label { color: var(--pm-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pm-input, .pm-select { flex: 1 1 auto; min-width: 0; font: inherit; padding: 5px 8px; border-radius: var(--pm-radius); border: 1px solid var(--pm-border); background: var(--pm-bg); color: var(--pm-fg); }
+  .pm-input:focus-visible, .pm-select:focus-visible, .pm-button:focus-visible { outline: 2px solid var(--pm-accent); outline-offset: 1px; }
+  .pm-button { font: inherit; padding: 6px 12px; border-radius: var(--pm-radius); border: 1px solid var(--pm-border); background: var(--pm-surface); color: var(--pm-fg); cursor: pointer; }
+  .pm-button:hover:not(:disabled) { background: var(--pm-hover); }
+  .pm-button:disabled { opacity: .5; cursor: default; }
+  .pm-button--primary { background: var(--pm-accent); border-color: var(--pm-accent); color: var(--pm-accent-fg); }
+  .pm-button--primary:hover:not(:disabled) { filter: brightness(1.1); }
+  .pm-button--danger { color: var(--pm-danger); }
+  .pm-mono { font-family: var(--pm-font-mono); font-size: calc(var(--pm-font-size) - 1px); }
+  .pm-muted { color: var(--pm-muted); }
+  .pm-status { min-height: 1.4em; color: var(--pm-muted); font-size: calc(var(--pm-font-size) - 1px); }
+  .pm-status[data-level="error"] { color: var(--pm-danger); }
 </style>
 <script>
 (function () {
@@ -46,6 +124,13 @@
 
   window.addEventListener('message', function (e) {
     if (e.source !== parent || !e.data || typeof e.data !== 'object') return;
+
+    // The editor's theme, on load and on every change. Like `__panelHtml`,
+    // this is OURS, not the plugin's — it must never reach a panel listener.
+    if (e.data.__panelTheme && typeof e.data.__panelTheme === 'object') {
+      applyTheme(e.data.__panelTheme);
+      return;
+    }
 
     // The editor hands us the plugin's panel markup once, after load. It is
     // NOT a plugin message and must never reach a panel's own listener.
@@ -63,12 +148,52 @@
   });
 
   /**
+   * Write the editor's values onto our own `:root`.
+   *
+   * Only `--pm-*` names are accepted, and only string values. The message comes
+   * from the parent, which is trusted — but the panel's own markup is not, and
+   * an unfiltered `setProperty` loop is the kind of thing that later becomes a
+   * way to set properties nobody meant to expose.
+   */
+  function applyTheme(theme) {
+    var vars = theme.vars;
+    if (vars && typeof vars === 'object') {
+      for (var name in vars) {
+        if (!Object.prototype.hasOwnProperty.call(vars, name)) continue;
+        if (name.indexOf('--pm-') !== 0) continue;
+        if (typeof vars[name] !== 'string') continue;
+        document.documentElement.style.setProperty(name, vars[name]);
+      }
+    }
+    // Exposed as an attribute too, so a panel can branch on the mode itself —
+    // an icon or an illustration often needs more than a colour swap.
+    document.documentElement.setAttribute('data-pm-theme', theme.mode === 'light' ? 'light' : 'dark');
+  }
+
+  /**
    * Put the plugin's markup on screen and run its scripts.
    *
    * `innerHTML` deliberately does not execute scripts, so they are re-created
    * as real elements. That is not a hole being opened: this document exists to
    * run the plugin's UI code, in a frame with an opaque origin and no network.
    * The alternative is what we had — a panel that renders and does nothing.
+   *
+   * ── HEAD as well as body, and why that was a real bug ─────────────────────
+   *
+   * This used to transplant `doc.body.innerHTML` alone. The HTML parser hoists
+   * `<style>`, `<link>`, `<meta>` and `<title>` into `<head>` when they appear
+   * before any body content — which is exactly where an author puts a
+   * stylesheet — so a panel whose first element was `<style>` rendered
+   * completely unstyled, with nothing anywhere saying why.
+   *
+   * `PLUGINS.md` carried the workaround as a rule: "open the panel with a real
+   * element". A rule an author must remember, whose violation is invisible, is
+   * a rule everyone breaks eventually. Deleted, along with the cause.
+   *
+   * Linked stylesheets are already inlined by the host before this runs (see
+   * `panelHtml.ts`) — a relative href here would resolve against the APP's
+   * origin, where the plugin's file does not exist, and this frame has no
+   * network to fetch it with anyway.
    */
   function render(html) {
     var doc = new DOMParser().parseFromString(html, 'text/html');
@@ -78,6 +203,26 @@
       scripts.push(found[i].textContent || '');
       found[i].parentNode.removeChild(found[i]);
     }
+
+    /*
+      Head first, so styles are in place before the body they style.
+
+      Appended one node at a time rather than by assigning `head.innerHTML`,
+      which would discard this document's OWN head — the theme variables, the
+      base stylesheet and the bridge script all live there.
+
+      `<base>` is dropped: it rewrites every relative URL in the document,
+      including ones this shell owns, and a panel has nothing legitimate to
+      point it at.
+    */
+    var headNodes = doc.head ? doc.head.children : [];
+    for (var h = 0; h < headNodes.length; h++) {
+      var node = headNodes[h];
+      var tag = node.tagName.toLowerCase();
+      if (tag === 'base' || tag === 'script') continue;
+      document.head.appendChild(document.importNode(node, true));
+    }
+
     document.body.innerHTML = doc.body.innerHTML;
     for (var j = 0; j < scripts.length; j++) {
       var el = document.createElement('script');

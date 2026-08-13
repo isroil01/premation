@@ -8,6 +8,8 @@
  * in {@link AudioEngine} which owns the AudioContext.
  */
 
+import { clamp01 } from '@utils/lang';
+
 export interface WaveformPeaks {
   /** Number of buckets in {@link peaks}. */
   buckets: number;
@@ -53,11 +55,6 @@ export function mixToMono(channels: readonly Float32Array[], length: number): Fl
     out[i] = sum / channels.length;
   }
   return out;
-}
-
-/** Clamp helper. */
-function clamp01(v: number): number {
-  return v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
 /**

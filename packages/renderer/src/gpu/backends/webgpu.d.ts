@@ -22,8 +22,25 @@ interface GPUTextureView {
 interface GPUSampler {
   readonly __brand?: 'sampler';
 }
+interface GPUCompilationMessage {
+  readonly type: 'error' | 'warning' | 'info';
+  readonly message: string;
+  readonly lineNum: number;
+}
+interface GPUCompilationInfo {
+  readonly messages: readonly GPUCompilationMessage[];
+}
 interface GPUShaderModule {
   readonly __brand?: 'shader';
+  /**
+   * Optional in this typing, not in the spec.
+   *
+   * The only way to learn a shader was refused WITHOUT waiting for the pipeline
+   * that uses it to be built mid-frame. Declared optional so a test double or
+   * an older implementation can omit it and the caller degrades to "no
+   * complaints" rather than throwing.
+   */
+  getCompilationInfo?(): Promise<GPUCompilationInfo>;
 }
 interface GPUBindGroupLayout {
   readonly __brand?: 'bgl';
@@ -78,6 +95,15 @@ interface GPUDevice {
   createBindGroup(desc: Record<string, unknown>): GPUBindGroup;
   createCommandEncoder(desc?: Record<string, unknown>): GPUCommandEncoder;
   destroy(): void;
+  /**
+   * Resolves — never rejects — when the device is lost.
+   *
+   * The non-rejecting part is what is worth declaring precisely. Written as a
+   * rejection, the obvious `.catch(…)` handler compiles, reads correctly to a
+   * reviewer, and never fires. Typing it as a resolving promise makes the
+   * correct shape the natural one to write.
+   */
+  readonly lost: Promise<{ reason?: string; message?: string }>;
 }
 
 interface GPUAdapter {

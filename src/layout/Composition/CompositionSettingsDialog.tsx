@@ -97,7 +97,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'general' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('general')}
         >
-          <Icon name="sliders-h" size={13} />
+          <Icon name="sliders-h" size="sm" />
           General
         </button>
         <button
@@ -107,7 +107,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'background' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('background')}
         >
-          <Icon name="brush" size={13} />
+          <Icon name="brush" size="sm" />
           Background
         </button>
         <button
@@ -117,7 +117,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'grid' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('grid')}
         >
-          <Icon name="grid" size={13} />
+          <Icon name="grid" size="sm" />
           Grid & Guides
         </button>
         <button
@@ -127,7 +127,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           className={`${styles.navTab} ${activeTab === 'time' ? styles.navTabActive : ''}`}
           onClick={() => setActiveTab('time')}
         >
-          <Icon name="keyframe" size={13} />
+          <Icon name="keyframe" size="sm" />
           Time
         </button>
       </div>
@@ -179,7 +179,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                       key={f.value}
                       type="button"
                       title={f.label}
-                      className={f.value === s.fps ? styles.chipOn : styles.chip}
+                      className={`${styles.chip} ${f.value === s.fps ? styles.chipOn : ''}`}
                       onClick={() => setFps(f.value)}
                     >
                       {f.value} fps
@@ -207,7 +207,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                     key={t}
                     type="button"
                     title={`${t[0]!.toUpperCase()}${t.slice(1)} background`}
-                    className={!s.transparent && bgPaint.type === t ? styles.segmentBtnActive : styles.segmentBtn}
+                    className={`${styles.segmentBtn} ${!s.transparent && bgPaint.type === t ? styles.segmentBtnActive : ''}`}
                     disabled={s.transparent}
                     onClick={() => setBgType(t)}
                   >
@@ -271,7 +271,7 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
 
                 {bgPaint.type !== 'solid' && (
                   <div className={styles.stopsContainer}>
-                    <span className={styles.colorCardLabel} style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Gradient Stops</span>
+                    <span className={styles.colorCardLabel} style={{ fontSize: 'var(--font-size-micro)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Gradient Stops</span>
                     {sortedStops(bgPaint.stops).map((stop) => (
                       <div key={stop.id} className={styles.stopRow}>
                         <ColorPicker
@@ -297,14 +297,14 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                           onClick={() => removeStop(stop.id)}
                           style={{ height: 24, width: 24, padding: 0, display: 'grid', placeItems: 'center' }}
                         >
-                          <Icon name="trash" size={12} />
+                          <Icon name="trash" size="sm" />
                         </button>
                       </div>
                     ))}
                     <Button
                       variant="ghost"
                       size="sm"
-                      leftIcon={<Icon name="plus" size={12} />}
+                      leftIcon={<Icon name="plus" size="sm" />}
                       onClick={addStop}
                       style={{ alignSelf: 'flex-start', marginTop: 2 }}
                     >
@@ -315,10 +315,33 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
               </div>
             )}
 
+            {/*
+              Per-format, because the previous copy said "exported frames and
+              video keep alpha channel" unconditionally — true for MOV/WebM/PNG
+              and false for MP4/GIF/JPG. Somebody following it shipped a
+              deliverable with a black background and no warning.
+
+              "not currently preserved" rather than "not possible" for GIF on
+              purpose: GIF does carry 1-bit transparency, the encoder's
+              palettegen/paletteuse graph simply does not request it. The wording
+              should not close off a feature the format allows.
+            */}
             {s.transparent && (
-              <p className={styles.hint} style={{ marginTop: 6, color: '#38bdf8' }}>
-                ✓ Comp background is transparent — exported frames and video keep alpha channel.
-              </p>
+              <div className={styles.hint} style={{ marginTop: 6 }}>
+                <div style={{ color: '#38bdf8' }}>
+                  ✓ Keeps alpha: <strong>MOV</strong> (ProRes 4444),{' '}
+                  <strong>WebM</strong> (VP9), <strong>PNG</strong> and PNG sequence.
+                </div>
+                <div style={{ marginTop: 2 }}>
+                  Composited over <strong>black</strong>: MP4, GIF and JPG sequence —
+                  these formats carry no alpha channel (GIF&nbsp;transparency is
+                  not currently preserved).
+                </div>
+                <div style={{ marginTop: 2 }}>
+                  Lottie&nbsp;/&nbsp;JSON carry no composition background at all;
+                  they take whatever is behind them where they are played.
+                </div>
+              </div>
             )}
           </div>
         )}
@@ -426,10 +449,10 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
       </div>
 
       <div className={styles.footer}>
-        <Button variant="secondary" size="sm" onClick={close}>
+        <Button variant="secondary" size="md" onClick={close} style={{ minWidth: 90 }}>
           Cancel
         </Button>
-        <Button variant="primary" size="sm" leftIcon={<Icon name="check" size={14} />} onClick={close}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={close} style={{ minWidth: 90 }}>
           Done
         </Button>
       </div>

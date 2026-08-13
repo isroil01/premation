@@ -36,7 +36,8 @@
  * honest; a plaintext fallback would look identical and protect nothing.
  */
 
-import { app, ipcMain, safeStorage } from 'electron';
+import { app, safeStorage } from 'electron';
+import { handle } from './ipcGuard';
 import path from 'node:path';
 import { readFile, writeFile, rename, unlink, chmod } from 'node:fs/promises';
 
@@ -167,9 +168,9 @@ export async function keyStatuses(): Promise<Record<VaultProvider, KeyStatus>> {
  * vault, and cannot ask where the file is.
  */
 export function registerAiKeyIpc(): void {
-  ipcMain.handle('aiKeys:status', async (): Promise<Record<VaultProvider, KeyStatus>> => keyStatuses());
+  handle('aiKeys:status', async (): Promise<Record<VaultProvider, KeyStatus>> => keyStatuses());
 
-  ipcMain.handle(
+  handle(
     'aiKeys:set',
     async (_event, provider: unknown, key: unknown): Promise<{ persisted: boolean; hint: string }> => {
       // Validate rather than trust: this is the one channel whose payload is
@@ -193,7 +194,7 @@ export function registerAiKeyIpc(): void {
     },
   );
 
-  ipcMain.handle('aiKeys:clear', async (_event, provider: unknown): Promise<void> => {
+  handle('aiKeys:clear', async (_event, provider: unknown): Promise<void> => {
     if (provider === undefined || provider === null) {
       await write({});
       return;
@@ -205,7 +206,7 @@ export function registerAiKeyIpc(): void {
   });
 
   /** False when the OS has no keystore — the app then never persists a key. */
-  ipcMain.handle('aiKeys:available', () => safeStorage.isEncryptionAvailable());
+  handle('aiKeys:available', () => safeStorage.isEncryptionAvailable());
 }
 
 /** Test seam: drop the in-memory cache so the next read hits disk again. */

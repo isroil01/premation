@@ -1,7 +1,7 @@
 /**
  * SceneInsertDialogs — AE-parity "New Camera" / "New Light" creation dialogs.
  *
- * The ViewportHeader's +Camera / +Light buttons open these instead of silently
+ * The +Camera / +Light buttons open these instead of silently
  * inserting hardcoded seeds. Both collect a small set of options and hand them
  * to insertCamera / insertLight (whose no-arg call keeps the legacy defaults,
  * so AI tools and other programmatic callers are unaffected).
@@ -94,7 +94,7 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
 
       <div className={styles.footer}>
         <Button variant="ghost" size="md" onClick={close}>Cancel</Button>
-        <Button variant="primary" size="md" leftIcon={<Icon name="check" size={14} />} onClick={create}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={create}>
           Create camera
         </Button>
       </div>
@@ -193,7 +193,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
 
       <div className={styles.footer}>
         <Button variant="ghost" size="md" onClick={close}>Cancel</Button>
-        <Button variant="primary" size="md" leftIcon={<Icon name="check" size={14} />} onClick={create}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={create}>
           Create light
         </Button>
       </div>

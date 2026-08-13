@@ -12,7 +12,8 @@
  */
 
 import { ResourceManager, NullBackend } from '@motion/renderer';
-import { AppTextureProvider, textCssFont, type ImageLoader, type VideoFactory } from './AppTextureProvider';
+import { AppTextureProvider, textCssFont, spotConeFactor, type ImageLoader, type VideoFactory } from './AppTextureProvider';
+import type { RenderLayer } from './RenderBackend';
 
 /** A fake decoded bitmap (only width/height matter to the provider). */
 function fakeBitmap(w = 320, h = 240): ImageBitmap {
@@ -361,10 +362,13 @@ describe('AppTextureProvider', () => {
   });
 
   describe('light textures', () => {
+    const wash = (color: string, extra: Partial<NonNullable<RenderLayer['light']>> = {}) =>
+      ({ color, intensity: 100, radius: 200, type: 'point' as const, ...extra });
+
     it('rasterizes a light to a real (non-placeholder) texture', () => {
       const { provider } = setup();
       const placeholderId = provider.get('nope')!.texture.id;
-      provider.setLight('light:l', '#ffffff');
+      provider.setLight('light:l', wash('#ffffff'));
       const tex = provider.get('light:l')!;
       expect(tex.ready).toBe(true);
       expect(tex.texture.id).not.toBe(placeholderId);
@@ -372,20 +376,100 @@ describe('AppTextureProvider', () => {
 
     it('reuses the texture for the same colour, re-rasterizes on colour change', () => {
       const { provider } = setup();
-      provider.setLight('light:l', '#ffffff');
+      provider.setLight('light:l', wash('#ffffff'));
       const a = provider.get('light:l')!.texture.id;
-      provider.setLight('light:l', '#ffffff');
+      provider.setLight('light:l', wash('#ffffff'));
       expect(provider.get('light:l')!.texture.id).toBe(a);
-      provider.setLight('light:l', '#ff8800');
+      provider.setLight('light:l', wash('#ff8800'));
       expect(provider.get('light:l')!.texture.id).not.toBe(a);
+    });
+
+    /**
+     * The colour-only key was a COLLISION, not merely a narrow key: two spots
+     * differing only in cone hashed to one entry, so the second silently reused
+     * the first's gradient. A correct rasterizer would still have drawn the
+     * wrong cone, which is why this is asserted at the cache and not only at
+     * the pixels.
+     */
+    it('re-rasterizes when a spot cone changes, not just its colour', () => {
+      const { provider } = setup();
+      const spot = (extra: Partial<NonNullable<RenderLayer['light']>>) =>
+        wash('#ffffff', { type: 'spot', angle: 0, cone: 60, coneFeather: 50, ...extra });
+
+      provider.setLight('light:s', spot({}));
+      const base = provider.get('light:s')!.texture.id;
+
+      provider.setLight('light:s', spot({ cone: 20 }));
+      expect(provider.get('light:s')!.texture.id).not.toBe(base);
+
+      provider.setLight('light:s', spot({ angle: 90 }));
+      const angled = provider.get('light:s')!.texture.id;
+      expect(angled).not.toBe(base);
+
+      provider.setLight('light:s', spot({ coneFeather: 0 }));
+      expect(provider.get('light:s')!.texture.id).not.toBe(angled);
+    });
+
+    it('ambient / point / parallel of one colour still share a texture', () => {
+      // Their washes ARE the same image, so this is reuse rather than a
+      // collision — the cone params are keyed only where they change pixels.
+      const { provider } = setup();
+      provider.setLight('light:a', wash('#ffffff', { type: 'point' }));
+      const id = provider.get('light:a')!.texture.id;
+      provider.setLight('light:a', wash('#ffffff', { type: 'ambient' }));
+      expect(provider.get('light:a')!.texture.id).toBe(id);
     });
 
     it('retain() forgets light keys, falling back to the placeholder', () => {
       const { provider } = setup();
-      provider.setLight('light:l', '#ffffff');
+      provider.setLight('light:l', wash('#ffffff'));
       const real = provider.get('light:l')!.texture.id;
       provider.retain(new Set());
       expect(provider.get('light:l')!.texture.id).not.toBe(real);
+    });
+
+    /**
+     * The cone shape itself. `rasterizeLight` needs a real 2D canvas, which
+     * jsdom has not got, so without extracting this the maths would be
+     * verifiable only through the GPU harness — and it is the whole point of
+     * the change.
+     */
+    describe('spot cone coverage', () => {
+      const D = Math.PI / 180;
+      const half = 30 * D; // a 60° cone
+      const feather = half * 0.5;
+
+      it('is fully lit along the aim and dark outside the cone', () => {
+        expect(spotConeFactor(1, 0, 0, half, feather)).toBe(1);
+        expect(spotConeFactor(0, 1, 0, half, feather)).toBe(0); // 90° off-axis
+      });
+
+      it('ramps across the feather band instead of stepping', () => {
+        // 25° off a 30° half-cone sits inside the 15° feather band.
+        const k = spotConeFactor(Math.cos(25 * D), Math.sin(25 * D), 0, half, feather);
+        expect(k).toBeGreaterThan(0);
+        expect(k).toBeLessThan(1);
+        // Further out is dimmer — the direction of the ramp, not just its range.
+        const further = spotConeFactor(Math.cos(28 * D), Math.sin(28 * D), 0, half, feather);
+        expect(further).toBeLessThan(k);
+      });
+
+      it('a zero feather is a hard edge', () => {
+        expect(spotConeFactor(Math.cos(29 * D), Math.sin(29 * D), 0, half, 0)).toBe(1);
+        expect(spotConeFactor(Math.cos(31 * D), Math.sin(31 * D), 0, half, 0)).toBe(0);
+      });
+
+      it('wraps at ±180°, so a cone aimed left is not cut in half', () => {
+        // Aim 180°; ±10° either side must both be lit. Without the wrap one
+        // side measures ~350° away and goes dark.
+        const aim = Math.PI;
+        expect(spotConeFactor(Math.cos(170 * D), Math.sin(170 * D), aim, half, 0)).toBe(1);
+        expect(spotConeFactor(Math.cos(-170 * D), Math.sin(-170 * D), aim, half, 0)).toBe(1);
+      });
+
+      it('the light centre is lit rather than undefined', () => {
+        expect(spotConeFactor(0, 0, 0, half, feather)).toBe(1);
+      });
     });
   });
 

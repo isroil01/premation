@@ -1,0 +1,108 @@
+<!--
+  The panel runs in a sandboxed frame. It talks to the plugin and to nothing
+  else: no editor access, no network. Inline <script> runs; a linked stylesheet
+  does not, which is why the CSS is inline too.
+
+  ── Why the <style> is INSIDE this div ──────────────────────────────────────
+
+  The host transplants `doc.body.innerHTML` and nothing else. A <style> written
+  before any body content parses into <head>, so it is dropped and the panel
+  renders completely unstyled — with no error anywhere, because nothing failed.
+  Opening with a real element puts the parser in body mode, and everything
+  after it survives the move.
+-->
+<div class="ds-root">
+  <style>
+    :root { color-scheme: dark; }
+    .ds-root, .ds-root * { box-sizing: border-box; }
+    .ds-root {
+      padding: 12px;
+      font: 12px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #d7d9de;
+    }
+    .ds-root h1 { font-size: 12px; font-weight: 600; margin: 0 0 2px; color: #f0f1f4; }
+    .ds-root .sub { color: #8b8f98; margin: 0 0 14px; }
+    .ds-root label { display: block; margin: 12px 0 5px; color: #a7abb4; }
+    .ds-root .row { display: flex; align-items: center; gap: 8px; }
+    .ds-root input[type=range] { flex: 1; accent-color: #6ea8fe; min-width: 0; }
+    .ds-root .val {
+      min-width: 46px; text-align: right; font-variant-numeric: tabular-nums;
+      color: #f0f1f4;
+    }
+    .ds-root button {
+      width: 100%; margin-top: 16px; padding: 8px 10px;
+      font: inherit; font-weight: 600; color: #0b0c0f;
+      background: #6ea8fe; border: 0; border-radius: 6px; cursor: pointer;
+    }
+    .ds-root button:disabled { background: #3a4048; color: #85898f; cursor: default; }
+    .ds-root .status { margin-top: 10px; min-height: 32px; color: #8b8f98; }
+    .ds-root .status.err { color: #ff8f8f; }
+    .ds-root .status.ok { color: #7bd88f; }
+    .ds-root .note {
+      margin-top: 16px; padding-top: 12px; border-top: 1px solid #2a2e35;
+      color: #71757e;
+    }
+  </style>
+
+  <h1>Depth Stack</h1>
+  <p class="sub">Select an image layer, then build the stack.</p>
+
+  <label for="cards">Cards <span class="val" id="cardsV">5</span></label>
+  <div class="row"><input type="range" id="cards" min="2" max="9" step="1" value="5" /></div>
+
+  <label for="spread">Depth spread <span class="val" id="spreadV">900</span></label>
+  <div class="row"><input type="range" id="spread" min="100" max="2500" step="50" value="900" /></div>
+
+  <label for="sweep">Sweep <span class="val" id="sweepV">90</span></label>
+  <div class="row"><input type="range" id="sweep" min="0" max="400" step="10" value="90" /></div>
+
+  <label for="duration">Duration <span class="val" id="durationV">3.0s</span></label>
+  <div class="row"><input type="range" id="duration" min="1" max="10" step="0.5" value="3" /></div>
+
+  <button id="go">Build depth stack</button>
+  <div class="status" id="status">Ready.</div>
+
+  <p class="note">
+    Brightness stands in for depth: brighter comes forward. Works best on images
+    lit front-to-back. The original layer stays underneath.
+  </p>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const fields = ['cards', 'spread', 'sweep', 'duration'];
+  const fmt = { duration: (v) => v.toFixed(1) + 's' };
+
+  function readOptions() {
+    const o = {};
+    for (const f of fields) o[f] = Number($(f).value);
+    return o;
+  }
+
+  for (const f of fields) {
+    $(f).addEventListener('input', () => {
+      const v = Number($(f).value);
+      $(f + 'V').textContent = fmt[f] ? fmt[f](v) : String(v);
+    });
+  }
+
+  function setStatus(text, cls) {
+    const el = $('status');
+    el.textContent = text;
+    el.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  $('go').addEventListener('click', () => {
+    $('go').disabled = true;
+    setStatus('Working…', '');
+    motionPanel.send({ type: 'explode', options: readOptions() });
+  });
+
+  // The plugin owns the button's enabled state, not the click handler: the work
+  // happens over there and only it knows when the last card has landed.
+  motionPanel.onMessage((msg) => {
+    if (!msg || msg.type !== 'status') return;
+    setStatus(msg.text, msg.level === 'error' ? 'err' : msg.level === 'success' ? 'ok' : '');
+    $('go').disabled = !!msg.busy;
+  });
+</script>

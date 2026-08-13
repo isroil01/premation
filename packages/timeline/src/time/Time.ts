@@ -51,7 +51,7 @@ function pad(n: number, width = 2): string {
 export function framesToParts(frames: number, rate: FrameRate): TimecodeParts {
   const n = Math.max(1, rate.nominal);
   const negative = frames < 0;
-  let whole = Math.round(Math.abs(frames));
+  const whole = Math.round(Math.abs(frames));
   const ff = whole % n;
   let totalSeconds = Math.floor(whole / n);
   const ss = totalSeconds % 60;

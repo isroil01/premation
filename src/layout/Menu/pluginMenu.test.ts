@@ -22,8 +22,11 @@ const labels = (): string[] =>
 const commandIds = (): string[] =>
   buildPluginsMenuGroup().items.flatMap((i) => (i.commandId ? [i.commandId] : []));
 
-beforeAll(() => {
+beforeAll(async () => {
   useFakeWorkers();
+    // Payloads live in IndexedDB, so the store must be hydrated before the
+    // host will start anything — `configure()` throws otherwise.
+    await usePluginStore.getState().hydrate();
   pluginHost.configure({ getSelection: () => [] });
 });
 
@@ -34,7 +37,7 @@ beforeEach(() => {
 });
 
 it('always offers the manager, even with nothing installed', () => {
-  expect(commandIds()).toEqual(['view.plugins']);
+  expect(commandIds()).toEqual(['view.marketplace']);
   expect(labels()).toContain('No plugins installed');
 });
 
@@ -44,9 +47,9 @@ it('lists a running plugin s panel and its contributed commands', () => {
   FakeWorker.last!.emit({ k: 'call', id: 1, method: 'commands.register', args: [{ id: 'go', label: 'Go' }] });
 
   expect(commandIds()).toEqual([
-    'plugin.com.menu.a.panel',
+    'plugin.com.menu.a.panel.main',
     'plugin.com.menu.a.go',
-    'view.plugins',
+    'view.marketplace',
   ]);
 });
 
@@ -58,7 +61,7 @@ it('still shows a disabled plugin, and says why it is not there', () => {
   // Present but inert: no commandId means the renderers draw it greyed out.
   // Omitting it entirely is what makes a user ask whether it installed at all.
   expect(labels().some((l) => l.startsWith('Beta ('))).toBe(true);
-  expect(commandIds()).toEqual(['view.plugins']);
+  expect(commandIds()).toEqual(['view.marketplace']);
 });
 
 it('sorts plugins by name so the menu does not reshuffle on reinstall', () => {

@@ -55,7 +55,7 @@ export class EventBus {
         fn(payload);
       } catch (err) {
         // One bad listener must not break the rest.
-        // eslint-disable-next-line no-console
+
         console.error(`[EventBus] listener for "${event}" threw:`, err);
       }
     }

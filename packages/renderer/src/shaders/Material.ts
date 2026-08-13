@@ -146,6 +146,32 @@ export const FRACTAL_NOISE_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Built-in material: a 3D .cube LUT lookup. Same four bindings as compound
+ *  blur — the second texture is the LUT strip rather than another layer. */
+export const APPLY_COLOR_LUT_MATERIAL: MaterialDescriptor = {
+  shader: 'apply-color-lut',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: compound blur. Same four bindings as displacement-map —
+ *  it is the same read-a-second-layer shape, with different arithmetic. */
+export const COMPOUND_BLUR_MATERIAL: MaterialDescriptor = {
+  shader: 'compound-blur',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
 export const DISPLACEMENT_MAP_MATERIAL: MaterialDescriptor = {
   shader: 'displacement-map',
   topology: 'triangle-list',
@@ -167,6 +193,41 @@ export const SET_MATTE_MATERIAL: MaterialDescriptor = {
     { binding: 1, type: 'texture', stages: ['fragment'] },
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
+/**
+ * The Perspective family all take one source texture and differ only in their
+ * uniform block, so they share a descriptor shape — declared once and named
+ * three times rather than copied, so a binding change cannot land on two of
+ * them and miss the third.
+ */
+const perspectiveMaterial = (shader: string): MaterialDescriptor => ({
+  shader,
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+});
+
+export const BEVEL_ALPHA_MATERIAL = perspectiveMaterial('bevel-alpha');
+export const BEVEL_EDGES_MATERIAL = perspectiveMaterial('bevel-edges');
+export const SPOTLIGHT_MATERIAL = perspectiveMaterial('spotlight');
+export const SPHERE_MATERIAL = perspectiveMaterial('sphere');
+/** Same one-texture binding shape; only the uniform block differs. */
+export const ARITHMETIC_MATERIAL = perspectiveMaterial('arithmetic');
+export const CYLINDER_MATERIAL = perspectiveMaterial('cylinder');
+
+/** Same binding shape as motion-tile: one source texture, warped in place. */
+export const BEND_MATERIAL: MaterialDescriptor = {
+  shader: 'bend',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
   ],
 };
 
@@ -202,6 +263,18 @@ export const STROKE_MATERIAL: MaterialDescriptor = {
 
 export const SHARPEN_MATERIAL: MaterialDescriptor = {
   shader: 'sharpen',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: Beam. Same three bindings as every other single-input
+ *  effect — it reads the layer and adds light to it. */
+export const BEAM_MATERIAL: MaterialDescriptor = {
+  shader: 'beam',
   topology: 'triangle-list',
   layout: [
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },

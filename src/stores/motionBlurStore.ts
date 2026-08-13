@@ -39,12 +39,22 @@ interface MotionBlurStore extends MotionBlurSettings {
   key: () => string;
 }
 
-export const useMotionBlurStore = create<MotionBlurStore>((set, get) => ({
+/**
+ * Render-affecting defaults, named so a NEW project can get back to them:
+ * `restore` only applies the keys a document carries, so a blank document used
+ * to leave the previous project's shutter settings in place — and these change
+ * what an export looks like.
+ */
+export const DEFAULT_MOTION_BLUR_SETTINGS: MotionBlurSettings = {
   enabled: true,
   shutterAngle: 180,
   shutterPhase: -90,
   samples: 8,
   adaptiveSampleLimit: 128,
+};
+
+export const useMotionBlurStore = create<MotionBlurStore>((set, get) => ({
+  ...DEFAULT_MOTION_BLUR_SETTINGS,
   setEnabled: (v) => { set({ enabled: v }); touched(); },
   setShutterAngle: (v) => { set({ shutterAngle: Math.max(0, Math.min(360, v)) }); touched(); },
   setShutterPhase: (v) => { set({ shutterPhase: Math.max(-360, Math.min(360, v)) }); touched(); },

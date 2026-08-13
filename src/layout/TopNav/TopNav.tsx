@@ -23,6 +23,8 @@ import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
 import { timeReverseKeyframes, easyEaseAll, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
+import { applyBounce, describeBounce, revealBounce } from '@core/animation/bounce';
+import { useBounceStore, currentSquash } from '@stores/bounceStore';
 import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
 
 /** The control kinds offered in the rig menu, in the order AE lists them. */
@@ -42,6 +44,7 @@ import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { customPrompt } from '@components/Modal/Dialogs';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
+import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
 
 import { useSelectionStore } from '@stores/selectionStore';
@@ -52,6 +55,9 @@ import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { useLayoutStore } from '@stores/layoutStore';
 import styles from './TopNav.module.css';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { usePresentationStore } from '@stores/presentationStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { openExportDialog } from '@layout/Export/ExportDialog';
 
 interface ToolDef {
   id: Tool;
@@ -75,6 +81,10 @@ const PEN_TOOLS: ToolDef[] = [
   { id: 'pen',      icon: 'pen',        label: 'Pen Tool', shortcut: 'G' },
   { id: 'pencil',   icon: 'pencil',     label: 'Pencil Tool' },
   { id: 'brush',    icon: 'brush',      label: 'Brush Tool (pressure ink)' },
+  // Split out of the Brush, which used to turn into this on its own whenever
+  // the pointer happened to land on the selected layer.
+  { id: 'paint',    icon: 'brush',      label: 'Paint Tool (paints onto the selected layer)' },
+  { id: 'eraser',   icon: 'eraser',     label: 'Eraser Tool (erases paint on the selected layer)' },
   { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen' },
 ];
 
@@ -91,6 +101,9 @@ const TEXT_TOOL: ToolDef = { id: 'text', icon: 'type', label: 'Text Tool', short
 const MASK_TOOLS: ToolDef[] = [
   { id: 'mask-rect',    icon: 'mask-square', label: 'Rectangle Mask Tool' },
   { id: 'mask-ellipse', icon: 'mask-circle', label: 'Ellipse Mask Tool' },
+  // Where the Pen's old implicit masking went, so nothing was lost by making
+  // the plain Pen always draw a path layer.
+  { id: 'mask-pen',     icon: 'mask-pen',    label: 'Pen Mask Tool' },
 ];
 
 const PUPPET_TOOL: ToolDef = { id: 'puppet-pin', icon: 'puppet-pin', label: 'Puppet Position Pin Tool', shortcut: 'Ctrl+P' };
@@ -127,8 +140,29 @@ function buildAnimateItems(
     { type: 'item', id: 'anim-tracking-reveal', label: 'Tracking Reveal (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created'); } },
     { type: 'separator' },
     { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { if (easyEaseAll(id)) notify('Eased all keyframes'); else notify('Layer has no keyframes yet', 'warning'); } },
+    // Applies the settings the Bounce section in the Graph panel is showing —
+    // the menu is a shortcut to that panel's current shape, not a second,
+    // hardcoded bounce. `applyBounce` (not `bounceKeyframes`) so the item is
+    // never a no-op: with nothing to rebound from it generates the fall too.
+    { type: 'item', id: 'anim-bounce', label: 'Bounce', icon: 'track', onSelect: () => { const s = useBounceStore.getState(); const r = applyBounce(id, { atTime: playhead, mode: 'auto', drop: s.drop, bounce: s.bounce, squash: currentSquash() }); if (r) { revealBounce(id); notify(describeBounce(r)); } else notify('Nothing to bounce — check the layer is unlocked', 'warning'); } },
     { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { if (timeReverseKeyframes(id)) notify('Keyframes reversed'); else notify('Layer has no keyframes yet', 'warning'); } },
-    { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers (bars, end-to-end)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (getTimelineController().sequenceLayerBars(selectedIds, 0)) notify('Layers sequenced end-to-end'); else notify('Select 2+ layers with timeline bars', 'warning'); } },
+    // Overlap is ASKED FOR rather than hardcoded. `sequenceLayerBars` has taken
+    // an `overlapSeconds` since it was written, with a passing test for it, but
+    // the only caller passed 0 — so the overlap shipped unreachable. A non-zero
+    // overlap now also cross-dissolves, which is what an overlap is for.
+    { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void (async () => {
+      const raw = await customPrompt(
+        'Sequence Layers',
+        'Lay the selected layers’ bars end-to-end, in selection order. Overlap in seconds — 0 butts them together; above 0 overlaps the bars by that much and cross-dissolves opacity across the overlap.',
+        '0',
+        { placeholder: 'e.g. 0.5', confirmLabel: 'Sequence' },
+      );
+      if (raw === null) return;
+      const overlap = Number(raw);
+      if (!Number.isFinite(overlap) || overlap < 0) { notify('Overlap must be a number of seconds, 0 or more', 'warning'); return; }
+      if (!getTimelineController().sequenceLayerBars(selectedIds, overlap, { crossfade: overlap > 0 })) { notify('Select 2+ layers with timeline bars', 'warning'); return; }
+      notify(overlap > 0 ? `Layers sequenced with a ${overlap}s cross-dissolve` : 'Layers sequenced end-to-end');
+    })(); } },
     { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (sequenceLayers(selectedIds, 0.3)) notify('Animations staggered'); else notify('Select 2+ animated layers first', 'warning'); } },
     { type: 'separator' },
     {
@@ -245,6 +279,9 @@ export function TopNav(): JSX.Element {
   const navigate = useNavigate();
   const activeTool = useUIStore((s) => s.activeTool);
   const setTool = useUIStore((s) => s.setActiveTool);
+  const enterPresentation = usePresentationStore((s) => s.enter);
+  const compFps = useCompositionStore((s) => s.fps);
+  const compDuration = useCompositionStore((s) => s.durationSeconds);
   
   useSceneRevision((s) => s.rev);
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -385,8 +422,8 @@ export function TopNav(): JSX.Element {
       label: '3D Options',
       icon: 'zap',
       submenu: [
-        // Workspace Free/Fixed is NOT mirrored here — ViewportHeader owns it and
-        // is always visible, so a copy would be a second switch for one state.
+        // Workspace Free/Fixed is NOT mirrored here — ViewportTools owns it, in
+        // the timeline's tool row, so a copy would be a second switch for one state.
         { type: 'checkbox', id: 'draft-3d', label: 'Draft 3D', checked: draft3d, onChange: () => useGuidesStore.getState().toggleDraft3d() },
         { type: 'checkbox', id: 'ground-grid', label: '3D Ground Plane', checked: groundGridVisible, onChange: () => useGuidesStore.getState().toggleGroundGridVisible() },
         { type: 'checkbox', id: 'layer-boxes', label: 'Layer Bounding Boxes', checked: layerBoxesVisible, onChange: () => usePreferenceStore.getState().set('showLayerBounds', !usePreferenceStore.getState().showLayerBounds) },
@@ -517,11 +554,14 @@ export function TopNav(): JSX.Element {
               className={styles.back}
               onClick={() => navigate('/')}
             >
-              <Icon name="arrow-left" size={18} />
+              <Icon name="arrow-left" size="md" />
             </IconButton>
           )}
 
+          {/* The File menu and the project it acts on, together. Electron shows
+              both in the title bar instead, so this would be a second copy. */}
           {!isElectron && <AppMenuButton />}
+          {!isElectron && <ProjectStatus />}
           <span className={styles.toolDivider} aria-hidden />
 
           {/* Cluster 1: Edit & Drawing Tools */}
@@ -535,8 +575,8 @@ export function TopNav(): JSX.Element {
                   className={isPointerActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${pointerDropdownTool.label}${pointerDropdownTool.shortcut ? ` (${pointerDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={pointerDropdownTool.icon} size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name={pointerDropdownTool.icon} size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={POINTER_TOOLS.map((t) => ({
@@ -557,8 +597,8 @@ export function TopNav(): JSX.Element {
                   className={isPenActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${penDropdownTool.label}${penDropdownTool.shortcut ? ` (${penDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={penDropdownTool.icon} size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name={penDropdownTool.icon} size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={PEN_TOOLS.map((t) => ({
@@ -577,7 +617,7 @@ export function TopNav(): JSX.Element {
               title={`${TEXT_TOOL.label} (${TEXT_TOOL.shortcut})`}
               onClick={() => setTool(TEXT_TOOL.id)}
             >
-              <Icon name={TEXT_TOOL.icon} size={18} />
+              <Icon name={TEXT_TOOL.icon} size="md" />
             </button>
 
             {/* Shape Tools Dropdown */}
@@ -589,8 +629,8 @@ export function TopNav(): JSX.Element {
                   className={isShapeActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${shapeDropdownTool.label}${shapeDropdownTool.shortcut ? ` (${shapeDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={shapeDropdownTool.icon} size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name={shapeDropdownTool.icon} size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={SHAPE_TOOLS.map((t) => ({
@@ -618,7 +658,7 @@ export function TopNav(): JSX.Element {
                       title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
                       onClick={() => setTool(tool.id)}
                     >
-                      <Icon name={tool.icon} size={18} />
+                      <Icon name={tool.icon} size="md" />
                     </button>
                   );
                 })}
@@ -632,7 +672,7 @@ export function TopNav(): JSX.Element {
                       disabled={!canRig}
                       onClick={() => setTool(PUPPET_TOOL.id)}
                     >
-                      <Icon name={PUPPET_TOOL.icon} size={18} />
+                      <Icon name={PUPPET_TOOL.icon} size="md" />
                     </button>
                     <button
                       type="button"
@@ -641,7 +681,7 @@ export function TopNav(): JSX.Element {
                       disabled={!canRig}
                       onClick={() => setTool(BONE_TOOL.id)}
                     >
-                      <Icon name={BONE_TOOL.icon} size={18} />
+                      <Icon name={BONE_TOOL.icon} size="md" />
                     </button>
                   </>
                 )}
@@ -655,10 +695,11 @@ export function TopNav(): JSX.Element {
             {/* New layer dropdown */}
             <Dropdown
               placement="bottom-start"
+              noScroll
               trigger={
                 <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New layer…">
-                  <Icon name="plus" size={18} />
-                  <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                  <Icon name="plus" size="md" />
+                  <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
               items={[
@@ -710,6 +751,7 @@ export function TopNav(): JSX.Element {
             {!hideAnimate && (
               <Dropdown
                 placement="bottom-start"
+                noScroll
                 trigger={
                   <button
                     type="button"
@@ -718,8 +760,8 @@ export function TopNav(): JSX.Element {
                     title={selectedId ? 'Animate the selected layer…' : 'Select a layer to animate'}
                     disabled={!selectedId}
                   >
-                    <Icon name="keyframe" size={18} />
-                    <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                    <Icon name="keyframe" size="md" />
+                    <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                   </button>
                 }
                 items={buildAnimateItems(selectedIds, isTextLayer, playhead)}
@@ -740,7 +782,7 @@ export function TopNav(): JSX.Element {
                   title={snap ? 'Snapping ON — click to disable' : 'Snapping OFF — click to enable'}
                   onClick={toggleSnap}
                 >
-                  <Icon name="magnet" size={18} />
+                  <Icon name="magnet" size="md" />
                 </button>
               </div>
             </>
@@ -765,7 +807,7 @@ export function TopNav(): JSX.Element {
                   placement="bottom-end"
                   trigger={
                     <button type="button" className={styles.tool} aria-label="More tools" title="More tools">
-                      <Icon name="more-horizontal" size={18} />
+                      <Icon name="more-horizontal" size="md" />
                     </button>
                   }
                   items={overflowItems}
@@ -787,7 +829,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canUndo}
                   onClick={() => performUndo()}
                 >
-                  <Icon name="undo" size={18} />
+                  <Icon name="undo" size="md" />
                 </button>
                 <button
                   type="button"
@@ -797,7 +839,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canRedo}
                   onClick={() => performRedo()}
                 >
-                  <Icon name="redo" size={18} />
+                  <Icon name="redo" size="md" />
                 </button>
               </div>
             </>
@@ -817,8 +859,8 @@ export function TopNav(): JSX.Element {
                       aria-label="Workspaces"
                       title="Workspaces & Layout Presets"
                     >
-                      <Icon name="layout" size={18} />
-                      <Icon name="chevron-down" size={12} style={{ opacity: 0.6 }} />
+                      <Icon name="layout" size="md" />
+                      <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                     </button>
                   }
                   items={buildWorkspaceItems()}
@@ -830,7 +872,33 @@ export function TopNav(): JSX.Element {
                   title="Customize (Shortcuts, Workspaces, Appearance)"
                   onClick={() => openCustomizeDialog()}
                 >
-                  <Icon name="settings" size={18} />
+                  <Icon name="settings" size="md" />
+                </button>
+              </div>
+            </>
+          )}
+
+          {!isElectron && (
+            <>
+              <span className={styles.toolDivider} aria-hidden />
+              <div className={styles.toolGroup}>
+                <button
+                  type="button"
+                  className={styles.previewBtn}
+                  title="Preview presentation (Fullscreen)"
+                  onClick={() => enterPresentation()}
+                >
+                  <Icon name="play" size="sm" weight="fill" />
+                  <span>Preview</span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.exportBtn}
+                  title="Export composition…"
+                  onClick={() => openExportDialog(compDuration, compFps)}
+                >
+                  <Icon name="export" size="sm" weight="bold" />
+                  <span>Export</span>
                 </button>
               </div>
             </>

@@ -394,6 +394,34 @@ export const setExpressionDef: AiToolDef = {
 
 // ── Effects + text ────────────────────────────────────────────────
 
+/**
+ * Effects that exist in `EFFECT_DEFS` and are deliberately NOT offered to the AI,
+ * each with the reason. An entry here is a claim that the effect cannot WORK from
+ * a tool call, not that nobody got round to listing it.
+ *
+ * This exists because the enum below was a silent subset for three rounds — the
+ * absent effects looked exactly like a curated allowlist and were nothing of the
+ * kind. So the two cases are now spelled apart: everything in `EFFECT_DEFS` is
+ * either in the enum or in here with a reason, and
+ * `src/core/effects/aiAddEffectEnum.test.ts` fails if anything is in neither.
+ *
+ * Keep this list SHORT and justify each entry against what the AI can actually
+ * reach. "Takes a layer reference" is NOT a reason: `update_effect_param` types
+ * its `value` as unconstrained JSON and `toolContext` passes it through
+ * uncoerced, so a `type: 'layer'` param takes a nodeId from `describe_scene`
+ * perfectly well — which is why set-matte, compound-blur, displacement-map and
+ * audio-spectrum are all in the enum rather than here.
+ */
+export const AI_EXCLUDED_EFFECTS: Readonly<Record<string, string>> = {
+  'apply-color-lut':
+    'Its `lut` param is a parsed .cube FILE (type "resolved"), and no AI tool loads ' +
+    'one — there is no file-picker equivalent on the tool surface. `applyColorLut` ' +
+    'returns early when the LUT is absent ("no file loaded — render unchanged"), so ' +
+    'an AI-added instance is a guaranteed silent no-op: it would occupy a slot in the ' +
+    'effect stack and change no pixels. Offering it would be worse than omitting it. ' +
+    'Delete this entry the moment a tool can supply a LUT.',
+};
+
 export const addEffectDef: AiToolDef = {
   name: 'add_effect',
   kind: 'write',
@@ -411,19 +439,86 @@ export const addEffectDef: AiToolDef = {
       nodeId: { type: 'string' },
       type: {
         type: 'string',
-        // Kept in lockstep with EFFECT_DEFS (src/core/effects/effects.ts). The
-        // enum can't import from the app, so list_capabilities (which reads the
-        // live registry) is the source of truth for params; this is the gate.
+        // EVERY effect in EFFECT_DEFS (src/core/effects/effects.ts) except those
+        // in AI_EXCLUDED_EFFECTS above. This package cannot import from the app,
+        // so the list is hand-written and a comment claiming lockstep is worth
+        // nothing — the previous one said exactly that while listing 45 of 92.
+        // The guard is `src/core/effects/aiAddEffectEnum.test.ts`, which imports
+        // both sides and fails NAMING whatever drifted. Grouped by the panel's
+        // category purely for review; order is not semantic.
+        //
+        // list_capabilities reads the live registry and remains the source of
+        // truth for each type's PARAMS; this enum is only the gate on the type.
         enum: [
-          'blur', 'glow', 'drop-shadow', 'brightness', 'contrast', 'saturate',
-          'grayscale', 'sepia', 'hue-rotate', 'hue-saturation', 'invert',
-          'levels', 'curves', 'posterize', 'tint', 'channel-mixer',
-          'gradient-ramp', 'fractal-noise', 'displacement-map', 'motion-tile',
-          'fill', 'four-color-gradient', 'stroke', 'beam', 'sharpen', 'noise',
-          'keylight', 'echo',
+          // Blur & Sharpen
+          'blur', 'compound-blur', 'sharpen', 'directional-blur', 'gaussian-blur',
+          'fast-box-blur', 'radial-blur', 'channel-blur', 'unsharp-mask',
+          // Stylize
+          'glow', 'drop-shadow', 'noise', 'inner-shadow', 'inner-glow', 'satin', 'bevel',
+          'mosaic', 'find-edges', 'roughen-edges', 'turbulent-noise', 'add-grain', 'median',
+          'threshold', 'emboss', 'scatter',
+          // Color Correction
+          'brightness', 'contrast', 'saturate', 'grayscale', 'sepia', 'hue-rotate',
+          'hue-saturation', 'invert', 'levels', 'curves', 'posterize', 'tint', 'channel-mixer',
+          'exposure', 'vibrance', 'colorama', 'lumetri', 'selective-color', 'shadow-highlight',
+          'color-balance', 'gamma-pedestal-gain', 'photo-filter', 'black-and-white', 'tritone',
+          // Generate
+          'gradient-ramp', 'fractal-noise', 'fill', 'four-color-gradient', 'stroke', 'beam',
+          'checkerboard', 'grid', 'cell-pattern', 'vegas', 'lens-flare', 'numbers', 'timecode',
+          'audio-spectrum',
+          // Distort
+          'displacement-map', 'motion-tile', 'bend', 'wide-time', 'force-motion-blur',
+          'bevel-alpha', 'bevel-edges', 'spotlight', 'sphere', 'cylinder', 'arithmetic',
+          'wave-warp', 'turbulent-displace', 'transform',
+          'bulge', 'twirl', 'spherize', 'corner-pin', 'bezier-warp', 'polar-coordinates', 'optics-compensation', 'mesh-warp', 'liquify',
+          'mirror', 'offset',
+          // Keying
+          'keylight', 'set-matte', 'simple-choker', 'linear-color-key', 'shift-channels',
+          'luma-key', 'minimax',
+          // Time
+          'echo', 'posterize-time',
+          // Transition
+          'linear-wipe', 'venetian-blinds', 'gradient-wipe', 'card-wipe', 'radial-wipe',
+          'block-dissolve',
+
+          // ── Round four ──
+          //
+          // `optics-compensation` is here rather than with the round-three
+          // distorts because it landed separately and the guard test caught its
+          // absence — which is the drift this whole arrangement exists to stop.
+          'optics-compensation',
+          // Blur & Sharpen
+          'bilateral-blur', 'smart-blur', 'camera-lens-blur',
+          // Distort
+          'ripple', 'magnify', 'warp', 'page-turn', 'split', 'slant', 'smear', 'rolling-shutter',
+          // Perspective
+          'radial-shadow',
+          // Generate
+          'circle', 'ellipse', 'radio-waves', 'lightning', 'light-rays', 'light-sweep',
+          'audio-waveform',
+          // Stylize
+          'cartoon', 'brush-strokes', 'strobe-light', 'color-emboss', 'halftone',
+          'kaleidoscope', 'vignette', 'burn-film',
+          // Color Correction
+          'equalize', 'auto-levels', 'auto-contrast', 'auto-color', 'change-color',
+          'change-to-color', 'leave-color', 'toner',
+          // Keying & Channel
+          'color-key', 'color-range', 'extract', 'spill-suppressor', 'matte-choker',
+          'alpha-levels', 'solid-composite', 'channel-combiner', 'remove-color-matting',
+          // Transition
+          'iris-wipe', 'light-wipe', 'line-sweep', 'grid-wipe',
+          // Noise & Grain
+          'dust-scratches', 'noise-alpha',
         ],
       },
       amount: { type: 'number', description: 'Initial value for the primary param. Omit for the effect default.' },
+      id: {
+        type: 'string',
+        description:
+          'Name the effect rather than taking the generated id. Use this when the ' +
+          'keyframes animating it are authored in the same batch and so cannot read ' +
+          "this call's result. Ignored if the node already has an effect with this id.",
+      },
     },
   },
 };
@@ -724,37 +819,64 @@ export const setTrimPathDef: AiToolDef = {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
       start: { type: 'number', minimum: 0, maximum: 100, description: 'Trim start percentage (0..100).' },
       end: { type: 'number', minimum: 0, maximum: 100, description: 'Trim end percentage (0..100).' },
-      offset: { type: 'number', description: 'Trim offset angle in degrees.' },
+      offset: {
+        type: 'number',
+        description: 'Rotate the visible window around the path, PERCENT of its length (wraps). Not degrees.',
+      },
     },
   },
 };
 
+/**
+ * Note the absence of `scaleY`.
+ *
+ * The engine's repeater carries ONE per-copy scale multiplier (`offsetScale`),
+ * so a schema offering two offered a control that cannot exist. With
+ * `additionalProperties: false` everywhere else in this file, a parameter that
+ * is accepted and then silently dropped is the worse of the two failures.
+ */
 export const addRepeaterDef: AiToolDef = {
   name: 'add_repeater',
   kind: 'write',
-  description: 'Add or update an AE-style Repeater shape operator (copies, position/rotation/scale offset per copy).',
+  description:
+    'Add or update an AE-style Repeater shape operator: N copies, each offset from the last in ' +
+    'position, rotation, scale and opacity. A radial burst is copies × rotation = 360 with a ' +
+    'non-zero anchorX; a linear array is rotation 0 with a positionX step.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
     required: ['nodeId'],
     properties: {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
-      copies: { type: 'number', minimum: 1, maximum: 100, description: 'Number of repeater copies.' },
-      positionX: { type: 'number', description: 'X offset per copy.' },
-      positionY: { type: 'number', description: 'Y offset per copy.' },
-      rotation: { type: 'number', description: 'Rotation offset per copy in degrees.' },
-      scaleX: { type: 'number', description: 'Scale X multiplier per copy (1 = 100%).' },
-      scaleY: { type: 'number', description: 'Scale Y multiplier per copy (1 = 100%).' },
-      startOpacity: { type: 'number', minimum: 0, maximum: 100, description: 'Start opacity 0..100.' },
-      endOpacity: { type: 'number', minimum: 0, maximum: 100, description: 'End opacity 0..100.' },
+      copies: { type: 'number', minimum: 1, maximum: 100, description: 'Number of copies, including the original.' },
+      positionX: { type: 'number', description: 'X offset per copy, in px.' },
+      positionY: { type: 'number', description: 'Y offset per copy, in px.' },
+      rotation: { type: 'number', description: 'Rotation offset per copy, in degrees. 360/copies closes a ring.' },
+      scale: { type: 'number', description: 'Scale multiplier per copy (1 = no change, 0.9 = each copy 10% smaller).' },
+      anchorX: { type: 'number', description: 'Pivot for the per-copy rotation/scale, layer-local px. Set this to the ring RADIUS for a true radial burst — at 0 every copy spins about its own origin and the ring collapses.' },
+      anchorY: { type: 'number', description: 'Pivot Y, layer-local px.' },
+      startOpacity: { type: 'number', minimum: 0, maximum: 100, description: 'Opacity of the first copy, 0..100.' },
+      endOpacity: { type: 'number', minimum: 0, maximum: 100, description: 'Opacity of the LAST copy, 0..100. The per-copy falloff is derived from these two.' },
     },
   },
 };
 
+/**
+ * The enum is the ENGINE's operator set, not a hand-written subset of it.
+ *
+ * It listed four names, one of which (`puckerBloat`) is not an operator the
+ * engine has — its name is `pucker` — while `offset` and `roughen`, which it
+ * does have, were unreachable. `puckerBloat` stays as an accepted alias because
+ * it is the name in the assistant's own quick presets and in the system prompt;
+ * the handler is the single translation point.
+ */
 export const addPathOperatorDef: AiToolDef = {
   name: 'add_path_operator',
   kind: 'write',
-  description: 'Apply procedural path distortion operators (zigzag, puckerBloat, twist, roundCorners) to a shape layer.',
+  description:
+    'Push a procedural path-distortion operator onto a shape layer. Operators STACK — call this ' +
+    'twice to chain two — and each one is independently keyframeable at ' +
+    '`pathop.<opId>.amount`. The returned opId is how you reach it.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -763,29 +885,39 @@ export const addPathOperatorDef: AiToolDef = {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
       op: {
         type: 'string',
-        enum: ['zigzag', 'puckerBloat', 'twist', 'roundCorners'],
-        description: 'Path operator algorithm.',
+        enum: ['zigzag', 'pucker', 'puckerBloat', 'twist', 'roundCorners', 'offset', 'roughen'],
+        description:
+          'zigzag: sawtooth the outline. pucker: negative amount pulls corners in, positive bloats them ' +
+          '(puckerBloat is an alias). twist: rotate proportionally to distance from centre. ' +
+          'roundCorners: corner radius. offset: grow/shrink the outline. roughen: noise displacement.',
       },
       amount: { type: 'number', description: 'Strength/radius of the deformation.' },
+      detail: { type: 'number', description: 'Segment count for zigzag / roughen. Higher is finer.' },
+      wigglesPerSecond: { type: 'number', minimum: 0, description: 'Roughen only — animates the noise with no keyframe. 0 is static.' },
     },
   },
 };
 
-export const setTextOnPathDef: AiToolDef = {
-  name: 'set_text_on_path',
-  kind: 'write',
-  description: 'Align a text layer to follow a vector Bezier path shape layer.',
-  inputSchema: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['nodeId', 'pathNodeId'],
-    properties: {
-      nodeId: { type: 'string', description: 'ID of the text layer.' },
-      pathNodeId: { type: 'string', description: 'ID of the shape path layer to follow.' },
-      align: { type: 'string', enum: ['left', 'center', 'right'], description: 'Alignment along path.' },
-    },
-  },
-};
+/*
+ * `set_text_on_path` stood here and is DELETED, not disabled.
+ *
+ * It wrote `pathNodeId` / `pathAlign` onto a text layer's Text component, and
+ * **nothing in this repository reads either key** — not the renderer, not
+ * `buildSnapshot`, not the text system. (`motionPath` / `autoOrient` are a
+ * different feature: a whole layer following a motion path, not glyphs laid
+ * along a curve.) So the tool reported success, changed nothing, and taught the
+ * model that the type had been shaped — after which it moved on and never
+ * revisited it.
+ *
+ * A tool the engine cannot honour is worse than a missing one: it costs a turn,
+ * it consumes the model's belief, and it is invisible in the output because the
+ * layer still renders, just straight. Same reasoning as the desktop key vault
+ * refusing to store a key the local proxy cannot spend.
+ *
+ * Type on a path is a real gap and it is on the Phase B.5 list. When the
+ * renderer can lay glyphs along a curve, this comes back with a reader behind
+ * it — and `propWriteSurvival.test.ts` is where that gets asserted.
+ */
 
 export const createSkeletonRigDef: AiToolDef = {
   name: 'create_skeleton_rig',
@@ -873,7 +1005,6 @@ export const WRITE_TOOL_DEFS: readonly AiToolDef[] = [
   setTrimPathDef,
   addRepeaterDef,
   addPathOperatorDef,
-  setTextOnPathDef,
   createSkeletonRigDef,
   poseSkeletonDef,
 ];

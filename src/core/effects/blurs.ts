@@ -259,3 +259,149 @@ export function radialBlurData(
   }
   return out;
 }
+
+/**
+ * Blur ONE channel, as an independent scalar field.
+ *
+ * ── Why this does not call `blurRgba` ───────────────────────────────────────
+ *
+ * `boxBlurPass` weights every colour sample by that sample's ALPHA, which is
+ * what stops a blur dragging the colour of transparent pixels into the visible
+ * edge — correct, and essential, for an ordinary blur. It is wrong here in both
+ * directions: blurring the ALPHA channel by a weight derived from alpha is
+ * circular, and blurring red alone through an alpha weight makes the red radius
+ * depend on the layer's transparency rather than on the red slider.
+ *
+ * Channel Blur's contract is that each slider is independent, so its per-channel
+ * pass has to be an unweighted mean. Hence a second, smaller kernel rather than
+ * a flag on the first — the two genuinely compute different things.
+ */
+function blurOneChannel(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  channel: number,
+  radius: number,
+  dimensions: BlurDimensions,
+  repeatEdge: boolean,
+): void {
+  const r = Math.round(radius);
+  if (r <= 0) return;
+
+  const scratch = new Uint8ClampedArray(w * h);
+  const read = (i: number): number => data[i * 4 + channel]!;
+
+  const pass = (horizontal: boolean): void => {
+    const len = horizontal ? w : h;
+    const lines = horizontal ? h : w;
+    for (let line = 0; line < lines; line++) {
+      for (let i = 0; i < len; i++) {
+        let sum = 0;
+        let count = 0;
+        for (let k = -r; k <= r; k++) {
+          let j = i + k;
+          if (j < 0 || j >= len) {
+            // Off the end: clamp to the edge sample, or count a zero. Counting
+            // it either way is what makes the non-repeat mode fade at the
+            // border rather than just sampling a shorter window.
+            if (!repeatEdge) { count++; continue; }
+            j = j < 0 ? 0 : len - 1;
+          }
+          const idx = horizontal ? line * w + j : j * w + line;
+          sum += read(idx);
+          count++;
+        }
+        const idx = horizontal ? line * w + i : i * w + line;
+        scratch[idx] = count > 0 ? sum / count : read(idx);
+      }
+    }
+    for (let i = 0; i < w * h; i++) data[i * 4 + channel] = scratch[i]!;
+  };
+
+  if (dimensions !== 'vertical') pass(true);
+  if (dimensions !== 'horizontal') pass(false);
+}
+
+/**
+ * Channel Blur — a separate blur radius for red, green, blue and alpha.
+ *
+ * Two jobs justify it, and neither is reachable with an ordinary blur:
+ *
+ *   • Blurring ALPHA ALONE softens a matte's edge without touching the image
+ *     inside it. That is the standard way to take the aliasing off a key, and
+ *     doing it with a normal blur would soften the picture too.
+ *   • Blurring one COLOUR channel more than the others reproduces chromatic
+ *     aberration and cheap-lens softness, which is most of what makes composited
+ *     footage sit in a plate instead of floating on it.
+ *
+ * Each channel is an independent unweighted blur — see `blurOneChannel` for why
+ * that cannot share the main blur's alpha-weighted kernel.
+ */
+export function channelBlurData(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  radii: { red: number; green: number; blue: number; alpha: number },
+  dimensions: BlurDimensions,
+  repeatEdge: boolean,
+): Uint8ClampedArray {
+  blurOneChannel(data, w, h, 0, radii.red, dimensions, repeatEdge);
+  blurOneChannel(data, w, h, 1, radii.green, dimensions, repeatEdge);
+  blurOneChannel(data, w, h, 2, radii.blue, dimensions, repeatEdge);
+  blurOneChannel(data, w, h, 3, radii.alpha, dimensions, repeatEdge);
+  return data;
+}
+
+/**
+ * Unsharp Mask — raise local contrast by subtracting a blurred copy.
+ *
+ * The classic sharpening operator, and a strictly better one than the existing
+ * `sharpen`, which is a fixed 3×3 kernel: that kernel's radius is one pixel and
+ * cannot change, so on a 4K frame it sharpens grain instead of detail. Here the
+ * RADIUS chooses the scale of the detail being enhanced, which is the control
+ * that makes sharpening usable at more than one resolution.
+ *
+ * The operator is `out = src + amount · (src − blur(src))`. The difference term
+ * is the detail the blur removed, so adding it back scaled up exaggerates
+ * exactly what the blur destroyed and leaves flat areas alone.
+ *
+ * ── Threshold ───────────────────────────────────────────────────────────────
+ *
+ * `threshold` is what separates a sharpen from a grain amplifier: differences
+ * smaller than it are left untouched, so film grain and sensor noise — which are
+ * low-amplitude everywhere — stay put while real edges get the boost. Sharpening
+ * a noisy plate without it makes the noise the sharpest thing in frame.
+ *
+ * Reuses `blurRgba`, whose alpha weighting is right for this one: the blurred
+ * copy is a stand-in for the image, and it should no more drag transparent
+ * colour inward here than it does anywhere else.
+ */
+export function unsharpMaskData(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  amount: number,
+  radius: number,
+  threshold: number,
+): Uint8ClampedArray {
+  const k = amount / 100;
+  if (k === 0 || radius <= 0) return data;
+
+  // Three iterations so the reference blur is a Gaussian rather than a box —
+  // a box blur's flat kernel leaves ringing at the scale of its own width, and
+  // an unsharp mask amplifies precisely that.
+  const blurred = blurRgba(new Uint8ClampedArray(data), w, h, radius, { iterations: 3, repeatEdge: true });
+
+  for (let i = 0; i < data.length; i += 4) {
+    for (let c = 0; c < 3; c++) {
+      const v = data[i + c]!;
+      const d = v - blurred[i + c]!;
+      if (Math.abs(d) <= threshold) continue;
+      data[i + c] = v + d * k;
+    }
+    // Alpha is deliberately untouched: sharpening a matte's edge is Channel
+    // Blur's business, and doing it here would make every sharpen quietly
+    // harden the layer's outline.
+  }
+  return data;
+}

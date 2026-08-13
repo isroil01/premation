@@ -53,10 +53,21 @@ import { registerAiKeyIpc, maskKey, keyStatuses, getKeyForProvider, resetVaultCa
  */
 const VAULT_FILE = path.join('/tmp/motion-test', 'ai-keys.bin');
 
+/**
+ * An invocation from our own top-level renderer.
+ *
+ * Handlers now run behind `ipcGuard`, which refuses anything that is not the
+ * app's own top frame — so a bare `{}` event is rejected before the vault is
+ * reached. That refusal is the point of the wrapper; here it just means the
+ * stub has to look like the real caller.
+ */
+const mainFrame = { url: 'file:///C:/app/dist/index.html' };
+const frameEvent = { senderFrame: mainFrame, sender: { mainFrame } };
+
 const invoke = (channel: string, ...args: unknown[]): unknown => {
   const fn = handlers.get(channel);
   if (!fn) throw new Error(`no handler for ${channel}`);
-  return fn({}, ...args);
+  return fn(frameEvent, ...args);
 };
 
 beforeEach(() => {

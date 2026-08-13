@@ -12,7 +12,8 @@
  */
 
 import path from 'node:path';
-import type { IpcMain, App } from 'electron';
+import type { App } from 'electron';
+import { handle } from './ipcGuard';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any;
@@ -24,7 +25,7 @@ function initDb(app: App): Db | null {
   if (initTried) return db;
   initTried = true;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+
     const Database = require('better-sqlite3');
     const file = path.join(app.getPath('userData'), 'index.sqlite');
     db = new Database(file);
@@ -66,10 +67,10 @@ const rowToProject = (r: any) => ({
   openedAt: r.opened_at ?? undefined, missing: !!r.missing,
 });
 
-export function registerIndexIpc(ipcMain: IpcMain, app: App): void {
-  ipcMain.handle('index:available', async () => initDb(app) != null);
+export function registerIndexIpc(app: App): void {
+  handle('index:available', async () => initDb(app) != null);
 
-  ipcMain.handle('index:upsertProject', async (_e, row: any) => {
+  handle('index:upsertProject', async (_e, row: any) => {
     const d = initDb(app);
     if (!d) return;
     d.prepare(
@@ -87,14 +88,14 @@ export function registerIndexIpc(ipcMain: IpcMain, app: App): void {
     });
   });
 
-  ipcMain.handle('index:getProject', async (_e, id: string) => {
+  handle('index:getProject', async (_e, id: string) => {
     const d = initDb(app);
     if (!d) return null;
     const r = d.prepare('SELECT * FROM projects WHERE id = ?').get(id);
     return r ? rowToProject(r) : null;
   });
 
-  ipcMain.handle('index:listProjects', async (_e, opts: any) => {
+  handle('index:listProjects', async (_e, opts: any) => {
     const d = initDb(app);
     if (!d) return [];
     const where = opts?.includeMissing ? '' : 'WHERE missing = 0';
@@ -105,20 +106,20 @@ export function registerIndexIpc(ipcMain: IpcMain, app: App): void {
     return rows.map(rowToProject);
   });
 
-  ipcMain.handle('index:removeProject', async (_e, id: string) => {
+  handle('index:removeProject', async (_e, id: string) => {
     const d = initDb(app);
     if (!d) return;
     d.prepare('DELETE FROM projects WHERE id = ?').run(id);
     d.prepare('DELETE FROM recovery WHERE project_id = ?').run(id);
   });
 
-  ipcMain.handle('index:markMissing', async (_e, id: string, missing: boolean) => {
+  handle('index:markMissing', async (_e, id: string, missing: boolean) => {
     const d = initDb(app);
     if (!d) return;
     d.prepare('UPDATE projects SET missing = ? WHERE id = ?').run(missing ? 1 : 0, id);
   });
 
-  ipcMain.handle('index:addRecovery', async (_e, row: any) => {
+  handle('index:addRecovery', async (_e, row: any) => {
     const d = initDb(app);
     if (!d) return;
     d.prepare(
@@ -127,14 +128,14 @@ export function registerIndexIpc(ipcMain: IpcMain, app: App): void {
     ).run({ projectId: row.projectId, snapshotPath: row.snapshotPath, createdAt: row.createdAt, rev: row.rev ?? null });
   });
 
-  ipcMain.handle('index:listRecovery', async (_e, projectId: string) => {
+  handle('index:listRecovery', async (_e, projectId: string) => {
     const d = initDb(app);
     if (!d) return [];
     return d.prepare('SELECT * FROM recovery WHERE project_id = ? ORDER BY created_at DESC').all(projectId)
       .map((r: any) => ({ projectId: r.project_id, snapshotPath: r.snapshot_path, createdAt: r.created_at, rev: r.rev ?? undefined }));
   });
 
-  ipcMain.handle('index:clearRecovery', async (_e, projectId: string) => {
+  handle('index:clearRecovery', async (_e, projectId: string) => {
     const d = initDb(app);
     if (!d) return;
     d.prepare('DELETE FROM recovery WHERE project_id = ?').run(projectId);

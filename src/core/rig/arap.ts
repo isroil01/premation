@@ -617,8 +617,36 @@ export function deformArap(
         s10 += w * ey * epx;
         s11 += w * ey * epy;
       }
-      // 2D orthogonal Procrustes: θ = atan2(S10−S01, S00+S11).
-      let theta = Math.atan2(s10 - s01, s00 + s11);
+      // 2D orthogonal Procrustes.
+      //
+      // The global step below applies R(θ) = [[c,−s],[s,c]] to the REST edge
+      // (`cs·ex − sn·ey`, `sn·ex + cs·ey`), so R·e_rest is its target for the
+      // deformed edge, and the local step must return the θ MAXIMISING
+      // Σ w (R·e_rest)·e_def. With S = Σ w·e_rest⊗e_def as accumulated above,
+      //
+      //   (R·e)·e' = c·(ex·epx + ey·epy) + s·(ex·epy − ey·epx)
+      //            = c·(s00 + s11) + s·(s01 − s10)
+      //
+      // which is maximal at θ = atan2(s01 − s10, s00 + s11).
+      //
+      // This read `atan2(s10 − s01, …)` — the NEGATION — until F33. Check it on
+      // one edge: a rest edge (1,0) rotated by +90° becomes (0,1), giving
+      // s01 = 1 and s00 = s10 = s11 = 0; the expression above returns +90°, the
+      // old one returned −90°. The two writers into `cosV`/`sinV` disagreed as a
+      // result: `resolvePinnedVertices` stores `sin = +sin(rot)` at a pinned
+      // vertex, so handles turned one way while every fitted interior vertex
+      // turned the other, and the local step spent each iteration undoing the
+      // global step. The tell is that the iteration ANTI-converged: on a rigidly
+      // rotated handle set — whose exact energy minimum is that rigid rotation —
+      // worst-vertex error GREW with the outer count (2 iters 21.4px, 4 30.2,
+      // 8 43.9, 16 53.7, 32 56.9). Corrected it converges instead.
+      //
+      // It survived because ARAP warm-starts from LBS and falls back to it, so
+      // the symptom read as a mesh that was insufficiently rigid rather than one
+      // visibly backwards — and because no assertion in `src/core/rig` observed
+      // the sign at all (see `arapRotationDirection.test.ts` and
+      // `scripts/symmetrySweep.mjs`).
+      let theta = Math.atan2(s01 - s10, s00 + s11);
       // Mesh Rotation Refinement: cap how far any vertex may rotate. A sparse
       // handle set lets the local step fit large rotations that read as
       // twisting; clamping the magnitude suppresses that. No limit → untouched.

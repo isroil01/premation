@@ -1,0 +1,161 @@
+/*
+ * The tab strip and the body beneath it.
+ *
+ * The one rule that is not cosmetic: `.scenePane` is ALWAYS rendered, and
+ * hidden with `visibility` — never `display: none`, and never a conditional
+ * render. See the note in `EditorTabs.tsx`.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.strip {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  height: var(--bar-height-panel, 30px);
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  max-width: 200px;
+  min-width: 0;
+  border: none;
+  border-right: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tab:hover { background: var(--color-hover); color: var(--color-text-primary); }
+
+.tabActive {
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+  box-shadow: inset 0 -2px 0 var(--color-primary);
+}
+
+/* Visible keyboard focus, everywhere. */
+.tab:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+/* A preview tab reads as provisional, which is exactly what it is. */
+.tabPreview { font-style: italic; }
+
+.tabLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--radius-sm, 3px);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.close:hover { background: var(--color-active); opacity: 1; }
+.close:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; }
+
+.overflow {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border: none;
+  border-left: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.overflow:hover { color: var(--color-text-primary); background: var(--color-hover); }
+.overflow:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; }
+
+.overflowMenu {
+  position: absolute;
+  right: var(--space-2);
+  top: var(--bar-height-panel, 30px);
+  z-index: var(--z-popover, 50);
+  min-width: 220px;
+  padding: var(--space-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 4px);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 0.35));
+}
+
+.overflowItem {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-label);
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm, 3px);
+}
+.overflowItem:hover { background: var(--color-hover); }
+
+.body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/*
+ * Scene.
+ *
+ * Always in the tree, always laid out. `visibility: hidden` rather than
+ * `display: none` on purpose: `display: none` collapses the element's box, the
+ * canvas inside it resizes to zero, and coming back gives a black or
+ * wrongly-scaled stage until something forces a resize. Keeping the box means
+ * the drawing buffer keeps its dimensions the whole time it is off screen.
+ */
+.scenePane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.sceneHidden {
+  visibility: hidden;
+  /* Off the interaction path while hidden — a viewport that still swallowed
+     clicks from behind an open tab would be a genuinely baffling bug. */
+  pointer-events: none;
+}
+
+.tabPane {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--color-panel);
+}

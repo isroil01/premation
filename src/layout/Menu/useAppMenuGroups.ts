@@ -14,6 +14,8 @@ import pluginHost from '@core/plugins/PluginHost';
 import { usePluginStore } from '@stores/pluginStore';
 import { APP_MENU, type MenuGroupModel, type MenuItemModel } from './menuModel';
 import { buildPluginsMenuGroup } from './pluginMenu';
+import { allLayerKinds } from '@core/plugins/layerKindRegistry';
+import { pluginsEnabled } from '@core/config/edition';
 
 export function useAppMenuGroups(): MenuGroupModel[] {
   // Runtime status (running / stopped / crashed, contributed commands).
@@ -25,13 +27,56 @@ export function useAppMenuGroups(): MenuGroupModel[] {
   const installed = usePluginStore((s) => s.plugins);
 
   return useMemo(() => {
+    /*
+      A build without plugins gets the app menu with no plugin group and no
+      layer-kind entries — but still filtered, because `visibleItems` is what
+      applies every OTHER edition gate in the menu. Returning `APP_MENU` raw
+      here would hide the plugins and un-hide the cloud.
+
+      Gated before anything is assembled rather than filtered afterwards. Both
+      additions are built from registries that are empty in this edition, so the
+      code below would produce the same answer today — and relying on that would
+      make the real gate "nothing happens to be installed", which stops being
+      true the moment something registers a kind for an unrelated reason.
+    */
+    if (!pluginsEnabled()) {
+      return APP_MENU.map((g) => ({ ...g, items: visibleItems(g.items) }));
+    }
+
     const plugins = buildPluginsMenuGroup();
     // Before Help, after Window — the same place After Effects puts it, and the
     // same place a user looks for "things that were added to this app".
     const helpAt = APP_MENU.findIndex((g) => g.id === 'help');
     const at = helpAt === -1 ? APP_MENU.length : helpAt;
     const groups = [...APP_MENU.slice(0, at), plugins, ...APP_MENU.slice(at)];
-    return groups.map((g) => ({ ...g, items: visibleItems(g.items) }));
+
+    /*
+      Plugin layer kinds, in the LAYER menu rather than the Plugins menu.
+
+      A user looking for "how do I add one of these" looks under Layer ▸ New,
+      beside Text and Solid — not under a menu named after the mechanism that
+      happens to provide it. The Plugins menu is for managing plugins; this is
+      for making a layer.
+
+      Built per render from the live registry, so enabling or disabling a plugin
+      changes the menu without a reload — `revision` and `installed` above are
+      already the dependencies that drive it.
+    */
+    const kinds = allLayerKinds();
+    const withKinds = kinds.length === 0 ? groups : groups.map((g) => {
+      if (g.id !== 'layer') return g;
+      const entries: MenuItemModel[] = kinds.map((k) => ({
+        commandId: `layer.new.${k.pluginId}.${k.kind.id}`,
+        label: `New -> ${k.kind.label}`,
+      }));
+      // After the native New entries and before the separator that follows
+      // them, so the list reads as one group of things you can create.
+      const firstSeparator = g.items.findIndex((it) => it.separator);
+      const at2 = firstSeparator === -1 ? g.items.length : firstSeparator;
+      return { ...g, items: [...g.items.slice(0, at2), ...entries, ...g.items.slice(at2)] };
+    });
+
+    return withKinds.map((g) => ({ ...g, items: visibleItems(g.items) }));
   }, [revision, installed]);
 }
 

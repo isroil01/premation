@@ -516,6 +516,36 @@ describe('tool results teach the model', () => {
     const id = (res.data as { id: string }).id;
     const ok = await reg.execute('set_expression', { nodeId: id, prop: 'x', expression: 'wiggle(2, 30)' }, c);
     expect(ok.ok).toBe(true);
+    expect(ok.content).toContain('overrides any keyframed value');
+  });
+
+  /**
+   * Writing an expression onto a property whose expression the user DISABLED
+   * succeeds and drives nothing: `setExpression` preserves the bit on purpose,
+   * so a rewrite cannot silently switch a formula back on. The tool has to say
+   * so, or the model reads "applied … it now overrides" and goes looking for a
+   * rendering bug that is not there.
+   *
+   * The clean fixture cannot reach this — it creates a fresh layer, where every
+   * expression is new and therefore enabled. Only pre-disabling gets here, and
+   * until this existed, breaking the report failed nothing across 155 AI tests.
+   */
+  it('says so when the property it wrote to has a DISABLED expression', async () => {
+    const reg = registry();
+    const c = ctx();
+    const res = await reg.execute('create_layer', { kind: 'shape', name: 'Box' }, c);
+    const id = (res.data as { id: string }).id;
+
+    await reg.execute('set_expression', { nodeId: id, prop: 'x', expression: 'wiggle(2, 30)' }, c);
+    defaultAnimation.setExpressionEnabled(id, 'x', false);
+
+    const out = await reg.execute('set_expression', { nodeId: id, prop: 'x', expression: 'time * 90' }, c);
+    expect(out.ok).toBe(true);
+    expect(out.content).toContain('DISABLED');
+    expect(out.content).not.toContain('It now overrides');
+    // …and the claim is true: the write landed, the bit did not move.
+    expect(defaultAnimation.getExpressionSrc(id, 'x')).toBe('time * 90');
+    expect(defaultAnimation.isExpressionEnabled(id, 'x')).toBe(false);
   });
 
   it('names the available presets when given an unknown one', async () => {

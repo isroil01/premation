@@ -1,0 +1,237 @@
+/*
+ * `.root` is gone with `ViewportHeader` — there is no bar above the canvas any
+ * more. So are `.compName` / `.compLabel`: the composition name is the Scene
+ * tab's label now (`layout/Tabs/EditorTabs.tsx`), styled by the tab strip like
+ * every other tab.
+ */
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 100%;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/*
+ * The tool cluster, INSIDE the timeline's tool row.
+ *
+ * Every property that made it a floating pill is gone: the border, the radius,
+ * the shadow, the backdrop blur and its own surface colour. All of those exist
+ * to separate a thing from the canvas it hovers over, and it does not hover
+ * over anything now — it sits in a row beside Play and the trim buttons, so it
+ * has to read as part of that row rather than as an object resting on it.
+ *
+ * Still shrink-wrapped and `nowrap`: most of these controls are contextual, and
+ * the row scrolls rather than reflows when they all appear at once.
+ */
+.tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-sans);
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/*
+ * Every interactive control in this bar is --control-height-md. They used to
+ * be 24px (buttons), 24px (select) and 22px (the axis dropdown), which meant
+ * the axis picker sat a pixel high against its neighbours. Horizontal spacing
+ * comes from the parent's `gap`, not per-child margins.
+ */
+.headerBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--control-height-md);
+  padding: 0 var(--space-4);
+  background: transparent;
+  /* Transparent border so the active state doesn't shift layout. */
+  border: 1px solid transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.headerBtn:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+/*
+ * The active state only needs to beat .headerBtn, which it already does by
+ * being applied alongside it and declared later. The !important flags were
+ * fighting a specificity war that did not exist.
+ */
+.headerBtnActive {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.headerBtnActive:hover {
+  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  color: var(--color-primary);
+  border-color: transparent;
+}
+
+/* The auto-keyframe button's "REC" word. Inline styles before — which meant it
+   could not be targeted by the collapse rules below. */
+.recLabel {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  margin-left: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sep {
+  width: 1px;
+  height: var(--space-6);
+  background: var(--color-border-strong);
+  margin: 0 var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Aspect-ratio / screen-size dropdown. */
+.select {
+  height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.select:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-primary);
+}
+
+/*
+ * Compact header dropdown (3D axis mode: Local / World / View). It asked for
+ * --color-text-main, which is not a token in any theme, so it fell through to
+ * pure #ffffff and rendered brighter than every label beside it.
+ */
+.headerSelect {
+  height: var(--control-height-md);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-3);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.headerSelect:hover {
+  border-color: var(--color-primary);
+}
+
+/* Small dimensions read-out next to the ratio picker. */
+.dims {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Read-only composition size (size is fixed at creation — no selector). */
+.sizeLabel {
+  height: var(--control-height-md);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+}
+
+/*
+ * Badges. These are read-only status, so they take --control-height-xs and sit
+ * a step below the interactive controls — that size difference is what tells
+ * you at a glance which things in this bar you can click.
+ *
+ * All three share one geometry block; only the colour differs. Amber is mixed
+ * from --color-warning rather than pasted as rgba(245,158,11), which was a
+ * *different* amber (#f59e0b) from the token (#f5b84b) — so the fill and the
+ * text on these badges were two shades apart.
+ */
+.animatedChip,
+.softwareBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height-xs);
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-wide);
+  border: 1px solid transparent;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.animatedChip {
+  color: var(--color-primary);
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary-subtle);
+}
+
+.softwareBadge {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning) 25%, transparent);
+}
+
+/*
+ * Progressive collapse, driven by the TIMELINE ROW's width (`tl-toolbar`).
+ *
+ * This cluster is 300-400px of controls dropped into a row that was already
+ * using nearly all of its space, so on a narrow window it pushed the tools at
+ * the right edge out of view. Rather than let that happen silently, the cluster
+ * gives up its own least-valuable controls first, in a deliberate order — each
+ * one chosen because it has ANOTHER route, so nothing becomes unreachable:
+ *
+ *   1. Pop out viewport — also on the panel's grip menu.
+ *   2. Zoom group      — wheel zoom, +/- keys, and "Fit in view" inside the
+ *                        View Options dropdown, which stays.
+ *   3. The REC label   — the auto-keyframe button keeps its glyph and its
+ *                        active colour; only the word goes.
+ *
+ * A container query, not a media query: this row sits between two docks, so the
+ * window's width says nothing useful about how much room it actually has.
+ */
+@container tl-toolbar (max-width: 1180px) {
+  .tools .popOut {
+    display: none;
+  }
+}
+
+@container tl-toolbar (max-width: 920px) {
+  .tools .recLabel {
+    display: none;
+  }
+}

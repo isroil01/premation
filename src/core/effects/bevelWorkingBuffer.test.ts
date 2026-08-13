@@ -116,6 +116,33 @@ maybe('bevel working-buffer cap', () => {
   });
 
   it('is materially cheaper than the full-resolution path', () => {
-    expect(capped.ms).toBeLessThan(full.ms);
+    /*
+      ★ Best-of-N per cap, not the single `beforeAll` sample.
+
+      This compared two individual timings and duly inverted on a shared CI
+      runner — capped 317ms against full 247ms — reporting that the cap made
+      things slower. It does not: a single timing is an UPPER BOUND, because
+      the noise is one-sided (a descheduled thread or a GC pause can only make
+      a run longer). Comparing two upper bounds is a coin toss whenever the
+      scheduler interferes with the wrong one, and here the loser of that toss
+      reads as a performance regression.
+
+      The MINIMUM over several runs is the right statistic — the fastest run is
+      the one that was interrupted least — which is the same conclusion
+      `proxyBindingCost.test.ts` and `svgHybridImport.test.ts` already reached.
+
+      The `beforeAll` pair above is left alone: every other assertion in this
+      file reads `profile`/`outside`, which are PIXELS and deterministic. Only
+      the clock needed re-sampling, and it doubles as the warm-up.
+    */
+    const bestMs = (cap: number): number => {
+      let best = Infinity;
+      for (let i = 0; i < 5; i += 1) best = Math.min(best, profileAtCap(cap).ms);
+      return best;
+    };
+
+    const fullMs = bestMs(Infinity);
+    const cappedMs = bestMs(640);
+    expect(cappedMs).toBeLessThan(fullMs);
   });
 });

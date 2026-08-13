@@ -43,7 +43,7 @@
 .stopwatchOn {
   flex: none;
   width: 20px;
-  height: 20px;
+  height: var(--control-height-xs);
   display: grid;
   place-items: center;
   border-radius: var(--radius-sm);

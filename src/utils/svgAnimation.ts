@@ -26,7 +26,7 @@
  * half a file.
  */
 
-import { type Mat, matMul, matInvert, applyMat, parseTransform } from './svgParser';
+import { type Mat, type MatrixFactor, matMul, matInvert, applyMat, parseTransform } from './svgParser';
 import { readCssAnimations, type CssAnimation } from './svgCss';
 
 /** One sampled keyframe: comp seconds → value. */
@@ -320,7 +320,17 @@ function readAnim(el: Element, unsupported: Set<string>, unrollSeconds: number):
   if (infinite) active = unrollSeconds;
   else if (repeatRaw && Number.isFinite(Number(repeatRaw))) active = dur * Number(repeatRaw);
   if (repeatDur !== null) active = repeatDur;
-  active = Math.min(active, unrollSeconds);
+  // The unroll budget is measured from t=0, so a delayed animation gets less of
+  // it: keyframes past the end of the composition can never play.
+  const budget = Math.max(0, unrollSeconds - Math.max(0, begin));
+  // A FINITE animation that runs past the composition is genuinely cut short,
+  // and re-importing into a longer comp is the only way to get the rest — an
+  // endless one hitting the same ceiling is just the loop being baked, which is
+  // by design and must not be reported as a loss.
+  if (!infinite && active > budget + TIME_EPS) {
+    unsupported.add('the end of an animation longer than the composition');
+  }
+  active = Math.min(active, budget);
 
   return {
     el, target: el.parentElement as Element, attr, transformType, begin, dur, active, values, keyTimes,
@@ -596,6 +606,16 @@ export interface SvgAnimationOptions {
    * them is pure cost. Callers that know the comp duration should pass it.
    */
   maxDurationSeconds?: number;
+  /**
+   * Filled with everything about the file's animation that did NOT convert.
+   *
+   * The importer used to re-parse the whole document to build its toast, which
+   * meant the toast could only ever report what a fresh SCAN can see — not what
+   * the translation itself discovered (a keyframe budget it ran out of, a
+   * `translateX(100%)` that resolved to nothing). Handing the set in is what
+   * lets one parse answer both questions.
+   */
+  unsupportedOut?: Set<string>;
 }
 
 function indexByTarget(anims: readonly SmilAnim[]): Map<Element, SmilAnim[]> {
@@ -670,20 +690,47 @@ function fromCss(c: CssAnimation): SmilAnim {
   };
 }
 
+export interface ShapeAnimationOptions {
+  /**
+   * An element's static `opacity` (0..1).
+   *
+   * Needed because an opacity animation ANYWHERE on the chain makes the sampled
+   * track authoritative for the whole chain: a `<g opacity="0.4">` around a
+   * shape whose own opacity pulses must still be 40% of the pulse. Supplied by
+   * the parser, which is the side that has resolved the stylesheet.
+   */
+  staticOpacityOf?: (el: Element) => number;
+}
+
 /**
  * Keyframe tracks for one shape element.
  *
- * `chain` is the element and its ancestors (root last) — an animation on a `<g>`
- * moves everything inside it. `staticMatrix` is the fully baked matrix the
- * parser used for this shape's points, and `center` is the shape's centre in
- * that baked space; both are needed to express the animation as a delta.
+ * `factors` is every factor of the shape's baked matrix, outermost first —
+ * elements whose `transform` may animate, interleaved with the fixed coordinate
+ * systems between them (root viewBox map, `<use>` offsets, nested viewports).
+ * ALL of them are needed: rebuilding `A(t)` from the element transforms alone
+ * left the fixed ones inside `S` only, so `D = A·S⁻¹` carried a constant `R⁻¹`
+ * — a spurious offset and scale on every animated shape. See `MatrixFactor`.
+ *
+ * `staticMatrix` is the fully baked matrix the parser used for this shape's
+ * points, and `center` is the shape's centre in that baked space.
  */
 export function buildShapeAnimation(
-  chain: ReadonlyArray<Element>,
+  factors: ReadonlyArray<MatrixFactor>,
   scan: SvgAnimationScan,
   staticMatrix: Mat,
   center: { x: number; y: number },
+  opts?: ShapeAnimationOptions,
 ): SvgShapeAnimation | null {
+  // The element factors, innermost first — the shape itself, then its
+  // ancestors. An animation on a <g> moves everything inside it.
+  const chain: Element[] = [];
+  for (let i = factors.length - 1; i >= 0; i--) {
+    const f = factors[i]!;
+    if ('el' in f) chain.push(f.el);
+  }
+  if (chain.length === 0) return null;
+
   // Only the chain's own elements can drive this shape — look them up rather
   // than scanning the document's whole animation list per shape.
   const relevant: SmilAnim[] = [];
@@ -704,17 +751,27 @@ export function buildShapeAnimation(
   // of them are endless — a finite `repeatCount` must NOT become an eternal
   // loop, and mixed periods have a combined period this cannot express.
   const lead = relevant[0]!;
-  const uniformCycle = relevant.every((a) => a.infinite
-    && a.dur > 0
-    && Math.abs(a.begin - lead.begin) < TIME_EPS
-    && Math.abs(a.dur - lead.dur) < TIME_EPS
-    && !!a.alternate === !!lead.alternate);
+  // A POSITIVE delay is a real lead-in and is NOT part of the period: baking
+  // `[0, begin + dur]` and looping it made two circles on the same 1 s
+  // animation, one delayed 0.5 s, run at 1.0 s and 1.5 s and drift apart
+  // forever. A NEGATIVE delay is the opposite — the animation is already
+  // mid-cycle at t=0, so `[0, dur]` is still a whole period and bakes fine.
+  const preRolled = relevant.every((a) => a.begin <= TIME_EPS);
+  const samePhase = relevant.every((a) => Math.abs(a.begin - lead.begin) < TIME_EPS);
+  const uniformCycle = preRolled
+    && relevant.every((a) => a.infinite
+      && a.dur > 0
+      && Math.abs(a.dur - lead.dur) < TIME_EPS
+      && !!a.alternate === !!lead.alternate)
+    // `pingpong` reflects a HALF period, so it is only right when every
+    // animation sits at the same point in its 2×dur cycle.
+    && (!lead.alternate || samePhase);
   const loop: 'cycle' | 'pingpong' | undefined = uniformCycle
     ? (lead.alternate ? 'pingpong' : 'cycle')
     : undefined;
 
   const end = uniformCycle
-    ? lead.begin + lead.dur
+    ? lead.dur
     : Math.max(...relevant.map((a) => a.begin + a.active));
   if (!(end > 0)) return null;
   const rotationStepDeg = uniformCycle ? CYCLE_ROTATION_STEP_DEG : MAX_ROTATION_STEP_DEG;
@@ -722,6 +779,12 @@ export function buildShapeAnimation(
   // Sample where the animation actually has knots; subdivide eased segments so
   // a spline is followed rather than cut straight across.
   const times = new Set<number>([0]);
+  // A negative `animation-delay` puts an animation's early keyTimes BEFORE the
+  // composition starts. Those instants are real (they set the phase at t=0, via
+  // `valueAt`) but they are not keyframes we can write.
+  const addTime = (t: number): void => {
+    if (t >= -TIME_EPS && t <= end + TIME_EPS) times.add(Math.max(0, t));
+  };
   for (const a of relevant) {
     const iterations = a.dur > 0 ? Math.ceil(a.active / a.dur) : 1;
     for (let it = 0; it < iterations; it++) {
@@ -729,7 +792,7 @@ export function buildShapeAnimation(
       for (let i = 0; i < a.keyTimes.length; i++) {
         const t = base + a.keyTimes[i]! * a.dur;
         if (t > end + TIME_EPS) break;
-        times.add(t);
+        addTime(t);
         const next = a.keyTimes[i + 1];
         if (next !== undefined) {
           // Splines need intermediate samples to follow their curve. So does
@@ -745,24 +808,27 @@ export function buildShapeAnimation(
           }
           for (let s = 1; s < subdivisions; s++) {
             const mid = base + (a.keyTimes[i]! + ((next - a.keyTimes[i]!) * s) / subdivisions) * a.dur;
-            if (mid <= end + TIME_EPS) times.add(mid);
+            if (mid <= end + TIME_EPS) addTime(mid);
           }
         }
       }
     }
-    // Sample just BEFORE each repeat boundary. A repeating animation ends its
-    // iteration at the final value and restarts instantly at the first; landing
-    // only on the boundary samples the RESTART and loses the ramp entirely, so a
-    // `repeatCount="2"` translate read as "still, then one slow move".
-    if (a.dur > 0 && a.active > a.dur) {
-      for (let it = 1; it * a.dur < a.active - TIME_EPS; it++) {
-        const boundary = a.begin + it * a.dur;
-        if (boundary - RESTART_EPS > a.begin && boundary - RESTART_EPS <= end + TIME_EPS) {
-          times.add(boundary - RESTART_EPS);
-        }
+    // Sample just BEFORE each iteration boundary, INCLUDING THE LAST.
+    //
+    // At a boundary the animation has already restarted (or already ended), so
+    // sampling only there reads the restart/base value and the iteration's ramp
+    // is never recorded. The interior boundaries were covered; the final one
+    // was not, and it is the one every animation has — a non-freezing
+    // `<animate from="0" to="50" dur="1s"/>` sampled 0 at t=0 and 0 at t=1 and
+    // was discarded as "never changes", so a one-shot SMIL animation imported
+    // as nothing at all. `repeatCount="2"` lost its second ramp the same way.
+    if (a.dur > 0) {
+      for (let it = 1; it * a.dur <= a.active + TIME_EPS; it++) {
+        const at = a.begin + it * a.dur - RESTART_EPS;
+        if (at > a.begin) addTime(at);
       }
     }
-    times.add(Math.min(a.begin + a.active, end));
+    addTime(Math.min(a.begin + a.active, end));
   }
   times.add(end);
 
@@ -798,15 +864,22 @@ export function buildShapeAnimation(
   // discarded: the step back to full opacity was never written.
   const hasOpacityAnim = relevant.some((a) => a.attr === 'opacity' || a.attr === 'fill-opacity');
 
-  // Per-element work that does NOT vary with time, hoisted out of the sample
-  // loop: which animations drive the element, split by kind, and its static
-  // transform. Inside the loop this ran `chain.length × times.length` times.
-  const perElement = chain.map((el) => {
-    const own = scan.byTarget.get(el) ?? [];
+  // Per-factor work that does NOT vary with time, hoisted out of the sample
+  // loop: which animations drive the element, split by kind, its static
+  // transform, and its static opacity. Inside the loop this ran
+  // `factors.length × times.length` times.
+  const staticOpacityOf = opts?.staticOpacityOf;
+  type FactorState =
+    | { fixed: Mat }
+    | { transforms: SmilAnim[]; opacities: SmilAnim[]; statics: Mat; staticOpacity: number };
+  const perFactor: FactorState[] = factors.map((f): FactorState => {
+    if (!('el' in f)) return { fixed: f.fixed };
+    const own = scan.byTarget.get(f.el) ?? [];
     return {
       transforms: own.filter((a) => a.attr === 'transform'),
       opacities: own.filter((a) => a.attr === 'opacity' || a.attr === 'fill-opacity'),
-      statics: parseTransform(el.getAttribute('transform')),
+      statics: parseTransform(f.el.getAttribute('transform')),
+      staticOpacity: staticOpacityOf ? staticOpacityOf(f.el) : 1,
     };
   });
 
@@ -823,14 +896,23 @@ export function buildShapeAnimation(
 
   for (const t of sorted) {
     const rt = readAt(t);
-    // Rebuild the chain's matrix with animated values substituted in.
+    // Rebuild the matrix in COMPOSITION order (outermost first), animated
+    // values substituted in and every fixed coordinate system left in place —
+    // exactly the product the parser baked, so `A·S⁻¹` is a pure delta.
     let animated: Mat = [1, 0, 0, 1, 0, 0];
-    let opacity: number | null = null;
-    for (let i = chain.length - 1; i >= 0; i--) {
-      const e = perElement[i]!;
+    let opacity = 1;
+    for (let i = 0; i < perFactor.length; i++) {
+      const e = perFactor[i]!;
+      if ('fixed' in e) {
+        animated = matMul(animated, e.fixed);
+        continue;
+      }
       animated = matMul(animated, elementMatrixAt(e.transforms, e.statics, rt));
+      // Where an element's opacity is not animated, its STATIC opacity still
+      // applies — an animated pulse inside a `<g opacity="0.4">` is 40% of the
+      // pulse, not the pulse.
       const o = e.opacities.length > 0 ? opacityAt(e.opacities, rt) : null;
-      if (o !== null) opacity = (opacity ?? 1) * o;
+      opacity *= o ?? e.staticOpacity;
     }
     // D = A · S⁻¹ maps the BAKED points to where they should be at time t.
     const d = matMul(animated, inv);
@@ -852,7 +934,7 @@ export function buildShapeAnimation(
     pushKf(rot, t, unwrapped, anyDiscrete);
     pushKf(sxs, t, dec.sx, anyDiscrete);
     pushKf(sys, t, dec.sy, anyDiscrete);
-    if (hasOpacityAnim) pushKf(ops, t, Math.max(0, Math.min(1, opacity ?? 1)) * 100, anyDiscrete);
+    if (hasOpacityAnim) pushKf(ops, t, Math.max(0, Math.min(1, opacity)) * 100, anyDiscrete);
     if (dashActive) {
       // Outside the animation's window valueAt is null → the static offset,
       // which for draw-on markup means "fully hidden" only while it has not

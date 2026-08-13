@@ -1,0 +1,112 @@
+/*
+ * The dock region that hosts plugins' own panels.
+ *
+ * Split out of `PluginsModal.module.css` when the manager modal was retired.
+ * These are the only classes that survived it: the frame is sized for a DOCK,
+ * not a modal — the user sets its size by dragging the dock edge, exactly as
+ * for every other panel.
+ */
+
+.dockPanel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+/* One tab per open plugin panel. A plugin may contribute several, and several
+   plugins may each contribute one, so this row is the only thing that can say
+   which of them is in front. */
+.dockTabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  overflow-x: auto;
+  flex: 0 0 auto;
+}
+
+.dockTab {
+  padding: 3px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dockTab:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.dockTabActive,
+.dockTabActive:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.dockTab:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.panelFrame {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 240px;
+  border: none;
+  background: var(--color-surface-1);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.emptyBody {
+  margin: 0;
+  max-width: 46ch;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+/* The one action a stopped panel offers. A plugin can be enabled and not
+   running — it crashed, or it never started — and the panel tab is where the
+   user finds that out, so it is also where the retry belongs. */
+.retry {
+  margin-top: var(--space-1);
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.retry:hover {
+  background: var(--color-surface-3);
+}
+
+.retry:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}

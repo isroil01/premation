@@ -33,7 +33,7 @@
 
 .header h2 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
   color: var(--color-text-primary);
 }
@@ -68,7 +68,7 @@
 }
 
 .fieldRow label {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
@@ -78,7 +78,7 @@
   color: var(--color-text-primary);
   padding: 6px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .multiInput {
@@ -95,7 +95,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-primary);
   cursor: pointer;
 }
@@ -111,7 +111,7 @@
 .cancelBtn, .okBtn {
   padding: 6px 12px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   cursor: pointer;
   border: 1px solid transparent;
 }

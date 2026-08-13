@@ -28,10 +28,10 @@ function openAccountMenu(email: string): void {
     size: 'sm',
     render: (close) => (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 260 }}>
-        <p style={{ margin: 0, fontSize: 13, color: 'var(--color-text-secondary)' }}>
+        <p style={{ margin: 0, fontSize: 'var(--font-size-md)', color: 'var(--color-text-secondary)' }}>
           Signed in as <strong style={{ color: 'var(--color-text-primary)' }}>{email}</strong>
         </p>
-        <p style={{ margin: 0, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+        <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-tertiary)' }}>
           Your projects and assets sync to the cloud. Open/Save uses your account.
         </p>
         <button
@@ -70,7 +70,7 @@ export function AccountButton(): JSX.Element | null {
     const label = user.name || user.email.split('@')[0];
     return (
       <button type="button" onClick={() => openAccountMenu(user.email)} title={user.email} style={pill}>
-        <Icon name="user" size={11} />
+        <Icon name="user" size="sm" />
         {label}
       </button>
     );
@@ -78,7 +78,7 @@ export function AccountButton(): JSX.Element | null {
 
   return (
     <button type="button" onClick={() => openAuthModal()} title="Sign in to sync to the cloud" style={pill}>
-      <Icon name="user" size={11} />
+      <Icon name="user" size="sm" />
       Sign in
     </button>
   );

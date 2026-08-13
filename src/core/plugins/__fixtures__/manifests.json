@@ -1,0 +1,2294 @@
+{
+  "_comment": [
+    "Shared manifest corpus. This exact file is duplicated in motion-back at",
+    "src/plugins/__fixtures__/manifests.json, and BOTH validators run it.",
+    "",
+    "The two run in different processes on different machines and neither can",
+    "import the other, so 'the registry accepts what the editor accepts' cannot",
+    "be guaranteed by sharing code. It can be guaranteed by sharing CASES: a",
+    "package the registry accepts and the editor then refuses is a user who",
+    "installed something that does not work, and a package the registry refuses",
+    "and the editor would have accepted is a publisher who cannot ship.",
+    "",
+    "Keep the two copies byte-identical. Add a case to both or to neither."
+  ],
+  "cases": [
+    {
+      "name": "api-1 minimal",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.one",
+        "name": "One",
+        "version": "1.0.0",
+        "description": "A minimal API 1 package.",
+        "apiVersion": 1,
+        "main": "main.js"
+      }
+    },
+    {
+      "name": "api-1 legacy panel string",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.legacy",
+        "name": "Legacy",
+        "version": "1.0.0",
+        "description": "Declares a panel the old way.",
+        "apiVersion": 1,
+        "main": "main.js",
+        "panel": "panel.html"
+      }
+    },
+    {
+      "name": "api-2 with contributes",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "bounce",
+              "label": "Bounce selection",
+              "icon": "zap",
+              "needsSelection": true
+            }
+          ],
+          "panels": [
+            {
+              "id": "main",
+              "title": "Easing Lab",
+              "entry": "panel.html"
+            }
+          ]
+        },
+        "activationEvents": [
+          "onCommand:bounce",
+          "onPanel:main"
+        ]
+      }
+    },
+    {
+      "name": "api-2 reserved keys present but empty",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.reserved",
+        "name": "Reserved",
+        "version": "1.0.0",
+        "description": "Reserved keys are known, and empty is fine.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [],
+          "effects": []
+        }
+      }
+    },
+    {
+      "name": "api-2 asset permissions",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.assets",
+        "name": "Assets",
+        "version": "1.0.0",
+        "description": "Reads and writes images.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "permissions": [
+          "assets:read",
+          "assets:write"
+        ]
+      }
+    },
+    {
+      "name": "an apiVersion beyond this host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.future",
+        "name": "Future",
+        "version": "1.0.0",
+        "description": "Built against a host generation that does not exist yet.",
+        "apiVersion": 99,
+        "main": "main.js"
+      }
+    },
+    {
+      "name": "contributes under apiVersion 1",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.mismatch",
+        "name": "Mismatch",
+        "version": "1.0.0",
+        "description": "Declares API 2 features at API 1.",
+        "apiVersion": 1,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "both panel and contributes.panels",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.both",
+        "name": "Both",
+        "version": "1.0.0",
+        "description": "Declares a panel twice, two different ways.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "panel": "panel.html",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Main",
+              "entry": "panel.html"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "reserved layerKinds non-empty",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.layerkinds",
+        "name": "LayerKinds",
+        "version": "1.0.0",
+        "description": "Uses a Phase 2 feature.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "orb"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "reserved effects non-empty",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.effects",
+        "name": "Effects",
+        "version": "1.0.0",
+        "description": "Uses a Phase 3 feature.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "duplicate command id",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dupe",
+        "name": "Dupe",
+        "version": "1.0.0",
+        "description": "Two commands with one id.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go"
+            },
+            {
+              "id": "go",
+              "label": "Go again"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "command id with a dot",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dotted",
+        "name": "Dotted",
+        "version": "1.0.0",
+        "description": "The host joins on dots, so ids cannot contain one.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "a.b",
+              "label": "Dotted"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "unknown icon name",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.icon",
+        "name": "Icon",
+        "version": "1.0.0",
+        "description": "Refused at validation, not silently at render.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go",
+              "icon": "definitely-not-an-icon"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "panel entry escapes the package",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.traversal",
+        "name": "Traversal",
+        "version": "1.0.0",
+        "description": "A panel entry that climbs out of the package.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Main",
+              "entry": "../../etc/passwd"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "panel entry is absolute",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.absolute",
+        "name": "Absolute",
+        "version": "1.0.0",
+        "description": "An absolute panel entry.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Main",
+              "entry": "/etc/passwd"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "activation event names a command that does not exist",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dangling",
+        "name": "Dangling",
+        "version": "1.0.0",
+        "description": "An event that can never fire.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "go",
+              "label": "Go"
+            }
+          ]
+        },
+        "activationEvents": [
+          "onCommand:nope"
+        ]
+      }
+    },
+    {
+      "name": "activation event names a panel that does not exist",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.danglingpanel",
+        "name": "DanglingPanel",
+        "version": "1.0.0",
+        "description": "An event that can never fire.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "activationEvents": [
+          "onPanel:main"
+        ]
+      }
+    },
+    {
+      "name": "unknown activation event",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.unknownevent",
+        "name": "UnknownEvent",
+        "version": "1.0.0",
+        "description": "Not one of the three.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "activationEvents": [
+          "onSaturday"
+        ]
+      }
+    },
+    {
+      "name": "unknown permission",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.perm",
+        "name": "Perm",
+        "version": "1.0.0",
+        "description": "Asks for something that does not exist.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "permissions": [
+          "filesystem:write"
+        ]
+      }
+    },
+    {
+      "name": "main escapes the package",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.mainescape",
+        "name": "MainEscape",
+        "version": "1.0.0",
+        "description": "An entry module outside the package.",
+        "apiVersion": 2,
+        "main": "../../../main.js"
+      }
+    },
+    {
+      "name": "a layer kind with every property type",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.kinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a controller kind draws nothing and is still valid",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.controller",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "rig",
+              "label": "Depth Image",
+              "render": "none",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "layerKinds at apiVersion 2 is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.oldapi",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an empty layerKinds block stays valid at apiVersion 2",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.emptykinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": []
+        }
+      }
+    },
+    {
+      "name": "the shader render strategy is live at apiVersion 4",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.shader",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "shader",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "note": "Reserved before API 4 and refused with a VERSION message, not an unknown-value one. Both validators had to change together, which is what this shared corpus is for."
+    },
+    {
+      "name": "an unknown render strategy is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.badrender",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "canvas",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a string property cannot be animatable",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.animstring",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "title": {
+                  "type": "string",
+                  "default": "x",
+                  "animatable": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a default below its own min is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.baddefault",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": -1,
+                  "min": 0,
+                  "max": 10
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an enum default outside its own values is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.badenum",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "a",
+                    "b"
+                  ],
+                  "default": "c"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a missing default is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.nodefault",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an asset property may not carry a default",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.assetdefault",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "source": {
+                  "type": "asset",
+                  "default": "asset-7"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a kind id that is not camelCase is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.badid",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depth-image",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a duplicate kind id is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.dupekind",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            },
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a kind with no properties is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.nopropskind",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a missing schemaVersion is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.noschemaversion",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel with no placement is accepted (it defaults to the shared host)",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelnoplacement",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel asking for its own sidebar tab, with an icon, is accepted",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelsidebar",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "sidebar",
+              "icon": "layers"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel asking for its own inspector tab, with an icon, is accepted",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelinspector",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "inspector",
+              "icon": "sliders-h"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an unknown placement is refused rather than defaulted",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.panelbadplacement",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "left",
+              "icon": "layers"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel that asks for its own tab without an icon is refused (the rail is icon-only)",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.panelnoicon",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "sidebar"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a panel icon the editor does not have is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.panelbadicon",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "sidebar",
+              "icon": "not-a-real-glyph"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a shared panel may still carry an icon",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.panelsharedicon",
+        "name": "Panels",
+        "version": "1.0.0",
+        "description": "Contributes panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "panels": [
+            {
+              "id": "main",
+              "title": "Tools",
+              "entry": "panel.html",
+              "placement": "shared",
+              "icon": "layers"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an effect with a shader and typed params",
+      "valid": true,
+      "note": "The happy path for API 4. Both validators must accept it.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "params": {
+                "amount": {
+                  "type": "number",
+                  "default": 1,
+                  "min": 0,
+                  "max": 2,
+                  "animatable": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "effects require apiVersion 4",
+      "valid": false,
+      "note": "A NON-EMPTY block is what uses the feature. An API-3 manifest spelling out effects: [] stays valid — see the next case.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "params": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an empty effects block stays valid on an older apiVersion",
+      "valid": true,
+      "note": "effects was a RESERVED key validated as must-be-empty under API 1-3, so packages declaring nothing must not break.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "effects": []
+        }
+      }
+    },
+    {
+      "name": "an effect parameter must be a type a shader can take",
+      "valid": false,
+      "note": "A string has no bytes in a uniform block. Refused at publish rather than discovered from a black frame.",
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv) * params.amount; }",
+              "params": {
+                "mode": {
+                  "type": "string",
+                  "default": "x"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "an effect must declare a shader",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "tint",
+              "label": "Tint",
+              "params": {}
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a declared host with the matching permission is valid",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "net:fetch without a host list is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ]
+      }
+    },
+    {
+      "name": "a host list without net:fetch is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "an empty host list is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": []
+          }
+        }
+      }
+    },
+    {
+      "name": "a wildcard host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "*.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a host with a scheme is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "https://api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a host with a port is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com:8443"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "localhost is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "localhost"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a .internal host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "db.internal"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "more than eight hosts is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "a1.example.com",
+              "a2.example.com",
+              "a3.example.com",
+              "a4.example.com",
+              "a5.example.com",
+              "a6.example.com",
+              "a7.example.com",
+              "a8.example.com",
+              "a9.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "a duplicated host is refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com",
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "contributes.net needs apiVersion 4",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "api.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "eight hosts is accepted",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.net",
+        "name": "Net",
+        "version": "1.0.0",
+        "description": "Talks to a server.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "permissions": [
+          "net:fetch"
+        ],
+        "contributes": {
+          "net": {
+            "hosts": [
+              "a1.example.com",
+              "a2.example.com",
+              "a3.example.com",
+              "a4.example.com",
+              "a5.example.com",
+              "a6.example.com",
+              "a7.example.com",
+              "a8.example.com"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "API 4 effect with a layer parameter",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "depthMap": {
+                  "type": "layer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a layer parameter cannot carry a default",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "depthMap": {
+                  "type": "layer",
+                  "default": "n_1"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "two layer parameters are refused",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "a": {
+                  "type": "layer"
+                },
+                "b": {
+                  "type": "layer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a layer parameter beside uniform parameters",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> { return textureSample(src, samp, uv); }",
+              "params": {
+                "depthMap": {
+                  "type": "layer"
+                },
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "animatable": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "layer is refused on a layer KIND",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "Draws pixels.",
+        "apiVersion": 4,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depth",
+              "label": "Depth",
+              "render": "none",
+              "schemaVersion": 2,
+              "props": {
+                "source": {
+                  "type": "layer"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 two-pass separable chain",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "blur",
+              "label": "Blur",
+              "passes": [
+                {
+                  "name": "horizontal",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "vertical",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with a downsampled pass",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "bloom",
+              "label": "Bloom",
+              "passes": [
+                {
+                  "name": "bright",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "blur",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "composite",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "reads": "both"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain declaring both shader and passes",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 empty pass chain",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain over the pass count limit",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "c",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "d",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "e",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain over the cost budget",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "c",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "d",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with a duplicate pass name",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with an unsupported scale",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.9
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain reading origin on the first pass",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "reads": "origin"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 effect with neither shader nor passes",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain reading origin on a later pass",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "first",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "second",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "reads": "origin"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with an explicit scale of 1",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 1
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 1
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain with an explicit reads of previous",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "reads": "previous"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 effect declaring a spread",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "radius": {
+                  "type": "number",
+                  "default": 8
+                }
+              },
+              "spread": {
+                "param": "radius",
+                "factor": 2.5
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 spread naming a parameter that does not exist",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "radius": {
+                  "type": "number",
+                  "default": 8
+                }
+              },
+              "spread": {
+                "param": "nope",
+                "factor": 2
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 spread naming a non-number parameter",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "tint": {
+                  "type": "color",
+                  "default": "#ffffff"
+                }
+              },
+              "spread": {
+                "param": "tint"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 spread with a negative factor",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A spread case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "glow",
+              "label": "Glow",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "radius": {
+                  "type": "number",
+                  "default": 8
+                }
+              },
+              "spread": {
+                "param": "radius",
+                "factor": -1
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 effect with a point parameter",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "centre": {
+                  "type": "point",
+                  "default": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 point default given as an array",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "centre": {
+                  "type": "point",
+                  "default": [
+                    0,
+                    0
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 point default missing an axis",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "centre": {
+                  "type": "point",
+                  "default": {
+                    "x": 1
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 point alongside a colour and a scalar",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A point case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "shader": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+              "params": {
+                "tint": {
+                  "type": "color",
+                  "default": "#ffffff"
+                },
+                "centre": {
+                  "type": "point",
+                  "default": {
+                    "x": 2,
+                    "y": 3
+                  }
+                },
+                "amount": {
+                  "type": "number",
+                  "default": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

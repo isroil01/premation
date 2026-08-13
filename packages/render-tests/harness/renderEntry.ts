@@ -17,9 +17,31 @@ import { buildSnapshot } from '@core/rendering/buildSnapshot';
 import { exportView } from '@core/export/offlineRenderer';
 import { SCENES } from './scenes/registry';
 import type { Scene } from './sceneKit';
+import { registeredEffects } from '@core/plugins/pluginEffects';
+
+/**
+ * Block until no registered plugin effect is still `pending`.
+ *
+ * Bounded, and a timeout is NOT a failure here: it leaves the effect pending,
+ * the scene renders without it, and the verifier that compares the two squares
+ * then fails with a picture. Throwing instead would replace a diagnosis with a
+ * stack trace from the wrong layer.
+ */
+async function waitForPluginEffects(timeoutMs = 8000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (registeredEffects().some((e) => e.state === 'pending')) {
+    if (Date.now() > deadline) {
+
+      console.warn('[harness] plugin effects still pending after '
+        + `${timeoutMs}ms: ${registeredEffects().filter((e) => e.state === 'pending').map((e) => e.id).join(', ')}`);
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 16));
+  }
+}
 
 interface HarnessBridge {
-  config: { backends: BackendChoice[] };
+  config: { backends: BackendChoice[]; only?: string[] };
   /** Sends one rendered frame to main. Resolves when written. */
   frame: (payload: {
     sceneId: string;
@@ -124,10 +146,39 @@ function rgbaToPngBase64(rgba: RGBA): string {
 /** One backend announcement per process, not one per scene. */
 let announcedBackend = false;
 
-async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> {
+/**
+ * Build a scene's graph, treating ANY error as fatal to the run.
+ *
+ * Separate from the render below because the two failures are not the same
+ * kind. A backend that cannot render is a per-scene, per-backend problem and
+ * stays isolated. A scene whose SETUP throws did not produce a wrong image — it
+ * produced NO image, and no image is not a measurement.
+ *
+ * `shape-path-op-zigzag` sat in exactly that state from schema 1.3.0 until
+ * 2026-08-04. Its `graph.setPathOp(…)` had been renamed to `setPathOps`, so
+ * `build` threw, no frame was ever written, and the comparator's
+ * `!actual → { pass: false }` was then routed by `gpuParity: 'known-divergent'`
+ * into the ACCEPTED-GAP bucket. The `divergence` prose that exists to stop
+ * silent suppression is what suppressed it: "fail closed unless a cause is
+ * written down" was designed for a pixel gap, and a stated cause cannot tell
+ * "these pixels differ for a known reason" from "there are no pixels".
+ */
+function buildSceneOrThrow(scene: Scene): { graph: SceneGraph; anim: AnimationEngine } {
   const graph = new SceneGraph();
   const anim = new AnimationEngine();
-  scene.build(graph, anim);
+  try {
+    scene.build(graph, anim);
+  } catch (err) {
+    throw new Error(
+      `scene setup threw for "${scene.id}" — the scene measures NOTHING until this is fixed: `
+      + `${(err as Error)?.message ?? err}`,
+    );
+  }
+  return { graph, anim };
+}
+
+async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> {
+  const { graph, anim } = buildSceneOrThrow(scene);
 
   const { w, h } = scene.size;
   const canvas = document.createElement('canvas');
@@ -138,6 +189,21 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
   be.resize(w, h, 1);
   be.setExactMediaTiming?.(true);
   if (be.readyPromise) await be.readyPromise;
+
+  /*
+    Wait for plugin effects to finish compiling.
+
+    Compilation is asynchronous and begins when the renderer bridge attaches,
+    which happens inside the init just awaited. `snapshotToFrameScene` emits
+    only `ready` effects, so rendering before the compile lands silently drops
+    the effect — producing a frame indistinguishable from the feature being
+    broken. Without this the plugin scenes would be green on a fast machine and
+    red on a slow one, with nothing in the output to say which.
+
+    Returns immediately for the scenes with no plugin effects, which is all but
+    two of them.
+  */
+  await waitForPluginEffects();
 
   // The backend we ASKED for must be the one that rendered.
   //
@@ -163,7 +229,7 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
   // the run log next to the results it is a claim about.
   if (!announcedBackend) {
     announcedBackend = true;
-    // eslint-disable-next-line no-console
+
     console.log(`[harness] backend resolved: asked ${backend}, running ${be.resolvedKind}`);
   }
 
@@ -233,6 +299,16 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
 async function main(): Promise<void> {
   try {
     const backends = window.harnessBridge.config.backends;
+    /*
+      Debug-only scene filter. Empty means every scene, which is what the gate
+      always runs — `run.mjs --scene` narrows the comparison but not the render,
+      so investigating one scene otherwise costs a full pass over all of them.
+      The MANIFEST is still written from the full set: it describes the suite,
+      not this run, and truncating it would make the runner report every
+      unrendered scene as missing.
+    */
+    const only = new Set(window.harnessBridge.config.only ?? []);
+    const toRender = only.size > 0 ? SCENES.filter((s) => only.has(s.id)) : SCENES;
     await window.harnessBridge.manifest(
       SCENES.map((s) => ({
         id: s.id,
@@ -251,18 +327,70 @@ async function main(): Promise<void> {
         animatesMinChange: s.animatesMinChange,
       })),
     );
+    // PRE-FLIGHT: every scene must build before anything renders.
+    //
+    // Backend-independent, so it runs once rather than once per backend, and it
+    // aborts the run rather than being absorbed by the isolation below. A scene
+    // that cannot build is not a scene with a visual gap — it is a scene that
+    // silently stopped testing its subject, which is the failure this whole
+    // check exists for (see `buildSceneOrThrow`).
+    const setupFailures: string[] = [];
+    for (const scene of toRender) {
+      try {
+        buildSceneOrThrow(scene);
+      } catch (err) {
+        setupFailures.push((err as Error)?.message ?? String(err));
+      }
+    }
+    if (setupFailures.length) {
+      await window.harnessBridge.done(
+        `${setupFailures.length} scene(s) failed SETUP:\n  ${setupFailures.join('\n  ')}`,
+      );
+      return;
+    }
+
     const failures: string[] = [];
-    for (const scene of SCENES) {
+    /*
+      Per-scene wall clock, reported at the end.
+
+      This run has taken anywhere from ~3 minutes to over 10 for the same
+      scenes, and there was no way to tell WHICH scene absorbed the difference —
+      the only output was the total, so every diagnosis started with a guess.
+      A run that is slow for a reason and a run that is slow everywhere are
+      different problems, and the summary below distinguishes them: if one
+      scene holds the whole excess it names it, and if the cost is spread the
+      per-scene mean says so.
+
+      Timings only, never a threshold. A wall-clock assertion in a correctness
+      gate is a test that fails on a loaded CI runner for no reason — the same
+      mistake `svgHybridImport`'s linearity check made.
+    */
+    const timings: Array<{ id: string; backend: string; ms: number }> = [];
+    for (const scene of toRender) {
       for (const backend of backends) {
+        const startedAt = Date.now();
         try {
           await renderScene(scene, backend);
         } catch (err) {
-          // Per-scene isolation: a bad scene must not abort the whole batch.
+          // Per-scene isolation for RENDER failures only — setup already passed
+          // above, so anything here is a backend problem, not a dead scene.
           failures.push(`${scene.id}/${backend}: ${(err as Error)?.message ?? err}`);
-          // eslint-disable-next-line no-console
+
           console.error(`[scene-fail] ${scene.id}/${backend}:`, err);
+        } finally {
+          // Recorded on the failure path too: a scene that took 40 seconds and
+          // then threw is the most interesting row in the table, and dropping
+          // it would hide exactly the case this exists for.
+          timings.push({ id: scene.id, backend, ms: Date.now() - startedAt });
         }
       }
+    }
+    if (timings.length) {
+      const total = timings.reduce((a, t) => a + t.ms, 0);
+      const slowest = [...timings].sort((a, b) => b.ms - a.ms).slice(0, 8);
+      console.log(`[harness] rendered ${timings.length} scene-backend pair(s) in ${(total / 1000).toFixed(1)}s `
+        + `(mean ${Math.round(total / timings.length)}ms). Slowest: `
+        + slowest.map((t) => `${t.id}/${t.backend} ${t.ms}ms`).join(', '));
     }
     if (failures.length) console.error(`[render-fails] ${failures.length}: ${failures.join(' | ')}`);
     await window.harnessBridge.done();

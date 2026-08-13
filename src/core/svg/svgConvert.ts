@@ -19,7 +19,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { runDocumentEdit } from '@core/commands/documentEdit';
-import { insertSvgShapeGroup, insertSvgLayer } from '@core/scene/sceneInsert';
+import { insertSvgShapeGroup, insertSvgLayer, measureSvgText, intersectSvgPaths } from '@core/scene/sceneInsert';
 import { parseSvgToShapes } from '../../utils/svgParser';
 import {
   readSvgLayer,
@@ -116,12 +116,15 @@ export function describeConversion(data: SvgLayerData): string[] {
     out.push('This SVG contains SMIL animations. Conversion will approximate them as keyframes.');
   }
   if (caps.hasRasterImage) {
-    out.push('This SVG contains raster images, which cannot be converted to shapes.');
+    out.push('Raster images become image layers rather than shapes.');
   }
   if (caps.hasText) {
     out.push('Text becomes text layers and may reflow.');
   }
-  out.push('Gradients, masks, filters and clip paths are flattened to solid fills.');
+  // Clip paths are CUT into the geometry now, not dropped — saying they are
+  // "flattened to solid fills" described neither what used to happen (they were
+  // ignored) nor what happens now.
+  out.push('Gradients, masks and filters are flattened to solid fills; clip paths are cut into the geometry, which turns curves into fine polygons.');
   return out;
 }
 
@@ -147,6 +150,8 @@ export function convertSvgLayerToShapes(nodeId: string): string | null {
   return runDocumentEdit('Convert SVG to Editable Shapes', () => {
     const shapes = parseSvgToShapes(data.sourceMarkup, {
       maxDurationSeconds: useCompositionStore.getState().durationSeconds,
+      measureText: measureSvgText,
+      intersectPaths: intersectSvgPaths,
     });
     if (shapes.length === 0) {
       useUIStore.getState().notify({

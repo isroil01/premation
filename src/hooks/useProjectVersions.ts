@@ -22,6 +22,7 @@ import {
   saveProjectBundleVersion,
   restoreProjectVersion,
 } from '@core/project/bundle/bundleProjectIO';
+import { markProjectDirty } from '@core/project/projectSession';
 import type { VersionEntry } from '@core/project/bundle/VersionStore';
 
 export interface UseProjectVersions {
@@ -94,7 +95,12 @@ export function useProjectVersions(): UseProjectVersions {
         // timeline UI re-read the restored state (same as the ProjectLoaded
         // pipeline does), then re-read the version list.
         bumpScene();
-        getProjectManager().markDirty(true);
+        // Mark the WORKSPACE tab, which is the flag `hasUnsavedChanges` (and
+        // therefore the discard prompt and the unsaved indicator) actually
+        // reads. This used to set a second dirty flag on the ProjectManager
+        // that nothing anywhere read, so restoring an old version left the
+        // document silently looking saved.
+        markProjectDirty();
         await refresh();
       }
       return ok;

@@ -18,7 +18,7 @@
   height: var(--bar-height-panel);
   padding: 0 var(--space-4);
   background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border);
   user-select: none;
 }
 

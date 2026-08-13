@@ -10,6 +10,7 @@ import {
 } from './propertyMeta';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
 import { EFFECT_DEFS } from '@core/effects/effects';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 
 describe('propertyMeta — static entries', () => {
   it('describes the transform group with AE labels and units', () => {
@@ -65,11 +66,102 @@ describe('propertyMeta — static entries', () => {
     expect(propertyUnit(POSITION_PSEUDO_PROP)).toBe('px');
   });
 
-  it('covers trim, repeater, time, text and data-track paths', () => {
-    for (const p of ['trim.start', 'rep.copies', 'timeRemap', 'text.source', 'fill.stops', 'path.points']) {
+  // `rep.copies` was in this list until document 1.5.0 folded the repeater into
+  // the path-operator chain. It moved to the id-scoped resolver alongside
+  // trim's — see the repeater case in the `pathop.<id>.<param>` block below.
+  it('covers time, text and data-track paths', () => {
+    for (const p of ['timeRemap', 'text.source', 'fill.stops', 'path.points']) {
       expect(hasPropertyMeta(p)).toBe(true);
       expect(propertyLabel(p)).not.toBe(p);
     }
+  });
+
+  /**
+   * Path-operator params are id-scoped (`pathop.<opId>.<param>`), so no static
+   * table can name them — they go through a resolver. Trim is why this exists:
+   * it HAD literal `trim.start` / `trim.end` / `trim.offset` entries with real
+   * labels, and folding it into the chain (v1.4.0) would have silently
+   * downgraded every trim row in the timeline and the graph editor to
+   * "Pathop Trimop Rect End" if the resolver had not landed with it.
+   */
+  it('names path-operator params, including the trim that used to be static', () => {
+    for (const p of ['pathop.abc.amount', 'pathop.abc.end', 'pathop.abc.offset']) {
+      expect(hasPropertyMeta(p)).toBe(true);
+      expect(propertyLabel(p)).not.toBe(p);
+      expect(propertyLabel(p)).not.toMatch(/pathop/i);
+    }
+    // The retired path is genuinely gone. Asserting on its LABEL would prove
+    // nothing — the generic fallback title-cases `trim.start` into "Trim Start",
+    // which is indistinguishable from a real entry. `hasPropertyMeta` is the
+    // question that actually has an answer: is any table or resolver claiming
+    // to describe it?
+    expect(hasPropertyMeta('trim.start')).toBe(false);
+    expect(hasPropertyMeta('trim.end')).toBe(false);
+  });
+
+  /**
+   * The repeater's rows, one version later and for the same reason.
+   *
+   * `rep.copies` / `rep.offsetScale` / `rep.offsetOpacity` were STATIC entries
+   * with real labels, bounds and steps. Folding the repeater into the chain
+   * (v1.5.0) moved them behind the same id-scoped resolver, and without a
+   * repeater branch there every one of them would have degraded to a
+   * title-cased id — "Path Operator Offsetscale", stepping by 1, so a Scale row
+   * would jump from 1 straight to 2 and an Opacity row would drag past its own
+   * range. The bounds are the half that a label-only check would miss.
+   */
+  describe('the repeater, which used to be static too', () => {
+    const NODE = 'repmeta_node';
+    beforeAll(() => {
+      defaultSceneGraph.addChild(
+        'comp_root',
+        {
+          id: NODE, name: NODE, parent: 'comp_root', children: [], visible: true, locked: false,
+          transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+          components: [{ id: `${NODE}_fx`, type: 'fx', props: { pathOps: [{ id: 'rop', type: 'repeater' }] } }],
+        } as unknown as Parameters<typeof defaultSceneGraph.addChild>[1],
+      );
+    });
+
+    it('names the rows the way the inspector card does', () => {
+      expect(propertyLabel('pathop.rop.offsetRotation', NODE)).toBe('Repeater Rotation');
+      expect(propertyLabel('pathop.rop.offsetX', NODE)).toBe('Repeater Position X');
+      expect(propertyLabel('pathop.rop.copies', NODE)).toBe('Repeater Copies');
+      // Not the generic fallback, which is what a missing branch would give.
+      expect(propertyLabel('pathop.rop.offsetScale', NODE)).not.toMatch(/offsetscale/i);
+    });
+
+    it('keeps the bounds and steps the rep.* entries carried', () => {
+      const scale = resolvePropertyMeta('pathop.rop.offsetScale', NODE);
+      expect(scale.step).toBeLessThan(1);
+      expect(scale.min).toBe(0);
+      // Reset lands on the NO-OP value. Defaulting to 0 would make "reset"
+      // collapse every copy to nothing.
+      expect(scale.defaultValue).toBe(1);
+
+      const opacity = resolvePropertyMeta('pathop.rop.offsetOpacity', NODE);
+      expect(opacity.min).toBe(0);
+      expect(opacity.max).toBe(1);
+      expect(opacity.defaultValue).toBe(1);
+
+      const copies = resolvePropertyMeta('pathop.rop.copies', NODE);
+      expect(copies.min).toBe(1);
+      expect(copies.max).toBe(200);
+      expect(copies.precision).toBe(0);
+
+      expect(resolvePropertyMeta('pathop.rop.offsetX', NODE).unit).toBe('px');
+      expect(resolvePropertyMeta('pathop.rop.offsetRotation', NODE).unit).toBe('°');
+    });
+
+    it('sorts into the repeater group, not the shape-geometry one', () => {
+      expect(resolvePropertyMeta('pathop.rop.copies', NODE).group).toBe('repeater');
+      expect(resolvePropertyMeta('pathop.rop.copies', NODE).order).toBe(ORDER.repeater);
+    });
+
+    it('the retired rep.* paths are genuinely gone', () => {
+      expect(hasPropertyMeta('rep.copies')).toBe(false);
+      expect(hasPropertyMeta('rep.offsetScale')).toBe(false);
+    });
   });
 });
 

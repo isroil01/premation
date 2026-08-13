@@ -36,7 +36,8 @@ export type TimingRule =
   | 'POPPING'
   | 'SUB_MINIMUM_DURATION'
   | 'ANTIPATTERN_VIOLATION'
-  | 'NO_CONTINUITY';
+  | 'NO_CONTINUITY'
+  | 'CAMERA_WITHOUT_PARALLAX';
 
 export type Severity = 'error' | 'warn';
 
@@ -56,6 +57,7 @@ const ERROR_RULES: ReadonlySet<TimingRule> = new Set([
   'SUB_MINIMUM_DURATION',
   'ANTIPATTERN_VIOLATION',
   'NO_CONTINUITY',
+  'CAMERA_WITHOUT_PARALLAX',
 ]);
 
 interface Keyframe {
@@ -104,6 +106,22 @@ const DEAD_AIR_MS = 700;
  * different thresholds.
  */
 const POP_FRACTION = 0.6;
+
+/**
+ * Depth a beat needs, in px, before a camera move reads as a move.
+ *
+ * 120 rather than "any non-zero value": `emitDepth` spreads a beat over
+ * `min(width, height) * 0.35`, which is 378px on a 1080-tall frame, so a healthy
+ * beat clears this by 3×. But a beat with two layers 40px apart is arithmetically
+ * non-flat and visually still a zoom, and a rule that passes it would be a rule
+ * that never fails once a single `update_layer { z }` exists anywhere.
+ *
+ * Deliberately absolute rather than a fraction of the frame: parallax is a
+ * function of the distance between planes and the focal length, and the focal
+ * length is derived from the frame, so scaling this too would cancel out the
+ * thing being measured.
+ */
+export const MIN_PARALLAX_SPREAD_PX = 120;
 
 /** Rebuild the animation tracks a batch of calls would produce. */
 export function tracksFromCalls(calls: readonly ToolCall[]): Track[] {
@@ -192,6 +210,19 @@ export interface TimingLintScene {
    * stricter `@motion/product-motion` linter.
    */
   uiNodeIds?: readonly string[];
+  /**
+   * Which beat each layer belongs to, and which beats carry a camera technique.
+   *
+   * Needed because parallax is judged PER BEAT. A composition-wide depth spread
+   * says nothing: measurement found the beat holding the camera flat at 0 while
+   * every other beat sat at 378, and a whole-composition figure reported 378 and
+   * called it healthy.
+   */
+  beatOf?: ReadonlyMap<string, number>;
+  /** Beat indices on which a camera technique was cast. */
+  cameraBeats?: readonly number[];
+  /** Static z per layer, from `update_layer { z }`. Tracks are read from calls. */
+  staticZ?: ReadonlyMap<string, number>;
 }
 
 const find = (rule: TimingRule, nodeIds: string[], message: string): TimingFinding => ({
@@ -449,6 +480,38 @@ export function lintTiming(scene: TimingLintScene): TimingFinding[] {
         `Nothing survives the beat boundary at ${(b.atMs / 1000).toFixed(1)}s — every element exits and a ` +
         `new set enters. That is a slideshow, not a cut. Declare at least one element that persists, ` +
         `transforms into, match-cuts to, or carries motion across the boundary.`));
+    }
+  }
+
+  // ── CAMERA_WITHOUT_PARALLAX ───────────────────────────────────────────────
+  // A perspective camera moving across coplanar layers produces a uniform scale
+  // or slide. It is not a subtle failure: it is the difference between a camera
+  // and a zoom, and it is invisible in a still — which is why it survived a
+  // sighted critique pass and had to become arithmetic.
+  //
+  // Judged PER BEAT, because the camera is composition-wide but only one beat is
+  // on screen while it moves. The whole-composition spread was 378 on exactly
+  // the runs whose camera beat measured 0.
+  for (const beatIndex of scene.cameraBeats ?? []) {
+    if (!scene.beatOf) break;
+    const ids = [...scene.beatOf.entries()].filter(([, b]) => b === beatIndex).map(([id]) => id);
+    if (ids.length < 2) continue;
+
+    // A layer with no z at all sits at 0, which is a real plane — not a layer to
+    // skip. Skipping them is how a beat with one staged layer and five unstaged
+    // ones would have reported a healthy spread.
+    const depths = ids.map((id) => {
+      const track = tracks.find((t) => t.nodeId === id && t.prop === 'z');
+      if (track?.keys.length) return track.keys[0]!.value;
+      return scene.staticZ?.get(id) ?? 0;
+    });
+    const spread = Math.max(...depths) - Math.min(...depths);
+    if (spread < MIN_PARALLAX_SPREAD_PX) {
+      out.push(find('CAMERA_WITHOUT_PARALLAX', ids,
+        `Beat ${beatIndex} has a camera move but only ${spread.toFixed(0)}px of depth across its ` +
+        `${ids.length} layers (needs ${MIN_PARALLAX_SPREAD_PX}px). A camera over coplanar layers is a ` +
+        `uniform scale — it reads as a zoom, not as a move through space. Stage the beat in z: ` +
+        `background furthest, headline nearest.`));
     }
   }
 

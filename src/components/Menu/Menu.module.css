@@ -2,11 +2,19 @@
   display: inline-flex;
   flex-direction: column;
   min-width: 180px;
+  max-height: 280px;
+  overflow-y: auto;
   padding: 2px 0;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-strong);
-  border-radius: 0;
+  border-radius: 2px;
   animation: menuIn var(--motion-duration-fast) var(--motion-ease-emphasized);
+}
+
+/* Override for menus that must show all items without scrolling */
+.noScroll {
+  max-height: none;
+  overflow-y: visible;
 }
 
 @keyframes menuIn {
@@ -20,17 +28,22 @@
   z-index: var(--z-index-dropdown);
 }
 
+/* Row metrics are set BY the icon, not independently of it.
+   At an 18px icon the old 24px row left 3px of air top and bottom and the
+   11px label sat well under the glyph's own height, so the icon read as the
+   content and the words as a caption on it. 28px/13px/8px puts them on the
+   same footing. */
 .item {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: 24px;
+  gap: var(--space-4);
+  height: var(--control-height-lg);
   padding: 0 var(--space-4);
   border: none;
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-md);
   cursor: pointer;
   border-radius: 0;
   text-align: left;
@@ -69,12 +82,16 @@
   background: rgba(244, 63, 94, 0.15);
 }
 
+/* The spacer is the reason this is a token and not a number. `Icon` sets its
+   own width inline, so a wrong value here is invisible on rows that HAVE an
+   icon — it only shows up as rows that don't having their labels start a
+   couple of pixels to the left. */
 .itemIcon,
 .itemIconSpacer {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: var(--icon-size-md);
   flex: none;
   color: var(--color-text-secondary);
 }
@@ -107,7 +124,7 @@
 
 .itemShortcut {
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   font-family: var(--font-family-mono);
   margin-left: var(--space-6);
   opacity: 0.8;

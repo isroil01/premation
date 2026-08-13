@@ -40,6 +40,12 @@ export const SFX_ITEMS: readonly SfxItem[] = [
   { id: 'sfx-subdrop',  name: 'Sub Drop',       cat: 'impact',  duration: 1.2,  color: '#38bdf8' },
   { id: 'sfx-room',     name: 'Room Tone',      cat: 'ambient', duration: 4.0,  color: '#14b8a6' },
   { id: 'sfx-rain',     name: 'Rain Noise',     cat: 'ambient', duration: 4.0,  color: '#84cc16' },
+  { id: 'sfx-tick',     name: 'Tick',           cat: 'click',   duration: 0.05, color: '#a3e635' },
+  { id: 'sfx-chime',    name: 'Success Chime',  cat: 'click',   duration: 0.9,  color: '#22d3ee' },
+  { id: 'sfx-swipe',    name: 'Soft Swipe',     cat: 'whoosh',  duration: 0.28, color: '#c084fc' },
+  { id: 'sfx-reverse',  name: 'Reverse Suck',   cat: 'whoosh',  duration: 1.1,  color: '#fb923c' },
+  { id: 'sfx-glass',    name: 'Glass Snap',     cat: 'impact',  duration: 0.4,  color: '#e2e8f0' },
+  { id: 'sfx-drone',    name: 'Low Drone',      cat: 'ambient', duration: 4.0,  color: '#8b5cf6' },
 ] as const;
 
 export function getSfxItem(id: string): SfxItem | null {
@@ -112,6 +118,42 @@ function normalize(buf: Float32Array, peakTarget = 0.89): Float32Array {
   const g = peakTarget / peak;
   for (let i = 0; i < buf.length; i++) buf[i] = (buf[i] ?? 0) * g;
   return buf;
+}
+
+/**
+ * Peak envelope of an item's actual audio, downsampled to `buckets` bars — the
+ * shape a card should draw.
+ *
+ * The cards drew a hardcoded `[4,7,5,9,6,8,5]` bar pattern, identical for every
+ * item: a click, a whoosh and an ambient pad all looked like the same seven
+ * bars, so the one glance that should say "short and sharp" vs "long and
+ * swelling" said nothing at all. This is the real envelope, so a decay looks
+ * like a decay.
+ *
+ * Values are 0..1 (peak absolute amplitude per bucket, normalised). Null for an
+ * unknown id.
+ */
+export function sfxWaveform(id: string, buckets = 28): number[] | null {
+  // The envelope is a SHAPE, not audio — rendering at full 44.1 kHz only to
+  // throw almost all of it away would cost a card ~130k samples per item. An
+  // eighth of the rate preserves every peak this drawing can resolve.
+  const samples = renderSfxSamples(id, SFX_SAMPLE_RATE / 8);
+  if (!samples) return null;
+  const out: number[] = [];
+  const per = samples.length / buckets;
+  for (let b = 0; b < buckets; b++) {
+    const start = Math.floor(b * per);
+    const end = Math.max(start + 1, Math.floor((b + 1) * per));
+    let peak = 0;
+    for (let i = start; i < end && i < samples.length; i++) {
+      const v = Math.abs(samples[i]!);
+      if (v > peak) peak = v;
+    }
+    out.push(peak);
+  }
+  // Normalised so a quiet item still reads — the card shows shape, not level.
+  const max = out.reduce((m, v) => Math.max(m, v), 0);
+  return max > 0 ? out.map((v) => v / max) : out;
 }
 
 /**
@@ -189,6 +231,76 @@ export function renderSfxSamples(id: string, sr: number = SFX_SAMPLE_RATE): Floa
       const sub = sweepOsc(n, sr, 220, 28);
       for (let i = 0; i < n; i++) out[i] = (sub[i] ?? 0) * ar(t(i), dur, 0.04);
       break;
+    }
+    case 'sfx-tick': {
+      // Shorter and drier than the UI click — a keystroke, not a button.
+      const noise = bandNoise(n, rnd, 0.85, 0.45);
+      for (let i = 0; i < n; i++) out[i] = (noise[i] ?? 0) * decay(t(i), dur, 22);
+      break;
+    }
+    case 'sfx-chime': {
+      // A major third stacked over a root, each partial decaying at its own
+      // rate — the higher the partial, the faster it dies, which is what makes
+      // additive tones read as a struck bell rather than an organ chord.
+      const partials: Array<[number, number, number]> = [[880, 1, 4], [1108, 0.6, 6], [1760, 0.32, 9]];
+      for (const [freq, gain, rate] of partials) {
+        let phase = 0;
+        for (let i = 0; i < n; i++) {
+          phase += (TAU * freq) / sr;
+          out[i] = (out[i] ?? 0) + Math.sin(phase) * gain * decay(t(i), dur, rate);
+        }
+      }
+      break;
+    }
+    case 'sfx-swipe': {
+      const noise = bandNoise(n, rnd, 0.6, 0.2);
+      for (let i = 0; i < n; i++) {
+        const p = t(i) / dur;
+        out[i] = (noise[i] ?? 0) * Math.sin(Math.PI * Math.min(1, p)) ** 1.1;
+      }
+      break;
+    }
+    case 'sfx-reverse': {
+      // Built forwards then reversed: a decaying tail read backwards is the
+      // swell that makes a reverse cymbal sound like one.
+      const fwd = new Float32Array(n);
+      const osc = sweepOsc(n, sr, 520, 180);
+      const noise = bandNoise(n, rnd, 0.45, 0.12);
+      for (let i = 0; i < n; i++) {
+        fwd[i] = ((osc[i] ?? 0) * 0.4 + (noise[i] ?? 0) * 0.75) * decay(t(i), dur, 3);
+      }
+      for (let i = 0; i < n; i++) out[i] = fwd[n - 1 - i] ?? 0;
+      break;
+    }
+    case 'sfx-glass': {
+      // Inharmonic partials — deliberately NOT integer ratios, which is what
+      // separates glass/metal from a pitched instrument.
+      const partials: Array<[number, number]> = [[2100, 1], [3170, 0.55], [4630, 0.4], [6210, 0.22]];
+      for (const [freq, gain] of partials) {
+        let phase = 0;
+        for (let i = 0; i < n; i++) {
+          phase += (TAU * freq) / sr;
+          out[i] = (out[i] ?? 0) + Math.sin(phase) * gain * decay(t(i), dur, 11);
+        }
+      }
+      // A short noise transient for the strike itself.
+      const strike = bandNoise(n, rnd, 0.9, 0.5);
+      for (let i = 0; i < n; i++) out[i] = (out[i] ?? 0) + (strike[i] ?? 0) * decay(t(i), dur * 0.12, 20) * 0.6;
+      break;
+    }
+    case 'sfx-drone': {
+      // Two detuned low sines beating against each other, over a filtered bed.
+      const bed = onePoleLp(bandNoise(n, rnd, 0.06, 0.008), 0.2);
+      let p1 = 0, p2 = 0;
+      for (let i = 0; i < n; i++) {
+        p1 += (TAU * 55) / sr;
+        p2 += (TAU * 55.7) / sr; // 0.7 Hz beat
+        const p = t(i) / dur;
+        const edge = Math.min(1, Math.min(p, 1 - p) * 20); // loopable edges
+        out[i] = (Math.sin(p1) * 0.5 + Math.sin(p2) * 0.4 + (bed[i] ?? 0) * 0.5) * edge;
+      }
+      normalize(out, 0.42);
+      return out;
     }
     case 'sfx-room': {
       // Quiet brown-ish noise bed; loopable (edges faded).

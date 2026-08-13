@@ -17,7 +17,18 @@ import type { NodeId, SceneGraphPort, SelectionPort } from '../ports';
 import type { HitTester } from '../hit/HitTester';
 import { Marquee, type MarqueeMode } from './Marquee';
 import type { Corners } from '../math/OrientedBox';
-import { computeHandles, type Handle } from './handles';
+
+/**
+ * One selected layer's drawn outline, with the layer it belongs to.
+ *
+ * The id is what lets the painter tint each outline by that layer's label
+ * colour, so a selected layer's box matches its timeline row.
+ */
+export interface SelectionBox {
+  id: NodeId;
+  corners: Corners;
+}
+import { computeHandles, orientedHandles, type Handle } from './handles';
 
 export class SelectionController {
   readonly marquee = new Marquee();
@@ -141,11 +152,15 @@ export class SelectionController {
    * yields three boxes rather than one merged rectangle that belongs to none of
    * them and encloses whatever happens to lie between them.
    */
-  selectionBoxes(): Corners[] {
-    const out: Corners[] = [];
+  selectionBoxes(): SelectionBox[] {
+    const out: SelectionBox[] = [];
     for (const id of this.selection.get()) {
       const n = this.scene.getNode(id);
-      if (n) out.push(n.worldCorners ?? (R.corners(n.worldBounds) as Corners));
+      // The id rides along so the painter can colour each outline by its own
+      // layer's label. Bare `Corners` made the drawn boxes anonymous: with
+      // three layers selected there was no way to tell which outline belonged
+      // to which timeline row, which is exactly what label colours are for.
+      if (n) out.push({ id, corners: n.worldCorners ?? (R.corners(n.worldBounds) as Corners) });
     }
     return out;
   }
@@ -169,7 +184,23 @@ export class SelectionController {
     if (ids.length === 1) {
       const only = this.scene.getNode(ids[0]!);
       if (only?.is3D) return [];
+      // ONE layer: put the grips on its own ORIENTED box.
+      //
+      // They used to come from the axis-aligned bounds even here, so rotating a
+      // layer turned the artwork and the hairline outline (`selectionBoxes`,
+      // which has always been oriented) while the eight grips stayed in an
+      // upright rectangle around them. That upright rectangle is what reads as
+      // "the selection border did not rotate" — the outline had, but the grips
+      // are the louder shape.
+      //
+      // The tool resizes in LOCAL space to match (see `SelectTool.onDrag`), so
+      // a grip drawn on the rotated corner also drags along the layer's own
+      // axes. Moving the grips without that would be worse than leaving them:
+      // the handle would sit in one place and act in another.
+      if (only?.worldCorners) return orientedHandles(only.worldCorners);
     }
+    // A MULTI-selection has no single orientation to honour, so its grips stay
+    // on the union AABB — which is also the box the move/marquee math uses.
     return computeHandles(bounds);
   }
 

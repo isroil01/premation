@@ -1,0 +1,81 @@
+/*
+ * The few things a schema-driven panel needs that the shared inspector styles
+ * do not already provide. Everything else borrows `TransformSection.module.css`
+ * deliberately — a plugin's properties should look like the layer's own, not
+ * like a guest panel.
+ */
+
+/*
+ * The inert banner.
+ *
+ * Non-blocking on purpose: it explains, it does not sit in front of the values.
+ * A user whose plugin is missing still needs to READ what they authored.
+ */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-warning);
+  color: var(--color-warning);
+  font-size: var(--font-size-label);
+  line-height: 1.45;
+}
+
+/* A property that exists and cannot be edited. Shown, never hidden: a panel
+   that omits what it cannot change reads as a layer that lost its settings. */
+.readonlyRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+
+.readonlyValue {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-label);
+  font-variant-numeric: tabular-nums;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.numberInput,
+.textInput {
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-field-border);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-label);
+}
+
+.numberInput { width: 84px; text-align: right; font-variant-numeric: tabular-nums; }
+.textInput { width: 130px; }
+
+.numberInput:focus-visible,
+.textInput:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+/* Offers, does not act. The plugin's page is where install, permissions and
+   publisher live — the same page the deep link opens. */
+.bannerAction {
+  margin-left: auto;
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-md, 4px);
+  border: 1px solid var(--color-warning);
+  background: transparent;
+  color: var(--color-warning);
+  font-size: var(--font-size-label);
+  cursor: pointer;
+}
+.bannerAction:hover { background: var(--color-hover); }
+.bannerAction:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }

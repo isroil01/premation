@@ -71,7 +71,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
   return (
     <div className={styles.header}>
       <div className={styles.leftGroup}>
-        {icon && <Icon name={icon as any} size={14} />}
+        {icon && <Icon name={icon as any} size="md" />}
         <span className={styles.title}>{title}</span>
       </div>
 
@@ -88,7 +88,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
             onClick={() => setMenuOpen(!menuOpen)}
             title="Panel Options"
           >
-            <Icon name="more-horizontal" size={14} />
+            <Icon name="more-horizontal" size="md" />
           </button>
         )}
 
@@ -100,7 +100,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
             onClick={() => closePanel(panelId)}
             title="Close Panel"
           >
-            <Icon name="close" size={14} />
+            <Icon name="close" size="md" />
           </button>
         )}
 
@@ -109,13 +109,13 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
           <div ref={menuRef} className={styles.menuDropdown}>
             {placement !== 'external' && (
               <button type="button" className={styles.menuItem} onClick={handlePopout}>
-                <Icon name="export" size={12} /> Pop Out into Window
+                <Icon name="export" size="sm" /> Pop Out into Window
               </button>
             )}
 
             <div className={styles.menuSeparator} />
 
-            <div style={{ fontSize: 10, color: 'var(--color-text-tertiary)', padding: '2px 8px', textTransform: 'uppercase' }}>
+            <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', padding: '2px 8px', textTransform: 'uppercase' }}>
               Dock Position
             </div>
 
@@ -134,10 +134,10 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
               genuinely works; there is no third destination to offer.
             */}
             <button type="button" className={styles.menuItem} onClick={() => handleDock('leftSidebar')}>
-              <Icon name="panel-left" size={12} /> Dock Left Sidebar
+              <Icon name="panel-left" size="sm" /> Dock Left Sidebar
             </button>
             <button type="button" className={styles.menuItem} onClick={() => handleDock('rightInspector')}>
-              <Icon name="sliders-h" size={12} /> Dock Right Inspector
+              <Icon name="sliders-h" size="sm" /> Dock Right Inspector
             </button>
           </div>
         )}

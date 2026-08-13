@@ -25,7 +25,37 @@ export interface ProjectRef {
 
 export interface ProjectState {
   current: ProjectRef | null;
-  dirty: boolean;
+}
+
+/**
+ * What a save actually did.
+ *
+ * `save`/`saveAs` used to return a bare boolean, and `false` meant three
+ * different things — no project open, the user cancelled the dialog, the write
+ * threw. The one caller collapsed all three into a SUCCESS toast reading
+ * "Saved" and then cleared the dirty flag and the crash-recovery snapshot, so a
+ * failed write was indistinguishable from a good one and took the user's last
+ * copy with it. Cancelling is not failing and failing is not saving; the type
+ * says so now.
+ */
+export type SaveOutcome =
+  | { status: 'saved'; ref: ProjectRef }
+  | { status: 'cancelled' }
+  | { status: 'failed'; error: unknown };
+
+/**
+ * The project's name after a Save As: the file the user actually chose.
+ *
+ * `chooseSavePath` returns a FILE PATH for the local adapters and a backend
+ * project ID for the cloud one, and an id is not a name — deriving one would
+ * rename the project to a uuid. So the path only overrides the requested name
+ * when it looks like a path: a directory separator, or a project extension.
+ */
+function nameFromSavePath(path: string, fallback: string): string {
+  const looksLikePath = /[\\/]/.test(path) || /\.(motion|json)$/i.test(path);
+  if (!looksLikePath) return fallback;
+  const stem = (path.split(/[\\/]/).pop() ?? '').replace(/\.(motion|json)$/i, '').trim();
+  return stem || fallback;
 }
 
 /** Bridge between the project file format and the live document (scene, etc.). */
@@ -63,7 +93,7 @@ export interface ProjectManagerDeps {
 }
 
 export class ProjectManager {
-  private state: ProjectState = { current: null, dirty: false };
+  private state: ProjectState = { current: null };
   private io: ProjectDocumentIO;
   private readonly storage: ProjectStorage;
   private readonly listeners = new Set<(s: ProjectState) => void>();
@@ -102,17 +132,10 @@ export class ProjectManager {
     this.io = io;
   }
 
-  markDirty(dirty = true): void {
-    if (this.state.dirty === dirty) return;
-    this.state = { ...this.state, dirty };
-    this.emit();
-    getEventBus().emit('ProjectDirtyChanged', { dirty });
-  }
-
   newProject(name = 'Untitled'): ProjectRef {
     const ref: ProjectRef = { id: this.deps.newId(), name, path: null };
     this.io.restore(this.io.createEmpty(name));
-    this.state = { current: ref, dirty: false };
+    this.state = { current: ref };
     this.emit();
     this.deps.logger?.info(`New project "${name}"`);
     getEventBus().emit('ProjectLoaded', { projectId: ref.id });
@@ -157,7 +180,7 @@ export class ProjectManager {
     try {
       this.io.restore(file);
       const ref: ProjectRef = { id: this.deps.newId(), name, path };
-      this.state = { current: ref, dirty: false };
+      this.state = { current: ref };
       this.emit();
       this.recordRecent(ref);
       this.deps.logger?.info(`Opened project "${name}"`);
@@ -169,41 +192,61 @@ export class ProjectManager {
     }
   }
 
-  async save(): Promise<boolean> {
+  /**
+   * Write the current project back to where it came from.
+   *
+   * A document with no destination yet (a scratch scene, or the very first save
+   * of a new project) routes to `saveAs` rather than reporting a failure — that
+   * is what Ctrl+S means everywhere else, and returning `false` here is how
+   * "Ctrl+S saved nothing at all" used to be reported as success.
+   */
+  async save(): Promise<SaveOutcome> {
     const current = this.state.current;
-    if (!current) return false;
+    if (!current) return this.saveAs('Untitled');
     if (!current.path) return this.saveAs(current.name);
     return this.writeTo(current, current.path);
   }
 
-  async saveAs(name: string): Promise<boolean> {
+  /**
+   * Write the document to a NEW destination the user picks.
+   *
+   * The result is a separate document, so it takes a fresh id: keeping the
+   * previous one made the MRU (which dedupes by id) treat the copy as the
+   * original and silently evict the source project from the recent list, even
+   * though it was still on disk.
+   *
+   * `name` is only a SUGGESTION for the dialog — the project takes the name of
+   * the file that was actually chosen. It used to keep the suggestion, so a
+   * project saved to `Promo.motion` stayed called "Untitled" in the recent
+   * list, in the discard prompt, and in the next Increment and Save.
+   */
+  async saveAs(name: string): Promise<SaveOutcome> {
     const path = await this.deps.files.chooseSavePath(`${name}.motion`);
-    if (!path) return false;
-    const ref: ProjectRef = this.state.current
-      ? { ...this.state.current, name, path }
-      : { id: this.deps.newId(), name, path };
+    if (!path) return { status: 'cancelled' };
+    const ref: ProjectRef = { id: this.deps.newId(), name: nameFromSavePath(path, name), path };
     return this.writeTo(ref, path);
   }
 
-  private async writeTo(ref: ProjectRef, path: string): Promise<boolean> {
+  private async writeTo(ref: ProjectRef, path: string): Promise<SaveOutcome> {
     try {
       const file = this.io.capture();
       await this.storage.save(path, file);
-      this.state = { current: { ...ref, path }, dirty: false };
+      const saved: ProjectRef = { ...ref, path };
+      this.state = { current: saved };
       this.emit();
-      this.recordRecent(this.state.current!);
+      this.recordRecent(saved);
       this.deps.logger?.info(`Saved project to ${path}`);
       getEventBus().emit('ProjectSaved', { projectId: ref.id });
-      return true;
+      return { status: 'saved', ref: saved };
     } catch (err) {
       this.deps.logger?.error('Failed to save project', err);
-      return false;
+      return { status: 'failed', error: err };
     }
   }
 
   close(): void {
     const prev = this.state.current;
-    this.state = { current: null, dirty: false };
+    this.state = { current: null };
     this.emit();
     if (prev) getEventBus().emit('ProjectUnloaded', { projectId: prev.id });
   }

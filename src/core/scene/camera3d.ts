@@ -60,9 +60,12 @@ export function cameraFromNode(
   let yaw: number | undefined, pitch: number | undefined;
   let poiX: number | undefined, poiY: number | undefined, poiZ: number | undefined;
   let rollProp: number | undefined;
+  let oriXProp: number | undefined, oriYProp: number | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
     rollProp = num(p.orientationZ) ?? rollProp;
+    oriXProp = num(p.orientationX) ?? oriXProp;
+    oriYProp = num(p.orientationY) ?? oriYProp;
     x = num(p.x) ?? x;
     y = num(p.y) ?? y;
     z = num(p.z) ?? z;
@@ -108,8 +111,34 @@ export function cameraFromNode(
   // re-aiming. Stored as `orientationZ` to match the layer transform naming, so
   // the inspector row and the keyframe track look like every other rotation.
   const roll = sample?.(node.id, 'orientationZ') ?? rollProp ?? 0;
-  const withRoll = (o: { yaw: number; pitch: number }) =>
-    roll !== 0 ? { ...o, roll } : o;
+
+  /**
+   * IN-PLACE rotation — the tripod pan and tilt (AE's camera X/Y Rotation).
+   *
+   * `orbitYaw`/`orbitPitch` swing the EYE about a target, which reads as a
+   * dolly-arc; these rotate the camera where it stands, which no combination of
+   * orbit props can express. Axis naming follows the layer transform exactly:
+   * `orientationX` is about X (pitch, tilt up/down), `orientationY` is about Y
+   * (yaw, pan left/right) — matching `nodeMatrix.ts`'s
+   * `x: rotationX + orientationX`.
+   *
+   * They are OFFSETS, added to whatever the base orientation resolved to. That
+   * is the whole design, and it is what makes them work on a two-node camera:
+   * the look-at establishes the aim, these nudge it, and tracking survives. Set
+   * rather than added, a targeted camera would ignore them entirely — the
+   * inspector rows would move and the projection would not.
+   *
+   * The eye is deliberately untouched. `orbitCamera` above is the only thing
+   * that moves it, so these rotate about the eye rather than about the POI or
+   * the comp centre.
+   */
+  const oriX = sample?.(node.id, 'orientationX') ?? oriXProp ?? 0;
+  const oriY = sample?.(node.id, 'orientationY') ?? oriYProp ?? 0;
+
+  const withOrientation = (o: { yaw: number; pitch: number }) => {
+    const composed = { yaw: o.yaw + oriY, pitch: o.pitch + oriX };
+    return roll !== 0 ? { ...composed, roll } : composed;
+  };
   const nonZero = (o: { yaw: number; pitch: number; roll?: number }) =>
     o.yaw !== 0 || o.pitch !== 0 || (o.roll ?? 0) !== 0;
 
@@ -121,7 +150,7 @@ export function cameraFromNode(
       z: poiZ ?? 0,
     });
     const orbited = Project3D.orbitCamera(basePosition, poi, yaw ?? 0, pitch ?? 0);
-    const orientation = withRoll(Project3D.lookAtOrientation(orbited.position, poi));
+    const orientation = withOrientation(Project3D.lookAtOrientation(orbited.position, poi));
     return {
       focalLength,
       position: orbited.position,
@@ -139,7 +168,7 @@ export function cameraFromNode(
     pitch ?? 0,
   );
 
-  const orientation = withRoll(orbited.orientation);
+  const orientation = withOrientation(orbited.orientation);
   return {
     focalLength,
     position: orbited.position,
@@ -259,17 +288,74 @@ export interface DofConfig {
    * Blur Level behaves exactly as before this field existed.
    */
   aperture: number;
+  /** Lens focal length (px). Only consulted by the PHYSICAL model below. */
+  focalLength?: number;
+  /**
+   * f-number. **Its presence is what selects the physical model** — absent
+   * means the legacy ramp, so every existing project renders identically. Same
+   * shape as `lightFalloffAt`'s `'none'`: a new model arrives as an opt-in,
+   * never as a silent re-grade of work someone already approved.
+   */
+  fStop?: number;
 }
 
 /**
- * Circle-of-confusion blur (px) for a layer at `depth`, given the DOF config.
- * `|depth − focus| / focus` is the normalised defocus; multiplied by the
- * aperture (slope) and clamped to `strength` (cap). Pure/testable — the render
- * layer applies the returned px as a CSS blur.
+ * Circle-of-confusion blur (px) for a layer at `depth`.
+ *
+ * ## Two models, and why the old one is kept
+ *
+ * **Legacy** (`fStop` absent): `|depth − focus| / focus × aperture`, capped by
+ * `strength`. It is not a circle of confusion — it is a normalised-distance
+ * ramp — and it is **symmetric**, which is the visible defect: a layer the same
+ * distance in FRONT of the focal plane blurs exactly as much as one behind it,
+ * and background blur grows without bound as the layer recedes. Real lenses do
+ * neither. Retained unchanged because changing it re-grades every shot anyone
+ * has already approved.
+ *
+ * **Physical** (`fStop` present): the thin-lens CoC,
+ *
+ * ```
+ *   CoC = A·f·|d − S| / (d·(S − f)),   A = f / N
+ * ```
+ *
+ * `f` focal length, `S` focus distance, `d` subject distance, `N` f-number.
+ * Two consequences the legacy ramp cannot express, and they are the point:
+ *
+ *  - **Asymmetry.** Foreground defocus grows without limit as `d → 0`, while
+ *    background defocus SATURATES at `A·f/(S − f)` as `d → ∞`. A distant
+ *    backdrop and a very distant backdrop look alike, which is why a real
+ *    background reads as "behind" rather than "smeared".
+ *  - **Focal length matters.** A long lens is shallower than a wide one at the
+ *    same f-number. Under the legacy ramp focal length changed nothing at all.
+ *
+ * `strength` stays the cap in both models (AE's Blur Level), so a physical
+ * camera cannot melt a frame by accident.
+ *
+ * NOTE: still ONE value per layer — a layer spanning depth gets one uniform
+ * blur, and there is no bokeh iris, because the per-pixel pass those need is
+ * blocked on both backends (WebGL2 keeps depth in a RENDERBUFFER; WebGPU's
+ * depth texture is created without `TEXTURE_BINDING`). Correct maths first.
  */
 export function dofBlurPx(depth: number, dof: DofConfig): number {
-  const defocus = Math.abs(depth - dof.focus) / Math.max(1, dof.focus);
-  return Math.min(dof.strength, defocus * dof.aperture);
+  if (dof.fStop === undefined) {
+    const defocus = Math.abs(depth - dof.focus) / Math.max(1, dof.focus);
+    return Math.min(dof.strength, defocus * dof.aperture);
+  }
+
+  const f = Math.max(1e-6, dof.focalLength ?? dof.focus);
+  const S = dof.focus;
+  const N = Math.max(1e-6, dof.fStop);
+
+  // Degenerate rigs: focusing at or inside the focal length has no solution
+  // (the image never converges), and a subject AT the lens is not defocused so
+  // much as absent. Both resolve to the cap rather than to Infinity or NaN — a
+  // NaN blur radius silently blanks the layer instead of erroring.
+  if (!(S > f) || !(depth > 0) || !Number.isFinite(depth)) return dof.strength;
+
+  const A = f / N;
+  const coc = (A * f * Math.abs(depth - S)) / (depth * (S - f));
+  if (!Number.isFinite(coc)) return dof.strength;
+  return Math.min(dof.strength, coc);
 }
 
 /**
@@ -330,22 +416,31 @@ export function readSceneDof(
     let focus: number | undefined;
     let focal: number | undefined;
     let aperture: number | undefined;
+    let fStop: number | undefined;
     for (const c of node.components) {
       const p = c.props as Record<string, unknown>;
       strength = num(p.dofStrength) ?? strength;
       focus = num(p.focusDistance) ?? focus;
       focal = num(p.focalLength) ?? focal;
       aperture = num(p.dofAperture) ?? aperture;
+      fStop = num(p.fStop) ?? fStop;
     }
     strength = sample?.(node.id, 'dofStrength') ?? strength;
     focus = sample?.(node.id, 'focusDistance') ?? focus;
     aperture = sample?.(node.id, 'dofAperture') ?? aperture;
+    fStop = sample?.(node.id, 'fStop') ?? fStop;
     if (!strength || strength <= 0) return null;
+    const lens = focal ?? Project3D.defaultCamera(width, height).focalLength;
     return {
       strength,
-      focus: focus ?? focal ?? Project3D.defaultCamera(width, height).focalLength,
+      focus: focus ?? lens,
       // Default the slope to the cap → identical to the old single-scalar ramp.
       aperture: aperture ?? strength,
+      focalLength: lens,
+      // Present ONLY when the camera actually carries one. `dofBlurPx` selects
+      // the physical model on presence, so defaulting it here — to anything at
+      // all — would silently re-grade every existing project's defocus.
+      ...(fStop !== undefined && fStop > 0 ? { fStop } : {}),
     };
   }
   return null;

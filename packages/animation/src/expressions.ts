@@ -18,6 +18,14 @@
 
 import { parseExpression, evaluateExpression, type ExprNode } from './exprLang';
 
+/**
+ * Ceiling on `wiggle`'s octave count.
+ *
+ * The one loop in this file whose iteration count is chosen by expression
+ * source rather than by the document. See the note at the call site.
+ */
+export const MAX_WIGGLE_OCTAVES = 8;
+
 /** Loop mode for `loopOut`/`loopIn` (AE semantics). Unknown modes fall back
  *  to `'cycle'` so a typo degrades gracefully instead of erroring. */
 export type LoopMode = 'cycle' | 'pingpong' | 'offset';
@@ -62,6 +70,128 @@ export interface ExprContext {
    *  x and y wiggle INDEPENDENTLY (AE behaviour) instead of diagonally in
    *  lock-step. Still reproducible: same node+prop ⇒ same motion every run. */
   propSeed?: number;
+  /**
+   * The layer's CONTENT bounds at time `t`, in layer space — backs
+   * `sourceRectAtTime`.
+   *
+   * `t` is a real parameter, not decoration: a text layer's bounds change when
+   * its size, tracking or source text animate, and an auto-sizing plate reading
+   * the bounds at the wrong time lags its subject by a frame. The provider is
+   * expected to evaluate the node's props at `t` before measuring.
+   *
+   * `extents` asks for the looser box. For text that is the FONT box (stable
+   * per font and line count) rather than the glyph INK box (tight, changes as
+   * you type) — see the note on `sourceRectAtTime` in `run` for why that is the
+   * closest honest mapping of AE's flag rather than an exact one.
+   */
+  sourceRectAt?: (t: number, extents: boolean) => SourceRect | undefined;
+  /** The current property's own keyframe times, ascending — backs `numKeys`,
+   *  `key(n)` and `nearestKey()`. Empty when the property has no track. */
+  keyTimes?: ReadonlyArray<number>;
+  /**
+   * The layer's LAYER-LOCAL → COMPOSITION placement at time `t` — backs
+   * `toComp` / `toWorld` / `fromComp` / `fromWorld`.
+   *
+   * `name` is null for the current layer, or another layer's name, matching
+   * how `layerAt` addresses layers. Undefined when there is no provider or no
+   * such layer, which the host turns into a STATED error rather than a silent
+   * identity: a coordinate conversion that quietly returns its input is
+   * indistinguishable from one that worked.
+   */
+  spaceAt?: (name: string | null, t: number) => LayerSpace | undefined;
+  /**
+   * Markers for one scope, ascending by time — backs `marker.*`.
+   *
+   * `'layer'` means the CURRENT layer's markers, already converted to comp
+   * seconds by the host. `'comp'` means the composition's. Absent or empty
+   * yields `numKeys === 0`, which every accessor handles, so an unwired
+   * provider degrades to "no markers" rather than throwing — the opposite call
+   * from `spaceAt`, and for a different reason: no markers is a perfectly
+   * ordinary state that an expression must survive, whereas no coordinate
+   * conversion is not.
+   *
+   * Order is not required of the host; see {@link ExprMarker}.
+   */
+  markersAt?: (scope: 'comp' | 'layer') => readonly ExprMarkerData[];
+}
+
+/**
+ * A layer's placement, as the coordinate-space functions need it.
+ *
+ * ── Why this is FUNCTIONS and not a matrix ─────────────────────────────
+ *
+ * A 2×3 affine would cover 2D layers and nothing else. A 3D layer's
+ * layer→comp conversion passes through the camera, which is a perspective
+ * DIVIDE, and its comp→layer conversion is a ray/plane intersection. Neither is
+ * a matrix, so a matrix contract would have forced the host to reimplement the
+ * app's projection — a second copy of "where does this point land", kept in
+ * step by attention. That is the §2·0 shape this codebase keeps paying for.
+ *
+ * So the arithmetic stays where the matrices already live (the app installs the
+ * provider over the SAME `parentWorld3d` / `worldMatrixOf` the renderer uses)
+ * and this package only marshals arguments and reports errors.
+ */
+export interface LayerSpace {
+  /** Layer-local (x, y) → composition (x, y). */
+  toComp(p: readonly [number, number]): [number, number];
+  /** Composition (x, y) → layer-local (x, y). */
+  fromComp(p: readonly [number, number]): [number, number];
+  /**
+   * Layer-local (x, y) → WORLD (x, y, z).
+   *
+   * For a 2D layer the composition is the world plane, so this returns the same
+   * x/y as `toComp` with z = 0 — as in AE. They stay separate functions rather
+   * than one aliased to the other, because for a 3D layer they genuinely differ:
+   * world is before the camera, comp is after it.
+   */
+  toWorld(p: readonly [number, number]): [number, number, number];
+  /** WORLD (x, y, z) → layer-local (x, y). */
+  fromWorld(p: readonly [number, number, number]): [number, number];
+}
+
+/** AE's `sourceRectAtTime` return shape. */
+export interface SourceRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * One marker, as an expression sees it — backs `marker.key(n)`.
+ *
+ * `time` is COMPOSITION seconds for both scopes, including layer markers,
+ * which the model stores layer-relative. That conversion is deliberate and it
+ * is the whole reason this type exists rather than passing `MarkerData`
+ * through: the overwhelmingly common expression is
+ * `marker.nearestKey(time).time`, and `time` in an expression is comp seconds.
+ * Handing back a layer-relative number there would compare two different
+ * clocks and be wrong by the layer's start offset — correct-looking on any
+ * layer starting at 0, which is most of them while you are testing.
+ *
+ * `duration` is NOT converted, because it is a length rather than an instant.
+ */
+export interface ExprMarkerData {
+  /** Composition seconds. */
+  time: number;
+  /** Span length in seconds; 0 for a point marker. */
+  duration: number;
+  /** The marker's label. */
+  name: string;
+  /** The marker's note — AE's `.comment`. */
+  comment: string;
+}
+
+/**
+ * A marker with its AE index. `index` is assigned HERE, by position after
+ * sorting, rather than supplied by the host — so the 1-based numbering that
+ * `key(n)` depends on has exactly one author. A host that returned markers in
+ * insertion order (which `MarkerList` does) would otherwise make `key(1)` mean
+ * "the first one added" in one scope and "the earliest" in another.
+ */
+export interface ExprMarker extends ExprMarkerData {
+  /** 1-based, matching AE's `key(n)` numbering. 0 when there are no markers. */
+  index: number;
 }
 
 export interface ExprResult {
@@ -104,16 +234,12 @@ function humanize(e: unknown): string {
   return msg;
 }
 
-/**
- * The complete set of names an expression can see. Was the parameter list for
- * `new Function`; now the contract for the scope built in `run` (and the source
- * of truth for the "Unknown name" hint below and API_NAMES highlighting).
- */
-export const API_PARAMS = [
-  'time', 'value', 'audio', 'ctrl', 'wiggle', 'clamp', 'linear', 'ease', 'easeIn', 'easeOut',
-  'timeToFrames', 'framesToTime', 'random', 'Math', 'valueAtTime', 'velocity', 'speed',
-  'velocityAtTime', 'layer', 'layerAt', 'loopOut', 'loopIn', 'thisComp', 'thisLayer', 'thisProperty',
-] as const;
+// `API_PARAMS` lived here: a fourth hand-written list of the same names, left
+// over from when this API was compiled with `new Function` and the array was
+// its parameter list. It had NO consumers anywhere in src/ or packages/ — the
+// tokenizer reads its own set, and the "Unknown name" hint below hardcodes its
+// suggestions — so it was a stale description of the scope that nothing could
+// notice going wrong. Deleted rather than updated, per the no-dual-shape rule.
 
 function resolveRange(t: number, a: number, b: number, c?: number, d?: number): { k: number; vMin: number; vMax: number } {
   let tMin: number, tMax: number, vMin: number, vMax: number;
@@ -125,6 +251,26 @@ function resolveRange(t: number, a: number, b: number, c?: number, d?: number): 
   if (tMax === tMin) return { k: 0, vMin, vMax };
   const k = Math.min(1, Math.max(0, (t - tMin) / (tMax - tMin)));
   return { k, vMin, vMax };
+}
+
+/** Filled on the first `run`; see {@link boundScopeNames}. */
+let boundNames: string[] = [];
+
+/**
+ * The names `run` actually binds — for the §2·0 discoverability guard.
+ *
+ * This is a REFLECTION of the scope Map, not a fourth list to keep in step.
+ * The guard it exists for previously probed a hand-written array of names,
+ * which meant the scope→table direction only covered names someone had
+ * remembered to add to it: a function bound in scope and missing from the
+ * autocomplete table worked perfectly, was undiscoverable, and failed nothing.
+ * Enumerating the Map itself is what makes that assertion complete.
+ *
+ * Empty until the first expression is evaluated, because the Map is built
+ * inside `run` where its closures live.
+ */
+export function boundScopeNames(): readonly string[] {
+  return boundNames;
 }
 
 export function compileExpression(src: string): CompiledExpression {
@@ -158,7 +304,18 @@ export function compileExpression(src: string): CompiledExpression {
         let f = freq;
         let a = amp;
         let maxA = 0;
-        const n = Math.max(1, Math.floor(octaves));
+        // CLAMPED AT BOTH ENDS. This loop count comes straight out of expression
+        // source, and expression source is written by plugins and persists in
+        // saved documents — so `wiggle(2, 30, 1e9)` was a billion iterations on
+        // the main thread, per property, per frame, arriving on the machine of
+        // whoever opened the project. Nothing downstream could catch it: the
+        // worker heartbeat supervises plugin workers, and this runs in the
+        // renderer.
+        //
+        // 8 is not arbitrary. Amplitude is multiplied by `ampMult` (0.5 by
+        // default) every octave, so the eighth contributes 1/256 of the first;
+        // past that the loop buys nothing a viewer could see.
+        const n = Math.min(MAX_WIGGLE_OCTAVES, Math.max(1, Math.floor(octaves) || 1));
         for (let i = 0; i < n; i++) {
           total += (smoothNoise(tt * f + wiggleSeed) * 2 - 1) * a;
           maxA += a;
@@ -191,7 +348,301 @@ export function compileExpression(src: string): CompiledExpression {
       const compInfo = ctx.comp ?? { width: 1920, height: 1080, duration: 10, fps: 60, numLayers: 1 };
       const timeToFrames = (t = time, fps = compInfo.fps): number => Math.round(t * fps);
       const framesToTime = (f: number, fps = compInfo.fps): number => f / fps;
-      const random = (seed = time): number => hash01(seed);
+      /**
+       * AE's randomness model, which is a SEQUENCE and not a pure function.
+       *
+       * `random()` with no argument must return a different value on each call
+       * within one evaluation — `[random(), random()]` is meant to be a random
+       * point, not the same number twice. But it must also be identical on
+       * every re-evaluation of the same frame, or scrubbing would shimmer and
+       * export would not match preview.
+       *
+       * Both hold by making the sequence a pure function of (seed, call index):
+       * the counter resets per evaluation, so call N of frame F always gets the
+       * same value. `seedRandom(s)` re-bases it; AE's `timeless` second
+       * argument is honoured by simply not mixing time in, which is what this
+       * already does — the seed is the only input.
+       *
+       * The previous `random(seed = time)` was a pure hash of the time, so
+       * every call in a frame returned the SAME number. That is not AE's
+       * behaviour and quietly broke the commonest use.
+       */
+      let randomSeed = ctx.propSeed ?? 0;
+      let randomCounter = 0;
+      const seedRandom = (seed: number, _timeless = false): number => {
+        randomSeed = seed;
+        randomCounter = 0;
+        return 0; // AE returns undefined; 0 keeps the expression numeric.
+      };
+      const nextRandom = (): number => hash01(randomSeed * 1013.7 + (randomCounter += 1) * 71.3);
+      /** `random()` → 0..1 · `random(max)` → 0..max · `random(min, max)`. */
+      const random = (a?: number, b?: number): number => {
+        const u = nextRandom();
+        if (a === undefined) return u;
+        if (b === undefined) return u * a;
+        return a + u * (b - a);
+      };
+      /**
+       * Gaussian random, mean 0 and standard deviation 1 — Box–Muller over two
+       * draws from the same sequence.
+       *
+       * Worth having distinct from `random`: a uniform jitter looks mechanical
+       * because extreme values are exactly as likely as central ones, which is
+       * why AE rigs reach for this for natural-looking variation.
+       */
+      const gaussRandom = (): number => {
+        const u1 = Math.max(1e-9, nextRandom());
+        const u2 = nextRandom();
+        return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      };
+      /**
+       * Coherent noise, −1..1 — smooth in its argument, unlike `random`.
+       *
+       * The distinction that matters: nearby inputs give nearby outputs, so
+       * `noise(time)` drifts where `random()` jitters. That is the whole reason
+       * both exist.
+       */
+      const noise = (x: number, y = 0): number => (smoothNoise(x * 1.7 + y * 31.4) - 0.5) * 2;
+
+      /**
+       * `sourceRectAtTime(t, includeExtents)` — the layer's content bounds.
+       *
+       * The single most-reached-for expression in AE, because an auto-sizing
+       * background behind text is impossible without it, and the reason it is
+       * worth the provider plumbing the rest of this API does not need.
+       *
+       * ── One honest divergence from AE ───────────────────────────────────
+       *
+       * AE's `includeExtents` adds the box-text extents (and, for shapes, the
+       * stroke). Here it selects the FONT box instead of the glyph INK box.
+       * They are not the same flag, but they are the same *choice*: tight to
+       * the pixels drawn, or loose and stable while the text changes. The tight
+       * box is the default because that is what a plate behind text wants; the
+       * loose one stops the plate twitching as the caret moves, which is what
+       * people actually reach for `includeExtents` to fix.
+       *
+       * Returns a plain object, so `sourceRectAtTime().width` reads naturally.
+       * Falls back to the layer box when there is no provider — never
+       * undefined, because a missing rect in the middle of an arithmetic
+       * expression surfaces as a confusing NaN rather than a useful error.
+       */
+      const sourceRectAtTime = (t = time, includeExtents = false): SourceRect =>
+        ctx.sourceRectAt?.(t, includeExtents)
+        ?? {
+          top: 0,
+          left: 0,
+          width: ctx.layerInfo?.width ?? compInfo.width,
+          height: ctx.layerInfo?.height ?? compInfo.height,
+        };
+
+      // ── Coordinate spaces ──────────────────────────────────────────
+      //
+      // `toComp` / `toWorld` / `fromComp` / `fromWorld`, AE's four. What they
+      // are FOR is attaching one thing to a point on another: the corner of a
+      // rotated, scaled, PARENTED layer, expressed in composition coordinates.
+      // That is exactly the case a naive implementation gets wrong, because
+      // adding the layer's position to the point is right only while the layer
+      // is unrotated, unscaled and unparented.
+      //
+      // The conversion itself comes from a PROVIDER (`ctx.spaceAt`) rather than
+      // being rebuilt here — see `LayerSpace` for why it is functions and not a
+      // matrix. This block only marshals arguments and reports failures.
+      const asPoint2 = (p: unknown, fn: string): [number, number] => {
+        if (Array.isArray(p) && p.length >= 2 &&
+            typeof p[0] === 'number' && typeof p[1] === 'number' &&
+            Number.isFinite(p[0]) && Number.isFinite(p[1])) {
+          return [p[0], p[1]];
+        }
+        throw new Error(`${fn}() needs a point, e.g. ${fn}([0, 0]).`);
+      };
+      /** A world point. `[x, y]` is accepted with z = 0, as AE does. */
+      const asPoint3 = (p: unknown, fn: string): [number, number, number] => {
+        const [x, y] = asPoint2(p, fn);
+        const z = Array.isArray(p) && typeof p[2] === 'number' && Number.isFinite(p[2]) ? p[2] : 0;
+        return [x, y, z];
+      };
+
+      /**
+       * The layer's placement, or a STATED error.
+       *
+       * Never a silent identity: a coordinate conversion that returns its input
+       * looks correct for a layer sitting at the origin and is wrong for every
+       * other one, which is the failure this whole API exists to remove.
+       */
+      const spaceOf = (name: string | null, t: number, fn: string): LayerSpace => {
+        const sp = ctx.spaceAt?.(name, t);
+        if (!sp) {
+          throw new Error(
+            name === null
+              ? `${fn}() cannot see this layer’s transform here.`
+              : `${fn}(): no layer named “${name}”.`,
+          );
+        }
+        return sp;
+      };
+
+      const spaceFns = (name: string | null): {
+        toComp: (p: unknown, t?: number) => [number, number];
+        toWorld: (p: unknown, t?: number) => [number, number, number];
+        fromComp: (p: unknown, t?: number) => [number, number];
+        fromWorld: (p: unknown, t?: number) => [number, number];
+      } => ({
+        toComp: (p, t = time) => spaceOf(name, t, 'toComp').toComp(asPoint2(p, 'toComp')),
+        toWorld: (p, t = time) => spaceOf(name, t, 'toWorld').toWorld(asPoint2(p, 'toWorld')),
+        fromComp: (p, t = time) => spaceOf(name, t, 'fromComp').fromComp(asPoint2(p, 'fromComp')),
+        fromWorld: (p, t = time) => spaceOf(name, t, 'fromWorld').fromWorld(asPoint3(p, 'fromWorld')),
+      });
+
+      const ownSpace = spaceFns(null);
+
+      // ── Keyframe access ────────────────────────────────────────────
+      const keyTimes = ctx.keyTimes ?? [];
+      const numKeys = keyTimes.length;
+      /**
+       * `key(n)` — the nth keyframe, ONE-BASED, as AE numbers them.
+       *
+       * Out-of-range clamps rather than throwing: `key(numKeys)` is the
+       * commonest call and an off-by-one there would otherwise take down the
+       * whole property rather than degrading.
+       */
+      const key = (n: number): { index: number; time: number; value: number } => {
+        const i = Math.max(1, Math.min(numKeys, Math.round(n)));
+        const t = keyTimes[i - 1] ?? 0;
+        return { index: i, time: t, value: selfAt(t) };
+      };
+      /** `nearestKey(t)` — the keyframe closest in time to `t`. */
+      const nearestKey = (t = time): { index: number; time: number; value: number } => {
+        if (numKeys === 0) return { index: 0, time: 0, value };
+        let best = 0;
+        for (let i = 1; i < numKeys; i++) {
+          if (Math.abs(keyTimes[i]! - t) < Math.abs(keyTimes[best]! - t)) best = i;
+        }
+        return key(best + 1);
+      };
+
+      // ── Marker access ──────────────────────────────────────────────
+      /**
+       * `marker.*` for one scope, deliberately the same shape as the keyframe
+       * accessors above — `numKeys`, `key(n)`, `nearestKey(t)` — because in AE
+       * they ARE the same shape, and someone who has learned one should not
+       * have to learn the other.
+       *
+       * The empty case returns a zero marker rather than null or undefined.
+       * `marker.nearestKey(time).time` is the canonical use, and on a comp
+       * with no markers the null version would throw on `.time` and take the
+       * whole property down; 0 degrades to "the start", which is wrong but
+       * survivable and visible.
+       */
+      const buildMarkers = (which: 'comp' | 'layer') => {
+        const sorted = [...(ctx.markersAt?.(which) ?? [])]
+          .sort((a, b) => a.time - b.time)
+          .map((m, i): ExprMarker => ({ ...m, index: i + 1 }));
+        const EMPTY: ExprMarker = { time: 0, duration: 0, name: '', comment: '', index: 0 };
+        /**
+         * `key(n)` — 1-based by position, or by NAME/comment when given a
+         * string, which is AE's other form (`marker.key("Chorus")`).
+         *
+         * Comment is matched before name because that is the field AE's
+         * string form addresses; name is accepted too since our markers carry
+         * a label as well and `addMarkerAtPlayhead` fills the label, not the
+         * comment — so matching only AE's field would make the string form
+         * useless on every marker this app creates.
+         */
+        const mKey = (n: number | string): ExprMarker => {
+          if (typeof n === 'string') {
+            return sorted.find((m) => m.comment === n)
+              ?? sorted.find((m) => m.name === n)
+              ?? EMPTY;
+          }
+          if (sorted.length === 0) return EMPTY;
+          const i = Math.max(1, Math.min(sorted.length, Math.round(n)));
+          return sorted[i - 1]!;
+        };
+        const mNearest = (t = time): ExprMarker => {
+          if (sorted.length === 0) return EMPTY;
+          let best = 0;
+          for (let i = 1; i < sorted.length; i++) {
+            if (Math.abs(sorted[i]!.time - t) < Math.abs(sorted[best]!.time - t)) best = i;
+          }
+          return sorted[best]!;
+        };
+        return { numKeys: sorted.length, key: mKey, nearestKey: mNearest };
+      };
+      /**
+       * LAZY, and that is not premature. `run` is called per property per
+       * frame, so building and sorting two marker lists eagerly would charge
+       * every expression in the project for a feature almost none of them use.
+       * The getter defers to first access and the memo keeps one build per
+       * evaluation, which is what a marker expression actually needs.
+       *
+       * `readMember` (exprLang.ts) does a plain property read, so a getter is
+       * indistinguishable from a field to the evaluator — checked, not assumed.
+       */
+      const markerScope = (which: 'comp' | 'layer') => {
+        let api: ReturnType<typeof buildMarkers> | null = null;
+        const get = () => (api ??= buildMarkers(which));
+        return {
+          get numKeys() { return get().numKeys; },
+          key: (n: number | string) => get().key(n),
+          nearestKey: (t?: number) => get().nearestKey(t),
+        };
+      };
+      /**
+       * Bare `marker` is the LAYER's markers, matching AE — comp markers are
+       * `thisComp.marker`. Worth stating because the reverse is the natural
+       * guess, and the two silently differ: a bare `marker` reading comp
+       * markers would work fine until someone put a marker on a layer.
+       */
+      const markerLayer = markerScope('layer');
+      const markerComp = markerScope('comp');
+
+      /**
+       * `posterizeTime(fps)` — quantise the clock this expression sees.
+       *
+       * Returns the stepped time rather than mutating anything, because an
+       * interpreted expression has no way to re-enter itself with a different
+       * `time`. `wiggle(3, 40, 1, 0.5, posterizeTime(8))` is the idiomatic use
+       * and reads the same as AE's, even though AE's version is a statement and
+       * this is a value.
+       */
+      const posterizeTime = (fps: number, t = time): number =>
+        fps > 0 ? Math.floor(t * fps) / fps : t;
+
+      // ── Vector maths ───────────────────────────────────────────────
+      // AE treats a 1-element vector and a scalar interchangeably, so each of
+      // these coerces a bare number to [n] rather than erroring.
+      const vec = (v: number | number[]): number[] => (Array.isArray(v) ? v : [v]);
+      const zip = (a: number | number[], b: number | number[], f: (x: number, y: number) => number): number[] => {
+        const va = vec(a); const vb = vec(b);
+        const n = Math.max(va.length, vb.length);
+        // The SHORTER operand extends with its last component, not with zero:
+        // `add([10,20], 5)` means "add 5 to both", which is how AE's scalar
+        // broadcast behaves. Padding with 0 would silently drop the second.
+        const at = (v: number[], i: number): number => v[i] ?? v[v.length - 1] ?? 0;
+        return Array.from({ length: n }, (_, i) => f(at(va, i), at(vb, i)));
+      };
+      const add = (a: number | number[], b: number | number[]): number[] => zip(a, b, (x, y) => x + y);
+      const sub = (a: number | number[], b: number | number[]): number[] => zip(a, b, (x, y) => x - y);
+      const mul = (a: number | number[], b: number | number[]): number[] => zip(a, b, (x, y) => x * y);
+      const div = (a: number | number[], b: number | number[]): number[] =>
+        zip(a, b, (x, y) => (y === 0 ? 0 : x / y));
+      const dot = (a: number | number[], b: number | number[]): number =>
+        zip(a, b, (x, y) => x * y).reduce((s, v) => s + v, 0);
+      /** 3D cross product. 2-vectors are treated as z=0, which is what makes
+       *  `cross([1,0],[0,1])` give [0,0,1] as expected rather than erroring. */
+      const cross = (a: number | number[], b: number | number[]): number[] => {
+        const [ax = 0, ay = 0, az = 0] = vec(a);
+        const [bx = 0, by = 0, bz = 0] = vec(b);
+        return [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx];
+      };
+      const length = (a: number | number[], b?: number | number[]): number =>
+        b === undefined
+          ? Math.hypot(...vec(a))
+          : Math.hypot(...sub(a, b)); // AE's two-argument form: distance between points
+      const normalize = (a: number | number[]): number[] => {
+        const len = Math.hypot(...vec(a));
+        return len === 0 ? vec(a).map(() => 0) : vec(a).map((v) => v / len);
+      };
 
       const selfAt = ctx.selfAt ?? ((): number => value);
       const valueAtTime = (t: number): number => selfAt(t);
@@ -253,16 +704,29 @@ export function compileExpression(src: string): CompiledExpression {
         frameDuration: 1 / Math.max(1, compInfo.fps),
         fps: compInfo.fps,
         numLayers: compInfo.numLayers,
+        // Without a prop this is a LAYER OBJECT, and the coordinate-space
+        // functions are bound to THAT layer — `thisComp.layer('Target').toComp`
+        // must convert in the target's space, not in this one's, which is the
+        // whole reason to reach for it.
         layer: (name: string, prop?: string) => prop ? layer(name, prop) : {
           width: compInfo.width,
           height: compInfo.height,
           name,
+          ...spaceFns(name),
         },
+        marker: markerComp,
       };
-      const thisLayer = ctx.layerInfo ?? {
-        name: 'Layer',
-        width: compInfo.width,
-        height: compInfo.height,
+      const thisLayer = {
+        ...(ctx.layerInfo ?? {
+          name: 'Layer',
+          width: compInfo.width,
+          height: compInfo.height,
+        }),
+        // AE spells these as layer methods, so `thisLayer.toComp([0,0])` is the
+        // form people already know. The bare `toComp([0,0])` is bound too, the
+        // same way `sourceRectAtTime` is — one shorter to type, identical.
+        ...ownSpace,
+        marker: markerLayer,
       };
       const thisProperty = {
         value,
@@ -275,8 +739,15 @@ export function compileExpression(src: string): CompiledExpression {
       };
 
       // The evaluator can only see these names — there is no `window`, no
-      // `fetch`, no prototype chain to climb. Keep in sync with API_PARAMS
-      // (the tokenizer's API_NAMES drives editor highlighting off the same set).
+      // `fetch`, no prototype chain to climb.
+      //
+      // §2·0 NOTE. This Map is the AUTHORITY on what exists. Two other lists
+      // describe the same set — `API_NAMES` (editor highlighting) and
+      // `EXPRESSION_API` (autocomplete + docs) — and nothing forced the three to
+      // agree, so a function added here alone would work but be invisible and
+      // undiscoverable: a model with no UI. `API_NAMES` is now DERIVED from
+      // `EXPRESSION_API` below, and `expressionApi.test.ts` asserts this Map and
+      // that table hold the same names, which closes the loop.
       const scope = new Map<string, unknown>([
         ['time', time], ['value', value], ['audio', audio], ['ctrl', ctrl],
         ['wiggle', wiggle], ['clamp', clamp], ['linear', linear],
@@ -288,7 +759,22 @@ export function compileExpression(src: string): CompiledExpression {
         ['layer', layer], ['layerAt', layerAt],
         ['loopOut', loopOut], ['loopIn', loopIn],
         ['thisComp', thisComp], ['thisLayer', thisLayer], ['thisProperty', thisProperty],
+        // ── Round two ──
+        ['sourceRectAtTime', sourceRectAtTime],
+        ['toComp', ownSpace.toComp], ['toWorld', ownSpace.toWorld],
+        ['fromComp', ownSpace.fromComp], ['fromWorld', ownSpace.fromWorld],
+        ['seedRandom', seedRandom], ['gaussRandom', gaussRandom], ['noise', noise],
+        ['numKeys', numKeys], ['key', key], ['nearestKey', nearestKey],
+        ['marker', markerLayer],
+        ['posterizeTime', posterizeTime],
+        ['add', add], ['sub', sub], ['mul', mul], ['div', div],
+        ['dot', dot], ['cross', cross], ['length', length], ['normalize', normalize],
       ]);
+      // Reflect the REAL Map for the discoverability guard. Captured once
+      // (first evaluation) rather than per run, because `run` is called per
+      // property per frame and this exists only so a test can enumerate what
+      // is actually bound — see `boundScopeNames`.
+      if (boundNames.length === 0) boundNames = [...scope.keys()];
 
       try {
         const out = evaluateExpression(ast, scope);
@@ -336,11 +822,34 @@ export interface SyntaxToken {
   start: number;
 }
 
-const API_NAMES = new Set([
-  'time', 'value', 'audio', 'ctrl', 'wiggle', 'clamp', 'linear', 'random', 'Math',
-  'valueAtTime', 'layer', 'layerAt', 'loopOut', 'loopIn', 'ease', 'easeIn', 'easeOut',
-  'timeToFrames', 'framesToTime', 'thisComp', 'thisLayer', 'thisProperty', 'velocity', 'speed', 'velocityAtTime',
-]);
+/**
+ * Names the editor highlights as API — DERIVED from `EXPRESSION_API`, not
+ * maintained beside it.
+ *
+ * These were two hand-written lists (this one and the autocomplete table) plus
+ * the `scope` Map in `run`, three descriptions of one set with nothing forcing
+ * agreement. §2·0, and a costly one for this API in particular: a function
+ * present in `scope` alone works perfectly and is invisible — no highlight, no
+ * autocomplete entry, nothing to discover it by. That is a model with no UI,
+ * which is the exact failure the project standard exists to prevent.
+ *
+ * Derivation collapses two of the three. `expressionApi.test.ts` closes the
+ * third by asserting `scope` and this table name the same set.
+ *
+ * Computed lazily because `EXPRESSION_API` is declared further down the file
+ * and `const` does not hoist its initialiser — deriving eagerly here throws at
+ * module load.
+ */
+let apiNamesCache: Set<string> | null = null;
+function apiNames(): Set<string> {
+  // The ROOT of each label, because the tokenizer looks up `word.split('.')[0]`
+  // — `Math.sin()` must register the name `Math`. Deriving the full label
+  // instead silently un-highlighted `Math`, which the API test caught.
+  apiNamesCache ??= new Set(
+    EXPRESSION_API.map((a) => a.label.replace(/\(\)$/, '').split('.')[0]!),
+  );
+  return apiNamesCache;
+}
 
 /** Split an expression into colored syntax tokens. Never throws. */
 export function tokenizeExpression(src: string): SyntaxToken[] {
@@ -365,7 +874,7 @@ export function tokenizeExpression(src: string): SyntaxToken[] {
     if (/[A-Za-z_$]/.test(c)) {
       let j = i; while (j < src.length && /[A-Za-z0-9_$.]/.test(src[j]!)) j++;
       const word = src.slice(i, j);
-      push(word, API_NAMES.has(word.split('.')[0]!) ? 'api' : 'ident');
+      push(word, apiNames().has(word.split('.')[0]!) ? 'api' : 'ident');
       continue;
     }
     if (c === '(' || c === ')' || c === '[' || c === ']') { push(c, 'paren'); continue; }
@@ -417,6 +926,13 @@ export const EXPRESSION_API: { insert: string; label: string; hint: string }[] =
   { insert: 'easeIn(time, 0, 1, 0, 100)', label: 'easeIn()', hint: 'smooth start interpolation' },
   { insert: 'easeOut(time, 0, 1, 0, 100)', label: 'easeOut()', hint: 'smooth end interpolation' },
   { insert: 'timeToFrames(time)', label: 'timeToFrames()', hint: 'convert seconds to frame number' },
+  // These three were bound in scope from the start and documented nowhere, so
+  // they worked and could not be found — the exact defect this table exists to
+  // prevent. Surfaced by the scope-wide discoverability assertion in
+  // `expressionApi.test.ts`, which the previous hand-written list could not see.
+  { insert: 'framesToTime(12)', label: 'framesToTime()', hint: 'convert a frame number to seconds' },
+  { insert: 'value + audio * 200', label: 'audio', hint: 'audio amplitude 0..1 at the playhead — audio-reactive motion' },
+  { insert: "ctrl('Speed')", label: 'ctrl()', hint: 'read a named slider control from anywhere in the scene' },
   { insert: 'thisComp.width', label: 'thisComp', hint: 'composition properties and layer access' },
   { insert: 'thisLayer.name', label: 'thisLayer', hint: 'current layer properties' },
   { insert: 'thisProperty.valueAtTime(time - 0.5)', label: 'thisProperty', hint: 'current property accessors' },
@@ -425,4 +941,29 @@ export const EXPRESSION_API: { insert: string; label: string; hint: string }[] =
   { insert: "layerAt('Layer 1', 'x', time - 0.5)", label: 'layerAt()', hint: "another layer's value at a time" },
   { insert: "loopOut('cycle')", label: 'loopOut()', hint: 'repeat keyframes after the last (cycle · pingpong · offset)' },
   { insert: "loopIn('cycle')", label: 'loopIn()', hint: 'repeat keyframes before the first (cycle · pingpong · offset)' },
+  // ── Round two ──
+  { insert: 'sourceRectAtTime().width', label: 'sourceRectAtTime()', hint: 'content bounds {top,left,width,height} — auto-sizing plates' },
+  // Coordinate spaces. The hints name the DIRECTION, because that is the only
+  // thing anyone gets wrong about these four.
+  { insert: 'toComp([0, 0])', label: 'toComp()', hint: 'layer point → composition coords (honours parenting, rotation, scale)' },
+  { insert: 'fromComp([960, 540])', label: 'fromComp()', hint: 'composition point → this layer’s coords' },
+  { insert: 'toWorld([0, 0])', label: 'toWorld()', hint: 'layer point → world coords (same as toComp for a 2D layer)' },
+  { insert: 'fromWorld([960, 540])', label: 'fromWorld()', hint: 'world point → this layer’s coords' },
+  { insert: 'numKeys', label: 'numKeys', hint: "this property's keyframe count" },
+  { insert: 'key(1).time', label: 'key()', hint: 'nth keyframe (1-based): .index .time .value' },
+  { insert: 'nearestKey(time).time', label: 'nearestKey()', hint: 'keyframe closest to a time' },
+  { insert: 'marker.nearestKey(time).time', label: 'marker', hint: 'THIS LAYER’s markers: .numKeys .key(n|"name") .nearestKey(t) → {time,duration,name,comment,index}' },
+  { insert: 'seedRandom(7)', label: 'seedRandom()', hint: 'rebase the random sequence' },
+  { insert: 'random(100)', label: 'random()', hint: 'random 0..1, 0..max, or min..max — advances per call' },
+  { insert: 'gaussRandom()', label: 'gaussRandom()', hint: 'normal distribution, mean 0 sd 1' },
+  { insert: 'noise(time)', label: 'noise()', hint: 'coherent noise −1..1 — drifts, unlike random()' },
+  { insert: 'posterizeTime(8)', label: 'posterizeTime()', hint: 'stepped time, e.g. wiggle(…, posterizeTime(8))' },
+  { insert: 'add(value, [10, 0])', label: 'add()', hint: 'vector add (scalars broadcast)' },
+  { insert: 'sub(value, [10, 0])', label: 'sub()', hint: 'vector subtract' },
+  { insert: 'mul(value, 2)', label: 'mul()', hint: 'vector multiply' },
+  { insert: 'div(value, 2)', label: 'div()', hint: 'vector divide (÷0 → 0)' },
+  { insert: 'dot([1, 0], [0, 1])', label: 'dot()', hint: 'dot product → scalar' },
+  { insert: 'cross([1, 0], [0, 1])', label: 'cross()', hint: '3D cross product (2-vectors take z=0)' },
+  { insert: 'length(value)', label: 'length()', hint: 'magnitude, or distance between two points' },
+  { insert: 'normalize(value)', label: 'normalize()', hint: 'unit vector' },
 ];

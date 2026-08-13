@@ -100,12 +100,29 @@ export class WebGL2Backend implements RenderBackend {
   readonly kind = 'webgl2' as const;
   /** GL FBOs are written bottom-up: full-screen samples of a target flip V. */
   readonly renderTargetFlipV = true;
+  /**
+   * Declared PESSIMISTICALLY; `initialize()` replaces each entry with what the
+   * context actually reports.
+   *
+   * `float16Textures` was declared `true` here and only corrected in
+   * `initialize()` — which reads as harmless and is not. Anything that asks a
+   * constructed-but-uninitialised backend what it supports gets a yes, and the
+   * caller takes the float branch on a context that may have no
+   * `EXT_color_buffer_float` at all. The failure that produces is an incomplete
+   * framebuffer, not an error message.
+   *
+   * The rule for this object is therefore: a capability starts at the value
+   * that is safe to be wrong about. `false` for a feature (worst case: a
+   * cheaper path is taken until the probe lands), and a conservative floor for
+   * a limit — 4096 is the WebGL2 spec minimum, so a texture that fits it fits
+   * every implementation.
+   */
   capabilities: BackendCapabilities = {
     kind: 'webgl2',
     maxTextureSize: 4096,
     instancing: true,
     storageBuffers: false,
-    float16Textures: true,
+    float16Textures: false,
     timestampQueries: false,
   };
 
@@ -230,7 +247,35 @@ export class WebGL2Backend implements RenderBackend {
     const gl = this.gl;
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, desc.width, desc.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    /*
+      Honour `desc.format`.
+
+      This allocated RGBA8 unconditionally and ignored the field entirely, while
+      `createRenderTarget` below reads it properly. So the two halves of one
+      backend disagreed about what a format request means: ask for
+      `rgba16float` and you got a float RENDER TARGET and an 8-bit TEXTURE,
+      silently, depending only on which function the caller happened to reach.
+
+      That is a divergence generator rather than a bug with one symptom, which
+      is why it is worth fixing BEFORE any GPU effect porting. A ported effect
+      allocating a float intermediate through `createTexture` would work on
+      WebGPU, quantise to 8 bits here, and present as "that effect bands on
+      WebGL2" — a fresh mystery per effect, instead of one wrong line.
+
+      Formats beyond these two keep the RGBA8 they already got: `r8unorm` and
+      `bgra8unorm` have no `createTexture` caller today, and inventing untested
+      mappings would be a guess. `depth24plus` is a render-target concern and
+      never arrives here.
+
+      Gated on the CAPABILITY as well as the request, exactly as
+      `createRenderTarget` is — without `EXT_color_buffer_float` a half-float
+      texture is not renderable, and silently producing an incomplete
+      framebuffer is worse than the 8-bit fallback.
+    */
+    const float = desc.format === 'rgba16float' && this.capabilities.float16Textures;
+    const internalFormat = float ? gl.RGBA16F : gl.RGBA8;
+    const texType = float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+    gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, desc.width, desc.height, 0, gl.RGBA, texType, null);
     this.liveTextures.add(texture);
     return h('texture', texture);
   }

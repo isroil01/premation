@@ -77,6 +77,28 @@ const SEMANTIC_GATE_BACKEND = 'webgpu';
 /** Rendered every run. The gate backend is forced in regardless. */
 const DEFAULT_BACKENDS = ['webgl2', 'webgpu'];
 
+/** Where a backend's ratchet baseline lives. */
+const RT_ROOT = PKG;
+
+/**
+ * How far a secondary backend may differ from the committed references on a
+ * frame nobody has recorded a ceiling for.
+ *
+ * Not the per-scene reference tolerance (0.5%), which judges OUR renderer
+ * against pixels we blessed. This judges one hardware rasterizer against
+ * another, where edge antialiasing genuinely differs: the extrusion scenes
+ * measure 0.16-0.27% of pixels between the two backends, all of it on edges.
+ * 1% clears that with room and still catches anything structural.
+ */
+const BACKEND_TOLERANCE = 0.01;
+
+/** Wobble allowed above a recorded ceiling before it counts as a regression. */
+const BACKEND_RATCHET_SLACK = 0.002;
+
+/** How far under its ceiling a frame must fall before the run suggests
+ *  tightening it. Larger than the slack, so a frame cannot be reported as both. */
+const BACKEND_RATCHET_TIGHTEN = 0.01;
+
 // ── args ──────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
 const updateMode = argv.includes('--update');
@@ -85,6 +107,14 @@ const sceneOnly = sceneFilterFlag >= 0 ? argv[sceneFilterFlag + 1] : null;
 const updateTargets = updateMode
   ? argv.slice(argv.indexOf('--update') + 1).filter((a) => !a.startsWith('--'))
   : [];
+/**
+ * Rewrite the secondary backend's ratchet baseline from this run.
+ *
+ * Separate from `--update` on purpose: that blesses REFERENCE pixels, and if
+ * one flag did both then re-blessing a reference would silently also forgive
+ * every backend regression in the same run.
+ */
+const updateBackendBaselineMode = argv.includes('--update-backend-baseline');
 
 const RESET = '\x1b[0m';
 const c = (code, s) => `\x1b[${code}m${s}${RESET}`;
@@ -168,6 +198,35 @@ async function renderBackendsIsolated(backends) {
     // loudly on any developer machine that HAS an adapter, which is where the
     // WebGPU path is actually developed.
     if (backend === GATE_BACKEND) return { ok: false, backend, code };
+    /*
+      In CI, a missing adapter is a FAILURE, not a skip.
+
+      The reasoning above is right about developer machines and wrong about the
+      place it matters most. WebGPU is the product's primary backend; a hosted
+      runner that quietly renders none of it turns every WebGPU gate below --
+      the alpha semantics, the 3D styles, the plugin effects, the extrusion
+      reach, and now the pixel ratchet -- into a no-op that reports success.
+      "Nobody has a WebGPU adapter in CI" is a statement about how the runner is
+      provisioned, and the honest response is to fail until it is, rather than
+      to keep printing green.
+
+      Overridable both ways so it can be set by policy rather than by accident:
+      HARNESS_REQUIRE_WEBGPU=1 demands it anywhere, =0 waives it in CI.
+    */
+    const requireSecondary = process.env.HARNESS_REQUIRE_WEBGPU !== undefined
+      ? process.env.HARNESS_REQUIRE_WEBGPU !== '0'
+      : !!process.env.CI;
+    if (requireSecondary) {
+      process.stdout.write(
+        red(
+          `  x [${backend}] exited ${code} and this run REQUIRES it. `
+          + `No adapter means every ${backend} gate silently passes. `
+          + `Provision one, or set HARNESS_REQUIRE_WEBGPU=0 to state that you accept the hole.
+`,
+        ),
+      );
+      return { ok: false, backend, code };
+    }
     process.stdout.write(
       yellow(
         `  ! [${backend}] exited ${code} — SKIPPED, not gated. ` +
@@ -216,19 +275,37 @@ async function bless(scenes) {
 }
 
 /**
- * Non-gating PIXEL parity report for the secondary backend.
+ * PIXEL parity gate for the secondary backend — a RATCHET, not a pass/fail line.
  *
- * Pixels only — WebGPU's semantics ARE gated, by verify-alpha (see
- * SEMANTIC_GATE_BACKEND). What stays ungated here is byte equality against
- * PNGs blessed on a different rasterizer, which is not something a hardware
- * adapter can be expected to reproduce exactly.
+ * ── What was here, and why measuring was not enough ─────────────────────────
  *
- * The number is worth printing every run because it is now a real measurement
- * of the product's backend rather than of a silent fallback: it moved from
- * 18/164 to 122/164 the moment the harness was given an adapter. The remaining
- * gap is a genuine WebGPU-vs-WebGL2 list to work through, not a phantom.
+ * This printed a number and never failed. 250 scenes rendered on WebGPU — the
+ * PRIMARY backend of the shipped product — and not one pixel of it was gated,
+ * on the reasoning that byte equality against PNGs blessed on a different
+ * rasterizer is not something a hardware adapter can be expected to reproduce.
+ * That reasoning is sound and is why this is a ratchet rather than a threshold.
+ *
+ * What it did not cover is REGRESSION. While the number was merely printed,
+ * `effect-compound-blur` sat at 87.8% divergence because its WGSL failed to
+ * compile — "textureSample must only be called from uniform control flow" —
+ * so Compound Blur drew NOTHING on the primary backend. The harness printed
+ * the validation error every run, and the number went in the dashboard beside
+ * scenes that differ by antialiasing.
+ *
+ * ── The ratchet ────────────────────────────────────────────────────────────
+ *
+ * A frame with no baseline entry must be within {@link BACKEND_TOLERANCE}. A
+ * frame WITH one must not exceed its recorded ceiling. Either way a change that
+ * makes WebGPU worse fails the build, which is the property that was missing.
+ *
+ * The baseline is a list of debts, not of blessings — every entry is a
+ * WebGPU-vs-WebGL2 disagreement nobody has diagnosed yet. It is deliberately
+ * NOT the `divergence` mechanism used for known Canvas2D gaps, which requires a
+ * stated mechanism per scene: demanding 42 diagnoses before any gate could
+ * exist is how the suite ended up with no gate at all. Entries are meant to be
+ * removed, and the report names the ones that have improved enough to tighten.
  */
-async function reportSecondaryBackend(scenes, backend) {
+async function gateSecondaryBackend(scenes, backend) {
   let compared = 0;
   let matched = 0;
   let missing = 0;
@@ -248,15 +325,101 @@ async function reportSecondaryBackend(scenes, backend) {
       else worst.push({ id: `${s.id}#${frame}`, ratio });
     }
   }
-  if (compared === 0 && missing === 0) return;
+  if (compared === 0 && missing === 0) return 0;
   worst.sort((a, b) => b.ratio - a.ratio);
-  process.stdout.write('\n' + dim(`  ${backend} parity report (measured, NOT gated):\n`));
-  process.stdout.write(dim(`  · ${matched}/${compared} frame(s) match the committed reference`));
-  process.stdout.write(missing > 0 ? dim(` · ${missing} not rendered\n`) : '\n');
-  for (const w of worst.slice(0, 5)) {
-    process.stdout.write(dim(`  · ${w.id} ${pct(w.ratio)}\n`));
+
+  const baseline = await readBackendBaseline(backend);
+  const regressed = [];
+  const unlisted = [];
+  const improved = [];
+  for (const w of worst) {
+    const ceiling = baseline[w.id];
+    if (ceiling === undefined) {
+      if (w.ratio > BACKEND_TOLERANCE) unlisted.push(w);
+      continue;
+    }
+    // A little slack over the recorded ceiling: these are hardware rasterizers
+    // and a frame can wobble in its last pixel row between driver versions.
+    // Large enough to absorb that, far too small to hide a real change.
+    if (w.ratio > ceiling + BACKEND_RATCHET_SLACK) regressed.push({ ...w, ceiling });
+    else if (w.ratio < ceiling - BACKEND_RATCHET_TIGHTEN) improved.push({ ...w, ceiling });
   }
-  if (worst.length > 5) process.stdout.write(dim(`  · …and ${worst.length - 5} more\n`));
+
+  process.stdout.write('\n' + dim(`  ${backend} pixel parity (RATCHET - a frame may not get worse):\n`));
+  process.stdout.write(dim(`  - ${matched}/${compared} frame(s) match the committed reference`));
+  process.stdout.write(missing > 0 ? dim(` - ${missing} not rendered\n`) : '\n');
+  process.stdout.write(dim(`  - ${Object.keys(baseline).length} known divergence(s) held at their ceiling\n`));
+
+  for (const w of regressed) {
+    process.stdout.write(red(`  x ${w.id} ${pct(w.ratio)} - WORSE than its ${pct(w.ceiling)} ceiling\n`));
+  }
+  for (const w of unlisted) {
+    process.stdout.write(red(`  x ${w.id} ${pct(w.ratio)} - newly divergent, over the ${pct(BACKEND_TOLERANCE)} tolerance\n`));
+  }
+  // Printed, never failed. An improvement left unrecorded quietly restores the
+  // headroom the ratchet exists to remove.
+  for (const w of improved.slice(0, 5)) {
+    process.stdout.write(green(`  v ${w.id} ${pct(w.ratio)} - better than its ${pct(w.ceiling)} ceiling; tighten it\n`));
+  }
+  if (improved.length > 5) process.stdout.write(green(`  v ...and ${improved.length - 5} more improved\n`));
+
+  const failures = regressed.length + unlisted.length;
+  if (failures > 0) {
+    process.stdout.write(dim(`    re-run with --update-backend-baseline once each is understood\n`));
+  }
+  return failures;
+}
+
+/**
+ * Recorded ceilings for `backend`, or `{}` when none has been committed.
+ *
+ * Absent file = every frame is judged against BACKEND_TOLERANCE alone, which is
+ * the correct behaviour for a backend nobody has triaged: strict, and noisy
+ * until someone records what they accept.
+ */
+async function readBackendBaseline(backend) {
+  try {
+    const raw = await fs.readFile(backendBaselinePath(backend), 'utf8');
+    return JSON.parse(raw).frames ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function backendBaselinePath(backend) {
+  return path.join(RT_ROOT, `${backend}-baseline.json`);
+}
+
+/**
+ * Rewrite the baseline from what just rendered.
+ *
+ * Deliberately a separate flag from `--update`, which blesses REFERENCE pixels.
+ * Conflating the two would mean any reference re-bless silently also forgave
+ * every backend regression in the same run.
+ */
+async function updateBackendBaseline(scenes, backend) {
+  const frames = {};
+  for (const s of scenes) {
+    if (s.fidelityOnly) continue;
+    for (const frame of s.frames) {
+      const actual = await readPngSafe(path.join(ACTUAL, backend, s.id, `${frame}.png`));
+      const reference = await readPngSafe(path.join(REFERENCES, s.id, `${frame}.png`));
+      if (!actual || !reference) continue;
+      const { ratio } = compareFrames(actual, reference, { tolerance: s.tolerance });
+      if (ratio > BACKEND_TOLERANCE) frames[`${s.id}#${frame}`] = Number(ratio.toFixed(5));
+    }
+  }
+  const body = {
+    _comment:
+      'Ceilings for how far this backend may differ from the committed (WebGL2-blessed) references. '
+      + 'A LIST OF DEBTS, not of blessings: every entry is an undiagnosed WebGPU-vs-WebGL2 disagreement. '
+      + 'The gate fails when a frame exceeds its ceiling, or when an unlisted frame exceeds the tolerance. '
+      + 'Entries are meant to be removed; run.mjs names the ones that have improved enough to tighten.',
+    tolerance: BACKEND_TOLERANCE,
+    frames,
+  };
+  await fs.writeFile(backendBaselinePath(backend), `${JSON.stringify(body, null, 2)}\n`, 'utf8');
+  process.stdout.write(green(`  baseline written: ${Object.keys(frames).length} divergence(s) for ${backend}\n`));
 }
 
 /**
@@ -480,7 +643,17 @@ async function compareAll(scenes) {
         });
       }
 
-      if (isExpectPass) {
+      // A scene that produced NO IMAGE is never an accepted gap.
+      //
+      // `known-divergent` + a stated cause means "these pixels differ for a
+      // reason we wrote down". It cannot mean "there are no pixels": a stated
+      // cause describes a comparison, and no comparison happened. Routing a
+      // missing frame through the gap bucket is exactly how
+      // `shape-path-op-zigzag` stayed green while its `build` threw for months
+      // — the divergence prose added to PREVENT silent suppression was the
+      // thing doing the suppressing.
+      const noImage = !actual;
+      if (isExpectPass || noImage) {
         if (!result.pass) {
           parityFail++;
         }
@@ -590,6 +763,39 @@ async function main() {
     scenes, backends, 'verify-3d-styles.mjs', 'three-d-drop-shadow',
     'layer styles + depth of field on 3D layers (direction and extent, not presence)',
   );
+  /*
+    Plugin effects, and the reason they need a SEMANTIC gate of their own.
+
+    The golden pixels come from WebGL2, where a plugin effect is a deliberate
+    passthrough — so `plugin-visible`'s reference is, correctly, a picture in
+    which the shader changed nothing. That reference gates the failure this
+    scene family was written for (a plugin effect ERASING the layer, which it
+    did on both tiers) and cannot gate the other one: an effect that silently
+    does not run looks exactly like the golden.
+
+    Only the WebGPU verifier can tell those apart, by comparing against a
+    control rendered in the same run. Without this line it existed and nothing
+    called it, which is the same shape of hole as the effect itself had.
+  */
+  const pluginFail = await gateSemantics(
+    scenes, backends, 'verify-plugin-render.mjs', 'plugin-control',
+    'a plugin effect runs, and runs correctly (against a live control, not a golden)',
+  );
+  /*
+    Extrusion effect REACH, and why a reference cannot hold it.
+
+    Every synthesized face of an extrusion carried `effects: undefined`, so a
+    layer's whole stack applied to the front face alone. The references for
+    these scenes are blessed from our own output, so blessing them while that
+    was true would have certified front-face-only forever — and every symptom
+    reads as success from a single frame, because the front face is most of
+    what a solid shows. Only a comparison against the scene's own control says
+    which FACES the effect reached.
+  */
+  const extrusionFail = await gateSemantics(
+    scenes, backends, 'verify-extrusion.mjs', 'ext-fx-invert',
+    'an effect reaches every face of an extruded solid, not just the front',
+  );
 
   process.stdout.write('\n');
   process.stdout.write(dim('  GPU-parity dashboard (unified engine comparison against committed reference):\n'));
@@ -605,18 +811,24 @@ async function main() {
 
   // Every non-gating backend that rendered gets a measured parity line, so the
   // primary engine's standing is visible on every run instead of unknown.
+  let backendFail = 0;
   for (const backend of backends) {
-    if (backend !== GATE_BACKEND) await reportSecondaryBackend(scenes, backend);
+    if (backend === GATE_BACKEND) continue;
+    if (updateBackendBaselineMode) await updateBackendBaseline(scenes, backend);
+    else backendFail += await gateSecondaryBackend(scenes, backend);
   }
 
-  if (parityFail === 0 && fidelityFail === 0 && animFail === 0 && alphaFail === 0 && stylesFail === 0) {
+  if (parityFail === 0 && fidelityFail === 0 && animFail === 0 && alphaFail === 0 && stylesFail === 0
+    && pluginFail === 0 && extrusionFail === 0 && backendFail === 0) {
     process.stdout.write(green(`\n✓ gate green — unified engine output matches golden expectations.\n`));
     process.exit(0);
   }
   process.stdout.write(
     red(`\n✗ gate failed — visual regressions: ${parityFail}, fidelity losses: ${fidelityFail}, ` +
       `properties that stopped animating: ${animFail}, ` +
-      `alpha semantics: ${alphaFail}, 3D-style semantics: ${stylesFail}.\n`) +
+      `alpha semantics: ${alphaFail}, 3D-style semantics: ${stylesFail}, ` +
+      `plugin effects: ${pluginFail}, extrusion face reach: ${extrusionFail}, ` +
+      `webgpu pixel ratchet: ${backendFail}.\n`) +
       dim(`  artifacts: ${path.join(ARTIFACTS, 'diff')}\n`),
   );
   process.exit(1);
