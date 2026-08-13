@@ -74,12 +74,36 @@ describe('the cost of a bound proxy subtree', () => {
     }
 
     // One second of playback, every child sampled every frame.
-    const started = performance.now();
-    for (let f = 0; f < FPS; f += 1) {
-      const t = f / FPS;
-      for (let i = 0; i < CHILDREN; i += 1) engine.sample(`child-${i}`, 'x', t);
-    }
-    const perFrameMs = (performance.now() - started) / FPS;
+    const oneSecond = (): number => {
+      const started = performance.now();
+      for (let f = 0; f < FPS; f += 1) {
+        const t = f / FPS;
+        for (let i = 0; i < CHILDREN; i += 1) engine.sample(`child-${i}`, 'x', t);
+      }
+      return (performance.now() - started) / FPS;
+    };
+
+    /*
+      ★ Best-of-N, for the reason the sibling test below already spells out: a
+      single timing is not an estimate, it is an UPPER BOUND. The noise is
+      one-sided — a descheduled thread or a GC pause can only ever make a run
+      longer, never shorter — so the MINIMUM is the right statistic, being the
+      run that was interrupted least.
+
+      This test took ONE sample and was the last wall-clock assertion in the
+      file still doing so. It duly failed on a shared CI runner at 2.018ms
+      against a 2ms budget: 0.9% over, which is noise, not a regression. The
+      budget is unchanged, deliberately — loosening it would have traded away
+      the gate's meaning to paper over a sampling mistake the file had already
+      diagnosed and fixed six lines further down.
+
+      The warm-up is charged to nobody: it runs the compiler and the binding
+      path before the first timed pass, so JIT cost does not land on whichever
+      run happens to go first.
+    */
+    oneSecond();
+    let perFrameMs = Infinity;
+    for (let i = 0; i < 5; i += 1) perFrameMs = Math.min(perFrameMs, oneSecond());
 
     // Reported, not silently asserted — the number is the deliverable.
     console.log(
