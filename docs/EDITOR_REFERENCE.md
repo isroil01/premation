@@ -324,28 +324,20 @@ alignment with its source by construction.
 What genuinely remains missing from this column: **pulldown removal**, and a
 placeholder/offline-media workflow.
 
-**Depth of field is per-layer, not per-pixel.** `dofEffectOf` (`buildSnapshot
-.ts`) computes one blur value from a layer's depth and pushes it as an ordinary
-`blur` effect. A layer that spans depth — a ground plane, a steeply tilted card
-— gets a single uniform blur across its whole surface. There is no DOF code in
-`packages/renderer` at all. This is the difference between "3D-ish" and
-cinematic.
+**Depth of field is still not per-pixel.** `dofEffectOf` pushes a Gaussian
+`blur` from one depth sample; there is still no DOF pass in `packages/renderer`
+(no sampleable depth buffer on WebGL2/WebGPU). Extrusions get per-face CoC.
+Depth-spanning flat quads (tilted cards, ground planes) now subdivide into UV
+strips via `dofStrips.ts` / `planDofStrips` in `buildSnapshot`, each with its
+own blur — better than one uniform CoC, still not cinematic.
 
-Corrected 2026-08-12: this used to name "a long extruded title" as the second
-example, and for an **extruded** layer it is no longer true. Every synthesized
-face carries its own `depth`, so each takes its own DOF radius now that faces
-carry effects at all — an extruded solid defocuses across its depth, within the
-face budget in `faceEffects.ts`. What stays per-layer is a *single* quad that
-spans depth, which face synthesis cannot help. See the ledger entry below.
+Corrected 2026-08-12: extruded faces already carried per-face depth/CoC.
+Corrected 2026-08-14: flat depth-spanning quads use strip subdivision (max 8).
 
-Added 2026-08-11: it is also a **Gaussian** blur, so there is no bokeh. AE's
-camera carries Iris Shape, Blades, Roundness, Aspect, Rotation, Diffraction
-Fringe and Highlight Gain/Threshold/Saturation — the parameters that turn
-defocused speculars into readable discs. None of them exist here (`bokeh`,
-`blades`, `iris` hit only transitions and AI prompt text), and the highlight
-bloom in particular is what makes a defocused background read as *filmed*
-rather than as blurred. A per-pixel DOF pass should be specified with the
-iris and highlight parameters, not just a depth-varying blur radius.
+Still missing vs AE: iris blades, bokeh shape, diffraction fringe, highlight
+gain — `bokeh` / `blades` / `iris` hit only transitions and AI prompt text.
+A true per-pixel pass should ship with those iris/highlight params, not just
+a depth-varying radius.
 
 **Lighting is per-fragment on the depth path, per-quad only as a fallback.**
 This entry previously claimed the opposite. The depth-tested 3D path runs real
@@ -496,8 +488,10 @@ Lottie export, and price.
 2. **Particle system — stateful floor bounce shipped 2026-08-14.** Opt-in
    `simMode: 'stateful'` with `SimulationCache`. Remaining density: turbulence,
    collisions, trails, sub-emitters, 3D / layer-as-particle.
-3. **Per-pixel depth of field with an iris model** — a real renderer pass, not a
-   per-layer blur. Fixes the "3D looks flat" complaint at its root.
+3. **Per-pixel depth of field — strip CoC shipped 2026-08-14.** Depth-spanning
+   flat quads subdivide into UV strips with per-strip blur (`dofStrips.ts`).
+   Extrusions already had per-face CoC. Still missing: sampleable depth buffer,
+   true per-pixel CoC, iris blades / bokeh / highlight bloom.
 4. **Essential Properties on precomps** — cheapest large win, because the
    template machinery it needs already exists.
 5. **A focused effect pass on the light/glow/flare family** — the cheapest route
@@ -522,7 +516,7 @@ Recorded so the same claims are not reconstructed from git history and believed.
 | "62 AI tools" | **61** |
 | "47 Zustand stores" | **39** |
 | "Cameras / lights / shadows — parity" | Shading is per-fragment on the depth path (see the 2026-08-10 row below); shadows really are 2.5D projections |
-| Depth of field implied working | Per-layer uniform blur; no DOF in the renderer |
+| Depth of field implied working | Per-face / strip Gaussian CoC; no per-pixel DOF in the renderer |
 
 The pattern across all seven: a number or a status written once by hand, then
 never re-derived. §0 exists to stop the next one.
@@ -541,7 +535,7 @@ only the §1 counts are under test.
 | §3 Templates include "data binding" | **Does not exist** — zero hits repo-wide for `dataBinding` / `dataSource` / `csvBind`. The other five capabilities are real and tested |
 | §4 "No 3D gizmo snapping… a switch wired to nothing" | **Already deleted**, with `deadLayoutState.test.ts` keeping it deleted |
 | §4 "the SQLite local index and version store both exist and are tested" | **Half true, and the wrong half was load-bearing.** The version store is real; `LocalIndex` is a declared interface with no implementation — `better-sqlite3` is not a dependency, so `index:available` is permanently false, and no caller ever writes a row |
-| §4 "no DOF code in `packages/renderer`" | **Still true.** `dofEffectOf` (`buildSnapshot.ts`) remains a per-layer blur. Retained, not corrected |
+| §4 "no DOF code in `packages/renderer`" | **Still true** for a renderer pass. Flat quads now strip-subdivide in `buildSnapshot` (`dofStrips.ts`, 2026-08-14); per-pixel iris still blocked |
 
 Two defects were fixed rather than merely recorded, and both were the same
 shape — a value honoured at one end of a boundary and silently dropped at the

@@ -67,6 +67,7 @@ import { bracketFrames } from './videoFrameCache';
 import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
+import { planDofStrips, layerCornerDepths } from './dofStrips';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides } from '@core/scene/compInstanceOverrides';
 import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
@@ -3065,6 +3066,42 @@ export function buildSnapshot(
       }
     } else if (frontInset > 0) {
       emitLayer({ ...layer, width: layerW - 2 * frontInset, height: layerH - 2 * frontInset }, node);
+    } else if (
+      is3D &&
+      dof &&
+      layer.matrix &&
+      world3d &&
+      extrusionDepth <= 0 &&
+      !layer.deformedMesh
+    ) {
+      // Depth-spanning flat quads (tilted cards, ground planes): split into UV
+      // strips with per-strip CoC. Extrusions already get per-face DOF above.
+      const corners = layerCornerDepths(world3d, layer.width, layer.height, project);
+      const strips = corners ? planDofStrips(layer.matrix, corners, dof) : null;
+      if (strips) {
+        for (let si = 0; si < strips.length; si++) {
+          const s = strips[si]!;
+          const effects = (layer.effects ?? [])
+            .filter((e) => e.id !== 'dof')
+            .concat(
+              s.blurPx >= 0.3
+                ? [{ id: 'dof', type: 'blur' as const, params: { amount: s.blurPx } }]
+                : [],
+            );
+          emitLayer({
+            ...layer,
+            id: `${layer.id}::dof-${si}`,
+            matrix: s.matrix,
+            depth: s.depth,
+            uvRect: s.uvRect,
+            effects: effects.length ? effects : undefined,
+            // Strip quads share the parent content hash — UV crop is transform-
+            // side, so the rasterizer cache stays warm across strips.
+          }, node);
+        }
+      } else {
+        emitLayer(layer, node);
+      }
     } else {
       emitLayer(layer, node);
     }
