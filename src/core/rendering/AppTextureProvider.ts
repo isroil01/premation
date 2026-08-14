@@ -28,6 +28,7 @@ import type {
   TextureHandle,
   SamplerHandle,
 } from '@motion/renderer';
+import { displayReferredUploadFormat } from '@motion/renderer';
 import type { RenderLayer } from './RenderBackend';
 import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
 
@@ -719,7 +720,8 @@ export class AppTextureProvider implements TextureProvider {
       label: `raster:${signature}`,
       width: result.texture.width,
       height: result.texture.height,
-      format: 'rgba8unorm',
+      format: displayReferredUploadFormat(),
+      displayReferred: true,
     });
     this.textEntries.set(key, { kind: 'text', signature, texture });
   }
@@ -751,7 +753,7 @@ export class AppTextureProvider implements TextureProvider {
     const canvas = rasterizeLight(light);
     const tex = this.resources.texture(
       `light:${key}:${signature}`,
-      { label: `light:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `light:${key}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -775,7 +777,7 @@ export class AppTextureProvider implements TextureProvider {
     const canvas = rasterizeGradient(paint, w, h);
     const tex = this.resources.texture(
       `gradient:${key}:${signature}`,
-      { label: `gradient:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `gradient:${key}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -932,7 +934,8 @@ export class AppTextureProvider implements TextureProvider {
       label: `raster:${signature}`,
       width: result.texture.width,
       height: result.texture.height,
-      format: 'rgba8unorm',
+      format: displayReferredUploadFormat(),
+      displayReferred: true,
     });
     this.pathEntries.set(key, { kind: 'path', signature, texture });
   }
@@ -1005,7 +1008,7 @@ export class AppTextureProvider implements TextureProvider {
       if (entry.texture) this.resources.freeTexture(`vid:${key}:${entry.w}x${entry.h}`);
       entry.texture = this.resources.texture(
         `vid:${key}:${w}x${h}`,
-        { label: `video:${key}`, width: w, height: h, format: 'rgba8unorm', externalCopy: true },
+        { label: `video:${key}`, width: w, height: h, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
         /* pinned */ true,
       );
       entry.w = w;
@@ -1107,7 +1110,7 @@ export class AppTextureProvider implements TextureProvider {
       if (existing?.poolKey) this.resources.freeTexture(existing.poolKey);
       tex = this.resources.texture(
         poolKey,
-        { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+        { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
         /* pinned */ true,
       );
     }
@@ -1160,7 +1163,7 @@ export class AppTextureProvider implements TextureProvider {
     if (entry.texture === null || entry.w !== pxW || entry.h !== pxH) {
       entry.texture = this.resources.texture(
         `particles:${key}:${pxW}x${pxH}`,
-        { label: `particles:${key}`, width: pxW, height: pxH, format: 'rgba8unorm', externalCopy: true },
+        { label: `particles:${key}`, width: pxW, height: pxH, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
         /* pinned */ true,
       );
       entry.w = pxW;
@@ -1445,7 +1448,7 @@ export class AppTextureProvider implements TextureProvider {
     const texId = `img:${entry.src}`;
     const tex = this.resources.texture(
       texId,
-      { label: `image:${src}`, width: entry.width, height: entry.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `image:${src}`, width: entry.width, height: entry.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     // `decodeOptions` has already brought the bytes into the invariant, so the
@@ -1605,7 +1608,8 @@ export class AppTextureProvider implements TextureProvider {
       label: `raster:${signature}`,
       width: result.texture.width,
       height: result.texture.height,
-      format: 'rgba8unorm',
+      format: displayReferredUploadFormat(),
+      displayReferred: true,
     });
     this.maskEntries.set(key, { kind: 'mask', signature, texture });
   }

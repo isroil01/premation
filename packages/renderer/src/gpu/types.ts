@@ -27,7 +27,13 @@ export type RenderTargetHandle = ResourceHandle<'render-target'>;
 // ── Enumerations (string unions map cleanly to both APIs) ─────────
 export type BufferUsage = 'vertex' | 'index' | 'uniform' | 'storage' | 'copy';
 export type IndexFormat = 'uint16' | 'uint32';
-export type TextureFormat = 'rgba8unorm' | 'bgra8unorm' | 'rgba16float' | 'r8unorm' | 'depth24plus';
+export type TextureFormat =
+  | 'rgba8unorm'
+  | 'rgba8unorm-srgb'
+  | 'bgra8unorm'
+  | 'rgba16float'
+  | 'r8unorm'
+  | 'depth24plus';
 export type FilterMode = 'nearest' | 'linear';
 export type AddressMode = 'clamp' | 'repeat' | 'mirror';
 export type PrimitiveTopology = 'triangle-list' | 'triangle-strip' | 'line-list' | 'point-list';
@@ -149,6 +155,10 @@ export interface TextureDescriptor {
   mipmapped?: boolean;
   /** Marks the texture as a color attachment target. */
   renderable?: boolean;
+  /** Display-referred sRGB content (footage, canvas rasters). Data textures
+   *  (LUT strips, masks) omit this. Used for colour-management tagging; when
+   *  `HARDWARE_SRGB_UPLOADS` is on, also selects `rgba8unorm-srgb`. */
+  displayReferred?: boolean;
   /** Texture will be uploaded from an external image (bitmap/canvas/video).
    *  WebGPU's copyExternalImageToTexture requires the destination to carry
    *  RENDER_ATTACHMENT usage, so backends must add it when this is set. */

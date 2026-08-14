@@ -9,6 +9,9 @@
 import { BUILTIN_SHADERS, LINEAR_WORKING_SPACE } from '../shaders/builtin';
 import {
   LINEAR_INTERMEDIATE_STORAGE,
+  HARDWARE_SRGB_UPLOADS,
+  displayReferredUploadFormat,
+  isSrgbTextureFormat,
   SRGB_TRANSFER_GLSL,
   SRGB_TRANSFER_WGSL,
   srgbChanToLinear,
@@ -73,5 +76,12 @@ describe('linear working space', () => {
   it('forces the encode blit for every frame while RT storage is linear', () => {
     expect(needsEncodeBlit(false)).toBe(LINEAR_INTERMEDIATE_STORAGE);
     expect(needsEncodeBlit(true)).toBe(true);
+  });
+
+  it('tags display-referred uploads for hardware sRGB when linear light is on', () => {
+    expect(HARDWARE_SRGB_UPLOADS).toBe(false);
+    expect(displayReferredUploadFormat()).toBe('rgba8unorm');
+    expect(isSrgbTextureFormat('rgba8unorm-srgb')).toBe(true);
+    expect(isSrgbTextureFormat('rgba8unorm')).toBe(false);
   });
 });

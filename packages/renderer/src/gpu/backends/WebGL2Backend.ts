@@ -44,8 +44,9 @@ interface NativeBuffer {
   buffer: WebGLBuffer;
   target: number;
 }
-interface NativeProgram {
-  program: WebGLProgram;
+interface NativeTexture {
+  texture: WebGLTexture;
+  format: TextureFormat;
 }
 interface NativePipeline {
   program: WebGLProgram;
@@ -81,6 +82,13 @@ interface NativeRenderTarget {
 
 function h<K extends string>(kind: K, native: unknown): ResourceHandle<K> {
   return { kind, id: nextId(), native };
+}
+
+function glTexture(native: unknown): WebGLTexture {
+  if (native && typeof native === 'object' && 'texture' in native) {
+    return (native as NativeTexture).texture;
+  }
+  return native as WebGLTexture;
 }
 
 function topo(gl: GL, t: PrimitiveTopology): number {
@@ -273,15 +281,17 @@ export class WebGL2Backend implements RenderBackend {
       framebuffer is worse than the 8-bit fallback.
     */
     const float = desc.format === 'rgba16float' && this.capabilities.float16Textures;
-    const internalFormat = float ? gl.RGBA16F : gl.RGBA8;
+    const srgb = desc.format === 'rgba8unorm-srgb';
+    const internalFormat = float ? gl.RGBA16F : srgb ? gl.SRGB8_ALPHA8 : gl.RGBA8;
     const texType = float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
     gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, desc.width, desc.height, 0, gl.RGBA, texType, null);
     this.liveTextures.add(texture);
-    return h('texture', texture);
+    return h('texture', { texture, format: desc.format } satisfies NativeTexture);
   }
   writeTexture(texture: TextureHandle, source: TextureSource): void {
     const gl = this.gl;
-    gl.bindTexture(gl.TEXTURE_2D, texture.native as WebGLTexture);
+    const native = texture.native as NativeTexture;
+    gl.bindTexture(gl.TEXTURE_2D, native.texture);
     if (source.type === 'buffer') {
       // Raw bytes are handed to us already in the invariant's space — there is
       // no decode step to reinterpret, so the unpack flags do not apply.
@@ -309,7 +319,7 @@ export class WebGL2Backend implements RenderBackend {
     }
   }
   destroyTexture(texture: TextureHandle): void {
-    const t = texture.native as WebGLTexture;
+    const t = (texture.native as NativeTexture).texture;
     this.liveTextures.delete(t);
     this.gl.deleteTexture(t);
   }
@@ -653,7 +663,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
         else gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, nb.buffer);
       } else if ('texture' in e) {
         gl.activeTexture(gl.TEXTURE0 + texIndex);
-        gl.bindTexture(gl.TEXTURE_2D, e.texture.native as WebGLTexture);
+        gl.bindTexture(gl.TEXTURE_2D, glTexture(e.texture.native));
         const uni = texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform;
         if (uni) gl.uniform1i(uni, texIndex);
         texIndex += 1;

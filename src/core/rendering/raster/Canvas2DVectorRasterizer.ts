@@ -3,7 +3,8 @@ import {
   VectorRasterizer,
   RasterRequest,
   RasterResult,
-  rasterCacheKey
+  rasterCacheKey,
+  displayReferredUploadFormat,
 } from '@motion/renderer';
 import { layoutText } from '@core/text/textLayout';
 import { applyTextPath } from '@core/text/textPath';
@@ -158,7 +159,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
 
     const tex = this.resources.texture(
       poolKeyFor(key),
-      { label: `raster:${drawable.contentHash}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `raster:${drawable.contentHash}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });

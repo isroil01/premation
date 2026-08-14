@@ -4,8 +4,9 @@
  * Float intermediates (`rgba16float`) already exist. `LINEAR_WORKING_SPACE`
  * makes grade / blend / blur maths run in linear light. `LINEAR_INTERMEDIATE_STORAGE`
  * keeps those RTs in linear until EffectPass `scene-blit` encodes to sRGB for
- * the canvas. Uploads stay display-referred: TEXTURED linearizes at the sample.
- * RT copies use the `*-linear` shader variant (no upload decode).
+ * the canvas. Uploads tagged `rgba8unorm-srgb` decode at the GPU sample;
+ * TEXTURED draws use the `*-linear` variant (no redundant shader decode). RT
+ * copies use the same variant.
  *
  * Set `LINEAR_WORKING_SPACE` to `false` to restore gamma-space maths without a
  * revert. Storage is meaningful only while working-space is on.
@@ -17,6 +18,7 @@
  */
 
 import type { Color } from '../core/math/Color';
+import type { TextureFormat } from '../gpu/types';
 
 /** Kill switch. `true` = linear grade/blend/blur.
  *  Default on for AE-parity; flip to false to restore gamma-space maths
@@ -30,6 +32,26 @@ export const LINEAR_WORKING_SPACE = true;
  * through `toWorkingColor`.
  */
 export const LINEAR_INTERMEDIATE_STORAGE = LINEAR_WORKING_SPACE;
+
+/**
+ * Use `rgba8unorm-srgb` for display-referred uploads so the GPU decodes at
+ * sample and TEXTURED draws skip redundant `srgbToLinearRgb`.
+ *
+ * Default **off**: premultiplied upload bytes require linearize-after-unpremul in
+ * the shader; hardware sRGB decode runs before unpremul and breaks semi-
+ * transparent pixels (alpha-control-straight-src on WebGPU). Flip on only after
+ * a straight-alpha upload path exists or the invariant changes.
+ */
+export const HARDWARE_SRGB_UPLOADS = false;
+
+/** GPU format for footage / canvas rasters (not LUT tables or data masks). */
+export function displayReferredUploadFormat(): TextureFormat {
+  return HARDWARE_SRGB_UPLOADS ? 'rgba8unorm-srgb' : 'rgba8unorm';
+}
+
+export function isSrgbTextureFormat(format: TextureFormat): boolean {
+  return format === 'rgba8unorm-srgb';
+}
 
 /** Scene-color + encode blit. Forced on while RTs stay linear so packColor's
  *  linearized solids are not written into the 8-bit canvas (plugin-control was

@@ -380,13 +380,14 @@ placed in a 3D space — not a rendered 3D scene. Out of scope by direction.
 in linear light via `LINEAR_WORKING_SPACE` (default **on**) in
 `packages/renderer/src/shaders/linearWorkingSpace.ts`. `LINEAR_INTERMEDIATE_STORAGE`
 is also on: RTs stay linear and EffectPass `scene-blit` encodes to sRGB for
-the canvas. Uploads remain display-referred and are linearized at the TEXTURED
-sample. RT copies use a `*-linear` shader variant so they are not decoded
-twice. Every frame routes through scene-color + `scene-blit` so linearized
+the canvas. Uploads carry a `displayReferred` tag (`TextureDescriptor`) and
+use `rgba8unorm-srgb` when `HARDWARE_SRGB_UPLOADS` is on (default **off** —
+premultiplied bytes need shader linearize-after-unpremul; see
+`linearWorkingSpace.ts`). TEXTURED draws skip redundant decode only when that
+flag is on. RT copies use the `*-linear` variant. Every frame routes through scene-color + `scene-blit` so linearized
 solids are encoded, not written into the 8-bit canvas. Kill
 switches sit next to `HDR_INTERMEDIATES` in `RenderGraph.ts`. Still absent:
-project working-space UI, 32-bpc depth, ACES/ODT, HDR output, and hardware
-sRGB upload tagging.
+project working-space UI, 32-bpc depth, ACES/ODT, HDR output.
 
 ### Tier 2 — ceilings on visual density
 
@@ -481,8 +482,9 @@ Lottie export, and price.
 
 1. **Linear-light colour — storage slice shipped 2026-08-14.** Grade / blend /
    blur run in linear under `LINEAR_WORKING_SPACE`; RTs stay linear until
-   `scene-blit` (`LINEAR_INTERMEDIATE_STORAGE`). Remaining: hardware sRGB
-   upload tagging, project working-space / ACES / 32-bpc.
+   `scene-blit` (`LINEAR_INTERMEDIATE_STORAGE`); uploads tagged display-referred
+   (`displayReferred` + optional `HARDWARE_SRGB_UPLOADS`). Remaining: project
+   working-space / ACES / 32-bpc.
 2. **Particle system — stateful floor bounce shipped 2026-08-14.** Opt-in
    `simMode: 'stateful'` with `SimulationCache`. Remaining density: turbulence,
    collisions, trails, sub-emitters, 3D / layer-as-particle.
