@@ -6,6 +6,11 @@ import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
 import { getNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { getNodeQuality, setNodeQuality } from '@core/effects/layerQuality';
+import {
+  enableLayerMotionBlurWithFeedback,
+  disableLayerMotionBlur,
+  setAdjustmentWithFeedback,
+} from '@core/effects/layerSwitchFeedback';
 import styles from '../Effects/EffectsPanel.module.css';
 
 export function LayerSwitchesControls({ nodeId }: { nodeId: string }): JSX.Element {
@@ -22,7 +27,7 @@ export function LayerSwitchesControls({ nodeId }: { nodeId: string }): JSX.Eleme
         <span className={styles.blendLabel}>Adjustment Layer</span>
         <Switch
           checked={isAdjustment}
-          onChange={(e) => setNodeAdjustment(nodeId, e.currentTarget.checked)}
+          onChange={(e) => setAdjustmentWithFeedback(nodeId, e.currentTarget.checked, setNodeAdjustment)}
           aria-label="Adjustment layer"
         />
       </div>
@@ -31,7 +36,10 @@ export function LayerSwitchesControls({ nodeId }: { nodeId: string }): JSX.Eleme
         <span className={styles.blendLabel}>Motion Blur</span>
         <Switch
           checked={motionBlur}
-          onChange={(e) => setNodeMotionBlur(nodeId, e.currentTarget.checked)}
+          onChange={(e) => {
+            if (e.currentTarget.checked) enableLayerMotionBlurWithFeedback(nodeId, setNodeMotionBlur);
+            else disableLayerMotionBlur(nodeId, setNodeMotionBlur);
+          }}
           aria-label="Motion blur"
         />
       </div>

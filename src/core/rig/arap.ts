@@ -459,8 +459,17 @@ function resolvePinnedVertices(
     }
     if (!pinnedFlag[best]) pinnedVerts.push(best);
     pinnedFlag[best] = 1;
-    targetX[best] = pin.x;
-    targetY[best] = pin.y;
+    // Handle target is the BOUND VERTEX's rest, plus the pin's displacement
+    // from ITS rest. Snapping the vertex onto the click (`target = pin.x/y`)
+    // made the mesh jump the moment a pin was placed between vertices — the
+    // pin had not moved, but the nearest vertex was yanked onto it.
+    const authored = restMesh.pinRestPositions[pin.id];
+    const vx = restMesh.vertices[best * 4 + 0]!;
+    const vy = restMesh.vertices[best * 4 + 1]!;
+    const restX = authored?.x ?? pin.x;
+    const restY = authored?.y ?? pin.y;
+    targetX[best] = vx + (pin.x - restX);
+    targetY[best] = vy + (pin.y - restY);
     const rot = (pin.rotation ?? 0) * DEG_TO_RAD;
     // Uniform scale folds into the local frame as a SIMILARITY (R·s). The local
     // step fixes this frame at the pin's vertex, so its 1-ring rotates AND

@@ -2,16 +2,8 @@
  * SvgSection — the Inspector panel for an SVG layer.
  *
  * Shows what the file is, what it contains, and the one action that turns it
- * into editable geometry. The capability warnings are part of the feature, not
- * polish: an SVG whose `<script>` we stripped, or whose text will reflow on
- * another machine, looks perfectly fine on screen — the badge is the only
- * signal the user gets, so it ships in v1.
- *
- * Playback controls (loop / speed / reverse) are deliberately absent. Our
- * compositor is texture-based, so a stored SVG is rasterized rather than played
- * (see createRenderBackend), and an animated file takes the convert-to-keyframes
- * route at import instead. Showing dead transport controls would promise
- * playback the renderer cannot deliver.
+ * into editable geometry. Live SVG layers scrub SMIL/CSS at the playhead; other
+ * SVG layers are static textures until Convert to Editable Shapes.
  */
 
 import { useMemo } from 'react';
@@ -84,6 +76,7 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
           value={`${Math.round(data.intrinsicWidth)} × ${Math.round(data.intrinsicHeight)}`}
         />
         <Row label="Paths" value={String(data.capabilities.pathCount)} />
+        <Row label="Playback" value={data.livePlayback ? 'Live SVG (time-scrubbed)' : 'Static texture'} />
       </div>
 
       {warnings.length > 0 && (
@@ -102,8 +95,9 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
           color: 'var(--color-text-tertiary)',
         }}
       >
-        The original file is stored intact and rendered as authored. Convert it to
-        edit individual paths — gradients, masks and filters are flattened when you do.
+        {data.livePlayback
+          ? 'This animated SVG plays with the timeline. Convert to Editable Shapes only when you need per-path keyframes — gradients, masks and filters may flatten.'
+          : 'The original file is stored intact and rendered as authored. Convert it to edit individual paths — gradients, masks and filters are flattened when you do.'}
       </p>
 
       <button

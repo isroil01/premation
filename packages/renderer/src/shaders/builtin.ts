@@ -1889,15 +1889,23 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 
     Welding it to the handles is what made this effect look like it deleted the
     layer: the default handles sit half a layer-height apart, so everything
-    further than that from the lamp fell to ambient — 15% — and a layer at
-    15% brightness on a dark composition is indistinguishable from a layer that
-    is not there.
+    further than that from the lamp fell to ambient — and a layer at low ambient
+    on a dark composition is indistinguishable from a layer that is not there.
+
+    Falloff plateaus through most of the reach, then softens at the edge — a
+    linear decline from the lamp (smoothstep from 0) darkened the subject even
+    inside the cone.
   */
-  let falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
+  let fallInner = reachCtl * 0.65;
+  let falloff = 1.0 - smoothstep(min(fallInner, reachCtl - 0.0001), reachCtl, dist);
   let lightAmt = ambient + cone * falloff * intensity;
-  // Multiplies the layer: a spotlight reveals what is there, so outside the
-  // cone the picture goes DARK rather than unchanged. Light Only drops the
-  // layer's colour and keeps the beam, which is AE's second Render mode.
+  // Floor at ambient so the beam can only BRIGHTEN relative to the outside
+  // level — never punch a hole darker than the user asked for. With the
+  // default ambient of 1 the layer is unchanged outside the cone (and on an
+  // adjustment layer that means the rest of the scene stays visible).
+  lightAmt = max(lightAmt, ambient);
+  // Multiplies the layer: a spotlight reveals what is there. Light Only drops
+  // the layer's colour and keeps the beam (AE's second Render mode).
   let base = select(c.rgb, vec3<f32>(c.a, c.a, c.a), lightOnly > 0.5);
   return vec4<f32>(base * obj.lightColor.rgb * lightAmt, c.a);
 }
@@ -1942,8 +1950,10 @@ void main() {
     float inner = min(coneHalf * (1.0 - softness), coneHalf - 0.0001);
     cone = 1.0 - smoothstep(inner, coneHalf, ang);
   }
-  float falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
+  float fallInner = reachCtl * 0.65;
+  float falloff = 1.0 - smoothstep(min(fallInner, reachCtl - 0.0001), reachCtl, dist);
   float lightAmt = ambient + cone * falloff * intensity;
+  lightAmt = max(lightAmt, ambient);
   vec3 base = (lightOnly > 0.5) ? vec3(c.a) : c.rgb;
   frag = vec4(base * lightColor.rgb * lightAmt, c.a);
 }

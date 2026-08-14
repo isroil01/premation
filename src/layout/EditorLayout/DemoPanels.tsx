@@ -1228,15 +1228,15 @@ const SECTION_KEYWORDS: Record<string, string> = {
   info: 'null object controller',
   // Style
   'style-presets': 'style preset look saved',
-  text: 'font typography size weight letter spacing line height align',
+  text: 'font typography size weight letter spacing line height align character color fill',
   animators: 'text animator range selector',
-  appearance: 'fill stroke color gradient background border',
+  appearance: 'fill stroke color gradient border outline',
   geometry: 'path trim repeater round corners wiggle stroke',
-  compositing: 'blend mode matte track alpha luma',
+  compositing: 'blend mode matte track alpha luma preserve',
   layerStyles: 'shadow glow drop outer bevel layer style',
   // Layer behaviour
-  layerSwitches: 'switches quality solo shy motion blur collapse',
-  time: 'time playback remap stretch speed in out',
+  time: 'layer time remap stretch speed reverse freeze frame blend',
+  layerSwitches: 'switches quality draft motion blur adjustment shutter',
 };
 
 /** Filter inspector sections by a search query; matches are forced open. */
@@ -1326,6 +1326,31 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
           {kind !== 'group' && kind !== 'null' && <ThreeDControl nodeId={nodeId} />}
         </>
       ),
+    });
+  }
+
+  // Layer time / switches sit next to Transform (AE-adjacent), not buried under styles.
+  if (!isAbstract) {
+    items.push({
+      id: 'time',
+      title: 'Layer Time',
+      icon: 'stopwatch',
+      defaultOpen: false,
+      content: <TimeControls nodeId={nodeId} />,
+    });
+    items.push({
+      id: 'layerSwitches',
+      title: 'Switches & Quality',
+      icon: 'sliders-h',
+      defaultOpen: false,
+      content: <LayerSwitchesControls nodeId={nodeId} />,
+    });
+    items.push({
+      id: 'compositing',
+      title: 'Blend & Matte',
+      icon: 'layers',
+      defaultOpen: true,
+      content: <CompositingControls nodeId={nodeId} />,
     });
   }
 
@@ -1441,7 +1466,7 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   // ── How it looks ───────────────────────────────────────────────
   if (kind === 'text') {
     items.push({
-      id: 'text', title: 'Text Styles', icon: 'type', defaultOpen: true,
+      id: 'text', title: 'Text', icon: 'type', defaultOpen: true,
       content: <TextSection nodeId={nodeId} />,
     });
     items.push({
@@ -1450,16 +1475,22 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
+  // Shapes / media: full Fill & Stroke. Text layers already own Character Color
+  // in Text — Appearance still mounts for Stroke (and corner radius is N/A),
+  // but with fill chrome suppressed so the two panels do not both edit "fill".
   if (isDrawable) {
     items.push({
-      id: 'appearance', title: 'Fill & Stroke', icon: 'shape', defaultOpen: true,
+      id: 'appearance',
+      title: kind === 'text' ? 'Stroke' : 'Fill & Stroke',
+      icon: 'shape',
+      defaultOpen: kind !== 'text',
       content: <AppearanceSection nodeId={nodeId} />,
     });
   }
 
   if (kind === 'shape') {
     items.push({
-      id: 'geometry', title: 'Geometry & Path Effects', icon: 'line',
+      id: 'geometry', title: 'Audio Waveform', icon: 'audio',
       content: <ShapeEffects nodeId={nodeId} />,
     });
   }
@@ -1471,30 +1502,14 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   // putting every section in one column made it obvious.
   if (isDrawable) {
     items.push({
-      id: 'style-presets', title: 'Saved Styles', icon: 'sparkles',
-      content: <StylePresetsSection nodeId={nodeId} />,
-    });
-    items.push({
       // "Layer Styles" is the After Effects term users will look for; the
       // keyword map also matches shadow/glow/bevel so either search finds it.
       id: 'layerStyles', title: 'Layer Styles', icon: 'sparkles',
       content: <LayerStylesControls nodeId={nodeId} />,
     });
-  }
-
-  // ── How it behaves ─────────────────────────────────────────────
-  if (!isAbstract) {
     items.push({
-      id: 'compositing', title: 'Blend & Matte', icon: 'layers',
-      content: <CompositingControls nodeId={nodeId} />,
-    });
-    items.push({
-      id: 'layerSwitches', title: 'Switches & Quality', icon: 'sliders-h',
-      content: <LayerSwitchesControls nodeId={nodeId} />,
-    });
-    items.push({
-      id: 'time', title: 'Time & Playback', icon: 'stopwatch',
-      content: <TimeControls nodeId={nodeId} />,
+      id: 'style-presets', title: 'Saved Styles', icon: 'sparkles',
+      content: <StylePresetsSection nodeId={nodeId} />,
     });
   }
 
@@ -1544,14 +1559,14 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
       <EmptyState
         icon="bone"
         title="Character Rigging"
-        message="Select a layer to add puppet pins or a skeleton, or pick a tool to start."
+        message="Select a layer, then use the Puppet or Bone tool."
         action={
           <>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('bone')}>
-              <Icon name="bone" size="sm" /> Bone tool
+              <Icon name="bone" size="sm" /> Bone Tool
             </Button>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
-              <Icon name="puppet-pin" size="sm" /> Puppet pin tool
+              <Icon name="puppet-pin" size="sm" /> Puppet Pin Tool
             </Button>
           </>
         }
@@ -1568,7 +1583,7 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
   if (hasSkeleton || activeTool === 'bone' || !hasPuppet) {
     items.push({
       id: 'skeleton',
-      title: 'Skeleton Bone Rigging',
+      title: 'Bones',
       icon: 'bone',
       defaultOpen: true,
       content: <BoneControls nodeId={nodeId} />,
@@ -1578,7 +1593,7 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
   if (hasPuppet || activeTool === 'puppet-pin' || !hasSkeleton) {
     items.push({
       id: 'puppet',
-      title: 'Puppet Mesh Pins',
+      title: 'Puppet',
       icon: 'puppet-pin',
       defaultOpen: true,
       content: <PuppetControls nodeId={nodeId} />,

@@ -421,7 +421,7 @@ const updateLayer: AiTool['handler'] = (input, ctx) => {
     // Both are read by buildSnapshot (cornerRadius:189, backdropBlur:190) and
     // were unreachable from any tool. `backdropBlur` in particular is the whole
     // glass-surface vocabulary and it was already fully wired and tested.
-    'cornerRadius', 'backdropBlur',
+    'cornerRadius', 'cornerRadiusTL', 'cornerRadiusTR', 'cornerRadiusBR', 'cornerRadiusBL', 'backdropBlur',
     // Static 3D placement. Previously the ONLY way to give a layer a z was a
     // one-keyframe `set_keyframes` call, which sets the value but also creates
     // an animation track — so a technique that later animated z inherited a

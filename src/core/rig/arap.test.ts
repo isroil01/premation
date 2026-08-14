@@ -379,3 +379,42 @@ describe('ARAP solver-quality threshold disclosure', () => {
     for (let i = 0; i < out.length; i++) expect(Number.isFinite(out[i])).toBe(true);
   });
 });
+
+describe('placing a pin at rest is an identity', () => {
+  it('two unmoved pins leave every vertex where it rested', () => {
+    const rig = barRig();
+    const mesh = buildRestMesh(200, 60, 0, rig);
+    const pins: DeformPin[] = [
+      { id: 'L', x: -80, y: 0 },
+      { id: 'R', x: 80, y: 0 },
+    ];
+    const out = deform(pins, mesh, 'arap');
+    expect(out.length).toBe(mesh.vertices.length);
+    for (let i = 0; i < out.length; i++) {
+      expect(out[i]).toBeCloseTo(mesh.vertices[i]!, 5);
+    }
+  });
+
+  it('a pin that is not on a vertex does not yank the mesh onto the click', () => {
+    // The old ARAP handle snapped the nearest vertex onto pin.x/y. Placing a
+    // pin between vertices therefore deformed the artwork even though the pin
+    // had not been dragged.
+    const rig: PuppetRig = {
+      meshExpansion: 0,
+      meshDensity: 10,
+      pins: [
+        { id: 'A', name: 'A', x: -73, y: 4 },
+        { id: 'B', name: 'B', x: 81, y: -3 },
+      ],
+    };
+    const mesh = buildRestMesh(200, 60, 0, rig);
+    const out = deform(
+      [{ id: 'A', x: -73, y: 4 }, { id: 'B', x: 81, y: -3 }],
+      mesh,
+      'arap',
+    );
+    for (let i = 0; i < out.length; i++) {
+      expect(out[i]).toBeCloseTo(mesh.vertices[i]!, 5);
+    }
+  });
+});

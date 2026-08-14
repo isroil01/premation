@@ -62,3 +62,57 @@
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 1px;
 }
+
+.kinds {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.kind,
+.kindActive {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.kind:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.kindActive {
+  background: var(--color-surface-3);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.kind:focus-visible,
+.kindActive:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.kindSwatch {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}

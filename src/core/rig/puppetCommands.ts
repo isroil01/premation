@@ -90,7 +90,21 @@ function applyAndRecord(
 /** Add a pin to the layer's rig (creating the rig if absent). One undo step. */
 export function addPuppetPin(nodeId: ID, pin: PuppetPin): void {
   const rig = currentRig(nodeId);
-  const after: PuppetRig = { ...(rig ?? {}), pins: [...(rig?.pins ?? []), pin] };
+  // A brand-new rig uses a coverage-culled GRID (AE's lattice), expansion 0,
+  // so a PNG character's transparent box is not part of the deform and the
+  // overlay reads as boxes rather than an ear-clipped outline. A pinless rig
+  // that never chose a mesh mode gets the same default on the first pin.
+  // Existing rigs with pins keep whatever meshMode they already have.
+  let after: PuppetRig;
+  if (!rig) {
+    after = { pins: [pin], meshMode: 'grid', meshExpansion: 0 };
+  } else {
+    after = { ...rig, pins: [...(rig.pins ?? []), pin] };
+    if ((rig.pins?.length ?? 0) === 0) {
+      if (after.meshMode === undefined || after.meshMode === 'silhouette') after.meshMode = 'grid';
+      if (after.meshExpansion === undefined) after.meshExpansion = 0;
+    }
+  }
   applyAndRecord(nodeId, after, `Add Puppet Pin ${pin.name}`);
 }
 

@@ -228,6 +228,29 @@ describe('applyPathOpChain — trim in the chain', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.closed).toBe(false);
   });
+
+  it('Individually trims every run by the same percent (they grow together)', () => {
+    const left: Pt[] = [{ x: 0, y: 0 }, { x: 100, y: 0 }];
+    const right: Pt[] = [{ x: 0, y: 10 }, { x: 100, y: 10 }];
+    const runs = [{ pts: left, closed: false }, { pts: right, closed: false }];
+    const out = applyPathOpChain(runs, [trim({ start: 0, end: 50, trimMultiple: 'individually' })]);
+    expect(out).toHaveLength(2);
+    // Each line is half drawn — both end around x=50.
+    expect(out[0]!.pts[out[0]!.pts.length - 1]!.x).toBeCloseTo(50);
+    expect(out[1]!.pts[out[1]!.pts.length - 1]!.x).toBeCloseTo(50);
+  });
+
+  it('Simultaneously walks the concatenation (first shape, then the next)', () => {
+    const left: Pt[] = [{ x: 0, y: 0 }, { x: 100, y: 0 }];
+    const right: Pt[] = [{ x: 0, y: 10 }, { x: 100, y: 10 }];
+    const runs = [{ pts: left, closed: false }, { pts: right, closed: false }];
+    const out = applyPathOpChain(runs, [trim({ start: 0, end: 50, trimMultiple: 'simultaneously' })]);
+    // Half the combined length is exactly the first line. The second has not
+    // started — that is the whole difference from Individually.
+    expect(out).toHaveLength(1);
+    expect(out[0]!.pts[0]!.y).toBeCloseTo(0);
+    expect(out[0]!.pts[out[0]!.pts.length - 1]!.x).toBeCloseTo(100);
+  });
 });
 
 /**

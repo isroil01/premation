@@ -39,6 +39,11 @@ export interface SvgLayerData {
   viewBox: [number, number, number, number] | null;
   capabilities: SvgCapabilities;
   fileName: string;
+  /**
+   * Re-rasterize the intact SVG at the playhead each frame (SMIL/CSS), instead
+   * of baking a dead frame 0. Used when keyframe conversion would lose fidelity.
+   */
+  livePlayback?: boolean;
 }
 
 /** The `svg` component on a node, or undefined when it isn't an SVG layer. */
@@ -65,6 +70,7 @@ export function readSvgLayer(node: SceneNode): SvgLayerData | null {
       : null,
     capabilities: (p.capabilities ?? {}) as SvgCapabilities,
     fileName: typeof p.fileName === 'string' ? p.fileName : 'untitled.svg',
+    livePlayback: p.livePlayback === true,
   };
 }
 
@@ -148,6 +154,7 @@ export function makeSvgComponent(
     size: SvgIntrinsicSize;
     capabilities: SvgCapabilities;
     fileName: string;
+    livePlayback?: boolean;
   },
 ): { id: string; type: string; props: Record<string, unknown> } {
   return {
@@ -161,6 +168,7 @@ export function makeSvgComponent(
       viewBox: data.size.viewBox,
       capabilities: data.capabilities,
       fileName: data.fileName,
+      ...(data.livePlayback ? { livePlayback: true } : {}),
     },
   };
 }

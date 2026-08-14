@@ -15,6 +15,7 @@
 
 import { defaultAnimation, type Keyframe } from '@motion/animation';
 import { getNodeEffects, writeNodeEffects, effectPropPath, type Effect } from './effects';
+import { listBuiltinEffectPresets } from './builtinEffectPresets';
 
 export interface CopiedEffect {
   effect: Effect;
@@ -130,9 +131,13 @@ function writePresets(list: EffectPreset[]): void {
   }
 }
 
-/** Every saved preset, newest last. */
+/** Every saved preset, newest last — built-ins first, then user presets. */
 export function listEffectPresets(): EffectPreset[] {
-  return readPresets();
+  const user = readPresets();
+  const builtins = listBuiltinEffectPresets();
+  // User presets with the same name override the built-in look.
+  const overridden = new Set(user.map((p) => p.name));
+  return [...builtins.filter((p) => !overridden.has(p.name)), ...user];
 }
 
 /**
@@ -147,10 +152,10 @@ export function saveEffectPreset(nodeId: string, name: string): boolean {
   return true;
 }
 
-/** Apply a saved preset to layers, appending like a paste. Returns false when
- *  the preset is missing. */
+/** Apply a saved or built-in preset to layers, appending like a paste. Returns
+ *  false when the preset is missing. */
 export function applyEffectPreset(name: string, targetNodeIds: readonly string[]): boolean {
-  const preset = readPresets().find((p) => p.name === name);
+  const preset = listEffectPresets().find((p) => p.name === name);
   if (!preset) return false;
   const previous = clipboard;
   clipboard = preset.items;

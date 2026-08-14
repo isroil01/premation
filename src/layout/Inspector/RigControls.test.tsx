@@ -17,6 +17,7 @@ import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { useUIStore } from '@stores/uiStore';
 
 function shapeNode(id: string): SceneNode {
   return {
@@ -61,6 +62,7 @@ beforeEach(() => {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   try { defaultSceneGraph.removeNode('n1'); } catch { /* fresh */ }
   defaultSceneGraph.addNode(shapeNode('n1'));
+  useUIStore.getState().setBoneRigMode('pose');
 });
 
 describe('PuppetControls', () => {
@@ -75,7 +77,7 @@ describe('PuppetControls', () => {
   it('reports the pin count', () => {
     withPins();
     const { getByText } = render(<PuppetControls nodeId="n1" />);
-    expect(getByText('1 pins')).toBeTruthy();
+    expect(getByText('1 pin')).toBeTruthy();
   });
 
   it('switching the solver persists it', () => {
@@ -97,10 +99,14 @@ describe('PuppetControls', () => {
   // user can reach: `kind` has no default UI anywhere else, so without this
   // control the whole feature is unreachable from the app.
 
-  it('offers a pin-type control, defaulting to advanced', () => {
+  it('lists After Effects pin types, defaulting to advanced', () => {
     withPins();
     const { getByLabelText } = render(<PuppetControls nodeId="n1" />);
-    expect((getByLabelText('Pin 1 pin type') as HTMLSelectElement).value).toBe('advanced');
+    const select = getByLabelText('Pin 1 pin type') as HTMLSelectElement;
+    expect(select.value).toBe('advanced');
+    expect([...select.options].map((o) => o.value)).toEqual([
+      'position', 'starch', 'bend', 'advanced', 'overlap',
+    ]);
   });
 
   it('switching a pin to bend persists it', () => {
@@ -184,17 +190,23 @@ describe('PuppetControls', () => {
     expect(rigOf()!.maxRotationDeg).toBeUndefined();
   });
 
-  it('per-pin scale and overlap persist', () => {
+  it('per-pin scale persists on an advanced pin', () => {
     withPins();
     render(<PuppetControls nodeId="n1" />);
     setField('Pin 1 scale', '1.5');
     expect(rigOf()!.pins[0]!.scale).toBeCloseTo(1.5, 5);
+  });
+
+  it('per-pin overlap persists on an overlap pin', () => {
+    withPins();
+    const { getByLabelText } = render(<PuppetControls nodeId="n1" />);
+    fireEvent.change(getByLabelText('Pin 1 pin type'), { target: { value: 'overlap' } });
     setField('Pin 1 overlap', '40');
     expect(rigOf()!.pins[0]!.overlap).toBeCloseTo(40, 5);
   });
 
   it('overlap 0 clears the value rather than storing a no-op', () => {
-    withPins();
+    withPins({ pins: [{ id: 'pin_1', name: 'Pin 1', x: 0, y: 0, kind: 'overlap', overlap: 40 }] });
     render(<PuppetControls nodeId="n1" />);
     setField('Pin 1 overlap', '40');
     setField('Pin 1 overlap', '0');
@@ -214,7 +226,7 @@ describe('BoneControls', () => {
   it('reports the bone count', () => {
     withBones();
     const { getByText } = render(<BoneControls nodeId="n1" />);
-    expect(getByText('1 bones')).toBeTruthy();
+    expect(getByText('1 bone')).toBeTruthy();
   });
 
   it('renames a bone', () => {
@@ -266,6 +278,7 @@ describe('BoneControls', () => {
 
   it('hides the standalone skinning-mesh card when a puppet rig owns the mesh', () => {
     withBones();
+    useUIStore.getState().setBoneRigMode('weights');
     const plain = render(<BoneControls nodeId="n1" />);
     expect(plain.queryByRole('spinbutton', { name: 'Skinning mesh density' })).not.toBeNull();
     plain.unmount();

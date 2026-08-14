@@ -3,7 +3,8 @@
  *
  * A `contentEditable` div overlaid on the canvas at the text layer's position,
  * styled to match what the renderer draws (font, size, colour, alignment,
- * rotation, zoom). Commit on Enter, cancel on Escape, commit on blur.
+ * rotation, zoom). Enter inserts a newline (After Effects); commit with
+ * Ctrl/Cmd+Enter or by clicking outside. Escape cancels.
  *
  * This replaces `window.prompt`, which Electron's Chromium refuses — so text
  * editing was silently dead in the desktop build the app actually ships as.
@@ -13,6 +14,7 @@
 
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { readGeometry } from '@core/workspace/geometry';
 import { useTextEditStore } from '@stores/textEditStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
@@ -104,10 +106,22 @@ export function TextEditOverlay(): JSX.Element | null {
     const place = (): void => {
       const box = boxRef.current;
       const p = getWorkspaceController().getNodeScreenPlacement(nodeId);
+      const node = defaultSceneGraph.getNode(nodeId);
+      const geom = node ? readGeometry(node) : null;
       if (box && p) {
+        const zoom = p.zoom;
+        const sx = p.scaleX ?? 1;
+        const sy = p.scaleY ?? 1;
+        const ox = (geom?.offsetX ?? 0) * zoom * sx;
+        const oy = (geom?.offsetY ?? 0) * zoom * sy;
         box.style.left = `${p.x}px`;
         box.style.top = `${p.y}px`;
-        box.style.transform = `translate(-50%, -50%) rotate(${p.rotationDeg}deg) scale(${p.zoom})`;
+        if (geom && geom.width > 0 && geom.height > 0) {
+          box.style.width = `${geom.width}px`;
+          box.style.height = `${geom.height}px`;
+        }
+        box.style.transform =
+          `translate(calc(-50% + ${ox}px), calc(-50% + ${oy}px)) rotate(${p.rotationDeg}deg) scale(${zoom * sx}, ${zoom * sy})`;
       }
       raf = requestAnimationFrame(place);
     };
@@ -115,7 +129,12 @@ export function TextEditOverlay(): JSX.Element | null {
     return () => cancelAnimationFrame(raf);
   }, [nodeId]);
 
-  // Focus + select-all on open, and seed the current text.
+  // Hide the canvas glyphs while the overlay is up, and restore them on close.
+  useEffect(() => {
+    if (!nodeId) return;
+    getWorkspaceController().requestRender();
+    return () => getWorkspaceController().requestRender();
+  }, [nodeId]);
   useLayoutEffect(() => {
     committedRef.current = false;
     const box = boxRef.current;
@@ -161,6 +180,8 @@ export function TextEditOverlay(): JSX.Element | null {
   const color = strp(p.color) ?? strp(p.fill) ?? '#ffffff';
   const lineHeight = num(p.lineHeight, 1.2);
   const letterSpacing = num(p.letterSpacing, 0);
+  const boxWidth = num(p.boxWidth, 0);
+  const paragraph = boxWidth > 0;
 
   const commit = (): void => {
     if (committedRef.current) return;
@@ -217,7 +238,9 @@ export function TextEditOverlay(): JSX.Element | null {
       onDoubleClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
         e.stopPropagation();
-        if (e.key === 'Enter' && !e.shiftKey) {
+        // AE: Enter inserts a line. Commit with Ctrl/Cmd+Enter or by clicking
+        // outside (blur). Escape cancels.
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
           e.preventDefault();
           commit();
         } else if (e.key === 'Escape') {
@@ -231,9 +254,12 @@ export function TextEditOverlay(): JSX.Element | null {
         position: 'absolute',
         // transform-origin at the layer's anchor so rotate/scale pivot there.
         transformOrigin: 'center',
-        // whiteSpace pre keeps newlines and leading spaces the renderer honours.
-        whiteSpace: 'pre',
+        boxSizing: 'border-box',
+        // pre-wrap: hard returns AND paragraph wrap inside the authored box.
+        whiteSpace: paragraph ? 'pre-wrap' : 'pre',
+        overflowWrap: paragraph ? 'break-word' : 'normal',
         minWidth: '1ch',
+        minHeight: '1em',
         padding: 0,
         margin: 0,
         outline: '1px solid var(--color-primary, #4c8dff)',

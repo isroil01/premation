@@ -110,6 +110,19 @@ export interface PathOp {
   /** Trim only — end of the visible range, percent 0..100. */
   end?: number;
   /**
+   * Trim only — AE's "Trim Multiple Shapes".
+   *
+   * `individually`: every run is trimmed by the SAME percentages, so three
+   * bars grow together like one body. `simultaneously`: the runs are one
+   * concatenated path, so the window walks the first shape, then the second,
+   * then the third — which is what a staggered reveal of several outlines
+   * looks like, and AE's default.
+   *
+   * Discrete (not keyframeable). Absent on stored ops means `individually`,
+   * which is what this renderer did before the switch existed.
+   */
+  trimMultiple?: 'individually' | 'simultaneously';
+  /**
    * Trim: rotate the window around the path, percent (wraps).
    * Repeater: AE's Repeater Offset — shift the whole ladder by this many rungs,
    * fractional and negative allowed.
@@ -204,7 +217,10 @@ export function defaultPathOp(): PathOp {
  * showing spurious diffs.
  */
 export function defaultTrimOp(): PathOp {
-  return { id: newPathOpId(), type: 'trim', amount: 0, detail: 0, start: 0, end: 100, offset: 0 };
+  return {
+    id: newPathOpId(), type: 'trim', amount: 0, detail: 0,
+    start: 0, end: 100, offset: 0, trimMultiple: 'simultaneously',
+  };
 }
 
 /**
@@ -225,6 +241,26 @@ export function defaultRepeaterOp(): PathOp {
     anchorX: d.anchorX ?? 0, anchorY: d.anchorY ?? 0, composite: d.composite ?? 'above',
   };
 }
+
+/** Fresh operator of `type` — what the Effects & Presets browser adds. */
+export function defaultPathOpOf(type: PathOpType): PathOp {
+  if (type === 'trim') return defaultTrimOp();
+  if (type === 'repeater') return defaultRepeaterOp();
+  if (type === 'none') return { id: newPathOpId(), type: 'none', amount: 0, detail: 0 };
+  return { ...defaultPathOp(), type };
+}
+
+/** Browser entries for path operators (Trim Paths, Zig-Zag, …). */
+export const PATH_OP_CATALOG: ReadonlyArray<{ type: PathOpType; label: string }> = [
+  { type: 'trim', label: 'Trim Paths' },
+  { type: 'zigzag', label: 'Zig-Zag' },
+  { type: 'roundCorners', label: 'Round Corners' },
+  { type: 'pucker', label: 'Pucker & Bloat' },
+  { type: 'twist', label: 'Twist' },
+  { type: 'offset', label: 'Offset Paths' },
+  { type: 'roughen', label: 'Wiggle Paths' },
+  { type: 'repeater', label: 'Repeater' },
+];
 
 /** The chain's repeater entry for a node, or null. AE allows one; so do we. */
 export function readRepeaterOp(node: SceneNode): PathOp | null {
@@ -690,6 +726,7 @@ function coercePathOp(raw: unknown): PathOp | null {
     start: num(o.start, 0),
     end: num(o.end, 100),
     offset: num(o.offset, 0),
+    trimMultiple: o.trimMultiple === 'simultaneously' ? 'simultaneously' : 'individually',
     copies: num(o.copies, 1),
     offsetX: num(o.offsetX, 0),
     offsetY: num(o.offsetY, 0),
@@ -729,6 +766,8 @@ function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
     start: v('start', op.start ?? 0),
     end: v('end', op.end ?? 100),
     offset: v('offset', op.offset ?? 0),
+    // Discrete — never sampled. Absent means the historical individually.
+    trimMultiple: op.trimMultiple === 'simultaneously' ? 'simultaneously' : 'individually',
     // The repeater's eight. Every one of them was keyframeable under `rep.*`
     // before the fold and stays keyframeable here — the migration reroutes the
     // tracks rather than dropping them.
@@ -789,19 +828,34 @@ function isInertTrim(op: PathOp): boolean {
   return segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1;
 }
 
+function polylineLength(pts: readonly Pt[], closed: boolean): number {
+  const n = pts.length;
+  if (n < 2) return 0;
+  const count = closed ? n : n - 1;
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % n]!;
+    total += Math.hypot(b.x - a.x, b.y - a.y);
+  }
+  return total;
+}
+
 /**
  * Cut every run down to a trim's visible arcs.
  *
- * Each run is trimmed INDEPENDENTLY by the same percentages — AE's "Trim
- * Multiple Shapes: Individually". Trimming the concatenation instead
- * (Simultaneously) would make a shape's arcs depend on how many runs happen to
- * precede it, so inserting an operator upstream would move a trim the user did
- * not touch. With the single closed outline that is the common case, the two
- * are identical.
+ * `individually` (the historical default): each run is trimmed by the same
+ * percentages — AE's "Trim Multiple Shapes: Individually". Three bars then
+ * grow together like one body.
  *
- * Outputs are always OPEN: a cut arc closed by the stroke would draw a chord
- * back to its own start. The fill closes it implicitly, which is the region AE
- * shades.
+ * `simultaneously`: the runs are one concatenated path, so the window walks
+ * the first shape, then the second — AE's default, and the one a staggered
+ * reveal of several outlines actually wants.
+ *
+ * Outputs of a partial cut are always OPEN: a cut arc closed by the stroke
+ * would draw a chord back to its own start. A run that lands fully inside
+ * the window keeps its own `closed`, so a finished bar stays a filled
+ * rectangle rather than gaining a chord.
  */
 function applyTrim(runs: readonly PolyRun[], op: PathOp): PolyRun[] {
   const segs = trimSegments(op.start ?? 0, op.end ?? 100, op.offset ?? 0);
@@ -809,6 +863,9 @@ function applyTrim(runs: readonly PolyRun[], op: PathOp): PolyRun[] {
   // outline closed, or adding an untouched Trim card would visibly open the
   // shape's stroke.
   if (segs.length === 1 && segs[0]![0] === 0 && segs[0]![1] === 1) return [...runs];
+  if (op.trimMultiple === 'simultaneously' && runs.length > 1) {
+    return applyTrimSimultaneously(runs, segs);
+  }
   const out: PolyRun[] = [];
   for (const run of runs) {
     for (const cut of trimPolyline(run.pts, run.closed, segs)) {
@@ -816,6 +873,50 @@ function applyTrim(runs: readonly PolyRun[], op: PathOp): PolyRun[] {
       // dropping the run's opacity here would flatten a faded ladder back to
       // full strength at the moment it was trimmed.
       out.push({ pts: cut, closed: false, opacity: run.opacity, strokeScale: run.strokeScale });
+    }
+  }
+  return out;
+}
+
+/**
+ * Trim the concatenation: each run occupies a slice of the combined
+ * arc-length, so a 0→100 end on three equal bars reveals them one after
+ * another instead of all three at once.
+ */
+function applyTrimSimultaneously(
+  runs: readonly PolyRun[],
+  segs: ReadonlyArray<readonly [number, number]>,
+): PolyRun[] {
+  const lens = runs.map((r) => polylineLength(r.pts, r.closed));
+  const total = lens.reduce((a, b) => a + b, 0);
+  if (total <= 0) return [];
+  const out: PolyRun[] = [];
+  for (const [lo, hi] of segs) {
+    const startLen = lo * total;
+    const endLen = hi * total;
+    if (endLen <= startLen) continue;
+    let acc = 0;
+    for (let i = 0; i < runs.length; i++) {
+      const run = runs[i]!;
+      const runLen = lens[i]!;
+      const runStart = acc;
+      const runEnd = acc + runLen;
+      acc = runEnd;
+      if (runLen <= 0) continue;
+      const a = Math.max(startLen, runStart);
+      const b = Math.min(endLen, runEnd);
+      if (b <= a) continue;
+      const localLo = (a - runStart) / runLen;
+      const localHi = (b - runStart) / runLen;
+      if (localLo <= 1e-9 && localHi >= 1 - 1e-9) {
+        // This run sits entirely inside the window — keep it closed so a
+        // finished bar stays a filled rectangle.
+        out.push({ ...run, pts: [...run.pts] });
+        continue;
+      }
+      for (const cut of trimPolyline(run.pts, run.closed, [[localLo, localHi]])) {
+        out.push({ pts: cut, closed: false, opacity: run.opacity, strokeScale: run.strokeScale });
+      }
     }
   }
   return out;

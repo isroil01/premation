@@ -2,6 +2,9 @@ import {
   buildRestMesh,
   deform,
   coverageMaskFromImageData,
+  silhouetteFromCoverage,
+  silhouetteFromPathPoints,
+  resolvePuppetSilhouette,
   PuppetRig,
   PuppetSilhouette,
 } from './puppet';
@@ -388,5 +391,41 @@ describe('Image-alpha coverage meshing', () => {
     for (let i = 0; i < m1.vertices.length; i++) {
       expect(Object.is(m1.vertices[i], m2.vertices[i])).toBe(true);
     }
+  });
+
+  it('traces a closed silhouette from a coverage disc (no bbox corners)', () => {
+    const cov = coverageMaskFromImageData(disc);
+    const sil = silhouetteFromCoverage(cov, 100, 100);
+    expect(sil).toBeDefined();
+    expect(sil!.points.length).toBeGreaterThanOrEqual(3);
+    // Every outline vertex sits on the disc, not out at the transparent corners.
+    for (const p of sil!.points) {
+      expect(Math.hypot(p.x, p.y)).toBeLessThan(50);
+    }
+    const meshed = buildRestMesh(100, 100, 0, { ...rig, meshMode: 'silhouette' }, sil);
+    const n = meshed.vertices.length / 4;
+    let hasCorner = false;
+    for (let i = 0; i < n; i++) {
+      if (meshed.vertices[i * 4 + 0]! === -50 && meshed.vertices[i * 4 + 1]! === -50) hasCorner = true;
+    }
+    expect(hasCorner).toBe(false);
+  });
+
+  it('expansion 0 does not dilate a ring of empty cells around the artwork', () => {
+    const cov = coverageMaskFromImageData(disc);
+    const tight = buildRestMesh(100, 100, 0, { ...rig, meshExpansion: 0 }, undefined, cov);
+    const padded = buildRestMesh(100, 100, 0, { ...rig, meshExpansion: 1 }, undefined, cov);
+    expect(padded.vertices.length).toBeGreaterThan(tight.vertices.length);
+  });
+
+  it('does not ear-clip an alpha mask — PNG characters stay a culled grid', () => {
+    const cov = coverageMaskFromImageData(disc);
+    expect(resolvePuppetSilhouette(undefined, cov, 100, 100, 'silhouette')).toBeUndefined();
+    expect(resolvePuppetSilhouette(undefined, cov, 100, 100, 'grid')).toBeUndefined();
+    const path = silhouetteFromPathPoints(
+      [{ x: -10, y: -10 }, { x: 10, y: -10 }, { x: 10, y: 10 }, { x: -10, y: 10 }],
+      false,
+    );
+    expect(resolvePuppetSilhouette(path, cov, 100, 100, 'silhouette')).toBe(path);
   });
 });

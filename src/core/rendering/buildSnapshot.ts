@@ -18,7 +18,13 @@ import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodePreserveTransparency } from '@core/effects/preserveTransparency';
-import { readNodeMaskAt } from '@core/effects/mask';
+import { readNodeMaskAt, roundedRectMask, type LayerMask } from '@core/effects/mask';
+import {
+  clampCornerRadii,
+  hasIndependentCornerRadii,
+  resolveCornerRadii,
+  type CornerRadiiTuple,
+} from '@core/scene/cornerRadii';
 import { readNodeMatte, readMatte } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readNodeMotionBlur, motionBlurSampleTimes, adaptiveMotionBlurSamples, type MotionBlurConfig } from '@core/effects/motionBlur';
@@ -79,14 +85,16 @@ import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint } from './RenderBackend';
 import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
-import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
+import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, resolvePuppetSilhouette, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { resolveLivePins } from '../rig/livePins';
 import { resolveActiveIkTargets } from '../rig/liveIkTargets';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
+import { resolveLiveBones } from '../rig/liveBones';
 import { applyIk, getSkeletonBinding, skinRigVertices, type IkTargetResolved } from '../rig/rigDeform';
 import { rigCoverageMask, resolveRigImageSrc } from '../rig/rigMeshInputs';
+import { readSvgLayer } from '../svg/svgLayer';
 
 const COMP_WIDTH = 1920;
 const COMP_HEIGHT = 1080;
@@ -226,6 +234,10 @@ function readBase(node: SceneNode): {
   scaleX: number; scaleY: number;
   width?: number; height?: number;
   cornerRadius?: number;
+  cornerRadiusTL?: number;
+  cornerRadiusTR?: number;
+  cornerRadiusBR?: number;
+  cornerRadiusBL?: number;
   backdropBlur?: number;
   fill?: string; text?: string; fontSize: number;
   fontFamily?: string; fontWeight?: string; fontStyle?: string;
@@ -258,6 +270,10 @@ function readBase(node: SceneNode): {
   let width: number | undefined;
   let height: number | undefined;
   let cornerRadius: number | undefined;
+  let cornerRadiusTL: number | undefined;
+  let cornerRadiusTR: number | undefined;
+  let cornerRadiusBR: number | undefined;
+  let cornerRadiusBL: number | undefined;
   let backdropBlur: number | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
@@ -286,6 +302,10 @@ function readBase(node: SceneNode): {
     width = num(p.width) ?? width;
     height = num(p.height) ?? height;
     if (num(p.cornerRadius) !== undefined) cornerRadius = num(p.cornerRadius);
+    if (num(p.cornerRadiusTL) !== undefined) cornerRadiusTL = num(p.cornerRadiusTL);
+    if (num(p.cornerRadiusTR) !== undefined) cornerRadiusTR = num(p.cornerRadiusTR);
+    if (num(p.cornerRadiusBR) !== undefined) cornerRadiusBR = num(p.cornerRadiusBR);
+    if (num(p.cornerRadiusBL) !== undefined) cornerRadiusBL = num(p.cornerRadiusBL);
     if (num(p.backdropBlur) !== undefined) backdropBlur = num(p.backdropBlur);
   }
   return {
@@ -298,6 +318,10 @@ function readBase(node: SceneNode): {
     width,
     height,
     cornerRadius,
+    cornerRadiusTL,
+    cornerRadiusTR,
+    cornerRadiusBR,
+    cornerRadiusBL,
     backdropBlur,
     fill,
     text,
@@ -1437,8 +1461,10 @@ export function buildSnapshot(
     // if a future consumer starts reading it.
     const filter = effectsToFilter(ownEffects) || undefined;
 
-    // A solid layer fills the whole composition (background / matte / adjustment
-    // base) — pinned to comp centre at comp size, regardless of its transform.
+    // A solid layer fills the whole composition by default, but remains a
+    // normal transformable shape once seeded — pinning x/y/scale made the
+    // selection blueprint sit at makeNode's 100×100 while the fill covered the
+    // frame, and scale/drag writes never showed.
     const isSolid = node.components.find((c) => c.type === 'fx')?.props.solid === true;
     const geomComponent = node.components.find((c) => c.type === 'Geometry');
     const staticPathPoints = geomComponent?.props.points as import('../../../packages/workspace/src/math/BezierPoint').BezierPoint[] | undefined;
@@ -1486,8 +1512,22 @@ export function buildSnapshot(
     const measuredText = layerKind === 'text'
       ? measureTextNodeSize(node, evalMap)
       : null;
-    let layerW = isSolid ? comp.width : (measuredText?.w ?? (a?.has('width') ? (a.get('width') as number) : base.width) ?? size.w);
-    let layerH = isSolid ? comp.height : (measuredText?.h ?? (a?.has('height') ? (a.get('height') as number) : base.height) ?? size.h);
+    // A solid layer is a full-frame colour plate by default. Prefer authored
+    // width/height when seeded (insertSolid / 3D enable); fall back to the
+    // composition when dims are missing or still makeNode's 100×100.
+    const rawW = a?.has('width') ? (a.get('width') as number) : base.width;
+    const rawH = a?.has('height') ? (a.get('height') as number) : base.height;
+    const solidUnseeded = isSolid && (
+      typeof rawW !== 'number'
+      || typeof rawH !== 'number'
+      || (rawW === 100 && rawH === 100)
+    );
+    let layerW = isSolid
+      ? (solidUnseeded ? comp.width : rawW)
+      : (measuredText?.w ?? (typeof rawW === 'number' ? rawW : size.w));
+    let layerH = isSolid
+      ? (solidUnseeded ? comp.height : rawH)
+      : (measuredText?.h ?? (typeof rawH === 'number' ? rawH : size.h));
 
     // Audio Waveform generator (envelope, not spectrum): a referenced audio
     // layer's precomputed peaks become this shape's live outline. Overrides any
@@ -1830,6 +1870,110 @@ export function buildSnapshot(
         ? [...(finalStroke ? [finalStroke] : []), ...strokeStack.slice(1)]
         : undefined;
 
+    // Appearance / paint stroke is drawn into the shape raster for vectors, but
+    // image / video / text upload a texture and never stroke that geometry — so
+    // enabling Stroke in Fill & Stroke was a silent no-op on photos. Compile it
+    // to the same GPU `stroke` effect Layer Styles use (silhouette outline),
+    // unless a Layer Styles stroke is already present.
+    if (
+      (layerKind === 'image' || layerKind === 'video' || layerKind === 'text')
+      && finalStroke?.enabled
+      && finalStroke.width > 0
+      && finalStroke.opacity > 0
+      && !resolvedEffects.some((e) => e.type === 'stroke' && e.enabled !== false)
+    ) {
+      resolvedEffects.push({
+        id: 'paintstroke:primary',
+        type: 'stroke',
+        enabled: true,
+        params: {
+          width: Math.max(0, finalStroke.width),
+          color: finalStroke.color,
+          opacity: Math.round(Math.max(0, Math.min(1, finalStroke.opacity)) * 100),
+        },
+      });
+    }
+
+    // Same trap for Fill: textured layers ignore Appearance fillPaint (they
+    // sample the asset). Map a solid/gradient paint onto the GPU fill /
+    // gradient-ramp effects so the Appearance panel actually recolours photos.
+    if (
+      (layerKind === 'image' || layerKind === 'video')
+      && fillPaint
+      && !resolvedEffects.some((e) =>
+        (e.type === 'fill' || e.type === 'gradient-ramp') && e.enabled !== false)
+    ) {
+      if (fillPaint.type === 'solid' && typeof fillPaint.color === 'string') {
+        resolvedEffects.push({
+          id: 'paintfill:primary',
+          type: 'fill',
+          enabled: true,
+          params: { color: fillPaint.color, opacity: 100 },
+        });
+      } else if (
+        (fillPaint.type === 'linear' || fillPaint.type === 'radial')
+        && Array.isArray(fillPaint.stops)
+        && fillPaint.stops.length >= 2
+      ) {
+        const aStop = fillPaint.stops[0]!;
+        const bStop = fillPaint.stops[fillPaint.stops.length - 1]!;
+        resolvedEffects.push({
+          id: 'paintfill:primary',
+          type: 'gradient-ramp',
+          enabled: true,
+          params: {
+            colorA: aStop.color,
+            colorB: bStop.color,
+            angle: fillPaint.type === 'linear' ? (fillPaint.angle ?? 90) : 90,
+            blend: 100,
+          },
+        });
+      }
+    }
+
+    // Corner radius on image/video: textured quads have no SDF, so Appearance →
+    // Corners was a silent no-op. Synthesize a rounded-rect mask (intersected
+    // with any authored mask) so the GPU mask path clips the photo.
+    // Per-corner radii (TL/TR/BR/BL) win over the uniform `cornerRadius`.
+    const sampleCorner = (key: string, fallback: number | undefined): number | undefined => {
+      const live = a?.get(key);
+      if (typeof live === 'number' && Number.isFinite(live)) return Math.max(0, live);
+      return typeof fallback === 'number' && Number.isFinite(fallback) ? Math.max(0, fallback) : undefined;
+    };
+    const resolvedCornerRadii: CornerRadiiTuple = clampCornerRadii(
+      layerW,
+      layerH,
+      resolveCornerRadii({
+        cornerRadius: sampleCorner('cornerRadius', base.cornerRadius),
+        cornerRadiusTL: sampleCorner('cornerRadiusTL', base.cornerRadiusTL),
+        cornerRadiusTR: sampleCorner('cornerRadiusTR', base.cornerRadiusTR),
+        cornerRadiusBR: sampleCorner('cornerRadiusBR', base.cornerRadiusBR),
+        cornerRadiusBL: sampleCorner('cornerRadiusBL', base.cornerRadiusBL),
+      }),
+    );
+    const resolvedCornerRadius = Math.max(
+      resolvedCornerRadii[0],
+      resolvedCornerRadii[1],
+      resolvedCornerRadii[2],
+      resolvedCornerRadii[3],
+    );
+    let resolvedMask: LayerMask | undefined = readNodeMaskAt(node, remapOf(node.id)(t));
+    if (
+      (layerKind === 'image' || layerKind === 'video')
+      && resolvedCornerRadius > 0.5
+      && layerW > 0
+      && layerH > 0
+    ) {
+      const round = roundedRectMask(layerW, layerH, resolvedCornerRadii);
+      if (!resolvedMask || resolvedMask.paths.length === 0) {
+        resolvedMask = { paths: [round] };
+      } else {
+        resolvedMask = {
+          paths: [...resolvedMask.paths, { ...round, mode: 'intersect' as const }],
+        };
+      }
+    }
+
     let finalColor = base.color;
     if (a?.has('color_r')) {
       const r = a.get('color_r') ?? 0;
@@ -1848,7 +1992,7 @@ export function buildSnapshot(
       kind: layerKind,
       blend: readNodeBlend(node),
       ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
-      mask: readNodeMaskAt(node, remapOf(node.id)(t)),
+      mask: resolvedMask,
       matte: readNodeMatte(node),
       isAdjustment: readNodeAdjustment(node) || undefined,
       quality: readNodeQuality(node) === 'draft' ? 'draft' : undefined,
@@ -1909,13 +2053,15 @@ export function buildSnapshot(
       // and preview share this path, so a pinned layer is perspective-correct in
       // both. Absent = affine, snapshot unchanged from before the feature.
       ...(readNodeCornerPin(node) ? { cornerPin: readNodeCornerPin(node) } : {}),
-      x: isSolid && !is3D ? comp.width / 2 : px,
-      y: isSolid && !is3D ? comp.height / 2 : py,
-      rotation: isSolid && !is3D ? 0 : rot,
-      scaleX: isSolid && !is3D ? 1 : sx,
-      scaleY: isSolid && !is3D ? 1 : sy,
-      matrix: isSolid && !is3D ? undefined : matrix,
-      world3d: isSolid && !is3D ? undefined : world3d,
+      // Legacy unseeded solids still lack a real transform — keep them
+      // full-frame until the user resizes. Seeded solids transform normally.
+      x: isSolid && !is3D && solidUnseeded ? comp.width / 2 : px,
+      y: isSolid && !is3D && solidUnseeded ? comp.height / 2 : py,
+      rotation: isSolid && !is3D && solidUnseeded ? 0 : rot,
+      scaleX: isSolid && !is3D && solidUnseeded ? 1 : sx,
+      scaleY: isSolid && !is3D && solidUnseeded ? 1 : sy,
+      matrix: isSolid && !is3D && solidUnseeded ? undefined : matrix,
+      world3d: isSolid && !is3D && solidUnseeded ? undefined : world3d,
       depth,
       opacity: ghost ? baseOpacity * GHOST_OPACITY : baseOpacity,
       width: layerW,
@@ -1952,10 +2098,12 @@ export function buildSnapshot(
       // Clamped at 0 for the reason `strokeWidth` is: an overshooting ease
       // undershoots between keys, and a negative radius is a Canvas2D exception
       // rather than a sharper corner. The property's own `min: 0` agrees.
-      cornerRadius: (() => {
-        const r = a?.get('cornerRadius');
-        return typeof r === 'number' && Number.isFinite(r) ? Math.max(0, r) : base.cornerRadius;
-      })(),
+      // Per-corner radii ride alongside for Appearance → individual corners;
+      // uniform SDF still reads `cornerRadius` when all four match.
+      cornerRadius: resolvedCornerRadius,
+      ...(resolvedCornerRadius > 0 || hasIndependentCornerRadii(resolvedCornerRadii)
+        ? { cornerRadii: resolvedCornerRadii }
+        : {}),
       // Keyframeable like any numeric prop: an animated track wins over the base,
       // so a panel can frost in over time.
       // Glass owns the backdrop blur when it is on — one control, not two that
@@ -2002,6 +2150,7 @@ export function buildSnapshot(
       // the SAME source this layer draws (its coverage mask is keyed off it).
       src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id), comp.useProxies === true),
       assetId: base.assetId,
+      ...(kind === 'svg' && readSvgLayer(node)?.livePlayback ? { liveSvgPlayback: true } : {}),
       // Media-slot COVER crop. The quad is already the slot rect (fillSlot
       // keeps the box there on purpose), so filling it without distortion means
       // sampling a sub-rect of the source. Computed per frame rather than baked
@@ -2071,18 +2220,21 @@ export function buildSnapshot(
       // path outline when path geometry exists (closed shapes). Image layers get
       // an alpha-derived coverage mask instead (once the bitmap has decoded);
       // open strokes and undecoded images keep the bbox grid.
-      const silhouette = silhouetteFromPathPoints(pathPoints, pathOpen);
-      const coverage = rigCoverageMask(layerKind, layer.src, base.assetId, silhouette);
+      const pathSilhouette = silhouetteFromPathPoints(pathPoints, pathOpen);
+      const coverage = rigCoverageMask(layerKind, layer.src, base.assetId, pathSilhouette);
       // ONE shared rest mesh. Puppet mesh settings win when a puppet rig exists
       // (its pin weights are baked into the mesh); a skeleton-only layer reads
       // density/expansion off its own config.
       const meshRig = hasPuppet
         ? puppetRig!
         : { pins: [], meshDensity: skelRig!.meshDensity, meshExpansion: skelRig!.meshExpansion };
+      const w = layer.width ?? 100;
+      const h = layer.height ?? 100;
+      const silhouette = resolvePuppetSilhouette(pathSilhouette, coverage, w, h, meshRig.meshMode);
       const restMesh = getCachedRestMesh(
         node.id,
-        layer.width ?? 100,
-        layer.height ?? 100,
+        w,
+        h,
         pad,
         meshRig,
         silhouette,
@@ -2112,24 +2264,7 @@ export function buildSnapshot(
       if (hasSkel) {
         // FK: sample the bone tracks (rotation stored in radians — the unit
         // fromTRS consumes; the UI converts at the display boundary).
-        const animatedBones: Bone[] = skelRig!.bones.map((b) => {
-          const liveRot = anim.sample(node.id, `bone.${b.id}.rotation`, rigT);
-          const liveX = anim.sample(node.id, `bone.${b.id}.x`, rigT);
-          const liveY = anim.sample(node.id, `bone.${b.id}.y`, rigT);
-          // Bone scale is keyframeable too — `scaleX/scaleY` already fed
-          // `fromTRS`, but nothing ever sampled a track for them, so squash /
-          // stretch on a limb was unreachable.
-          const liveSx = anim.sample(node.id, `bone.${b.id}.scaleX`, rigT);
-          const liveSy = anim.sample(node.id, `bone.${b.id}.scaleY`, rigT);
-          return {
-            ...b,
-            rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
-            x: typeof liveX === 'number' ? liveX : b.x,
-            y: typeof liveY === 'number' ? liveY : b.y,
-            scaleX: typeof liveSx === 'number' ? liveSx : b.scaleX,
-            scaleY: typeof liveSy === 'number' ? liveSy : b.scaleY,
-          };
-        });
+        const animatedBones: Bone[] = resolveLiveBones(skelRig!.bones, node.id, rigT, anim);
         // IK: each enabled target overrides its chain's rotations so the end
         // bone's tip reaches the (keyframeable) target position.
         // Live positions, live poles, and the per-chain IK/FK mode — resolved

@@ -777,22 +777,28 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'fromY', label: 'From Y', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'From' },
       { key: 'toX', label: 'To X', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'To' },
       { key: 'toY', label: 'To Y', type: 'number', unit: 'px', min: -8000, max: 8000, default: 0, group: 'To' },
-      { key: 'coneAngle', label: 'Cone Angle', type: 'number', unit: '°', min: 1, max: 180, default: 60, group: 'Cone' },
-      { key: 'edgeSoftness', label: 'Edge Softness', type: 'number', unit: '%', min: 0, max: 100, default: 40, group: 'Cone' },
+      { key: 'coneAngle', label: 'Cone Angle', type: 'number', unit: '°', min: 1, max: 180, default: 100, group: 'Cone' },
+      { key: 'edgeSoftness', label: 'Edge Softness', type: 'number', unit: '%', min: 0, max: 100, default: 45, group: 'Cone' },
       /*
         How far the beam reaches, as a percentage of the layer's HEIGHT — AE's
         Height, and its own control rather than the From→To distance.
 
         Welding reach to the handles is what made this effect look like it
         deleted the layer: at rest the points sit half a layer-height apart, so
-        everything beyond that fell to Ambient (15%), and a layer at 15%
-        brightness on a dark composition is indistinguishable from one that is
-        not there. The default now covers the whole layer and then some.
+        everything beyond that fell to Ambient, and a layer at low ambient on a
+        dark composition is indistinguishable from one that is not there. The
+        default covers the whole layer generously.
       */
-      { key: 'reach', label: 'Reach', type: 'number', unit: '%', min: 1, max: 400, default: 150, group: 'Cone' },
+      { key: 'reach', label: 'Reach', type: 'number', unit: '%', min: 1, max: 400, default: 250, group: 'Cone' },
       { key: 'lightColor', label: 'Light Color', type: 'color', default: '#ffffff' },
-      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 400, default: 150 },
-      { key: 'ambient', label: 'Ambient', type: 'number', unit: '%', min: 0, max: 100, default: 15 },
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 400, default: 100 },
+      /*
+        Ambient is what survives OUTSIDE the cone. Default 100% = the layer is
+        unchanged outside the beam — a Spotlight that darkens the whole plate
+        by default (15% / 55%) reads as "the scene disappeared" on a dark
+        composition, especially on fullscreen images and solids.
+      */
+      { key: 'ambient', label: 'Ambient', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
       {
         // AE's Render menu. Light Only drops the layer's colour and keeps the
         // beam, which is how the effect is used to build a visible light cone

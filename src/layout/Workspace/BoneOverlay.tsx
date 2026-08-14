@@ -13,6 +13,7 @@ import { beginAnimEdit, recordAnimEdit } from '@core/animation/animationCommands
 import { bumpScene } from '@stores/sceneStore';
 
 import { computeWorldTransforms, boneRoot, boneTip, type Bone } from '@core/rig/skeleton';
+import { resolveLiveBones } from '@core/rig/liveBones';
 import { angleOf } from '@core/rig/mat2d';
 import { applyIk, ikChainIds, type IkTargetResolved } from '@core/rig/rigDeform';
 import {
@@ -33,6 +34,7 @@ import {
 } from '@core/rig/weightPaint';
 import { useAssetStore } from '@stores/assetStore';
 import { useRigVertexSelection, selectRigVertex } from '@stores/rigVertexStore';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import { nextRigId, usedRigIds } from '@core/rig/rigIds';
 
 /**
@@ -118,33 +120,46 @@ function controllerPath(shape: RigController['shape'], cx: number, cy: number, r
 
 export function BoneOverlay(): JSX.Element | null {
   const activeTool = useUIStore((s) => s.activeTool);
+  const boneRigMode = useUIStore((s) => s.boneRigMode);
+  const boneWeightMode = useUIStore((s) => s.boneWeightMode);
+  const brushRadius = useUIStore((s) => s.boneBrushRadius);
+  const setBrushRadius = useUIStore((s) => s.setBoneBrushRadius);
   const selectedNodeId = useSelectionStore((s) => s.ids[0]);
+  const rigSelectionNodeId = useRigSelectionStore((s) => s.nodeId);
+  const rigSelectedBoneId = useRigSelectionStore((s) => s.boneId);
+  const rigSelectedControllerId = useRigSelectionStore((s) => s.controllerId);
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
   const comp = useCompositionStore((s) => s.comp());
 
-  const [selectedBoneId, setSelectedBoneId] = useState<string | null>(null);
+  const selectedBoneId = rigSelectionNodeId === selectedNodeId ? rigSelectedBoneId : null;
+  const selectedControllerId =
+    rigSelectionNodeId === selectedNodeId ? rigSelectedControllerId : null;
+  const setSelectedBoneId = (boneId: string | null): void => {
+    if (!selectedNodeId) return;
+    useRigSelectionStore.getState().selectBone(selectedNodeId, boneId);
+  };
+  const setSelectedControllerId = (controllerId: string | null, boneId?: string | null): void => {
+    if (!selectedNodeId) return;
+    useRigSelectionStore.getState().selectController(selectedNodeId, controllerId, boneId);
+  };
   const [hoveredBoneId, setHoveredBoneId] = useState<string | null>(null);
-  const [selectedControllerId, setSelectedControllerId] = useState<string | null>(null);
   const [hoveredControllerId, setHoveredControllerId] = useState<string | null>(null);
-  /** Weight painting (Phase 4.3): hold W, or toggle from the header. */
-  const [paintMode, setPaintMode] = useState<PaintMode | null>(null);
-  /**
-   * Vertex-pick mode, for the Rigging panel's numeric weight editor.
-   *
-   * An explicit mode rather than a modifier-click: a plain click on empty canvas
-   * already ADDS A BONE, and Alt is already taken by the brush's invert. A
-   * picking gesture that silently grew the skeleton would be the worst of the
-   * three outcomes.
-   */
-  const [vertexPick, setVertexPick] = useState(false);
+  const paintMode: PaintMode | null =
+    boneRigMode === 'weights' && boneWeightMode !== 'pick' ? boneWeightMode : null;
+  const vertexPick = boneRigMode === 'weights' && boneWeightMode === 'pick';
   // Reactive, and ABOVE the guards — the highlight has to redraw when the panel
   // or another pick changes the selection, and a hook below an early return is
   // the "Rendered fewer hooks than expected" crash.
   const pickedVertex = useRigVertexSelection(selectedNodeId ?? '');
-  const [brushRadius, setBrushRadius] = useState(40);
   /** Scratch paint map during a stroke — committed as ONE undo step on release. */
   const paintScratchRef = useRef<WeightPaintMap | null>(null);
+  const [drawDraft, setDrawDraft] = useState<{
+    start: { x: number; y: number };
+    current: { x: number; y: number };
+    parentId: string | null;
+    pointerId: number;
+  } | null>(null);
 
   const dragInfoRef = useRef<{
     /** 'fk' rotates/translates the bone; 'ik' drags an IK target (also the mode
@@ -155,6 +170,8 @@ export function BoneOverlay(): JSX.Element | null {
     animTx: any;
     startRotation: number;
     startLocal: { x: number; y: number };
+    startBoneX?: number;
+    startBoneY?: number;
     /** Set when the gesture began on a controller — drives the active state. */
     controllerId?: string;
     /**
@@ -188,20 +205,31 @@ export function BoneOverlay(): JSX.Element | null {
   // Keyboard listener to delete selected bone
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (activeTool !== 'bone' || !selectedNodeId || !selectedBoneId) return;
-      if (e.key === 'Delete' || e.key === 'Backspace') {
+      if (activeTool !== 'bone' || !selectedNodeId) return;
+      if (e.key === 'Escape' && drawDraft) {
+        e.preventDefault();
+        setDrawDraft(null);
+        return;
+      }
+      if (selectedBoneId && boneRigMode === 'draw' && (e.key === 'Delete' || e.key === 'Backspace')) {
         e.preventDefault();
         deleteBone(selectedNodeId, selectedBoneId);
         setSelectedBoneId(null);
         return;
       }
       // Brush sizing, matching every other paint tool.
-      if (e.key === '[') { e.preventDefault(); setBrushRadius((r) => Math.max(4, r / 1.25)); }
-      if (e.key === ']') { e.preventDefault(); setBrushRadius((r) => Math.min(400, r * 1.25)); }
+      if (boneRigMode === 'weights' && e.key === '[') {
+        e.preventDefault();
+        setBrushRadius(brushRadius / 1.25);
+      }
+      if (boneRigMode === 'weights' && e.key === ']') {
+        e.preventDefault();
+        setBrushRadius(brushRadius * 1.25);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTool, selectedNodeId, selectedBoneId]);
+  }, [activeTool, selectedNodeId, selectedBoneId, boneRigMode, brushRadius, drawDraft]);
 
   if (activeTool !== 'bone' || !selectedNodeId) return null;
 
@@ -243,17 +271,7 @@ export function BoneOverlay(): JSX.Element | null {
   const layerT = compToKeyframeTime(node.id, time);
 
   // Evaluate live animated bone poses (rotation in RADIANS — the engine unit).
-  const animatedBones: Bone[] = bones.map((b) => {
-    const liveRot = defaultAnimation.sample(node.id, `bone.${b.id}.rotation`, layerT);
-    const liveX = defaultAnimation.sample(node.id, `bone.${b.id}.x`, layerT);
-    const liveY = defaultAnimation.sample(node.id, `bone.${b.id}.y`, layerT);
-    return {
-      ...b,
-      rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
-      x: typeof liveX === 'number' ? liveX : b.x,
-      y: typeof liveY === 'number' ? liveY : b.y,
-    };
-  });
+  const animatedBones: Bone[] = resolveLiveBones(bones, node.id, layerT, defaultAnimation);
 
   // Live IK targets (keyframeable) and the SOLVED pose — the overlay previews
   // exactly what buildSnapshot renders.
@@ -262,6 +280,7 @@ export function BoneOverlay(): JSX.Element | null {
   const activeIkTargets: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
   const posedBones = applyIk(animatedBones, activeIkTargets);
   const worldTransforms = computeWorldTransforms({ bones: posedBones });
+  const restWorldTransforms = computeWorldTransforms({ bones });
 
   // Posed mesh + binding: what the renderer will actually draw, and the weight
   // field the heatmap and the paint brush both read.
@@ -273,6 +292,90 @@ export function BoneOverlay(): JSX.Element | null {
   /** Effective weight of `boneId` at a vertex — drives the heatmap. */
   const weightAt = (boneId: string, vertexIndex: number): number =>
     binding.weights[vertexIndex]?.find((w) => w.boneId === boneId)?.weight ?? 0;
+
+  type JointAnchor = { point: { x: number; y: number }; parentId: string | null };
+
+  /** Nearest rest-pose joint, with the parent a new branch should attach to. */
+  const nearestJoint = (point: { x: number; y: number }, radiusPx = 12): JointAnchor | null => {
+    const radius = radiusPx / (camera.zoom || 1);
+    let best: JointAnchor | null = null;
+    let bestDistance = radius;
+    for (const bone of bones) {
+      const m = restWorldTransforms.get(bone.id);
+      if (!m) continue;
+      const candidates: JointAnchor[] = [
+        // Starting from this bone's head creates a sibling branch.
+        { point: boneRoot(m), parentId: bone.parentId },
+        // Starting from its tail extends this bone.
+        { point: boneTip(m, bone.length), parentId: bone.id },
+      ];
+      for (const candidate of candidates) {
+        const distance = Math.hypot(candidate.point.x - point.x, candidate.point.y - point.y);
+        if (distance <= bestDistance) {
+          bestDistance = distance;
+          best = candidate;
+        }
+      }
+    }
+    return best;
+  };
+
+  const beginBoneDraw = (
+    e: React.PointerEvent,
+    forcedAnchor?: JointAnchor,
+  ): void => {
+    e.stopPropagation();
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const raw = screenToLocal(e.clientX - rect.left, e.clientY - rect.top);
+    const anchor = forcedAnchor ?? nearestJoint(raw) ?? { point: raw, parentId: null };
+    suppressClickAddRef.current = true;
+    setSelectedControllerId(null);
+    setDrawDraft({
+      start: anchor.point,
+      current: anchor.point,
+      parentId: anchor.parentId,
+      pointerId: e.pointerId,
+    });
+    capturePointer(svg, e.pointerId);
+  };
+
+  const commitBoneDraw = (draft: NonNullable<typeof drawDraft>): void => {
+    const dx = draft.current.x - draft.start.x;
+    const dy = draft.current.y - draft.start.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 4) return;
+
+    const id = nextRigId('bone_', usedRigIds(bones));
+    let bone: Bone;
+    if (draft.parentId) {
+      const parent = bones.find((candidate) => candidate.id === draft.parentId);
+      const parentWorld = restWorldTransforms.get(draft.parentId);
+      if (!parent || !parentWorld) return;
+      bone = {
+        id,
+        name: `Bone ${bones.length + 1}`,
+        parentId: parent.id,
+        length,
+        x: parent.length,
+        y: 0,
+        rotation: Math.atan2(dy, dx) - angleOf(parentWorld),
+      };
+    } else {
+      bone = {
+        id,
+        name: `Bone ${bones.length + 1}`,
+        parentId: null,
+        length,
+        x: draft.start.x,
+        y: draft.start.y,
+        rotation: Math.atan2(dy, dx),
+      };
+    }
+    addBone(node.id, bone);
+    setSelectedBoneId(id);
+  };
 
 
   /** The IK target whose chain contains this bone (AE/DUIK: dragging a bone of
@@ -341,17 +444,19 @@ export function BoneOverlay(): JSX.Element | null {
    * gesture that started static must not begin keyframing halfway through
    * because the first write made the track animated.
    */
-  const gestureKeyframes = (kind: 'fk' | 'ik', boneId: string): boolean => {
+  const gestureKeyframes = (kind: 'fk' | 'ik' | 'pole', boneId: string): boolean => {
     if (usePreferenceStore.getState().timelineAutoKeyframe) return true;
     const paths = kind === 'ik'
       ? [`ikTarget.${boneId}.x`, `ikTarget.${boneId}.y`]
-      : [`bone.${boneId}.rotation`, `bone.${boneId}.x`, `bone.${boneId}.y`];
+      : kind === 'pole'
+        ? [`ikPole.${boneId}.x`, `ikPole.${boneId}.y`]
+        : [`bone.${boneId}.rotation`, `bone.${boneId}.x`, `bone.${boneId}.y`];
     return paths.some((p) => defaultAnimation.isAnimated(node.id, p));
   };
 
   /** Write the STATIC rig value for a non-keyframing pose drag (no history). */
   const previewStaticPose = (
-    kind: 'fk' | 'ik',
+    kind: 'fk' | 'ik' | 'pole',
     boneId: string,
     local: { x: number; y: number },
     rotation: number,
@@ -365,10 +470,23 @@ export function BoneOverlay(): JSX.Element | null {
             t.boneId === boneId ? { ...t, x: local.x, y: local.y } : t,
           ),
         }
-      : {
+      : kind === 'pole'
+        ? {
+            ...current,
+            ikTargets: (current.ikTargets ?? []).map((t) =>
+              t.boneId === boneId ? { ...t, pole: { x: local.x, y: local.y } } : t,
+            ),
+          }
+        : {
           ...current,
           bones: (current.bones ?? []).map((b) =>
-            b.id === boneId ? { ...b, rotation } : b,
+            b.id === boneId
+              ? {
+                  ...b,
+                  rotation,
+                  ...(b.parentId === null ? { x: local.x, y: local.y } : {}),
+                }
+              : b,
           ),
         };
     previewSkeleton(node.id, next);
@@ -376,9 +494,10 @@ export function BoneOverlay(): JSX.Element | null {
 
   const onPointerDownController = (e: React.PointerEvent, c: RigController) => {
     e.stopPropagation();
+    if (boneRigMode !== 'pose') return;
     suppressClickAddRef.current = true;
     setSelectedBoneId(c.link.boneId);
-    setSelectedControllerId(c.id);
+    setSelectedControllerId(c.id, c.link.boneId);
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
@@ -404,6 +523,28 @@ export function BoneOverlay(): JSX.Element | null {
   // Pointer drag operations
   const onPointerDownBone = (e: React.PointerEvent, boneId: string) => {
     e.stopPropagation();
+    const restBone = bones.find((bone) => bone.id === boneId);
+    const restWorld = restWorldTransforms.get(boneId);
+    if (boneRigMode === 'draw' && restBone && restWorld) {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const pointer = screenToLocal(e.clientX - rect.left, e.clientY - rect.top);
+      const root = boneRoot(restWorld);
+      const tip = boneTip(restWorld, restBone.length);
+      const rootDistance = Math.hypot(pointer.x - root.x, pointer.y - root.y);
+      const tipDistance = Math.hypot(pointer.x - tip.x, pointer.y - tip.y);
+      beginBoneDraw(e, tipDistance <= rootDistance
+        ? { point: tip, parentId: restBone.id }
+        : { point: root, parentId: restBone.parentId });
+      return;
+    }
+    if (boneRigMode === 'weights') {
+      suppressClickAddRef.current = true;
+      setSelectedBoneId(boneId);
+      return;
+    }
+    if (boneRigMode !== 'pose') return;
     suppressClickAddRef.current = true;
     setSelectedBoneId(boneId);
     const svg = svgRef.current;
@@ -413,14 +554,18 @@ export function BoneOverlay(): JSX.Element | null {
     const bone = animatedBones.find((b) => b.id === boneId);
     const ik = ikTargetForBone(boneId);
 
-    const animTx = beginAnimEdit();
+    const kind = ik ? 'ik' : 'fk';
+    const keyframes = gestureKeyframes(kind, ik ? ik.boneId : boneId);
     dragInfoRef.current = {
-      kind: ik ? 'ik' : 'fk',
+      kind,
       boneId: ik ? ik.boneId : boneId,
       startScreen,
-      animTx,
+      animTx: keyframes ? beginAnimEdit() : null,
       startRotation: bone?.rotation ?? 0,
       startLocal: screenToLocal(startScreen.x, startScreen.y),
+      startBoneX: bone?.x ?? 0,
+      startBoneY: bone?.y ?? 0,
+      ...(keyframes ? {} : { staticBefore: skel }),
     };
     capturePointer(svg, e.pointerId);
   };
@@ -428,38 +573,43 @@ export function BoneOverlay(): JSX.Element | null {
   /** Drag an IK pole — writes the keyframeable ikPole.<boneId>.x/.y tracks. */
   const onPointerDownPole = (e: React.PointerEvent, boneId: string) => {
     e.stopPropagation();
+    if (boneRigMode !== 'pose') return;
     suppressClickAddRef.current = true;
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const keyframes = gestureKeyframes('pole', boneId);
     dragInfoRef.current = {
       kind: 'pole',
       boneId,
       startScreen,
-      animTx: beginAnimEdit(),
+      animTx: keyframes ? beginAnimEdit() : null,
       startRotation: 0,
       startLocal: screenToLocal(startScreen.x, startScreen.y),
+      ...(keyframes ? {} : { staticBefore: skel }),
     };
     capturePointer(svg, e.pointerId);
   };
 
   const onPointerDownIkTarget = (e: React.PointerEvent, boneId: string) => {
     e.stopPropagation();
+    if (boneRigMode !== 'pose') return;
     suppressClickAddRef.current = true;
     setSelectedBoneId(boneId);
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    const animTx = beginAnimEdit();
+    const keyframes = gestureKeyframes('ik', boneId);
     dragInfoRef.current = {
       kind: 'ik',
       boneId,
       startScreen,
-      animTx,
+      animTx: keyframes ? beginAnimEdit() : null,
       startRotation: 0,
       startLocal: screenToLocal(startScreen.x, startScreen.y),
+      ...(keyframes ? {} : { staticBefore: skel }),
     };
     capturePointer(svg, e.pointerId);
   };
@@ -469,6 +619,11 @@ export function BoneOverlay(): JSX.Element | null {
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     downScreenRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+    if (boneRigMode === 'draw') {
+      beginBoneDraw(e);
+      return;
+    }
 
     // Start a paint stroke. Alt inverts add↔subtract, matching every other
     // paint tool; the scratch map is committed as one undo step on release.
@@ -512,6 +667,15 @@ export function BoneOverlay(): JSX.Element | null {
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (drawDraft) {
+      const svg = svgRef.current;
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const raw = screenToLocal(e.clientX - rect.left, e.clientY - rect.top);
+      const snapped = nearestJoint(raw);
+      setDrawDraft({ ...drawDraft, current: snapped?.point ?? raw });
+      return;
+    }
     if (paintMode && paintScratchRef.current !== null) {
       const svg = svgRef.current;
       if (!svg) return;
@@ -529,7 +693,11 @@ export function BoneOverlay(): JSX.Element | null {
     const local = screenToLocal(currentScreen.x, currentScreen.y);
 
     if (drag.kind === 'pole') {
-      // Pole vector: keyframeable, so the bend side can flip over time.
+      if (drag.staticBefore !== undefined || drag.animTx === null) {
+        previewStaticPose('pole', drag.boneId, local, 0);
+        controller.requestRender();
+        return;
+      }
       defaultAnimation.setKeyframe(node.id, `ikPole.${drag.boneId}.x`, layerT, local.x);
       defaultAnimation.setKeyframe(node.id, `ikPole.${drag.boneId}.y`, layerT, local.y);
       controller.requestRender();
@@ -564,21 +732,38 @@ export function BoneOverlay(): JSX.Element | null {
       const currAngle = Math.atan2(local.y - selfRoot.y, local.x - selfRoot.x);
       const newRot = drag.startRotation + (currAngle - startAngle);
       if (drag.staticBefore !== undefined || drag.animTx === null) {
-        previewStaticPose('fk', drag.boneId, local, newRot);
+        previewStaticPose('fk', drag.boneId, { x: bone.x, y: bone.y }, newRot);
         controller.requestRender();
         return;
       }
       defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.rotation`, layerT, newRot);
     } else {
-      // Root bone translation
-      defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.x`, layerT, local.x);
-      defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.y`, layerT, local.y);
+      const x = (drag.startBoneX ?? bone.x) + (local.x - drag.startLocal.x);
+      const y = (drag.startBoneY ?? bone.y) + (local.y - drag.startLocal.y);
+      if (drag.staticBefore !== undefined || drag.animTx === null) {
+        previewStaticPose('fk', drag.boneId, { x, y }, bone.rotation);
+        controller.requestRender();
+        return;
+      }
+      defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.x`, layerT, x);
+      defaultAnimation.setKeyframe(node.id, `bone.${drag.boneId}.y`, layerT, y);
     }
 
     controller.requestRender();
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    if (drawDraft) {
+      commitBoneDraw(drawDraft);
+      setDrawDraft(null);
+      const svg = svgRef.current;
+      if (svg) {
+        try { svg.releasePointerCapture(e.pointerId); } catch {}
+      }
+      suppressClickAddRef.current = true;
+      downScreenRef.current = null;
+      return;
+    }
     // Commit a paint stroke: ONE undo step for the whole gesture.
     if (paintScratchRef.current) {
       const painted = paintScratchRef.current;
@@ -661,44 +846,7 @@ export function BoneOverlay(): JSX.Element | null {
       return;
     }
 
-    // Chain drawing: a new bone grows from the selected parent's TIP toward the
-    // click. Local pose is derived from the parent's world frame so the bone
-    // points exactly at the clicked spot (rotation in radians — engine unit).
-    // Lowest free ordinal for this skeleton. The old form was a 6-char slice of
-    // a base-36 timestamp, whose leading digits barely move between calls — two
-    // bones drawn in quick succession could collide and share pose tracks.
-    const newBoneId = nextRigId('bone_', usedRigIds(bones));
-    const parentId = selectedBoneId;
-    const parent = parentId ? posedBones.find((b) => b.id === parentId) : undefined;
-
-    let newBone: Bone;
-    if (parent) {
-      const pMat = worldTransforms.get(parent.id);
-      const pTip = pMat ? boneTip(pMat, parent.length) : { x: 0, y: 0 };
-      const pAngle = pMat ? angleOf(pMat) : 0;
-      const dx = local.x - pTip.x;
-      const dy = local.y - pTip.y;
-      newBone = {
-        id: newBoneId,
-        parentId: parent.id,
-        length: Math.max(4, Math.hypot(dx, dy)),
-        x: parent.length,
-        y: 0,
-        rotation: Math.atan2(dy, dx) - pAngle,
-      };
-    } else {
-      newBone = {
-        id: newBoneId,
-        parentId: null,
-        length: 40,
-        x: local.x,
-        y: local.y,
-        rotation: 0,
-      };
-    }
-
-    addBone(node.id, newBone);
-    setSelectedBoneId(newBoneId);
+    // Construction is drag-only. A plain click intentionally creates no bone.
   };
 
   return (
@@ -711,7 +859,7 @@ export function BoneOverlay(): JSX.Element | null {
         height: '100%',
         pointerEvents: 'auto',
         zIndex: 10,
-        cursor: 'crosshair',
+        cursor: boneRigMode === 'draw' ? 'crosshair' : boneRigMode === 'weights' ? 'none' : 'default',
       }}
       onPointerDown={onPointerDownSvg}
       onPointerMove={onPointerMove}
@@ -722,7 +870,7 @@ export function BoneOverlay(): JSX.Element | null {
           Drawn from the POSED vertices, so it shows the deformation the
           renderer produces. With a bone selected the fill becomes that bone's
           weight field, which is what makes painting legible. */}
-      {bones.length > 0 && (() => {
+      {boneRigMode === 'weights' && bones.length > 0 && (() => {
         const tris: JSX.Element[] = [];
         const tri = restMesh.triangles;
         for (let i = 0; i < tri.length; i += 3) {
@@ -758,7 +906,7 @@ export function BoneOverlay(): JSX.Element | null {
       {/* The picked vertex. Drawn from the POSED position so the ring sits on
           the point the user clicked even on a deformed rig, and labelled with
           its index so the panel's `#N` badge is checkable against the canvas. */}
-      {bones.length > 0 && pickedVertex !== null && pickedVertex * 4 < posedVertices.length && (() => {
+      {boneRigMode === 'weights' && bones.length > 0 && pickedVertex !== null && pickedVertex * 4 < posedVertices.length && (() => {
         const p = localToScreen(posedVertices[pickedVertex * 4]!, posedVertices[pickedVertex * 4 + 1]!);
         return (
           <g pointerEvents="none">
@@ -770,102 +918,6 @@ export function BoneOverlay(): JSX.Element | null {
           </g>
         );
       })()}
-
-      {/* ── Weight-paint controls (Phase 4.3) ────────────────────────────
-          Only meaningful with a bone selected — the brush writes that bone's
-          weight column. */}
-      {bones.length > 0 && (
-        <g transform="translate(12, 12)">
-          {(['add', 'subtract', 'smooth'] as const).map((mode, i) => {
-            const active = paintMode === mode;
-            const disabled = !selectedBoneId;
-            return (
-              <g
-                key={mode}
-                style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
-                opacity={disabled ? 0.35 : 1}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (disabled) return;
-                  setPaintMode(active ? null : mode);
-                }}
-              >
-                <rect
-                  x={i * 74} y={0} width={70} height={22} rx={4}
-                  fill={active ? 'rgba(0,230,153,0.25)' : 'rgba(0,0,0,0.45)'}
-                  stroke={active ? '#00e699' : 'rgba(255,255,255,0.25)'}
-                  strokeWidth={1}
-                />
-                <text
-                  x={i * 74 + 35} y={15} textAnchor="middle"
-                  fontSize={11} fill={active ? '#00e699' : '#ffffff'}
-                  style={{ userSelect: 'none' }}
-                >
-                  {mode === 'add' ? 'Paint +' : mode === 'subtract' ? 'Paint −' : 'Smooth'}
-                </text>
-              </g>
-            );
-          })}
-          {/* Vertex pick — the entry point for the numeric weight editor in the
-              Rigging panel. Needs no bone selected, because it reads the whole
-              influence list rather than one bone's column. Turning it on turns
-              the brush off: the two interpret the same click. */}
-          <g
-            style={{ cursor: 'pointer' }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              setVertexPick((on) => !on);
-              setPaintMode(null);
-            }}
-          >
-            <rect
-              x={3 * 74} y={0} width={82} height={22} rx={4}
-              fill={vertexPick ? 'rgba(0,170,255,0.25)' : 'rgba(0,0,0,0.45)'}
-              stroke={vertexPick ? '#33aaff' : 'rgba(255,255,255,0.25)'}
-              strokeWidth={1}
-            />
-            <text
-              x={3 * 74 + 41} y={15} textAnchor="middle"
-              fontSize={11} fill={vertexPick ? '#33aaff' : '#ffffff'}
-              style={{ userSelect: 'none' }}
-            >
-              Pick Vertex
-            </text>
-          </g>
-          {vertexPick && (
-            <text x={0} y={40} fontSize={10} fill="rgba(255,255,255,0.75)" style={{ userSelect: 'none' }}>
-              Click the mesh — weights appear in the Rigging panel
-            </text>
-          )}
-          {paintMode && (
-            <g onPointerDown={(e) => e.stopPropagation()}>
-              <text x={0} y={40} fontSize={10} fill="rgba(255,255,255,0.75)" style={{ userSelect: 'none' }}>
-                Brush {Math.round(brushRadius)}px — [ / ] to resize, Alt inverts
-              </text>
-              {(['[', ']'] as const).map((k, i) => (
-                <g
-                  key={k}
-                  style={{ cursor: 'pointer' }}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setBrushRadius((r) => Math.max(4, Math.min(400, k === '[' ? r / 1.25 : r * 1.25)));
-                  }}
-                >
-                  <rect x={i * 26} y={48} width={22} height={20} rx={4} fill="rgba(0,0,0,0.45)" stroke="rgba(255,255,255,0.25)" />
-                  <text x={i * 26 + 11} y={62} textAnchor="middle" fontSize={12} fill="#fff" style={{ userSelect: 'none' }}>{k}</text>
-                </g>
-              ))}
-            </g>
-          )}
-          {!selectedBoneId && (
-            <text x={0} y={40} fontSize={10} fill="rgba(255,255,255,0.6)" style={{ userSelect: 'none' }}>
-              Select a bone to paint its weights
-            </text>
-          )}
-        </g>
-      )}
 
       {/* Brush cursor while painting */}
       {paintMode && (
@@ -891,9 +943,40 @@ export function BoneOverlay(): JSX.Element | null {
         />
       )}
 
+      {/* Live construction preview. No scene mutation occurs until release. */}
+      {drawDraft && (() => {
+        const start = localToScreen(drawDraft.start.x, drawDraft.start.y);
+        const end = localToScreen(drawDraft.current.x, drawDraft.current.y);
+        const length = Math.hypot(
+          drawDraft.current.x - drawDraft.start.x,
+          drawDraft.current.y - drawDraft.start.y,
+        );
+        return (
+          <g pointerEvents="none" data-bone-draft="">
+            <line
+              x1={start.x} y1={start.y} x2={end.x} y2={end.y}
+              stroke="#00e699" strokeWidth={2} strokeDasharray="5 3"
+            />
+            <circle cx={start.x} cy={start.y} r={6} fill="#00e699" stroke="#fff" />
+            <circle cx={end.x} cy={end.y} r={5} fill="none" stroke="#00e699" strokeWidth={2} />
+            <text
+              x={(start.x + end.x) / 2 + 8}
+              y={(start.y + end.y) / 2 - 8}
+              fill="#fff"
+              fontSize={11}
+              paintOrder="stroke"
+              stroke="rgba(0,0,0,.8)"
+              strokeWidth={3}
+            >
+              {`${Math.round(length)} px`}
+            </text>
+          </g>
+        );
+      })()}
+
       {/* Draw bone shapes and joint connections (SOLVED pose — FK + IK) */}
-      {posedBones.map((b) => {
-        const mat = worldTransforms.get(b.id);
+      {(boneRigMode === 'draw' ? bones : posedBones).map((b) => {
+        const mat = (boneRigMode === 'draw' ? restWorldTransforms : worldTransforms).get(b.id);
         if (!mat) return null;
         const rootPos = boneRoot(mat);
         const tipPos = boneTip(mat, b.length);
@@ -967,7 +1050,7 @@ export function BoneOverlay(): JSX.Element | null {
       })}
 
       {/* IK target handles — layer-local, keyframeable, draggable */}
-      {activeIkTargets.map((tg) => {
+      {boneRigMode === 'pose' && activeIkTargets.map((tg) => {
         const tScreen = localToScreen(tg.x, tg.y);
         return (
           <g
@@ -999,7 +1082,7 @@ export function BoneOverlay(): JSX.Element | null {
       {/* ── IK pole handles (Phase 4.4) ──────────────────────────────────
           The side a two-bone chain bends toward. Drag to flip the elbow/knee;
           without one the solver can only ever hold the current side. */}
-      {activeIkTargets.map((tg) => {
+      {boneRigMode === 'pose' && activeIkTargets.map((tg) => {
         if (!tg.pole) return null;
         const p = localToScreen(tg.pole.x, tg.pole.y);
         const chain = ikChainIds(animatedBones, tg.boneId, tg.chainLength);
@@ -1033,7 +1116,7 @@ export function BoneOverlay(): JSX.Element | null {
           Drawn LAST so they sit above bones, IK crosses and poles: a controller
           is the thing an animator is meant to grab, and the painter's order is
           also the pick order (`pickController` walks the list backwards). */}
-      {controllers.map((c) => {
+      {boneRigMode === 'pose' && controllers.map((c) => {
         const s = controllerScreen(c);
         // A dangling link draws nothing rather than stacking at the origin.
         if (!s) return null;

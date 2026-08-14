@@ -468,7 +468,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
        * independently and leaving the batch as mixed as it started.
        */
       id: asCommandId('layer.toggleGuide'),
-      label: 'Guide Layer (exclude from render)',
+      label: 'Guide Layer (omit from export)',
       icon: 'eye-off',
       enabled: () => useSelectionStore.getState().ids.length > 0,
       execute: () => {
@@ -476,11 +476,15 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (ids.length === 0) return;
         const next = !isGuideLayer(ids[0]!);
         for (const id of ids) setGuideLayer(id, next);
-        const plural = ids.length > 1 ? 's' : '';
+        const plural = ids.length > 1;
         notify(
           next
-            ? `Guide layer${plural} — hidden from render and export`
-            : `No longer a guide layer${plural}`,
+            ? plural
+              ? 'Guide layers — visible while editing, omitted from export'
+              : 'Guide layer — visible while editing, omitted from export'
+            : plural
+              ? 'No longer guide layers'
+              : 'No longer a guide layer',
           'success',
         );
       },

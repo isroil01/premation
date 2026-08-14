@@ -361,3 +361,17 @@
 .lockBtnActive {
   color: var(--color-primary);
 }
+
+.cornerGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+
+.cornerGrid .popoverRow {
+  margin-bottom: 0;
+}
+
+.cornerGrid .popoverLabel {
+  min-width: 28px;
+}

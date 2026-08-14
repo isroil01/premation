@@ -5,7 +5,7 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode } from '@core/rig/skeletonCommands';
-import { chainModeOf } from '@core/rig/liveIkTargets';
+import { chainModeOf, resolveActiveIkTargets } from '@core/rig/liveIkTargets';
 import { applyRigPreset } from '@core/rig/skeletonCommands';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { readGeometry } from '@core/workspace/geometry';
@@ -22,11 +22,15 @@ import {
 import { readNodePuppet } from '@core/rig/puppet';
 import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding } from '@core/rig/rigDeform';
+import { applyIk, ikChainIds } from '@core/rig/rigDeform';
+import { resolveLiveBones } from '@core/rig/liveBones';
+import { boneRoot, boneTip, computeWorldTransforms } from '@core/rig/skeleton';
 import { setWeightPaint } from '@core/rig/skeletonCommands';
 import {
   setVertexWeight, emptyWeightPaint, weightPaintMatches, isWeightPaintEmpty,
 } from '@core/rig/weightPaint';
 import { useRigVertexSelection, clearRigVertex } from '@stores/rigVertexStore';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import { useAssetStore } from '@stores/assetStore';
 import styles from './BoneControls.module.css';
 
@@ -49,6 +53,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   // hit it; `conditionalHooks.test.tsx` exists because it has happened before.
   const workspaceTime = useActiveWorkspace()?.time ?? 0;
   const selectedVertex = useRigVertexSelection(nodeId);
+  const boneRigMode = useUIStore((s) => s.boneRigMode);
+  const rigSelectionNodeId = useRigSelectionStore((s) => s.nodeId);
+  const selectedBoneId = useRigSelectionStore((s) => s.boneId);
+  const selectedControllerId = useRigSelectionStore((s) => s.controllerId);
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
 
@@ -56,10 +64,69 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   const bones = skel?.bones ?? [];
   const ikTargets = skel?.ikTargets ?? [];
   const controllers = skel?.controllers ?? [];
+  const selectedBone =
+    rigSelectionNodeId === nodeId
+      ? bones.find((bone) => bone.id === selectedBoneId) ?? null
+      : bones[0] ?? null;
+  const selectBone = (boneId: string | null): void =>
+    useRigSelectionStore.getState().selectBone(nodeId, boneId);
   // The canonical keyframe axis for this layer — the same forward map the
   // renderer samples, so a mode keyframe lands where the pose does.
   const layerT = compToKeyframeTime(nodeId, workspaceTime);
+  const liveBones = resolveLiveBones(bones, nodeId, layerT, defaultAnimation);
+  const posedBones = applyIk(liveBones, resolveActiveIkTargets(skel, nodeId, layerT));
+  const posedWorld = computeWorldTransforms({ bones: posedBones });
   const hasPuppet = ((readNodePuppet(node)?.pins ?? []).length ?? 0) > 0;
+
+  const effectorFor = (boneId: string): { x: number; y: number } => {
+    const bone = posedBones.find((candidate) => candidate.id === boneId);
+    const world = posedWorld.get(boneId);
+    return bone && world ? boneTip(world, bone.length) : { x: 0, y: 0 };
+  };
+
+  const poleFor = (boneId: string, chainLength?: number): { x: number; y: number } => {
+    const chain = ikChainIds(posedBones, boneId, chainLength);
+    const first = chain[0];
+    const bend = chain[1];
+    const end = posedBones.find((candidate) => candidate.id === boneId);
+    const firstWorld = first ? posedWorld.get(first) : undefined;
+    const endWorld = posedWorld.get(boneId);
+    if (!firstWorld || !endWorld || !end) return { x: 0, y: -80 };
+    const root = boneRoot(firstWorld);
+    const tip = boneTip(endWorld, end.length);
+    const dx = tip.x - root.x;
+    const dy = tip.y - root.y;
+    const distance = Math.hypot(dx, dy) || 1;
+    let nx = -dy / distance;
+    let ny = dx / distance;
+    const midpoint = { x: (root.x + tip.x) / 2, y: (root.y + tip.y) / 2 };
+    const bendWorld = bend ? posedWorld.get(bend) : undefined;
+    if (bendWorld) {
+      const joint = boneRoot(bendWorld);
+      if ((joint.x - midpoint.x) * nx + (joint.y - midpoint.y) * ny < 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+    }
+    const offset = Math.max(40, distance * 0.5);
+    return { x: midpoint.x + nx * offset, y: midpoint.y + ny * offset };
+  };
+
+  const orderedBones: Array<{ bone: (typeof bones)[number]; depth: number }> = [];
+  const seenBones = new Set<string>();
+  const appendChildren = (parentId: string | null, depth: number): void => {
+    for (const bone of bones) {
+      if (bone.parentId !== parentId || seenBones.has(bone.id)) continue;
+      seenBones.add(bone.id);
+      orderedBones.push({ bone, depth });
+      appendChildren(bone.id, depth + 1);
+    }
+  };
+  appendChildren(null, 0);
+  // Keep malformed legacy rigs inspectable instead of hiding cycle/orphan rows.
+  for (const bone of bones) {
+    if (!seenBones.has(bone.id)) orderedBones.push({ bone, depth: 0 });
+  }
 
   /**
    * The per-vertex weight editor — numbers for what the brush paints by feel.
@@ -181,8 +248,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       <div className={styles.headerCard}>
         <div className={styles.headerTitle}>
           <Icon name="bone" size="md" />
-          <span>Skeleton Hierarchy</span>
-          <span className={styles.badge}>{bones.length} bones</span>
+          <span>Bones</span>
+          <span className={styles.badge}>{bones.length === 1 ? '1 bone' : `${bones.length} bones`}</span>
         </div>
         <Button
           size="sm"
@@ -230,7 +297,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       </div>
       {bones.length === 0 && (
         <div className={styles.card} style={{ textAlign: 'center', padding: '16px 12px' }}>
-          <span className={styles.subText}>No bones added to this layer.</span>
+          <span className={styles.subText}>Click the layer to draw bones.</span>
           <Button
             size="sm"
             variant="primary"
@@ -252,7 +319,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
         </div>
       )}
 
-      {bones.length > 0 && !hasPuppet && (
+      {boneRigMode === 'weights' && bones.length > 0 && !hasPuppet && (
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>
@@ -284,10 +351,55 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
         </div>
       )}
 
-      {renderVertexWeights()}
+      {boneRigMode === 'weights' && renderVertexWeights()}
 
-      {/* Bone list cards */}
-      {bones.map((bone) => {
+      {bones.length > 0 && (
+        <div className={styles.card}>
+          <div className={styles.cardHeader}>
+            <div className={styles.cardTitle}>
+              <Icon name="bone" size="sm" style={{ opacity: 0.7 }} />
+              <span>Hierarchy</span>
+              <span className={styles.badge}>{bones.length}</span>
+            </div>
+          </div>
+          <div role="tree" aria-label="Bone hierarchy">
+            {orderedBones.map(({ bone, depth }) => {
+              const selected = selectedBone?.id === bone.id;
+              const hasIk = ikTargets.some((target) => target.boneId === bone.id);
+              return (
+                <button
+                  key={bone.id}
+                  type="button"
+                  role="treeitem"
+                  aria-level={depth + 1}
+                  aria-selected={selected}
+                  onClick={() => selectBone(bone.id)}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: `5px 6px 5px ${6 + depth * 14}px`,
+                    border: 0,
+                    borderRadius: 4,
+                    background: selected ? 'rgba(43,126,255,.2)' : 'transparent',
+                    color: 'inherit',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  <Icon name="bone" size="sm" style={{ opacity: selected ? 1 : 0.55 }} />
+                  <span style={{ flex: 1 }}>{bone.name ?? bone.id}</span>
+                  {hasIk && <span className={styles.badge}>IK</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* One selected-item editor, rather than a full property card per bone. */}
+      {selectedBone && [selectedBone].map((bone) => {
         const ik = ikTargets.find((t) => t.boneId === bone.id);
         const hasIK = ik?.enabled !== false && !!ik;
 
@@ -327,7 +439,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => deleteBone(nodeId, bone.id)}
+                onClick={() => {
+                  deleteBone(nodeId, bone.id);
+                  selectBone(null);
+                }}
                 aria-label={`Delete bone ${bone.name || bone.id}`}
                 title="Delete bone"
               >
@@ -335,8 +450,20 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               </Button>
             </div>
 
+            {(() => {
+              const live = posedBones.find((candidate) => candidate.id === bone.id) ?? bone;
+              return (
+                <div className={styles.paramRow}>
+                  <span className={styles.paramLabel}>Live Pose</span>
+                  <span className={styles.subText}>
+                    {`${((live.rotation * 180) / Math.PI).toFixed(1)}° · ${live.x.toFixed(1)}, ${live.y.toFixed(1)}`}
+                  </span>
+                </div>
+              );
+            })()}
+
             <div className={styles.paramRow}>
-              <span className={styles.paramLabel}>Bone Length</span>
+              <span className={styles.paramLabel}>Rest Length</span>
               <ValueField
                 value={bone.length}
                 min={1}
@@ -381,16 +508,17 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <Button
                 size="sm"
                 variant={hasIK ? 'primary' : 'secondary'}
-                onClick={() =>
+                onClick={() => {
+                  const effector = effectorFor(bone.id);
                   setIKTarget(nodeId, {
                     boneId: bone.id,
-                    x: bone.length,
-                    y: 0,
+                    x: ik?.x ?? effector.x,
+                    y: ik?.y ?? effector.y,
                     enabled: !hasIK,
                     ...(ik?.pole ? { pole: ik.pole } : {}),
                     ...(ik?.chainLength ? { chainLength: ik.chainLength } : {}),
-                  })
-                }
+                  });
+                }}
               >
                 <Icon name="crosshair" size="sm" />
                 {hasIK ? 'IK Active' : 'Enable IK Target'}
@@ -427,6 +555,43 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               </div>
             )}
             {hasIK && (
+              <>
+                <div className={styles.paramRow}>
+                  <span className={styles.paramLabel}>Chain Length</span>
+                  <ValueField
+                    value={ik?.chainLength ?? 2}
+                    min={1}
+                    max={8}
+                    onChange={(v) =>
+                      setIKTarget(nodeId, {
+                        ...ik!,
+                        chainLength: Math.max(1, Math.min(8, Math.round(v))),
+                        enabled: true,
+                      })
+                    }
+                    aria-label={`${bone.name || bone.id} IK chain length`}
+                  />
+                </div>
+                <div className={styles.paramRow}>
+                  <span className={styles.paramLabel}>Goal X / Y</span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    <ValueField
+                      value={ik!.x}
+                      unit="px"
+                      onChange={(x) => setIKTarget(nodeId, { ...ik!, x, enabled: true })}
+                      aria-label={`${bone.name || bone.id} IK goal x`}
+                    />
+                    <ValueField
+                      value={ik!.y}
+                      unit="px"
+                      onChange={(y) => setIKTarget(nodeId, { ...ik!, y, enabled: true })}
+                      aria-label={`${bone.name || bone.id} IK goal y`}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+            {hasIK && (
               <div className={styles.paramRow}>
                 <span
                   className={styles.paramLabel}
@@ -437,21 +602,32 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 <Button
                   size="sm"
                   variant={ik?.pole ? 'primary' : 'secondary'}
-                  onClick={() =>
+                  onClick={() => {
+                    const pole = poleFor(bone.id, ik!.chainLength);
                     setIKTarget(nodeId, {
                       boneId: bone.id,
                       x: ik!.x,
                       y: ik!.y,
                       enabled: true,
                       chainLength: ik!.chainLength,
-                      // Seed the pole perpendicular to the bone so it starts on
-                      // one clear side; drag the handle on canvas to choose.
-                      ...(ik?.pole ? {} : { pole: { x: 0, y: -bone.length } }),
-                    })
-                  }
+                      ...(ik?.pole ? {} : { pole }),
+                    });
+                  }}
                 >
                   {ik?.pole ? 'Pole Set' : 'Add Pole'}
                 </Button>
+                {ik?.pole && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const { pole: _pole, ...withoutPole } = ik;
+                      setIKTarget(nodeId, { ...withoutPole, enabled: true });
+                    }}
+                  >
+                    Remove
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -462,7 +638,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           The grab handles. Listed after the bones because a controller is
           defined BY the bone it drives — the link is picked from the bones
           above, so there is nothing to configure before one exists. */}
-      {bones.length > 0 && (
+      {boneRigMode === 'pose' && bones.length > 0 && (
         <div className={styles.card}>
           <div className={styles.cardHeader}>
             <div className={styles.cardTitle}>
@@ -479,7 +655,22 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           )}
 
           {controllers.map((c) => (
-            <div key={c.id} className={styles.paramRow} style={{ flexWrap: "wrap", gap: 4 }}>
+            <div
+              key={c.id}
+              className={styles.paramRow}
+              style={{
+                flexWrap: 'wrap',
+                gap: 4,
+                borderRadius: 4,
+                background:
+                  rigSelectionNodeId === nodeId && selectedControllerId === c.id
+                    ? 'rgba(43,126,255,.16)'
+                    : undefined,
+              }}
+              onClick={() =>
+                useRigSelectionStore.getState().selectController(nodeId, c.id, c.link.boneId)
+              }
+            >
               <span className={styles.paramLabel} style={{ flexBasis: "100%" }}>
                 {c.name ?? c.id} → {c.link.kind === "ikTarget" ? "IK goal" : "bone"} {c.link.boneId}
               </span>

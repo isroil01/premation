@@ -10,6 +10,10 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { subscribeWithSelector } from 'zustand/middleware';
 import type { Disposable } from '@app-types/common';
+import type { PinKind } from '@core/rig/puppet';
+
+export type BoneRigMode = 'draw' | 'pose' | 'weights';
+export type BoneWeightMode = 'add' | 'subtract' | 'smooth' | 'pick';
 
 export type Tool =
   | 'select'
@@ -49,6 +53,17 @@ export type Tool =
 interface UIState {
   /** Active tool in the toolbar. */
   activeTool: Tool;
+  /**
+   * Armed Puppet pin variant while `activeTool` is `puppet-pin`.
+   * Default is Position — the same first tool AE's flyout highlights.
+   */
+  puppetPinKind: PinKind;
+  /** Bone workflow mode: construct, animate, or bind the deformation mesh. */
+  boneRigMode: BoneRigMode;
+  /** Brush/picker armed while `boneRigMode === 'weights'`. */
+  boneWeightMode: BoneWeightMode;
+  /** Screen-pixel brush radius; intentionally independent of camera zoom. */
+  boneBrushRadius: number;
   /** Whether the user is currently dragging. */
   isDragging: boolean;
   /** Generic "toast"-style notifications. */
@@ -72,6 +87,10 @@ export interface Notification {
 
 interface UIActions {
   setActiveTool(tool: Tool): void;
+  setPuppetPinKind(kind: PinKind): void;
+  setBoneRigMode(mode: BoneRigMode): void;
+  setBoneWeightMode(mode: BoneWeightMode): void;
+  setBoneBrushRadius(radius: number): void;
   setDragging(isDragging: boolean): void;
   notify(notification: Omit<Notification, 'id' | 'createdAt'>): string;
   dismissNotification(id: string): void;
@@ -86,6 +105,10 @@ export const useUIStore = create<UIStore>()(
   subscribeWithSelector(
     immer((set) => ({
       activeTool: 'select',
+      puppetPinKind: 'position',
+      boneRigMode: 'draw',
+      boneWeightMode: 'add',
+      boneBrushRadius: 40,
       isDragging: false,
       notifications: [],
       snap: true,
@@ -95,6 +118,22 @@ export const useUIStore = create<UIStore>()(
       setActiveTool: (tool) =>
         set((s) => {
           s.activeTool = tool;
+        }),
+      setPuppetPinKind: (kind) =>
+        set((s) => {
+          s.puppetPinKind = kind;
+        }),
+      setBoneRigMode: (mode) =>
+        set((s) => {
+          s.boneRigMode = mode;
+        }),
+      setBoneWeightMode: (mode) =>
+        set((s) => {
+          s.boneWeightMode = mode;
+        }),
+      setBoneBrushRadius: (radius) =>
+        set((s) => {
+          s.boneBrushRadius = Math.max(4, Math.min(400, radius));
         }),
       setDragging: (isDragging) =>
         set((s) => {

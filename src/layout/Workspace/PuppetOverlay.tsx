@@ -8,18 +8,17 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { readGeometry } from '@core/workspace/geometry';
-import { rasterPadding } from '@core/rendering/raster/vectorDraw';
-import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, PuppetPin } from '@core/rig/puppet';
+import { readNodePuppet, deform, draftPin, pinKindOf, pinColor, pinHasTransformGizmo } from '@core/rig/puppet';
 import { resolveLivePins } from '@core/rig/livePins';
 import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
-import { rigCoverageMask, rigLayerKind, readNodeMediaRef, resolveRigImageSrc } from '@core/rig/rigMeshInputs';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { useAssetStore } from '@stores/assetStore';
 import { addPuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
 import { nextRigId, usedRigIds } from '@core/rig/rigIds';
 import { SketchRecorder, DEFAULT_SKETCH_TOLERANCE } from '@core/rig/puppetSketch';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '@core/rig/skeleton';
+import { resolveLiveBones } from '@core/rig/liveBones';
 import {
   applyIk,
   getSkeletonBinding,
@@ -54,16 +53,55 @@ function capturePointer(svg: SVGSVGElement, pointerId: number): void {
   }
 }
 
-function getHeatmapColor(weight: number): string {
-  // Map weight 0..1 to blue -> green/yellow -> red
-  const r = Math.round(Math.min(255, Math.max(0, (weight - 0.5) * 2 * 255)));
-  const g = Math.round(Math.min(255, Math.max(0, (1 - Math.abs(weight - 0.5) * 2) * 255)));
-  const b = Math.round(Math.min(255, Math.max(0, (0.5 - weight) * 2 * 255)));
-  return `rgba(${r}, ${g}, ${b}, 0.45)`;
+/**
+ * Unique mesh edges as one SVG path.
+ *
+ * After Effects' Puppet overlay is a regular lattice, not a filled triangulation.
+ * Drawing every triangle as its own stroked polygon doubled every shared edge
+ * and read as a noisy blueprint. Grid mode keeps only rest-axis edges so the
+ * lattice is boxes; silhouette mode (an outline ear-clip) still needs every
+ * edge or the wireframe would vanish.
+ */
+function puppetLatticePath(
+  rest: Float32Array,
+  posed: Float32Array,
+  triangles: Uint16Array,
+  toScreen: (x: number, y: number) => { x: number; y: number },
+  boxesOnly: boolean,
+): string {
+  const seen = new Set<number>();
+  let d = '';
+  for (let i = 0; i < triangles.length; i += 3) {
+    const tri = [triangles[i]!, triangles[i + 1]!, triangles[i + 2]!];
+    for (let e = 0; e < 3; e++) {
+      let a = tri[e]!;
+      let b = tri[(e + 1) % 3]!;
+      if (a > b) {
+        const t = a;
+        a = b;
+        b = t;
+      }
+      const key = a * 65536 + b;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (boxesOnly) {
+        const ax = rest[a * 4]!;
+        const ay = rest[a * 4 + 1]!;
+        const bx = rest[b * 4]!;
+        const by = rest[b * 4 + 1]!;
+        if (Math.abs(ax - bx) > 1e-3 && Math.abs(ay - by) > 1e-3) continue;
+      }
+      const p = toScreen(posed[a * 4]!, posed[a * 4 + 1]!);
+      const q = toScreen(posed[b * 4]!, posed[b * 4 + 1]!);
+      d += `M${p.x.toFixed(2)} ${p.y.toFixed(2)}L${q.x.toFixed(2)} ${q.y.toFixed(2)}`;
+    }
+  }
+  return d;
 }
 
 export function PuppetOverlay(): JSX.Element | null {
   const activeTool = useUIStore((s) => s.activeTool);
+  const puppetPinKind = useUIStore((s) => s.puppetPinKind);
   const selectedNodeId = useSelectionStore((s) => s.ids[0]);
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
@@ -137,14 +175,6 @@ export function PuppetOverlay(): JSX.Element | null {
   const puppetRig = readNodePuppet(node);
   const pins = puppetRig?.pins ?? [];
 
-  // Construct dummy layer for padding extraction
-  const dummyLayer: any = {
-    kind: geom.ellipse ? 'shape' : 'rect',
-    stroke: node.components.find((c) => c.type === 'Stroke')?.props.stroke,
-    strokes: node.components.find((c) => c.type === 'Strokes')?.props.strokes,
-    paint: node.components.find((c) => c.type === 'Paint')?.props.paint,
-  };
-  const pad = rasterPadding(dummyLayer);
   const controller = getWorkspaceController();
   const camera = controller.ws.camera;
 
@@ -164,37 +194,16 @@ export function PuppetOverlay(): JSX.Element | null {
   // Canonical keyframe axis — the same forward map buildSnapshot samples.
   const layerT = compToKeyframeTime(node.id, time);
 
-  // Build the rest mesh and deformed mesh for wireframe rendering. The static
-  // path outline (Geometry component) mirrors buildSnapshot's silhouette so the
-  // wireframe matches the rendered mesh for shape layers.
-  const geometryComponent = node.components.find((c) => c.type === 'Geometry');
-  const silhouette = silhouetteFromPathPoints(
-    geometryComponent?.props.points as Array<{ x: number; y: number }> | undefined,
-    geometryComponent?.props.open === true,
+  // Same assembly BoneOverlay and the renderer use. `authoringPreview` hugs the
+  // PNG silhouette before the first pin exists, so placing a pin does not
+  // retopologize a bounding-box grid into a body mesh.
+  const restMesh = nodeRestMesh(
+    node,
+    geom,
+    (id) => useAssetStore.getState().assets.find((asset) => asset.id === id),
+    true,
   );
-  // Image layers cull the mesh against the bitmap's alpha, exactly as
-  // buildSnapshot does. Omitting this drew an untrimmed bbox grid over an
-  // alpha-culled render — a different vertex count, different weights, and a
-  // weight heatmap that described a mesh nobody was drawing. Both sides resolve
-  // the source and the mask through rigMeshInputs so they cannot drift again.
-  const media = readNodeMediaRef(node);
-  const coverage = rigCoverageMask(
-    rigLayerKind(readNodeKind(node)),
-    resolveRigImageSrc(node, readNodeKind(node), media, layerT, (id) =>
-      useAssetStore.getState().assets.find((asset) => asset.id === id),
-    ),
-    media.assetId,
-    silhouette,
-  );
-  const restMesh = getCachedRestMesh(
-    node.id,
-    geom.width,
-    geom.height,
-    pad,
-    puppetRig ?? { pins: [] },
-    silhouette,
-    coverage,
-  );
+  const pad = puppetRig?.meshExpansion ?? 0;
 
   // Shared with buildSnapshot — see `livePins.ts` for why this is not written
   // out here a second time.
@@ -212,23 +221,13 @@ export function PuppetOverlay(): JSX.Element | null {
   let skelBinding: SkeletonBinding | null = null;
   let skelPoseWorld: Map<string, Mat2D> | null = null;
   if (skel && skel.bones.length > 0) {
-    const animatedBones: Bone[] = skel.bones.map((b) => {
-      const liveRot = defaultAnimation.sample(node.id, `bone.${b.id}.rotation`, layerT);
-      const liveX = defaultAnimation.sample(node.id, `bone.${b.id}.x`, layerT);
-      const liveY = defaultAnimation.sample(node.id, `bone.${b.id}.y`, layerT);
-      return {
-        ...b,
-        rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
-        x: typeof liveX === 'number' ? liveX : b.x,
-        y: typeof liveY === 'number' ? liveY : b.y,
-      };
-    });
+    const animatedBones: Bone[] = resolveLiveBones(skel.bones, node.id, layerT, defaultAnimation);
     // Shared resolver. This copy had DRIFTED — it never sampled the pole, so a
     // keyframed pole previewed here differently from how it rendered.
     const activeIk: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
     const posedBones = applyIk(animatedBones, activeIk);
     skelPoseWorld = computeWorldTransforms({ bones: posedBones });
-    skelBinding = getSkeletonBinding(restMesh, skel.bones);
+    skelBinding = getSkeletonBinding(restMesh, skel.bones, skel.weightPaint);
     deformedVertices = skinRigVertices(skelBinding, skelPoseWorld, deformedVertices);
   }
 
@@ -274,39 +273,23 @@ export function PuppetOverlay(): JSX.Element | null {
     return pts.join(' ');
   })();
 
-  // Render triangulation polygons
-  const polygons: JSX.Element[] = [];
-  const vertices = deformedVertices;
-  const triangles = restMesh.triangles;
-
-  for (let i = 0; i < triangles.length; i += 3) {
-    const i0 = triangles[i]!;
-    const i1 = triangles[i + 1]!;
-    const i2 = triangles[i + 2]!;
-
-    const s0 = localToScreen(vertices[i0 * 4 + 0]!, vertices[i0 * 4 + 1]!);
-    const s1 = localToScreen(vertices[i1 * 4 + 0]!, vertices[i1 * 4 + 1]!);
-    const s2 = localToScreen(vertices[i2 * 4 + 0]!, vertices[i2 * 4 + 1]!);
-
-    let fill = 'rgba(0, 191, 255, 0.04)';
-    if (selectedPinId && restMesh.weights[selectedPinId]) {
-      const w0 = restMesh.weights[selectedPinId]![i0] ?? 0;
-      const w1 = restMesh.weights[selectedPinId]![i1] ?? 0;
-      const w2 = restMesh.weights[selectedPinId]![i2] ?? 0;
-      const avgWeight = (w0 + w1 + w2) / 3;
-      fill = getHeatmapColor(avgWeight);
-    }
-
-    polygons.push(
-      <polygon
-        key={`tri-${i}`}
-        points={`${s0.x},${s0.y} ${s1.x},${s1.y} ${s2.x},${s2.y}`}
-        stroke="rgba(0, 191, 255, 0.25)"
-        strokeWidth={1}
-        fill={fill}
-      />
-    );
-  }
+  // After Effects draws a gold lattice, not filled triangles. Grid mode is
+  // boxes (the two-triangle cell's diagonal is omitted); silhouette mode
+  // keeps every unique edge because there is no axis-aligned lattice.
+  const meshBoxes = puppetLatticePath(
+    restMesh.vertices,
+    deformedVertices,
+    restMesh.triangles,
+    localToScreen,
+    true,
+  );
+  const meshPath = meshBoxes || puppetLatticePath(
+    restMesh.vertices,
+    deformedVertices,
+    restMesh.triangles,
+    localToScreen,
+    false,
+  );
 
   /**
    * The point a pin's rotation gesture turns about, in the same local space the
@@ -595,12 +578,13 @@ export function PuppetOverlay(): JSX.Element | null {
     // placed in the same millisecond used to collide and share one set of
     // animation tracks.
     const pinId = nextRigId('pin_', usedRigIds(pins));
-    const newPin: PuppetPin = {
-      id: pinId,
-      name: `Pin ${pins.length + 1}`,
-      x: localCoords.x,
-      y: localCoords.y,
-    };
+    const newPin = draftPin(
+      puppetPinKind,
+      pinId,
+      `Pin ${pins.length + 1}`,
+      localCoords.x,
+      localCoords.y,
+    );
     addPuppetPin(node.id, newPin);
     setSelectedPinId(pinId);
   };
@@ -628,7 +612,19 @@ export function PuppetOverlay(): JSX.Element | null {
       onPointerUp={onPointerUp}
       onClick={onClickOverlay}
     >
-      {polygons}
+      {meshPath && (
+        <path
+          d={meshPath}
+          data-puppet-mesh="true"
+          fill="none"
+          stroke="rgba(232, 196, 96, 0.55)"
+          strokeWidth={1}
+          strokeLinecap="butt"
+          strokeLinejoin="miter"
+          shapeRendering="geometricPrecision"
+          pointerEvents="none"
+        />
+      )}
 
       {/* ── Selected pin's motion path + spatial tangent handles ──────────
           Drag a handle to arc the pin's trajectory; Alt-drag breaks the point
@@ -694,7 +690,9 @@ export function PuppetOverlay(): JSX.Element | null {
       {/* Render pin dots */}
       {pins.map((pin) => {
         const animPin = animatedPins.find((p) => p.id === pin.id) ?? pin;
-        const isBendPin = pin.kind === 'bend';
+        const kind = pinKindOf(pin);
+        const color = pinColor(kind);
+        const isBendPin = kind === 'bend';
         // Draw the handle where the mesh actually IS, not where it rests.
         //
         // Pin positions are stored in REST space (the puppet solve runs before
@@ -737,7 +735,7 @@ export function PuppetOverlay(): JSX.Element | null {
                 cy={screen.y}
                 r={10}
                 fill="none"
-                stroke={isSelected ? '#ffc107' : 'rgba(255, 193, 7, 0.5)'}
+                stroke={isSelected ? color : `${color}80`}
                 strokeWidth={2}
               />
             )}
@@ -748,31 +746,28 @@ export function PuppetOverlay(): JSX.Element | null {
                 y1={screen.y}
                 x2={screen.x + 14 * Math.cos(((animPin.rotation ?? 0) * Math.PI) / 180)}
                 y2={screen.y + 14 * Math.sin(((animPin.rotation ?? 0) * Math.PI) / 180)}
-                stroke={isSelected ? '#ffc107' : '#00bfff'}
+                stroke={isSelected ? color : color}
                 strokeWidth={2}
               />
             )}
-            {/* Core dot. A bend pin is HOLLOW and green — it has to be tellable
-                apart from an advanced pin at a glance, because the two respond
-                to the same drag in different ways. */}
+            {/* Core dot. Bend pins are hollow; the other four tools are solid
+                circles in AE's colours so they are readable at a glance. */}
             <circle
               cx={screen.x}
               cy={screen.y}
               r={5}
-              fill={isBendPin ? 'none' : isSelected ? '#ffc107' : '#00bfff'}
-              stroke={isBendPin ? (isSelected ? '#ffc107' : '#7ee787') : '#ffffff'}
+              fill={isBendPin ? 'none' : color}
+              stroke={isBendPin ? color : '#ffffff'}
               strokeWidth={isBendPin ? 2.5 : 1.5}
             />
 
-            {/* ── Advanced-pin gizmo (3B) ────────────────────────────────
-                AE's shape: an outer circle you drag to rotate, plus one square
-                handle you drag to scale. Shift constrains rotation to 15° and
-                scale to 5%. Shown on the selected pin only. */}
-            {isSelected && (
+            {/* Advanced / Bend gizmo — AE's rotate ring + scale square. Position,
+                Starch and Overlap pins only move. */}
+            {isSelected && pinHasTransformGizmo(kind) && (
               <g>
                 <circle
                   cx={screen.x} cy={screen.y} r={GIZMO_R}
-                  fill="none" stroke="#ffc107" strokeWidth={1} opacity={0.55}
+                  fill="none" stroke={color} strokeWidth={1} opacity={0.55}
                   style={{ cursor: 'grab' }}
                   onPointerDown={(e) => {
                     // Dragging the ring rotates — reuse the rotate sub-mode.
@@ -782,14 +777,14 @@ export function PuppetOverlay(): JSX.Element | null {
                 />
                 <rect
                   x={screen.x + GIZMO_R - 4} y={screen.y - 4} width={8} height={8}
-                  fill="#ffffff" stroke="#ffc107" strokeWidth={1.5}
+                  fill="#ffffff" stroke={color} strokeWidth={1.5}
                   style={{ cursor: 'nwse-resize' }}
                   onPointerDown={(e) => onPointerDownScale(e, pin.id)}
                 />
                 {(animPin.scale ?? 1) !== 1 && (
                   <text
                     x={screen.x + GIZMO_R + 8} y={screen.y + 4}
-                    fontSize={10} fill="#ffc107" style={{ userSelect: 'none' }}
+                    fontSize={10} fill={color} style={{ userSelect: 'none' }}
                     pointerEvents="none"
                   >
                     {(animPin.scale ?? 1).toFixed(2)}x

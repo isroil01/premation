@@ -102,17 +102,24 @@ export class WorkspaceController {
   }
 
   /**
-   * Where a node's anchor sits on screen, and the current zoom.
-   *
-   * Backs the on-canvas text editor, which overlays a DOM element on the
-   * canvas at the layer's position. Returns null when the node isn't known to
-   * the workspace (e.g. it was just deleted).
+   * Where a node's box sits on screen, with camera zoom and the layer's own
+   * scale. Backs the on-canvas text editor so the overlay matches the glyphs
+   * the renderer draws — including a scaled / offset text box, not a tiny
+   * unscaled input at the layer origin.
    */
-  getNodeScreenPlacement(nodeId: string): { x: number; y: number; zoom: number; rotationDeg: number } | null {
+  getNodeScreenPlacement(nodeId: string): {
+    x: number;
+    y: number;
+    zoom: number;
+    rotationDeg: number;
+    scaleX: number;
+    scaleY: number;
+  } | null {
     const node = this.scenePort.getNode(nodeId as never);
     if (!node) return null;
     // worldMatrix e/f are the node's world-space origin; its on-screen angle is
-    // the matrix's rotation (camera never rotates, only pans/zooms).
+    // the matrix's rotation (camera never rotates, only pans/zooms). Scale is
+    // the matrix's axis lengths — camera zoom is applied separately.
     const m = node.worldMatrix;
     const screen = this.ws.camera.worldToScreen({ x: m.e, y: m.f });
     return {
@@ -120,6 +127,8 @@ export class WorkspaceController {
       y: screen.y,
       zoom: this.ws.camera.zoom,
       rotationDeg: (Math.atan2(m.b, m.a) * 180) / Math.PI,
+      scaleX: Math.hypot(m.a, m.b) || 1,
+      scaleY: Math.hypot(m.c, m.d) || 1,
     };
   }
 

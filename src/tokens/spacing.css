@@ -95,3 +95,28 @@
   --space-sidebar-width:    280px;
   --space-inspector-width:  320px;
 }
+
+/*
+  Compact chrome for ~13" / 1366-class laptops. Tokens only — TopNav tools,
+  IconButton, and bar heights pick these up without per-call-site churn.
+  14"+ / wider viewports keep the default scale above.
+*/
+@media (max-width: 1366px) {
+  :root {
+    --icon-size-sm: 13px;
+    --icon-size-md: 16px;
+    --icon-size-lg: 22px;
+    --control-height-2xs: 16px;
+    --control-height-xs: 18px;
+    --control-height-sm: 20px;
+    --control-height-md: 22px;
+    --control-height-row: 24px;
+    --control-height-lg: 24px;
+    --bar-height-menu: 28px;
+    --bar-height-tool: 32px;
+    --bar-height-panel: 28px;
+    --space-toolbar-height: 34px;
+    --space-sidebar-width: 260px;
+    --space-inspector-width: 280px;
+  }
+}

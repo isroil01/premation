@@ -21,16 +21,20 @@ import type { TextStyle } from '@core/text/textLayout';
 import styles from './TransformSection.module.css';
 
 const PRESETS = [
+  { label: 'Display', fontSize: 96, fontWeight: '800', fontStyle: 'normal' },
   { label: 'Title (Large)', fontSize: 72, fontWeight: '700', fontStyle: 'normal' },
+  { label: 'Headline', fontSize: 56, fontWeight: '700', fontStyle: 'normal' },
   { label: 'Subtitle', fontSize: 48, fontWeight: '600', fontStyle: 'normal' },
   { label: 'Body Text', fontSize: 36, fontWeight: '400', fontStyle: 'normal' },
+  { label: 'Lower Third', fontSize: 28, fontWeight: '600', fontStyle: 'normal' },
   { label: 'Caption', fontSize: 24, fontWeight: '400', fontStyle: 'normal' },
   { label: 'Label', fontSize: 20, fontWeight: '500', fontStyle: 'normal' },
   { label: 'Overline', fontSize: 14, fontWeight: '500', fontStyle: 'normal' },
   { label: 'Quote', fontSize: 32, fontWeight: '300', fontStyle: 'italic' },
+  { label: 'Pull Quote', fontSize: 40, fontWeight: '400', fontStyle: 'italic' },
   { label: 'Monospace', fontSize: 36, fontWeight: '500', fontStyle: 'normal', fontFamily: 'Fira Code' },
   { label: 'Button', fontSize: 16, fontWeight: '600', fontStyle: 'normal' },
-  { label: 'Link', fontSize: 18, fontWeight: '400', fontStyle: 'normal' }
+  { label: 'Link', fontSize: 18, fontWeight: '400', fontStyle: 'normal' },
 ];
 
 export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -61,6 +65,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
   const [lineHeight, setLineHeight] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'lineHeight');
   const [paragraphSpacing, setParagraphSpacing] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'paragraphSpacing');
   const [strokeOverFill, setStrokeOverFill] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'strokeOverFill');
+  const [boxWidth, setBoxWidth] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'boxWidth');
 
   // Real per-family weights from the installed-font catalog (async, cached).
   const [, fontsReady] = useReducer((n: number) => n + 1, 0);
@@ -342,13 +347,22 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
           >
             <Icon name="keyframe" size="sm" />
           </button>
-          <input
-            type="text"
+          <textarea
             value={contentStr}
             onChange={(e) => onContentEdit(e.target.value)}
             className={styles.textInput}
-            style={{ flex: 1, minWidth: 0, height: 24, padding: '2px 8px' }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              minHeight: 72,
+              height: 88,
+              padding: '8px 10px',
+              resize: 'vertical',
+              lineHeight: 1.35,
+              fontFamily: 'inherit',
+            }}
             aria-label="Text content"
+            rows={4}
           />
         </div>
 
@@ -404,6 +418,23 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
         {renderTextPropInner('Leading', 'lineHeight', lineHeightVal, setLineHeight, 'em', 1.2)}
         {renderTextPropInner('Paragraph', 'paragraphSpacing', paragraphSpacingVal, setParagraphSpacing, 'px', 0)}
 
+        <div className={styles.popoverRow}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+            <Checkbox
+              checked={typeof boxWidth === 'number' && boxWidth > 0}
+              onChange={() => {
+                if (typeof boxWidth === 'number' && boxWidth > 0) setBoxWidth(0);
+                else setBoxWidth(typeof boxWidth === 'number' && boxWidth > 0 ? boxWidth : 400);
+              }}
+              title="Wrap text inside a box (After Effects paragraph text). Off = point text, size to the glyphs."
+              style={{ width: 13, height: 13 }}
+            />
+            <span className={styles.popoverLabel}>Box Text</span>
+          </div>
+        </div>
+        {typeof boxWidth === 'number' && boxWidth > 0 &&
+          renderTextPropInner('Box Width', 'boxWidth', boxWidth, setBoxWidth, 'px', 400)}
+
         {/* AE's Fill & Stroke order. Only meaningful once something gives the
             glyphs a stroke — today that is a text animator's Stroke Width — so
             it sits with the other layer-wide text properties rather than in the
@@ -422,11 +453,10 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
           </div>
         </div>
 
-        {/* NOT the same control as Appearance's fill, though it writes the same
-            prop when nothing is selected: with a character range selected this
-            writes a per-RUN colour, which Appearance cannot do. It was labelled
-            "Color" in both places, so the two rows looked like a duplicate of
-            each other — the label now says which one this is. */}
+        {/* NOT a second fill picker competing with Appearance — for text layers
+            Appearance suppresses its Fill chrome, and this row is the only
+            Character Color control (supports per-run colour when a range is
+            selected). */}
         <ColorKfRow
           nodeId={nodeId}
           propPrefix="fill"

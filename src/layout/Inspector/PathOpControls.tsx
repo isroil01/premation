@@ -60,6 +60,14 @@ const COMPOSITE: { id: RepeaterComposite; label: string }[] = [
   { id: 'below', label: 'Below' },
 ];
 
+/** AE's "Trim Multiple Shapes". `simultaneously` is AE's default and what a
+ *  staggered reveal of several outlines wants; `individually` is what this
+ *  renderer did before the switch existed. */
+const TRIM_MULTIPLE: { id: 'individually' | 'simultaneously'; label: string }[] = [
+  { id: 'simultaneously', label: 'Simultaneously' },
+  { id: 'individually', label: 'Individually' },
+];
+
 interface ParamSpec {
   param: PathOpParam;
   label: string;
@@ -308,6 +316,27 @@ function PathOpCard({
           />
         </div>
       )}
+      {op.type === 'trim' && (
+        <div className={styles.selectorRow}>
+          <span className={styles.paramLabel}>Multiple</span>
+          <Dropdown
+            placement="left-start"
+            trigger={
+              <button type="button" className={styles.pick}>
+                <span>{op.trimMultiple === 'individually' ? 'Individually' : 'Simultaneously'}</span>
+                <Icon name="chevron-down" size="sm" />
+              </button>
+            }
+            items={TRIM_MULTIPLE.map((c) => ({
+              type: 'item' as const,
+              id: c.id,
+              label: c.label,
+              icon: (op.trimMultiple ?? 'individually') === c.id ? 'check' : undefined,
+              onSelect: () => updatePathOp(nodeId, op.id, { trimMultiple: c.id }),
+            }))}
+          />
+        </div>
+      )}
       {paramsFor(op.type).map((row) => (
         <ParamRow
           key={row.param}
@@ -374,7 +403,7 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   if (!node || readNodeKind(node) !== 'shape') return null;
 
   const ops = readPathOps(node);
-  if (ops.length === 0) return null; // added via the Shape-Effects menu
+  if (ops.length === 0) return null; // added via Effects & Presets
 
   // Rendered top-to-bottom in APPLICATION order, so the panel reads the way the
   // geometry evaluates. Keyed by operator id rather than index, or React reuses

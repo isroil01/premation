@@ -134,8 +134,9 @@
  * icon controls.
  */
 .vertical .tab {
-  height: 36px;
-  width: 36px;
+  height: var(--control-height-lg);
+  width: var(--control-height-lg);
+  min-width: var(--control-height-lg);
   border-left: none;
   border-radius: var(--radius-md, 6px);
   justify-content: center;

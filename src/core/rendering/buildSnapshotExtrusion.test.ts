@@ -363,7 +363,7 @@ describe('buildSnapshot — 3D solids', () => {
     } as unknown as SceneNode;
   }
 
-  it('an un-switched solid stays pinned full-comp exactly as before', () => {
+  it('an un-switched unseeded solid stays full-comp (legacy insert)', () => {
     const g = new SceneGraph();
     g.addNode(solid('bg'));
     const l = snap(g).layers[0]!;

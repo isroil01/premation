@@ -198,6 +198,10 @@ const STATIC: Record<string, MetaSpec> = {
   width: { ...PX('Width', 'geometry', ORDER.geometry), min: 0, resettable: false },
   height: { ...PX('Height', 'geometry', ORDER.geometry), min: 0, resettable: false },
   cornerRadius: { ...PX('Corner Radius', 'geometry', ORDER.geometry), min: 0 },
+  cornerRadiusTL: { ...PX('Corner TL', 'geometry', ORDER.geometry), min: 0 },
+  cornerRadiusTR: { ...PX('Corner TR', 'geometry', ORDER.geometry), min: 0 },
+  cornerRadiusBR: { ...PX('Corner BR', 'geometry', ORDER.geometry), min: 0 },
+  cornerRadiusBL: { ...PX('Corner BL', 'geometry', ORDER.geometry), min: 0 },
   'path.points': {
     label: 'Path', group: 'geometry', type: 'path', unit: '',
     step: 1, precision: 0, defaultValue: null, resettable: false, order: ORDER.geometry,

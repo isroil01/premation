@@ -69,8 +69,14 @@ import { getNodeMatte, setNodeMatte } from '@core/effects/matte';
 import { readNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
 import { readNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { readNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
-import { readIsGuideLayer, toggleGuideLayer } from '@core/scene/guideLayer';
+import { readIsGuideLayer, toggleGuideLayer, isGuideLayer } from '@core/scene/guideLayer';
 import { readNodePreserveTransparency, setNodePreserveTransparency } from '@core/effects/preserveTransparency';
+import {
+  enableLayerMotionBlurWithFeedback,
+  disableLayerMotionBlur,
+  setAdjustmentWithFeedback,
+  notifyGuideLayerChange,
+} from '@core/effects/layerSwitchFeedback';
 import { reparentNode, moveNodeAdjacent } from '@core/scene/parenting';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
@@ -1247,16 +1253,15 @@ function EditorShellInner(): JSX.Element {
                 // changed, while the inspector's equivalent switch (writing the
                 // `fx` component) changed pixels without lighting the icon.
                 if (flag === 'preserveTransparency') {
-                  // Through the graph, like `guide` — so undo, autosave and the
-                  // renderer all see one flag. See the comment above.
                   setNodePreserveTransparency(trackId, !readNodePreserveTransparency(n));
+                  bumpScene();
                   return;
                 }
                 if (flag === 'guide') {
-                  // Writes the fx component through the graph, so undo, autosave
-                  // and the renderer all see the same flag — the trap this
-                  // handler'''s comment above is about.
+                  const next = !isGuideLayer(trackId);
                   toggleGuideLayer(trackId);
+                  notifyGuideLayerChange(next);
+                  bumpScene();
                   return;
                 }
                 if (flag === 'threeD') {
@@ -1279,9 +1284,10 @@ function EditorShellInner(): JSX.Element {
                     );
                   }
                 } else if (flag === 'motionBlur') {
-                  setNodeMotionBlur(trackId, !readNodeMotionBlur(n));
+                  if (readNodeMotionBlur(n)) disableLayerMotionBlur(trackId, setNodeMotionBlur);
+                  else enableLayerMotionBlurWithFeedback(trackId, setNodeMotionBlur);
                 } else if (flag === 'adjustment') {
-                  setNodeAdjustment(trackId, !readNodeAdjustment(n));
+                  setAdjustmentWithFeedback(trackId, !readNodeAdjustment(n), setNodeAdjustment);
                 } else if (flag === 'fxEnabled') {
                   setNodeFxEnabled(trackId, !readNodeFxEnabled(n));
                 } else {

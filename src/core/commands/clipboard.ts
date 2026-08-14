@@ -18,7 +18,6 @@ import {
   expandKeyframeProp,
   type EasingKind,
   type BezierHandles,
-  type PropertyTrack,
 } from '@motion/animation';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
@@ -27,6 +26,7 @@ import { runAnimEdit } from '@core/animation/animationCommands';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { bumpScene } from '@stores/sceneStore';
+import { snapshotNodeAnimation, applyNodeAnimation, type NodeAnimationSnapshot } from '@core/animation/cloneNodeAnimation';
 import type { SceneNode } from '@core/types';
 
 /** Float times never compare exactly; match the engine's own tolerance. */
@@ -45,7 +45,7 @@ interface ClipboardState {
   }> | null;
   copiedLayers: Array<{
     node: SceneNode;
-    tracks: PropertyTrack[];
+    animation: NodeAnimationSnapshot;
   }> | null;
 }
 
@@ -98,13 +98,12 @@ export function copySelection(): void {
         const original = defaultSceneGraph.getNode(id);
         if (!original) continue;
         
-        // Deep clone node
+        // Deep clone node. Animation is snapshotted separately so paste still
+        // works after the original is deleted (Cut, or a later Delete).
         const clonedNode = JSON.parse(JSON.stringify(original)) as SceneNode;
-        const tracks = defaultAnimation.tracksFor(id);
-        
         copiedLayers.push({
           node: clonedNode,
-          tracks: JSON.parse(JSON.stringify(tracks)) as PropertyTrack[],
+          animation: snapshotNodeAnimation(id),
         });
       }
       
@@ -194,7 +193,9 @@ export function pasteSelection(): void {
       const dupComponents = item.node.components.map((c) => ({
         ...c,
         id: `${dupId}_${c.type}`,
-        props: { ...c.props },
+        // Deep-clone so a second paste does not share nested fx / pathOps /
+        // puppet state with the first paste (or the clipboard).
+        props: structuredClone(c.props),
       }));
       
       const dupNode = {
@@ -227,11 +228,10 @@ export function pasteSelection(): void {
         });
       }
       
-      // Paste tracks wholesale — carries every keyframe field (easing, bezier,
-      // roving, spatial tangents) without per-field re-assembly.
-      for (const track of item.tracks) {
-        defaultAnimation.setTrackKeyframes(dupId, track.prop, track.keyframes);
-      }
+      // Paste tracks wholesale — property keyframes, data tracks (Source Text,
+      // puppet pins) and expressions. A property-track-only paste left the
+      // copy looking like a bare object with none of the original's motion.
+      applyNodeAnimation(dupId, item.animation);
       
       newIds.push(dupId);
     }

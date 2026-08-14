@@ -291,6 +291,12 @@ interface ImageEntry {
   premultipliedFile?: boolean;
   texture: TextureHandle | null;
   bitmap: ImageBitmap | null;
+  /**
+   * Decoded FILE pixels, before any CPU bake. Kept so a bake-spec change
+   * (tweaking Inner Glow, a layer style, …) can re-bake without re-decoding
+   * and without throwing away the texture already on screen.
+   */
+  unbaked: ImageBitmap | null;
   width: number;
   height: number;
   ready: boolean;
@@ -512,6 +518,13 @@ export class AppTextureProvider implements TextureProvider {
   private readonly particleEntries = new Map<string, ParticleEntry>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
+  /** Reused scratch canvases for CPU effect bakes — allocating one per CSS
+   *  flush inside a five-effect stack was a major source of main-thread freezes.
+   *  Two slots so silhouette + flushCss never alias the same surface. */
+  private bakeWork: HTMLCanvasElement | null = null;
+  private bakeScratchA: HTMLCanvasElement | null = null;
+  private bakeScratchB: HTMLCanvasElement | null = null;
+  private bakeScratchToggle = 0;
   /** One-shot init for the transparent placeholder — see `placeholder()`. */
   private hasInitTransparent = false;
   /**
@@ -620,17 +633,39 @@ export class AppTextureProvider implements TextureProvider {
    *   Interpret Footage would keep serving the bitmap uploaded under the old
    *   setting and the inspector would appear to do nothing.
    */
-  setImage(key: string, src: string, fillColor?: string, premultipliedFile?: boolean, bake?: ImageBakeSpec): void {
+  setImage(key: string, src: string, fillColor?: string, premultipliedFile?: boolean, bake?: ImageBakeSpec, mediaTime?: number): void {
     // The bake belongs in the key: it changes the TEXTURE, so two layers on the
     // same file with different styles must not share one upload, and editing a
     // style has to invalidate what is already there.
     const bakeSig = bake ? `#bake=${JSON.stringify(bake)}` : '';
-    const fullKey = (fillColor ? `${src}#fill=${fillColor}` : src) + (premultipliedFile ? '#premul' : '') + bakeSig;
+    // Live SVG scrubbing: quantize to centiseconds so adjacent frames share a
+    // decode when the playhead barely moves, while still invalidating on scrub.
+    const timeSig = mediaTime !== undefined && Number.isFinite(mediaTime)
+      ? `#t=${Math.round(mediaTime * 100) / 100}`
+      : '';
+    const fileId = (fillColor ? `${src}#fill=${fillColor}` : src) + (premultipliedFile ? '#premul' : '') + timeSig;
+    const fullKey = fileId + bakeSig;
     const existing = this.entries.get(key);
     if (existing && existing.src === fullKey) return; // already loading or loaded
-    const entry: ImageEntry = { kind: 'image', src: fullKey, bake, texture: null, bitmap: null, width: 1, height: 1, ready: false, premultipliedFile };
+    // Keep the last good texture on screen while the new bake/decode runs.
+    // Dropping it for a 1×1 transparent placeholder is the "eye blink": every
+    // Inner Glow / Stroke / Fill tweak replaced the entry with ready:false,
+    // so get() drew nothing until the async bake landed.
+    const sameFile = !!existing && existing.src.startsWith(src);
+    const entry: ImageEntry = {
+      kind: 'image',
+      src: fullKey,
+      bake,
+      texture: existing?.texture ?? null,
+      bitmap: existing?.bitmap ?? null,
+      unbaked: sameFile && !timeSig ? existing?.unbaked ?? null : null,
+      width: existing?.width ?? 1,
+      height: existing?.height ?? 1,
+      ready: !!(existing?.texture),
+      premultipliedFile,
+    };
     this.entries.set(key, entry);
-    const decoding = this.decode(key, src, fillColor, entry);
+    const decoding = this.decode(key, src, fillColor, entry, mediaTime);
     // Under exact media timing (offline render / the golden-frame harness) the
     // caller renders, awaits the waits, then re-renders. Video registered here
     // but image decode did NOT, so a freshly-created backend — which is what
@@ -879,7 +914,7 @@ export class AppTextureProvider implements TextureProvider {
       ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
       : '';
     const tier = this.tierFor(effectiveScale, layer.continuousRaster, layer.width ?? 1, layer.height ?? 1);
-    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
+      const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|cr:${layer.cornerRadii ? layer.cornerRadii.join(',') : ''}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
 
     const pad = rasterPadding(layer);
     const result = this.rasterizer.rasterize({
@@ -997,22 +1032,24 @@ export class AppTextureProvider implements TextureProvider {
     const h = v.videoHeight || 0;
     if (!(w > 0) || !(h > 0)) return;
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
+      const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.filter = 'none';
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(v, 0, 0);
       const k = bake.width > 0 ? w / bake.width : 1;
       if (bake.mask && bake.mask.paths.length > 0) {
-        const matte = document.createElement('canvas');
-        matte.width = w;
-        matte.height = h;
+        const matte = this.nextBakeScratch(w, h);
         const mc = matte.getContext('2d');
         if (mc) {
           const ky = bake.height > 0 ? h / bake.height : 1;
+          mc.setTransform(1, 0, 0, 1, 0, 0);
+          mc.globalCompositeOperation = 'source-over';
+          mc.clearRect(0, 0, w, h);
           mc.setTransform(k, 0, 0, ky, w / 2, h / 2);
           paintMaskMatte(mc, bake.mask, bake.width, bake.height);
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1026,20 +1063,22 @@ export class AppTextureProvider implements TextureProvider {
         w,
         h,
         scaleEffectLengths(bake.effects, k),
-        (sw, sh) => {
-          const c = document.createElement('canvas');
-          c.width = sw;
-          c.height = sh;
-          return c;
-        },
+        (sw, sh) => this.nextBakeScratch(sw, sh),
         bake.fillOpacity ?? 1,
+        bake.mask,
       );
       const fxSig = bake.effects.map((e) => `${e.type}:${e.enabled !== false ? 1 : 0}:${JSON.stringify(e.params ?? {})}`).join('|');
       const maskSig = bake.mask ? `:m${bake.mask.paths.length}` : '';
       // Frame entries win over video entries in get(), so the baked canvas is
       // what the compositor samples while the video element stays alive for the
-      // next seek.
-      this.setFrame(key, canvas, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}`);
+      // next seek. Copy out of the pooled work surface before upload.
+      const out = document.createElement('canvas');
+      out.width = w;
+      out.height = h;
+      const oc = out.getContext('2d');
+      if (!oc) return;
+      oc.drawImage(canvas, 0, 0);
+      this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}`);
     } catch {
       /* leave the raw video upload from setVideo in place */
     }
@@ -1262,6 +1301,24 @@ export class AppTextureProvider implements TextureProvider {
    * Returns null if anything is unavailable, leaving the untouched bitmap in
    * place rather than dropping the layer.
    */
+  private ensureCanvas(slot: 'work' | 'a' | 'b', w: number, h: number): HTMLCanvasElement {
+    const cur = slot === 'work' ? this.bakeWork : slot === 'a' ? this.bakeScratchA : this.bakeScratchB;
+    if (cur && cur.width === w && cur.height === h) return cur;
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    if (slot === 'work') this.bakeWork = c;
+    else if (slot === 'a') this.bakeScratchA = c;
+    else this.bakeScratchB = c;
+    return c;
+  }
+
+  /** Alternating scratch so consecutive acquire calls never share a canvas. */
+  private nextBakeScratch(w: number, h: number): HTMLCanvasElement {
+    const slot = (this.bakeScratchToggle++ & 1) === 0 ? 'a' : 'b';
+    return this.ensureCanvas(slot, w, h);
+  }
+
   private async bakeImageBitmap(
     bitmap: ImageBitmap,
     bake: ImageBakeSpec,
@@ -1271,12 +1328,13 @@ export class AppTextureProvider implements TextureProvider {
     const h = bitmap.height;
     if (!(w > 0) || !(h > 0)) return null;
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
+      const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.filter = 'none';
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(bitmap, 0, 0);
       const k = bake.width > 0 ? w / bake.width : 1;
@@ -1287,12 +1345,13 @@ export class AppTextureProvider implements TextureProvider {
       // the layer's centred space scaled to the bitmap's resolution, since the
       // two are rarely the same size.
       if (bake.mask && bake.mask.paths.length > 0) {
-        const matte = document.createElement('canvas');
-        matte.width = w;
-        matte.height = h;
+        const matte = this.nextBakeScratch(w, h);
         const mc = matte.getContext('2d');
         if (mc) {
           const ky = bake.height > 0 ? h / bake.height : 1;
+          mc.setTransform(1, 0, 0, 1, 0, 0);
+          mc.globalCompositeOperation = 'source-over';
+          mc.clearRect(0, 0, w, h);
           mc.setTransform(k, 0, 0, ky, w / 2, h / 2);
           paintMaskMatte(mc, bake.mask, bake.width, bake.height);
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1306,28 +1365,55 @@ export class AppTextureProvider implements TextureProvider {
         w,
         h,
         scaleEffectLengths(bake.effects, k),
-        (sw, sh) => {
-          const c = document.createElement('canvas');
-          c.width = sw;
-          c.height = sh;
-          return c;
-        },
+        (sw, sh) => this.nextBakeScratch(sw, sh),
         bake.fillOpacity ?? 1,
+        bake.mask,
       );
       void premultipliedFile;
       // A canvas is straight alpha; 'premultiply' brings it into the invariant.
-      return await createImageBitmap(canvas, decodeOptions(false));
+      // Copy into a dedicated canvas so the pooled work surface can be reused
+      // without racing createImageBitmap's read of these pixels.
+      const out = document.createElement('canvas');
+      out.width = w;
+      out.height = h;
+      const oc = out.getContext('2d');
+      if (!oc) return null;
+      oc.drawImage(canvas, 0, 0);
+      return await createImageBitmap(out, decodeOptions(false));
     } catch {
       return null;
     }
   }
 
-  private async decode(key: string, src: string, fillColor: string | undefined, entry: ImageEntry): Promise<void> {
+  private async decode(
+    key: string,
+    src: string,
+    fillColor: string | undefined,
+    entry: ImageEntry,
+    mediaTime?: number,
+  ): Promise<void> {
     let bitmap: ImageBitmap;
-    try {
-      bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
-    } catch {
-      return; // broken source — leave the placeholder in place
+    if (entry.unbaked) {
+      bitmap = entry.unbaked;
+    } else {
+      try {
+        if (
+          mediaTime !== undefined
+          && Number.isFinite(mediaTime)
+          && (/^data:image\/svg\+xml/i.test(src) || /\.svg(\?|#|$)/i.test(src))
+        ) {
+          const { rasterizeSvgAtTime } = await import('../svg/liveSvgRaster');
+          bitmap = await rasterizeSvgAtTime(src, mediaTime);
+        } else {
+          bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
+        }
+      } catch {
+        return; // broken source — leave the placeholder in place
+      }
+      // A newer setImage for this key (different src) supersedes this decode.
+      if (this.entries.get(key) !== entry) return;
+      // Live SVG frames must NOT park as unbaked — each time needs a fresh draw.
+      if (mediaTime === undefined) entry.unbaked = bitmap;
     }
     // A newer setImage for this key (different src) supersedes this decode.
     if (this.entries.get(key) !== entry) return;
@@ -1477,8 +1563,11 @@ export class AppTextureProvider implements TextureProvider {
       return { texture: video.texture, sampler: this.sampler(), ready: true };
     }
     const entry = this.entries.get(key);
-    if (entry && entry.ready && entry.texture) {
-      return { texture: entry.texture, sampler: this.sampler(), ready: true };
+    // A stale texture (rebake in flight) still draws — `ready` says whether
+    // THIS bake has landed, but flashing transparent while it hasn't is worse
+    // than showing last frame's pixels for a tick.
+    if (entry && entry.texture) {
+      return { texture: entry.texture, sampler: this.sampler(), ready: entry.ready };
     }
     // Not-yet-decoded image/video: show the placeholder box so the layer still
     // composites (parity with Canvas2D's loading placeholder).

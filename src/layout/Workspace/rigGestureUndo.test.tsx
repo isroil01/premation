@@ -25,6 +25,7 @@ import { performUndo, performRedo } from '@stores/historyStore';
 import { setCommandSystem, CommandSystem, getCommandSystem } from '@core/commands/CommandSystem';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
@@ -92,14 +93,6 @@ beforeEach(() => {
 // ── Weight-paint stroke ─────────────────────────────────────────────
 
 describe('weight-paint stroke undo', () => {
-  const paintButton = (container: HTMLElement, label: string) =>
-    [...container.querySelectorAll('g')].find(
-      (g) =>
-        g.children.length === 2 &&
-        g.children[0]!.tagName === 'rect' &&
-        g.children[1]!.textContent === label,
-    )!;
-
   function setup() {
     defaultSceneGraph.setSkeleton('u1', {
       bones: [
@@ -109,13 +102,15 @@ describe('weight-paint stroke undo', () => {
       ikTargets: [], meshDensity: 6, meshExpansion: 0,
     });
     useUIStore.getState().setActiveTool('bone');
+    useUIStore.getState().setBoneRigMode('weights');
+    useUIStore.getState().setBoneWeightMode('add');
+    useRigSelectionStore.getState().clear();
     const utils = render(<BoneOverlay />);
     const { container } = utils;
     // Select a bone, then engage the brush.
     const boneG = container.querySelector('polygon[stroke="#ffaa00"]')!.parentElement!;
     fireEvent.pointerDown(boneG, { clientX: -60, clientY: 0, pointerId: 1 });
     fireEvent.pointerUp(container.querySelector('svg')!, { clientX: -60, clientY: 0, pointerId: 1 });
-    fireEvent.click(paintButton(container, 'Paint +'));
     return utils;
   }
 

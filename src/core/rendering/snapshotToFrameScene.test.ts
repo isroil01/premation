@@ -42,9 +42,15 @@ describe('snapshotToFrameScene', () => {
       expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 0, width: 220, height: 140 });
     });
 
-    test('a rect layer with cornerRadius gets a rounded-rect SDF with that radius', () => {
-      const r = layerToRenderable(layer({ primitive: 'rect', width: 220, height: 140, cornerRadius: 15 }));
-      expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 15, width: 220, height: 140 });
+    test('a rect with independent corner radii forces shape raster (no isotropic SDF)', () => {
+      const r = layerToRenderable(layer({
+        primitive: 'rect', width: 220, height: 140,
+        cornerRadius: 40,
+        cornerRadii: [40, 4, 40, 4],
+      }));
+      // Non-uniform corners → path:/image raster, not SDF solid.
+      expect(r.textureKey).toBe('path:n1');
+      expect(r.sdf?.radiusPx ?? 0).toBe(0);
     });
 
     test('an ellipse layer gets an ellipse SDF', () => {
@@ -256,6 +262,17 @@ describe('snapshotToFrameScene', () => {
       expect(tl.y).toBeCloseTo(-50); // (100*1)/2
       expect(br.x).toBeCloseTo(200);
       expect(br.y).toBeCloseTo(50);
+    });
+
+    test('scale 0 collapses the quad to the layer origin (the layer vanishes)', () => {
+      // `0 || 1` used to treat scale 0 as 1, so text/shapes scaled to 0 still
+      // drew at authored size. Every corner of a 0-scale quad must land on (x,y).
+      const r = layerToRenderable(layer({ x: 40, y: 80, width: 200, height: 100, scaleX: 0, scaleY: 0 }));
+      for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]] as const) {
+        const p = apply(r.modelMatrix, u, v);
+        expect(p.x).toBeCloseTo(40);
+        expect(p.y).toBeCloseTo(80);
+      }
     });
 
     test('90° rotation about the centre swaps axes', () => {

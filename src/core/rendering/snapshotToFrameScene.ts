@@ -152,6 +152,13 @@ function quadOrigin(layer: RenderLayer, pad: number): { x: number; y: number } {
   };
 }
 
+/** Affine scale: `0` is a real value (the layer must vanish), not “missing”.
+ *  `|| 1` treated scale 0 as 1, so a text layer scaled to 0 still drew at
+ *  its authored size. `??` is the right fallback — only undefined/null default. */
+function affineScale(v: number | undefined): number {
+  return v ?? 1;
+}
+
 /** Center-pivot model matrix: unit-quad centre → (x,y), rotated/scaled in place.
  *  The quad grows by the layer's raster padding so a stroked shape's padded
  *  texture (which includes the outer stroke band) places 1:1 without stretching;
@@ -160,8 +167,8 @@ function quadOrigin(layer: RenderLayer, pad: number): { x: number; y: number } {
 function centerModel(layer: RenderLayer): Mat3 {
   const rad = (layer.rotation * Math.PI) / 180;
   const pad = rasterPadding(layer);
-  const w = (layer.width + 2 * pad) * (layer.scaleX || 1);
-  const h = (layer.height + 2 * pad) * (layer.scaleY || 1);
+  const w = (layer.width + 2 * pad) * affineScale(layer.scaleX);
+  const h = (layer.height + 2 * pad) * affineScale(layer.scaleY);
   const skew = layer.skew ?? 0;
   const base = skew === 0
     // The un-skewed path stays on `Mat3.compose` so nothing about existing
@@ -392,6 +399,16 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   if (layer.primitive === 'ellipse') {
     return { shape: 'ellipse', radiusPx: 0, width: layer.width, height: layer.height };
   }
+  // Independent corners cannot use the isotropic GPU SDF — those shapes rasterize
+  // via needsShapeRaster. When all four match, keep the fast SDF path.
+  const radii = layer.cornerRadii;
+  if (radii) {
+    const [tl, tr, br, bl] = radii;
+    if (tl === tr && tr === br && br === bl) {
+      return { shape: 'rounded', radiusPx: tl, width: layer.width, height: layer.height };
+    }
+    return { shape: 'rounded', radiusPx: 0, width: layer.width, height: layer.height };
+  }
   return { shape: 'rounded', radiusPx: layer.cornerRadius ?? 0, width: layer.width, height: layer.height };
 }
 
@@ -605,6 +622,14 @@ export function extractSpatialEffects(
         ({ x: (pxX / w) * aspect, y: pxY / h });
       const from = toQ(w / 2 + n('fromX'), 0 + n('fromY'));
       const to = toQ(w / 2 + n('toX'), h / 2 + n('toY'));
+      // Migrate known-bad shipping defaults that crushed fullscreen layers into
+      // the dark comp background (looked like the whole scene went blank).
+      let ambientPct = n('ambient');
+      if (ambientPct === 15 || ambientPct === 55) ambientPct = 100;
+      let intensityPct = n('intensity');
+      if (intensityPct === 150 && (n('ambient') === 15 || n('ambient') === 55)) {
+        intensityPct = 100;
+      }
       spatial.push({
         type: 'spotlight',
         fromX: from.x, fromY: from.y,
@@ -614,12 +639,12 @@ export function extractSpatialEffects(
         // to remember which one it holds.
         coneHalfRad: (n('coneAngle') * Math.PI) / 360,
         softness: n('edgeSoftness') / 100,
-        intensity: n('intensity') / 100,
-        ambient: n('ambient') / 100,
+        intensity: intensityPct / 100,
+        ambient: ambientPct / 100,
         aspect,
         lightOnly: Math.round(n('render')) === 1,
         // Percent of the layer's height — the unit the shader works in.
-        reach: n('reach') / 100,
+        reach: Math.max(0.01, n('reach') / 100),
         color: c('lightColor', 1),
       });
     }
@@ -855,6 +880,16 @@ export function needsShapeRaster(layer: RenderLayer): boolean {
   if (layer.strokes && layer.strokes.some((s) => s.width > 0)) return true;
   if (layer.mask && layer.mask.paths.length > 0) return true;
   if (layer.paint && layer.paint.strokes.length > 0) return true;
+  // Non-uniform per-corner radii need Canvas2D roundRect([tl,tr,br,bl]) — the
+  // GPU solid SDF is isotropic and cannot express independent corners.
+  if (
+    layer.cornerRadii
+    && !(
+      layer.cornerRadii[0] === layer.cornerRadii[1]
+      && layer.cornerRadii[1] === layer.cornerRadii[2]
+      && layer.cornerRadii[2] === layer.cornerRadii[3]
+    )
+  ) return true;
   // A shape carrying a Canvas2D-only effect is CPU-baked (content + mask +
   // full effect chain) into its `path:` texture — those effects have no GPU
   // shader form and otherwise silently no-op.
@@ -927,8 +962,8 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         );
       } else {
         const rad = (s.rotation * Math.PI) / 180;
-        const w = (layer.width + 2 * pad) * (s.scaleX || 1);
-        const h = (layer.height + 2 * pad) * (s.scaleY || 1);
+        const w = (layer.width + 2 * pad) * affineScale(s.scaleX);
+        const h = (layer.height + 2 * pad) * affineScale(s.scaleY);
         m = Mat3.multiply(Mat3.compose(s.x, s.y, rad, w, h), Mat3.translation(so.x, so.y));
         if (parentMatrix) m = Mat3.multiply(parentMatrix, m);
       }
@@ -1083,7 +1118,7 @@ export function precompChildParent(layer: RenderLayer, parentMatrix: Mat3): Mat3
     -layer.width / 2 - (layer.anchorX ?? 0),
     -layer.height / 2 - (layer.anchorY ?? 0),
   );
-  const mPrecomp = Mat3.compose(layer.x, layer.y, rad, layer.scaleX || 1, layer.scaleY || 1);
+  const mPrecomp = Mat3.compose(layer.x, layer.y, rad, affineScale(layer.scaleX), affineScale(layer.scaleY));
   return Mat3.multiply(parentMatrix, Mat3.multiply(mPrecomp, tOrigin));
 }
 

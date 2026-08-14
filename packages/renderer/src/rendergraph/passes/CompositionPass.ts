@@ -504,6 +504,24 @@ export class CompositionPass extends RenderPass {
     let curName = pool[0];
 
     for (const effect of effects) {
+      // Skip no-op spatial passes — a zero-radius blur/glow still cost a full
+      // viewport ping-pong, and stacks of five-plus effects amplify that.
+      if (
+        (effect.type === 'blur' || effect.type === 'glow') && effect.radiusPx <= 0
+      ) continue;
+      if (effect.type === 'drop-shadow' && effect.radiusPx <= 0
+        && Math.abs(effect.offsetX) < 0.01 && Math.abs(effect.offsetY) < 0.01) continue;
+      if (effect.type === 'sharpen' && Math.abs(effect.amount) < 0.0001) continue;
+      if (effect.type === 'noise' && Math.abs(effect.amount) < 0.0001) continue;
+      // Spotlight with ambient≈1 and no intensity boost is a no-op multiply —
+      // skip the full-viewport pass (and avoid wiping an adjustment-layer scene
+      // into a cleared transparent target for nothing).
+      if (
+        effect.type === 'spotlight'
+        && effect.ambient >= 0.999
+        && Math.abs(effect.intensity) < 0.0001
+      ) continue;
+
       const free = pool.filter((n) => n !== curName);
       const f0 = free[0];
       const f1 = free[1];

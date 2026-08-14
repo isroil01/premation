@@ -101,7 +101,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3, 8px);
-  height: 36px;
+  height: var(--bar-height-tool);
   padding: 0 10px;
   background: var(--color-toolbar, #1d1d1d);
   border-bottom: 1px solid var(--color-border);
@@ -177,8 +177,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 26px;
+  width: var(--control-height-lg);
+  height: var(--control-height-row);
   background: var(--color-surface-1, #232323);
   border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
   border-radius: var(--radius-md, 6px);
@@ -208,8 +208,8 @@
 }
 
 .playBtn {
-  width: 36px;
-  height: 26px;
+  width: calc(var(--control-height-lg) + 8px);
+  height: var(--control-height-row);
   background: var(--color-primary, #2988ff);
   border: 1px solid transparent;
   color: var(--color-primary-foreground, #ffffff);

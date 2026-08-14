@@ -17,6 +17,7 @@ import { BrowserTree, BrowserFolder, BrowserRow, BrowserTag, BrowserEmpty } from
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { EFFECT_DEFS, addEffect, getNodeEffects, type EffectType } from '@core/effects/effects';
 import { pluginEffectDefs, pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
@@ -32,6 +33,14 @@ import {
   listEffectPresets,
 } from '@core/effects/effectClipboard';
 import { EffectStack } from './EffectStack';
+import { PathOpControls } from '@layout/Inspector/PathOpControls';
+import {
+  PATH_OP_CATALOG,
+  addPathOp,
+  defaultPathOpOf,
+  readTrimOp,
+  readRepeaterOp,
+} from '@core/scene/pathOps';
 import {
   getNodeMask,
   addMaskPath,
@@ -269,7 +278,8 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
 /** Folder order in the browser — most-reached-for first. */
 const EFFECT_CATEGORY_ORDER: readonly string[] = [
   'Blur & Sharpen', 'Color Correction', 'Stylize', 'Generate',
-  'Distort', 'Keying', 'Time', 'Transition',
+  'Shape',
+  'Distort', 'Perspective', 'Channel', 'Keying', 'Time', 'Transition',
   /*
     Last, and its OWN folder rather than sorted into the others by guesswork.
 
@@ -298,7 +308,10 @@ const EFFECT_CATEGORY_ICON: Record<string, IconName> = {
   Stylize: 'brush',
   [PLUGIN_EFFECT_CATEGORY]: 'plugin',
   Generate: 'gradient',
+  Shape: 'shape',
   Distort: 'waves',
+  Perspective: 'cube',
+  Channel: 'layers',
   Keying: 'eraser',
   Time: 'clock',
   Transition: 'wipe',
@@ -351,6 +364,9 @@ export function EffectsPanel(): JSX.Element {
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
   const { w: maskW, h: maskH } = SIZE[layerKind];
   const masks = hasSelection ? getNodeMask(primary!).paths : [];
+  const shapeOps = kind === 'shape'
+    ? PATH_OP_CATALOG.filter((op) => !q || op.label.toLowerCase().includes(q))
+    : [];
 
   const effectGroups = useMemo(() => {
     const groups: Record<string, typeof browserDefs> = {};
@@ -426,13 +442,18 @@ export function EffectsPanel(): JSX.Element {
         </button>
       </div>
       {presets.length > 0 && (
-        <div className={styles.addRow}>
+        <div
+          className={styles.addRow}
+          style={{ maxHeight: 120, overflowY: 'auto', flexWrap: 'wrap' }}
+          role="group"
+          aria-label="Effect presets"
+        >
           {presets.map((p) => (
             <button
               key={p.name}
               type="button"
               className={styles.addChip}
-              title={`Apply "${p.name}" (${p.items.length} effect(s)) — Alt-click to delete`}
+              title={`Apply "${p.name}" (${p.items.length} effect(s)) — Alt-click deletes a user-saved preset`}
               onClick={(e) => {
                 if (e.altKey) deleteEffectPreset(p.name);
                 else applyEffectPreset(p.name, [primary]);
@@ -445,6 +466,7 @@ export function EffectsPanel(): JSX.Element {
         </div>
       )}
       <EffectStack nodeId={primary} />
+      <PathOpControls nodeId={primary} />
 
       {/* Effects & Presets browser — the AE library tree of effect types. */}
       <div className={styles.sectionTitle}>Effects &amp; Presets</div>
@@ -459,7 +481,7 @@ export function EffectsPanel(): JSX.Element {
           onClear={() => setEffectQuery('')}
           onChange={(e) => setEffectQuery(e.currentTarget.value)}
         />
-        {browserFolders.length > 0 ? (
+        {browserFolders.length > 0 || shapeOps.length > 0 ? (
           <BrowserTree>
             {browserFolders.map(([cat, items], index) => (
               <BrowserFolder
@@ -506,6 +528,33 @@ export function EffectsPanel(): JSX.Element {
                 ))}
               </BrowserFolder>
             ))}
+            {shapeOps.length > 0 && node && (
+              <BrowserFolder
+                key="Shape"
+                label="Shape"
+                icon={EFFECT_CATEGORY_ICON.Shape}
+                count={shapeOps.length}
+                defaultOpen={browserFolders.length === 0}
+                forceOpen={!!q}
+              >
+                {shapeOps.map((op) => {
+                  const taken = (op.type === 'trim' && !!readTrimOp(node))
+                    || (op.type === 'repeater' && !!readRepeaterOp(node));
+                  return (
+                    <BrowserRow
+                      key={op.type}
+                      label={op.label}
+                      fx
+                      title={taken ? `${op.label} is already on this layer` : `Add ${op.label}`}
+                      onClick={() => {
+                        if (!primary || taken) return;
+                        addPathOp(primary, defaultPathOpOf(op.type));
+                      }}
+                    />
+                  );
+                })}
+              </BrowserFolder>
+            )}
           </BrowserTree>
         ) : (
           <BrowserEmpty>No effects match “{effectQuery}”.</BrowserEmpty>
@@ -513,12 +562,38 @@ export function EffectsPanel(): JSX.Element {
       </div>
 
       <div className={styles.sectionTitle}>Masks</div>
+      {!hasSelection && (
+        <p className={styles.hint} style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+          Select a layer, then draw with Mask Rectangle / Ellipse / Pen in the toolbar.
+        </p>
+      )}
       <div className={styles.addRow}>
-        <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, rectangleMask(maskW, maskH))}>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={!hasSelection}
+          title={hasSelection ? 'Add a rectangle mask' : 'Select a layer first'}
+          onClick={() => primary && addMaskPath(primary, rectangleMask(maskW, maskH))}
+        >
           <Icon name="plus" size="sm" /> Rectangle
         </button>
-        <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, ellipseMask(maskW, maskH))}>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={!hasSelection}
+          title={hasSelection ? 'Add an ellipse mask' : 'Select a layer first'}
+          onClick={() => primary && addMaskPath(primary, ellipseMask(maskW, maskH))}
+        >
           <Icon name="plus" size="sm" /> Ellipse
+        </button>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={!hasSelection}
+          title="Switch to the Mask Pen tool"
+          onClick={() => useUIStore.getState().setActiveTool('mask-pen')}
+        >
+          <Icon name="pen" size="sm" /> Draw
         </button>
         {masks.length > 0 && (
           <button
@@ -544,7 +619,7 @@ export function EffectsPanel(): JSX.Element {
                 <span className={styles.maskMark} aria-hidden>
                   <Icon name="mask-square" size="sm" />
                 </span>
-                <span className={styles.itemLabel}>Mask {i + 1}</span>
+                <span className={styles.itemLabel}>{m.name?.trim() || `Mask ${i + 1}`}</span>
                 <Dropdown
                   placement="left-start"
                   trigger={
@@ -574,6 +649,25 @@ export function EffectsPanel(): JSX.Element {
                 </div>
               </div>
               <div className={styles.effectParamsBody}>
+                <PropertyRow label="Name" compact>
+                  <input
+                    value={m.name ?? ''}
+                    placeholder={`Mask ${i + 1}`}
+                    aria-label={`Mask ${i + 1} name`}
+                    onChange={(e) =>
+                      updateMaskPath(primary, m.id, { name: e.target.value || undefined }, maskTime)
+                    }
+                    style={{
+                      width: '100%',
+                      fontSize: 11,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border, #333)',
+                      background: 'var(--color-surface, #1e1e1e)',
+                      color: 'inherit',
+                    }}
+                  />
+                </PropertyRow>
                 {/* One PropertyRow per value, so a mask's Feather sits in the
                     same column as an effect's Softness rather than in a
                     three-up strip of its own. */}

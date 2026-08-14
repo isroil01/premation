@@ -254,7 +254,10 @@ export interface RenderLayer {
   visible: boolean;
   /** For shapes. */
   primitive?: 'rect' | 'ellipse' | 'path';
+  /** Uniform corner radius (legacy / linked mode). Prefer `cornerRadii` when set. */
   cornerRadius?: number;
+  /** Per-corner radii in TL → TR → BR → BL order (Appearance → Corners). */
+  cornerRadii?: readonly [number, number, number, number];
   /**
    * Draw as a bare quad with no SDF edge coverage.
    *
@@ -351,6 +354,11 @@ export interface RenderLayer {
   effects?: ReadonlyArray<Effect>;
   /** Imported source URL (blob: or web URL) for image/video/audio layers. */
   src?: string;
+  /**
+   * Intact animated SVG: re-rasterize at `sourceTime` each frame instead of
+   * caching a single static decode.
+   */
+  liveSvgPlayback?: boolean;
   /** Referenced project asset ID. */
   assetId?: string;
   /**

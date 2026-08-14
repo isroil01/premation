@@ -18,6 +18,8 @@ import { isWeightPaintEmpty } from '@core/rig/weightPaint';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
@@ -76,6 +78,10 @@ beforeEach(() => {
   });
   useSelectionStore.getState().set(['b1']);
   useUIStore.getState().setActiveTool('bone');
+  useUIStore.getState().setBoneRigMode('draw');
+  useUIStore.getState().setBoneWeightMode('add');
+  useRigSelectionStore.getState().clear();
+  usePreferenceStore.setState({ timelineAutoKeyframe: false });
 });
 
 describe('gating and drawing', () => {
@@ -91,12 +97,14 @@ describe('gating and drawing', () => {
   });
 
   it('draws the skinning MESH preview (§12.9 — the bone tool never showed it)', () => {
+    act(() => useUIStore.getState().setBoneRigMode('weights'));
     const { container } = render(<BoneOverlay />);
     // density 6 ⇒ 72 mesh triangles, drawn with the mesh stroke.
     expect(container.querySelectorAll('polygon[stroke="rgba(255, 170, 0, 0.22)"]')).toHaveLength(72);
   });
 
   it('shows the weight heatmap only once a bone is selected', () => {
+    act(() => useUIStore.getState().setBoneRigMode('weights'));
     const { container } = render(<BoneOverlay />);
     const heat = () =>
       [...container.querySelectorAll('polygon')].filter((p) =>
@@ -109,7 +117,7 @@ describe('gating and drawing', () => {
 });
 
 describe('bone authoring', () => {
-  it('clicking empty canvas adds a bone with a distinct id', () => {
+  it('a plain click creates no fixed-length bone', () => {
     const { container } = render(<BoneOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.pointerDown(svg, { clientX: 70, clientY: 40, pointerId: 1 });
@@ -117,33 +125,61 @@ describe('bone authoring', () => {
     fireEvent.click(svg, { clientX: 70, clientY: 40 });
 
     const bones = skelOf()!.bones;
-    expect(bones).toHaveLength(3);
-    expect(new Set(bones.map((b) => b.id)).size).toBe(3);
+    expect(bones).toHaveLength(2);
   });
 
-  it('a real drag does NOT also add a bone (travel past the slop suppresses it)', () => {
+  it('dragging empty canvas creates a measured root bone', () => {
     const { container } = render(<BoneOverlay />);
     const svg = container.querySelector('svg')!;
-    fireEvent.pointerDown(svg, { clientX: 0, clientY: 0, pointerId: 1 });
-    fireEvent.pointerUp(svg, { clientX: 60, clientY: 60, pointerId: 1 });
-    fireEvent.click(svg, { clientX: 60, clientY: 60 });
+    fireEvent.pointerDown(svg, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 160, clientY: 160, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 160, clientY: 160, pointerId: 1 });
+    fireEvent.click(svg, { clientX: 160, clientY: 160 });
+    const bones = skelOf()!.bones;
+    expect(bones).toHaveLength(3);
+    expect(bones[2]!.parentId).toBeNull();
+    expect(bones[2]!.length).toBeCloseTo(Math.hypot(60, 60));
+  });
+
+  it('dragging from an existing tip creates a connected child', () => {
+    const { container } = render(<BoneOverlay />);
+    const svg = container.querySelector('svg')!;
+    const foreG = bonePolys(container)[1]!.parentElement!;
+    fireEvent.pointerDown(foreG, { clientX: 40, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 40, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(svg, { clientX: 40, clientY: 40, pointerId: 1 });
+    expect(skelOf()!.bones.at(-1)?.parentId).toBe('fore');
+  });
+
+  it('Escape cancels the live bone preview', () => {
+    const { container } = render(<BoneOverlay />);
+    const svg = container.querySelector('svg')!;
+    fireEvent.pointerDown(svg, { clientX: 10, clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(svg, { clientX: 60, clientY: 10, pointerId: 1 });
+    expect(container.querySelector('[data-bone-draft]')).not.toBeNull();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('[data-bone-draft]')).toBeNull();
     expect(skelOf()!.bones).toHaveLength(2);
   });
 
-  it('dragging a child bone writes its rotation track (FK)', () => {
+  it('posing keys only when auto-key is enabled', () => {
+    act(() => {
+      useUIStore.getState().setBoneRigMode('pose');
+      usePreferenceStore.setState({ timelineAutoKeyframe: true });
+    });
     const { container } = render(<BoneOverlay />);
     const svg = container.querySelector('svg')!;
     const foreG = bonePolys(container)[1]!.parentElement!;
     fireEvent.pointerDown(foreG, { clientX: -10, clientY: 0, pointerId: 1 });
     fireEvent.pointerMove(svg, { clientX: -10, clientY: 40, pointerId: 1 });
     fireEvent.pointerUp(svg, { clientX: -10, clientY: 40, pointerId: 1 });
-
     expect(defaultAnimation.getTrackKeyframes('b1', 'bone.fore.rotation')?.length).toBeGreaterThan(0);
   });
 });
 
 describe('IK', () => {
   beforeEach(() => {
+    useUIStore.getState().setBoneRigMode('pose');
     defaultSceneGraph.setSkeleton('b1', {
       bones: TWO_BONES.map((b) => ({ ...b })),
       ikTargets: [{ boneId: 'fore', x: 30, y: 30, enabled: true, pole: { x: 0, y: -80 } }],
@@ -159,6 +195,7 @@ describe('IK', () => {
   });
 
   it('dragging the pole writes the keyframeable ikPole tracks', () => {
+    act(() => usePreferenceStore.setState({ timelineAutoKeyframe: true }));
     const { container } = render(<BoneOverlay />);
     const svg = container.querySelector('svg')!;
     const poleG = container.querySelector('polygon[fill="#a855f7"]')!.parentElement!;
@@ -177,28 +214,21 @@ describe('IK', () => {
 });
 
 describe('weight painting', () => {
-  const paintButton = (container: HTMLElement, label: string) =>
-    [...container.querySelectorAll('g')].find(
-      (g) =>
-        g.children.length === 2 &&
-        g.children[0]!.tagName === 'rect' &&
-        g.children[1]!.textContent === label,
-    );
+  beforeEach(() => {
+    useUIStore.getState().setBoneRigMode('weights');
+    useUIStore.getState().setBoneWeightMode('add');
+  });
 
-  it('offers the brush modes, disabled until a bone is selected', () => {
+  it('shows the mesh only in Weights mode', () => {
     const { container } = render(<BoneOverlay />);
-    expect(paintButton(container, 'Paint +')).toBeTruthy();
-    expect(paintButton(container, 'Paint −')).toBeTruthy();
-    expect(paintButton(container, 'Smooth')).toBeTruthy();
-    expect(
-      [...container.querySelectorAll('text')].some((t) => /Select a bone to paint/.test(t.textContent ?? '')),
-    ).toBe(true);
+    expect(container.querySelectorAll('polygon[stroke="rgba(255, 170, 0, 0.22)"]').length).toBeGreaterThan(0);
+    act(() => useUIStore.getState().setBoneRigMode('pose'));
+    expect(container.querySelectorAll('polygon[stroke="rgba(255, 170, 0, 0.22)"]')).toHaveLength(0);
   });
 
   it('a stroke writes a paint map, and only for the selected bone', () => {
     const { container } = render(<BoneOverlay />);
     selectFirstBone(container);
-    fireEvent.click(paintButton(container, 'Paint +')!);
 
     const svg = container.querySelector('svg')!;
     fireEvent.pointerDown(svg, { clientX: -40, clientY: 0, pointerId: 2 });

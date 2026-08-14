@@ -1,10 +1,9 @@
 /**
- * PuppetControls — inspector section shown when a layer carries a puppet rig
- * (fx.puppet block). Exposes the rig's mesh settings (density / expansion, both
- * triggering a deterministic mesh rebuild via the rest-mesh cache key) and the
- * selected pins' static rotation / stiffness.
+ * PuppetControls — inspector for a layer's puppet rig.
  *
- * All edits are single undo steps via puppetCommands (PuppetEditCommand).
+ * After Effects' Puppet panel is short: mesh density, then the pins you placed,
+ * each showing only the properties its tool owns. Solver / rotation refinement
+ * stay available but are not the first thing you see.
  */
 
 import { Slider } from '@components/Slider';
@@ -14,7 +13,13 @@ import { Icon } from '@components/Icon';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodePuppet, type PinKind } from '@core/rig/puppet';
+import {
+  readNodePuppet,
+  PIN_KIND_CATALOG,
+  pinKindOf,
+  pinColor,
+  type PinKind,
+} from '@core/rig/puppet';
 import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap';
 import { updatePuppetSettings, updatePuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
 import styles from './BoneControls.module.css';
@@ -29,6 +34,10 @@ const selectStyle: React.CSSProperties = {
   border: '1px solid var(--color-border, #333)',
 };
 
+function pinCountLabel(n: number): string {
+  return n === 1 ? '1 pin' : `${n} pins`;
+}
+
 export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
   const node = defaultSceneGraph.getNode(nodeId);
@@ -36,33 +45,22 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
 
   const rig = readNodePuppet(node);
   const density = rig?.meshDensity ?? 15;
-  const expansion = rig?.meshExpansion ?? 8;
+  const expansion = rig?.meshExpansion ?? 0;
   const solver = rig?.solver ?? 'arap';
   const pins = rig?.pins ?? [];
 
-  // Solver quality disclosure (§12.11). Past this density ARAP drops from the
-  // exact dense Cholesky solve to fixed-sweep Gauss-Seidel — deterministic and
-  // stable, but softer. It used to happen silently with the slider running on
-  // to 50 and no indication anywhere.
   const hasStiffness = pins.some((p) => (p.stiffness ?? 0) > 0);
   const exactMax = maxExactMeshDensity(hasStiffness);
   const pastExact = solver === 'arap' && density > exactMax;
-
-  // Cost disclosure — SEPARATE from the exactness one, because the two
-  // thresholds are different and conflating them misleads. Measured: density 33
-  // (the last EXACT density) already costs ~36 ms/frame and stalls ~673 ms on
-  // the first solve. Labelling 33 as "exact" without this reads as a
-  // recommendation to go there. See SMOOTH_PLAYBACK_MAX_DENSITY for the table.
   const costly = solver === 'arap' && density > SMOOTH_PLAYBACK_MAX_DENSITY;
 
   return (
     <div className={styles.root}>
-      {/* Puppet summary card */}
       <div className={styles.headerCard}>
         <div className={styles.headerTitle}>
           <Icon name="puppet-pin" size="md" />
-          <span>Deformation Mesh</span>
-          <span className={styles.badge}>{pins.length} pins</span>
+          <span>Puppet</span>
+          <span className={styles.badge}>{pinCountLabel(pins.length)}</span>
         </div>
         <Button
           size="sm"
@@ -73,33 +71,10 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </Button>
       </div>
 
-      {/* Mesh settings card */}
       <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <div className={styles.cardTitle}>
-            <Icon name="grid" size="sm" style={{ opacity: 0.7 }} />
-            <span>Mesh Settings</span>
-          </div>
-        </div>
-
-        <div className={styles.paramRow}>
-          <span className={styles.paramLabel}>Deform Solver</span>
-          <select
-            value={solver}
-            aria-label="Puppet deform solver"
-            onChange={(e) =>
-              updatePuppetSettings(nodeId, { solver: e.target.value as 'lbs' | 'arap' })
-            }
-            style={selectStyle}
-          >
-            <option value="arap">ARAP (Rigid / Elastic)</option>
-            <option value="lbs">Linear Blend (LBS)</option>
-          </select>
-        </div>
-
         <div className={styles.paramRow}>
           <span className={styles.paramLabel}>
-            Mesh Density
+            Density
             {solver === 'arap' && (
               <span
                 className={styles.subText}
@@ -145,7 +120,24 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         )}
 
         <div className={styles.paramRow}>
-          <span className={styles.paramLabel}>Mesh Expansion</span>
+          <span className={styles.paramLabel} title="Grid culls a uniform mesh against the artwork; Silhouette triangulates the outline (or a PNG's alpha).">
+            Mesh
+          </span>
+          <select
+            value={rig?.meshMode ?? 'grid'}
+            aria-label="Puppet mesh mode"
+            onChange={(e) =>
+              updatePuppetSettings(nodeId, { meshMode: e.target.value as 'grid' | 'silhouette' })
+            }
+            style={selectStyle}
+          >
+            <option value="grid">Grid</option>
+            <option value="silhouette">Outline</option>
+          </select>
+        </div>
+
+        <div className={styles.paramRow}>
+          <span className={styles.paramLabel}>Expansion</span>
           <Slider
             value={expansion}
             min={0}
@@ -159,25 +151,23 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </div>
 
         <div className={styles.paramRow}>
-          <span className={styles.paramLabel} title="Grid culls a uniform mesh against the artwork; Silhouette triangulates the outline itself — better on thin diagonal shapes.">
-            Mesh Shape
-          </span>
+          <span className={styles.paramLabel}>Solver</span>
           <select
-            value={rig?.meshMode ?? 'grid'}
-            aria-label="Puppet mesh mode"
+            value={solver}
+            aria-label="Puppet deform solver"
             onChange={(e) =>
-              updatePuppetSettings(nodeId, { meshMode: e.target.value as 'grid' | 'silhouette' })
+              updatePuppetSettings(nodeId, { solver: e.target.value as 'lbs' | 'arap' })
             }
             style={selectStyle}
           >
-            <option value="grid">Grid (culled)</option>
-            <option value="silhouette">Silhouette (outline)</option>
+            <option value="arap">ARAP</option>
+            <option value="lbs">LBS</option>
           </select>
         </div>
 
         <div className={styles.paramRow}>
-          <span className={styles.paramLabel} title="Caps how far any one pin may rotate the mesh. Suppresses twisting on sparse pin sets.">
-            Rotation Refinement
+          <span className={styles.paramLabel} title="Caps how far any one pin may rotate the mesh. 0 = unlimited.">
+            Rotation Limit
           </span>
           <ValueField
             value={rig?.maxRotationDeg ?? 0}
@@ -191,134 +181,164 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             aria-label="Mesh rotation refinement"
           />
         </div>
-        {(rig?.maxRotationDeg ?? 0) <= 0 && (
-          <div className={styles.paramRow} style={{ display: 'block' }}>
-            <span className={styles.subText}>0 = unlimited (no clamping).</span>
-          </div>
-        )}
       </div>
 
       {pins.length === 0 && (
         <div className={styles.card} style={{ textAlign: 'center', padding: '16px 12px' }}>
-          <span className={styles.subText}>No puppet pins added to this layer.</span>
+          <span className={styles.subText}>Click the layer to place pins.</span>
           <Button
             size="sm"
             variant="primary"
             onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
             style={{ marginTop: 8 }}
           >
-            <Icon name="puppet-pin" size="sm" /> Place Pins with Puppet Tool (Ctrl+P)
+            <Icon name="puppet-pin" size="sm" /> Puppet Pin Tool (Ctrl+P)
           </Button>
         </div>
       )}
 
-      {/* Pin list cards */}
-      {pins.map((pin) => (
-        <div key={pin.id} className={styles.card}>
-          <div className={styles.cardHeader}>
-            <div className={styles.cardTitle}>
-              <Icon name="push-pin" size="sm" style={{ opacity: 0.7 }} />
-              <span>{pin.name || pin.id}</span>
+      {pins.map((pin) => {
+        const kind = pinKindOf(pin);
+        const showRotate = kind === 'advanced' || kind === 'bend';
+        const showScale = kind === 'advanced' || kind === 'bend';
+        const showStiffness = kind === 'starch' || kind === 'advanced' || (pin.stiffness ?? 0) > 0;
+        const showOverlap = kind === 'overlap' || (pin.overlap ?? 0) !== 0;
+        return (
+          <div key={pin.id} className={styles.card}>
+            <div className={styles.cardHeader}>
+              <div className={styles.cardTitle}>
+                <span
+                  aria-hidden
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: '50%',
+                    background: kind === 'bend' ? 'transparent' : pinColor(kind),
+                    border: `2px solid ${pinColor(kind)}`,
+                    flexShrink: 0,
+                  }}
+                />
+                <span>{pin.name || pin.id}</span>
+              </div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => deletePuppetPin(nodeId, pin.id)}
+                aria-label={`Delete pin ${pin.name || pin.id}`}
+                title="Delete pin"
+              >
+                <Icon name="trash" size="sm" />
+              </Button>
             </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => deletePuppetPin(nodeId, pin.id)}
-              aria-label={`Delete pin ${pin.name || pin.id}`}
-              title="Delete pin"
-            >
-              <Icon name="trash" size="sm" />
-            </Button>
-          </div>
 
-          <div className={styles.paramRow}>
-            <span className={styles.paramLabel}>Pin Type</span>
-            <select
-              value={pin.kind ?? 'advanced'}
-              aria-label={`${pin.name || pin.id} pin type`}
-              onChange={(e) =>
-                updatePuppetPin(nodeId, pin.id, { kind: e.target.value as PinKind })
-              }
-              style={selectStyle}
-            >
-              <option value="advanced">Advanced (owns position)</option>
-              <option value="bend">Bend (derives position)</option>
-            </select>
-          </div>
-
-          {pin.kind === 'bend' && (
-            <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
-              Position is derived from the advanced pins around it. Rotation and
-              scale act on the motion they already produce — at 0° and 1× this
-              pin does nothing.
-            </div>
-          )}
-
-          <div className={styles.paramRow}>
-            <span className={styles.paramLabel}>Rotation</span>
-            <ValueField
-              value={pin.rotation ?? 0}
-              unit="°"
-              onChange={(v) => updatePuppetPin(nodeId, pin.id, { rotation: v })}
-              aria-label={`${pin.name || pin.id} rotation`}
-            />
-          </div>
-
-          <div className={styles.paramRow}>
-            <span className={styles.paramLabel}>Stiffness</span>
-            <ValueField
-              value={pin.stiffness ?? 0}
-              min={0}
-              onChange={(v) => updatePuppetPin(nodeId, pin.id, { stiffness: Math.max(0, v) })}
-              aria-label={`${pin.name || pin.id} stiffness`}
-            />
-          </div>
-
-          <div className={styles.paramRow}>
-            <span className={styles.paramLabel}>Scale</span>
-            <ValueField
-              value={pin.scale ?? 1}
-              min={0.01}
-              onChange={(v) => updatePuppetPin(nodeId, pin.id, { scale: Math.max(0.01, v) })}
-              aria-label={`${pin.name || pin.id} scale`}
-            />
-          </div>
-
-          <div className={styles.paramRow}>
-            <span
-              className={styles.paramLabel}
-              title="Depth ordering where the mesh folds over itself — positive draws this region in front."
-            >
-              Overlap
-            </span>
-            <ValueField
-              value={pin.overlap ?? 0}
-              min={-100}
-              max={100}
-              onChange={(v) =>
-                updatePuppetPin(nodeId, pin.id, {
-                  overlap: v === 0 ? undefined : Math.max(-100, Math.min(100, v)),
-                })
-              }
-              aria-label={`${pin.name || pin.id} overlap`}
-            />
-          </div>
-
-          {(pin.overlap ?? 0) !== 0 && (
             <div className={styles.paramRow}>
-              <span className={styles.paramLabel}>Overlap Extent</span>
-              <ValueField
-                value={pin.overlapExtent ?? 1}
-                min={0.05}
-                onChange={(v) =>
-                  updatePuppetPin(nodeId, pin.id, { overlapExtent: Math.max(0.05, v) })
+              <span className={styles.paramLabel}>Type</span>
+              <select
+                value={kind}
+                aria-label={`${pin.name || pin.id} pin type`}
+                onChange={(e) =>
+                  updatePuppetPin(nodeId, pin.id, { kind: e.target.value as PinKind })
                 }
-                aria-label={`${pin.name || pin.id} overlap extent`}
-              />
+                style={selectStyle}
+              >
+                {PIN_KIND_CATALOG.map((k) => (
+                  <option key={k.kind} value={k.kind}>{k.short}</option>
+                ))}
+              </select>
             </div>
-          )}
-        </div>
-      ))}
+
+            {kind === 'bend' && (
+              <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+                Position is derived from the advanced pins around it. Rotation and
+                scale act on the motion they already produce — at 0° and 1× this
+                pin does nothing.
+              </div>
+            )}
+            {kind === 'starch' && (
+              <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+                Keeps this region rigid so nearby pins cannot fold it.
+              </div>
+            )}
+            {kind === 'overlap' && (
+              <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+                Sets which part draws in front when the mesh folds over itself.
+              </div>
+            )}
+
+            {showRotate && (
+              <div className={styles.paramRow}>
+                <span className={styles.paramLabel}>Rotation</span>
+                <ValueField
+                  value={pin.rotation ?? 0}
+                  unit="°"
+                  onChange={(v) => updatePuppetPin(nodeId, pin.id, { rotation: v })}
+                  aria-label={`${pin.name || pin.id} rotation`}
+                />
+              </div>
+            )}
+
+            {showStiffness && (
+              <div className={styles.paramRow}>
+                <span className={styles.paramLabel}>Stiffness</span>
+                <ValueField
+                  value={pin.stiffness ?? 0}
+                  min={0}
+                  onChange={(v) => updatePuppetPin(nodeId, pin.id, { stiffness: Math.max(0, v) })}
+                  aria-label={`${pin.name || pin.id} stiffness`}
+                />
+              </div>
+            )}
+
+            {showScale && (
+              <div className={styles.paramRow}>
+                <span className={styles.paramLabel}>Scale</span>
+                <ValueField
+                  value={pin.scale ?? 1}
+                  min={0.01}
+                  onChange={(v) => updatePuppetPin(nodeId, pin.id, { scale: Math.max(0.01, v) })}
+                  aria-label={`${pin.name || pin.id} scale`}
+                />
+              </div>
+            )}
+
+            {showOverlap && (
+              <div className={styles.paramRow}>
+                <span
+                  className={styles.paramLabel}
+                  title="Depth ordering where the mesh folds over itself — positive draws this region in front."
+                >
+                  Overlap
+                </span>
+                <ValueField
+                  value={pin.overlap ?? 0}
+                  min={-100}
+                  max={100}
+                  onChange={(v) =>
+                    updatePuppetPin(nodeId, pin.id, {
+                      overlap: v === 0 ? undefined : Math.max(-100, Math.min(100, v)),
+                    })
+                  }
+                  aria-label={`${pin.name || pin.id} overlap`}
+                />
+              </div>
+            )}
+
+            {showOverlap && (pin.overlap ?? 0) !== 0 && (
+              <div className={styles.paramRow}>
+                <span className={styles.paramLabel}>Overlap Extent</span>
+                <ValueField
+                  value={pin.overlapExtent ?? 1}
+                  min={0.05}
+                  onChange={(v) =>
+                    updatePuppetPin(nodeId, pin.id, { overlapExtent: Math.max(0.05, v) })
+                  }
+                  aria-label={`${pin.name || pin.id} overlap extent`}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

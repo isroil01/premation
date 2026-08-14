@@ -3,6 +3,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import type { SceneNode, ID } from '@core/types';
 import { performUndo, performRedo } from '@stores/historyStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
+import { defaultAnimation } from '@motion/animation';
 
 describe('skeletonCommands', () => {
   const nodeId = 'test_node_skel_1' as ID;
@@ -70,5 +71,50 @@ describe('skeletonCommands', () => {
     skel = readNodeSkeleton(defaultSceneGraph.getNode(nodeId)!);
     expect(skel?.bones).toHaveLength(0);
     expect(skel?.ikTargets).toHaveLength(0);
+  });
+
+  it('deletes a full descendant subtree, references and tracks in one undo step', () => {
+    defaultSceneGraph.setSkeleton(nodeId, {
+      bones: [
+        { id: 'root', parentId: null, length: 40, x: 0, y: 0, rotation: 0 },
+        { id: 'arm', parentId: 'root', length: 30, x: 40, y: 0, rotation: 0 },
+        { id: 'hand', parentId: 'arm', length: 20, x: 30, y: 0, rotation: 0 },
+        { id: 'leg', parentId: 'root', length: 35, x: 40, y: 0, rotation: 1 },
+      ],
+      ikTargets: [{ boneId: 'hand', x: 90, y: 10, pole: { x: 30, y: -40 } }],
+      controllers: [{
+        id: 'hand_ctrl',
+        shape: 'circle',
+        side: 'left',
+        size: 14,
+        link: { kind: 'ikTarget', boneId: 'hand' },
+      }],
+      weightPaint: {
+        vertexCount: 1,
+        bones: { hand: { 0: 1 }, leg: { 0: 1 } },
+      },
+    });
+    defaultAnimation.setKeyframe(nodeId, 'bone.hand.rotation', 0, 0.5);
+    defaultAnimation.setKeyframe(nodeId, 'ikTarget.hand.x', 0, 90);
+    defaultAnimation.setKeyframe(nodeId, 'ikMode.hand', 0, 1);
+
+    deleteBone(nodeId, 'arm');
+    let skel = readNodeSkeleton(defaultSceneGraph.getNode(nodeId)!);
+    expect(skel?.bones.map((bone) => bone.id)).toEqual(['root', 'leg']);
+    expect(skel?.ikTargets).toEqual([]);
+    expect(skel?.controllers).toEqual([]);
+    expect(skel?.weightPaint?.bones).toEqual({ leg: { 0: 1 } });
+    expect(defaultAnimation.isAnimated(nodeId, 'bone.hand.rotation')).toBe(false);
+    expect(defaultAnimation.isAnimated(nodeId, 'ikTarget.hand.x')).toBe(false);
+    expect(defaultAnimation.isAnimated(nodeId, 'ikMode.hand')).toBe(false);
+
+    performUndo();
+    skel = readNodeSkeleton(defaultSceneGraph.getNode(nodeId)!);
+    expect(skel?.bones.map((bone) => bone.id)).toEqual(['root', 'arm', 'hand', 'leg']);
+    expect(skel?.ikTargets).toHaveLength(1);
+    expect(skel?.controllers).toHaveLength(1);
+    expect(defaultAnimation.isAnimated(nodeId, 'bone.hand.rotation')).toBe(true);
+    expect(defaultAnimation.isAnimated(nodeId, 'ikTarget.hand.x')).toBe(true);
+    expect(defaultAnimation.isAnimated(nodeId, 'ikMode.hand')).toBe(true);
   });
 });

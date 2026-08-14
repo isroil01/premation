@@ -102,7 +102,7 @@ describe('buildSnapshot — fill / stroke / solid', () => {
     expect(layer.stroke).toMatchObject({ color: '#ff0000', width: 5 });
   });
 
-  test('a solid layer is sized + centred to the composition', () => {
+  test('a solid layer is sized + centred to the composition when unseeded', () => {
     const graph = new SceneGraph();
     graph.addNode(shapeNode('bg'));
     graph.setSolid('bg', true);
@@ -111,7 +111,27 @@ describe('buildSnapshot — fill / stroke / solid', () => {
     expect(layer.height).toBe(600);
     expect(layer.x).toBe(400);
     expect(layer.y).toBe(300);
-    expect(layer.rotation).toBe(0); // pinned regardless of the node's own transform
+    expect(layer.rotation).toBe(0);
+  });
+
+  test('a seeded solid keeps its authored transform (scale / drag work)', () => {
+    const graph = new SceneGraph();
+    const n = shapeNode('bg2');
+    (n.components[0]!.props as Record<string, number>).width = 800;
+    (n.components[0]!.props as Record<string, number>).height = 600;
+    (n.components[0]!.props as Record<string, number>).x = 400;
+    (n.components[0]!.props as Record<string, number>).y = 300;
+    (n.components[0]!.props as Record<string, number>).scaleX = 0.5;
+    (n.components[0]!.props as Record<string, number>).rotation = 15;
+    graph.addNode(n);
+    graph.setSolid('bg2', true);
+    const layer = buildSnapshot(graph, anim, 0, undefined, undefined, undefined, undefined, comp).layers[0]!;
+    expect(layer.width).toBe(800);
+    expect(layer.height).toBe(600);
+    expect(layer.x).toBe(400);
+    expect(layer.y).toBe(300);
+    expect(layer.scaleX).toBeCloseTo(0.5);
+    expect(layer.rotation).toBeCloseTo(15);
   });
 
   test('a non-solid shape keeps its fixed kind size', () => {

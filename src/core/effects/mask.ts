@@ -50,6 +50,8 @@ export interface MaskPoint {
 
 export interface MaskPath {
   id: string;
+  /** Optional display name — AE's mask list label. */
+  name?: string;
   mode: MaskMode;
   /** Closed loop (the only kind that can clip). */
   closed: boolean;
@@ -92,6 +94,59 @@ export function rectangleMask(w: number, h: number): MaskPath {
   return {
     id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0, inverted: false,
     points: [corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)],
+  };
+}
+
+/**
+ * Rounded-rectangle mask filling the layer's local bounds.
+ *
+ * Used to honour Appearance → Corners on image/video layers (which draw as
+ * textured quads and otherwise ignore `cornerRadius`). Eight anchors: ends of
+ * each straight side, with cubic handles only on the quarter-circle corners
+ * (same κ as `ellipseMask`).
+ *
+ * `radii` is TL → TR → BR → BL. A single number still works (uniform).
+ */
+export function roundedRectMask(
+  w: number,
+  h: number,
+  radii: number | readonly [number, number, number, number],
+): MaskPath {
+  const hw = w / 2;
+  const hh = h / 2;
+  const raw = typeof radii === 'number' ? [radii, radii, radii, radii] as const : radii;
+  // Clamp against box edges so adjacent arcs cannot overlap.
+  const scale = (a: number, b: number, limit: number): number => {
+    const sum = a + b;
+    if (sum <= limit || sum <= 1e-6) return 1;
+    return limit / sum;
+  };
+  let [tl, tr, br, bl] = raw.map((r) => Math.max(0, r)) as [number, number, number, number];
+  const s = Math.min(
+    scale(tl, tr, w),
+    scale(tr, br, h),
+    scale(br, bl, w),
+    scale(bl, tl, h),
+    1,
+  );
+  tl *= s; tr *= s; br *= s; bl *= s;
+  if (tl < 0.5 && tr < 0.5 && br < 0.5 && bl < 0.5) return rectangleMask(w, h);
+  const k = 0.5522847498307936;
+  const pt = (x: number, y: number, inX: number, inY: number, outX: number, outY: number): MaskPoint =>
+    ({ x, y, inX, inY, outX, outY });
+  // Clockwise: top edge → TR arc → right → BR → bottom → BL → left → TL arc.
+  return {
+    id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0, inverted: false,
+    points: [
+      pt(-hw + tl, -hh, -hw + tl - tl * k, -hh, -hw + tl, -hh),
+      pt(hw - tr, -hh, hw - tr, -hh, hw - tr + tr * k, -hh),
+      pt(hw, -hh + tr, hw, -hh + tr - tr * k, hw, -hh + tr),
+      pt(hw, hh - br, hw, hh - br, hw, hh - br + br * k),
+      pt(hw - br, hh, hw - br + br * k, hh, hw - br, hh),
+      pt(-hw + bl, hh, -hw + bl, hh, -hw + bl - bl * k, hh),
+      pt(-hw, hh - bl, -hw, hh - bl + bl * k, -hw, hh - bl),
+      pt(-hw, -hh + tl, -hw, -hh + tl, -hw, -hh + tl - tl * k),
+    ],
   };
 }
 

@@ -295,6 +295,12 @@ export function applyStylePreset(nodeId: string, presetId: string, accent?: stri
   if (styleComp) {
     if (preset.cornerRadius !== undefined) {
       defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadius', preset.cornerRadius);
+      // Presets state a uniform look — clear any independent corner overrides.
+      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusTL', undefined);
+      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusTR', undefined);
+      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusBR', undefined);
+      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornerRadiusBL', undefined);
+      defaultSceneGraph.writeProp(nodeId, styleComp.id, 'cornersLinked', true);
     }
     if (preset.opacity !== undefined) {
       defaultSceneGraph.writeProp(nodeId, styleComp.id, 'opacity', preset.opacity);

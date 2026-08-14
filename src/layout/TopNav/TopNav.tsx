@@ -46,6 +46,7 @@ import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
 import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
+import { PIN_KIND_CATALOG, PUPPET_PIN_ICONS, puppetPinLabel } from './puppetPinTools';
 
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -106,7 +107,6 @@ const MASK_TOOLS: ToolDef[] = [
   { id: 'mask-pen',     icon: 'mask-pen',    label: 'Pen Mask Tool' },
 ];
 
-const PUPPET_TOOL: ToolDef = { id: 'puppet-pin', icon: 'puppet-pin', label: 'Puppet Position Pin Tool', shortcut: 'Ctrl+P' };
 const BONE_TOOL: ToolDef = { id: 'bone', icon: 'bone', label: 'Bone Tool', shortcut: 'Ctrl+B' };
 
 function buildAnimateItems(
@@ -278,6 +278,8 @@ const isElectron = typeof window !== 'undefined' && (!!window.motionEditor || !!
 export function TopNav(): JSX.Element {
   const navigate = useNavigate();
   const activeTool = useUIStore((s) => s.activeTool);
+  const puppetPinKind = useUIStore((s) => s.puppetPinKind);
+  const setPuppetPinKind = useUIStore((s) => s.setPuppetPinKind);
   const setTool = useUIStore((s) => s.setActiveTool);
   const enterPresentation = usePresentationStore((s) => s.enter);
   const compFps = useCompositionStore((s) => s.fps);
@@ -360,6 +362,12 @@ export function TopNav(): JSX.Element {
 
   const isShapeActive = SHAPE_TOOLS.some(t => t.id === activeTool);
   const shapeDropdownTool = SHAPE_TOOLS.find(t => t.id === (isShapeActive ? activeTool : lastShapeTool)) || SHAPE_TOOLS[0]!;
+
+  const isPuppetActive = activeTool === 'puppet-pin';
+  const armPuppet = (kind: typeof puppetPinKind): void => {
+    setPuppetPinKind(kind);
+    setTool('puppet-pin');
+  };
 
   useEffect(() => {
     if (isPointerActive) setLastPointerTool(activeTool);
@@ -464,14 +472,16 @@ export function TopNav(): JSX.Element {
 
   if (hidePuppet) {
     pushSeparator();
-    overflowItems.push({
-      type: 'item',
-      id: 'puppet-pin-item',
-      label: 'Puppet Position Pin Tool',
-      icon: 'puppet-pin',
-      disabled: !canRig,
-      onSelect: () => setTool('puppet-pin')
-    });
+    for (const k of PIN_KIND_CATALOG) {
+      overflowItems.push({
+        type: 'item',
+        id: `puppet-${k.kind}`,
+        label: k.label,
+        icon: PUPPET_PIN_ICONS[k.kind],
+        disabled: !canRig,
+        onSelect: () => armPuppet(k.kind),
+      });
+    }
     overflowItems.push({
       type: 'item',
       id: 'bone-item',
@@ -665,15 +675,28 @@ export function TopNav(): JSX.Element {
 
                 {!hidePuppet && (
                   <>
-                    <button
-                      type="button"
-                      className={activeTool === PUPPET_TOOL.id ? styles.toolActive : styles.tool}
-                      title={`${PUPPET_TOOL.label} (${PUPPET_TOOL.shortcut})${rigHint}`}
-                      disabled={!canRig}
-                      onClick={() => setTool(PUPPET_TOOL.id)}
-                    >
-                      <Icon name={PUPPET_TOOL.icon} size="md" />
-                    </button>
+                    <Dropdown
+                      placement="bottom-start"
+                      trigger={
+                        <button
+                          type="button"
+                          className={isPuppetActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+                          title={`${puppetPinLabel(puppetPinKind)} (Ctrl+P)${rigHint}`}
+                          disabled={!canRig}
+                          aria-label={puppetPinLabel(puppetPinKind)}
+                        >
+                          <Icon name={PUPPET_PIN_ICONS[puppetPinKind]} size="md" />
+                          <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
+                        </button>
+                      }
+                      items={PIN_KIND_CATALOG.map((k) => ({
+                        type: 'item' as const,
+                        id: `puppet-${k.kind}`,
+                        label: k.label,
+                        icon: PUPPET_PIN_ICONS[k.kind],
+                        onSelect: () => armPuppet(k.kind),
+                      }))}
+                    />
                     <button
                       type="button"
                       className={activeTool === BONE_TOOL.id ? styles.toolActive : styles.tool}

@@ -28,6 +28,7 @@ import { viewportVideoFrames } from './videoFrameCache';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
 import { layerIsBaked } from '@core/effects/effectBake';
+import { useTextEditStore } from '@stores/textEditStore';
 import { AppTextureProvider } from './AppTextureProvider';
 import { getEventBus } from '@core/events/EventBus';
 import { noteDeviceLoss } from '@core/plugins/pluginEffects';
@@ -604,7 +605,14 @@ export class MotionRendererBackend implements RenderBackend {
                     ...(layer.mask && layer.mask.paths.length > 0 ? { mask: layer.mask } : {}),
                   }
                 : undefined;
-              this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource, bakeImg);
+              this.textures!.setImage(
+                key,
+                layer.src,
+                layer.fill,
+                layer.premultipliedSource,
+                bakeImg,
+                layer.liveSvgPlayback ? (layer.sourceTime ?? snapshot.time ?? 0) : undefined,
+              );
             } else if (layer.kind === 'video' && layer.src) {
               const bakeVid = layerIsBaked(layer)
                 ? {
@@ -649,7 +657,7 @@ export class MotionRendererBackend implements RenderBackend {
               const key = `text:${layer.id}`;
               activeKeys.add(key);
               this.textures!.setText(key, {
-                text: layer.text ?? 'Text',
+                text: useTextEditStore.getState().nodeId === layer.id ? '' : (layer.text ?? 'Text'),
                 fontSize: layer.fontSize ?? 48,
                 color: layer.fill ?? '#ffffff',
                 width: layer.width,

@@ -338,6 +338,65 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
   const [cornerRadiusRaw, setCornerRadius] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadius');
   const cornerRadius = typeof cornerRadiusRaw === 'number' ? cornerRadiusRaw : 0;
+  const [cornerTLRaw, setCornerTL] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadiusTL');
+  const [cornerTRRaw, setCornerTR] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadiusTR');
+  const [cornerBRRaw, setCornerBR] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadiusBR');
+  const [cornerBLRaw, setCornerBL] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornerRadiusBL');
+  const [cornersLinkedRaw, setCornersLinked] = useNodeComponentProp(defaultSceneGraph, nodeId, styleComp?.id, 'cornersLinked');
+  const cornerTL = typeof cornerTLRaw === 'number' ? cornerTLRaw : cornerRadius;
+  const cornerTR = typeof cornerTRRaw === 'number' ? cornerTRRaw : cornerRadius;
+  const cornerBR = typeof cornerBRRaw === 'number' ? cornerBRRaw : cornerRadius;
+  const cornerBL = typeof cornerBLRaw === 'number' ? cornerBLRaw : cornerRadius;
+  const cornersLinked = (() => {
+    if (cornersLinkedRaw === false) return false;
+    if (cornersLinkedRaw === true) return true;
+    // Legacy docs with only `cornerRadius` (or equal individuals) stay linked.
+    return cornerTL === cornerTR && cornerTR === cornerBR && cornerBR === cornerBL;
+  })();
+
+  const writeAllCorners = (v: number, link: boolean) => {
+    const r = Math.max(0, v);
+    setCornerRadius(r);
+    setCornerTL(r);
+    setCornerTR(r);
+    setCornerBR(r);
+    setCornerBL(r);
+    if (link) setCornersLinked(true);
+  };
+
+  const writeCorner = (
+    which: 'TL' | 'TR' | 'BR' | 'BL',
+    setOne: (v: unknown) => void,
+    v: number,
+  ) => {
+    const r = Math.max(0, v);
+    if (cornersLinked) {
+      writeAllCorners(r, true);
+      return;
+    }
+    setOne(r);
+    // Keep `cornerRadius` as the max so extrusion / legacy readers stay sensible.
+    const next = {
+      TL: which === 'TL' ? r : cornerTL,
+      TR: which === 'TR' ? r : cornerTR,
+      BR: which === 'BR' ? r : cornerBR,
+      BL: which === 'BL' ? r : cornerBL,
+    };
+    setCornerRadius(Math.max(next.TL, next.TR, next.BR, next.BL));
+  };
+
+  const toggleCornersLinked = () => {
+    if (cornersLinked) {
+      // Unlink: seed each corner from the current values so fields don't jump.
+      setCornerTL(cornerTL);
+      setCornerTR(cornerTR);
+      setCornerBR(cornerBR);
+      setCornerBL(cornerBL);
+      setCornersLinked(false);
+    } else {
+      writeAllCorners(cornerRadius, true);
+    }
+  };
 
   const fill = getNodeFill(nodeId);
   const fills = getNodeFills(nodeId);
@@ -441,7 +500,11 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
   const isFillAnimated = defaultAnimation.isAnimated(nodeId, 'fill') || defaultAnimation.isAnimated(nodeId, 'fill_r') || defaultAnimation.isAnimated(nodeId, 'fill_g') || defaultAnimation.isAnimated(nodeId, 'fill_b');
   const isStrokeAnimated = defaultAnimation.isAnimated(nodeId, 'stroke') || defaultAnimation.isAnimated(nodeId, 'stroke_r') || defaultAnimation.isAnimated(nodeId, 'stroke_g') || defaultAnimation.isAnimated(nodeId, 'stroke_b');
-  const isCornerAnimated = defaultAnimation.isAnimated(nodeId, 'cornerRadius');
+  const isCornerAnimated = defaultAnimation.isAnimated(nodeId, 'cornerRadius')
+    || defaultAnimation.isAnimated(nodeId, 'cornerRadiusTL')
+    || defaultAnimation.isAnimated(nodeId, 'cornerRadiusTR')
+    || defaultAnimation.isAnimated(nodeId, 'cornerRadiusBR')
+    || defaultAnimation.isAnimated(nodeId, 'cornerRadiusBL');
 
   const isGroupNode = defaultSceneGraph.getChildren(node.id).length > 0 || node.components.some((c) => c.type === 'group');
 
@@ -479,6 +542,11 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
           section previews the real paint stack and covers all four categories
           plus 3D materials. */}
       <div className={styles.inlineRows}>
+        {/* Text layers own Character Color in TextSection. Editing paint fill
+            here wrote the same prop and looked like a duplicate background
+            picker — hide Fill chrome on text; Stroke remains. */}
+        {!textComp && (
+          <>
         <div className={styles.subhead}>
           Fill
           {isFillAnimated && <span className={styles.animatedDot} />}
@@ -602,6 +670,8 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
           >
             <Icon name="plus" size="sm" /> Add fill
           </button>
+        )}
+          </>
         )}
 
         <div className={styles.subhead} style={{ marginTop: 10 }}>
@@ -858,13 +928,47 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
         {styleComp && (
           <>
             <div className={styles.subhead} style={{ marginTop: 10 }}>
-              Corners
+              <span>Corners</span>
+              <button
+                type="button"
+                onClick={toggleCornersLinked}
+                className={`${styles.lockBtn} ${cornersLinked ? styles.lockBtnActive : ''}`}
+                title={cornersLinked ? 'Unlink corners (edit individually)' : 'Link corners (same radius)'}
+                style={{ marginLeft: 6 }}
+                aria-pressed={cornersLinked}
+              >
+                <Icon name={cornersLinked ? 'lock' : 'unlock'} size="sm" />
+              </button>
               {isCornerAnimated && <span className={styles.animatedDot} />}
             </div>
             <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Radius</span>
-              <ValueField value={cornerRadius} unit="px" onChange={(v) => setCornerRadius(v)} />
+              <span className={styles.popoverLabel}>All</span>
+              <ValueField
+                value={cornersLinked ? cornerRadius : Math.max(cornerTL, cornerTR, cornerBR, cornerBL)}
+                unit="px"
+                onChange={(v) => writeAllCorners(v, cornersLinked)}
+              />
             </div>
+            {!cornersLinked && (
+              <div className={styles.cornerGrid} role="group" aria-label="Individual corner radii">
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>TL</span>
+                  <ValueField value={cornerTL} unit="px" onChange={(v) => writeCorner('TL', setCornerTL, v)} />
+                </div>
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>TR</span>
+                  <ValueField value={cornerTR} unit="px" onChange={(v) => writeCorner('TR', setCornerTR, v)} />
+                </div>
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>BL</span>
+                  <ValueField value={cornerBL} unit="px" onChange={(v) => writeCorner('BL', setCornerBL, v)} />
+                </div>
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>BR</span>
+                  <ValueField value={cornerBR} unit="px" onChange={(v) => writeCorner('BR', setCornerBR, v)} />
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
