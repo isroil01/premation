@@ -235,7 +235,7 @@ const CANVAS2D_ONLY = new Set<string>([
   'ellipse',
   'radio-waves',
   'lightning',
-  'light-rays',
+  // 'light-rays' PORTED 2026-08-14 — GPU shader; Canvas2D retained below.
   // 'light-sweep' PORTED 2026-08-14 — GPU shader; Canvas2D retained below.
   'audio-waveform',
   // Stylize — neighbourhood and cell operations, none expressible as a filter.
@@ -304,6 +304,7 @@ const CANVAS2D_IMPLEMENTED: ReadonlySet<string> = new Set<string>([
   'beam',
   'light-sweep',
   'lens-flare',
+  'light-rays',
   /*
     Apply Color LUT moved OFF the forces-a-bake list when it gained a GPU
     shader — a 3D LUT is a texture lookup, which is what the strip in

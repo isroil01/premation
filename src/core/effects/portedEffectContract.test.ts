@@ -66,6 +66,13 @@ const PORTED: ReadonlyArray<{ type: string; params: Record<string, unknown> }> =
     type: 'lens-flare',
     params: { centerX: 48, centerY: -28, brightness: 70, scale: 1, color: '#ffd9a0' },
   },
+  {
+    type: 'light-rays',
+    params: {
+      centerX: 0, centerY: 0, rayCount: 48, rayLength: 180, spread: 100, rotation: 15,
+      color: '#fff3c4', opacity: 70, falloff: 40, seed: 1, composite: 1,
+    },
+  },
 ];
 
 const layerWith = (effects: Effect[]): RenderLayer =>

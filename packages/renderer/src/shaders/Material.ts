@@ -316,6 +316,17 @@ export const LENS_FLARE_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Built-in material: Light Rays. Same three bindings as Beam. */
+export const LIGHT_RAYS_MATERIAL: MaterialDescriptor = {
+  shader: 'light-rays',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 export const NOISE_MATERIAL: MaterialDescriptor = {
   shader: 'noise',
   topology: 'triangle-list',

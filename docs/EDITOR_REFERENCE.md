@@ -400,11 +400,9 @@ sentence was written, left behind by registry growth, and the value every brief
 written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
-registry def, a Canvas2D implementation and a Generate entry in the effects
-browser. They are CPU passes rather than shaders, which is a performance fact
-(see the GPU-porting work) and not an absence. The count is now phrased as "154
-effects" rather than as a bare figure specifically so that
-`docPropagatedCounts.test.ts` can check it.
+registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
+GPU shader. The count is now phrased as "154 effects" rather than as a bare
+figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
 **Uniform mask feather only.** `MaskPoint` carries x/y plus handles and one
 scalar feather per path. AE's variable-width feather — the tool for organic
@@ -492,9 +490,9 @@ Lottie export, and price.
 4. **Essential Properties — promotion shipped 2026-08-14.** Source comps publish
    props via the property menu; instances show the curated set (nested OK).
    Remaining: colour / text overrides beyond the numeric Transform set.
-5. **Light/glow/flare — Light Sweep + Lens Flare GPU-ported 2026-08-14.** Beam,
-   Light Sweep and Lens Flare run as shaders with retained Canvas2D references.
-   Remaining in the family: `light-rays`, and broader glow polish.
+5. **Light/glow/flare — Beam / Sweep / Flare / Rays GPU-ported 2026-08-14.**
+   The procedural light family now runs as shaders with retained Canvas2D
+   references. Remaining: broader glow polish (and any further generators).
 
 Motion tracking is a much larger project serving a different audience and should
 not be sequenced against these. Note also that it is **gated behind the decoder**
@@ -1532,9 +1530,8 @@ in §5 — including every "Fixed …" narrative — is still checked.
 Corrected in the same pass, because the paragraph was being rewritten anyway:
 §4 listed "no volumetric light rays (Shine)" and "no optical-flare system worth
 the name" among the missing *classes*. `light-rays`, `lens-flare`, `light-sweep`
-and `beam` all ship, each with a registry def, a Canvas2D implementation and a
-Generate entry in the effects browser. They are CPU passes rather than shaders —
-a performance fact, not an absence.
+and `beam` all ship, each with a registry def, a Canvas2D reference, a Generate
+entry, and (as of 2026-08-14) a GPU shader.
 
 ---
 

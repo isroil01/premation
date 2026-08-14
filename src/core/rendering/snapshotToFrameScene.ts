@@ -510,6 +510,23 @@ export function extractSpatialEffects(
         color: c('color'),
       });
     }
+    if (e.type === 'light-rays') {
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'light-rays',
+        centerX: n('centerX'),
+        centerY: n('centerY'),
+        rayCount: Math.max(1, Math.min(256, Math.round(n('rayCount')))),
+        rayLength: Math.max(0, n('rayLength')),
+        spread: clamp01n(n('spread') / 100),
+        rotation: (n('rotation') * Math.PI) / 180,
+        opacity: clamp01n(n('opacity') / 100),
+        falloff: clamp01n(n('falloff') / 100),
+        seed: Math.round(n('seed')),
+        composite: Math.round(n('composite')),
+        color: c('color'),
+      });
+    }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {
       // Map source layer (node id === renderable id). '' / non-string = unset →

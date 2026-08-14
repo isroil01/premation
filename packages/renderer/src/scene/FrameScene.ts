@@ -229,6 +229,25 @@ export type RenderableEffect =
       scale: number;
       color: Color;
     }
+  /**
+   * Light Rays. Centre offsets are composition px from the layer mid.
+   * `rayLength` is composition px; `opacity`/`falloff`/`spread` are 0..1;
+   * `rotation` radians; `composite` matches Canvas2D modes (default add).
+   */
+  | {
+      type: 'light-rays';
+      centerX: number;
+      centerY: number;
+      rayCount: number;
+      rayLength: number;
+      spread: number;
+      rotation: number;
+      opacity: number;
+      falloff: number;
+      seed: number;
+      composite: number;
+      color: Color;
+    }
   | { type: 'noise'; amount: number; evolution: number; monochrome: boolean }
   /**
    * An effect a PLUGIN declared, from WGSL the host validated and compiled.
