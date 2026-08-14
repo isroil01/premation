@@ -27,6 +27,11 @@ import {
   readCompOverrides,
   setCompOverride,
   clearCompOverridesFor,
+  compositionRootOf,
+  readEssentialProps,
+  setEssentialProp,
+  isEssentialProp,
+  COMP_ESSENTIAL_PROPS,
 } from './compInstanceOverrides';
 import defaultSceneGraph from './DefaultSceneGraph';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
@@ -293,6 +298,50 @@ describe('the control is reachable', () => {
     expect(ui).toMatch(/setCompOverride\(/);
     expect(ui).toMatch(/clearCompOverridesFor\(/);
     expect(ui).toMatch(/OVERRIDABLE_PROPS/);
+    expect(ui).toMatch(/readEssentialProps/);
+  });
+
+  it('property menu can promote into Essential Properties', () => {
+    const menu = readSource('core/inspector/propertyMenu.ts');
+    expect(menu).toMatch(/Add to Essential Properties/);
+    expect(menu).toMatch(/setEssentialProp/);
+  });
+});
+
+/**
+ * Source-side promotion — without this, every Transform prop on every direct
+ * child appears on every instance. Publishing a curated set is AE's model and
+ * is what unlocks nested layers in the instance UI (the engine already
+ * resolved grandchild overrides; the listing was the limit).
+ */
+describe('Essential Properties promotion', () => {
+  it('compositionRootOf walks to the parentless root', () => {
+    addShape('b_group', 'comp_b');
+    addShape('b_deep', 'b_group');
+    expect(compositionRootOf('b_deep')).toBe('comp_b');
+    expect(compositionRootOf('comp_b')).toBe('comp_b');
+    expect(compositionRootOf('missing')).toBeNull();
+  });
+
+  it('setEssentialProp publishes and clears keys on the source root', () => {
+    addShape('b_shape', 'comp_b');
+    expect(readEssentialProps('comp_b').size).toBe(0);
+    setEssentialProp('comp_b', 'b_shape', 'opacity', true);
+    expect(isEssentialProp('comp_b', 'b_shape', 'opacity')).toBe(true);
+    expect([...readEssentialProps('comp_b')]).toEqual([overrideKey('b_shape', 'opacity')]);
+    const meta = defaultSceneGraph.getNode('comp_b')!.components[0]!;
+    expect((meta.props as Record<string, unknown>)[COMP_ESSENTIAL_PROPS]).toEqual([
+      'b_shape/opacity',
+    ]);
+    setEssentialProp('comp_b', 'b_shape', 'opacity', false);
+    expect(readEssentialProps('comp_b').size).toBe(0);
+  });
+
+  it('refuses to promote the composition root itself or a non-overridable prop', () => {
+    setEssentialProp('comp_b', 'comp_b', 'x', true);
+    addShape('b_shape', 'comp_b');
+    setEssentialProp('comp_b', 'b_shape', 'width' as 'x', true);
+    expect(readEssentialProps('comp_b').size).toBe(0);
   });
 });
 
@@ -300,36 +349,21 @@ describe('the control is reachable', () => {
  * How deep an override can reach — a fact about the ENGINE, written down
  * because a backlog was about to be planned from a guess about it.
  *
- * `CompOverridesSection` lists only the referenced comp's DIRECT children, and
- * says so; "Essential Properties: direct children only" was then carried as a
- * gap. But the limit is in the listing, not underneath it: `cloneSubtree`
- * consults the same override map at every node it clones within one instance,
- * and the key is any node id. A grandchild override already resolves, so adding
- * depth to the UI is a UI change rather than an architectural one — a very
- * different item to schedule.
- *
- * Asserted rather than left as the comment it was. A comment claiming a
- * capability that nothing exercises is exactly how the opposite claim survived
- * long enough to reach a backlog.
+ * Listing used to be direct-children-only; with promotion, nested keys appear
+ * in the instance UI. The engine always resolved any node id.
  */
 describe('override depth', () => {
   it('applies to a GRANDCHILD of the referenced comp, not only a direct child', () => {
-    // comp_b ▸ b_group ▸ b_deep — two levels below the instance.
     addShape('b_group', 'comp_b');
     addShape('b_deep', 'b_group', 11);
     addInstance('inst1', 'comp_root', 'comp_b');
     setCompOverride('inst1', 'b_deep', 'x', 456);
 
     expect(transformProps(cloneNamed('inst1::b_deep')).x).toBe(456);
-    // Its parent carries no override and is untouched — so this is the override
-    // landing on one node, not being smeared over the subtree.
     expect(transformProps(cloneNamed('inst1::b_group')).x).toBe(10);
   });
 
   it('a grandchild override survives the ANIMATED half too', () => {
-    // The half that is easy to omit: without buildSnapshot dropping the prop,
-    // a keyframed grandchild ignores its override on every frame. Nothing in
-    // the engine treats depth differently, which is the point being pinned.
     addShape('b_group', 'comp_b');
     addShape('b_deep', 'b_group', 11);
     addInstance('inst1', 'comp_root', 'comp_b');
@@ -338,8 +372,6 @@ describe('override depth', () => {
     defaultAnimation.setKeyframe('b_deep', 'x', 1, 99);
     setCompOverride('inst1', 'b_deep', 'x', 456);
 
-    // The clones hang off the instance's `precompLayers`, at whatever depth the
-    // source tree had — so this searches rather than indexing a level.
     const find = (layers: ReadonlyArray<{ id: string; x: number; precompLayers?: ReadonlyArray<never> }>, id: string): { x: number } | undefined => {
       for (const l of layers) {
         if (l.id === id) return l;
@@ -356,11 +388,6 @@ describe('override depth', () => {
     const inherited = find(snap, 'inst2::b_deep');
     expect(overridden).toBeTruthy();
     expect(inherited).toBeTruthy();
-    // Compared against the un-overridden twin rather than against a literal:
-    // a snapshot layer's `x` is COMPOSED with its parent's, so the absolute
-    // number carries `b_group`'s offset too. The two instances share that
-    // parent, so the difference is the override alone — 456 against the 11 the
-    // track gives at t = 0.
     expect(overridden!.x - inherited!.x).toBeCloseTo(456 - 11, 9);
   });
 });

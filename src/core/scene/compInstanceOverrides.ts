@@ -48,6 +48,14 @@ import { bumpScene } from '@stores/sceneStore';
 export const COMP_OVERRIDES_PROP = '__compOverrides';
 
 /**
+ * Published Essential Properties on the SOURCE composition root — AE's
+ * "Master Properties" / promote step. Keys use the same `nodeId/prop` form as
+ * overrides. Empty means the instance UI falls back to listing every
+ * overridable prop on direct children (pre-promotion behaviour).
+ */
+export const COMP_ESSENTIAL_PROPS = '__essentialProps';
+
+/**
  * The properties an instance may override.
  *
  * Deliberately the numeric Transform set and nothing else: these are the ones
@@ -62,6 +70,67 @@ export type OverridableProp = (typeof OVERRIDABLE_PROPS)[number];
 
 export function isOverridableProp(p: string): p is OverridableProp {
   return (OVERRIDABLE_PROPS as ReadonlyArray<string>).includes(p);
+}
+
+/**
+ * Composition root that owns `nodeId` (walk parents to `parent === null`).
+ * Null when the node is missing from the graph.
+ */
+export function compositionRootOf(nodeId: string): string | null {
+  let cur: string | null = nodeId;
+  for (let i = 0; i < 64 && cur; i++) {
+    const n = defaultSceneGraph.getNode(cur);
+    if (!n) return null;
+    if (n.parent === null) return n.id;
+    cur = n.parent;
+  }
+  return null;
+}
+
+/** Every property published on this source composition. Empty when none. */
+export function readEssentialProps(compRootId: string | undefined): ReadonlySet<string> {
+  const out = new Set<string>();
+  if (!compRootId) return out;
+  const node = defaultSceneGraph.getNode(compRootId);
+  if (!node) return out;
+  for (const c of renderComponentsOf(node)) {
+    const bag = (c.props as Record<string, unknown>)[COMP_ESSENTIAL_PROPS];
+    if (!Array.isArray(bag)) continue;
+    for (const k of bag) {
+      if (typeof k !== 'string') continue;
+      const parsed = parseOverrideKey(k);
+      if (parsed && isOverridableProp(parsed.prop)) out.add(k);
+    }
+  }
+  return out;
+}
+
+export function isEssentialProp(compRootId: string, origNodeId: string, prop: string): boolean {
+  return readEssentialProps(compRootId).has(overrideKey(origNodeId, prop));
+}
+
+/**
+ * Publish or un-publish one property on the source composition.
+ * Stored on the root's first writable component (meta/group), same write path
+ * as other document props so undo/dirty tracking sees it.
+ */
+export function setEssentialProp(
+  compRootId: string,
+  origNodeId: string,
+  prop: string,
+  promoted: boolean,
+): void {
+  if (!isOverridableProp(prop)) return;
+  if (origNodeId === compRootId) return; // the root itself is not an overridable layer
+  const node = defaultSceneGraph.getNode(compRootId);
+  if (!node || node.components.length === 0) return;
+  const target = node.components[0]!;
+  const next = new Set(readEssentialProps(compRootId));
+  const key = overrideKey(origNodeId, prop);
+  if (promoted) next.add(key);
+  else next.delete(key);
+  defaultSceneGraph.writeProp(compRootId, target.id, COMP_ESSENTIAL_PROPS, [...next].sort());
+  bumpScene();
 }
 
 /** Key for one override: the ORIGINAL node's id, and the property path. */

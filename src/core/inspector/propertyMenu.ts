@@ -22,6 +22,12 @@ import { copyKeyframes, pasteKeyframes, hasClipboard } from '@core/animation/key
 import { convertExpressionToKeyframes } from '@core/animation/convertExpressionToKeyframes';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import { resolvePropertyMeta } from './propertyMeta';
+import {
+  compositionRootOf,
+  isEssentialProp,
+  isOverridableProp,
+  setEssentialProp,
+} from '@core/scene/compInstanceOverrides';
 
 /** How close (seconds) the playhead must be to count as "on" a keyframe. */
 const EPS = 1e-4;
@@ -177,6 +183,25 @@ export function buildPropertyMenu(ctx: PropertyMenuContext): ContextMenuItem[] {
         }
       },
     });
+  }
+
+  // Essential Properties promotion — AE's source-side half. Only for the
+  // numeric overridable set, and only when this layer sits inside a real
+  // composition root (property-menu unit tests use a bare id with no graph
+  // node, so they stay free of this entry).
+  if (isOverridableProp(prop)) {
+    const root = compositionRootOf(nodeId);
+    if (root && root !== nodeId) {
+      const promoted = isEssentialProp(root, nodeId, prop);
+      items.push({ id: 'sep-essential', separator: true });
+      items.push({
+        id: 'essential-toggle',
+        label: promoted ? 'Remove from Essential Properties' : 'Add to Essential Properties',
+        onSelect: () => {
+          setEssentialProp(root, nodeId, prop, !promoted);
+        },
+      });
+    }
   }
 
   return items;

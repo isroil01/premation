@@ -2,20 +2,13 @@
  * Essential Properties — the instance-side control for a placed composition.
  *
  * AE splits this in two: you promote a property in the source comp, then set it
- * per placement. There is no promotion step here yet, so every source layer
- * offers the whole overridable set (`OVERRIDABLE_PROPS`). That is more surface
- * than AE shows, but it is honest: each field either overrides or it does not,
- * and nothing is offered that the renderer will not read.
+ * per placement. Promotion lives on the source root (`__essentialProps`); right-
+ * click a property in the source inspector → "Add to Essential Properties".
  *
- * The value shown when a property is NOT overridden is the INHERITED one — the
- * source layer's own value at the current time, sampled if it is keyframed. So
- * the field always displays what you are actually seeing, and typing into it is
- * what creates the override. A dot marks an overridden property; clicking it
- * clears the override and the field falls back to inherited.
- *
- * An override REPLACES a keyframed value rather than fighting it (AE's rule) —
- * see `compInstanceOverrides.ts` for why that needs two halves and what breaks
- * with only one.
+ * When the source has published at least one property, this panel lists only
+ * those (any depth — the engine already resolves grandchild overrides). When
+ * none are published yet, it keeps the pre-promotion fallback: every overridable
+ * prop on each direct child, so existing projects keep working.
  */
 
 import { ValueField } from '@components/ValueField';
@@ -27,9 +20,12 @@ import { readCompRef } from '@core/scene/compInstance';
 import {
   OVERRIDABLE_PROPS,
   readCompOverrides,
+  readEssentialProps,
   overrideKey,
+  parseOverrideKey,
   setCompOverride,
   clearCompOverridesFor,
+  isOverridableProp,
   type OverridableProp,
 } from '@core/scene/compInstanceOverrides';
 import type { SceneNode } from '@core/types';
@@ -69,6 +65,40 @@ function inheritedValue(source: SceneNode, prop: OverridableProp, t: number): nu
   return found ?? FALLBACK[prop];
 }
 
+type LayerRow = { source: SceneNode; props: OverridableProp[] };
+
+function rowsForInstance(ref: string, promoted: ReadonlySet<string>): LayerRow[] {
+  if (promoted.size > 0) {
+    // Curated list — group promoted keys by source node, keep document order
+    // by walking the referenced tree so nested layers appear under their
+    // natural parents rather than in bag-iteration order.
+    const byId = new Map<string, OverridableProp[]>();
+    for (const key of promoted) {
+      const parsed = parseOverrideKey(key);
+      if (!parsed || !isOverridableProp(parsed.prop)) continue;
+      const list = byId.get(parsed.origNodeId) ?? [];
+      list.push(parsed.prop);
+      byId.set(parsed.origNodeId, list);
+    }
+    const rows: LayerRow[] = [];
+    const visit = (id: string): void => {
+      const source = defaultSceneGraph.getNode(id);
+      if (!source) return;
+      const props = byId.get(id);
+      if (props && props.length > 0) rows.push({ source, props });
+      for (const child of defaultSceneGraph.getChildren(id)) visit(child.id);
+    };
+    visit(ref);
+    return rows;
+  }
+
+  // Pre-promotion fallback: every overridable prop on each direct child.
+  return defaultSceneGraph.getChildren(ref).map((source) => ({
+    source,
+    props: [...OVERRIDABLE_PROPS],
+  }));
+}
+
 export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
   const time = useActiveWorkspace()?.time ?? 0;
@@ -77,22 +107,9 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
   const ref = readCompRef(node);
   if (ref === null) return null;
 
-  // Direct children of the referenced composition.
-  //
-  // A LISTING limit, not an engine one — a distinction worth stating because it
-  // was read the other way round, and "Essential Properties: direct children
-  // only" sat on a backlog as though depth needed building. It does not:
-  // `cloneSubtree` consults the override map at every node inside an instance
-  // and the key is any node id, so a grandchild override already resolves,
-  // statically and through the animated half. `compInstanceOverrides.test.ts`
-  // ("override depth") asserts that now, rather than leaving it to this comment
-  // — a capability nothing exercises is how the opposite claim survived.
-  //
-  // Kept flat anyway: a list of a whole nested tree is unreadable, and AE's
-  // promotion step exists precisely so an instance shows a chosen few rather
-  // than everything. Depth belongs here once there is something to choose WITH.
-  const sources = defaultSceneGraph.getChildren(ref);
-  if (sources.length === 0) return null;
+  const promoted = readEssentialProps(ref);
+  const rows = rowsForInstance(ref, promoted);
+  if (rows.length === 0) return null;
 
   const overrides = readCompOverrides(node);
 
@@ -101,12 +118,21 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
       <div className={styles.row}>
         <span className={styles.label}>Essential Properties</span>
         <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
-          {overrides.size > 0 ? `${overrides.size} overridden` : 'inheriting'}
+          {overrides.size > 0
+            ? `${overrides.size} overridden`
+            : promoted.size > 0
+              ? `${promoted.size} published`
+              : 'inheriting'}
         </span>
       </div>
+      {promoted.size === 0 && (
+        <p style={{ margin: '0 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.45 }}>
+          Right-click a property in the source composition to publish it here.
+        </p>
+      )}
 
-      {sources.map((source) => {
-        const layerOverrides = OVERRIDABLE_PROPS.filter((p) =>
+      {rows.map(({ source, props }) => {
+        const layerOverrides = props.filter((p) =>
           overrides.has(overrideKey(source.id, p)));
         return (
           <div key={source.id} style={{ marginBottom: 6 }}>
@@ -130,7 +156,7 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                 </button>
               )}
             </div>
-            {OVERRIDABLE_PROPS.map((prop) => {
+            {props.map((prop) => {
               const key = overrideKey(source.id, prop);
               const overridden = overrides.has(key);
               const value = overridden

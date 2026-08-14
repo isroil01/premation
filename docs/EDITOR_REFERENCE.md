@@ -450,17 +450,14 @@ to describe is gone: `gizmo3dSnapping` was deleted with nine sibling symbols and
   `index:available` is permanently false and `getLocalIndex()` always returns
   `MemoryLocalIndex`, and nothing in `src/` ever calls `upsertProject` or
   `addRecovery`, so the index would be empty even with the driver present.
-- **Essential Properties — BUILT 2026-08-11**, same day this line first
-  recorded it as missing. Two instances of one comp can now differ:
-  `compInstanceOverrides.ts` stores per-instance overrides of the numeric
-  Transform set, keyed `<sourceNodeId>/<prop>`, edited in
-  `CompOverridesSection.tsx` on the placed-composition inspector branch. There
-  is still **no promotion step** — AE has you publish a property in the source
-  comp first, whereas every source layer here offers the whole overridable set,
-  and only the referenced comp's DIRECT children are listed. Extending the
-  overridable set beyond numbers needs a second look, because `evaluateNode`
-  returns `Map<PropPath, number>` and a colour or text override does not travel
-  that path at all.
+- **Essential Properties — promotion shipped 2026-08-14.** Instance overrides
+  (`compInstanceOverrides.ts` / `CompOverridesSection`) already existed for the
+  numeric Transform set. Source comps can now **publish** properties via
+  right-click → "Add to Essential Properties" (`__essentialProps` on the root).
+  When anything is published, the instance panel lists only that curated set
+  (including nested layers). Empty still falls back to every overridable prop
+  on direct children. Still missing: non-numeric overrides (colour / text —
+  `evaluateNode` is number-only).
 - **The frame cache is memory-only.** `renderCache.ts` and `videoFrameCache.ts`
   are both in-process and budgeted; `diskCache` is zero hits and nothing survives
   a restart. AE's disk cache is what makes iterating on a heavy comp bearable on
@@ -492,8 +489,9 @@ Lottie export, and price.
    flat quads subdivide into UV strips with per-strip blur (`dofStrips.ts`).
    Extrusions already had per-face CoC. Still missing: sampleable depth buffer,
    true per-pixel CoC, iris blades / bokeh / highlight bloom.
-4. **Essential Properties on precomps** — cheapest large win, because the
-   template machinery it needs already exists.
+4. **Essential Properties — promotion shipped 2026-08-14.** Source comps publish
+   props via the property menu; instances show the curated set (nested OK).
+   Remaining: colour / text overrides beyond the numeric Transform set.
 5. **A focused effect pass on the light/glow/flare family** — the cheapest route
    to frames that read as expensive, and it compounds with (1).
 
