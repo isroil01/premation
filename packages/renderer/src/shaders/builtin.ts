@@ -24,6 +24,14 @@ export interface ShaderSource {
 import { GLASS_COMPOSITE } from './glass';
 export { GLASS_COMPOSITE };
 
+import {
+  LINEAR_WORKING_SPACE,
+  LINEAR_INTERMEDIATE_STORAGE,
+  SRGB_TRANSFER_GLSL,
+  SRGB_TRANSFER_WGSL,
+} from './linearWorkingSpace';
+export { LINEAR_WORKING_SPACE, LINEAR_INTERMEDIATE_STORAGE } from './linearWorkingSpace';
+
 // Solid-colored quad with an optional SDF mask so shapes render with real
 // geometry, not just flat rectangles. `shape` = (kind, radiusPx, worldW, worldH):
 //   kind 0 = plain rect (alpha 1 — unchanged; used by masks & default solids)
@@ -624,13 +632,14 @@ fn bSetSat(c : vec3<f32>, s : f32) -> vec3<f32> {
   return vec3<f32>(0.0);
 }
 ${MATTE_FACTOR_WGSL}
+${SRGB_TRANSFER_WGSL}
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let s = textureSample(tex, smp, uv);
   let d = textureSample(uMaskTex, smp, uv);
   let as1 = s.a; let ad = d.a;
-  var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = s.rgb / as1; }
-  var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = d.rgb / ad; }
+  var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = srgbToLinearRgb(min(s.rgb / as1, vec3<f32>(1.0))); }
+  var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = srgbToLinearRgb(min(d.rgb / ad, vec3<f32>(1.0))); }
   let mode = i32(obj.cr0.x + 0.5);
   // Dispatch is by FAMILY, not by a >= threshold. The separable range is no
   // longer contiguous (1-11 and 16-26), so a bare mode >= 12 would have swept
@@ -654,6 +663,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // They cannot be a bChan branch, because bChan only ever produces a blended
   // COLOUR that the standard Porter-Duff line above then composites. These two
   // change that line itself.
+  var skipEncode = false;
   if (mode == 29) {
     // Alpha Add. Standard alpha is as + ad - as*ad, which is exactly why two
     // touching anti-aliased 50% edges composite to 75% and leave a visible seam
@@ -663,7 +673,12 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // Luminescent Premul. Treats the source as ALREADY premultiplied and adds it
     // rather than lerping, so colour that exceeds its own alpha is kept instead
     // of clipped — the glow/highlight case AE keeps this mode for.
-    co = s.rgb + (1.0 - as1) * d.rgb;
+    // Work in linear premul, then encode with the common path below.
+    var sLin = s.rgb;
+    var dLin = d.rgb;
+    if (as1 > 0.0) { sLin = srgbToLinearRgb(min(s.rgb / as1, vec3<f32>(1.0))) * as1; }
+    if (ad > 0.0) { dLin = srgbToLinearRgb(min(d.rgb / ad, vec3<f32>(1.0))) * ad; }
+    co = sLin + (1.0 - as1) * dLin;
   } else if (mode >= 31 && mode <= 34) {
     // ── Matte family (31-34): Stencil / Silhouette ──
     // Not blends. The layer contributes NO colour of its own; it scales the
@@ -673,8 +688,10 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // Everything here is premultiplied, so scaling coverage means scaling all
     // four channels. Scaling alpha alone would leave colour behind where there
     // is no longer any coverage to carry it, which reads as a bright fringe.
+    // Backdrop stays display-referred — no linear round-trip.
     co = d.rgb * k;
     ao = ad * k;
+    skipEncode = true;
   }
   // ── Preserve Underlying Transparency (cr0.y) ──
   // Independent of the blend mode, because it composes with every blend: the
@@ -690,6 +707,11 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   if (obj.cr0.y > 0.5 && mode < 31) {
     co = ad * (as1 * B + (1.0 - as1) * cb);
     ao = ad;
+  }
+  // Encode linear premul → sRGB premul so RTs stay display-referred.
+  if (!skipEncode && ao > 0.0001) {
+    let straight = min(co / ao, vec3<f32>(1.0));
+    co = linearToSrgbRgb(straight) * ao;
   }
   return vec4<f32>(co, ao);
 }
@@ -709,12 +731,13 @@ uniform sampler2D uMaskTex;
 in vec2 vUv;
 out vec4 frag;
 ${BLEND_COMBINE_GLSL_HELPERS}
+${SRGB_TRANSFER_GLSL}
 void main() {
   vec4 s = texture(uTex, vUv);
   vec4 d = texture(uMaskTex, vUv);
   float as1 = s.a, ad = d.a;
-  vec3 cs = as1 > 0.0 ? s.rgb / as1 : vec3(0.0);
-  vec3 cb = ad > 0.0 ? d.rgb / ad : vec3(0.0);
+  vec3 cs = as1 > 0.0 ? srgbToLinearRgb(min(s.rgb / as1, vec3(1.0))) : vec3(0.0);
+  vec3 cb = ad > 0.0 ? srgbToLinearRgb(min(d.rgb / ad, vec3(1.0))) : vec3(0.0);
   int mode = int(cr0.x + 0.5);
   // Dispatch is by FAMILY, not by a >= threshold — the separable range is no
   // longer contiguous (1-11 and 16-26). Must match the WGSL branch above.
@@ -725,6 +748,7 @@ void main() {
   // Utility family (29-30): these write ALPHA, not just colour, so they change
   // the composite line itself rather than contributing a blended B.
   // Must match the WGSL branch above.
+  bool skipEncode = false;
   if (mode == 29) {
     // Alpha Add — standard alpha (as + ad - as*ad) makes two touching
     // anti-aliased 50% edges composite to 75% and leave a seam. Adding closes it.
@@ -732,7 +756,11 @@ void main() {
   } else if (mode == 30) {
     // Luminescent Premul — treat the source as already premultiplied and add,
     // keeping colour that exceeds its own alpha instead of clipping it.
-    co = s.rgb + (1.0 - as1) * d.rgb;
+    vec3 sLin = s.rgb;
+    vec3 dLin = d.rgb;
+    if (as1 > 0.0) sLin = srgbToLinearRgb(min(s.rgb / as1, vec3(1.0))) * as1;
+    if (ad > 0.0) dLin = srgbToLinearRgb(min(d.rgb / ad, vec3(1.0))) * ad;
+    co = sLin + (1.0 - as1) * dLin;
   } else if (mode >= 31 && mode <= 34) {
     // Matte family (31-34): Stencil / Silhouette. The layer contributes no
     // colour; it scales the coverage of the whole backdrop beneath it.
@@ -742,6 +770,7 @@ void main() {
     float k = matteFactor(mode, s);
     co = d.rgb * k;
     ao = ad * k;
+    skipEncode = true;
   }
   // ── Preserve Underlying Transparency (cr0.y) ──
   // Independent of the blend mode, because it composes with every blend: the
@@ -757,6 +786,10 @@ void main() {
   if (cr0.y > 0.5 && mode < 31) {
     co = ad * (as1 * B + (1.0 - as1) * cb);
     ao = ad;
+  }
+  if (!skipEncode && ao > 0.0001) {
+    vec3 straight = min(co / ao, vec3(1.0));
+    co = linearToSrgbRgb(straight) * ao;
   }
   frag = vec4(co, ao);
 }
@@ -790,6 +823,7 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
   return o;
 }
 
+${SRGB_TRANSFER_WGSL}
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let r = obj.blurParams.z;
@@ -805,16 +839,30 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // the loop cap, taps spread out and linear filtering fills the gaps. The
   // old kernel used σ = r/2 truncated at ±r — visibly tighter than Canvas2D
   // at every radius (profiled: tail died 2–3× sooner).
+  //
+  // Accumulate in linear-premul so glow/blur falloff matches lit light rather
+  // than gamma-space grey. Helpers are identity when LINEAR_WORKING_SPACE is off.
   let sigma = r;
   let steps = 30;
   let spacing = max(1.0, (sigma * 2.5) / f32(steps));
   for(var i = -steps; i <= steps; i = i + 1) {
     let off = f32(i) * spacing;
     let w = exp(-0.5 * (off * off) / (sigma * sigma));
-    c = c + textureSample(tex, smp, uv + dir * off) * w;
+    let t = textureSample(tex, smp, uv + dir * off);
+    var lin = t;
+    if (t.a > 0.0001) {
+      let straight = min(t.rgb / t.a, vec3<f32>(1.0));
+      lin = vec4<f32>(srgbToLinearRgb(straight) * t.a, t.a);
+    }
+    c = c + lin * w;
     total = total + w;
   }
-  return c / total;
+  let avg = c / total;
+  if (avg.a > 0.0001) {
+    let straight = min(avg.rgb / avg.a, vec3<f32>(1.0));
+    return vec4<f32>(linearToSrgbRgb(straight) * avg.a, avg.a);
+  }
+  return avg;
 }
 `,
   glsl: {
@@ -834,6 +882,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 blurParams; };
 uniform sampler2D uTex;
 in vec2 vUv;
 out vec4 frag;
+${SRGB_TRANSFER_GLSL}
 void main() {
   float r = blurParams.z;
   if (r <= 0.0) {
@@ -846,16 +895,29 @@ void main() {
 
   // CSS blur semantics: radius IS sigma (matches Canvas2D). ±2.5σ extent,
   // spaced taps under the loop cap — see the WGSL twin above.
+  // Linear-premul accumulate; helpers are identity when the kill switch is off.
   float sigma = r;
   const int steps = 30;
   float spacing = max(1.0, (sigma * 2.5) / float(steps));
   for(int i = -steps; i <= steps; i++) {
     float off = float(i) * spacing;
     float w = exp(-0.5 * (off * off) / (sigma * sigma));
-    c += texture(uTex, vUv + dir * off) * w;
+    vec4 t = texture(uTex, vUv + dir * off);
+    vec4 lin = t;
+    if (t.a > 0.0001) {
+      vec3 straight = min(t.rgb / t.a, vec3(1.0));
+      lin = vec4(srgbToLinearRgb(straight) * t.a, t.a);
+    }
+    c += lin * w;
     total += w;
   }
-  frag = c / total;
+  vec4 avg = c / total;
+  if (avg.a > 0.0001) {
+    vec3 straight = min(avg.rgb / avg.a, vec3(1.0));
+    frag = vec4(linearToSrgbRgb(straight) * avg.a, avg.a);
+  } else {
+    frag = avg;
+  }
 }
 `,
   },
@@ -3453,7 +3515,8 @@ const UNPREMUL_GLSL = `vec4 unpremul(vec4 t) {
 `;
 
 /**
- * Rewrite a textured shader to un-premultiply at the sample.
+ * Rewrite a textured shader to un-premultiply at the sample, grade in linear
+ * light (when LINEAR_WORKING_SPACE is on), and encode back before re-premul.
  *
  * Keeps the base NAME — the result IS the shader, not an alternative to it. That
  * is the whole change: there is no `-premul` suffix any more, because there is
@@ -3472,18 +3535,62 @@ function unpremultiplyingSample(base: ShaderSource): ShaderSource {
     }
     return code.split(from).join(to);
   };
-  const wgsl = sub(
-    sub(base.wgsl, '@fragment', `${UNPREMUL_WGSL}@fragment`, 'wgsl fragment entry'),
+  let wgsl = sub(
+    sub(base.wgsl, '@fragment', `${UNPREMUL_WGSL}${SRGB_TRANSFER_WGSL}@fragment`, 'wgsl fragment entry'),
     'textureSample(tex, smp, uv) * obj.tint',
     'unpremul(textureSample(tex, smp, uv)) * obj.tint',
     'wgsl sample',
   );
-  const fragment = sub(
-    sub(base.glsl.fragment, 'void main()', `${UNPREMUL_GLSL}void main()`, 'glsl main'),
+  wgsl = sub(
+    wgsl,
+    'let v = vec4<f32>(c.rgb, 1.0);',
+    'let v = vec4<f32>(srgbToLinearRgb(c.rgb), 1.0);',
+    'wgsl linearize',
+  );
+
+  let fragment = sub(
+    sub(base.glsl.fragment, 'void main()', `${UNPREMUL_GLSL}${SRGB_TRANSFER_GLSL}void main()`, 'glsl main'),
     'texture(uTex, vUv) * tint',
     'unpremul(texture(uTex, vUv)) * tint',
     'glsl sample',
   );
+  fragment = sub(
+    fragment,
+    'vec4 v = vec4(c.rgb, 1.0);',
+    'vec4 v = vec4(srgbToLinearRgb(c.rgb), 1.0);',
+    'glsl linearize',
+  );
+
+  // LUT tables are authored in display-referred sRGB — encode after the matrix
+  // and before the table, then leave the table output alone.
+  if (base.name === 'lut-textured') {
+    wgsl = sub(
+      wgsl,
+      'var graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));',
+      'var graded = linearToSrgbRgb(clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0)));',
+      'wgsl lut encode',
+    );
+    fragment = sub(
+      fragment,
+      'vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);',
+      'vec3 graded = linearToSrgbRgb(clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0));',
+      'glsl lut encode',
+    );
+  } else if (base.name === 'textured3d') {
+    wgsl = sub(wgsl, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'wgsl encode lit');
+    fragment = sub(fragment, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'glsl encode lit');
+  } else if (base.name === 'masked-textured3d') {
+    wgsl = sub(wgsl, 'lit * a', 'linearToSrgbRgb(lit) * a', 'wgsl encode lit');
+    fragment = sub(fragment, 'lit * a', 'linearToSrgbRgb(lit) * a', 'glsl encode lit');
+  } else if (base.name === 'masked-textured') {
+    wgsl = sub(wgsl, 'graded * a', 'linearToSrgbRgb(graded) * a', 'wgsl encode');
+    fragment = sub(fragment, 'graded * a', 'linearToSrgbRgb(graded) * a', 'glsl encode');
+  } else {
+    // textured, deformed-mesh
+    wgsl = sub(wgsl, 'graded * c.a', 'linearToSrgbRgb(graded) * c.a', 'wgsl encode');
+    fragment = sub(fragment, 'graded * c.a', 'linearToSrgbRgb(graded) * c.a', 'glsl encode');
+  }
+
   return { name: base.name, wgsl, glsl: { ...base.glsl, fragment } };
 }
 
@@ -3492,6 +3599,74 @@ function unpremultiplyingSample(base: ShaderSource): ShaderSource {
 // either alpha space, so an un-premultiply in front of it would be dead code
 // operating on a channel it never uses.
 const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
+
+/**
+ * Final scene-color → SURFACE blit. When LINEAR_INTERMEDIATE_STORAGE is on,
+ * scene-color holds linear premul and this encodes to sRGB for the canvas.
+ * First slice keeps storage display-referred, so the encode helpers are
+ * identity / skipped and this is a straight copy (same layout as TEXTURED).
+ */
+const SCENE_BLIT: ShaderSource = {
+  name: 'scene-blit',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${UNPREMUL_WGSL}${SRGB_TRANSFER_WGSL}
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = unpremul(textureSample(tex, smp, uv)) * obj.tint;
+  ${LINEAR_INTERMEDIATE_STORAGE
+    ? 'let rgb = linearToSrgbRgb(c.rgb);'
+    : 'let rgb = c.rgb;'}
+  return vec4<f32>(rgb * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${UNPREMUL_GLSL}${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 c = unpremul(texture(uTex, vUv)) * tint;
+  ${LINEAR_INTERMEDIATE_STORAGE
+    ? 'vec3 rgb = linearToSrgbRgb(c.rgb);'
+    : 'vec3 rgb = c.rgb;'}
+  frag = vec4(rgb * c.a, c.a);
+}
+`,
+  },
+};
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
@@ -3506,5 +3681,6 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   unpremultiplyingSample(TEXTURED3D),
   unpremultiplyingSample(MASKED_TEXTURED3D),
   TEXTURED_SILHOUETTE,
+  SCENE_BLIT,
   GLASS_COMPOSITE,
 ];

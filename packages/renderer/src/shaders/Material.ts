@@ -50,6 +50,17 @@ export const TEXTURED_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Final scene-color → surface blit (optional linear→sRGB encode). */
+export const SCENE_BLIT_MATERIAL: MaterialDescriptor = {
+  shader: 'scene-blit',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 /** Built-in material: masked textured quad. Uniform + texture + sampler + mask texture. */
 export const MASKED_TEXTURED_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured',

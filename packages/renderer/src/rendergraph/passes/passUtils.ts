@@ -9,7 +9,7 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, SCENE_BLIT_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
 import { TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
 import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
 
@@ -219,6 +219,27 @@ export function emitTextured(
     material: TEXTURED_MATERIAL,
     blend,
     uniforms: packTextured(mvp, uvRect, tint, opacity, color),
+    texture,
+    sampler,
+  });
+}
+
+/** Final scene-color → SURFACE blit (optional linear→sRGB encode). */
+export function emitSceneBlit(
+  cmds: CommandBuffer,
+  mvp: Mat3,
+  tint: Color,
+  opacity: number,
+  blend: BlendMode,
+  texture: TextureHandle,
+  sampler: SamplerHandle,
+  uvRect: Rect = FULL_UV,
+): void {
+  cmds.add({
+    batchKey: `scene-blit|${texture.id}|${blend}`,
+    material: SCENE_BLIT_MATERIAL,
+    blend,
+    uniforms: packTextured(mvp, uvRect, tint, opacity),
     texture,
     sampler,
   });

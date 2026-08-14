@@ -69,7 +69,11 @@ describe('every textured family un-premultiplies at the sample', () => {
     // exactly why the original grep for this fix found three families instead of
     // six, so the assertion matches the SHAPE rather than one literal.
     const s = byName(name)!;
-    const multipliesOut = /(graded|lit|outColor|rgb) \* (c\.a|a)\b/;
+    // After linear working-space, most families encode before the output
+    // multiply: `linearToSrgbRgb(graded|lit) * alpha`. LUT encodes before the
+    // table and keeps a bare `graded * c.a`. Match either shape.
+    const multipliesOut =
+      /(linearToSrgbRgb\((?:graded|lit)\)|(?:graded|lit|outColor|rgb)) \* (c\.a|a)\b/;
     expect(s.wgsl).toMatch(multipliesOut);
     expect(s.glsl.fragment).toMatch(multipliesOut);
   });

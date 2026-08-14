@@ -383,26 +383,15 @@ and Plexus are bought for. Lifting this ceiling means giving up the closed form.
 **No imported 3D models, PBR or HDRI.** "3D" here means 2D layers with extrusion
 placed in a 3D space — not a rendered 3D scene. Out of scope by direction.
 
-**No colour management, and no linear working space.** Added 2026-08-11. The
-float *precision* work shipped — `rgba16float` compositing intermediates
-(`rendergraph/passes/index.ts`), WebGL2 gated on `EXT_color_buffer_float` — but
-step 5 of that plan, linear light, did not. There is no sRGB decode on input, no
-encode on output, no project working space, no 32-bpc depth, no LUT/ACES/ODT and
-no HDR output. (`colorSpace`, `colorManagement`, `acescg`, `bitDepth`: zero hits.
-The `linearColor` hits are the Linear Color Key effect, unrelated.)
-
-AE has had 8/16/32 bpc plus a project working space for over a decade. The
-consequence here is not abstract: every add/screen/overlay blend, every glow and
-every blur composites in **gamma space**, which is a large part of why a
-gamma-space glow reads as dirty in the falloff where AE's reads as lit. It
-belongs in Tier 1 rather than Tier 2 because it is not a missing feature the user
-can route around — it is the colour behaviour of every pixel the app produces.
-
-The blocker is the **alpha invariant**: textures are premultiplied at upload *in
-sRGB* (`gpu/types.ts`), and you cannot cheaply re-premultiply in linear after
-sampling premultiplied-sRGB texels. Doing this properly changes the appearance of
-every blend mode and every alpha edge in existing projects, so it needs a
-deliberate render-test golden rebaseline, not a flag.
+**Linear working space — first slice shipped (2026-08-14).** Float *precision*
+(`rgba16float` intermediates) already existed; grade / blend / blur maths now
+run in linear light via `LINEAR_WORKING_SPACE` (default **on**) in
+`packages/renderer/src/shaders/linearWorkingSpace.ts`, encoding back to sRGB
+before write so RTs stay display-referred. Kill switch sits next to
+`HDR_INTERMEDIATES` in `RenderGraph.ts`. `LINEAR_INTERMEDIATE_STORAGE` remains
+false — true linear RT storage (encode only on the EffectPass `scene-blit`) is
+the next colour slice. Still absent: project working-space UI, 32-bpc depth,
+ACES/ODT, HDR output, and linear upload tagging.
 
 ### Tier 2 — ceilings on visual density
 
@@ -500,11 +489,10 @@ Lottie export, and price.
 
 ### Highest-leverage work, if the goal is complex output
 
-1. **Linear-light colour** — reordered to first on 2026-08-11. The precision
-   foundation is already merged, so this is step 5 of a plan that is mostly done,
-   and it improves every glow, blur and additive blend at once rather than adding
-   one more thing to reach for. Cost is the alpha-invariant decision and a
-   deliberate golden rebaseline, not new architecture.
+1. **Linear-light colour — first slice shipped 2026-08-14.** Grade / blend /
+   blur run in linear under `LINEAR_WORKING_SPACE` (default on); goldens
+   re-blessed. Remaining: linear intermediate storage, upload tagging, project
+   working-space / ACES / 32-bpc.
 2. **Particle system** — the largest single *feature* unlock, and it requires
    accepting a stateful simulation with a seeded-replay contract in place of the
    closed form.

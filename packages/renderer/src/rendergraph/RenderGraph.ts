@@ -16,6 +16,11 @@ import type { FrameInfo } from '../core/Frame';
 import type { FrameScene } from '../scene/FrameScene';
 import type { Viewport } from '../viewport/Viewport';
 import { RenderPass, SURFACE, type RenderPassContext, type RenderServices } from './RenderPass';
+// Compositing colour-space kill switch (grade/blend/blur). Kept imported here
+// next to HDR_INTERMEDIATES so both precision toggles are discoverable from
+// resolveTargets. Flip to false in shaders/linearWorkingSpace.ts to restore
+// gamma-space maths without a revert.
+import { LINEAR_WORKING_SPACE } from '../shaders/linearWorkingSpace';
 
 export class RenderGraphError extends Error {
   constructor(
@@ -188,6 +193,9 @@ export class RenderGraph {
     // when the backend cannot render float — every target uses the surface
     // format, exactly as before this change.
     const HDR_INTERMEDIATES = true;
+    // Pin the colour-space kill switch next to HDR so both are visible here.
+    // Actual transfer lives in builtin shaders; this reference documents the pair.
+    void LINEAR_WORKING_SPACE;
     const map = new Map<string, RenderTargetHandle>();
     const { width, height } = viewport.pixelSize;
     const orphaned = this.orphanedTargets();
