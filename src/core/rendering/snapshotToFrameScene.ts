@@ -485,6 +485,20 @@ export function extractSpatialEffects(
         color: c('color'),
       });
     }
+    if (e.type === 'light-sweep') {
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'light-sweep',
+        // Keep −1..2 range — off-frame start/end is intentional.
+        position: n('position') / 100,
+        sweepWidth: Math.max(0, n('sweepWidth')),
+        angle: n('angle'),
+        softness: clamp01n(n('softness') / 100),
+        intensity: clamp01n(n('intensity') / 100),
+        composite: Math.round(n('composite')),
+        color: c('color'),
+      });
+    }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {
       // Map source layer (node id === renderable id). '' / non-string = unset →

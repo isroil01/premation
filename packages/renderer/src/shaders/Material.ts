@@ -294,6 +294,17 @@ export const BEAM_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Built-in material: Light Sweep. Same three bindings as Beam. */
+export const LIGHT_SWEEP_MATERIAL: MaterialDescriptor = {
+  shader: 'light-sweep',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 export const NOISE_MATERIAL: MaterialDescriptor = {
   shader: 'noise',
   topology: 'triangle-list',

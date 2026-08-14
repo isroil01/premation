@@ -622,6 +622,23 @@ export function packBeam(
   return out;
 }
 
+/** Light Sweep — same layout as Beam: ends of the gradient band, then
+ *  params (softness, intensity, composite, unused), then colour. */
+export function packLightSweep(
+  mvp: Mat3, uvRect: Rect,
+  ax: number, ay: number, bx: number, by: number,
+  softness: number, intensity: number, composite: number,
+  color: Color,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = ax; out[o + 1] = ay; out[o + 2] = bx; out[o + 3] = by; o += 4;
+  out[o + 0] = softness; out[o + 1] = intensity; out[o + 2] = composite; out[o + 3] = 0; o += 4;
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
 export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: number, monochrome: boolean): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);

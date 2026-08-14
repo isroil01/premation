@@ -6,8 +6,8 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -926,6 +926,32 @@ export class CompositionPass extends RenderPass {
           ),
           texture: curTex, sampler: clampSampler(),
         });
+      } else if (effect.type === 'light-sweep') {
+        if (effect.intensity <= 0 || effect.sweepWidth <= 0) {
+          // no-op — keep curTex
+        } else {
+          const rad = (effect.angle * Math.PI) / 180;
+          const cos = Math.cos(rad);
+          const sin = Math.sin(rad);
+          // Same geometry as `drawLightSweep`: travel along the angle across the
+          // layer's projected span; band width is comp px → target UV via k.
+          const span = Math.abs(fxBox.width * cos) + Math.abs(fxBox.height * sin);
+          const cx = fxBox.x + fxBox.width * 0.5 + cos * (effect.position - 0.5) * span;
+          const cy = fxBox.y + fxBox.height * 0.5 + sin * (effect.position - 0.5) * span;
+          const k = (kx / viewport.pixelSize.width + ky / viewport.pixelSize.height) / 2;
+          const half = Math.max(0.5, effect.sweepWidth) * 0.5 * k;
+          cmds.add({
+            batchKey: 'light-sweep', material: LIGHT_SWEEP_MATERIAL, blend: 'normal',
+            uniforms: packLightSweep(
+              mvp, targetUv,
+              cx - cos * half, cy - sin * half,
+              cx + cos * half, cy + sin * half,
+              effect.softness, effect.intensity, effect.composite,
+              effect.color,
+            ),
+            texture: curTex, sampler: clampSampler(),
+          });
+        }
       } else if (effect.type === 'noise') {
         cmds.add({
           batchKey: 'noise', material: NOISE_MATERIAL, blend: 'normal',

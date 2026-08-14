@@ -200,6 +200,22 @@ export type RenderableEffect =
       softness: number;
       color: Color;
     }
+  /**
+   * Light Sweep. `position` is a fraction of the layer's projected span
+   * (−1..2 so the band can start/end off-frame). `sweepWidth` is comp px;
+   * `angle` degrees; `softness`/`intensity` 0..1; `composite` matches the
+   * Canvas2D modes (0 over · 1 add · 2 screen · 3 multiply · 4 atop).
+   */
+  | {
+      type: 'light-sweep';
+      position: number;
+      sweepWidth: number;
+      angle: number;
+      softness: number;
+      intensity: number;
+      composite: number;
+      color: Color;
+    }
   | { type: 'noise'; amount: number; evolution: number; monochrome: boolean }
   /**
    * An effect a PLUGIN declared, from WGSL the host validated and compiled.

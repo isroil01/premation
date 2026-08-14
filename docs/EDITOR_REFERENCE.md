@@ -492,8 +492,9 @@ Lottie export, and price.
 4. **Essential Properties — promotion shipped 2026-08-14.** Source comps publish
    props via the property menu; instances show the curated set (nested OK).
    Remaining: colour / text overrides beyond the numeric Transform set.
-5. **A focused effect pass on the light/glow/flare family** — the cheapest route
-   to frames that read as expensive, and it compounds with (1).
+5. **Light/glow/flare — Light Sweep GPU-ported 2026-08-14.** Beam (2026-08-12)
+   and Light Sweep now run as shaders with retained Canvas2D references.
+   Remaining in the family: `lens-flare`, `light-rays`, and broader glow polish.
 
 Motion tracking is a much larger project serving a different audience and should
 not be sequenced against these. Note also that it is **gated behind the decoder**

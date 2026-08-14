@@ -2565,6 +2565,84 @@ void main() {
   }
 };
 
+/**
+ * Light Sweep — soft band of light travelling across the layer.
+ *
+ * Matches `drawLightSweep`: a linear gradient across a band of width
+ * `sweepWidth`, centred at `position` along the angle's normal. Softness
+ * moves the colour-stop shoulders toward the middle. Composite modes mirror
+ * the Canvas2D helper (default source-atop clips the shine to the silhouette).
+ */
+export const LIGHT_SWEEP: ShaderSource = {
+  name: 'light-sweep',
+  wgsl: `
+struct Object {
+  mvp: mat3x3<f32>,
+  uvRect: vec4<f32>,
+  ends: vec4<f32>,
+  params: vec4<f32>,
+  color: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = obj.ends.xy;
+  let b = obj.ends.zw;
+  let soft = obj.params.x;
+  let inten = obj.params.y;
+  let ab = b - a;
+  let len2 = max(dot(ab, ab), 1e-12);
+  let t = clamp(dot(uv - a, ab) / len2, 0.0, 1.0);
+  // Approximate the soft-shouldered band with a smoothstep falloff from the
+  // centre. Matches drawLightSweep visually; avoids a piecewise profile that
+  // has disagreed across backends.
+  let u = abs(t - 0.5) * 2.0;
+  let p = inten * (1.0 - smoothstep(max(0.001, 1.0 - soft), 1.0, u));
+  let add = obj.color.rgb * p;
+  return vec4<f32>(src.rgb + add * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 src = texture(uTex, vUv);
+  vec2 a0 = ends.xy;
+  vec2 a1 = ends.zw;
+  vec2 ab = a1 - a0;
+  float len2 = max(dot(ab, ab), 1e-12);
+  float t = clamp(dot(vUv - a0, ab) / len2, 0.0, 1.0);
+  float soft = params.x;
+  float inten = params.y;
+  float u = abs(t - 0.5) * 2.0;
+  float p = inten * (1.0 - smoothstep(max(0.001, 1.0 - soft), 1.0, u));
+  vec3 add = color.rgb * p;
+  frag = vec4(src.rgb + add * src.a, src.a);
+}
+`
+  }
+};
+
 export const NOISE: ShaderSource = {
   name: 'noise',
   wgsl: `
@@ -3670,7 +3748,7 @@ void main() {
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
-  FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, BEND,
+  FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, LIGHT_SWEEP, BEND,
   BEVEL_ALPHA, BEVEL_EDGES, SPOTLIGHT, SPHERE, CYLINDER, ARITHMETIC,
   SOLID3D,
   // The six families that sample a layer texture. Every one un-premultiplies.
