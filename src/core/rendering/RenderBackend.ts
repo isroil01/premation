@@ -462,6 +462,8 @@ export interface RenderSnapshot {
   channel?: 'rgb' | 'alpha' | 'red' | 'green' | 'blue';
   /** Current playhead time in seconds. */
   time?: number;
+  /** Comp frame rate — stateful particles and other frame-stepped sims. */
+  fps?: number;
   layers: ReadonlyArray<RenderLayer>;
   /** Guide overlays drawn over the composition. */
   overlays?: RenderOverlays;

@@ -1131,6 +1131,7 @@ export class AppTextureProvider implements TextureProvider {
     fieldW: number,
     fieldH: number,
     transformScale = 1,
+    fps = 30,
   ): void {
     const w = Math.max(1, Math.round(fieldW));
     const h = Math.max(1, Math.round(fieldH));
@@ -1138,7 +1139,7 @@ export class AppTextureProvider implements TextureProvider {
     const requestedScale = dpr * Math.max(1, transformScale) * (this.rasterScale || 1);
     const scale = Math.max(0.5, Math.min(requestedScale, PARTICLE_TEX_MAX / Math.max(w, h)));
     const time = Math.max(0, timeSec);
-    const signature = particleFieldSignature(cfg, time, w, h, scale);
+    const signature = `${particleFieldSignature(cfg, time, w, h, scale)}|fps:${fps}`;
     let entry = this.particleEntries.get(key);
     if (!entry) {
       entry = { kind: 'particles', signature: '', canvas: document.createElement('canvas'), texture: null, w: 0, h: 0 };
@@ -1154,7 +1155,7 @@ export class AppTextureProvider implements TextureProvider {
     }
     const ctx = entry.canvas.getContext('2d');
     if (!ctx) return;
-    drawParticleField(ctx, cfg, time, w, h, scale);
+    drawParticleField(ctx, cfg, time, w, h, scale, { fps, cacheKey: key });
 
     if (entry.texture === null || entry.w !== pxW || entry.h !== pxH) {
       entry.texture = this.resources.texture(

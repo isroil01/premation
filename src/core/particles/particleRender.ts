@@ -12,6 +12,9 @@
  */
 
 import { simulateParticles, type ParticleBlend, type ParticleConfig, type ParticleShape } from './particleSim';
+import { particlesFromSoA } from './statefulParticleSim';
+import { statefulParticleCache } from './statefulParticleCache';
+import type { Particle } from './particleSim';
 
 /** One particle placed in TEXTURE space (origin top-left, emitter at centre). */
 export interface ParticleSprite {
@@ -28,21 +31,14 @@ export interface ParticleSprite {
   shape: ParticleShape;
 }
 
-/**
- * All live particles at `time`, mapped from emitter-local space into a
- * `fieldW × fieldH` texture with the emitter at the field centre — the layer's
- * transform then places/rotates/scales the whole field in the comp, so flying
- * the emitter is just keyframing the layer. Pure and deterministic.
- */
-export function particleSprites(
-  cfg: ParticleConfig,
-  time: number,
+function toSprites(
+  particles: Particle[],
   fieldW: number,
   fieldH: number,
 ): ParticleSprite[] {
   const cx = fieldW / 2;
   const cy = fieldH / 2;
-  return simulateParticles(cfg, time).map((p) => ({
+  return particles.map((p) => ({
     x: cx + p.x,
     y: cy + p.y,
     size: p.size,
@@ -51,6 +47,33 @@ export function particleSprites(
     opacity: p.opacity,
     shape: p.shape,
   }));
+}
+
+/**
+ * All live particles at `time`, mapped from emitter-local space into a
+ * `fieldW × fieldH` texture with the emitter at the field centre — the layer's
+ * transform then places/rotates/scales the whole field in the comp, so flying
+ * the emitter is just keyframing the layer. Pure and deterministic.
+ *
+ * When `cfg.simMode === 'stateful'`, steps through SimulationCache (floor bounce)
+ * using integer frames from `time * fps`. `cacheKey` must be stable per layer.
+ */
+export function particleSprites(
+  cfg: ParticleConfig,
+  time: number,
+  fieldW: number,
+  fieldH: number,
+  opts?: { fps?: number; cacheKey?: string },
+): ParticleSprite[] {
+  if (cfg.simMode === 'stateful') {
+    const fps = Math.max(1, opts?.fps ?? 30);
+    const key = opts?.cacheKey ?? `anon:${particleFieldSignature(cfg, time, fieldW, fieldH, 1)}`;
+    const cache = statefulParticleCache(key, cfg, fps);
+    const frame = Math.max(0, Math.floor(time * fps + 1e-9));
+    const state = cache.stateAt(frame);
+    return toSprites(particlesFromSoA(state, cfg), fieldW, fieldH);
+  }
+  return toSprites(simulateParticles(cfg, time), fieldW, fieldH);
 }
 
 /** Canvas composite op for the intra-field transfer mode ('add' = glow). */
@@ -105,6 +128,7 @@ export function drawParticleField(
   fieldW: number,
   fieldH: number,
   scale = 1,
+  opts?: { fps?: number; cacheKey?: string },
 ): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.save();
@@ -112,7 +136,7 @@ export function drawParticleField(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.globalCompositeOperation = particleCompositeOp(cfg.blend);
-  for (const s of particleSprites(cfg, time, fieldW, fieldH)) {
+  for (const s of particleSprites(cfg, time, fieldW, fieldH, opts)) {
     if (s.size <= 0 || s.opacity <= 0) continue;
     const r = s.size / 2;
     if (s.shape === 'circle') {

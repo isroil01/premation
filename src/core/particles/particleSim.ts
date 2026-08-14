@@ -18,6 +18,8 @@ import type { SceneNode } from '@core/types';
 export type EmitterType = 'point' | 'box' | 'circle';
 export type ParticleShape = 'circle' | 'square' | 'line' | 'star';
 export type ParticleBlend = 'normal' | 'add';
+/** `ballistic` = closed-form (default). `stateful` = SimulationCache + floor bounce. */
+export type ParticleSimMode = 'ballistic' | 'stateful';
 
 export interface ParticleConfig {
   emitterType: EmitterType;
@@ -56,6 +58,17 @@ export interface ParticleConfig {
   blend: ParticleBlend;
   /** Randomisation seed — changing it reshuffles every particle. */
   seed: number;
+  /**
+   * Simulation mode. Default `ballistic` keeps the closed-form emitter.
+   * `stateful` uses frame-stepping with floor bounce (seeded-replay scrub).
+   */
+  simMode?: ParticleSimMode;
+  /** Floor Y in emitter-local px (positive down). Used when simMode=stateful. */
+  bounceFloor?: number;
+  /** Bounce restitution 0..1 when simMode=stateful. */
+  bounceRestitution?: number;
+  /** Air damping per frame 0..1 when simMode=stateful. 1 = none. */
+  bounceDamping?: number;
 }
 
 export interface Particle {
@@ -97,6 +110,10 @@ export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
   shape: 'circle',
   blend: 'add',
   seed: 1,
+  simMode: 'ballistic',
+  bounceFloor: 160,
+  bounceRestitution: 0.65,
+  bounceDamping: 0.998,
 };
 
 /** Read a node's particle config off its `fx` component, filling in every

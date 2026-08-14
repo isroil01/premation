@@ -582,6 +582,7 @@ export class MotionRendererBackend implements RenderBackend {
                 layer.width,
                 layer.height,
                 maxLayerScale,
+                snapshot.fps ?? 30,
               );
             } else if (layer.kind === 'image' && layer.src) {
               const key = `asset:${layer.id}`;

@@ -3248,6 +3248,7 @@ export function buildSnapshot(
     backgroundPaint: comp.backgroundPaint,
     transparent: comp.transparent,
     time: t,
+    fps,
     layers,
     overlays,
     view,

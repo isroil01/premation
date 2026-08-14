@@ -205,10 +205,11 @@ plus an **ARAP puppet** with pins and sketch. Both compose on the same layer and
 are GPU-deformed. AE has no skeleton at all — its users buy DUIK.
 
 ### Particles
-`particleSim.ts` — a deterministic closed-form emitter. Particle *i* is born at
-`i / birthRate`, its randoms hash from `i`, position is the closed-form ballistic
-`p0 + v0·age + ½g·age²`. No frame stepping and no accumulated state, so scrubbing
-to any time gives the identical frame. See §4 for the cost of that choice.
+Default `simMode: 'ballistic'` — closed-form emitter (`particleSim.ts`): particle
+`i` born at `i / birthRate`, hash RNG, ballistic `p0 + v0·age + ½g·age²`. Opt-in
+`simMode: 'stateful'` (`statefulParticleSim.ts` + `SimulationCache`) adds
+frame-stepping with floor bounce and seeded-replay scrub. Still no turbulence,
+particle–particle collisions, trails, sub-emitters, 3D, or layer-as-particle.
 
 ### Composition background and export alpha
 
@@ -372,13 +373,12 @@ shaded per **face**, each face flat. Likewise `shadowCatcher`, `environmentLight
 and `imageBased` are all zero hits, so there is no image-based lighting and no
 way to land a 3D element on a real plate.
 
-**Particles are structurally limited by the determinism choice.** 253 lines:
-3 emitter types, 4 shapes (circle/square/line/star), gravity, spin, and
-size/colour/opacity ramps. There is **no turbulence or wind field, no collisions,
-no sub-emitters, no trails, no layer-as-particle, and no 3D particles.** Exact
-scrubbing is a genuinely valuable property, but closed-form position is precisely
-what forbids the interacting, stateful behaviour that Trapcode Particular, Form
-and Plexus are bought for. Lifting this ceiling means giving up the closed form.
+**Particles — stateful floor bounce shipped (2026-08-14); density still limited.**
+Ballistic mode remains the default. Stateful mode (`simMode: 'stateful'`) uses
+`SimulationCache` for seeded-replay scrub with a floor bounce — the cheapest
+history-dependent proof. Still **no turbulence or wind field, no collisions
+between particles, no sub-emitters, no trails, no layer-as-particle, and no 3D
+particles.** Particular / Form / Plexus class density remains a later ceiling.
 
 **No imported 3D models, PBR or HDRI.** "3D" here means 2D layers with extrusion
 placed in a 3D space — not a rendered 3D scene. Out of scope by direction.
@@ -493,9 +493,9 @@ Lottie export, and price.
    blur run in linear under `LINEAR_WORKING_SPACE` (default on); goldens
    re-blessed. Remaining: linear intermediate storage, upload tagging, project
    working-space / ACES / 32-bpc.
-2. **Particle system** — the largest single *feature* unlock, and it requires
-   accepting a stateful simulation with a seeded-replay contract in place of the
-   closed form.
+2. **Particle system — stateful floor bounce shipped 2026-08-14.** Opt-in
+   `simMode: 'stateful'` with `SimulationCache`. Remaining density: turbulence,
+   collisions, trails, sub-emitters, 3D / layer-as-particle.
 3. **Per-pixel depth of field with an iris model** — a real renderer pass, not a
    per-layer blur. Fixes the "3D looks flat" complaint at its root.
 4. **Essential Properties on precomps** — cheapest large win, because the

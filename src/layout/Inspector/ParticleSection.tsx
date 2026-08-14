@@ -166,8 +166,60 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
         </div>
         {StaticNum('seed', 'Random Seed', 0)}
 
+        <div className={styles.popoverRow}>
+          <span className={styles.popoverLabel}>Sim</span>
+          <select
+            className={styles.select}
+            style={{ width: 110 }}
+            value={cfg.simMode ?? 'ballistic'}
+            onChange={(e) => set('simMode', e.target.value as ParticleConfig['simMode'])}
+            aria-label="Simulation mode"
+          >
+            <option value="ballistic">Ballistic</option>
+            <option value="stateful">Stateful</option>
+          </select>
+        </div>
+        {(cfg.simMode ?? 'ballistic') === 'stateful' && (
+          <>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Floor Y</span>
+              <ValueField
+                value={cfg.bounceFloor ?? 160}
+                onChange={(v) => set('bounceFloor', Number(v))}
+                aria-label="Floor Y"
+              />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Bounce</span>
+              <ValueField
+                value={cfg.bounceRestitution ?? 0.65}
+                min={0}
+                max={1}
+                onChange={(v) => set('bounceRestitution', Number(v))}
+                aria-label="Bounce restitution"
+              />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Damping</span>
+              <ValueField
+                value={cfg.bounceDamping ?? 0.998}
+                min={0}
+                max={1}
+                onChange={(v) => set('bounceDamping', Number(v))}
+                aria-label="Air damping"
+              />
+            </div>
+          </>
+        )}
+
         <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Deterministic emitter — scrubbing is stable. The layer transform moves the whole system; keyframe it to fly the emitter.
+          {(cfg.simMode ?? 'ballistic') === 'stateful'
+            ? 'Stateful emitter with floor bounce — scrubbing replays from snapshots, identical every time.'
+            : 'Deterministic ballistic emitter — scrubbing is stable. Switch to Stateful for floor bounce.'}
+          {' '}The layer transform moves the whole system.
         </p>
       </div>
     </div>
