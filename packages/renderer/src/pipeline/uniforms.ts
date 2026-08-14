@@ -639,6 +639,22 @@ export function packLightSweep(
   return out;
 }
 
+/** Lens Flare — ends = (center, mid); params = (brightness, coreR, haloR, streakH). */
+export function packLensFlare(
+  mvp: Mat3, uvRect: Rect,
+  cx: number, cy: number, midX: number, midY: number,
+  brightness: number, coreR: number, haloR: number, streakH: number,
+  color: Color,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = cx; out[o + 1] = cy; out[o + 2] = midX; out[o + 3] = midY; o += 4;
+  out[o + 0] = brightness; out[o + 1] = coreR; out[o + 2] = haloR; out[o + 3] = streakH; o += 4;
+  out[o + 0] = color.r; out[o + 1] = color.g; out[o + 2] = color.b; out[o + 3] = color.a;
+  return out;
+}
+
 export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: number, monochrome: boolean): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
   let o = packMat3(mvp, out, 0);

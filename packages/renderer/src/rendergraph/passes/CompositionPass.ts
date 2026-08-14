@@ -6,8 +6,8 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -947,6 +947,34 @@ export class CompositionPass extends RenderPass {
               cx - cos * half, cy - sin * half,
               cx + cos * half, cy + sin * half,
               effect.softness, effect.intensity, effect.composite,
+              effect.color,
+            ),
+            texture: curTex, sampler: clampSampler(),
+          });
+        }
+      } else if (effect.type === 'lens-flare') {
+        if (effect.brightness <= 0) {
+          // no-op
+        } else {
+          // Centre is an offset from the LAYER mid in composition px — same as
+          // applyLensFlare(w/2+centerX, …). Radii scale with max(box) like the
+          // CPU path's span = max(w,h).
+          const kxUv = kx / viewport.pixelSize.width;
+          const kyUv = ky / viewport.pixelSize.height;
+          const midX = fxBox.x + fxBox.width * 0.5;
+          const midY = fxBox.y + fxBox.height * 0.5;
+          const cx = midX + effect.centerX * kxUv;
+          const cy = midY + effect.centerY * kyUv;
+          const span = Math.max(fxBox.width, fxBox.height);
+          const coreR = span * 0.06 * effect.scale;
+          const haloR = span * 0.35 * effect.scale;
+          const streakH = Math.max(coreR * 0.12, 1e-6);
+          cmds.add({
+            batchKey: 'lens-flare', material: LENS_FLARE_MATERIAL, blend: 'normal',
+            uniforms: packLensFlare(
+              mvp, targetUv,
+              cx, cy, midX, midY,
+              effect.brightness, coreR, haloR, streakH,
               effect.color,
             ),
             texture: curTex, sampler: clampSampler(),

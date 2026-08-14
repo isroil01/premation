@@ -216,6 +216,19 @@ export type RenderableEffect =
       composite: number;
       color: Color;
     }
+  /**
+   * Lens Flare. `centerX`/`centerY` are offsets from the layer centre in
+   * composition pixels (same as the effect controls). `brightness` 0..1;
+   * `scale` multiplies the halo/core/ghost radii.
+   */
+  | {
+      type: 'lens-flare';
+      centerX: number;
+      centerY: number;
+      brightness: number;
+      scale: number;
+      color: Color;
+    }
   | { type: 'noise'; amount: number; evolution: number; monochrome: boolean }
   /**
    * An effect a PLUGIN declared, from WGSL the host validated and compiled.

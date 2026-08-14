@@ -62,6 +62,10 @@ const PORTED: ReadonlyArray<{ type: string; params: Record<string, unknown> }> =
     type: 'light-sweep',
     params: { position: 50, sweepWidth: 120, angle: 35, color: '#ffffff', intensity: 70, softness: 60, composite: 4 },
   },
+  {
+    type: 'lens-flare',
+    params: { centerX: 48, centerY: -28, brightness: 70, scale: 1, color: '#ffd9a0' },
+  },
 ];
 
 const layerWith = (effects: Effect[]): RenderLayer =>

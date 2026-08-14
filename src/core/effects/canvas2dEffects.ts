@@ -163,7 +163,7 @@ const CANVAS2D_ONLY = new Set<string>([
   'gradient-wipe',
   'card-wipe',
   // Generate / Text — these DRAW rather than transform, like `beam` above.
-  'lens-flare',
+  // 'lens-flare' PORTED 2026-08-14 — GPU shader; Canvas2D retained in IMPLEMENTED.
   'numbers',
   'timecode',
   'audio-spectrum',
@@ -303,6 +303,7 @@ const CANVAS2D_IMPLEMENTED: ReadonlySet<string> = new Set<string>([
   // here for the same reason the four above are.
   'beam',
   'light-sweep',
+  'lens-flare',
   /*
     Apply Color LUT moved OFF the forces-a-bake list when it gained a GPU
     shader — a 3D LUT is a texture lookup, which is what the strip in

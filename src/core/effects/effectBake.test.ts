@@ -19,7 +19,7 @@ describe('bake predicates', () => {
     // it gained a shader (2026-08-12); it kept its Canvas2D pass, so it is
     // still `hasCanvas2dImplementation`, which is the pairing asserted below.
     for (const t of ['blur', 'glow', 'brightness', 'levels', 'curves', 'tint', 'gradient-ramp',
-      'fractal-noise', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise', 'beam', 'light-sweep']) {
+      'fractal-noise', 'displacement-map', 'fill', 'stroke', 'sharpen', 'noise', 'beam', 'light-sweep', 'lens-flare']) {
       expect(isGpuUnbakeableEffect(t)).toBe(false);
     }
   });
@@ -40,7 +40,7 @@ describe('bake predicates', () => {
       expect(hasCanvas2dImplementation(t)).toBe(true);
     }
     // Anything that forces a bake must also be drawable by it.
-    for (const t of ['inner-shadow', 'inner-glow', 'satin', 'bevel', 'beam', 'light-sweep', 'keylight',
+    for (const t of ['inner-shadow', 'inner-glow', 'satin', 'bevel', 'beam', 'light-sweep', 'lens-flare', 'keylight',
       'wave-warp', 'turbulent-displace', 'four-color-gradient', 'directional-blur',
       'linear-wipe', 'transform']) {
       expect(hasCanvas2dImplementation(t)).toBe(true);

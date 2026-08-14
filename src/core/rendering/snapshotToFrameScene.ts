@@ -499,6 +499,17 @@ export function extractSpatialEffects(
         color: c('color'),
       });
     }
+    if (e.type === 'lens-flare') {
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'lens-flare',
+        centerX: n('centerX'),
+        centerY: n('centerY'),
+        brightness: clamp01n(n('brightness') / 100),
+        scale: Math.max(0.05, n('scale')),
+        color: c('color'),
+      });
+    }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {
       // Map source layer (node id === renderable id). '' / non-string = unset →
