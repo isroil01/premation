@@ -375,15 +375,18 @@ particles.** Particular / Form / Plexus class density remains a later ceiling.
 **No imported 3D models, PBR or HDRI.** "3D" here means 2D layers with extrusion
 placed in a 3D space — not a rendered 3D scene. Out of scope by direction.
 
-**Linear working space — first slice shipped (2026-08-14).** Float *precision*
-(`rgba16float` intermediates) already existed; grade / blend / blur maths now
-run in linear light via `LINEAR_WORKING_SPACE` (default **on**) in
-`packages/renderer/src/shaders/linearWorkingSpace.ts`, encoding back to sRGB
-before write so RTs stay display-referred. Kill switch sits next to
-`HDR_INTERMEDIATES` in `RenderGraph.ts`. `LINEAR_INTERMEDIATE_STORAGE` remains
-false — true linear RT storage (encode only on the EffectPass `scene-blit`) is
-the next colour slice. Still absent: project working-space UI, 32-bpc depth,
-ACES/ODT, HDR output, and linear upload tagging.
+**Linear working space — storage slice shipped (2026-08-14).** Float *precision*
+(`rgba16float` intermediates) already existed; grade / blend / blur maths run
+in linear light via `LINEAR_WORKING_SPACE` (default **on**) in
+`packages/renderer/src/shaders/linearWorkingSpace.ts`. `LINEAR_INTERMEDIATE_STORAGE`
+is also on: RTs stay linear and EffectPass `scene-blit` encodes to sRGB for
+the canvas. Uploads remain display-referred and are linearized at the TEXTURED
+sample. RT copies use a `*-linear` shader variant so they are not decoded
+twice. Every frame routes through scene-color + `scene-blit` so linearized
+solids are encoded, not written into the 8-bit canvas. Kill
+switches sit next to `HDR_INTERMEDIATES` in `RenderGraph.ts`. Still absent:
+project working-space UI, 32-bpc depth, ACES/ODT, HDR output, and hardware
+sRGB upload tagging.
 
 ### Tier 2 — ceilings on visual density
 
@@ -476,10 +479,10 @@ Lottie export, and price.
 
 ### Highest-leverage work, if the goal is complex output
 
-1. **Linear-light colour — first slice shipped 2026-08-14.** Grade / blend /
-   blur run in linear under `LINEAR_WORKING_SPACE` (default on); goldens
-   re-blessed. Remaining: linear intermediate storage, upload tagging, project
-   working-space / ACES / 32-bpc.
+1. **Linear-light colour — storage slice shipped 2026-08-14.** Grade / blend /
+   blur run in linear under `LINEAR_WORKING_SPACE`; RTs stay linear until
+   `scene-blit` (`LINEAR_INTERMEDIATE_STORAGE`). Remaining: hardware sRGB
+   upload tagging, project working-space / ACES / 32-bpc.
 2. **Particle system — stateful floor bounce shipped 2026-08-14.** Opt-in
    `simMode: 'stateful'` with `SimulationCache`. Remaining density: turbulence,
    collisions, trails, sub-emitters, 3D / layer-as-particle.

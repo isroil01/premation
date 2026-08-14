@@ -23,6 +23,7 @@ import { Viewport, type ViewportOptions } from '../../viewport/Viewport';
 import type { FrameScene } from '../../scene/FrameScene';
 import type { FrameInfo } from '../Frame';
 import { Logger } from '../../utils/Logger';
+import { needsEncodeBlit } from '../../shaders/linearWorkingSpace';
 
 export interface RendererOptions {
   /** The GPU backend (WebGPU/WebGL2/Null). Injected — the renderer owns it. */
@@ -148,10 +149,11 @@ export class Renderer {
   renderViewport(viewport: Viewport, scene: FrameScene, frame: FrameInfo): void {
     if (!this.inFrame) throw new Error('renderViewport called outside a frame');
     
-    // Dynamically toggle EffectPass based on whether the scene has layers with effects
+    // Dynamically toggle EffectPass. Linear RT storage always needs the encode
+    // blit — otherwise packColor's linearized solids land in the 8-bit canvas.
     const effectPass = this.graph.getPass('effect');
     if (effectPass) {
-      const needsEffect = !!scene.hasEffects;
+      const needsEffect = needsEncodeBlit(!!scene.hasEffects);
       if (effectPass.enabled !== needsEffect) {
         effectPass.enabled = needsEffect;
         this.graph.invalidate();

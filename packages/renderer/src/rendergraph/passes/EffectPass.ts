@@ -79,8 +79,8 @@ export class EffectPass extends RenderPass {
 
     services.commands.clear();
     // Dedicated scene blit: encodes linear→sRGB when LINEAR_INTERMEDIATE_STORAGE
-    // is on; otherwise a straight copy. Grade/blend already encode per-op when
-    // LINEAR_WORKING_SPACE is on (see shaders/linearWorkingSpace.ts).
+    // is on. Grade/blend write working-space when that flag is on; uploads still
+    // linearize at the TEXTURED sample (see shaders/linearWorkingSpace.ts).
     emitSceneBlit(
       services.commands,
       screenMvp(),

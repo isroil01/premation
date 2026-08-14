@@ -11,24 +11,29 @@ import {
   LINEAR_INTERMEDIATE_STORAGE,
   SRGB_TRANSFER_GLSL,
   SRGB_TRANSFER_WGSL,
+  srgbChanToLinear,
+  toWorkingColor,
+  needsEncodeBlit,
 } from '../shaders/linearWorkingSpace';
 
 const byName = (n: string) => BUILTIN_SHADERS.find((s) => s.name === n);
 
 describe('linear working space', () => {
-  it('exposes the kill switch (default on for AE-parity linear light)', () => {
+  it('exposes the kill switches (working space + linear RT storage)', () => {
     expect(LINEAR_WORKING_SPACE).toBe(true);
-    // First slice keeps display-referred RT storage; blit encode is prepared.
-    expect(LINEAR_INTERMEDIATE_STORAGE).toBe(false);
+    expect(LINEAR_INTERMEDIATE_STORAGE).toBe(true);
   });
 
   it('ships real transfer helpers when the switch is on', () => {
     expect(SRGB_TRANSFER_WGSL).toContain('srgbToLinearChan');
     expect(SRGB_TRANSFER_GLSL).toContain('srgbToLinearChan');
     expect(SRGB_TRANSFER_WGSL).toContain('linearToSrgbChan');
+    expect(SRGB_TRANSFER_WGSL).toContain('workingFromSample');
+    expect(SRGB_TRANSFER_WGSL).toContain('workingToStorage');
+    expect(SRGB_TRANSFER_WGSL).toContain('storageToWorking');
   });
 
-  it.each(['textured', 'masked-textured', 'deformed-mesh', 'blend-combine', 'blur', 'scene-blit'])(
+  it.each(['textured', 'textured-linear', 'masked-textured', 'deformed-mesh', 'blend-combine', 'blur', 'scene-blit'])(
     '%s carries srgb↔linear helpers in both dialects',
     (name) => {
       const s = byName(name)!;
@@ -40,13 +45,33 @@ describe('linear working space', () => {
     },
   );
 
-  it('textured linearizes before the colour matrix', () => {
+  it('textured linearizes uploads at the sample and does not encode before write', () => {
     const s = byName('textured')!;
-    expect(s.wgsl).toContain('srgbToLinearRgb(c.rgb)');
-    expect(s.wgsl).toContain('linearToSrgbRgb(graded)');
+    expect(s.wgsl).toContain('workingFromSample(c.rgb, 0.0)');
+    expect(s.wgsl).not.toContain('linearToSrgbRgb(graded)');
+    expect(s.wgsl).toContain('graded * c.a');
   });
 
-  it('registers scene-blit for the EffectPass encode path', () => {
+  it('textured-linear skips the upload decode so RT copies stay in working space', () => {
+    const s = byName('textured-linear')!;
+    expect(s).toBeDefined();
+    expect(s.wgsl).toContain('workingFromSample(c.rgb, 1.0)');
+    expect(s.wgsl).not.toContain('workingFromSample(c.rgb, 0.0)');
+  });
+
+  it('scene-blit encodes linear working-space to sRGB for the canvas', () => {
     expect(byName('scene-blit')).toBeDefined();
+    expect(byName('scene-blit')!.wgsl).toContain('linearToSrgbRgb(c.rgb)');
+  });
+
+  it('toWorkingColor linearizes mid-grey and leaves 0/1 alone', () => {
+    expect(toWorkingColor({ r: 0, g: 0, b: 0, a: 1 })).toEqual({ r: 0, g: 0, b: 0, a: 1 });
+    expect(toWorkingColor({ r: 1, g: 1, b: 1, a: 0.5 })).toEqual({ r: 1, g: 1, b: 1, a: 0.5 });
+    expect(toWorkingColor({ r: 0.5, g: 0.5, b: 0.5, a: 1 }).r).toBeCloseTo(srgbChanToLinear(0.5));
+  });
+
+  it('forces the encode blit for every frame while RT storage is linear', () => {
+    expect(needsEncodeBlit(false)).toBe(LINEAR_INTERMEDIATE_STORAGE);
+    expect(needsEncodeBlit(true)).toBe(true);
   });
 });

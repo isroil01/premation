@@ -1,13 +1,14 @@
 /**
  * Linear working-space kill switch and shader transfer helpers.
  *
- * Float intermediates (`rgba16float`) already exist; compositing still ran in
- * gamma-encoded sRGB. Flipping `LINEAR_WORKING_SPACE` makes grade / blend / blur
- * maths run in linear light, then encode back to sRGB before writing so render
- * targets stay display-referred and safe to re-sample through the same path
- * (uploads and intermediate RTs share `TEXTURED`).
+ * Float intermediates (`rgba16float`) already exist. `LINEAR_WORKING_SPACE`
+ * makes grade / blend / blur maths run in linear light. `LINEAR_INTERMEDIATE_STORAGE`
+ * keeps those RTs in linear until EffectPass `scene-blit` encodes to sRGB for
+ * the canvas. Uploads stay display-referred: TEXTURED linearizes at the sample.
+ * RT copies use the `*-linear` shader variant (no upload decode).
  *
- * Set to `false` to restore the previous gamma-space behaviour without a revert.
+ * Set `LINEAR_WORKING_SPACE` to `false` to restore gamma-space maths without a
+ * revert. Storage is meaningful only while working-space is on.
  * Mirrored next to `HDR_INTERMEDIATES` in `RenderGraph.ts` for discoverability.
  *
  * Transfer matches IEC 61966-2-1 (same curves as `packages/design-system`
@@ -15,17 +16,80 @@
  * renderer must stay free of UI deps.
  */
 
-/** Kill switch. `true` = linear grade/blend/blur with sRGB storage.
+import type { Color } from '../core/math/Color';
+
+/** Kill switch. `true` = linear grade/blend/blur.
  *  Default on for AE-parity; flip to false to restore gamma-space maths
  *  without a code revert. Goldens must be reblessed when changing this. */
 export const LINEAR_WORKING_SPACE = true;
 
 /**
  * When true, float scene-color stays linear until the EffectPass blit encodes.
- * First slice keeps this false: per-op encode before write, so blit is a copy.
- * Flip together with removing encode-before-write once uploads are tagged.
+ * Uploads remain sRGB and are linearized at the TEXTURED sample; RT copies use
+ * the `*-linear` shader variant so they are not decoded twice. Authored uniforms/clears go
+ * through `toWorkingColor`.
  */
-export const LINEAR_INTERMEDIATE_STORAGE = false;
+export const LINEAR_INTERMEDIATE_STORAGE = LINEAR_WORKING_SPACE;
+
+/** Scene-color + encode blit. Forced on while RTs stay linear so packColor's
+ *  linearized solids are not written into the 8-bit canvas (plugin-control was
+ *  147,32,32 against identity's 200,100,100 for `#c86464` when the no-effect
+ *  path drew straight to SURFACE). */
+export function needsEncodeBlit(hasEffects: boolean): boolean {
+  return hasEffects || LINEAR_INTERMEDIATE_STORAGE;
+}
+
+/** IEC 61966-2-1 channel decode. Same numbers as the shader helpers. */
+export function srgbChanToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+export function linearChanToSrgb(c: number): number {
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * Math.max(c, 0) ** (1 / 2.4) - 0.055;
+}
+
+/** Authored display-referred RGB → values to write into a working-space RT. */
+export function toWorkingColor(c: Color): Color {
+  if (!LINEAR_WORKING_SPACE || !LINEAR_INTERMEDIATE_STORAGE) return c;
+  return {
+    r: srgbChanToLinear(c.r),
+    g: srgbChanToLinear(c.g),
+    b: srgbChanToLinear(c.b),
+    a: c.a,
+  };
+}
+
+const STORAGE_WGSL = LINEAR_INTERMEDIATE_STORAGE
+  ? /* wgsl */ `
+fn workingFromSample(rgb : vec3<f32>, srcLinear : f32) -> vec3<f32> {
+  return select(srgbToLinearRgb(rgb), rgb, srcLinear > 0.5);
+}
+fn workingToStorage(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
+fn storageToWorking(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
+`
+  : /* wgsl */ `
+fn workingFromSample(rgb : vec3<f32>, srcLinear : f32) -> vec3<f32> {
+  return srgbToLinearRgb(rgb);
+}
+fn workingToStorage(rgb : vec3<f32>) -> vec3<f32> { return linearToSrgbRgb(rgb); }
+fn storageToWorking(rgb : vec3<f32>) -> vec3<f32> { return srgbToLinearRgb(rgb); }
+`;
+
+const STORAGE_GLSL = LINEAR_INTERMEDIATE_STORAGE
+  ? /* glsl */ `
+vec3 workingFromSample(vec3 rgb, float srcLinear) {
+  return srcLinear > 0.5 ? rgb : srgbToLinearRgb(rgb);
+}
+vec3 workingToStorage(vec3 rgb) { return rgb; }
+vec3 storageToWorking(vec3 rgb) { return rgb; }
+`
+  : /* glsl */ `
+vec3 workingFromSample(vec3 rgb, float srcLinear) {
+  return srgbToLinearRgb(rgb);
+}
+vec3 workingToStorage(vec3 rgb) { return linearToSrgbRgb(rgb); }
+vec3 storageToWorking(vec3 rgb) { return srgbToLinearRgb(rgb); }
+`;
 
 const SRGB_TRANSFER_WGSL_REAL = /* wgsl */ `
 fn srgbToLinearChan(c : f32) -> f32 {
@@ -42,6 +106,7 @@ fn srgbToLinearRgb(c : vec3<f32>) -> vec3<f32> {
 fn linearToSrgbRgb(c : vec3<f32>) -> vec3<f32> {
   return vec3<f32>(linearToSrgbChan(c.r), linearToSrgbChan(c.g), linearToSrgbChan(c.b));
 }
+${STORAGE_WGSL}
 `;
 
 const SRGB_TRANSFER_GLSL_REAL = /* glsl */ `
@@ -57,17 +122,24 @@ vec3 srgbToLinearRgb(vec3 c) {
 vec3 linearToSrgbRgb(vec3 c) {
   return vec3(linearToSrgbChan(c.r), linearToSrgbChan(c.g), linearToSrgbChan(c.b));
 }
+${STORAGE_GLSL}
 `;
 
 /** Identity stubs so call sites compile when the kill switch is off. */
 const SRGB_TRANSFER_WGSL_IDENTITY = /* wgsl */ `
 fn srgbToLinearRgb(c : vec3<f32>) -> vec3<f32> { return c; }
 fn linearToSrgbRgb(c : vec3<f32>) -> vec3<f32> { return c; }
+fn workingFromSample(rgb : vec3<f32>, srcLinear : f32) -> vec3<f32> { return rgb; }
+fn workingToStorage(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
+fn storageToWorking(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
 `;
 
 const SRGB_TRANSFER_GLSL_IDENTITY = /* glsl */ `
 vec3 srgbToLinearRgb(vec3 c) { return c; }
 vec3 linearToSrgbRgb(vec3 c) { return c; }
+vec3 workingFromSample(vec3 rgb, float srcLinear) { return rgb; }
+vec3 workingToStorage(vec3 rgb) { return rgb; }
+vec3 storageToWorking(vec3 rgb) { return rgb; }
 `;
 
 export const SRGB_TRANSFER_WGSL = LINEAR_WORKING_SPACE

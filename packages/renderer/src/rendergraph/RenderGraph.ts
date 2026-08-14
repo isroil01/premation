@@ -20,7 +20,7 @@ import { RenderPass, SURFACE, type RenderPassContext, type RenderServices } from
 // next to HDR_INTERMEDIATES so both precision toggles are discoverable from
 // resolveTargets. Flip to false in shaders/linearWorkingSpace.ts to restore
 // gamma-space maths without a revert.
-import { LINEAR_WORKING_SPACE } from '../shaders/linearWorkingSpace';
+import { LINEAR_WORKING_SPACE, LINEAR_INTERMEDIATE_STORAGE } from '../shaders/linearWorkingSpace';
 
 export class RenderGraphError extends Error {
   constructor(
@@ -196,6 +196,7 @@ export class RenderGraph {
     // Pin the colour-space kill switch next to HDR so both are visible here.
     // Actual transfer lives in builtin shaders; this reference documents the pair.
     void LINEAR_WORKING_SPACE;
+    void LINEAR_INTERMEDIATE_STORAGE;
     const map = new Map<string, RenderTargetHandle>();
     const { width, height } = viewport.pixelSize;
     const orphaned = this.orphanedTargets();

@@ -56,9 +56,9 @@ storage layer.
 - **Broader render-test coverage.** Subsystems with only unit tests can regress
   visually without anything going red. The harness is in
   `packages/render-tests/`.
-- **Colour management.** Linear working-space first slice shipped
-  (`LINEAR_WORKING_SPACE` default on); project working-space UI, ACES and
-  32-bpc are still open.
+- **Colour management.** Linear working-space and linear RT storage shipped
+  (`LINEAR_WORKING_SPACE` and `LINEAR_INTERMEDIATE_STORAGE` default on);
+  project working-space UI, ACES and 32-bpc are still open.
 
 ## Later
 

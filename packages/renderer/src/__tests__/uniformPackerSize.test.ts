@@ -31,13 +31,15 @@
 import { BUILTIN_SHADERS } from '../shaders/builtin';
 import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
-  packSharpen, packSetMatte, packStroke,
+  packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D,
 } from '../pipeline/uniforms';
 import type { Mat3 } from '../core/math/Mat3';
+import type { Mat4 } from '../core/math/Mat4';
 import type { Rect } from '../core/math/geometry';
 import type { Color } from '../core/math/Color';
 
 const MVP = [1, 0, 0, 0, 1, 0, 0, 0, 1] as unknown as Mat3;
+const MVP4 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] as unknown as Mat4;
 const RECT = { x: 0, y: 0, width: 1, height: 1 } as unknown as Rect;
 const COLOR = { r: 1, g: 1, b: 1, a: 1 } as unknown as Color;
 
@@ -112,6 +114,14 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'sharpen', pack: () => packSharpen(MVP, RECT, 0.01, 0.01, 1) },
   { shader: 'set-matte', pack: () => packSetMatte(MVP, RECT, false, false) },
   { shader: 'stroke', pack: () => packStroke(MVP, RECT, COLOR, 2, 0.01, 0.01) },
+  { shader: 'textured', pack: () => packTextured(MVP, RECT, COLOR, 1) },
+  { shader: 'textured-linear', pack: () => packTextured(MVP, RECT, COLOR, 1) },
+  { shader: 'masked-textured-linear', pack: () => packTextured(MVP, RECT, COLOR, 1) },
+  { shader: 'lut-textured-linear', pack: () => packTextured(MVP, RECT, COLOR, 1) },
+  { shader: 'deformed-mesh-linear', pack: () => packDeformedMesh(MVP, COLOR, 1) },
+  { shader: 'textured3d-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
+  { shader: 'masked-textured3d-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
+  { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
 ];
 
 const byName = new Map(BUILTIN_SHADERS.map((s) => [s.name, s]));

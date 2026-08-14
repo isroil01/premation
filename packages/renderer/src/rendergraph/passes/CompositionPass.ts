@@ -556,7 +556,7 @@ export class CompositionPass extends RenderPass {
       */
       if (effect.type === 'plugin' && effect.capturesOrigin) {
         const originCmds = new CommandBuffer();
-        emitTextured(originCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+        emitTextured(originCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv, undefined, true);
         const encO = beginViewportPass(
           ctx, 'fx-origin', writeAttachment(ctx, PLUGIN_ORIGIN, Color.transparent()),
         );
@@ -636,7 +636,7 @@ export class CompositionPass extends RenderPass {
         // rPx = 0 — from the original in curName, since f1 ≠ curName).
         const compCmds = new CommandBuffer();
         if (effect.type === 'blur') {
-          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), targetUv);
+          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), targetUv, undefined, true);
         } else if (effect.type === 'glow') {
           // emitSilhouette, not emitTextured: the glow is the blurred ALPHA
           // filled with the glow colour. Tinting instead returned
@@ -657,7 +657,7 @@ export class CompositionPass extends RenderPass {
             emitSilhouette(compCmds, mvp, glowColor, 0.4, 'screen', wideTex, clampSampler(), targetUv);
           }
           emitSilhouette(compCmds, mvp, glowColor, 1, 'screen', blurredTex, clampSampler(), targetUv);
-          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv, undefined, true);
         } else {
           // The shadow copy is the whole buffer shifted. In screen space that
           // is the visible world rect translated by the offset; in layer space
@@ -681,7 +681,7 @@ export class CompositionPass extends RenderPass {
           // is the absorbing element of a multiply — every non-black shadow
           // colour was returning layerRGB × shadowRGB.
           emitSilhouette(compCmds, shadowMvp, effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
-          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv, undefined, true);
         }
         const encC = beginViewportPass(ctx, 'fx-comp', writeAttachment(ctx, f1, Color.transparent()));
         services.quad.execute(encC, compCmds);
@@ -1227,7 +1227,7 @@ export class CompositionPass extends RenderPass {
     // Settle the result into `dest` (scratch targets are reused immediately after).
     const clampSampler = services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     const copy = new CommandBuffer();
-    emitTextured(copy, screenMvp(), Color.white(), 1, 'none', res.tex, clampSampler, targetSampleUv(ctx));
+    emitTextured(copy, screenMvp(), Color.white(), 1, 'none', res.tex, clampSampler, targetSampleUv(ctx), undefined, true);
     const encC = beginViewportPass(ctx, 'layer-settle', writeAttachment(ctx, dest, Color.transparent()));
     services.quad.execute(encC, copy);
     encC.end();
@@ -1295,7 +1295,7 @@ export class CompositionPass extends RenderPass {
           const masked = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET2)!);
           if (masked) {
             const copyCmds = new CommandBuffer();
-            emitTextured(copyCmds, screenMvp(), Color.white(), 1, 'none', masked, clampSampler(), targetUv);
+            emitTextured(copyCmds, screenMvp(), Color.white(), 1, 'none', masked, clampSampler(), targetUv, undefined, true);
             const encC = beginViewportPass(ctx, 'precomp-settle', writeAttachment(ctx, targetName, Color.transparent()));
             services.quad.execute(encC, copyCmds);
             encC.end();
@@ -1546,7 +1546,7 @@ export class CompositionPass extends RenderPass {
           // transparent, so writing depth there would punch a rectangular hole
           // through anything behind it — an extruded object's own side walls,
           // most visibly. It still depth-tests, so it is occluded correctly.
-          emitTextured3D(cmds, fxMvp, tint, r.opacity, r.blend, resolved.tex, clampSampler(), targetUv, undefined, fxShade, false);
+          emitTextured3D(cmds, fxMvp, tint, r.opacity, r.blend, resolved.tex, clampSampler(), targetUv, undefined, fxShade, false, true);
           pendingResolved = true;
         }
         continue;
@@ -1731,9 +1731,9 @@ export class CompositionPass extends RenderPass {
       const lut = r.adjustment.lutTextureKey ? services.textures.get(r.adjustment.lutTextureKey) : undefined;
       const mvp = screenMvp();
       if (lut) {
-        emitLutTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), lut.texture, targetUv, r.adjustment.colorMatrix);
+        emitLutTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), lut.texture, targetUv, r.adjustment.colorMatrix, true);
       } else {
-        emitTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), targetUv, r.adjustment.colorMatrix);
+        emitTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), targetUv, r.adjustment.colorMatrix, true);
       }
       const encCopy = beginViewportPass(ctx, 'adjust-copy', writeAttachment(ctx, LAYER_TARGET, Color.transparent()));
       services.quad.execute(encCopy, copyCmds);
@@ -1753,7 +1753,7 @@ export class CompositionPass extends RenderPass {
       // finalTex is an offscreen target — sample with the backend-correct UV.
       // (An identity UV here vertically flipped the whole scene on WebGL
       // whenever a grade-only adjustment layer took this branch.)
-      emitTextured(applyCmds, mvp, Color.white(), 1, 'normal', finalTex, clampSampler(), targetUv);
+      emitTextured(applyCmds, mvp, Color.white(), 1, 'normal', finalTex, clampSampler(), targetUv, undefined, true);
       const encGrade = beginViewportPass(ctx, 'adjust-apply', writeAttachment(ctx, st.out, Color.transparent()));
       services.quad.execute(encGrade, applyCmds);
       encGrade.end();
@@ -1823,7 +1823,7 @@ export class CompositionPass extends RenderPass {
         const t2 = half ? BACKDROP_HALF2 : BLUR_TARGET2;
 
         const copyCmds = new CommandBuffer();
-        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full);
+        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full, undefined, true);
         // The copy IS the downsample: the same full-screen quad drawn into a
         // half-size target, filtered down by the sampler on the way in.
         const encCopy = half
@@ -1898,11 +1898,11 @@ export class CompositionPass extends RenderPass {
               maskTexture: layerTex,
             });
           } else {
-            emitMaskedTextured(mainCmds, fullMvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), layerTex, full);
+            emitMaskedTextured(mainCmds, fullMvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), layerTex, full, undefined, true);
             // Plain backdrop blur keeps the layer's own colour on top — that is
             // how a translucent frosted panel gets its fill. Glass supplies its
             // own tint, so it skips this (see above).
-            emitTextured(mainCmds, fullMvp, Color.white(), 1, r.blend, layerTex, clampSampler(), full);
+            emitTextured(mainCmds, fullMvp, Color.white(), 1, r.blend, layerTex, clampSampler(), full, undefined, true);
           }
         }
         return;
@@ -1934,7 +1934,7 @@ export class CompositionPass extends RenderPass {
         const layerTex = this.layerIntoTarget(ctx, r, r.opacity, LAYER_TARGET, byId);
         // 2. copy backdrop out (can't sample a target while writing it).
         const copyCmds = new CommandBuffer();
-        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full);
+        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full, undefined, true);
         const encCopy = beginViewportPass(ctx, 'blend-backdrop', writeAttachment(ctx, MATTE_TARGET, Color.transparent()));
         services.quad.execute(encCopy, copyCmds);
         encCopy.end();
@@ -2045,6 +2045,8 @@ export class CompositionPass extends RenderPass {
         Color.white(), 1, r.blend, layerTex,
         clampSampler(),
         targetUv,
+        undefined,
+        true,
       );
       return;
     }
@@ -2112,6 +2114,8 @@ export class CompositionPass extends RenderPass {
       Color.white(), r.opacity, r.blend, effectTex,
       clampSampler(),
       targetUv,
+      undefined,
+      true,
     );
   }
 }

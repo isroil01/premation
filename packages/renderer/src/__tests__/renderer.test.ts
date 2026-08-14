@@ -2,6 +2,7 @@ import { Renderer } from '../core/renderer/Renderer';
 import { NullBackend } from '../gpu/backends/NullBackend';
 import { buildFrameScene } from '../integration/buildFrameScene';
 import { Color } from '../core/math/Color';
+import { LINEAR_INTERMEDIATE_STORAGE } from '../shaders/linearWorkingSpace';
 
 function makeRenderer() {
   const backend = new NullBackend();
@@ -31,6 +32,7 @@ describe('Renderer lifecycle', () => {
     const result = renderer.render(vp, sceneWith({ id: 'a', x: 100, y: 100 }, { id: 'b', x: 150, y: 120 }));
 
     expect(backend.passLog).toEqual(expect.arrayContaining(['clear', 'background', 'composition']));
+    if (LINEAR_INTERMEDIATE_STORAGE) expect(backend.passLog).toContain('effect');
     // 1 composition background + 2 visible rects.
     expect(backend.stats().draws).toBeGreaterThanOrEqual(2);
     expect(result.frame.index).toBe(1);
@@ -42,8 +44,8 @@ describe('Renderer lifecycle', () => {
     const vp = renderer.createViewport({ width: 800, height: 600, overlays: { grid: false, checkerboard: false } });
     vp.camera.setState({ center: { x: 0, y: 0 }, zoom: 1 }); // visible ~[-400..400, -300..300]
     renderer.render(vp, sceneWith({ id: 'near', x: 0, y: 0 }, { id: 'far', x: 50000, y: 50000 }));
-    // background (1) + only the near rect (1) = 2
-    expect(backend.stats().draws).toBe(2);
+    // background (1) + only the near rect (1) [+ encode blit when RTs stay linear]
+    expect(backend.stats().draws).toBe(LINEAR_INTERMEDIATE_STORAGE ? 3 : 2);
   });
 
   it('shares one pipeline across same-material draws', async () => {
@@ -51,7 +53,8 @@ describe('Renderer lifecycle', () => {
     await renderer.initialize();
     const vp = renderer.createViewport({ width: 800, height: 600, overlays: { grid: false, checkerboard: false } });
     renderer.render(vp, sceneWith({ id: 'a', x: 10, y: 10 }, { id: 'b', x: 20, y: 20 }, { id: 'c', x: 30, y: 30 }));
-    expect(renderer.resourceStats().pipelines).toBe(1);
+    // One solid pipeline; linear storage adds the scene-blit pipeline.
+    expect(renderer.resourceStats().pipelines).toBe(LINEAR_INTERMEDIATE_STORAGE ? 2 : 1);
   });
 
   it('increments the frame index across renders', async () => {

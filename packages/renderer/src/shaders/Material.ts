@@ -50,6 +50,12 @@ export const TEXTURED_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** RT copy of `TEXTURED_MATERIAL` — skips the sRGB upload decode. */
+export const TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED_MATERIAL,
+  shader: 'textured-linear',
+};
+
 /** Final scene-color → surface blit (optional linear→sRGB encode). */
 export const SCENE_BLIT_MATERIAL: MaterialDescriptor = {
   shader: 'scene-blit',
@@ -73,6 +79,11 @@ export const MASKED_TEXTURED_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+export const MASKED_TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...MASKED_TEXTURED_MATERIAL,
+  shader: 'masked-textured-linear',
+};
+
 /** Built-in material: textured quad with a colour LUT (Levels/Curves/Posterize).
  *  Uniform + layer texture + sampler + LUT texture (binding 3). */
 export const LUT_TEXTURED_MATERIAL: MaterialDescriptor = {
@@ -84,6 +95,11 @@ export const LUT_TEXTURED_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: 3, type: 'texture', stages: ['fragment'] },
   ],
+};
+
+export const LUT_TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...LUT_TEXTURED_MATERIAL,
+  shader: 'lut-textured-linear',
 };
 
 /** Built-in material: track-matte combine (matted layer + matte source texture). */
@@ -362,6 +378,11 @@ export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
   depth: { test: true, write: true },
 };
 
+export const TEXTURED3D_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED3D_MATERIAL,
+  shader: 'textured3d-linear',
+};
+
 /**
  * 3D textured quad that depth-TESTS but does not depth-WRITE.
  *
@@ -388,6 +409,11 @@ export const TEXTURED3D_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
   depth: { test: true, write: false },
 };
 
+export const TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED3D_NO_DEPTH_WRITE_MATERIAL,
+  shader: 'textured3d-linear',
+};
+
 /** 3D masked textured quad with depth test+write. */
 export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured3d',
@@ -399,6 +425,11 @@ export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: 3, type: 'texture', stages: ['fragment'] },
   ],
   depth: { test: true, write: true },
+};
+
+export const MASKED_TEXTURED3D_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...MASKED_TEXTURED3D_MATERIAL,
+  shader: 'masked-textured3d-linear',
 };
 
 export const DEFORMED_MESH_LAYOUT: VertexBufferLayout = {
@@ -419,6 +450,11 @@ export const DEFORMED_MESH_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
   ],
   buffers: [DEFORMED_MESH_LAYOUT],
+};
+
+export const DEFORMED_MESH_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...DEFORMED_MESH_MATERIAL,
+  shader: 'deformed-mesh-linear',
 };
 
 // The premultiplied-source TWINS are gone, along with the flag that selected
