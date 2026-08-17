@@ -221,7 +221,40 @@ export type EffectType =
   | 'grid-wipe'
   // Noise & Grain — a thresholded median, and noise in COVERAGE not colour.
   | 'dust-scratches'
-  | 'noise-alpha';
+  | 'noise-alpha'
+  // ── Round five ────────────────────────────────────────────────────
+  //
+  // Twenty of the most-reached-for AE / Cycore effects still missing after
+  // round four. Every one is a Canvas2D pixel pass or generator, and every
+  // animated one moves through a KEYFRAMED phase/evolution/completion param
+  // rather than the clock — none joins TIME_DEPENDENT (the Strobe Light rule).
+  //
+  // Generate — these DRAW, like Beam and Lens Flare. Weather and starfields
+  // are deterministic hashes of (seed, evolution), so scrubbing is stable.
+  | 'star-burst'
+  | 'snowfall'
+  | 'rainfall'
+  | 'write-on'
+  | 'light-burst'
+  // Stylize — surface shading and per-cell resamples.
+  | 'glass'
+  | 'texturize'
+  | 'threads'
+  | 'chromatic-aberration'
+  | 'hex-tile'
+  // Blur — blur along the luminance-gradient flow field (CC Vector Blur).
+  | 'vector-blur'
+  // Distort — inverse-map resamples, like every other member of the family.
+  | 'flo-motion'
+  | 'lens'
+  | 'griddler'
+  | 'ball-action'
+  | 'drizzle'
+  // Transition — completion-driven reveals, matching the wipes' contract.
+  | 'jaws'
+  | 'pixel-polly'
+  | 'twister'
+  | 'card-dance';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -3030,6 +3063,328 @@ export const EFFECT_DEFS: EffectDef[] = [
       // Keyframe to boil the grain; leave static for a fixed texture.
       { key: 'noisePhase', label: 'Noise Phase', type: 'number', min: 0, max: 100000, precision: 0, default: 0 },
       { key: 'clipResult', label: 'Clip Result', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+
+  // ── Round five · Generate ─────────────────────────────────────────
+  {
+    /*
+      CC Star Burst — a starfield flown through. Stars are a deterministic
+      hash of (seed, index); `phase` is the flight, so motion is a KEYFRAME on
+      phase, exactly how Evolution works everywhere else. Scrub-stable.
+    */
+    type: 'star-burst',
+    label: 'Star Burst',
+    params: [
+      { key: 'phase', label: 'Phase', type: 'number', min: 0, max: 36000, default: 0 },
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 0.5, max: 12, precision: 1, default: 2 },
+      { key: 'starColor', label: 'Star Color', type: 'color', default: '#ffffff' },
+      { key: 'blend', label: 'Blend With Original', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      CC Snowfall. Flakes fall by `evolution` (keyframe it for motion), drift
+      by `wind`. Deterministic per (seed, flake index) — same frame, same snow.
+    */
+    type: 'snowfall',
+    label: 'Snowfall',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 0.5, max: 12, precision: 1, default: 3 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: 0, max: 36000, default: 0 },
+      { key: 'wind', label: 'Wind', type: 'number', unit: '%', min: -100, max: 100, default: 10 },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 85 },
+      { key: 'flakeColor', label: 'Flake Color', type: 'color', default: '#ffffff' },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    /* CC Rainfall — streaks at `angle`, advanced by `evolution`. */
+    type: 'rainfall',
+    label: 'Rainfall',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+      { key: 'length', label: 'Length', type: 'number', unit: 'px', min: 2, max: 200, default: 30 },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', min: -60, max: 60, default: 10 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: 0, max: 36000, default: 0 },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 55 },
+      { key: 'rainColor', label: 'Rain Color', type: 'color', default: '#cfe6ff' },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      Write-on — a stroke drawn progressively from Start toward End; keyframe
+      `completion` for the reveal. Wobble bends the path deterministically so
+      the line reads hand-drawn rather than ruled.
+    */
+    type: 'write-on',
+    label: 'Write-on',
+    params: [
+      { key: 'startX', label: 'Start X', type: 'number', unit: 'px', min: -4000, max: 4000, default: -120 },
+      { key: 'startY', label: 'Start Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'endX', label: 'End X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 120 },
+      { key: 'endY', label: 'End Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'completion', label: 'Completion', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'brushSize', label: 'Brush Size', type: 'number', unit: 'px', min: 1, max: 100, default: 8 },
+      { key: 'brushColor', label: 'Color', type: 'color', default: '#ffffff' },
+      { key: 'wobble', label: 'Wobble', type: 'number', unit: '%', min: 0, max: 100, default: 25 },
+      { key: 'taper', label: 'Taper', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      CC Light Burst 2.5 — radial zoom rays: the picture streaked outward from
+      a centre and screened back over itself. Intensity multiplies the streaks,
+      not the source, so 0 is exactly the untouched layer.
+    */
+    type: 'light-burst',
+    label: 'Light Burst',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 300, default: 100 },
+      { key: 'rayLength', label: 'Ray Length', type: 'number', unit: '%', min: 0, max: 100, default: 30 },
+    ],
+    css: () => '',
+  },
+
+  // ── Round five · Stylize ──────────────────────────────────────────
+  {
+    /*
+      CC Glass — the layer's own luminance as a bump map: refract, then a
+      light. `height` may be negative (bumps become dents), which is half the
+      use of the effect in the wild.
+    */
+    type: 'glass',
+    label: 'Glass',
+    params: [
+      { key: 'bumpSoftness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 20, default: 4 },
+      { key: 'height', label: 'Height', type: 'number', min: -100, max: 100, default: 30 },
+      { key: 'displacement', label: 'Displacement', type: 'number', unit: 'px', min: 0, max: 100, default: 12 },
+      { key: 'lightAngle', label: 'Light Angle', type: 'number', unit: '°', min: -360, max: 360, default: 135 },
+      { key: 'lightIntensity', label: 'Light Intensity', type: 'number', unit: '%', min: 0, max: 200, default: 60 },
+      { key: 'shininess', label: 'Shininess', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+    ],
+    css: () => '',
+  },
+  {
+    /* AE Texturize — emboss the layer with a procedural texture. */
+    type: 'texturize',
+    label: 'Texturize',
+    params: [
+      // 0 Noise · 1 Canvas · 2 Weave · 3 Brick.
+      { key: 'pattern', label: 'Texture', type: 'number', min: 0, max: 3, precision: 0, default: 1 },
+      { key: 'contrast', label: 'Texture Contrast', type: 'number', unit: '%', min: 0, max: 200, default: 80 },
+      { key: 'scale', label: 'Texture Scale', type: 'number', unit: '%', min: 10, max: 400, default: 100 },
+      { key: 'lightAngle', label: 'Light Direction', type: 'number', unit: '°', min: -360, max: 360, default: 135 },
+    ],
+    css: () => '',
+  },
+  {
+    /* CC Threads — the layer rewoven as an over-under fabric of strips. */
+    type: 'threads',
+    label: 'Threads',
+    params: [
+      { key: 'thickness', label: 'Thickness', type: 'number', unit: 'px', min: 2, max: 64, precision: 0, default: 10 },
+      { key: 'spacing', label: 'Spacing', type: 'number', unit: 'px', min: 0, max: 32, precision: 0, default: 2 },
+      { key: 'depth', label: 'Shadow Depth', type: 'number', unit: '%', min: 0, max: 100, default: 45 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      Chromatic Aberration — per-channel displacement. Radial mode scales red
+      out and blue in from the centre (a lens); linear mode shifts along an
+      angle (the music-video split). Falloff protects the centre in radial mode.
+    */
+    type: 'chromatic-aberration',
+    label: 'Chromatic Aberration',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: 'px', min: 0, max: 60, precision: 1, default: 6 },
+      // 0 radial (lens) · 1 linear (split along Angle).
+      { key: 'aberrationMode', label: 'Mode', type: 'number', min: 0, max: 1, precision: 0, default: 0 },
+      { key: 'angle', label: 'Angle', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'falloff', label: 'Center Protection', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    /* CC HexTile — hexagonal mosaic; border darkens the seams into a comb. */
+    type: 'hex-tile',
+    label: 'Hex Tile',
+    params: [
+      { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 2, max: 200, default: 24 },
+      { key: 'border', label: 'Border', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+
+  // ── Round five · Blur ─────────────────────────────────────────────
+  {
+    /*
+      CC Vector Blur — blur ALONG the luminance flow: each pixel smears down
+      the isophote (perpendicular to the gradient), which is what turns noise
+      into hair/water streaks. Smoothness steadies the field first so the
+      streaks follow form, not grain.
+    */
+    type: 'vector-blur',
+    label: 'Vector Blur',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: 'px', min: 0, max: 60, default: 12 },
+      { key: 'angleOffset', label: 'Angle Offset', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'smoothness', label: 'Ridge Smoothness', type: 'number', unit: 'px', min: 0, max: 12, default: 2 },
+    ],
+    css: () => '',
+  },
+
+  // ── Round five · Distort ──────────────────────────────────────────
+  {
+    /*
+      CC Flo Motion — two knots that suck the picture in (negative) or shove
+      it out (positive). The classic infinite-zoom/backdrop-warp tool.
+    */
+    type: 'flo-motion',
+    label: 'Flo Motion',
+    params: [
+      { key: 'knot1X', label: 'Knot 1 X', type: 'number', unit: 'px', min: -4000, max: 4000, default: -100 },
+      { key: 'knot1Y', label: 'Knot 1 Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'knot1Amount', label: 'Knot 1 Amount', type: 'number', unit: '%', min: -100, max: 100, default: 30 },
+      { key: 'knot2X', label: 'Knot 2 X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 100 },
+      { key: 'knot2Y', label: 'Knot 2 Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'knot2Amount', label: 'Knot 2 Amount', type: 'number', unit: '%', min: -100, max: 100, default: 30 },
+      { key: 'falloff', label: 'Falloff', type: 'number', unit: '%', min: 1, max: 100, default: 40 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      CC Lens — the layer wrapped into a fisheye ball. Convergence 0 is flat;
+      100 closes the picture into a sphere with transparency outside it, which
+      is what separates it from Spherize (a bulge inside the frame).
+    */
+    type: 'lens',
+    label: 'Lens',
+    params: [
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'size', label: 'Size', type: 'number', unit: '%', min: 5, max: 200, default: 80 },
+      { key: 'convergence', label: 'Convergence', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+    ],
+    css: () => '',
+  },
+  {
+    /* CC Griddler — the layer cut into a grid, every tile scaled/rotated. */
+    type: 'griddler',
+    label: 'Griddler',
+    params: [
+      { key: 'tileSize', label: 'Tile Size', type: 'number', unit: 'px', min: 4, max: 400, default: 60 },
+      { key: 'horizontalScale', label: 'Horizontal Scale', type: 'number', unit: '%', min: 1, max: 200, default: 90 },
+      { key: 'verticalScale', label: 'Vertical Scale', type: 'number', unit: '%', min: 1, max: 200, default: 90 },
+      { key: 'rotation', label: 'Tile Rotation', type: 'number', unit: '°', min: -180, max: 180, default: 10 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      CC Ball Action — the layer sampled into a grid of shaded balls. Scatter
+      jitters each ball off its cell deterministically by (seed, cell).
+    */
+    type: 'ball-action',
+    label: 'Ball Action',
+    params: [
+      { key: 'grid', label: 'Grid Spacing', type: 'number', unit: 'px', min: 4, max: 200, default: 24 },
+      { key: 'ballSize', label: 'Ball Size', type: 'number', unit: '%', min: 10, max: 100, default: 90 },
+      { key: 'scatter', label: 'Scatter', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      CC Drizzle — raindrop rings rippling the picture. Each drop is a hash of
+      (seed, index); `evolution` advances its ring outward and fades it, so the
+      rain animates by keyframing evolution alone.
+    */
+    type: 'drizzle',
+    label: 'Drizzle',
+    params: [
+      { key: 'dripRate', label: 'Drip Rate', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
+      { key: 'rippleHeight', label: 'Ripple Height', type: 'number', unit: 'px', min: 0, max: 60, default: 10 },
+      { key: 'spreading', label: 'Spreading', type: 'number', unit: 'px', min: 8, max: 400, default: 120 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: 0, max: 36000, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+
+  // ── Round five · Transition ───────────────────────────────────────
+  {
+    /* CC Jaws — the frame bitten in two along a toothed seam. */
+    type: 'jaws',
+    label: 'Jaws',
+    params: [
+      { key: 'completion', label: 'Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'direction', label: 'Direction', type: 'number', unit: '°', min: -360, max: 360, default: 0 },
+      { key: 'teethHeight', label: 'Tooth Height', type: 'number', unit: 'px', min: 1, max: 200, default: 40 },
+      { key: 'teethWidth', label: 'Tooth Width', type: 'number', unit: 'px', min: 2, max: 200, default: 40 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      CC Pixel Polly — the frame shattered into cells that fly and spin away.
+      Completion drives distance, tumble and fade together, so two keyframes on
+      it are the whole transition.
+    */
+    type: 'pixel-polly',
+    label: 'Pixel Polly',
+    params: [
+      { key: 'completion', label: 'Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'cellSize', label: 'Cell Size', type: 'number', unit: 'px', min: 4, max: 200, default: 30 },
+      { key: 'gravity', label: 'Gravity', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'spin', label: 'Spin', type: 'number', unit: '°', min: 0, max: 720, default: 180 },
+      { key: 'centerX', label: 'Force Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Force Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 100000, precision: 0, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    /* CC Twister — rows fold and wring out around a horizontal axis. */
+    type: 'twister',
+    label: 'Twister',
+    params: [
+      { key: 'completion', label: 'Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'centerY', label: 'Axis Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'twist', label: 'Twist', type: 'number', unit: '°', min: 0, max: 360, default: 120 },
+    ],
+    css: () => '',
+  },
+  {
+    /*
+      Card Dance — the frame cut into cards, each displaced/rotated by its own
+      LUMINANCE (the layer stands in for AE's gradient layer) and a travelling
+      wave in `phase`. Amount 0 is exactly the untouched picture.
+    */
+    type: 'card-dance',
+    label: 'Card Dance',
+    params: [
+      { key: 'rows', label: 'Rows', type: 'number', min: 1, max: 64, precision: 0, default: 10 },
+      { key: 'columns', label: 'Columns', type: 'number', min: 1, max: 64, precision: 0, default: 16 },
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 30 },
+      { key: 'cardRotation', label: 'Rotation', type: 'number', unit: '°', min: -180, max: 180, default: 20 },
+      { key: 'phase', label: 'Phase', type: 'number', min: 0, max: 36000, default: 0 },
     ],
     css: () => '',
   },

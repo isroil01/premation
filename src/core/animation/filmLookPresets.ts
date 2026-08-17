@@ -389,4 +389,108 @@ export const FILM_LOOK_PRESETS: ReadonlyArray<AnimationPreset> = [
       { prop: 'effect.fx0.rotation', keyframes: [kfb(0, 0), kfb(0.6, 25)] },
     ],
   }),
+
+  // ══ Round five — weather, lens character, and the new transitions ══
+  //
+  // The weather presets ship their Evolution TRACKS, not just the effect: snow
+  // that does not fall is a bug report, and the whole reason evolution is a
+  // keyframeable param is that a preset can arrive already wound.
+
+  preset({
+    name: 'Falling Snow',
+    folder: STYLIZE,
+    description: 'Soft snowfall drifting across the frame, ready-wound for six seconds.',
+    effects: [
+      { id: 'fx0', type: 'snowfall', params: { amount: 45, size: 3, wind: 12, opacity: 85, flakeColor: '#ffffff', seed: 7, evolution: 0 } },
+    ],
+    tracks: [{ prop: 'effect.fx0.evolution', keyframes: [kfb(0, 0), kfb(6, 300)] }],
+  }),
+
+  preset({
+    name: 'Driving Rain',
+    folder: STYLIZE,
+    description: 'Streaking rain with drops rippling the picture beneath it.',
+    effects: [
+      { id: 'fx0', type: 'rainfall', params: { amount: 50, length: 34, angle: 12, opacity: 50, rainColor: '#cfe6ff', seed: 11, evolution: 0 } },
+      { id: 'fx1', type: 'drizzle', params: { dripRate: 35, rippleHeight: 8, spreading: 110, seed: 4, evolution: 0 } },
+    ],
+    tracks: [
+      { prop: 'effect.fx0.evolution', keyframes: [kfb(0, 0), kfb(6, 420)] },
+      { prop: 'effect.fx1.evolution', keyframes: [kfb(0, 0), kfb(6, 1200)] },
+    ],
+  }),
+
+  preset({
+    name: 'Star Voyage',
+    folder: STYLIZE,
+    description: 'The layer scattered into a starfield being flown through.',
+    effects: [
+      { id: 'fx0', type: 'star-burst', params: { amount: 60, size: 2.5, starColor: '#ffffff', blend: 20, seed: 9, phase: 0 } },
+    ],
+    tracks: [{ prop: 'effect.fx0.phase', keyframes: [kfb(0, 0), kfb(6, 2400)] }],
+  }),
+
+  preset({
+    name: 'Dream Glass',
+    folder: LOOKS,
+    description: 'The frame refracted through its own relief — soft, expensive, slightly wet.',
+    effects: [
+      { id: 'fx0', type: 'glass', params: { bumpSoftness: 6, height: 22, displacement: 9, lightAngle: 130, lightIntensity: 55, shininess: 35 } },
+      { id: 'fx1', type: 'vignette', params: { amount: 30, size: 68, feather: 85, roundness: 20 } },
+    ],
+  }),
+
+  preset({
+    name: 'Retro Chromatic',
+    folder: LOOKS,
+    description: 'Edge fringing, grain and a corner shade — the worn-lens music-video look.',
+    effects: [
+      { id: 'fx0', type: 'chromatic-aberration', params: { amount: 7, aberrationMode: 0, falloff: 55, angle: 0, centerX: 0, centerY: 0 } },
+      { id: 'fx1', type: 'add-grain', params: { intensity: 28, size: 1.4, seed: 6 } },
+      { id: 'fx2', type: 'vignette', params: { amount: 42, size: 58, feather: 70, roundness: 10 } },
+    ],
+  }),
+
+  preset({
+    name: 'Shatter Away',
+    folder: TRANSITIONS,
+    description: 'The frame breaks into shards that fly, tumble and fade.',
+    effects: [
+      { id: 'fx0', type: 'pixel-polly', params: { completion: 0, cellSize: 34, gravity: 55, spin: 240, centerX: 0, centerY: 0, seed: 5 } },
+    ],
+    tracks: [{ prop: 'effect.fx0.completion', keyframes: [kfb(0, 0, LEAVE), kfb(1.1, 100)] }],
+  }),
+
+  preset({
+    name: 'Jaws Bite',
+    folder: TRANSITIONS,
+    description: 'The picture bitten in two along a toothed seam.',
+    effects: [
+      { id: 'fx0', type: 'jaws', params: { completion: 0, direction: 0, teethHeight: 46, teethWidth: 52 } },
+    ],
+    tracks: [{ prop: 'effect.fx0.completion', keyframes: [kfb(0, 0, EVEN), kfb(0.9, 100)] }],
+  }),
+
+  preset({
+    name: 'Wring Out',
+    folder: TRANSITIONS,
+    description: 'The frame wrings itself edge-on around its own middle and vanishes.',
+    effects: [
+      { id: 'fx0', type: 'twister', params: { completion: 0, centerY: 0, twist: 140 } },
+    ],
+    tracks: [{ prop: 'effect.fx0.completion', keyframes: [kfb(0, 0, EVEN), kfb(0.9, 100)] }],
+  }),
+
+  preset({
+    name: 'Card Cascade',
+    folder: TRANSITIONS,
+    description: 'The frame lifts into dancing cards and settles back — a hit, not a cut.',
+    effects: [
+      { id: 'fx0', type: 'card-dance', params: { rows: 8, columns: 14, amount: 0, cardRotation: 24, phase: 0 } },
+    ],
+    tracks: [
+      { prop: 'effect.fx0.amount', keyframes: [kfb(0, 0, SNAP), kfb(0.4, 38, EVEN), kfb(1.2, 0)] },
+      { prop: 'effect.fx0.phase', keyframes: [kfb(0, 0), kfb(1.2, 160)] },
+    ],
+  }),
 ];

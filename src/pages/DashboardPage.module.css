@@ -55,6 +55,16 @@
   background: rgba(255, 255, 255, 0.05);
 }
 
+/**
+ * Splits the workspace destinations from the account ones (Billing, Developer,
+ * Settings). A hairline, not a heading: the grouping only has to be felt.
+ */
+.navDivider {
+  height: 1px;
+  margin: 10px 12px;
+  background: var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+}
+
 .navLinkActive {
   color: var(--color-primary) !important;
   background: var(--color-primary-subtle) !important;
@@ -1190,15 +1200,28 @@
   border-radius: var(--radius-surface);
   padding: 12px 14px;
   cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   transition: border-color 140ms ease, background-color 140ms ease;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-.launchpadCard:hover {
+.launchpadCard:hover:not(:disabled) {
   border-color: var(--color-border-strong);
   background: var(--color-surface-2);
+}
+
+.launchpadCard:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.launchpadCard:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .launchpadHeader {
@@ -1264,6 +1287,14 @@
     flex-direction: row;
     gap: 6px;
     flex: initial;
+  }
+  /* The sidebar is a horizontal strip here, so the rule turns on its side. */
+  .navDivider {
+    width: 1px;
+    height: auto;
+    margin: 6px 4px;
+    align-self: stretch;
+    flex: 0 0 auto;
   }
   .sidebarFooter {
     border-top: none;

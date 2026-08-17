@@ -154,6 +154,10 @@ interface ArapTopology {
   off: Int32Array;
   /** Σ_j w_ij per vertex (Laplacian diagonal). */
   diag: Float64Array;
+  /** Connected-component id per vertex (deterministic BFS labelling). */
+  comp: Int32Array;
+  /** Number of connected components. */
+  compCount: number;
   restX: Float64Array;
   restY: Float64Array;
   /** Reduced-system factorisations keyed by the pinned-vertex signature. */
@@ -285,8 +289,36 @@ function buildTopology(restMesh: DeformedMesh): ArapTopology {
   }
   off[n] = cursor;
 
+  // Connected components (deterministic BFS in ascending vertex order). A mesh
+  // culled against an alpha mask can carry several disconnected islands; the
+  // solve must know which component each vertex belongs to so an island with no
+  // handle can be left at rest instead of making the reduced system singular.
+  const comp = new Int32Array(n).fill(-1);
+  let compCount = 0;
+  const queue = new Int32Array(n);
+  for (let seed = 0; seed < n; seed++) {
+    if (comp[seed] !== -1) continue;
+    const id = compCount++;
+    comp[seed] = id;
+    let head = 0;
+    let tail = 0;
+    queue[tail++] = seed;
+    while (head < tail) {
+      const i = queue[head++]!;
+      const start = off[i]!;
+      const end = off[i + 1]!;
+      for (let k = start; k < end; k++) {
+        const j = nbrIdx[k]!;
+        if (comp[j] === -1) {
+          comp[j] = id;
+          queue[tail++] = j;
+        }
+      }
+    }
+  }
+
   const topo: ArapTopology = {
-    numVertices: n, nbrIdx, nbrW, off, diag, restX, restY,
+    numVertices: n, nbrIdx, nbrW, off, diag, comp, compCount, restX, restY,
     factors: new Map(), stiffFactors: new Map(),
   };
   topologyCache.set(restMesh, topo);
@@ -361,11 +393,24 @@ function getReducedFactor(
   if (existing) return existing;
 
   const n = topo.numVertices;
+  // A connected component with NO handle has no boundary condition: including
+  // its vertices makes the reduced Laplacian singular, the Cholesky factor
+  // fails, and the WHOLE mesh silently degrades to the soft Gauss–Seidel path.
+  // Leave those vertices out of the free set instead — they keep their warm
+  // start (the LBS field, which with zero weights is the rest pose), the
+  // pinned components keep the exact solve.
+  const compHasPin = new Uint8Array(topo.compCount);
+  for (let i = 0; i < n; i++) {
+    if (pinnedFlag[i]) compHasPin[topo.comp[i]!] = 1;
+  }
   const compactOf = new Int32Array(n).fill(-1);
   let m = 0;
   for (let i = 0; i < n; i++) {
-    // Free = not pinned and not isolated (a weightless vertex stays put).
-    if (!pinnedFlag[i] && topo.diag[i]! > DIAG_EPS) compactOf[i] = m++;
+    // Free = not pinned, not isolated (a weightless vertex stays put), and in a
+    // component that has at least one handle to anchor the solve.
+    if (!pinnedFlag[i] && topo.diag[i]! > DIAG_EPS && compHasPin[topo.comp[i]!]) {
+      compactOf[i] = m++;
+    }
   }
   const freeOf = new Int32Array(m);
   for (let i = 0; i < n; i++) {

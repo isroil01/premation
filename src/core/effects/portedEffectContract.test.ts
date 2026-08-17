@@ -73,6 +73,39 @@ const PORTED: ReadonlyArray<{ type: string; params: Record<string, unknown> }> =
       color: '#fff3c4', opacity: 70, falloff: 40, seed: 1, composite: 1,
     },
   },
+  // ── Round six: the per-pixel colour ports ──
+  {
+    type: 'vignette',
+    params: { amount: 55, size: 55, feather: 60, roundness: 0, centerX: 0, centerY: 0 },
+  },
+  {
+    type: 'black-and-white',
+    params: { reds: 40, yellows: 60, greens: 40, cyans: 60, blues: 20, magentas: 80, tint: false, tintColor: '#d8b48a' },
+  },
+  {
+    type: 'tritone',
+    params: { highlights: '#ffffff', midtones: '#808080', shadows: '#000000', blend: 0 },
+  },
+  {
+    type: 'photo-filter',
+    params: { color: '#ec8a00', density: 25, preserveLuminosity: true },
+  },
+  { type: 'threshold', params: { level: 128 } },
+  { type: "mirror", params: {"centerX":0,"centerY":0,"angle":45} },
+  { type: "offset", params: {"shiftX":30,"shiftY":10,"blend":0} },
+  { type: "bulge", params: {"centerX":0,"centerY":0,"radius":80,"height":50} },
+  { type: "twirl", params: {"centerX":0,"centerY":0,"radius":80,"angle":90} },
+  { type: "spherize", params: {"centerX":0,"centerY":0,"radius":80,"amount":60} },
+  { type: "kaleidoscope", params: {"segments":6,"centerX":0,"centerY":0,"rotation":0,"sourceAngle":0,"zoom":100} },
+  { type: "ripple", params: {"centerX":0,"centerY":0,"radius":100,"amplitude":10,"frequency":3,"phase":0,"decay":1} },
+  { type: "chromatic-aberration", params: {"amount":6,"aberrationMode":0,"angle":0,"falloff":50,"centerX":0,"centerY":0} },
+  { type: "magnify", params: {"centerX":0,"centerY":0,"magnification":150,"radius":80,"shape":0,"feather":10} },
+  { type: "mosaic", params: {"horizontalBlocks":20,"verticalBlocks":15,"sharpColors":false} },
+  { type: "find-edges", params: {"invert":true,"blendWithOriginal":0} },
+  { type: "emboss", params: {"angle":45,"relief":2,"contrast":100,"blend":0} },
+  { type: "color-emboss", params: {"direction":45,"relief":2,"contrast":100,"blendWithOriginal":0} },
+  { type: "halftone", params: {"cellSize":8,"screenAngle":45,"contrast":100,"inkColor":"#000000","paperColor":"#ffffff","colorize":false,"blendWithOriginal":0} },
+  { type: 'vibrance', params: { vibrance: 30, saturation: 0 } },
 ];
 
 const layerWith = (effects: Effect[]): RenderLayer =>

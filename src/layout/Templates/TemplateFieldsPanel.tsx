@@ -24,7 +24,13 @@ import { ANIM_PRESETS, insertAnimPreset, animPresetThumbnail, createAnimPresetPl
 import type { TemplateDefinition, TemplateField } from '@core/template/templateTypes';
 import {
   readAuthoredFields, exposeNodeAsField, removeAuthoredField, renameAuthoredField,
+  renameAuthoredFieldId,
 } from '@core/template/templateAuthoring';
+import { publishCurrentTemplate } from '@core/automation/publishTemplate';
+import { isPublicFieldId } from '@core/automation/fieldIds';
+import { cloudProjectsEnabled } from '@core/config/edition';
+import { customPrompt } from '@components/Modal';
+import { useUIStore } from '@stores/uiStore';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import { useTemplateStore } from '@stores/templateStore';
 import { DataFillSection } from './DataFillSection';
@@ -83,7 +89,7 @@ function TemplateGallery(): JSX.Element {
         </div>
       </section>
 
-      <AuthoringSection />
+      <TemplateAuthoringSection />
     </div>
   );
 }
@@ -146,11 +152,24 @@ function TemplateCard({ template, onPick }: { template: TemplateDefinition; onPi
   );
 }
 
-/** "Make this composition a template" — expose selected layers as fields. */
-function AuthoringSection(): JSX.Element {
+/**
+ * "Make this composition a template" — expose selected layers as fields.
+ *
+ * Exported for the same reason `ActiveTemplateFields` is: this lived only
+ * inside `TemplateFieldsPanel`, which nothing mounts, so the one button that
+ * reaches `POST /v1/templates` — "Save as Animation Template" — could not be
+ * clicked in a shipped build. The Automation API had keys, quotas and an admin
+ * console, and no way to put a template into it.
+ *
+ * Renders nothing while a template is being FILLED IN: authoring and filling
+ * are opposite modes, and `ActiveTemplateFields` owns the latter.
+ */
+export function TemplateAuthoringSection(): JSX.Element | null {
   useSceneRevision(); // re-read the authored manifest after any scene change
+  const activeTemplate = useTemplateStore((s) => s.active);
   const selectedId = useSelectionStore((s) => s.ids[0]);
   const previewAuthored = useTemplateStore((s) => s.previewAuthored);
+  const notify = useUIStore((s) => s.notify);
   const fields = readAuthoredFields();
 
   const exposeSelected = (): void => {
@@ -158,11 +177,31 @@ function AuthoringSection(): JSX.Element {
     exposeNodeAsField(selectedId);
   };
 
+  const publish = async (): Promise<void> => {
+    const name = await customPrompt(
+      'Save as Animation Template',
+      'n8n will call this template by name and send the input ids below — not Premation layer ids.',
+      'Anime Cooking Reaction',
+      { placeholder: 'Template name', confirmLabel: 'Save template' },
+    );
+    if (!name?.trim()) return;
+    const result = await publishCurrentTemplate(name.trim());
+    notify({
+      level: result.ok ? 'success' : 'error',
+      message: result.ok ? `Saved template “${name.trim()}”` : result.error ?? 'Publish failed',
+      durationMs: 3200,
+    });
+  };
+
+  if (activeTemplate) return null;
+
   return (
     <div className={styles.authoring}>
       <div className={styles.groupLabel}>Make this a template</div>
       <div className={styles.introText}>
-        Select a text, image or shape layer and expose it as an editable field.
+        Select a text, image or shape layer and expose it as an editable input.
+        Give each input a public id (<code>character</code>, <code>backgroundVideo</code>) —
+        that is what n8n sends.
       </div>
       <Button
         variant="secondary"
@@ -179,6 +218,16 @@ function AuthoringSection(): JSX.Element {
           <div className={styles.authoredList}>
             {fields.map((f) => (
               <div key={f.id} className={styles.authoredRow}>
+                <Input
+                  defaultValue={f.id}
+                  key={`${f.id}-id`}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== f.id) renameAuthoredFieldId(f.id, v);
+                  }}
+                  aria-label="Input id"
+                  title={isPublicFieldId(f.id) ? 'Public input id' : 'Must be a camelCase slug like character'}
+                />
                 <Input
                   value={f.label}
                   onChange={(e) => renameAuthoredField(f.id, e.target.value)}
@@ -199,6 +248,11 @@ function AuthoringSection(): JSX.Element {
           <Button variant="primary" size="sm" onClick={previewAuthored}>
             Preview fill-in ({fields.length})
           </Button>
+          {cloudProjectsEnabled() && (
+            <Button variant="secondary" size="sm" onClick={() => void publish()}>
+              Save as Animation Template
+            </Button>
+          )}
         </>
       )}
     </div>

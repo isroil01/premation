@@ -29,6 +29,8 @@ import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect } from 
 import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
 import { layerParamNames, packParameters, effectSpreadFor } from '@core/plugins/effectSchema';
 import { layerIsBaked } from '@core/effects/effectBake';
+import { parseHex } from '@core/effects/canvas2dEffects';
+import { rgbToHsl } from '@core/effects/colorSpace';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
@@ -526,6 +528,207 @@ export function extractSpatialEffects(
         composite: Math.round(n('composite')),
         color: c('color'),
       });
+    }
+    // Colour helpers for the round-six ports: raw sRGB bytes (the CPU
+    // kernels' own space) and a precomputed tint hue/sat.
+    const hexTriple = (hex: string): [number, number, number] => parseHex(hex);
+    const rgbToHslHs = (r: number, g: number, b: number): [number, number] => {
+      const [hh, ss] = rgbToHsl(r, g, b);
+      return [hh, ss];
+    };
+    // ── Round-six GPU ports: per-pixel colour passes ──
+    // Parity contract: the maths (and its scalings) mirror the Canvas2D
+    // wrappers byte-for-byte intent — percentages become fractions HERE, and
+    // colours stay raw sRGB fractions because the CPU kernels work on sRGB.
+    if (e.type === 'vignette') {
+      const w = Math.max(1, layer.width || 1);
+      const h = Math.max(1, layer.height || 1);
+      spatial.push({
+        type: 'vignette',
+        amount: Math.max(-1, Math.min(1, n('amount') / 100)),
+        inner: Math.max(0, Math.min(1, n('size') / 100)),
+        feather: Math.max(1e-3, Math.min(1, n('feather') / 100)),
+        roundness: Math.max(0, Math.min(1, n('roundness') / 100)),
+        cx: 0.5 + n('centerX') / w,
+        cy: 0.5 + n('centerY') / h,
+        aspect: w / h,
+      });
+    }
+    if (e.type === 'black-and-white') {
+      const tintOn = effectParam(e, 'tint') === true;
+      const [tr, tg, tb] = hexTriple(String(effectParam(e, 'tintColor') ?? '#d8b48a'));
+      const [th, ts] = rgbToHslHs(tr, tg, tb);
+      spatial.push({
+        type: 'black-and-white',
+        reds: n('reds') / 100, yellows: n('yellows') / 100, greens: n('greens') / 100,
+        cyans: n('cyans') / 100, blues: n('blues') / 100, magentas: n('magentas') / 100,
+        tintOn: tintOn ? 1 : 0, tintH: th, tintS: ts,
+      });
+    }
+    if (e.type === 'tritone') {
+      const [sr, sg, sb] = hexTriple(String(effectParam(e, 'shadows') ?? '#000000'));
+      const [mr, mg, mb] = hexTriple(String(effectParam(e, 'midtones') ?? '#808080'));
+      const [hr, hg, hb] = hexTriple(String(effectParam(e, 'highlights') ?? '#ffffff'));
+      spatial.push({
+        type: 'tritone',
+        sr: sr / 255, sg: sg / 255, sb: sb / 255,
+        mr: mr / 255, mg: mg / 255, mb: mb / 255,
+        hr: hr / 255, hg: hg / 255, hb: hb / 255,
+        blend: Math.max(0, Math.min(1, n('blend') / 100)),
+      });
+    }
+    if (e.type === 'photo-filter') {
+      const [pr, pg, pb] = hexTriple(String(effectParam(e, 'color') ?? '#ec8a00'));
+      spatial.push({
+        type: 'photo-filter',
+        r: pr / 255, g: pg / 255, b: pb / 255,
+        density: Math.max(0, Math.min(1, n('density') / 100)),
+        preserveLuminosity: effectParam(e, 'preserveLuminosity') !== false,
+      });
+    }
+    if (e.type === 'threshold') {
+      spatial.push({ type: 'threshold', level: Math.max(0, Math.min(1, n('level') / 255)) });
+    }
+    if (e.type === 'vibrance') {
+      spatial.push({ type: 'vibrance', vibrance: n('vibrance') / 100, saturation: n('saturation') / 100 });
+    }
+    // ── Round-six waves 2–3: warps + neighbourhood passes ──
+    // Geometry stays in LAYER PIXELS with lw/lh riding along, mirroring each
+    // Canvas2D wrapper's exact scalings (the CPU kernels are the reference).
+    {
+      const lw = Math.max(1, layer.width || 1);
+      const lh = Math.max(1, layer.height || 1);
+      if (e.type === 'mirror') {
+        const mrad = (n('angle') * Math.PI) / 180;
+        spatial.push({
+          type: 'mirror',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          nx: Math.cos(mrad), ny: Math.sin(mrad), lw, lh,
+        });
+      }
+      if (e.type === 'offset') {
+        // "Shift centre TO" semantics — the kernel translates by how far the
+        // requested centre is from the current one, not by the raw param.
+        spatial.push({
+          type: 'offset',
+          tx: n('shiftX') - lw / 2, ty: n('shiftY') - lh / 2,
+          keep: Math.max(0, Math.min(1, n('blend') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'bulge') {
+        spatial.push({
+          type: 'bulge',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius'), amount: n('height') / 100, lw, lh,
+        });
+      }
+      if (e.type === 'twirl') {
+        spatial.push({
+          type: 'twirl',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius'), maxAngle: (n('angle') * Math.PI) / 180, lw, lh,
+        });
+      }
+      if (e.type === 'spherize') {
+        spatial.push({
+          type: 'spherize',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius'), amount: n('amount') / 100, lw, lh,
+        });
+      }
+      if (e.type === 'kaleidoscope') {
+        const segN = Math.max(1, Math.min(64, Math.round(n('segments'))));
+        spatial.push({
+          type: 'kaleidoscope',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          rot: (n('rotation') * Math.PI) / 180, srcA: (n('sourceAngle') * Math.PI) / 180,
+          seg: segN <= 1 ? 0 : (Math.PI * 2) / segN,
+          scale: Math.max(0.01, n('zoom') / 100), lw, lh,
+        });
+      }
+      if (e.type === 'ripple') {
+        spatial.push({
+          type: 'ripple',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius') > 0 ? n('radius') : Math.hypot(lw, lh),
+          amplitude: n('amplitude'), frequency: n('frequency'),
+          phase: (n('phase') * Math.PI) / 180, decay: Math.max(0, n('decay')), lw, lh,
+        });
+      }
+      if (e.type === 'chromatic-aberration') {
+        const caRad = (n('angle') * Math.PI) / 180;
+        const cax = lw / 2 + n('centerX');
+        const cay = lh / 2 + n('centerY');
+        spatial.push({
+          type: 'chromatic-aberration',
+          amount: n('amount'),
+          linear: Math.round(n('aberrationMode')) === 1,
+          lvx: Math.cos(caRad) * n('amount'), lvy: Math.sin(caRad) * n('amount'),
+          falloffExp: 1 + (n('falloff') / 100) * 3,
+          cx: cax, cy: cay,
+          maxR: Math.max(1, Math.hypot(Math.max(cax, lw - cax), Math.max(cay, lh - cay))),
+          lw, lh,
+        });
+      }
+      if (e.type === 'magnify') {
+        const mradius = n('radius');
+        spatial.push({
+          type: 'magnify',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: mradius, scale: Math.max(0.01, n('magnification') / 100),
+          square: Math.round(n('shape')) === 1,
+          feather: Math.max(0, Math.min(n('feather'), mradius)), lw, lh,
+        });
+      }
+      if (e.type === 'mosaic') {
+        spatial.push({
+          type: 'mosaic',
+          cols: Math.max(1, Math.min(lw, Math.round(n('horizontalBlocks')))),
+          rows: Math.max(1, Math.min(lh, Math.round(n('verticalBlocks')))),
+          sharp: effectParam(e, 'sharpColors') === true, lw, lh,
+        });
+      }
+      if (e.type === 'find-edges') {
+        spatial.push({
+          type: 'find-edges',
+          invert: effectParam(e, 'invert') !== false,
+          blend: Math.max(0, Math.min(1, n('blendWithOriginal') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'emboss') {
+        const erad = (n('angle') * Math.PI) / 180;
+        spatial.push({
+          type: 'emboss',
+          dx: Math.cos(erad) * n('relief'), dy: Math.sin(erad) * n('relief'),
+          k: n('contrast') / 100,
+          keep: Math.max(0, Math.min(1, n('blend') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'color-emboss') {
+        const cerad = (n('direction') * Math.PI) / 180;
+        spatial.push({
+          type: 'color-emboss',
+          ox: Math.round(Math.cos(cerad) * Math.max(1, n('relief'))),
+          oy: Math.round(Math.sin(cerad) * Math.max(1, n('relief'))),
+          k: Math.max(0, n('contrast')) / 100,
+          blend: Math.max(0, Math.min(1, 1 - n('blendWithOriginal') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'halftone') {
+        const hrad = (n('screenAngle') * Math.PI) / 180;
+        const [ir, ig, ib] = hexTriple(String(effectParam(e, 'inkColor') ?? '#000000'));
+        const [pr, pg, pb] = hexTriple(String(effectParam(e, 'paperColor') ?? '#ffffff'));
+        spatial.push({
+          type: 'halftone',
+          cell: Math.max(2, Math.round(n('cellSize'))),
+          ca: Math.cos(hrad), sa: Math.sin(hrad),
+          k: Math.max(0.01, n('contrast') / 100),
+          inkR: ir / 255, inkG: ig / 255, inkB: ib / 255,
+          colorize: effectParam(e, 'colorize') === true,
+          paperR: pr / 255, paperG: pg / 255, paperB: pb / 255,
+          blend: Math.max(0, Math.min(1, 1 - n('blendWithOriginal') / 100)), lw, lh,
+        });
+      }
     }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {

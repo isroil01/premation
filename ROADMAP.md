@@ -59,7 +59,8 @@ storage layer.
 - **Colour management.** Linear working-space and linear RT storage shipped;
   display-referred upload tagging (`displayReferred`, `rgba8unorm-srgb` backend
   support, `HARDWARE_SRGB_UPLOADS` kill switch default off) shipped;
-  project working-space UI, ACES and 32-bpc are still open.
+  project working-space UI (Composition Settings → Color), ACES display ODT, and
+  32-bpc intermediate depth shipped (2026-08-14). HDR output still open.
 
 ## Later
 

@@ -35,6 +35,8 @@ import {
 } from '@core/animation/animationPresets';
 import { downloadBlob } from '@core/export/exportManager';
 import { hasTextComponent } from '@core/text/textAnimators';
+import { api, isAuthenticated } from '@core/api/client';
+import { cloudProjectsEnabled } from '@core/config/edition';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
@@ -185,8 +187,24 @@ export function MotionPresetsPanel(): JSX.Element {
     if (ok) {
       setSaveName('');
       setSaving(false);
+      void syncPresetToCloud(name);
     }
     bumpScene();
+  };
+
+  const syncPresetToCloud = async (name: string): Promise<void> => {
+    if (!cloudProjectsEnabled() || !isAuthenticated()) return;
+    const preset = listPresets().find((p) => p.name === name && !p.builtin);
+    if (!preset) return;
+    try {
+      await api.publishAnimationTemplate({ name, animationData: preset });
+    } catch {
+      notify({
+        level: 'warning',
+        message: `Saved locally, but could not sync “${name}” to the cloud`,
+        durationMs: 2800,
+      });
+    }
   };
 
   const beginSave = (): void => {

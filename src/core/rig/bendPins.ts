@@ -139,7 +139,18 @@ export function driverRestMesh(restMesh: DeformedMesh, bends: readonly DeformPin
     driverIds.push(id);
   }
   const numVertices = restMesh.vertices.length / 4;
-  normalizeWeightColumns(weights, driverIds, numVertices);
+  // Equal-share fallback ONLY where some pin (bend included) held influence
+  // before the bend columns were dropped — i.e. the bend anchors' Dirichlet
+  // zeros. A vertex no pin could ever reach (a disconnected alpha island)
+  // keeps zero weight and stays at rest, same as the base mesh.
+  const hadInfluence = new Uint8Array(numVertices);
+  for (const id of Object.keys(restMesh.weights)) {
+    const col = restMesh.weights[id]!;
+    for (let i = 0; i < numVertices; i++) {
+      if ((col[i] ?? 0) > 0) hadInfluence[i] = 1;
+    }
+  }
+  normalizeWeightColumns(weights, driverIds, numVertices, hadInfluence);
 
   const view: DeformedMesh = {
     vertices: restMesh.vertices,

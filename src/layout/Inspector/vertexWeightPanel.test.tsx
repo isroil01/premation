@@ -34,6 +34,7 @@ import { nodeRestMesh } from '@core/rig/rigMeshInputs';
 import { getSkeletonBinding } from '@core/rig/rigDeform';
 import { readGeometry } from '@core/workspace/geometry';
 import { selectRigVertex, clearRigVertex } from '@stores/rigVertexStore';
+import { useUIStore } from '@stores/uiStore';
 import type { VertexWeight } from '@core/rig/skinning';
 import type { SceneNode } from '@core/types';
 
@@ -99,6 +100,7 @@ beforeEach(() => {
   defaultAnimation.clear();
   clearRestMeshCache();
   clearRigVertex();
+  useUIStore.setState({ boneRigMode: 'weights' });
   addNode();
   setBones(TWO_BONES);
   useSelectionStore.getState().set([ID]);

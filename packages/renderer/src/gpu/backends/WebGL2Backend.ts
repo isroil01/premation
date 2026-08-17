@@ -131,6 +131,7 @@ export class WebGL2Backend implements RenderBackend {
     instancing: true,
     storageBuffers: false,
     float16Textures: false,
+    float32Textures: false,
     timestampQueries: false,
   };
 
@@ -208,6 +209,7 @@ export class WebGL2Backend implements RenderBackend {
     // is absent, resolveTargets falls the intermediates back to 8-bit rather than
     // creating an incomplete framebuffer.
     this.capabilities.float16Textures = !!gl.getExtension('EXT_color_buffer_float');
+    this.capabilities.float32Textures = this.capabilities.float16Textures;
   }
 
   /** True while the GL context is lost — draws are no-ops until restore. */
@@ -280,10 +282,11 @@ export class WebGL2Backend implements RenderBackend {
       texture is not renderable, and silently producing an incomplete
       framebuffer is worse than the 8-bit fallback.
     */
-    const float = desc.format === 'rgba16float' && this.capabilities.float16Textures;
+    const float16 = desc.format === 'rgba16float' && this.capabilities.float16Textures;
+    const float32 = desc.format === 'rgba32float' && this.capabilities.float32Textures;
     const srgb = desc.format === 'rgba8unorm-srgb';
-    const internalFormat = float ? gl.RGBA16F : srgb ? gl.SRGB8_ALPHA8 : gl.RGBA8;
-    const texType = float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+    const internalFormat = float32 ? gl.RGBA32F : float16 ? gl.RGBA16F : srgb ? gl.SRGB8_ALPHA8 : gl.RGBA8;
+    const texType = float32 ? gl.FLOAT : float16 ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
     gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, desc.width, desc.height, 0, gl.RGBA, texType, null);
     this.liveTextures.add(texture);
     return h('texture', { texture, format: desc.format } satisfies NativeTexture);
@@ -403,9 +406,10 @@ export class WebGL2Backend implements RenderBackend {
     // Honour the requested colour format. rgba16float only reaches here when the
     // backend advertised float support (EXT_color_buffer_float); every other
     // format is the 8-bit path exactly as before.
-    const float = desc.format === 'rgba16float';
-    const internalFormat = float ? gl.RGBA16F : gl.RGBA8;
-    const texType = float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+    const float32 = desc.format === 'rgba32float' && this.capabilities.float32Textures;
+    const float16 = desc.format === 'rgba16float' && this.capabilities.float16Textures;
+    const internalFormat = float32 ? gl.RGBA32F : float16 ? gl.RGBA16F : gl.RGBA8;
+    const texType = float32 ? gl.FLOAT : float16 ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, desc.width, desc.height, 0, gl.RGBA, texType, null);

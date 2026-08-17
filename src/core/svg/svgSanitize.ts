@@ -65,6 +65,37 @@ function stripRemoteRefs(root: Element): void {
 }
 
 /**
+ * SMIL nodes DOMPurify refuses and why we re-admit them selectively.
+ *
+ * DOMPurify's svg profile allows `animateTransform`/`animateMotion` but drops
+ * plain `<animate>` and `<set>` — because `<animate attributeName="href">` can
+ * retarget a link or `<use>` at runtime, which is a real vector. But those two
+ * tags are also how every Keyshape/SVGator export animates FILL, OPACITY and
+ * VISIBILITY: stripping them wholesale turned a dark-mode toggle into a
+ * permanently-light picture with only its transforms still moving.
+ *
+ * So the tags are ADD_TAGS'd back in, and THIS pass removes only the actually
+ * dangerous instances: any SMIL element whose `attributeName` retargets a
+ * reference/identity attribute rather than a presentation value.
+ */
+const UNSAFE_SMIL_TARGETS = new Set(['href', 'xlink:href', 'src', 'id', 'class', 'style']);
+
+function stripUnsafeAnimations(root: Element): void {
+  for (const el of root.querySelectorAll('animate, set, animateTransform, animateMotion')) {
+    const tag = el.localName.toLowerCase();
+    const target = (el.getAttribute('attributeName') ?? '').trim().toLowerCase();
+    if (UNSAFE_SMIL_TARGETS.has(target) || target.startsWith('on')) {
+      el.remove();
+      continue;
+    }
+    // DOMPurify may have already stripped a hostile attributeName, leaving an
+    // inert shell — drop it too rather than serialize dead nodes. (Transform/
+    // motion animations legitimately need no attributeName.)
+    if (!target && (tag === 'animate' || tag === 'set')) el.remove();
+  }
+}
+
+/**
  * Root + every descendant, as a STATIC array.
  *
  * `getElementsByTagName` hands back a live HTMLCollection whose indexed access
@@ -195,6 +226,16 @@ export function readSvgIntrinsicSize(root: Element): SvgIntrinsicSize {
   return { width, height, viewBox };
 }
 
+/**
+ * Version of the sanitize POLICY, stamped onto stored layers.
+ *
+ * The sanitized markup is baked into the document at import time, so a policy
+ * fix (v2: stop dropping `<animate>`/`<set>` — the dark-mode-button bug) would
+ * otherwise never reach layers imported before it. `readSvgLayer` re-sanitizes
+ * from `sourceMarkup` when a stored layer's stamp is older than this.
+ */
+export const SVG_SANITIZE_POLICY_VERSION = 2;
+
 export interface SanitizedSvg {
   /** Safe, id-scoped markup — what actually renders. */
   markup: string;
@@ -257,7 +298,13 @@ export function sanitizeSvg(
     // `style` carries @keyframes and class rules; dropping it silently restyles
     // the file. Both are safe here: DOMPurify still scrubs their contents, and
     // cross-file `<use href="external.svg#id">` is removed by stripRemoteRefs.
-    ADD_TAGS: ['use', 'style'],
+    //
+    // `animate`/`set` are DOMPurify-forbidden because they can retarget href —
+    // re-admitted here and policed by stripUnsafeAnimations, which removes only
+    // the instances aimed at reference/identity attributes. Without these two
+    // tags every Keyshape/SVGator export loses its fill/opacity/visibility
+    // animation and plays as transforms-only.
+    ADD_TAGS: ['use', 'style', 'animate', 'set'],
     FORBID_TAGS: ['script', 'foreignObject'],
     FORBID_ATTR: ['onload', 'onerror', 'onclick', 'onmouseover', 'onbegin', 'onend', 'onrepeat'],
   });
@@ -269,6 +316,7 @@ export function sanitizeSvg(
   }
 
   stripRemoteRefs(root);
+  stripUnsafeAnimations(root);
 
   // Measured after every REMOVAL pass but before the viewBox backfill, which is
   // a rewrite and must not read as content loss. The importer has already

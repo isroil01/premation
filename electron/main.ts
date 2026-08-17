@@ -179,6 +179,18 @@ function registerFileIpc(): void {
     await writeFile(filePath, contents, 'utf8');
   });
 
+  handle('file:writeBytes', async (_event, filePath: string, bytes: Uint8Array) => {
+    await writeFile(filePath, Buffer.from(bytes));
+  });
+
+  handle('file:readBytes', async (_event, filePath: string) => {
+    try {
+      return await readFile(filePath);
+    } catch {
+      return null;
+    }
+  });
+
   handle('window:minimize', (event) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     win?.minimize();
@@ -777,10 +789,11 @@ function buildApplicationMenu(win: BrowserWindow): void {
       label: 'File',
       submenu: [
         { label: 'New Project', accelerator: 'CmdOrCtrl+N', click: cmd('project.new') },
-        { label: 'Open…', accelerator: 'CmdOrCtrl+O', click: cmd('project.open') },
+        { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: cmd('project.open') },
         { type: 'separator' },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: cmd('project.save') },
         { label: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S', click: cmd('project.saveAs') },
+        { label: 'Save to Computer…', click: cmd('project.saveToComputer') },
         { type: 'separator' },
         process.platform === 'darwin' ? { role: 'close' } : { role: 'quit' },
       ],

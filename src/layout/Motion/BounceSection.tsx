@@ -1,6 +1,5 @@
 /**
- * Bounce — the panel section, in the Graph tab beside the rest of a layer's
- * motion.
+ * Bounce — the generator workspace in the Graph panel.
  *
  * It replaces a single menu item that applied one hardcoded shape and refused
  * to run on a layer with no keyframes. What that item could not express, and
@@ -24,6 +23,7 @@
 
 import { useMemo } from 'react';
 import { cn } from '@utils/cn';
+import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
@@ -162,194 +162,193 @@ export function BounceSection({ nodeId }: { nodeId: string }): JSX.Element {
 
   return (
     <div className={styles.root}>
-      {/* The panel's own section label, not a second one. */}
-      <h3 className={panel.sectionLabel}>
-        Bounce
-        {/* The one thing worth saying up front on a static layer, because the
-            old assistant refused to run on exactly this case. */}
-        {!hasAnimation && <span className={panel.sectionNote}>no keyframes needed</span>}
-      </h3>
+      <div className={styles.scroll}>
+      <section className={styles.block} aria-label="Bounce preview">
+        <h3 className={panel.sectionLabel}>Preview</h3>
+        <BouncePreview keyframes={previewKeys} />
+      </section>
 
-      <BouncePreview keyframes={previewKeys} />
-
-      {/* Styles — starting points, not modes. */}
-      <div className={styles.styles} role="radiogroup" aria-label="Bounce style">
-        {BOUNCE_STYLES.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            role="radio"
-            aria-checked={activeStyle === s.id}
-            className={cn(styles.styleChip, activeStyle === s.id && styles.styleChipOn)}
-            title={s.description}
-            onClick={() => applyStyle(s.options)}
-          >
-            {s.label}
-          </button>
-        ))}
-      </div>
-
-      {/* The three knobs every bounce expression exposes, plus the one that
-          decides whether this is gravity or a spring. */}
-      <div className={styles.grid}>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Bounces</span>
-          <ValueField
-            value={bounce.bounces}
-            min={0}
-            max={12}
-            step={1}
-            precision={0}
-            onChange={(v) => setBounce({ bounces: Math.round(v) })}
-            aria-label="Number of bounces"
-          />
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Decay</span>
-          <ValueField
-            value={bounce.decay}
-            min={0.05}
-            max={0.95}
-            step={0.01}
-            precision={2}
-            onChange={(v) => setBounce({ decay: v })}
-            aria-label="Decay per bounce"
-          />
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Elasticity</span>
-          <ValueField
-            value={bounce.elasticity}
-            min={0}
-            max={1.5}
-            step={0.01}
-            precision={2}
-            onChange={(v) => setBounce({ elasticity: v })}
-            aria-label="Elasticity"
-          />
-        </label>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel} title="Overshoot both ways around the resting value, like a spring, instead of only rebounding back the way it came">
-          Oscillate
-        </span>
-        <Switch
-          checked={!!bounce.oscillate}
-          onChange={(e) => setBounce({ oscillate: e.currentTarget.checked })}
-          aria-label="Oscillate around the resting value"
-        />
-      </div>
-
-      {/* Squash & stretch — scale, not position, so it is its own switch. */}
-      <div className={styles.row}>
-        <span className={styles.rowLabel} title="Counter-scale on each impact: flatter along the direction of travel, wider across it">
-          Squash &amp; stretch
-        </span>
-        <Switch
-          checked={squashEnabled}
-          onChange={(e) => setSquashEnabled(e.currentTarget.checked)}
-          aria-label="Squash and stretch"
-        />
-      </div>
-      {squashEnabled && (
+      <section className={styles.block} aria-label="Bounce style">
+        <h3 className={panel.sectionLabel}>Style</h3>
+        <div className={styles.styles} role="radiogroup" aria-label="Bounce style">
+          {BOUNCE_STYLES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              role="radio"
+              aria-checked={activeStyle === s.id}
+              className={cn(styles.styleChip, activeStyle === s.id && styles.styleChipOn)}
+              title={s.description}
+              onClick={() => applyStyle(s.options)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
         <div className={styles.grid}>
           <label className={styles.field}>
-            <span className={styles.fieldLabel}>Amount</span>
+            <span className={styles.fieldLabel}>Bounces</span>
             <ValueField
-              value={Math.round(squash.amount * 100)}
+              value={bounce.bounces}
               min={0}
-              max={90}
+              max={12}
               step={1}
               precision={0}
-              unit="%"
-              onChange={(v) => setSquash({ amount: v / 100 })}
-              aria-label="Squash amount"
+              onChange={(v) => setBounce({ bounces: Math.round(v) })}
+              aria-label="Number of bounces"
             />
           </label>
           <label className={styles.field}>
-            <span className={styles.fieldLabel}>Recover</span>
+            <span className={styles.fieldLabel}>Decay</span>
             <ValueField
-              value={squash.duration}
-              min={0.02}
-              max={1}
+              value={bounce.decay}
+              min={0.05}
+              max={0.95}
               step={0.01}
               precision={2}
-              unit="s"
-              onChange={(v) => setSquash({ duration: v })}
-              aria-label="Squash recovery time"
+              onChange={(v) => setBounce({ decay: v })}
+              aria-label="Decay per bounce"
+            />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Elasticity</span>
+            <ValueField
+              value={bounce.elasticity}
+              min={0}
+              max={1.5}
+              step={0.01}
+              precision={2}
+              onChange={(v) => setBounce({ elasticity: v })}
+              aria-label="Elasticity"
             />
           </label>
         </div>
-      )}
-
-      {/* From zero — the half that did not exist. */}
-      <h4 className={panel.sectionLabel}>Drop in from</h4>
-      <div className={styles.styles} role="radiogroup" aria-label="Drop direction">
-        {DIRECTIONS.map((d) => (
-          <button
-            key={d.id}
-            type="button"
-            role="radio"
-            aria-checked={drop.direction === d.id}
-            className={cn(styles.styleChip, drop.direction === d.id && styles.styleChipOn)}
-            title={d.label}
-            onClick={() => setDrop({ direction: d.id })}
-          >
-            <Icon name={d.icon} size="sm" />
-            <span>{d.label.replace('From ', '')}</span>
-          </button>
-        ))}
-      </div>
-      <div className={styles.grid}>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Distance</span>
-          <ValueField
-            value={drop.distance}
-            min={0}
-            max={4000}
-            step={1}
-            precision={0}
-            unit="px"
-            onChange={(v) => setDrop({ distance: v })}
-            aria-label="Drop distance"
-          />
-        </label>
-        <label className={styles.field}>
-          <span className={styles.fieldLabel}>Fall</span>
-          <ValueField
-            value={drop.duration}
-            min={0.05}
-            max={5}
-            step={0.01}
-            precision={2}
-            unit="s"
-            onChange={(v) => setDrop({ duration: v })}
-            aria-label="Fall duration"
-          />
-        </label>
-        <label className={styles.fieldInline}>
-          <span className={styles.fieldLabel}>Fade in</span>
+        <div className={styles.row}>
+          <span className={styles.rowLabel} title="Overshoot both ways around the resting value, like a spring, instead of only rebounding back the way it came">
+            Oscillate
+          </span>
           <Switch
-            checked={drop.fade}
-            onChange={(e) => setDrop({ fade: e.currentTarget.checked })}
-            aria-label="Fade in over the fall"
+            checked={!!bounce.oscillate}
+            onChange={(e) => setBounce({ oscillate: e.currentTarget.checked })}
+            aria-label="Oscillate around the resting value"
           />
-        </label>
+        </div>
+      </section>
+
+      <section className={styles.block} aria-label="Squash and stretch">
+        <div className={styles.row}>
+          <h3 className={panel.sectionLabel} title="Counter-scale on each impact: flatter along the direction of travel, wider across it">
+            Squash &amp; stretch
+          </h3>
+          <Switch
+            checked={squashEnabled}
+            onChange={(e) => setSquashEnabled(e.currentTarget.checked)}
+            aria-label="Squash and stretch"
+          />
+        </div>
+        {squashEnabled && (
+          <div className={styles.grid}>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Amount</span>
+              <ValueField
+                value={Math.round(squash.amount * 100)}
+                min={0}
+                max={90}
+                step={1}
+                precision={0}
+                unit="%"
+                onChange={(v) => setSquash({ amount: v / 100 })}
+                aria-label="Squash amount"
+              />
+            </label>
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Recover</span>
+              <ValueField
+                value={squash.duration}
+                min={0.02}
+                max={1}
+                step={0.01}
+                precision={2}
+                unit="s"
+                onChange={(v) => setSquash({ duration: v })}
+                aria-label="Squash recovery time"
+              />
+            </label>
+          </div>
+        )}
+      </section>
+
+      <section className={styles.block} aria-label="Drop in">
+        <h3 className={panel.sectionLabel}>Drop in from</h3>
+        <div className={styles.styles} role="radiogroup" aria-label="Drop direction">
+          {DIRECTIONS.map((d) => (
+            <button
+              key={d.id}
+              type="button"
+              role="radio"
+              aria-checked={drop.direction === d.id}
+              className={cn(styles.styleChip, drop.direction === d.id && styles.styleChipOn)}
+              title={d.label}
+              onClick={() => setDrop({ direction: d.id })}
+            >
+              <Icon name={d.icon} size="sm" />
+              <span>{d.label.replace('From ', '')}</span>
+            </button>
+          ))}
+        </div>
+        <div className={styles.grid}>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Distance</span>
+            <ValueField
+              value={drop.distance}
+              min={0}
+              max={4000}
+              step={1}
+              precision={0}
+              unit="px"
+              onChange={(v) => setDrop({ distance: v })}
+              aria-label="Drop distance"
+            />
+          </label>
+          <label className={styles.field}>
+            <span className={styles.fieldLabel}>Fall</span>
+            <ValueField
+              value={drop.duration}
+              min={0.05}
+              max={5}
+              step={0.01}
+              precision={2}
+              unit="s"
+              onChange={(v) => setDrop({ duration: v })}
+              aria-label="Fall duration"
+            />
+          </label>
+          <label className={styles.fieldInline}>
+            <span className={styles.fieldLabel}>Fade in</span>
+            <Switch
+              checked={drop.fade}
+              onChange={(e) => setDrop({ fade: e.currentTarget.checked })}
+              aria-label="Fade in over the fall"
+            />
+          </label>
+        </div>
+      </section>
       </div>
 
       <div className={styles.actions}>
-        <button
-          type="button"
-          className={cn(styles.action, styles.actionPrimary)}
+        <Button
+          variant="primary"
+          size="sm"
+          fullWidth
           onClick={dropIn}
           title="Generate the fall and the bounce at the playhead — no keyframes needed"
         >
           Drop In &amp; Bounce
-        </button>
-        <button
-          type="button"
-          className={styles.action}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          fullWidth
           onClick={addToExisting}
           disabled={!hasAnimation}
           title={
@@ -359,7 +358,7 @@ export function BounceSection({ nodeId }: { nodeId: string }): JSX.Element {
           }
         >
           Add to Existing
-        </button>
+        </Button>
       </div>
     </div>
   );

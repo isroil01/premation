@@ -32,6 +32,7 @@ import { BUILTIN_SHADERS } from '../shaders/builtin';
 import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
   packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D,
+  packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock,
 } from '../pipeline/uniforms';
 import type { Mat3 } from '../core/math/Mat3';
 import type { Mat4 } from '../core/math/Mat4';
@@ -109,6 +110,28 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'cylinder', pack: () => packPerspective(MVP, RECT, [0, 0, 0, 0], [0, 0, 0, 0], RECT, COLOR) },
   // A sample of the pre-existing ones, so the rule is shown to hold for shaders
   // written before this test rather than only for the ones that broke it.
+  // Round-six per-pixel colour ports.
+  { shader: 'vignette', pack: () => packVignetteFx(MVP, RECT, 0.5, 0.5, 0.6, 0, 0.5, 0.5, 1.5, RECT) },
+  { shader: 'black-and-white', pack: () => packBlackAndWhite(MVP, RECT, 0.4, 0.6, 0.4, 0.6, 0.2, 0.8, 0, 0, 0) },
+  { shader: 'tritone', pack: () => packTritone(MVP, RECT, 0, 0, 0, 0, 0.5, 0.5, 0.5, 1, 1, 1) },
+  { shader: 'photo-filter', pack: () => packPhotoFilter(MVP, RECT, 0.9, 0.5, 0, 0.25, true) },
+  { shader: 'threshold', pack: () => packThreshold(MVP, RECT, 0.5) },
+  { shader: 'vibrance', pack: () => packVibrance(MVP, RECT, 0.3, 0) },
+  // Round-six waves 2-3 (packFxBlock, per-shader vec4 counts).
+  { shader: 'mirror', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'offset', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'bulge', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'twirl', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'spherize', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'kaleidoscope', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'ripple', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'chromatic-aberration', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'magnify', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'mosaic', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'find-edges', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'emboss', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'color-emboss', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
+  { shader: 'halftone', pack: () => packFxBlock(MVP, RECT, [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]], RECT) },
   { shader: 'motion-tile', pack: () => packMotionTile(MVP, RECT, 1, 1, 0, 0) },
   { shader: 'fill', pack: () => packFill(MVP, RECT, COLOR) },
   { shader: 'sharpen', pack: () => packSharpen(MVP, RECT, 0.01, 0.01, 1) },

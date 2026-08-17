@@ -13,8 +13,9 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
  * carried exactly one scalar — which is why Glow's colour and Drop Shadow's
  * angle didn't exist.
  *
- * Shared by the kitchen-sink Effects panel and the dedicated Effect Controls
- * panel so the stack lives in exactly one component (no duplicated logic).
+ * Shared by the dedicated Effect Controls panel (left sidebar) so the stack
+ * lives in exactly one component. The right-sidebar Effects tab is the library
+ * you add FROM; this list is what you edit after.
  *
  * ── The AE Effect Controls treatment ────────────────────────────────────────
  * Three things AE has that a list of labelled number fields does not, all of
@@ -498,7 +499,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   if (effects.length === 0) {
     return (
       <div className={panel.hint}>
-        No active effects on this layer. Choose an effect below to add one.
+        No active effects on this layer. Add one from the Effects panel on the right.
       </div>
     );
   }
@@ -524,7 +525,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
         if (!def) return null;
         const name = names.get(e.id) ?? def.label;
         const off = e.enabled === false;
-        const defaultCollapsed = i > 0;
+        const defaultCollapsed = i !== effects.length - 1;
         const isCollapsed = userToggledIds.has(e.id) ? userToggledIds.get(e.id)! : defaultCollapsed;
 
         // Drop BEFORE this card when the pointer is in its top half, after it
@@ -606,18 +607,6 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 {name}
               </span>
 
-              {/* AE's Reset link. A word, not another icon: the header already
-                  carries five glyphs, and this is the one control here whose
-                  meaning an icon would not carry. */}
-              <button
-                type="button"
-                className={panel.resetLink}
-                title={`Restore every ${name} parameter to its default`}
-                onClick={() => resetEffectParams(nodeId, e.id)}
-              >
-                Reset
-              </button>
-
               <div className={panel.itemActions}>
                 <button
                   type="button"
@@ -646,6 +635,18 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                   <Icon name="close" size="sm" />
                 </button>
               </div>
+
+              {/* AE's Reset link. A word, not another icon: the header already
+                  carries five glyphs, and this is the one control here whose
+                  meaning an icon would not carry. Far right, like AE. */}
+              <button
+                type="button"
+                className={panel.resetLink}
+                title={`Restore every ${name} parameter to its default`}
+                onClick={() => resetEffectParams(nodeId, e.id)}
+              >
+                Reset
+              </button>
             </div>
 
             {/* Accordion Body: Effect Parameters */}

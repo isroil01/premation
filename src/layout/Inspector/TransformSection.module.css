@@ -1,7 +1,7 @@
+/* Accordion already draws the section rule. A second border + margin here
+   stacked a card inside a card and shortened the hairline of the group below. */
 .section {
-  border-bottom: 1px solid var(--color-border-subtle);
-  padding-bottom: var(--space-4);
-  margin-bottom: var(--space-4);
+  min-width: 0;
 }
 
 .title {
@@ -201,23 +201,23 @@
 .inlineRows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
+  gap: var(--space-2);
 }
 
-/* Small group heading inside a section (Fill / Stroke / Corners …). */
+/* Small group heading inside a section (Fill / Stroke / Corners …).
+   Same label language as the Graph panel: micro uppercase + a hairline. */
 .subhead {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: var(--font-size-xs);
-  font-weight: 700;
+  gap: var(--space-3);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-secondary);
-  margin-top: 10px;
-  margin-bottom: 6px;
-  padding-bottom: 4px;
+  letter-spacing: var(--letter-spacing-uppercase);
+  color: var(--color-text-tertiary);
+  margin-top: var(--space-4);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-2);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 

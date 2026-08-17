@@ -20,6 +20,7 @@ import {
   NullBackend,
   WebGL2Backend,
   WebGPUBackend,
+  setActiveColorPipeline,
   type RenderBackend as GpuBackend,
 } from '@motion/renderer';
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
@@ -35,6 +36,7 @@ import { noteDeviceLoss } from '@core/plugins/pluginEffects';
 import { setWebgpuAvailable } from '@core/plugins/capabilities';
 import { markGpuOwned } from './canvasOwnership';
 import { attachPluginEffects } from './pluginEffectBridge';
+import { useColorManagementStore } from '@stores/colorManagementStore';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
@@ -847,6 +849,8 @@ export class MotionRendererBackend implements RenderBackend {
     vp.overlays.compRect = { x: 0, y: 0, width: snapshot.width, height: snapshot.height };
     vp.overlays.safeArea = ov?.safeArea ?? false;
     vp.overlays.rulers = ov?.rulers ?? false;
+
+    setActiveColorPipeline(useColorManagementStore.getState().settings());
 
     const result = this.renderer.render(vp, snapshotToFrameScene(snapshot));
 

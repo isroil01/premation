@@ -22,6 +22,7 @@ export interface ShaderSource {
 // Lives in its own file — it is the one shader long enough that inlining it
 // here would bury everything else.
 import { GLASS_COMPOSITE } from './glass';
+import { FX_ROUND_SIX_SHADERS } from './fxRoundSix';
 export { GLASS_COMPOSITE };
 
 import {
@@ -1916,7 +1917,10 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
 }
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let from      = obj.p0.xy;
+  // 'from' is a RESERVED WORD in WGSL (fine in GLSL) — naming this binding
+  // 'from' failed CreateShaderModule, which invalidated the pipeline and then
+  // the whole frame's command buffer: ONE spotlight blanked the ENTIRE scene.
+  let fromPt    = obj.p0.xy;
   let to        = obj.p0.zw;
   let coneHalf  = max(obj.p1.x, 0.0001);
   let softness  = clamp(obj.p1.y, 0.0, 1.0);
@@ -1930,9 +1934,9 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
   let q = vec2<f32>(l.x * aspect, l.y);
 
-  let axis = to - from;
+  let axis = to - fromPt;
   let reach = length(axis);
-  let p = q - from;
+  let p = q - fromPt;
   let dist = length(p);
 
   var cone = 1.0;
@@ -1963,7 +1967,8 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   */
   let fallInner = reachCtl * 0.65;
   let falloff = 1.0 - smoothstep(min(fallInner, reachCtl - 0.0001), reachCtl, dist);
-  let lightAmt = ambient + cone * falloff * intensity;
+  // var, not let - WGSL lets are immutable and the floor below reassigns.
+  var lightAmt = ambient + cone * falloff * intensity;
   // Floor at ambient so the beam can only BRIGHTEN relative to the outside
   // level — never punch a hole darker than the user asked for. With the
   // default ambient of 1 the layer is unchanged outside the cone (and on an
@@ -2300,6 +2305,411 @@ void main() {
   vec3 outC = vec3(arith(c.r, v.x, op), arith(c.g, v.y, op), arith(c.b, v.z, op));
   if (clipResult > 0.5) outC = clamp(outC, vec3(0.0), vec3(1.0));
   frag = vec4(outC * src.a, src.a);
+}
+`
+  }
+};
+
+/*
+ * ── Round-six per-pixel colour ports ─────────────────────────────────
+ *
+ * Six passes ported off the CPU bake. Shared rules, all inherited from
+ * ARITHMETIC above:
+ *   • unpremultiply → operate on STRAIGHT colour → repremultiply. The CPU
+ *     kernels (the parity references, still shipped in canvas2dEffects) work
+ *     on straight sRGB bytes; skipping the unpremul distorts every soft edge.
+ *   • colours and levels arrive as RAW sRGB fractions, no working-space
+ *     conversion, for the same parity reason.
+ *   • no WGSL reserved words as identifiers, and `var` for anything
+ *     reassigned — one bad shader invalidates the whole frame's submit
+ *     (see the Spotlight incident note on that shader).
+ */
+
+export const VIGNETTE_FX: ShaderSource = {
+  name: 'vignette',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let amount   = obj.p0.x;
+  let inner    = obj.p0.y;
+  let feather  = max(obj.p0.z, 0.001);
+  let round    = obj.p0.w;
+  let center   = obj.p1.xy;
+  let aspect   = max(obj.p1.z, 0.0001);
+
+  let src = textureSample(tex, smp, uv);
+  // Layer-box coordinates, like Bend/Beam: the chain buffer is not the layer.
+  let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
+  let d = l - center;
+  // Elliptical: per-axis normalised so the box edge midpoints sit at d = 1.
+  let dEllipse = length(d * 2.0);
+  // Circular: physical distance over the half-diagonal.
+  let dCircle = length(vec2<f32>(d.x * aspect, d.y)) * 2.0 / length(vec2<f32>(aspect, 1.0));
+  let dist = mix(dEllipse, dCircle, round);
+  let t = clamp((dist - inner) / feather, 0.0, 1.0);
+  let s = t * t * (3.0 - 2.0 * t);
+  let k = clamp(1.0 - amount * s, 0.0, 4.0);
+  // Display-referred, like the CPU kernel: decode storage, scale, re-encode.
+  let aV = max(src.a, 0.00001);
+  let cV = select(src.rgb / aV, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0);
+  let outD = clamp(linearToSrgbRgb(cV) * k, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(srgbToLinearRgb(outD) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  float amount = p0.x; float inner = p0.y; float feather = max(p0.z, 0.001); float roundK = p0.w;
+  vec2 center = p1.xy; float aspect = max(p1.z, 0.0001);
+  vec4 src = texture(uTex, vUv);
+  vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
+  vec2 d = l - center;
+  float dEllipse = length(d * 2.0);
+  float dCircle = length(vec2(d.x * aspect, d.y)) * 2.0 / length(vec2(aspect, 1.0));
+  float dist = mix(dEllipse, dCircle, roundK);
+  float t = clamp((dist - inner) / feather, 0.0, 1.0);
+  float s = t * t * (3.0 - 2.0 * t);
+  float k = clamp(1.0 - amount * s, 0.0, 4.0);
+  float aV = max(src.a, 0.00001);
+  vec3 cV = (src.a <= 0.0) ? vec3(0.0) : src.rgb / aV;
+  vec3 outD = clamp(linearToSrgbRgb(cV) * k, vec3(0.0), vec3(1.0));
+  frag = vec4(srgbToLinearRgb(outD) * src.a, src.a);
+}
+`
+  }
+};
+
+export const BLACK_AND_WHITE_FX: ShaderSource = {
+  name: 'black-and-white',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn hue2rgb(p : f32, q : f32, tIn : f32) -> f32 {
+  var t = tIn;
+  if (t < 0.0) { t = t + 1.0; }
+  if (t > 1.0) { t = t - 1.0; }
+  if (t < 1.0 / 6.0) { return p + (q - p) * 6.0 * t; }
+  if (t < 0.5) { return q; }
+  if (t < 2.0 / 3.0) { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+  return p;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+
+  let mx = max(c.r, max(c.g, c.b));
+  let mn = min(c.r, min(c.g, c.b));
+  let md = c.r + c.g + c.b - mx - mn;
+  // Primary weight = the channel holding the max; secondary = the pair that
+  // excludes the min. Same tie behaviour as the CPU kernel (ties multiply 0).
+  var wPrimary = obj.p1.x;                       // blues
+  if (mx == c.r) { wPrimary = obj.p0.x; }        // reds
+  else if (mx == c.g) { wPrimary = obj.p0.z; }   // greens
+  var wSecondary = obj.p1.y;                     // magentas
+  if (mn == c.b) { wSecondary = obj.p0.y; }      // yellows
+  else if (mn == c.r) { wSecondary = obj.p0.w; } // cyans
+  let grey = clamp(mn + (md - mn) * wSecondary + (mx - md) * wPrimary, 0.0, 1.0);
+
+  var outC = vec3<f32>(grey, grey, grey);
+  if (obj.p1.z > 0.5) {
+    let hIn = obj.p1.w;
+    let sIn = obj.p2.x;
+    let q = select(grey + sIn - grey * sIn, grey * (1.0 + sIn), grey < 0.5);
+    let p = 2.0 * grey - q;
+    outC = vec3<f32>(hue2rgb(p, q, hIn + 1.0 / 3.0), hue2rgb(p, q, hIn), hue2rgb(p, q, hIn - 1.0 / 3.0));
+  }
+  return vec4<f32>(srgbToLinearRgb(outC) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+float hue2rgb(float p, float q, float t) {
+  if (t < 0.0) t += 1.0;
+  if (t > 1.0) t -= 1.0;
+  if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
+  if (t < 0.5) return q;
+  if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+  return p;
+}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  float mx = max(c.r, max(c.g, c.b));
+  float mn = min(c.r, min(c.g, c.b));
+  float md = c.r + c.g + c.b - mx - mn;
+  float wPrimary = (mx == c.r) ? p0.x : (mx == c.g) ? p0.z : p1.x;
+  float wSecondary = (mn == c.b) ? p0.y : (mn == c.r) ? p0.w : p1.y;
+  float grey = clamp(mn + (md - mn) * wSecondary + (mx - md) * wPrimary, 0.0, 1.0);
+  vec3 outC = vec3(grey);
+  if (p1.z > 0.5) {
+    float hIn = p1.w; float sIn = p2.x;
+    float q = (grey < 0.5) ? grey * (1.0 + sIn) : grey + sIn - grey * sIn;
+    float p = 2.0 * grey - q;
+    outC = vec3(hue2rgb(p, q, hIn + 1.0 / 3.0), hue2rgb(p, q, hIn), hue2rgb(p, q, hIn - 1.0 / 3.0));
+  }
+  frag = vec4(srgbToLinearRgb(outC) * src.a, src.a);
+}
+`
+  }
+};
+
+export const TRITONE_FX: ShaderSource = {
+  name: 'tritone',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+  // Rec.601 — aeColor imports colorEffects.luma, and CPU parity is the contract.
+  let t = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+  let shadows = obj.p0.xyz;
+  let mid     = obj.p1.xyz;
+  let high    = obj.p2.xyz;
+  var mapped : vec3<f32>;
+  if (t <= 0.5) { mapped = mix(shadows, mid, t * 2.0); }
+  else { mapped = mix(mid, high, (t - 0.5) * 2.0); }
+  let keep = obj.p0.w;
+  let outC = mix(mapped, c, keep);
+  return vec4<f32>(srgbToLinearRgb(clamp(outC, vec3<f32>(0.0), vec3<f32>(1.0))) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  float t = dot(c, vec3(0.299, 0.587, 0.114));
+  vec3 mapped = (t <= 0.5) ? mix(p0.xyz, p1.xyz, t * 2.0) : mix(p1.xyz, p2.xyz, (t - 0.5) * 2.0);
+  vec3 outC = mix(mapped, c, p0.w);
+  frag = vec4(srgbToLinearRgb(clamp(outC, vec3(0.0), vec3(1.0))) * src.a, src.a);
+}
+`
+  }
+};
+
+export const PHOTO_FILTER_FX: ShaderSource = {
+  name: 'photo-filter',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+  let gel = obj.p0.xyz;
+  let density = obj.p0.w;
+  var outC = mix(c, c * gel, density);
+  if (obj.p1.x > 0.5) {
+    let lumaW = vec3<f32>(0.299, 0.587, 0.114);
+    let before = dot(c, lumaW);
+    let after = dot(outC, lumaW);
+    // Guard the divisor: black is black under any gel.
+    if (after > 0.0001) { outC = outC * (before / after); }
+  }
+  return vec4<f32>(srgbToLinearRgb(clamp(outC, vec3<f32>(0.0), vec3<f32>(1.0))) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  vec3 outC = mix(c, c * p0.xyz, p0.w);
+  if (p1.x > 0.5) {
+    vec3 lumaW = vec3(0.299, 0.587, 0.114);
+    float before = dot(c, lumaW);
+    float after = dot(outC, lumaW);
+    if (after > 0.0001) outC *= before / after;
+  }
+  frag = vec4(srgbToLinearRgb(clamp(outC, vec3(0.0), vec3(1.0))) * src.a, src.a);
+}
+`
+  }
+};
+
+export const THRESHOLD_FX: ShaderSource = {
+  name: 'threshold',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+  let lum = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+  let v = select(0.0, 1.0, lum >= obj.p0.x);
+  return vec4<f32>(srgbToLinearRgb(vec3<f32>(v, v, v)) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  float lum = dot(c, vec3(0.299, 0.587, 0.114));
+  float v = (lum >= p0.x) ? 1.0 : 0.0;
+  frag = vec4(srgbToLinearRgb(vec3(v)) * src.a, src.a);
+}
+`
+  }
+};
+
+export const VIBRANCE_FX: ShaderSource = {
+  name: 'vibrance',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  if (src.a <= 0.0) { return src; } // invisible pixels keep their bytes (CPU parity)
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(src.rgb / a);
+  // Rec.601 — vibrance's CPU kernel uses colorEffects.luma, not colorSpace's.
+  let l = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+  let mx = max(c.r, max(c.g, c.b));
+  let mn = min(c.r, min(c.g, c.b));
+  let current = select((mx - mn), 0.0, mx <= 0.0);
+  let amount = 1.0 + obj.p0.y + obj.p0.x * (1.0 - current);
+  let outC = clamp(vec3<f32>(l, l, l) + (c - vec3<f32>(l, l, l)) * amount, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(srgbToLinearRgb(outC) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  if (src.a <= 0.0) { frag = src; return; }
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb(src.rgb / a);
+  float l = dot(c, vec3(0.299, 0.587, 0.114));
+  float mx = max(c.r, max(c.g, c.b));
+  float mn = min(c.r, min(c.g, c.b));
+  float current = (mx <= 0.0) ? 0.0 : (mx - mn);
+  float amount = 1.0 + p0.y + p0.x * (1.0 - current);
+  vec3 outC = clamp(vec3(l) + (c - vec3(l)) * amount, vec3(0.0), vec3(1.0));
+  frag = vec4(srgbToLinearRgb(outC) * src.a, src.a);
 }
 `
   }
@@ -3930,13 +4340,16 @@ function unpremultiplyingSample(base: ShaderSource, src: 'srgb' | 'linear' = 'sr
     'unpremul(textureSample(tex, smp, uv)) * obj.tint',
     'wgsl sample',
   );
-  const srcLinear = src === 'linear' ? '1.0' : '0.0';
-  wgsl = sub(
-    wgsl,
-    'let v = vec4<f32>(c.rgb, 1.0);',
-    `let v = vec4<f32>(workingFromSample(c.rgb, ${srcLinear}), 1.0);`,
-    'wgsl linearize',
-  );
+  if (src !== 'linear') {
+    wgsl = sub(
+      wgsl,
+      'let v = vec4<f32>(c.rgb, 1.0);',
+      `let lin = workingFromSample(c.rgb, 0.0);
+  let ws = select(lin, linearSrgbToAcesCg(lin), obj.srcSpace.y > 0.5);
+  let v = vec4<f32>(ws, 1.0);`,
+      'wgsl linearize',
+    );
+  }
 
   let fragment = sub(
     sub(base.glsl.fragment, 'void main()', `${UNPREMUL_GLSL}${SRGB_TRANSFER_GLSL}void main()`, 'glsl main'),
@@ -3944,12 +4357,16 @@ function unpremultiplyingSample(base: ShaderSource, src: 'srgb' | 'linear' = 'sr
     'unpremul(texture(uTex, vUv)) * tint',
     'glsl sample',
   );
-  fragment = sub(
-    fragment,
-    'vec4 v = vec4(c.rgb, 1.0);',
-    `vec4 v = vec4(workingFromSample(c.rgb, ${srcLinear}), 1.0);`,
-    'glsl linearize',
-  );
+  if (src !== 'linear') {
+    fragment = sub(
+      fragment,
+      'vec4 v = vec4(c.rgb, 1.0);',
+      `vec3 lin = workingFromSample(c.rgb, 0.0);
+  vec3 ws = srcSpace.y > 0.5 ? linearSrgbToAcesCg(lin) : lin;
+  vec4 v = vec4(ws, 1.0);`,
+      'glsl linearize',
+    );
+  }
 
   // LUT tables are authored in display-referred sRGB — encode after the matrix
   // and before the table. With linear storage, decode the table output back.
@@ -4033,7 +4450,7 @@ ${UNPREMUL_WGSL}${SRGB_TRANSFER_WGSL}
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c = unpremul(textureSample(tex, smp, uv)) * obj.tint;
   ${LINEAR_INTERMEDIATE_STORAGE
-    ? 'let rgb = linearToSrgbRgb(c.rgb);'
+    ? 'let rgb = workingToDisplay(c.rgb, obj.srcSpace);'
     : 'let rgb = c.rgb;'}
   return vec4<f32>(rgb * c.a, c.a);
 }
@@ -4059,7 +4476,7 @@ ${UNPREMUL_GLSL}${SRGB_TRANSFER_GLSL}
 void main() {
   vec4 c = unpremul(texture(uTex, vUv)) * tint;
   ${LINEAR_INTERMEDIATE_STORAGE
-    ? 'vec3 rgb = linearToSrgbRgb(c.rgb);'
+    ? 'vec3 rgb = workingToDisplay(c.rgb, srcSpace);'
     : 'vec3 rgb = c.rgb;'}
   frag = vec4(rgb * c.a, c.a);
 }
@@ -4071,6 +4488,10 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
   FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, LIGHT_SWEEP, LENS_FLARE, LIGHT_RAYS, BEND,
   BEVEL_ALPHA, BEVEL_EDGES, SPOTLIGHT, SPHERE, CYLINDER, ARITHMETIC,
+  // Round-six per-pixel colour ports.
+  VIGNETTE_FX, BLACK_AND_WHITE_FX, TRITONE_FX, PHOTO_FILTER_FX, THRESHOLD_FX, VIBRANCE_FX,
+  // Round-six waves 2–3: warps + neighbourhood passes (fxRoundSix.ts).
+  ...FX_ROUND_SIX_SHADERS,
   SOLID3D,
   // The six families that sample a layer texture. Every one un-premultiplies.
   // Upload (`srgb`) and RT (`linear`) variants: linear storage keeps graph RTs

@@ -175,6 +175,19 @@ export class ProjectManager {
     return this.applyLoadedDoc(file, name, path);
   }
 
+  /**
+   * Become the current project after the document has already been restored
+   * (portable `.motion` zip, relink). Does not touch the scene graph.
+   */
+  adopt(name: string, path: string | null): ProjectRef {
+    const ref: ProjectRef = { id: this.deps.newId(), name, path };
+    this.state = { current: ref };
+    this.emit();
+    this.recordRecent(ref);
+    getEventBus().emit('ProjectLoaded', { projectId: ref.id });
+    return ref;
+  }
+
   /** Restore a parsed document into the engines and become the current project. */
   private applyLoadedDoc(file: VersionedDocument, name: string, path: string | null): ProjectRef | null {
     try {

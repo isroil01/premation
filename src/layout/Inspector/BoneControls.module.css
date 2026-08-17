@@ -110,3 +110,91 @@
   margin-top: 2px;
   flex-shrink: 0;
 }
+
+.presetGroup {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+
+.presetButton {
+  flex: 1;
+  padding: 4px 8px;
+  font-size: var(--font-size-micro);
+  font-weight: 500;
+  border-radius: 4px;
+  background: var(--color-surface, #1e1e1e);
+  color: var(--color-text-secondary, #aaa);
+  border: 1px solid var(--color-border, #333);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.presetButton:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary, #fff);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.presetButtonActive {
+  background: rgba(43, 126, 255, 0.18);
+  color: #60a5fa;
+  border-color: rgba(43, 126, 255, 0.4);
+}
+
+.tipCard {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(43, 126, 255, 0.08);
+  border: 1px solid rgba(43, 126, 255, 0.2);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary, #ccc);
+  line-height: 1.4;
+}
+
+.tipCard strong {
+  color: var(--color-text-primary, #fff);
+}
+
+.anchorToggle {
+  padding: 2px 6px;
+  font-size: var(--font-size-micro);
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #333);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.anchorToggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary);
+}
+
+.anchorToggleActive {
+  background: rgba(234, 179, 8, 0.15);
+  border-color: rgba(234, 179, 8, 0.4);
+  color: #facc15;
+}
+
+.warningBox {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary, #aaa);
+  line-height: 1.4;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  border-left: 2px solid rgba(234, 179, 8, 0.5);
+  margin: 2px 0 6px 0;
+  display: block;
+}
+
+

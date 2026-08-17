@@ -55,6 +55,12 @@ export interface ExportOptions {
   comp?: SnapshotComp;
   /** Encoder quality tier. Draft trades visible quality for speed. */
   quality?: ExportQuality;
+  /**
+   * When false, ignore the timeline work area and export the whole composition.
+   * Default (undefined/true) keeps the existing behaviour: a set work area is
+   * the export range.
+   */
+  useWorkArea?: boolean;
   onProgress?: (fraction: number) => void;
   /** Cooperative cancellation for the whole export (frame loop and encoder).
    *  Aborting rejects with a DOMException 'AbortError'. */
@@ -158,8 +164,13 @@ function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; backend:
   return { canvas, backend };
 }
 
+function activeWorkArea(opts: ExportOptions): { start: number; end: number } | null {
+  if (opts.useWorkArea === false) return null;
+  return getTimelineController().getWorkArea();
+}
+
 function offlineParams(opts: ExportOptions): OfflineRenderParams {
-  const wa = getTimelineController().getWorkArea();
+  const wa = activeWorkArea(opts);
   return {
     width: opts.width,
     height: opts.height,
@@ -642,7 +653,7 @@ function exportLottie(opts: ExportOptions): void {
 
 /** The export range in seconds — the work area if set, else the whole comp. */
 function exportRange(opts: ExportOptions): { startSec: number; endSec: number } {
-  const wa = getTimelineController().getWorkArea();
+  const wa = activeWorkArea(opts);
   return wa ? { startSec: wa.start, endSec: wa.end } : { startSec: 0, endSec: opts.duration };
 }
 

@@ -45,6 +45,22 @@
   background: color-mix(in srgb, var(--color-accent) 9%, transparent);
 }
 
+.paymentWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: var(--radius-surface);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+}
+
+.warningIcon {
+  color: var(--color-warning);
+  flex: none;
+  margin-top: 2px;
+}
+
 .calloutIcon {
   color: var(--color-accent);
   flex: none;
@@ -76,55 +92,148 @@
   font-variant-numeric: tabular-nums;
 }
 
+.comparisonWrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-surface);
+}
+
+.comparison {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 420px;
+  font-size: 0.72rem;
+}
+
+.comparison caption {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.comparison th,
+.comparison td {
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.comparison thead th {
+  color: var(--color-text-primary);
+  text-align: center;
+}
+
+.comparison thead th:first-child,
+.comparison tbody th {
+  text-align: left;
+}
+
+.comparison tbody th {
+  color: var(--color-text-secondary);
+  font-weight: 400;
+}
+
+.comparison td {
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
 /* Plan cards. */
 .plans {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
 }
 
 .plan {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border-radius: var(--radius-surface);
+  gap: 12px;
+  padding: 16px;
+  border-radius: 12px;
   border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-2);
+  background: var(--color-surface-0);
+  min-width: 0;
 }
 
 .planCurrent {
-  border-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 70%, var(--color-border-subtle));
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface-0));
+}
+
+.planHighlighted {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.planBadges {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 20px;
+  gap: 8px;
 }
 
 .planHead {
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
   gap: 8px;
 }
 
 .planName {
-  font-size: 0.9rem;
+  margin: 0;
+  font-size: 0.82rem;
   font-weight: 600;
-  color: #fff;
+  letter-spacing: 0.01em;
+  color: var(--color-text-primary);
 }
 
-.planPrice {
-  font-size: 0.78rem;
+.priceBlock {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin: 0;
+}
+
+.priceAmount {
+  font-size: 1.55rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.priceInterval {
+  font-size: 0.72rem;
   color: var(--color-text-secondary);
 }
 
+.planDescription {
+  margin: 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.popularTag,
 .currentTag {
-  margin-left: auto;
   font-size: 0.62rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: 999px;
-  border: 1px solid var(--color-accent);
-  color: var(--color-accent);
   white-space: nowrap;
+}
+
+.popularTag {
+  border: 1px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  color: var(--color-accent);
+}
+
+.currentTag {
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
 }
 
 .features {
@@ -133,16 +242,16 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 7px;
 }
 
 .feature {
   display: flex;
   align-items: flex-start;
-  gap: 6px;
-  font-size: 0.73rem;
+  gap: 7px;
+  font-size: 0.74rem;
   color: var(--color-text-secondary);
-  line-height: 1.35;
+  line-height: 1.4;
 }
 
 .featureTick {
@@ -153,7 +262,7 @@
 
 .planFoot {
   margin-top: auto;
-  padding-top: 4px;
+  padding-top: 6px;
 }
 
 .note {

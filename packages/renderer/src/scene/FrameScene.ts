@@ -181,6 +181,75 @@ export type RenderableEffect =
    * because the bitwise operators are only meaningful on 8-bit integers).
    */
   | { type: 'arithmetic'; operator: number; r: number; g: number; b: number; clip: boolean }
+  /**
+   * Round-six GPU ports — per-pixel colour passes whose CPU kernels remain the
+   * parity reference (portedEffectContract.test.ts). Colours ride as RAW sRGB
+   * fractions rather than working-space Colors: the CPU kernels do their maths
+   * on sRGB bytes and CPU↔GPU parity is the contract.
+   */
+  | {
+      type: 'vignette';
+      /** Signed strength −1..1 (negative lightens, like the CPU kernel). */
+      amount: number;
+      inner: number; feather: number; roundness: number;
+      /** Centre as fractions of the LAYER box (resolved against fxBox). */
+      cx: number; cy: number;
+      aspect: number;
+    }
+  | {
+      type: 'black-and-white';
+      reds: number; yellows: number; greens: number;
+      cyans: number; blues: number; magentas: number;
+      /** Precomputed tint hue/sat (0..1); tintOn 0 = plain greyscale. */
+      tintOn: number; tintH: number; tintS: number;
+    }
+  | {
+      type: 'tritone';
+      sr: number; sg: number; sb: number;
+      mr: number; mg: number; mb: number;
+      hr: number; hg: number; hb: number;
+      blend: number;
+    }
+  | { type: 'photo-filter'; r: number; g: number; b: number; density: number; preserveLuminosity: boolean }
+  | { type: 'threshold'; level: number }
+  | { type: 'vibrance'; vibrance: number; saturation: number }
+  /**
+   * Round-six waves 2–3: warps and neighbourhood passes. All geometry is in
+   * LAYER PIXELS plus the layer's pixel size (`lw`/`lh`), so the shader can
+   * mirror the CPU kernel's px-space maths exactly and resolve against fxBox.
+   */
+  | { type: 'mirror'; cx: number; cy: number; nx: number; ny: number; lw: number; lh: number }
+  | { type: 'offset'; tx: number; ty: number; keep: number; lw: number; lh: number }
+  | { type: 'bulge'; cx: number; cy: number; radius: number; amount: number; lw: number; lh: number }
+  | { type: 'twirl'; cx: number; cy: number; radius: number; maxAngle: number; lw: number; lh: number }
+  | { type: 'spherize'; cx: number; cy: number; radius: number; amount: number; lw: number; lh: number }
+  | {
+      type: 'kaleidoscope';
+      cx: number; cy: number; rot: number; srcA: number;
+      seg: number; scale: number; lw: number; lh: number;
+    }
+  | {
+      type: 'ripple';
+      cx: number; cy: number; radius: number; amplitude: number;
+      frequency: number; phase: number; decay: number; lw: number; lh: number;
+    }
+  | {
+      type: 'chromatic-aberration';
+      amount: number; linear: boolean; lvx: number; lvy: number;
+      falloffExp: number; cx: number; cy: number; maxR: number; lw: number; lh: number;
+    }
+  | { type: 'magnify'; cx: number; cy: number; radius: number; scale: number; square: boolean; feather: number; lw: number; lh: number }
+  | { type: 'mosaic'; cols: number; rows: number; sharp: boolean; lw: number; lh: number }
+  | { type: 'find-edges'; invert: boolean; blend: number; lw: number; lh: number }
+  | { type: 'emboss'; dx: number; dy: number; k: number; keep: number; lw: number; lh: number }
+  | { type: 'color-emboss'; ox: number; oy: number; k: number; blend: number; lw: number; lh: number }
+  | {
+      type: 'halftone';
+      cell: number; ca: number; sa: number; k: number;
+      inkR: number; inkG: number; inkB: number; colorize: boolean;
+      paperR: number; paperG: number; paperB: number; blend: number;
+      lw: number; lh: number;
+    }
   | { type: 'fill'; color: Color }
   | { type: 'stroke'; widthPx: number; color: Color }
   | { type: 'sharpen'; amount: number }

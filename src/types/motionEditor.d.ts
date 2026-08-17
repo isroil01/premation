@@ -174,6 +174,9 @@ export interface MotionEditorApi {
   file?: {
     read?(path: string): Promise<string | null>;
     write?(path: string, contents: string): Promise<void>;
+    /** Binary read for packed `.motion` zips. */
+    readBytes?(path: string): Promise<Uint8Array | null>;
+    writeBytes?(path: string, bytes: Uint8Array): Promise<void>;
   };
   /**
    * `.motion` directory-bundle access (local-first storage). `root` is the

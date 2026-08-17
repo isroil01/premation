@@ -17,6 +17,25 @@
   overflow-y: visible;
 }
 
+/* Context menus: room between rows, not a packed 280px scroller.
+   Compact toolbar dropdowns keep the default `.menu` metrics. */
+.spacious {
+  min-width: 220px;
+  padding: var(--space-3) 0;
+  gap: var(--space-1);
+}
+
+.spacious > .item {
+  height: auto;
+  min-height: var(--control-height-lg);
+  padding: var(--space-3) var(--space-5);
+  gap: var(--space-3);
+}
+
+.spacious > .separator {
+  margin: var(--space-2) var(--space-4);
+}
+
 @keyframes menuIn {
   from { opacity: 0; transform: translateY(-4px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }

@@ -24,11 +24,12 @@ import {
 import { openModal } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
+import { useColorManagementStore, type IntermediateBitDepth } from '@stores/colorManagementStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { FPS_PRESETS, MAX_DURATION } from '@core/composition/presets';
 import styles from './CompositionSettingsDialog.module.css';
 
-type TabId = 'general' | 'background' | 'grid' | 'time';
+type TabId = 'general' | 'background' | 'grid' | 'time' | 'color';
 
 function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   const s = useCompositionStore();
@@ -54,6 +55,11 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   const toggleProportionalGrid = useGuidesStore((g) => g.toggleProportionalGrid);
   const setProportionalColumns = useGuidesStore((g) => g.setProportionalColumns);
   const setProportionalRows = useGuidesStore((g) => g.setProportionalRows);
+
+  const cm = useColorManagementStore();
+  const setWorkingSpace = useColorManagementStore((c) => c.setWorkingSpace);
+  const setDisplayTransform = useColorManagementStore((c) => c.setDisplayTransform);
+  const setBitDepth = useColorManagementStore((c) => c.setBitDepth);
 
   const setName = (name: string): void => s.update({ name });
   const setFps = (fps: number): void => {
@@ -129,6 +135,16 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         >
           <Icon name="keyframe" size="sm" />
           Time
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'color'}
+          className={`${styles.navTab} ${activeTab === 'color' ? styles.navTabActive : ''}`}
+          onClick={() => setActiveTab('color')}
+        >
+          <Icon name="palette" size="sm" />
+          Color
         </button>
       </div>
 
@@ -446,6 +462,72 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
 
         {/* TAB 4: TIME — responsive/protected regions (M7) */}
         {activeTab === 'time' && <ResponsiveTimeSection />}
+
+        {/* TAB 5: COLOR — project working space / display / bit depth */}
+        {activeTab === 'color' && (
+          <>
+            <div className={styles.section}>
+              <div className={styles.label}>Working space</div>
+              <p className={styles.hint}>Where grade, blend, and blur maths run.</p>
+              <div className={styles.row}>
+                <Button
+                  variant={cm.workingSpace === 'srgb-linear' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setWorkingSpace('srgb-linear')}
+                >
+                  sRGB linear
+                </Button>
+                <Button
+                  variant={cm.workingSpace === 'aces-cg' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setWorkingSpace('aces-cg')}
+                >
+                  ACEScg
+                </Button>
+              </div>
+            </div>
+            <div className={styles.section}>
+              <div className={styles.label}>Display transform</div>
+              <p className={styles.hint}>Output mapping to the preview canvas.</p>
+              <div className={styles.row}>
+                <Button
+                  variant={cm.displayTransform === 'srgb' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setDisplayTransform('srgb')}
+                >
+                  sRGB
+                </Button>
+                <Button
+                  variant={cm.displayTransform === 'aces' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setDisplayTransform('aces')}
+                >
+                  ACES (sRGB ODT)
+                </Button>
+              </div>
+            </div>
+            <div className={styles.section}>
+              <div className={styles.label}>Intermediate bit depth</div>
+              <p className={styles.hint}>Float precision for scene-color and effect RTs.</p>
+              <div className={styles.row}>
+                <Button
+                  variant={cm.bitDepth === 16 ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setBitDepth(16 as IntermediateBitDepth)}
+                >
+                  16-bit float
+                </Button>
+                <Button
+                  variant={cm.bitDepth === 32 ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setBitDepth(32 as IntermediateBitDepth)}
+                >
+                  32-bit float
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={styles.footer}>

@@ -509,6 +509,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       controller.requestRender();
     });
 
+    const nodeSub = getEventBus().on('NodeUpdated', () => {
+      controller.requestRender();
+    });
+
     // Leaving playback must reveal the live canvas even if no further render is
     // requested, or the last blitted frame would sit frozen over the viewport.
     let wasPlaying = false;
@@ -536,6 +540,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       ro.disconnect();
       qualitySub();
       animSub.dispose();
+      nodeSub.dispose();
       playSub();
       // Don't leave a mount's worth of frames pinned in RAM.
       viewportFrameCache.clear();

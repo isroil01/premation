@@ -59,6 +59,10 @@
   letter-spacing: 0.08em;
 }
 
+.sectionTitle:first-child {
+  margin-top: 0;
+}
+
 .maskControls {
   display: flex;
   align-items: flex-end;
@@ -207,9 +211,9 @@
 .itemLabelOff {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: -0.005em;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0;
   color: var(--color-text-primary);
   cursor: pointer;
   overflow: hidden;
@@ -227,6 +231,7 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  margin-left: auto;
 }
 
 .eyeBtn {
@@ -252,9 +257,10 @@
 }
 
 .hint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  padding: var(--space-1) 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  padding: var(--space-5) var(--space-4);
+  line-height: var(--line-height-normal);
 }
 
 .remove {
@@ -306,45 +312,47 @@
 }
 
 /* ── Active Applied Effects Accordion Stack ────────────────────── */
+/* AE Effect Controls: a flat, dense list. Cards with radius and fill made
+   six effects look like six separate widgets and wasted the width a sidebar
+   actually has. Hairlines and a selected-row tint are the hierarchy. */
+
 .stackList {
   display: flex;
   flex-direction: column;
-  gap: 8px;
 }
 
 .effectCardItem {
   display: flex;
   flex-direction: column;
-  border-radius: 6px;
-  border: 1px solid var(--color-border-subtle);
-  background: color-mix(in srgb, var(--color-surface-2) 40%, transparent);
-  overflow: hidden;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.effectCardItem:hover {
-  border-color: var(--color-border-strong);
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .effectCardHead {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 4px 6px 4px 2px;
-  background: color-mix(in srgb, var(--color-surface-2) 65%, transparent);
+  gap: 4px;
+  min-height: 22px;
+  padding: 2px 8px 2px 4px;
   user-select: none;
 }
 
-/* The effect whose handles are on the canvas. AE bands the selected effect in
-   the Effect Controls list, and that band is the ONLY thing on screen that says
-   which of four Corner Pins the four draggable points belong to. */
-.effectCardHeadSelected {
-  background: var(--color-selected);
-  box-shadow: inset 2px 0 0 0 var(--color-primary);
+.effectCardHead:hover {
+  background: var(--color-hover);
 }
 
-/* AE's `fx` mark, matching the browser rows below so an applied effect and its
+/* The effect whose handles are on the canvas. A full-row tint, not a side
+   stripe: a 2px inset bar is the accent this app refuses, and the band is
+   the only thing on screen that says which of four Corner Pins the points
+   belong to. */
+.effectCardHeadSelected {
+  background: var(--color-selected);
+}
+
+.effectCardHeadSelected:hover {
+  background: var(--color-selected-hover);
+}
+
+/* AE's `fx` mark, matching the browser rows so an applied effect and its
    entry in the library read as the same thing. */
 .fxMark {
   flex: none;
@@ -358,8 +366,9 @@
   text-align: center;
 }
 
-/* AE's Reset link: quiet until the header is under the pointer, because it is
-   reached for rarely and destroys every value in the effect when it is. */
+/* AE's Reset link. Always visible: it is the one word on the header whose
+   meaning an icon would not carry, and hiding it until hover made the
+   control undiscoverable next to five glyphs. */
 .resetLink {
   flex: none;
   padding: 0 4px;
@@ -367,15 +376,8 @@
   border: none;
   color: var(--color-primary);
   font-family: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.effectCardHead:hover .resetLink,
-.effectCardHead:focus-within .resetLink {
-  opacity: 1;
 }
 
 .resetLink:hover {
@@ -384,7 +386,6 @@
 }
 
 .resetLink:focus-visible {
-  opacity: 1;
   outline: 1px solid var(--color-focus-ring);
   outline-offset: 1px;
 }
@@ -475,9 +476,8 @@
 .effectParamsBody {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px 10px 22px;
-  border-top: 1px solid var(--color-border-subtle);
+  gap: 1px;
+  padding: 2px 8px 8px 20px;
   background: transparent;
 
   --prop-nav-col: 0px;
@@ -561,4 +561,50 @@
 
 .effectDropAfter {
   box-shadow: inset 0 -2px 0 0 var(--color-primary);
+}
+
+/* ── Left-sidebar Effect Controls chrome ─────────────────────────── */
+/* Header + toolbar stay put; the stack scrolls. AE's panel is a list, not a
+   padded card column, so this root has no gap and no page padding. */
+
+.controlsRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.layerHead {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-header, transparent);
+}
+
+.layerName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layerCount {
+  flex: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.controlsBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }

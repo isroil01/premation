@@ -246,6 +246,28 @@ export const SPHERE_MATERIAL = perspectiveMaterial('sphere');
 /** Same one-texture binding shape; only the uniform block differs. */
 export const ARITHMETIC_MATERIAL = perspectiveMaterial('arithmetic');
 export const CYLINDER_MATERIAL = perspectiveMaterial('cylinder');
+// Round-six per-pixel colour ports — same binding shape again.
+export const VIGNETTE_MATERIAL = perspectiveMaterial('vignette');
+export const BLACK_AND_WHITE_MATERIAL = perspectiveMaterial('black-and-white');
+export const TRITONE_MATERIAL = perspectiveMaterial('tritone');
+export const PHOTO_FILTER_MATERIAL = perspectiveMaterial('photo-filter');
+export const THRESHOLD_MATERIAL = perspectiveMaterial('threshold');
+export const VIBRANCE_MATERIAL = perspectiveMaterial('vibrance');
+// Round-six waves 2–3 (fxRoundSix.ts) — one-texture binding shape throughout.
+export const MIRROR_MATERIAL = perspectiveMaterial('mirror');
+export const OFFSET_MATERIAL = perspectiveMaterial('offset');
+export const BULGE_MATERIAL = perspectiveMaterial('bulge');
+export const TWIRL_MATERIAL = perspectiveMaterial('twirl');
+export const SPHERIZE_MATERIAL = perspectiveMaterial('spherize');
+export const KALEIDOSCOPE_MATERIAL = perspectiveMaterial('kaleidoscope');
+export const RIPPLE_MATERIAL = perspectiveMaterial('ripple');
+export const CHROMATIC_ABERRATION_MATERIAL = perspectiveMaterial('chromatic-aberration');
+export const MAGNIFY_MATERIAL = perspectiveMaterial('magnify');
+export const MOSAIC_MATERIAL = perspectiveMaterial('mosaic');
+export const FIND_EDGES_MATERIAL = perspectiveMaterial('find-edges');
+export const EMBOSS_MATERIAL = perspectiveMaterial('emboss');
+export const COLOR_EMBOSS_MATERIAL = perspectiveMaterial('color-emboss');
+export const HALFTONE_MATERIAL = perspectiveMaterial('halftone');
 
 /** Same binding shape as motion-tile: one source texture, warped in place. */
 export const BEND_MATERIAL: MaterialDescriptor = {

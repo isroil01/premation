@@ -4,6 +4,9 @@ node_modules/
 # Build output
 dist/
 dist-electron/
+# The render worker's page bundle, built by packages/render-worker before it
+# serves. Same status as dist-harness/ — a build artifact, never committed.
+dist-render/
 out/
 release/
 # build/ holds electron-builder's buildResources (electron-builder.yml), not

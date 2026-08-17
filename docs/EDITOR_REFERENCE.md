@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 154 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 174 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 36 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 8 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 9 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 40 | `src/stores/*.ts` |
+| Stores | 42 | `src/stores/*.ts` |
 | Packages | 12 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -386,13 +386,19 @@ premultiplied bytes need shader linearize-after-unpremul; see
 `linearWorkingSpace.ts`). TEXTURED draws skip redundant decode only when that
 flag is on. RT copies use the `*-linear` variant. Every frame routes through scene-color + `scene-blit` so linearized
 solids are encoded, not written into the 8-bit canvas. Kill
-switches sit next to `HDR_INTERMEDIATES` in `RenderGraph.ts`. Still absent:
-project working-space UI, 32-bpc depth, ACES/ODT, HDR output.
+switches sit next to `HDR_INTERMEDIATES` in `RenderGraph.ts`. **Project colour
+settings shipped (2026-08-14):** Composition Settings → **Color** tab persists
+`workingSpace` (`srgb-linear` | `aces-cg`), `displayTransform` (`srgb` |
+`aces` ODT), and `bitDepth` (`16` | `32` float) via `colorManagementStore` →
+document round-trip. `MotionRendererBackend` calls `setActiveColorPipeline`
+each frame; `scene-blit` uses `workingToDisplay`; float RTs pick
+`rgba16float` / `rgba32float` via `intermediateFloatFormat`. Still absent: HDR
+output.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 154 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 154 effects present are properly
+**Effect breadth: 174 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 174 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -405,7 +411,7 @@ written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
-GPU shader. The count is now phrased as "154 effects" rather than as a bare
+GPU shader. The count is now phrased as "174 effects" rather than as a bare
 figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
 **Uniform mask feather only.** `MaskPoint` carries x/y plus handles and one
@@ -480,11 +486,12 @@ Lottie export, and price.
 
 ### Highest-leverage work, if the goal is complex output
 
-1. **Linear-light colour — storage slice shipped 2026-08-14.** Grade / blend /
-   blur run in linear under `LINEAR_WORKING_SPACE`; RTs stay linear until
-   `scene-blit` (`LINEAR_INTERMEDIATE_STORAGE`); uploads tagged display-referred
-   (`displayReferred` + optional `HARDWARE_SRGB_UPLOADS`). Remaining: project
-   working-space / ACES / 32-bpc.
+1. **Linear-light colour — shipped 2026-08-14.** Grade / blend / blur run in
+   linear under `LINEAR_WORKING_SPACE`; RTs stay linear until `scene-blit`
+   (`LINEAR_INTERMEDIATE_STORAGE`); uploads tagged display-referred
+   (`displayReferred` + optional `HARDWARE_SRGB_UPLOADS`). Project settings
+   (working space, ACES ODT, 16/32-bit intermediates) live in Composition
+   Settings → Color. Remaining: HDR output.
 2. **Particle system — stateful floor bounce shipped 2026-08-14.** Opt-in
    `simMode: 'stateful'` with `SimulationCache`. Remaining density: turbulence,
    collisions, trails, sub-emitters, 3D / layer-as-particle.
@@ -941,14 +948,14 @@ answers what can be answered exactly and refuses the rest.
 
 | | |
 |---|---|
-| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 154 |
-| already a pure `(data, w, h, …)` kernel | **92** (82%) |
+| CPU-baked effects (`CANVAS2D_ONLY`) | **132** of 174 |
+| already a pure `(data, w, h, …)` kernel | **112** (85%) |
 | need a whole-image reduction | **4** — `equalize`, `auto-levels`, `auto-contrast`, `auto-color` |
-| drawn with canvas ops, no pure kernel | **20** |
+| drawn with canvas ops, no pure kernel | **16** |
 
-The **112** confirms the figure every brief has been quoting; unlike the effect
+The **132** (112 before round five) confirms the figure every brief has been quoting; unlike the effect
 count, this one was right. Derived from the predicate rather than a copy of the
-list, and `unaccounted: 0` — every one of the 154 lands in exactly one bucket,
+list, and `unaccounted: 0` — every one of the 174 lands in exactly one bucket,
 so there is no silent third category rendering as a no-op.
 
 **The 82% is the finding that decides the answer.** The pixel work is already
@@ -1525,7 +1532,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "154 effects".
+it. Prose stating a count should say "174 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and

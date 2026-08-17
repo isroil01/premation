@@ -87,7 +87,7 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 260, collapsed: false },
     },
     panelOrder: {
-      leftSidebar: ['scene', 'assets', 'library', 'ai'],
+      leftSidebar: ['scene', 'effectControls', 'assets', 'library', 'ai'],
       rightInspector: ['properties', 'rig', 'effects', 'motion', 'presets'],
       centerWorkspace: [],
       bottomTimeline: [],
@@ -104,7 +104,7 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 380, collapsed: false },
     },
     panelOrder: {
-      leftSidebar: ['scene', 'assets', 'library'],
+      leftSidebar: ['scene', 'effectControls', 'assets', 'library'],
       rightInspector: ['properties', 'effects', 'motion'],
       centerWorkspace: [],
       bottomTimeline: [],
@@ -124,7 +124,7 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 200, collapsed: false },
     },
     panelOrder: {
-      leftSidebar: ['ai', 'scene', 'assets'],
+      leftSidebar: ['ai', 'scene', 'effectControls', 'assets'],
       rightInspector: ['properties', 'effects', 'presets'],
       centerWorkspace: [],
       bottomTimeline: [],
@@ -158,15 +158,14 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
       bottomTimeline: { size: 220, collapsed: false },
     },
     panelOrder: {
-      leftSidebar: ['scene', 'assets'],
-      // `style` used to lead this list; it was merged into `properties` when
-      // the three selection-scoped inspector tabs became one. Effects leads
-      // now, which is what this workspace is actually for.
+      leftSidebar: ['effectControls', 'scene', 'assets'],
+      // The library stays on the right (add); Effect Controls leads on the
+      // left (tune). That is the split this workspace exists to make obvious.
       rightInspector: ['effects', 'properties'],
       centerWorkspace: [],
       bottomTimeline: [],
     },
-    activePanelByRegion: { leftSidebar: 'scene', rightInspector: 'effects' },
+    activePanelByRegion: { leftSidebar: 'effectControls', rightInspector: 'effects' },
   },
   {
     id: 'dual-monitor-studio',

@@ -168,6 +168,22 @@ export function readOnlyDetail(status: number, body: unknown): { reason?: string
   return { reason, message };
 }
 
+/** Nest may send `message` as a string, a string[], or `{ message }`. */
+function messageFromBody(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const msg = (body as { message?: unknown }).message;
+  if (typeof msg === 'string' && msg.trim()) return msg;
+  if (Array.isArray(msg)) {
+    const joined = msg.map((m) => (typeof m === 'string' ? m : '')).filter(Boolean).join(' ');
+    return joined || undefined;
+  }
+  if (msg && typeof msg === 'object') {
+    const nested = (msg as { message?: unknown }).message;
+    if (typeof nested === 'string' && nested.trim()) return nested;
+  }
+  return undefined;
+}
+
 async function toError(res: Response): Promise<ApiError> {
   let body: unknown;
   try {
@@ -175,9 +191,7 @@ async function toError(res: Response): Promise<ApiError> {
   } catch {
     body = await res.text().catch(() => undefined);
   }
-  const err = new Error(
-    (body as { message?: string })?.message || `Request failed (${res.status})`,
-  ) as ApiError;
+  const err = new Error(messageFromBody(body) || `Request failed (${res.status})`) as ApiError;
   err.status = res.status;
   err.body = body;
   err.requestId = header(res, 'X-Request-Id');

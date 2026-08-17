@@ -56,6 +56,10 @@ export const ICON_NAMES = [
   'sphere', 'cylinder', 'text-3d', 'pop-out', 'gpu',
   // Effect-browser folder vocabulary, one glyph per AE folder.
   'blur', 'palette', 'gradient', 'waves', 'eraser', 'clock', 'wipe', 'magic-wand',
+  // Developer / API, in the dashboard sidebar. NB: no apostrophes in comments
+  // here — generate-sharp-icons.mjs scrapes this list with a quote regex and
+  // reads one as the start of a name.
+  'code',
 ] as const;
 
 export type IconName = (typeof ICON_NAMES)[number];

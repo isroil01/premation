@@ -19,14 +19,134 @@
  * does not get. Rhythm comes from the section rule, not from large gaps.
  */
 
-.root {
+/* Shell: tabs stay put, the active workspace scrolls. Mixing Bounce's
+   generator graph with the keyframe curve in one column is what made this
+   panel read as a pile of buttons. */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.shell > .workspaceTabs {
+  display: flex;
+  flex: none;
+  width: 100%;
+  padding: 0 var(--space-3);
+  background: var(--color-panel-header);
+}
+
+.body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-5);
-  height: 100%;
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding: var(--space-4) var(--space-5) var(--space-5);
+}
+
+/* Bounce owns its own scroll + pinned commit bar, so the Curve padding
+   and gap must not wrap it. */
+.bounceBody {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Motion path is supporting chrome, not the reason you opened Graph.
+   Collapsed by default so the curve is the first thing you see. */
+.fold {
+  flex: none;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-0);
+}
+
+.foldSummary {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 var(--space-3);
+  cursor: pointer;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  list-style: none;
+}
+
+.foldSummary::-webkit-details-marker {
+  display: none;
+}
+
+.foldSummary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  margin-right: var(--space-2);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--color-text-muted);
+}
+
+.fold[open] > .foldSummary::before {
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid var(--color-text-muted);
+  border-bottom: 0;
+  margin-right: var(--space-2);
+}
+
+.foldSummary:hover {
+  color: var(--color-text-secondary);
+}
+
+.foldBody {
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/* Property chips, Value/Speed, and the SVG are one editor — not a row of
+   buttons sitting on top of a naked graph. */
+.graphWell {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  overflow: hidden;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-surface);
+}
+
+.graphHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-header);
+}
+
+.graphHint {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
 /* ── Section label ────────────────────────────────────────────────
@@ -55,30 +175,6 @@
   flex: 1;
   height: 1px;
   background: var(--color-border-subtle);
-}
-
-/* A secondary note on the right of a section label (counts, state). */
-.sectionNote {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-regular);
-  letter-spacing: normal;
-  text-transform: none;
-  color: var(--color-text-muted);
-}
-
-.empty {
-  padding: var(--space-9) var(--space-5);
-  text-align: center;
-  font-size: var(--font-size-md);
-  color: var(--color-text-muted);
-  line-height: var(--line-height-normal);
-}
-
-.topRow {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
 }
 
 .props {
@@ -145,11 +241,6 @@
   border-color: var(--color-border-subtle);
   background: transparent;
   cursor: not-allowed;
-}
-
-/* The segmented toggle keeps ONE outline; its members must not draw their own. */
-.modeToggle {
-  border-color: var(--color-border);
 }
 
 /* Selected state: one accent, the app's primary, everywhere in the panel.
@@ -230,9 +321,9 @@
   height: 208px;
   flex: none;
   display: block;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-surface);
+  background: transparent;
+  border: none;
+  border-radius: 0;
   touch-action: none;
 }
 
@@ -384,13 +475,6 @@
   stroke-width: 1.75;
   stroke-linecap: round;
   stroke-linejoin: round;
-}
-
-.hint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  text-align: center;
-  padding: var(--space-4);
 }
 
 /* The panel's chrome does not animate. Motion in a motion editor belongs to

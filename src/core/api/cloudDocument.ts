@@ -18,6 +18,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurStore';
 import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
+import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import { migrateDocument } from '@core/project/migrations';
@@ -39,6 +40,8 @@ export interface EditorDocument {
   /** Render-affecting; must round-trip or exports change after a reload. */
   motionBlur?: MotionBlurSettings;
   guides?: GuidesSettings;
+  /** Project working space, display transform, intermediate bit depth. */
+  colorManagement?: ColorManagementSettings;
   /**
    * The plugins this document's custom layers depend on.
    *
@@ -87,6 +90,7 @@ export function captureDocument(): EditorDocument {
     timelines: getTimelineController().capture(),
     motionBlur: useMotionBlurStore.getState().settings(),
     guides: useGuidesStore.getState().settings(),
+    colorManagement: useColorManagementStore.getState().settings(),
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
     // Absent when empty, so a document with no plugin state reads back
     // byte-identical — the same rule `plugins` follows above.
@@ -201,4 +205,5 @@ export function restoreDocument(doc: EditorDocument): void {
   if (doc.timelines) getTimelineController().restore(doc.timelines);
   if (doc.motionBlur) useMotionBlurStore.getState().restore(doc.motionBlur);
   if (doc.guides) useGuidesStore.getState().restore(doc.guides);
+  if (doc.colorManagement) useColorManagementStore.getState().restore(doc.colorManagement);
 }

@@ -120,8 +120,17 @@ export class BrowserFileAdapter implements FileAdapter {
         return null; // user cancelled / unsupported
       }
     }
-    // Virtual FS fallback
-    return defaultName;
+    /**
+     * No picker (Firefox, Safari, any non-secure context) — say so.
+     *
+     * This used to return `defaultName`, i.e. a destination the user never
+     * chose. `Save As` then reported success for a write into the localStorage
+     * virtual FS, with no dialog of any kind: the reported symptom was "File ▸
+     * Save As does nothing". Refusing here makes the caller fall back to
+     * `Save to Computer`, which always has a real destination (picker, Electron
+     * dialog, or download).
+     */
+    return null;
   }
 
   async list(): Promise<string[]> {

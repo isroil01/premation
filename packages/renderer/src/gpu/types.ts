@@ -32,6 +32,7 @@ export type TextureFormat =
   | 'rgba8unorm-srgb'
   | 'bgra8unorm'
   | 'rgba16float'
+  | 'rgba32float'
   | 'r8unorm'
   | 'depth24plus';
 export type FilterMode = 'nearest' | 'linear';
@@ -279,5 +280,6 @@ export interface BackendCapabilities {
   instancing: boolean;
   storageBuffers: boolean;
   float16Textures: boolean;
+  float32Textures: boolean;
   timestampQueries: boolean;
 }

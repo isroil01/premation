@@ -21,6 +21,7 @@ import { RenderPass, SURFACE, type RenderPassContext, type RenderServices } from
 // resolveTargets. Flip to false in shaders/linearWorkingSpace.ts to restore
 // gamma-space maths without a revert.
 import { LINEAR_WORKING_SPACE, LINEAR_INTERMEDIATE_STORAGE } from '../shaders/linearWorkingSpace';
+import { intermediateFloatFormat } from '../shaders/colorPipeline';
 
 export class RenderGraphError extends Error {
   constructor(
@@ -194,9 +195,9 @@ export class RenderGraph {
     // format, exactly as before this change.
     const HDR_INTERMEDIATES = true;
     // Pin the colour-space kill switch next to HDR so both are visible here.
-    // Actual transfer lives in builtin shaders; this reference documents the pair.
     void LINEAR_WORKING_SPACE;
     void LINEAR_INTERMEDIATE_STORAGE;
+    const floatFormat = intermediateFloatFormat(backend.capabilities);
     const map = new Map<string, RenderTargetHandle>();
     const { width, height } = viewport.pixelSize;
     const orphaned = this.orphanedTargets();
@@ -205,11 +206,13 @@ export class RenderGraph {
       // full-viewport surface nothing can write to. See orphanedTargets.
       if (orphaned.has(decl.name)) continue;
       const desc = decl.descriptor(viewport);
-      // A target opts into float precision by declaring `rgba16float`; anything
-      // else (matte/mask coverage buffers) shares the surface format as before.
-      const useFloat =
-        desc.format === 'rgba16float' && HDR_INTERMEDIATES && backend.capabilities.float16Textures;
-      desc.format = useFloat ? 'rgba16float' : colorFormat;
+      // A target opts into float precision by declaring float intermediates;
+      // matte/mask coverage buffers share the surface format as before.
+      const wantsFloat =
+        (desc.format === 'rgba16float' || desc.format === 'rgba32float') &&
+        HDR_INTERMEDIATES &&
+        floatFormat !== 'rgba8unorm';
+      desc.format = wantsFloat ? floatFormat : colorFormat;
       const handle = resources.renderTarget(`graph-target:${decl.name}:${width}x${height}`, desc);
       map.set(decl.name, handle);
     }

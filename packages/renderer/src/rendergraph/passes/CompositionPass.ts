@@ -6,8 +6,8 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -845,6 +845,189 @@ export class CompositionPass extends RenderPass {
         cmds.add({
           batchKey: 'arithmetic', material: ARITHMETIC_MATERIAL, blend: 'normal',
           uniforms: packArithmetic(mvp, targetUv, effect.operator, effect.r, effect.g, effect.b, effect.clip),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'vignette') {
+        cmds.add({
+          batchKey: 'vignette', material: VIGNETTE_MATERIAL, blend: 'normal',
+          uniforms: packVignetteFx(
+            mvp, targetUv,
+            effect.amount, effect.inner, effect.feather, effect.roundness,
+            effect.cx, effect.cy, effect.aspect,
+            // The LAYER's box within the chain buffer — same reason Bend/Beam
+            // resolve against it: on the 2D route the buffer is screen space.
+            fxBox,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'black-and-white') {
+        cmds.add({
+          batchKey: 'black-and-white', material: BLACK_AND_WHITE_MATERIAL, blend: 'normal',
+          uniforms: packBlackAndWhite(
+            mvp, targetUv,
+            effect.reds, effect.yellows, effect.greens, effect.cyans,
+            effect.blues, effect.magentas, effect.tintOn, effect.tintH, effect.tintS,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'tritone') {
+        cmds.add({
+          batchKey: 'tritone', material: TRITONE_MATERIAL, blend: 'normal',
+          uniforms: packTritone(
+            mvp, targetUv,
+            effect.sr, effect.sg, effect.sb, effect.blend,
+            effect.mr, effect.mg, effect.mb,
+            effect.hr, effect.hg, effect.hb,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'photo-filter') {
+        cmds.add({
+          batchKey: 'photo-filter', material: PHOTO_FILTER_MATERIAL, blend: 'normal',
+          uniforms: packPhotoFilter(mvp, targetUv, effect.r, effect.g, effect.b, effect.density, effect.preserveLuminosity),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'threshold') {
+        cmds.add({
+          batchKey: 'threshold', material: THRESHOLD_MATERIAL, blend: 'normal',
+          uniforms: packThreshold(mvp, targetUv, effect.level),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'vibrance') {
+        cmds.add({
+          batchKey: 'vibrance', material: VIBRANCE_MATERIAL, blend: 'normal',
+          uniforms: packVibrance(mvp, targetUv, effect.vibrance, effect.saturation),
+          texture: curTex, sampler: clampSampler(),
+        });
+      // ── Round-six waves 2–3: one packer shape, per-effect param rows ──
+      } else if (effect.type === 'mirror') {
+        cmds.add({
+          batchKey: 'mirror', material: MIRROR_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.nx, effect.ny],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'offset') {
+        cmds.add({
+          batchKey: 'offset', material: OFFSET_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.tx, effect.ty, effect.keep, 0],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'bulge') {
+        cmds.add({
+          batchKey: 'bulge', material: BULGE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.amount],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'twirl') {
+        cmds.add({
+          batchKey: 'twirl', material: TWIRL_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.maxAngle],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'spherize') {
+        cmds.add({
+          batchKey: 'spherize', material: SPHERIZE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.amount],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'kaleidoscope') {
+        cmds.add({
+          batchKey: 'kaleidoscope', material: KALEIDOSCOPE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.rot, effect.srcA],
+            [effect.seg, effect.scale, effect.lw, effect.lh],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'ripple') {
+        cmds.add({
+          batchKey: 'ripple', material: RIPPLE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.amplitude],
+            [effect.frequency, effect.phase, effect.decay, effect.lw],
+            [effect.lh, 0, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'chromatic-aberration') {
+        cmds.add({
+          batchKey: 'chromatic-aberration', material: CHROMATIC_ABERRATION_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.amount, effect.linear ? 1 : 0, effect.lvx, effect.lvy],
+            [effect.falloffExp, effect.cx, effect.cy, effect.maxR],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'magnify') {
+        cmds.add({
+          batchKey: 'magnify', material: MAGNIFY_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.scale],
+            [effect.square ? 1 : 0, effect.feather, effect.lw, effect.lh],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'mosaic') {
+        cmds.add({
+          batchKey: 'mosaic', material: MOSAIC_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cols, effect.rows, effect.sharp ? 1 : 0, 0],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'find-edges') {
+        cmds.add({
+          batchKey: 'find-edges', material: FIND_EDGES_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.invert ? 1 : 0, effect.blend, 0, 0],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'emboss') {
+        cmds.add({
+          batchKey: 'emboss', material: EMBOSS_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.dx, effect.dy, effect.k, effect.keep],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'color-emboss') {
+        cmds.add({
+          batchKey: 'color-emboss', material: COLOR_EMBOSS_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.ox, effect.oy, effect.k, effect.blend],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'halftone') {
+        cmds.add({
+          batchKey: 'halftone', material: HALFTONE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cell, effect.ca, effect.sa, effect.k],
+            [effect.inkR, effect.inkG, effect.inkB, effect.colorize ? 1 : 0],
+            [effect.paperR, effect.paperG, effect.paperB, effect.blend],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
           texture: curTex, sampler: clampSampler(),
         });
       } else if (effect.type === 'bend') {

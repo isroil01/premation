@@ -25,7 +25,7 @@
 
 import type { SceneNode } from '../types';
 import { SCENE_KIND_PROP } from '../scene/seedDefaultScene';
-import { svgToDataUrl, type SvgIntrinsicSize } from './svgSanitize';
+import { sanitizeSvg, svgToDataUrl, SVG_SANITIZE_POLICY_VERSION, type SvgIntrinsicSize } from './svgSanitize';
 import type { SvgCapabilities } from './svgCapabilities';
 
 /** The component type carrying an SVG layer's document. */
@@ -53,13 +53,48 @@ function svgComponent(node: SceneNode): { props: Record<string, unknown> } | und
     | undefined;
 }
 
+/**
+ * nodeId → re-sanitized markup for layers stored under an older sanitize
+ * policy. Keyed by source so an edited document re-derives; never written back
+ * into the scene graph (a read path must not create history entries).
+ */
+const resanitizeCache = new Map<string, { source: string; markup: string }>();
+
+/**
+ * The stored sanitized markup, upgraded to the CURRENT sanitize policy.
+ *
+ * Sanitized markup is baked in at import, so a policy fix (v2 re-admitted
+ * `<animate>`/`<set>`, which v1 silently dropped — every SMIL fill/opacity/
+ * visibility animation was lost) would never reach existing layers without
+ * this. Old layers are re-sanitized from their retained source on first read,
+ * memoized, and left untouched in the document.
+ */
+function upgradedSanitizedMarkup(node: SceneNode, p: Record<string, unknown>, sanitized: string): string {
+  if (p.sanitizePolicy === SVG_SANITIZE_POLICY_VERSION) return sanitized;
+  const source = typeof p.sourceMarkup === 'string' ? p.sourceMarkup : '';
+  if (!source) return sanitized;
+  const hit = resanitizeCache.get(node.id);
+  if (hit && hit.source === source) return hit.markup;
+  // Same scope derivation as insertSvgLayer — ids must come out identical or
+  // every internal url(#…) reference would dangle.
+  const redone = sanitizeSvg(source, node.id.replace(/[^\w-]/g, '_'));
+  const markup = redone?.markup ?? sanitized;
+  resanitizeCache.set(node.id, { source, markup });
+  if (resanitizeCache.size > DATA_URL_CACHE_MAX) {
+    const oldest = resanitizeCache.keys().next();
+    if (!oldest.done) resanitizeCache.delete(oldest.value);
+  }
+  return markup;
+}
+
 /** Read an SVG layer's stored document. Null for any other kind of node. */
 export function readSvgLayer(node: SceneNode): SvgLayerData | null {
   const c = svgComponent(node);
   if (!c) return null;
   const p = c.props;
-  const sanitized = typeof p.sanitizedMarkup === 'string' ? p.sanitizedMarkup : '';
-  if (!sanitized) return null;
+  const stored = typeof p.sanitizedMarkup === 'string' ? p.sanitizedMarkup : '';
+  if (!stored) return null;
+  const sanitized = upgradedSanitizedMarkup(node, p, stored);
   return {
     sourceMarkup: typeof p.sourceMarkup === 'string' ? p.sourceMarkup : sanitized,
     sanitizedMarkup: sanitized,
@@ -163,6 +198,9 @@ export function makeSvgComponent(
     props: {
       sourceMarkup: data.sourceMarkup,
       sanitizedMarkup: data.sanitizedMarkup,
+      // Which sanitize POLICY produced the markup above — readSvgLayer
+      // re-sanitizes stored layers stamped with an older (or missing) version.
+      sanitizePolicy: SVG_SANITIZE_POLICY_VERSION,
       intrinsicWidth: data.size.width,
       intrinsicHeight: data.size.height,
       viewBox: data.size.viewBox,

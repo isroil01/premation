@@ -227,6 +227,10 @@
   align-items: center;
   gap: 6px;
 }
+.authoredRow :global(input) {
+  min-width: 0;
+  flex: 1;
+}
 .kindBadge {
   font-size: var(--font-size-micro);
   font-weight: 700;

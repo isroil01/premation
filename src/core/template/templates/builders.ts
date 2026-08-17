@@ -1,8 +1,9 @@
 /**
  * Minimal node builders shared by authored templates. These mirror the exact
- * SceneNode/Component shapes seedSaaSAd uses (Transform carries SCENE_KIND_PROP
- * + geometry; Style carries fill/opacity; Text carries content/font/fill), so
- * templates render through the same buildSnapshot pipeline as everything else.
+ * SceneNode/Component shapes the editor uses everywhere else (Transform carries
+ * SCENE_KIND_PROP + geometry; Style carries fill/opacity; Text carries
+ * content/font/fill), so templates render through the same buildSnapshot
+ * pipeline as a hand-built composition.
  *
  * Every builder takes the target `graph` so a template's `layout` can be built
  * into either the live singleton (real apply) or a throwaway SceneGraph (gallery

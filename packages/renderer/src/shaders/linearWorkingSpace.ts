@@ -19,6 +19,7 @@
 
 import type { Color } from '../core/math/Color';
 import type { TextureFormat } from '../gpu/types';
+import { ACES_TRANSFER_GLSL, ACES_TRANSFER_WGSL, getActiveColorPipeline } from './colorPipeline';
 
 /** Kill switch. `true` = linear grade/blend/blur.
  *  Default on for AE-parity; flip to false to restore gamma-space maths
@@ -73,12 +74,16 @@ export function linearChanToSrgb(c: number): number {
 /** Authored display-referred RGB → values to write into a working-space RT. */
 export function toWorkingColor(c: Color): Color {
   if (!LINEAR_WORKING_SPACE || !LINEAR_INTERMEDIATE_STORAGE) return c;
-  return {
-    r: srgbChanToLinear(c.r),
-    g: srgbChanToLinear(c.g),
-    b: srgbChanToLinear(c.b),
-    a: c.a,
-  };
+  let r = srgbChanToLinear(c.r);
+  let g = srgbChanToLinear(c.g);
+  let b = srgbChanToLinear(c.b);
+  if (getActiveColorPipeline().workingSpace === 'aces-cg') {
+    const nr = 0.613097396 * r + 0.339523469 * g + 0.047379562 * b;
+    const ng = 0.070194066 * r + 0.916353879 * g + 0.013452032 * b;
+    const nb = 0.020615588 * r + 0.109569769 * g + 0.869814633 * b;
+    r = nr; g = ng; b = nb;
+  }
+  return { r, g, b, a: c.a };
 }
 
 const STORAGE_WGSL = LINEAR_INTERMEDIATE_STORAGE
@@ -128,6 +133,7 @@ fn srgbToLinearRgb(c : vec3<f32>) -> vec3<f32> {
 fn linearToSrgbRgb(c : vec3<f32>) -> vec3<f32> {
   return vec3<f32>(linearToSrgbChan(c.r), linearToSrgbChan(c.g), linearToSrgbChan(c.b));
 }
+${ACES_TRANSFER_WGSL}
 ${STORAGE_WGSL}
 `;
 
@@ -144,6 +150,7 @@ vec3 srgbToLinearRgb(vec3 c) {
 vec3 linearToSrgbRgb(vec3 c) {
   return vec3(linearToSrgbChan(c.r), linearToSrgbChan(c.g), linearToSrgbChan(c.b));
 }
+${ACES_TRANSFER_GLSL}
 ${STORAGE_GLSL}
 `;
 

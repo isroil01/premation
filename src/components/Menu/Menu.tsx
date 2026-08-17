@@ -40,6 +40,10 @@ interface MenuContextValue {
   closeParent: () => void;
   openSubMenu: (id: string) => void;
   closeSubMenu: (id: string) => void;
+  /** Inherited by portaled submenus so a context menu cannot grow a scrollbar
+   *  on Arrange / Label Color / Merge Paths while the root stays un-scrolled. */
+  noScroll: boolean;
+  spacious: boolean;
 }
 
 const MenuContext = createContext<MenuContextValue | null>(null);
@@ -55,9 +59,14 @@ export interface MenuProps {
   ariaLabel?: string;
   /** When true, removes the max-height cap and shows all items without scrolling. */
   noScroll?: boolean;
+  /** Extra padding and row spacing. Context menus, not compact toolbar dropdowns. */
+  spacious?: boolean;
 }
 
-export function Menu({ children, className, onItemActivate, ariaLabel, noScroll }: MenuProps): JSX.Element {
+export function Menu({ children, className, onItemActivate, ariaLabel, noScroll, spacious }: MenuProps): JSX.Element {
+  const parent = useContext(MenuContext);
+  const resolvedNoScroll = noScroll ?? parent?.noScroll ?? false;
+  const resolvedSpacious = spacious ?? parent?.spacious ?? false;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const subMenuOpen = useRef<Set<string>>(new Set());
   const [, force] = useState(0);
@@ -102,6 +111,8 @@ export function Menu({ children, className, onItemActivate, ariaLabel, noScroll 
     closeParent,
     openSubMenu: (id) => { subMenuOpen.current.add(id); force((n) => n + 1); },
     closeSubMenu: (id) => { subMenuOpen.current.delete(id); force((n) => n + 1); },
+    noScroll: resolvedNoScroll,
+    spacious: resolvedSpacious,
   };
 
   return (
@@ -110,7 +121,12 @@ export function Menu({ children, className, onItemActivate, ariaLabel, noScroll 
         ref={rootRef}
         role="menu"
         aria-label={ariaLabel}
-        className={cn(styles.menu, noScroll && styles.noScroll, className)}
+        className={cn(
+          styles.menu,
+          resolvedNoScroll && styles.noScroll,
+          resolvedSpacious && styles.spacious,
+          className,
+        )}
         onKeyDown={onKeyDown}
       >
         {Children.map(children, (child) => child)}
@@ -256,7 +272,10 @@ export function MenuItem({
           onPointerEnter={openSub}
           onPointerLeave={scheduleCloseSub}
         >
-          <Menu ariaLabel={typeof label === 'string' ? label : undefined} onItemActivate={() => { setSubOpen(false); ctx?.closeParent(); }}>
+          <Menu
+            ariaLabel={typeof label === 'string' ? label : undefined}
+            onItemActivate={() => { setSubOpen(false); ctx?.closeParent(); }}
+          >
             {children}
           </Menu>
         </div>,
@@ -384,7 +403,7 @@ export function ContextMenu({ children, menu, className }: ContextMenuProps): JS
           className={cn(styles.contextWrapper, className)}
           style={pos ? { top: pos.top, left: pos.left } : { top: coords.y, left: coords.x, visibility: 'hidden' }}
         >
-          <Menu onItemActivate={() => setCoords(null)}>
+          <Menu noScroll spacious onItemActivate={() => setCoords(null)}>
             {menu(() => setCoords(null))}
           </Menu>
         </div>,

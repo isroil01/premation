@@ -16,6 +16,7 @@ import { activeCompRootId } from '@core/scene/activeComp';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { declareSlot, DEFAULT_SLOT_FIT } from './mediaSlots';
 import { bumpScene } from '@stores/sceneStore';
+import { slugFieldId, uniqueFieldId, isPublicFieldId } from '@core/automation/fieldIds';
 import type { TemplateField } from './templateTypes';
 
 const FIELDS_PROP = '__templateFields';
@@ -44,17 +45,23 @@ function writeAuthoredFields(rootId: string, fields: TemplateField[]): void {
   bumpScene();
 }
 
+function nextFieldId(label: string, existing: readonly TemplateField[]): string {
+  const taken = new Set(existing.map((f) => f.id));
+  return uniqueFieldId(slugFieldId(label) || 'input', taken);
+}
+
 /** Build a field that exposes the primary editable prop of `nodeId`, or null if
  *  the node has nothing obviously editable. Default value = its current value. */
 export function inferFieldForNode(nodeId: string): TemplateField | null {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const label = node.name || 'Field';
+  const id = nextFieldId(label, readAuthoredFields());
 
   const text = node.components.find((c) => c.type === 'Text');
   if (text) {
     return {
-      id: `f_${nodeId}_content`, label, kind: 'text', group: 'Text',
+      id, label, kind: 'text', group: 'Text',
       default: String((text.props as Record<string, unknown>).content ?? ''),
       target: { nodeId, componentType: 'Text', prop: 'content' },
     };
@@ -76,7 +83,7 @@ export function inferFieldForNode(nodeId: string): TemplateField | null {
     // capturing then would make every later fill compound.
     declareSlot(nodeId, DEFAULT_SLOT_FIT);
     return {
-      id: `f_${nodeId}_src`, label, kind: 'media', group: 'Media', fit: DEFAULT_SLOT_FIT,
+      id, label, kind: 'media', group: 'Media', fit: DEFAULT_SLOT_FIT,
       default: String((transform.props as Record<string, unknown>).src ?? ''),
       target: { nodeId, componentType: 'Transform', prop: 'src' },
     };
@@ -85,7 +92,7 @@ export function inferFieldForNode(nodeId: string): TemplateField | null {
   const style = node.components.find((c) => c.type === 'Style');
   if (style) {
     return {
-      id: `f_${nodeId}_fill`, label, kind: 'color', group: 'Colours',
+      id, label, kind: 'color', group: 'Colours',
       default: String((style.props as Record<string, unknown>).fill ?? '#000000'),
       target: { nodeId, componentType: 'Style', prop: 'fill' },
     };
@@ -101,10 +108,16 @@ export function exposeNodeAsField(nodeId: string): TemplateField | null {
   const field = inferFieldForNode(nodeId);
   if (!field) return null;
   const rootId = activeCompRootId();
-  const fields = readAuthoredFields(rootId).filter((f) => f.id !== field.id);
-  fields.push(field);
-  writeAuthoredFields(rootId, fields);
-  return field;
+  const existing = readAuthoredFields(rootId);
+  const prior = existing.find(
+    (f) => f.target.nodeId === field.target.nodeId && f.target.prop === field.target.prop,
+  );
+  const next = prior ? { ...field, id: prior.id } : field;
+  writeAuthoredFields(
+    rootId,
+    [...existing.filter((f) => f.id !== next.id), next],
+  );
+  return next;
 }
 
 export function removeAuthoredField(fieldId: string): void {
@@ -115,4 +128,21 @@ export function removeAuthoredField(fieldId: string): void {
 export function renameAuthoredField(fieldId: string, label: string): void {
   const rootId = activeCompRootId();
   writeAuthoredFields(rootId, readAuthoredFields(rootId).map((f) => (f.id === fieldId ? { ...f, label } : f)));
+}
+
+/**
+ * Change the public input id n8n will send. Rejects collisions and ids that
+ * are not a public slug. Returns false when the rename did not apply.
+ */
+export function renameAuthoredFieldId(fieldId: string, nextId: string): boolean {
+  const id = nextId.trim();
+  if (!isPublicFieldId(id)) return false;
+  const rootId = activeCompRootId();
+  const fields = readAuthoredFields(rootId);
+  if (fields.some((f) => f.id === id && f.id !== fieldId)) return false;
+  writeAuthoredFields(
+    rootId,
+    fields.map((f) => (f.id === fieldId ? { ...f, id } : f)),
+  );
+  return true;
 }

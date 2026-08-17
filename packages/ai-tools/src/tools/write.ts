@@ -509,6 +509,14 @@ export const addEffectDef: AiToolDef = {
           'iris-wipe', 'light-wipe', 'line-sweep', 'grid-wipe',
           // Noise & Grain
           'dust-scratches', 'noise-alpha',
+          // Round five — Generate / weather
+          'star-burst', 'snowfall', 'rainfall', 'write-on', 'light-burst',
+          // Round five — Stylize & Blur
+          'glass', 'texturize', 'threads', 'chromatic-aberration', 'hex-tile', 'vector-blur',
+          // Round five — Distort
+          'flo-motion', 'lens', 'griddler', 'ball-action', 'drizzle',
+          // Round five — Transition
+          'jaws', 'pixel-polly', 'twister', 'card-dance',
         ],
       },
       amount: { type: 'number', description: 'Initial value for the primary param. Omit for the effect default.' },

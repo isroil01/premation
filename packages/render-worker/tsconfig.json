@@ -1,0 +1,31 @@
+{
+  "//": "The root tsconfig only includes `src`, so this package's entry would otherwise be transpiled by Vite and never type-checked. `npm run typecheck` here is that gate.",
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": "../..",
+    "types": ["vite/client"],
+    "paths": {
+      "@/*": ["src/*"],
+      "@core/*": ["src/core/*"],
+      "@components/*": ["src/components/*"],
+      "@layout/*": ["src/layout/*"],
+      "@stores/*": ["src/stores/*"],
+      "@hooks/*": ["src/hooks/*"],
+      "@styles/*": ["src/styles/*"],
+      "@tokens/*": ["src/tokens/*"],
+      "@themes/*": ["src/themes/*"],
+      "@app-types/*": ["src/types/*"],
+      "@utils/*": ["src/utils/*"],
+      "@assets/*": ["src/assets/*"],
+      "@providers/*": ["src/providers/*"],
+      "@motion/scene": ["packages/scene/src/index.ts"],
+      "@motion/workspace": ["packages/workspace/src/index.ts"],
+      "@motion/timeline": ["packages/timeline/src/index.ts"],
+      "@motion/animation": ["packages/animation/src/index.ts"],
+      "@motion/renderer": ["packages/renderer/src/index.ts"],
+      "@motion/ai-tools": ["packages/ai-tools/src/index.ts"]
+    }
+  },
+  "include": ["render/**/*.ts"]
+}

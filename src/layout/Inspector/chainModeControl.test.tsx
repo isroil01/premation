@@ -33,6 +33,8 @@ import { chainModePropPath } from '@core/rig/ikfk';
 import { computeWorldTransforms, boneTip } from '@core/rig/skeleton';
 import { applyIk } from '@core/rig/rigDeform';
 import { resolveActiveIkTargets } from '@core/rig/liveIkTargets';
+import { useUIStore } from '@stores/uiStore';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import type { SceneNode } from '@core/types';
 
 const DEG = Math.PI / 180;
@@ -65,6 +67,8 @@ function handNow(): { x: number; y: number } {
 beforeEach(() => {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
+  useUIStore.setState({ boneRigMode: 'pose' });
+  useRigSelectionStore.getState().selectBone(ID, 'fore');
   defaultSceneGraph.addNode(shapeNode(ID));
   defaultAnimation.removeTrack(ID, chainModePropPath('fore'));
   defaultSceneGraph.setSkeleton(ID, {

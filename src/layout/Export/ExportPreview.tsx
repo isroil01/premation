@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
+import { IconButton } from '@components/IconButton';
 import type { SnapshotComp } from '@core/rendering/buildSnapshot';
 import { createExportPreviewRenderer, type ExportPreviewRenderer } from '@core/export/exportPreview';
 import styles from './ExportPreview.module.css';
@@ -25,6 +26,8 @@ interface ExportPreviewProps {
   comp: SnapshotComp;
   /** Paused while an export is running — the GPU is busy with real frames. */
   disabled?: boolean;
+  /** Still-frame export: hide the range scrubber. */
+  singleFrame?: boolean;
 }
 
 /** Timecode as `mm:ss:ff`, matching the timeline's readout. */
@@ -44,6 +47,7 @@ export function ExportPreview({
   startSec = 0,
   comp,
   disabled = false,
+  singleFrame = false,
 }: ExportPreviewProps): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<ExportPreviewRenderer | null>(null);
@@ -128,22 +132,44 @@ export function ExportPreview({
         ) : null}
       </div>
 
-      <div className={styles.scrubRow}>
-        <input
-          type="range"
-          className={styles.scrub}
-          min={0}
-          max={frameCount - 1}
-          step={1}
-          value={clampedFrame}
-          disabled={disabled}
-          aria-label="Preview frame"
-          onChange={(e) => setFrame(Number(e.target.value))}
-        />
-        <span className={styles.timecode}>
-          {timecode(time, fps)} · {clampedFrame + 1}/{frameCount}
-        </span>
-      </div>
+      {singleFrame ? (
+        <div className={styles.scrubRow}>
+          <span className={styles.timecode}>{timecode(time, fps)} · playhead</span>
+        </div>
+      ) : (
+        <div className={styles.scrubRow}>
+          <IconButton
+            aria-label="Previous frame"
+            size="xs"
+            disabled={disabled || clampedFrame <= 0}
+            onClick={() => setFrame((f) => Math.max(0, f - 1))}
+          >
+            <Icon name="chevron-left" size="sm" />
+          </IconButton>
+          <input
+            type="range"
+            className={styles.scrub}
+            min={0}
+            max={frameCount - 1}
+            step={1}
+            value={clampedFrame}
+            disabled={disabled}
+            aria-label="Preview frame"
+            onChange={(e) => setFrame(Number(e.target.value))}
+          />
+          <IconButton
+            aria-label="Next frame"
+            size="xs"
+            disabled={disabled || clampedFrame >= frameCount - 1}
+            onClick={() => setFrame((f) => Math.min(frameCount - 1, f + 1))}
+          >
+            <Icon name="chevron-right" size="sm" />
+          </IconButton>
+          <span className={styles.timecode}>
+            {timecode(time, fps)} · {clampedFrame + 1}/{frameCount}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

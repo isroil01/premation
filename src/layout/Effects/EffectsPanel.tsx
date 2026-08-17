@@ -1,8 +1,11 @@
 /**
- * EffectsPanel — per-layer visual effects (blur, glow, color grades). Add from
- * the palette of effect types; each applied effect gets a scrubbable amount and
- * a remove control. Effects render live on the canvas and are captured by
- * History / autosave / export.
+ * EffectsPanel — the right-inspector library of effect types (AE's Effects &
+ * Presets). Click a row to add it to the selected layer; the applied stack
+ * itself lives in the left-sidebar Effect Controls panel, because keeping both
+ * in this tab buried the browser under every effect you applied.
+ *
+ * Masks stay here: they are added from this palette (rectangle / ellipse /
+ * pen), the same way AE adds them from a tool rather than from Effect Controls.
  */
 
 import { useState, useMemo, useSyncExternalStore } from 'react';
@@ -19,9 +22,10 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { EFFECT_DEFS, addEffect, getNodeEffects, type EffectType } from '@core/effects/effects';
+import { EFFECT_DEFS, getNodeEffects, type EffectType } from '@core/effects/effects';
 import { pluginEffectDefs, pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { subscribeToEffects, pluginEffectRevision } from '@core/plugins/pluginEffects';
+import { addEffectAndReveal, revealEffectControls } from './revealEffectControls';
 import {
   copyAllEffects,
   pasteEffects,
@@ -32,8 +36,8 @@ import {
   deleteEffectPreset,
   listEffectPresets,
 } from '@core/effects/effectClipboard';
-import { EffectStack } from './EffectStack';
-import { PathOpControls } from '@layout/Inspector/PathOpControls';
+import { BUILTIN_EFFECT_PRESETS } from '@core/effects/builtinEffectPresets';
+import { customPrompt } from '@components/Modal/Dialogs';
 import {
   PATH_OP_CATALOG,
   addPathOp,
@@ -56,7 +60,6 @@ import {
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { customPrompt } from '@components/Modal/Dialogs';
 import styles from './EffectsPanel.module.css';
 
 // AE menu order — `None` leads, because it is the "this path does not cut"
@@ -273,6 +276,29 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   'grid-wipe': 'Transition',
   'dust-scratches': 'Stylize',
   'noise-alpha': 'Stylize',
+  // ── Round five ── AE/Cycore's own folders, with the standing exceptions:
+  // no Simulation folder exists, so the weather generators (which DRAW, like
+  // Lens Flare) sit in Generate where a user hunting "snow" will look.
+  'star-burst': 'Generate',
+  snowfall: 'Generate',
+  rainfall: 'Generate',
+  'write-on': 'Generate',
+  'light-burst': 'Generate',
+  glass: 'Stylize',
+  texturize: 'Stylize',
+  threads: 'Stylize',
+  'chromatic-aberration': 'Stylize',
+  'hex-tile': 'Stylize',
+  'vector-blur': 'Blur & Sharpen',
+  'flo-motion': 'Distort',
+  lens: 'Distort',
+  griddler: 'Distort',
+  'ball-action': 'Distort',
+  drizzle: 'Distort',
+  jaws: 'Transition',
+  'pixel-polly': 'Transition',
+  twister: 'Transition',
+  'card-dance': 'Transition',
 };
 
 /** Folder order in the browser — most-reached-for first. */
@@ -326,7 +352,10 @@ export function EffectsPanel(): JSX.Element {
   // localStorage), so a counter is what tells this panel they changed.
   const [clipboardRev, bumpClipboard] = useState(0);
   const presets = useMemo(() => listEffectPresets(), [clipboardRev]);
-
+  const builtinPresetNames = useMemo(
+    () => new Set(BUILTIN_EFFECT_PRESETS.map((p) => p.name)),
+    [],
+  );
 
   // NOTE: the empty-state early return must come AFTER every hook — the
   // browser-accordion useMemos below run on every render, and returning before
@@ -352,6 +381,9 @@ export function EffectsPanel(): JSX.Element {
 
   const q = effectQuery.trim().toLowerCase();
   const browserDefs = q ? allDefs.filter((d) => d.label.toLowerCase().includes(q)) : allDefs;
+  const browserPresets = q
+    ? presets.filter((p) => p.name.toLowerCase().includes(q))
+    : presets;
   // Every effect in EFFECT_DEFS renders on the unified GPU engine, so nothing
   // is locked. The availability check that used to gate this returned a constant
   // `{ ok: true }`, which left the lock icon, the `disabled` attribute and the
@@ -400,8 +432,8 @@ export function EffectsPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
-      {/* Active Applied Effects — front and center at the top for easy access */}
-      <div className={styles.sectionTitle}>Active Layer Effects</div>
+      {/* Effects & Presets browser — the AE library tree of effect types. */}
+      <div className={styles.sectionTitle}>Effects &amp; Presets</div>
       <div className={styles.addRow}>
         <button
           type="button"
@@ -417,7 +449,11 @@ export function EffectsPanel(): JSX.Element {
           className={styles.addChip}
           disabled={!hasEffectClipboard()}
           title={hasEffectClipboard() ? `Paste ${effectClipboardSize()} effect(s) onto this layer` : 'Nothing copied yet'}
-          onClick={() => { pasteEffects([primary]); bumpClipboard((n) => n + 1); }}
+          onClick={() => {
+            pasteEffects([primary]);
+            bumpClipboard((n) => n + 1);
+            revealEffectControls();
+          }}
         >
           <Icon name="plus" size="sm" /> Paste
         </button>
@@ -441,35 +477,6 @@ export function EffectsPanel(): JSX.Element {
           <Icon name="star" size="sm" /> Save Preset
         </button>
       </div>
-      {presets.length > 0 && (
-        <div
-          className={styles.addRow}
-          style={{ maxHeight: 120, overflowY: 'auto', flexWrap: 'wrap' }}
-          role="group"
-          aria-label="Effect presets"
-        >
-          {presets.map((p) => (
-            <button
-              key={p.name}
-              type="button"
-              className={styles.addChip}
-              title={`Apply "${p.name}" (${p.items.length} effect(s)) — Alt-click deletes a user-saved preset`}
-              onClick={(e) => {
-                if (e.altKey) deleteEffectPreset(p.name);
-                else applyEffectPreset(p.name, [primary]);
-                bumpClipboard((n) => n + 1);
-              }}
-            >
-              <Icon name="sparkles" size="sm" /> {p.name}
-            </button>
-          ))}
-        </div>
-      )}
-      <EffectStack nodeId={primary} />
-      <PathOpControls nodeId={primary} />
-
-      {/* Effects & Presets browser — the AE library tree of effect types. */}
-      <div className={styles.sectionTitle}>Effects &amp; Presets</div>
       <div className={styles.browser}>
         <Input
           value={effectQuery}
@@ -481,8 +488,44 @@ export function EffectsPanel(): JSX.Element {
           onClear={() => setEffectQuery('')}
           onChange={(e) => setEffectQuery(e.currentTarget.value)}
         />
-        {browserFolders.length > 0 || shapeOps.length > 0 ? (
+        {browserFolders.length > 0 || shapeOps.length > 0 || browserPresets.length > 0 ? (
           <BrowserTree>
+            {browserPresets.length > 0 && (
+              <BrowserFolder
+                key="presets"
+                label="Effect Presets"
+                icon="sparkles"
+                count={browserPresets.length}
+                defaultOpen={false}
+                forceOpen={!!q}
+              >
+                {browserPresets.map((p) => {
+                  const userSaved = !builtinPresetNames.has(p.name);
+                  return (
+                    <BrowserRow
+                      key={p.name}
+                      label={p.name}
+                      icon="sparkles"
+                      title={
+                        userSaved
+                          ? `Apply "${p.name}" (${p.items.length} effect(s)) — Alt-click deletes`
+                          : `Apply "${p.name}" (${p.items.length} effect(s))`
+                      }
+                      onClick={(e) => {
+                        if (userSaved && e.altKey) {
+                          deleteEffectPreset(p.name);
+                          bumpClipboard((n) => n + 1);
+                          return;
+                        }
+                        applyEffectPreset(p.name, [primary]);
+                        bumpClipboard((n) => n + 1);
+                        revealEffectControls();
+                      }}
+                    />
+                  );
+                })}
+              </BrowserFolder>
+            )}
             {browserFolders.map(([cat, items], index) => (
               <BrowserFolder
                 key={cat}
@@ -523,7 +566,7 @@ export function EffectsPanel(): JSX.Element {
                     }
                     draggable
                     onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
-                    onClick={() => { if (primary) addEffect(primary, d.type); }}
+                    onClick={() => { if (primary) addEffectAndReveal(primary, d.type); }}
                   />
                 ))}
               </BrowserFolder>
@@ -549,6 +592,7 @@ export function EffectsPanel(): JSX.Element {
                       onClick={() => {
                         if (!primary || taken) return;
                         addPathOp(primary, defaultPathOpOf(op.type));
+                        revealEffectControls();
                       }}
                     />
                   );

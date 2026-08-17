@@ -7,11 +7,13 @@ import { Logo } from '@components/Logo';
 import { Checkbox } from '@components/Checkbox';
 import { Pagination } from '@components/Pagination';
 import { Modal, customConfirm } from '@components/Modal';
-import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
 import { useUIStore } from '@stores/uiStore';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';
+import { ApiKeysSection } from '@layout/Settings/ApiKeysSection';
+import { BillingSection } from '@layout/Settings/BillingSection';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { billingEnabled } from '@core/config/edition';
 import {
   SIZE_PRESETS, SIZE_GROUPS, FPS_PRESETS, DURATION_PRESETS,
   MIN_DIMENSION, MAX_DIMENSION, MIN_FPS, MAX_FPS, MIN_DURATION, MAX_DURATION,
@@ -46,7 +48,42 @@ function timeAgo(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-type TabType = 'home' | 'projects' | 'assets' | 'plugins' | 'renders' | 'trash' | 'settings';
+/**
+ * Dashboard destinations.
+ *
+ * `billing` and `developer` used to be CARDS inside `settings`, which made that
+ * page a scroll of four unrelated concerns — account, subscription, assistant,
+ * API keys — and left two first-class surfaces with no address of their own.
+ * "Show me my plan" was a link to a scroll POSITION
+ * (`?tab=settings&section=billing`, followed by a `scrollIntoView`), which is
+ * what a missing page looks like while something still has to link to it.
+ */
+type TabType =
+  | 'home'
+  | 'projects'
+  | 'assets'
+  | 'plugins'
+  | 'renders'
+  | 'trash'
+  | 'billing'
+  | 'developer'
+  | 'settings';
+
+const TABS: readonly TabType[] = [
+  'home', 'projects', 'assets', 'plugins', 'renders', 'trash', 'billing', 'developer', 'settings',
+];
+
+/**
+ * Narrow a `?tab=` value.
+ *
+ * Derived from TABS rather than restated. The initial-state reader and the
+ * effect below used to carry two hand-written lists that had already drifted —
+ * `plugins` was in one and not the other, so `?tab=plugins` opened Home and
+ * then jumped to Plugins one render later.
+ */
+function isTab(value: string | null): value is TabType {
+  return value != null && (TABS as readonly string[]).includes(value);
+}
 
 type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -83,56 +120,6 @@ function formatBytes(bytes: number): string {
   return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 }
 
-function openUpgradeProModal(): void {
-  openModal({
-    id: 'upgrade-pro',
-    title: (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <Icon name="sparkles" size="md" style={{ color: 'var(--color-warning)' }} />
-        <span>Upgrade to Motion Studio Pro</span>
-      </div>
-    ),
-    size: 'md',
-    render: () => (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '24px', alignItems: 'center' }}>
-          <div>
-            <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)', lineHeight: '1.5', margin: 0 }}>
-              Take your motion design workflow to the cloud. Unlock ultimate performance, AI neural assets, and collaborate with your team.
-            </p>
-          </div>
-          <div style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-dialog, 4px)', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: '600' }}>Pro Features include:</h4>
-            <ul style={{ margin: 0, paddingLeft: '16px', color: 'var(--color-text-secondary)', fontSize: '0.78rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <li>8K Cloud Rendering & Exports</li>
-              <li>Neural Engine AI Background Removal</li>
-              <li>Unlimited Storage for Media & Audio</li>
-              <li>Version History for up to 90 days</li>
-              <li>Team Collaboration & Shared Libraries</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    ),
-    footer: (close: () => void) => (
-      <>
-        <Button variant="ghost" onClick={close}>
-          Maybe Later
-        </Button>
-        <Button
-          variant="primary"
-          onClick={() => {
-            close();
-            useUIStore.getState().notify({ level: 'success', message: 'Opening subscription portal...', durationMs: 2600 });
-          }}
-        >
-          Upgrade Now
-        </Button>
-      </>
-    )
-  });
-}
-
 export function DashboardPage(): JSX.Element {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -149,10 +136,29 @@ export function DashboardPage(): JSX.Element {
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabType>(() => {
     const t = searchParams.get('tab');
-    return t === 'settings' || t === 'projects' || t === 'assets' || t === 'renders' || t === 'trash'
-      ? (t as TabType)
-      : 'home';
+    return isTab(t) ? t : 'home';
   });
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    // `?tab=settings&section=billing` is the address billing had before it was
+    // a page. Honour it so an old link, a bookmark or a previously-sent email
+    // still lands on billing rather than dropping the reader into Settings.
+    if (tab === 'settings' && searchParams.get('section') === 'billing') {
+      setActiveTab('billing');
+      return;
+    }
+    if (isTab(tab)) setActiveTab(tab);
+  }, [searchParams]);
+
+  /** Go to a dashboard page, keeping the URL and the view in step. */
+  const openTab = useCallback(
+    (tab: TabType): void => {
+      setActiveTab(tab);
+      navigate(`/dashboard?tab=${tab}`);
+    },
+    [navigate],
+  );
 
   // Search & Filter States for Projects. The orientation filter lives in the
   // store because it is part of the server query, not a view of loaded rows.
@@ -699,10 +705,14 @@ export function DashboardPage(): JSX.Element {
               </div>
               <div className={styles.launchpadGrid}>
                 {PRESET_TEMPLATES.map((tmpl) => (
-                  <div
+                  <button
+                    type="button"
                     key={tmpl.id}
                     className={styles.launchpadCard}
-                    onClick={() => void onQuickCreatePreset(tmpl.title, tmpl.width, tmpl.height, tmpl.fps, tmpl.duration)}
+                    disabled={creating}
+                    onClick={() => {
+                      void onQuickCreatePreset(tmpl.title, tmpl.width, tmpl.height, tmpl.fps, tmpl.duration);
+                    }}
                   >
                     <div className={styles.launchpadHeader}>
                       <div className={styles.launchpadIcon} style={{ background: `color-mix(in srgb, ${tmpl.color} 15%, transparent)`, color: tmpl.color }}>
@@ -712,7 +722,7 @@ export function DashboardPage(): JSX.Element {
                     </div>
                     <div className={styles.launchpadTitle}>{tmpl.title}</div>
                     <div className={styles.launchpadDesc}>{tmpl.desc}</div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -1250,6 +1260,22 @@ export function DashboardPage(): JSX.Element {
           </div>
         );
 
+      case 'billing':
+        return (
+          <div className={styles.settingsPanel}>
+            <div className={styles.settingsCard} id="billing-settings">
+              <BillingSection />
+            </div>
+          </div>
+        );
+
+      case 'developer':
+        return (
+          <div className={styles.settingsPanel}>
+            <ApiKeysSection onViewPlans={() => openTab('billing')} />
+          </div>
+        );
+
       case 'settings':
         return (
           <div className={styles.settingsPanel}>
@@ -1265,7 +1291,7 @@ export function DashboardPage(): JSX.Element {
                   </div>
                   <div className={styles.profileEmailText}>{user?.email}</div>
                   <div className={styles.profileNodeBadge}>
-                    {account ? `${account.plan === 'pro' ? 'Pro' : 'Free'} plan · member since ${new Date(account.createdAt).toLocaleDateString()}` : '—'}
+                    {account ? `${account.plan.charAt(0).toUpperCase()}${account.plan.slice(1)} plan · member since ${new Date(account.createdAt).toLocaleDateString()}` : '—'}
                   </div>
                 </div>
               </div>
@@ -1487,10 +1513,23 @@ export function DashboardPage(): JSX.Element {
           title: 'Render queue',
           desc: 'Monitor export rendering progress, completed videos, and queued exports.',
         };
+      case 'billing':
+        return {
+          title: 'Billing',
+          desc: 'Your plan, what it includes, and how to change or cancel it.',
+        };
+      case 'developer':
+        return {
+          title: 'Developer / API',
+          desc: 'API keys and usage for the Automation API — render your templates from n8n, a script, or CI.',
+        };
       case 'settings':
         return {
-          title: 'Dashboard settings',
-          desc: 'Configure application preferences, auto-save settings, and project defaults.',
+          // Was "Dashboard settings / Configure application preferences,
+          // auto-save settings, and project defaults" — which described none of
+          // what the page held. It is accurate now because the page is smaller.
+          title: 'Settings',
+          desc: 'Your account, the assistant, and where to change editor preferences.',
         };
     }
   }, [activeTab]);
@@ -1551,10 +1590,36 @@ export function DashboardPage(): JSX.Element {
             <Icon name="trash" size="md" className={styles.navIcon} />
             <span>Trash</span>
           </button>
+
+          {/*
+            Account-level destinations, separated from the workspace ones above.
+            Everything above this line is about the WORK; everything below is
+            about the account that owns it.
+          */}
+          <div className={styles.navDivider} role="separator" />
+
+          {billingEnabled() && (
+            <button
+              type="button"
+              className={`${styles.navLink} ${activeTab === 'billing' ? styles.navLinkActive : ''}`}
+              onClick={() => openTab('billing')}
+            >
+              <Icon name="sparkles" size="md" className={styles.navIcon} />
+              <span>Billing</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className={`${styles.navLink} ${activeTab === 'developer' ? styles.navLinkActive : ''}`}
+            onClick={() => openTab('developer')}
+          >
+            <Icon name="code" size="md" className={styles.navIcon} />
+            <span>Developer / API</span>
+          </button>
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'settings' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('settings')}
+            onClick={() => openTab('settings')}
           >
             <Icon name="settings" size="md" className={styles.navIcon} />
             <span>Settings</span>
@@ -1562,24 +1627,26 @@ export function DashboardPage(): JSX.Element {
         </nav>
 
         <div className={styles.sidebarFooter}>
+          {billingEnabled() && (
           <div className={styles.upgradeCardBox}>
             <div className={styles.upgradeCardHeader}>
               <div className={styles.upgradeCardBadge}>
                 <Icon name="sparkles" size="sm" />
               </div>
-              <span className={styles.upgradeCardTitle}>Upgrade to Pro</span>
+              <span className={styles.upgradeCardTitle}>Plans &amp; billing</span>
             </div>
             <p className={styles.upgradeCardDesc}>
-              Unlock 8K cloud rendering, AI neural tools & unlimited storage.
+              Compare current plans and manage your subscription.
             </p>
             <button
               type="button"
               className={styles.upgradeCardActionBtn}
-              onClick={openUpgradeProModal}
+              onClick={() => openTab('billing')}
             >
-              <span>Upgrade Now</span>
+              <span>{account?.plan && account.plan !== 'free' ? 'Manage plan' : 'View plans'}</span>
             </button>
           </div>
+          )}
 
           <button
             type="button"

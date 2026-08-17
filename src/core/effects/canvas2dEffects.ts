@@ -85,6 +85,19 @@ import {
 import {
   irisWipeData, lightWipeData, lineSweepData, gridWipeData, dustAndScratchesData, noiseAlphaData,
 } from './aeTransitionsAdvanced';
+// ── Round five kernels ──
+import {
+  starBurstData, snowfallData, rainfallData, writeOnData, lightBurstData,
+} from './generateRoundFive';
+import {
+  glassData, texturizeData, threadsData, chromaticAberrationData, hexTileData, vectorBlurData,
+} from './aeStylizeRoundFive';
+import {
+  floMotionData, lensData, griddlerData, ballActionData, drizzleData,
+} from './aeDistortRoundFive';
+import {
+  jawsData, pixelPollyData, twisterData, cardDanceData,
+} from './aeTransitionsRoundFive';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -114,14 +127,13 @@ const CANVAS2D_ONLY = new Set<string>([
   'fast-box-blur',
   'radial-blur',
   // Stylize family — all three are per-pixel passes with no shader form.
-  'mosaic',
-  'find-edges',
+  // 'mosaic' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'find-edges' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
   'roughen-edges',
   // Colour family. `exposure` is deliberately ABSENT: it is a per-channel
   // transfer function, so it lives in LUT_EFFECTS and renders on both backends
-  // with no bake. These two read all three channels per pixel, which no
-  // per-channel table can express.
-  'vibrance',
+  // with no bake. `vibrance` PORTED 2026-08-14 (round six) — GPU shader, its
+  // Canvas2D pass stays in CANVAS2D_IMPLEMENTED as the parity reference.
   'colorama',
   // Both for the same reason as the two above, one step further. `lumetri` is
   // deliberately ABSENT beside `exposure` — all eight of its controls are
@@ -132,9 +144,9 @@ const CANVAS2D_ONLY = new Set<string>([
   'shadow-highlight',
   // Distort family — inverse-map resamples, no shader form. `transform` and
   // `wave-warp` above are the same class.
-  'bulge',
-  'twirl',
-  'spherize',
+  // 'bulge' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'twirl' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'spherize' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
   'corner-pin',
   // Same class as the four above: an inverse-map resample with no shader form.
   'bezier-warp',
@@ -175,12 +187,10 @@ const CANVAS2D_ONLY = new Set<string>([
   // would drag every layer carrying a grade onto the CPU to do something the GPU
   // already does — the exact mistake `colorLut.ts` documents at length.
   //
-  // Colour — the four that read all three channels. See `aeColor.ts` for why
-  // none of them can be a table.
-  'photo-filter',
-  'black-and-white',
-  'tritone',
-  'threshold',
+  // Colour — the four that read all three channels (so no LUT) were here;
+  // ALL FOUR PORTED 2026-08-14 (round six): photo-filter, black-and-white,
+  // tritone, threshold now have GPU shaders and no longer force a bake.
+  // Their Canvas2D passes stay in CANVAS2D_IMPLEMENTED below.
   // Distort — inverse-map resamples, like the five above.
   'polar-coordinates',
   // Optics Compensation is one too. It has no GPU shader, so without this entry
@@ -191,10 +201,10 @@ const CANVAS2D_ONLY = new Set<string>([
   // Mesh Warp is a resample too, and has no GPU form.
   'mesh-warp',
   'liquify',
-  'mirror',
-  'offset',
+  // 'mirror' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'offset' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
   // Stylize — a directional derivative and a randomised resample.
-  'emboss',
+  // 'emboss' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
   'scatter',
   // Transition — alpha-only reveals, like the three above.
   'radial-wipe',
@@ -220,8 +230,8 @@ const CANVAS2D_ONLY = new Set<string>([
   'smart-blur',
   'camera-lens-blur',
   // Distort — inverse-map resamples, like every other member of the family.
-  'ripple',
-  'magnify',
+  // 'ripple' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'magnify' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
   'warp',
   'page-turn',
   'split',
@@ -242,10 +252,10 @@ const CANVAS2D_ONLY = new Set<string>([
   'cartoon',
   'brush-strokes',
   'strobe-light',
-  'color-emboss',
-  'halftone',
-  'kaleidoscope',
-  'vignette',
+  // 'color-emboss' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'halftone' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'kaleidoscope' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  // 'vignette' PORTED 2026-08-14 (round six) — GPU shader; Canvas2D retained below.
   'burn-film',
   // Colour — the eight that need the HISTOGRAM or read all three channels.
   // Deliberately NOT in `LUT_BUILDERS`: a table is built from params alone and
@@ -276,6 +286,30 @@ const CANVAS2D_ONLY = new Set<string>([
   // Noise — a thresholded median, and noise in coverage rather than colour.
   'dust-scratches',
   'noise-alpha',
+  // ── Round five ──
+  //
+  // All twenty. None is a LUT candidate (every one is spatial) and none has a
+  // GPU material, so each forces a bake and needs a `case` below.
+  'star-burst',
+  'snowfall',
+  'rainfall',
+  'write-on',
+  'light-burst',
+  'glass',
+  'texturize',
+  'threads',
+  // 'chromatic-aberration' PORTED 2026-08-15 (round six waves 2-3) — GPU shader; Canvas2D retained below.
+  'hex-tile',
+  'vector-blur',
+  'flo-motion',
+  'lens',
+  'griddler',
+  'ball-action',
+  'drizzle',
+  'jaws',
+  'pixel-polly',
+  'twister',
+  'card-dance',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -305,6 +339,31 @@ const CANVAS2D_IMPLEMENTED: ReadonlySet<string> = new Set<string>([
   'light-sweep',
   'lens-flare',
   'light-rays',
+  // Round six (2026-08-14): the six per-pixel colour ports. Same position as
+  // every ported effect above — the GPU draws them on live layers, and these
+  // Canvas2D passes remain the parity reference and the path for layers baked
+  // for other reasons.
+  'vignette',
+  'black-and-white',
+  'tritone',
+  'photo-filter',
+  'threshold',
+  'vibrance',
+  // Waves 2–3 (2026-08-15): warps + neighbourhood passes, same position.
+  'mirror',
+  'offset',
+  'bulge',
+  'twirl',
+  'spherize',
+  'kaleidoscope',
+  'ripple',
+  'chromatic-aberration',
+  'magnify',
+  'mosaic',
+  'find-edges',
+  'emboss',
+  'color-emboss',
+  'halftone',
   /*
     Apply Color LUT moved OFF the forces-a-bake list when it gained a GPU
     shader — a 3D LUT is a texture lookup, which is what the strip in
@@ -627,6 +686,47 @@ export function applyCanvas2dEffect(
       return applyDustAndScratches(oc, w, h, e);
     case 'noise-alpha':
       return applyNoiseAlpha(oc, w, h, e);
+    // ── Round five ──
+    case 'star-burst':
+      return applyStarBurst(oc, w, h, e);
+    case 'snowfall':
+      return applySnowfall(oc, w, h, e);
+    case 'rainfall':
+      return applyRainfall(oc, w, h, e);
+    case 'write-on':
+      return applyWriteOn(oc, w, h, e);
+    case 'light-burst':
+      return applyLightBurst(oc, w, h, e);
+    case 'glass':
+      return applyGlass(oc, w, h, e);
+    case 'texturize':
+      return applyTexturize(oc, w, h, e);
+    case 'threads':
+      return applyThreads(oc, w, h, e);
+    case 'chromatic-aberration':
+      return applyChromaticAberration(oc, w, h, e);
+    case 'hex-tile':
+      return applyHexTile(oc, w, h, e);
+    case 'vector-blur':
+      return applyVectorBlur(oc, w, h, e);
+    case 'flo-motion':
+      return applyFloMotion(oc, w, h, e);
+    case 'lens':
+      return applyLens(oc, w, h, e);
+    case 'griddler':
+      return applyGriddler(oc, w, h, e);
+    case 'ball-action':
+      return applyBallAction(oc, w, h, e);
+    case 'drizzle':
+      return applyDrizzle(oc, w, h, e);
+    case 'jaws':
+      return applyJaws(oc, w, h, e);
+    case 'pixel-polly':
+      return applyPixelPolly(oc, w, h, e);
+    case 'twister':
+      return applyTwister(oc, w, h, e);
+    case 'card-dance':
+      return applyCardDance(oc, w, h, e);
   }
 }
 
@@ -2667,6 +2767,182 @@ function applyBurnFilm(oc: CanvasRenderingContext2D, w: number, h: number, e: Ef
     effectNumber(e, 'burn'), effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
     parseHex(str(e, 'burnColor', '#fff6e0')), parseHex(str(e, 'charColor', '#3d1f0a')),
     effectNumber(e, 'randomness'), effectNumber(e, 'seed'),
+  ));
+}
+
+// ── Round five ──
+
+function applyStarBurst(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => starBurstData(
+    d, w, h,
+    effectNumber(e, 'phase'), effectNumber(e, 'amount'), effectNumber(e, 'size'),
+    parseHex(str(e, 'starColor', '#ffffff')),
+    effectNumber(e, 'blend'), effectNumber(e, 'seed'),
+  ));
+}
+
+function applySnowfall(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => snowfallData(
+    d, w, h,
+    effectNumber(e, 'amount'), effectNumber(e, 'size'), effectNumber(e, 'evolution'),
+    effectNumber(e, 'wind'), effectNumber(e, 'opacity'),
+    parseHex(str(e, 'flakeColor', '#ffffff')), effectNumber(e, 'seed'),
+  ));
+}
+
+function applyRainfall(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => rainfallData(
+    d, w, h,
+    effectNumber(e, 'amount'), effectNumber(e, 'length'), effectNumber(e, 'angle'),
+    effectNumber(e, 'evolution'), effectNumber(e, 'opacity'),
+    parseHex(str(e, 'rainColor', '#cfe6ff')), effectNumber(e, 'seed'),
+  ));
+}
+
+function applyWriteOn(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => writeOnData(
+    d, w, h,
+    effectNumber(e, 'startX'), effectNumber(e, 'startY'),
+    effectNumber(e, 'endX'), effectNumber(e, 'endY'),
+    effectNumber(e, 'completion'), effectNumber(e, 'brushSize'),
+    parseHex(str(e, 'brushColor', '#ffffff')),
+    effectNumber(e, 'wobble'), effectNumber(e, 'taper'),
+  ));
+}
+
+function applyLightBurst(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'intensity') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => lightBurstData(
+    d, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'intensity'), effectNumber(e, 'rayLength'),
+  ));
+}
+
+function applyGlass(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => glassData(
+    d, w, h,
+    effectNumber(e, 'bumpSoftness'), effectNumber(e, 'height'), effectNumber(e, 'displacement'),
+    effectNumber(e, 'lightAngle'), effectNumber(e, 'lightIntensity'), effectNumber(e, 'shininess'),
+  ));
+}
+
+function applyTexturize(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'contrast') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => texturizeData(
+    d, w, h,
+    effectNumber(e, 'pattern'), effectNumber(e, 'contrast'),
+    effectNumber(e, 'scale'), effectNumber(e, 'lightAngle'),
+  ));
+}
+
+function applyThreads(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => threadsData(
+    d, w, h,
+    effectNumber(e, 'thickness'), effectNumber(e, 'spacing'), effectNumber(e, 'depth'),
+  ));
+}
+
+function applyChromaticAberration(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => chromaticAberrationData(
+    d, w, h,
+    effectNumber(e, 'amount'), effectNumber(e, 'aberrationMode'), effectNumber(e, 'angle'),
+    effectNumber(e, 'falloff'), effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+  ));
+}
+
+function applyHexTile(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => hexTileData(
+    d, w, h, effectNumber(e, 'radius'), effectNumber(e, 'border'),
+  ));
+}
+
+function applyVectorBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => vectorBlurData(
+    d, w, h,
+    effectNumber(e, 'amount'), effectNumber(e, 'angleOffset'), effectNumber(e, 'smoothness'),
+  ));
+}
+
+function applyFloMotion(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => floMotionData(
+    d, w, h,
+    effectNumber(e, 'knot1X'), effectNumber(e, 'knot1Y'), effectNumber(e, 'knot1Amount'),
+    effectNumber(e, 'knot2X'), effectNumber(e, 'knot2Y'), effectNumber(e, 'knot2Amount'),
+    effectNumber(e, 'falloff'),
+  ));
+}
+
+function applyLens(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => lensData(
+    d, w, h,
+    effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'size'), effectNumber(e, 'convergence'),
+  ));
+}
+
+function applyGriddler(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => griddlerData(
+    d, w, h,
+    effectNumber(e, 'tileSize'), effectNumber(e, 'horizontalScale'),
+    effectNumber(e, 'verticalScale'), effectNumber(e, 'rotation'),
+  ));
+}
+
+function applyBallAction(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => ballActionData(
+    d, w, h,
+    effectNumber(e, 'grid'), effectNumber(e, 'ballSize'),
+    effectNumber(e, 'scatter'), effectNumber(e, 'seed'),
+  ));
+}
+
+function applyDrizzle(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'dripRate') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => drizzleData(
+    d, w, h,
+    effectNumber(e, 'dripRate'), effectNumber(e, 'rippleHeight'), effectNumber(e, 'spreading'),
+    effectNumber(e, 'evolution'), effectNumber(e, 'seed'),
+  ));
+}
+
+function applyJaws(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'completion') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => jawsData(
+    d, w, h,
+    effectNumber(e, 'completion'), effectNumber(e, 'direction'),
+    effectNumber(e, 'teethHeight'), effectNumber(e, 'teethWidth'),
+  ));
+}
+
+function applyPixelPolly(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'completion') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => pixelPollyData(
+    d, w, h,
+    effectNumber(e, 'completion'), effectNumber(e, 'cellSize'), effectNumber(e, 'gravity'),
+    effectNumber(e, 'spin'), effectNumber(e, 'centerX'), effectNumber(e, 'centerY'),
+    effectNumber(e, 'seed'),
+  ));
+}
+
+function applyTwister(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'completion') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => twisterData(
+    d, w, h,
+    effectNumber(e, 'completion'), effectNumber(e, 'centerY'), effectNumber(e, 'twist'),
+  ));
+}
+
+function applyCardDance(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  if (effectNumber(e, 'amount') <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => cardDanceData(
+    d, w, h,
+    effectNumber(e, 'rows'), effectNumber(e, 'columns'), effectNumber(e, 'amount'),
+    effectNumber(e, 'cardRotation'), effectNumber(e, 'phase'),
   ));
 }
 

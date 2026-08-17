@@ -44,7 +44,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   if (!node) return null;
 
   const rig = readNodePuppet(node);
-  const density = rig?.meshDensity ?? 15;
+  const density = rig?.meshDensity ?? 22;
   const expansion = rig?.meshExpansion ?? 0;
   const solver = rig?.solver ?? 'arap';
   const pins = rig?.pins ?? [];
@@ -72,6 +72,43 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       </div>
 
       <div className={styles.card}>
+        <div className={styles.paramRow} style={{ height: 'auto', marginBottom: 2 }}>
+          <div className={styles.presetGroup}>
+            <button
+              type="button"
+              className={`${styles.presetButton} ${expansion === 0 ? styles.presetButtonActive : ''}`}
+              title="Tight mesh with zero expansion — prevents limbs from pulling the torso"
+              onClick={() =>
+                // Density 20, not 22: the ⚓ Anchor toggle gives a pin stiffness
+                // 10, and any stiffness lowers the ARAP exact-solve cap to 21 —
+                // a 22 preset silently landed every anchored character in the
+                // approximate Gauss–Seidel solve.
+                updatePuppetSettings(nodeId, {
+                  meshExpansion: 0,
+                  meshDensity: 20,
+                  meshMode: 'silhouette',
+                })
+              }
+            >
+              🧍 Character (Tight)
+            </button>
+            <button
+              type="button"
+              className={`${styles.presetButton} ${expansion > 0 ? styles.presetButtonActive : ''}`}
+              title="Softer mesh with padding — ideal for shapes and banners"
+              onClick={() =>
+                updatePuppetSettings(nodeId, {
+                  meshExpansion: 6,
+                  meshDensity: 16,
+                  meshMode: 'grid',
+                })
+              }
+            >
+              🎨 Graphic (Smooth)
+            </button>
+          </div>
+        </div>
+
         <div className={styles.paramRow}>
           <span className={styles.paramLabel}>
             Density
@@ -98,24 +135,17 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </div>
 
         {costly && (
-          <div className={styles.paramRow} style={{ display: 'block' }}>
-            <span className={styles.subText} role="note">
-              Density {density} is heavy to solve — roughly{' '}
-              {density >= 33 ? '35–45 ms' : '10–20 ms'} per frame for this layer, paid again
-              for every rigged layer. Around {SMOOTH_PLAYBACK_MAX_DENSITY} keeps playback
-              smooth; higher is best reserved for a final look.
-            </span>
+          <div className={styles.warningBox} role="note">
+            Density {density} is heavy to solve — roughly{' '}
+            {density >= 33 ? '35–45 ms' : '10–20 ms'} per frame. Around {SMOOTH_PLAYBACK_MAX_DENSITY} keeps playback smooth.
           </div>
         )}
 
         {pastExact && (
-          <div className={styles.paramRow} style={{ display: 'block' }}>
-            <span className={styles.subText} role="note">
-              Density {density} is above {exactMax}
-              {hasStiffness ? ' (lowered because a pin has stiffness)' : ''} — ARAP falls
-              back from the exact solve to an approximate one. Still deterministic and
-              stable, but deformation is softer. Lower the density for maximum fidelity.
-            </span>
+          <div className={styles.warningBox} role="note">
+            Density {density} is above {exactMax}
+            {hasStiffness ? ' (lowered because a pin has stiffness)' : ''} — ARAP falls
+            back from exact solve to an approximate one. Lower density for maximum fidelity.
           </div>
         )}
 
@@ -183,6 +213,15 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </div>
       </div>
 
+      {pins.length > 0 && pins.length < 3 && (
+        <div className={styles.tipCard}>
+          <Icon name="info" size="sm" style={{ flexShrink: 0, marginTop: 1, color: '#60a5fa' }} />
+          <span>
+            <strong>Tip:</strong> Add anchor pins to the <em>chest</em> & <em>shoulders</em> to keep the body in place when moving limbs.
+          </span>
+        </div>
+      )}
+
       {pins.length === 0 && (
         <div className={styles.card} style={{ textAlign: 'center', padding: '16px 12px' }}>
           <span className={styles.subText}>Click the layer to place pins.</span>
@@ -203,6 +242,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         const showScale = kind === 'advanced' || kind === 'bend';
         const showStiffness = kind === 'starch' || kind === 'advanced' || (pin.stiffness ?? 0) > 0;
         const showOverlap = kind === 'overlap' || (pin.overlap ?? 0) !== 0;
+        const isAnchored = (pin.stiffness ?? 0) >= 5;
         return (
           <div key={pin.id} className={styles.card}>
             <div className={styles.cardHeader}>
@@ -220,15 +260,29 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 />
                 <span>{pin.name || pin.id}</span>
               </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => deletePuppetPin(nodeId, pin.id)}
-                aria-label={`Delete pin ${pin.name || pin.id}`}
-                title="Delete pin"
-              >
-                <Icon name="trash" size="sm" />
-              </Button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  type="button"
+                  className={`${styles.anchorToggle} ${isAnchored ? styles.anchorToggleActive : ''}`}
+                  title={isAnchored ? 'Anchor lock active (body stays rigid)' : 'Lock as rigid anchor (Stiffness: 10)'}
+                  onClick={() =>
+                    updatePuppetPin(nodeId, pin.id, {
+                      stiffness: isAnchored ? 0 : 10,
+                    })
+                  }
+                >
+                  {isAnchored ? '🔒 Locked' : '⚓ Anchor'}
+                </button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => deletePuppetPin(nodeId, pin.id)}
+                  aria-label={`Delete pin ${pin.name || pin.id}`}
+                  title="Delete pin"
+                >
+                  <Icon name="trash" size="sm" />
+                </Button>
+              </div>
             </div>
 
             <div className={styles.paramRow}>

@@ -51,6 +51,7 @@ describe('linear working space', () => {
   it('textured linearizes uploads at the sample and does not encode before write', () => {
     const s = byName('textured')!;
     expect(s.wgsl).toContain('workingFromSample(c.rgb, 0.0)');
+    expect(s.wgsl).toContain('obj.srcSpace.y > 0.5');
     expect(s.wgsl).not.toContain('linearToSrgbRgb(graded)');
     expect(s.wgsl).toContain('graded * c.a');
   });
@@ -58,13 +59,13 @@ describe('linear working space', () => {
   it('textured-linear skips the upload decode so RT copies stay in working space', () => {
     const s = byName('textured-linear')!;
     expect(s).toBeDefined();
-    expect(s.wgsl).toContain('workingFromSample(c.rgb, 1.0)');
+    expect(s.wgsl).toContain('let v = vec4<f32>(c.rgb, 1.0);');
     expect(s.wgsl).not.toContain('workingFromSample(c.rgb, 0.0)');
   });
 
   it('scene-blit encodes linear working-space to sRGB for the canvas', () => {
     expect(byName('scene-blit')).toBeDefined();
-    expect(byName('scene-blit')!.wgsl).toContain('linearToSrgbRgb(c.rgb)');
+    expect(byName('scene-blit')!.wgsl).toContain('workingToDisplay');
   });
 
   it('toWorkingColor linearizes mid-grey and leaves 0/1 alone', () => {

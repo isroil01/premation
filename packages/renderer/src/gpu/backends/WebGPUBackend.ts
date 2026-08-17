@@ -105,6 +105,7 @@ export class WebGPUBackend implements RenderBackend {
     instancing: true,
     storageBuffers: true,
     float16Textures: true,
+    float32Textures: true,
     timestampQueries: false,
   };
 

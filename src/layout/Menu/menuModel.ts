@@ -7,6 +7,10 @@
 
 import { BuiltinCommands } from '@core/commands/Command';
 import { cloudProjectsEnabled } from '@core/config/edition';
+// `tryCoreServices`, not `getFileManager`: this model's `visible` predicates are
+// evaluated wherever the menu renders, and TitleBar renders on /login and
+// /dashboard, where the core has not booted. `coreServices()` throws there.
+import { tryCoreServices } from '@core/services/coreServices';
 
 /** Project-lifecycle command ids (registered against ProjectManager at boot). */
 export const ProjectCommands = {
@@ -14,6 +18,13 @@ export const ProjectCommands = {
   Open: 'project.open',
   Save: 'project.save',
   SaveAs: 'project.saveAs',
+  SaveToComputer: 'project.saveToComputer',
+  /**
+   * Fork the project on the SERVER. This is what Save As did in the cloud
+   * editor, which is why Save As could not write a file to the user's machine
+   * there. Split out so both things exist and each says what it does.
+   */
+  SaveCopyToCloud: 'project.saveCopyToCloud',
   IncrementAndSave: 'project.incrementAndSave',
   /**
    * End-to-end encrypted sync of the open `.motion` bundle.
@@ -57,10 +68,30 @@ export const APP_MENU: MenuGroupModel[] = [
     label: 'File',
     items: [
       { commandId: ProjectCommands.New, label: 'New Project' },
-      { commandId: ProjectCommands.Open, label: 'Open…' },
+      { commandId: ProjectCommands.Open, label: 'Open Project…' },
       { separator: true },
       { commandId: ProjectCommands.Save, label: 'Save' },
       { commandId: ProjectCommands.SaveAs, label: 'Save As…' },
+      /**
+       * Only where it is a DIFFERENT command from Save As.
+       *
+       * Save As now opens a save dialog and writes a portable `.motion` file in
+       * every build. On the desktop that is genuinely distinct from Save As,
+       * which writes the local-first directory bundle that Sync reconciles
+       * against — so both belong there. Anywhere else the two would run the
+       * identical code under two names, which is two menu entries for one
+       * feature and a user wondering which one is the real save.
+       */
+      {
+        commandId: ProjectCommands.SaveToComputer,
+        label: 'Save Portable Copy…',
+        visible: () => tryCoreServices()?.files.environment === 'electron',
+      },
+      {
+        commandId: ProjectCommands.SaveCopyToCloud,
+        label: 'Save Copy to Cloud…',
+        visible: cloudProjectsEnabled,
+      },
       { commandId: ProjectCommands.IncrementAndSave, label: 'Increment and Save' },
       { separator: true },
       { commandId: ProjectCommands.Sync, label: 'Sync Project…' },
@@ -107,6 +138,7 @@ export const APP_MENU: MenuGroupModel[] = [
       // for a working feature.
       { commandId: 'comp.new', label: 'New Composition…' },
       { commandId: 'comp.settings', label: 'Composition Settings…' },
+      { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
       { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
     ],
@@ -195,7 +227,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: 'view.project', label: 'Project' },
       { commandId: 'view.history', label: 'History' },
-      { commandId: 'view.effectControls', label: 'Effects' },
+      { commandId: 'view.effectControls', label: 'Effect Controls' },
       { commandId: 'view.renderQueue', label: 'Render Queue' },
       { commandId: 'view.graphEditor', label: 'Graph Editor' },
       { separator: true },

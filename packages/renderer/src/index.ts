@@ -54,6 +54,16 @@ export {
   toWorkingColor,
 } from './shaders/linearWorkingSpace';
 export {
+  setActiveColorPipeline,
+  getActiveColorPipeline,
+  DEFAULT_COLOR_PIPELINE,
+  intermediateFloatFormat,
+  type ColorPipelineConfig,
+  type WorkingSpace,
+  type DisplayTransform,
+  type IntermediateBitDepth,
+} from './shaders/colorPipeline';
+export {
   MaterialSystem,
   SOLID_MATERIAL,
   TEXTURED_MATERIAL,

@@ -20,6 +20,9 @@ const bridge = {
   file: {
     read: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
     write: (filePath: string, contents: string) => ipcRenderer.invoke('file:write', filePath, contents),
+    readBytes: (filePath: string) => ipcRenderer.invoke('file:readBytes', filePath),
+    writeBytes: (filePath: string, bytes: Uint8Array) =>
+      ipcRenderer.invoke('file:writeBytes', filePath, bytes),
   },
 
   bundle: {

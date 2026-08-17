@@ -53,6 +53,12 @@ export interface PanelDef {
 export const PANEL_DEFS: readonly PanelDef[] = [
   // ── Left sidebar ─────────────────────────────────────────────────
   { id: 'scene',       title: 'Scene',     icon: 'layers',      region: 'leftSidebar', weight: 10,  closable: false },
+  // AE's Effect Controls: the applied-effect stack for the selected layer.
+  // Lives on the LEFT because the right inspector's Effects tab is the library
+  // you add FROM — putting both in one tab buried the browser under every
+  // effect you applied. `stopwatch` is the glyph AE uses on every animatable
+  // parameter in this panel, and no other tab already speaks it.
+  { id: 'effectControls', title: 'Effect Controls', icon: 'stopwatch', region: 'leftSidebar', weight: 9, closable: false },
   { id: 'assets',      title: 'Assets',    icon: 'image',       region: 'leftSidebar', weight: 8,   closable: false },
   { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
   // Server edition only — see PANEL_AVAILABILITY. The local (OSS) edition does

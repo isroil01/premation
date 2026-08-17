@@ -97,12 +97,13 @@ export function addPuppetPin(nodeId: ID, pin: PuppetPin): void {
   // Existing rigs with pins keep whatever meshMode they already have.
   let after: PuppetRig;
   if (!rig) {
-    after = { pins: [pin], meshMode: 'grid', meshExpansion: 0 };
+    after = { pins: [pin], meshMode: 'grid', meshExpansion: 0, meshDensity: 22 };
   } else {
     after = { ...rig, pins: [...(rig.pins ?? []), pin] };
     if ((rig.pins?.length ?? 0) === 0) {
       if (after.meshMode === undefined || after.meshMode === 'silhouette') after.meshMode = 'grid';
       if (after.meshExpansion === undefined) after.meshExpansion = 0;
+      if (after.meshDensity === undefined) after.meshDensity = 22;
     }
   }
   applyAndRecord(nodeId, after, `Add Puppet Pin ${pin.name}`);

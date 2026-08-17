@@ -49,7 +49,7 @@ import { useAssetStore } from '@stores/assetStore';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { addEffect } from '@core/effects/effects';
+import { addEffectAndReveal } from '@layout/Effects/revealEffectControls';
 import { applyPresetByName } from '@core/animation/animationPresets';
 import { insertAnimPreset } from '@core/template/animPresets';
 import { UI_COMPONENT_PRESETS } from '@core/scene/uiComponents';
@@ -283,7 +283,7 @@ export function WorkspaceViewport({
       case 'effect': {
         // Effects apply to a layer — target the one under the cursor (AE-style).
         const node = controller.ws.hitTestScreen(local);
-        if (node) addEffect(node.id, payload.effectType);
+        if (node) addEffectAndReveal(node.id, payload.effectType);
         else useUIStore.getState().notify({ level: 'warning', message: 'Drop an effect onto a layer.', durationMs: 2400 });
         break;
       }

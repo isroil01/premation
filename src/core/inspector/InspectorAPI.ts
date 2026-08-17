@@ -18,3 +18,4 @@ export function updateNodeComponentProp(
 }
 
 export default updateNodeComponentProp;
+

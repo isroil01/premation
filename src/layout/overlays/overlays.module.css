@@ -2,7 +2,7 @@
 .contextMenu {
   position: fixed;
   z-index: var(--z-index-popover);
-  min-width: 200px;
+  min-width: 220px;
 }
 
 /* ── Toaster ───────────────────────────────────────────────────── */

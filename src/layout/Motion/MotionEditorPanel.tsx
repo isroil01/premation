@@ -5,9 +5,8 @@
  * big and directly manipulable instead of a cramped graph editor.
  *
  * For the selected layer it lists animated properties; picking one draws its
- * value-over-time curve with large draggable keyframes. Selecting a keyframe
- * exposes easing presets (which reshape the curve live) and exact numeric
- * value/time inputs.
+ * value-over-time curve with large draggable keyframes. Bounce generation lives
+ * on its own tab so the two graphs never share a column.
  */
 
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -21,6 +20,7 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { defaultAnimation, sampleTrack, sampleSpeed, makeKeyframeId, EASY_EASE_BEZIER, type EasingKind, type PropertyTrack } from '@motion/animation';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { Icon } from '@components/Icon';
+import { Tabs } from '@components/Tabs';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { ExpressionEditor } from './ExpressionEditor';
 import { BounceSection } from './BounceSection';
@@ -34,10 +34,12 @@ import styles from './MotionEditorPanel.module.css';
  */
 function MotionPathBlock({ nodeId }: { nodeId: string }): JSX.Element {
   return (
-    <>
-      <h3 className={styles.sectionLabel}>Motion Path &amp; Orientation</h3>
-      <MotionControls nodeId={nodeId} />
-    </>
+    <details className={styles.fold}>
+      <summary className={styles.foldSummary}>Motion Path &amp; Orientation</summary>
+      <div className={styles.foldBody}>
+        <MotionControls nodeId={nodeId} />
+      </div>
+    </details>
   );
 }
 
@@ -141,6 +143,7 @@ export function MotionEditorPanel(): JSX.Element {
 
   const [selT, setSelT] = useState<number | null>(null);
   const [graphMode, setGraphMode] = useState<'value' | 'speed'>('value');
+  const [workspace, setWorkspace] = useState<'curve' | 'bounce'>('curve');
   const svgRef = useRef<SVGSVGElement | null>(null);
   const drag = useRef<{ oldT: number; tx: ReturnType<typeof beginAnimEdit> } | null>(null);
 
@@ -320,290 +323,278 @@ export function MotionEditorPanel(): JSX.Element {
       <EmptyState
         icon="graph-value"
         title="No selection"
-        message="Select a layer to shape its keyframe curves and motion path."
+        message="Select a layer to shape its keyframe curves, or generate a bounce."
       />
-    );
-  }
-  if (!prop) {
-    return (
-      <div className={styles.root}>
-        <MotionPathBlock nodeId={primary} />
-        {/* Bounce comes BEFORE the empty state, because "this layer has no
-            animation" is precisely the case Drop In & Bounce exists for. The
-            graph below has nothing to draw; this section still works. */}
-        <BounceSection nodeId={primary} />
-        {/* "above" used to mean the PresetsBar that sat here. That bar was a
-            duplicate of the Presets panel — which also saves, deletes, searches
-            and previews — so it was removed and this points at the real home. */}
-        <EmptyState icon="keyframe" message="No animation yet — apply one from the Presets panel, or add a keyframe." />
-      </div>
     );
   }
 
   return (
-    <div className={styles.root}>
-      <MotionPathBlock nodeId={primary} />
-      <BounceSection nodeId={primary} />
-      {/* Property picker + graph-mode toggle */}
-      <div className={styles.topRow}>
-        <div className={styles.props}>
-          {propList.map((p) => (
-            <button
-              key={p}
-              type="button"
-              className={cn(styles.propChip, p === prop && styles.propChipOn)}
-              onClick={() => { setProp(p); setSelT(null); }}
-            >
-              {p}
-            </button>
-          ))}
+    <div className={styles.shell}>
+      <Tabs
+        value={workspace}
+        onChange={(id) => setWorkspace(id as 'curve' | 'bounce')}
+        size="sm"
+        variant="bordered"
+        className={styles.workspaceTabs}
+        items={[
+          { id: 'curve', label: 'Curve', icon: <Icon name="graph-value" size="sm" />, ariaLabel: 'Keyframe curve' },
+          { id: 'bounce', label: 'Bounce', icon: <Icon name="ease" size="sm" />, ariaLabel: 'Bounce generator' },
+        ]}
+      />
+
+      {workspace === 'bounce' ? (
+        <div className={styles.bounceBody} role="tabpanel" aria-label="Bounce">
+          <BounceSection nodeId={primary} />
         </div>
-        <div className={styles.modeToggle} role="radiogroup" aria-label="Graph mode">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={graphMode === 'value'}
-            className={cn(styles.modeChip, graphMode === 'value' && styles.modeChipOn)}
-            onClick={() => setGraphMode('value')}
-          >
-            Value
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={graphMode === 'speed'}
-            className={cn(styles.modeChip, graphMode === 'speed' && styles.modeChipOn)}
-            onClick={() => setGraphMode('speed')}
-          >
-            Speed
-          </button>
-        </div>
-      </div>
-
-      {track && bounds ? (
-      <>
-      {/* Curve */}
-      <svg
-        ref={svgRef}
-        className={styles.graph}
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-        preserveAspectRatio="none"
-        onPointerDown={() => setSelT(null)}
-      >
-        {/* grid — faint value/time divisions (graph paper) */}
-        <g className={styles.grid}>
-          {[0.25, 0.5, 0.75].map((f) => {
-            const y = PAD + f * (VIEW_H - 2 * PAD);
-            return <line key={`h${f}`} x1={PAD} y1={y} x2={VIEW_W - PAD} y2={y} />;
-          })}
-          {[0.25, 0.5, 0.75].map((f) => {
-            const x = PAD + f * (VIEW_W - 2 * PAD);
-            return <line key={`v${f}`} x1={x} y1={PAD} x2={x} y2={VIEW_H - PAD} />;
-          })}
-        </g>
-        {/* frame */}
-        <rect x={PAD} y={PAD} width={VIEW_W - 2 * PAD} height={VIEW_H - 2 * PAD} className={styles.frame} />
-        {/* Axis extents. A curve with no numbers on it shows a shape but not a
-            magnitude — you could see the value rise without seeing what it rose
-            to, which is most of what a graph editor is for. */}
-        <text className={styles.axisLabel} x={2} y={PAD + 4} textAnchor="start">
-          {formatAxis(bounds.vmax)}
-        </text>
-        <text className={styles.axisLabel} x={2} y={VIEW_H - PAD} textAnchor="start">
-          {formatAxis(bounds.vmin)}
-        </text>
-        <text className={styles.axisLabel} x={PAD} y={VIEW_H - 4} textAnchor="start">
-          {bounds.t0.toFixed(2)}s
-        </text>
-        <text className={styles.axisLabel} x={VIEW_W - PAD} y={VIEW_H - 4} textAnchor="end">
-          {bounds.t1.toFixed(2)}s
-        </text>
-        {/* The playhead, converted out of comp time into this track's own time
-            so a trimmed or stretched layer marks the frame it actually renders.
-            The graph and the timeline were showing the same moment and nothing
-            on either said so. */}
-        {playheadX !== null && (
-          <line className={styles.playhead} x1={playheadX} y1={PAD} x2={playheadX} y2={VIEW_H - PAD} />
-        )}
-        {/* curve */}
-        {path ? <path d={path} className={styles.curve} /> : null}
-        {/* Bezier handles for the selected segment (custom easing) */}
-        {handlePts ? (
-          <g className={styles.bezier}>
-            <line className={styles.bezierLine} x1={handlePts.a.x} y1={handlePts.a.y} x2={handlePts.h1.x} y2={handlePts.h1.y} />
-            <line className={styles.bezierLine} x1={handlePts.b.x} y1={handlePts.b.y} x2={handlePts.h2.x} y2={handlePts.h2.y} />
-            <circle className={styles.bezierHandle} cx={handlePts.h1.x} cy={handlePts.h1.y} r={5} onPointerDown={(e) => onHandleGrab(0, e)} />
-            <circle className={styles.bezierHandle} cx={handlePts.h2.x} cy={handlePts.h2.y} r={5} onPointerDown={(e) => onHandleGrab(1, e)} />
-          </g>
-        ) : null}
-        {/* Keyframes. Each is drawn small and grabbed large: the visible dot is
-            5px, the hit target behind it is 11px. A 5px target in a control
-            people drag all day is a miss-click generator. */}
-        {track.keyframes.map((k) => (
-          <g key={k.t}>
-            <circle
-              cx={xOf(k.t)}
-              cy={yOf(kfY(k))}
-              r={11}
-              className={styles.pointHit}
-              onPointerDown={(e) => onPointGrab(k.t, e)}
-            />
-            <circle
-              cx={xOf(k.t)}
-              cy={yOf(kfY(k))}
-              r={k.t === selT ? 6 : 5}
-              className={cn(styles.point, k.t === selT && styles.pointSel, k.roving && styles.pointRoving)}
-              onPointerDown={(e) => onPointGrab(k.t, e)}
-            />
-          </g>
-        ))}
-      </svg>
-
-      {/* Easing Presets (Always Visible) */}
-      <h3 className={styles.sectionLabel}>
-        Easing
-        {!selectedKf && <span className={styles.sectionNote}>select a keyframe</span>}
-      </h3>
-      <div className={styles.easings} role="radiogroup" aria-label="Easing">
-        {EASINGS.map((e) => {
-          const isActive = selectedKf && (selectedKf.easing ?? 'linear') === e.kind;
-          return (
-            <button
-              key={e.kind}
-              type="button"
-              role="radio"
-              aria-checked={!!isActive}
-              className={cn(styles.easeChip, isActive && styles.easeChipOn)}
-              onClick={() => setEasing(e.kind)}
-              disabled={!selectedKf}
-              title={selectedKf ? `Apply ${e.label} easing` : "Select a keyframe on the graph above to shape its easing"}
-            >
-              <svg className={styles.easePreview} viewBox="0 0 24 16" aria-hidden>
-                <path d={EASE_PREVIEW[e.kind]} />
-              </svg>
-              <span>{e.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Selected keyframe controls */}
-      {selectedKf && (
-        <div className={styles.controls}>
-          <div className={styles.numeric}>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Value</span>
-              <ValueField
-                value={selectedKf.value}
-                precision={2}
-                onChange={(v) =>
-                  runAnimEdit(
-                    'Set keyframe value',
-                    () => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { value: v }),
-                    `kf-value:${primary}:${prop}:${selectedKf.t}`,
-                  )
-                }
-                aria-label="keyframe value"
-              />
-            </label>
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Time</span>
-              <ValueField
-                value={selectedKf.t}
-                precision={2}
-                unit="s"
-                min={0}
-                onChange={(t) => {
-                  // Time drifts as the field scrubs, so key the merge on the
-                  // track (not t) to keep the scrub one undo step.
-                  runAnimEdit(
-                    'Set keyframe time',
-                    () => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { t }),
-                    `kf-time:${primary}:${prop}`,
-                  );
-                  setSelT(t);
-                }}
-                aria-label="keyframe time"
-              />
-            </label>
-          </div>
-
-          {/* Everything you do TO the selected keyframe, in one row.
-              These were three rows in two different button treatments: Easy
-              Ease + Roving here, Copy/Paste Ease in a second `.actions` block
-              below the expression editor, several hundred pixels away from the
-              keyframe they act on. */}
-          <div className={styles.actions}>
-            <button type="button" className={styles.actionChip} onClick={applyEasyEase} title="Easy Ease (F9)">
-              <Icon name="ease" size="sm" /> Easy Ease
-            </button>
-            <button
-              type="button"
-              className={cn(styles.actionChip, selectedKf.roving && styles.actionChipOn)}
-              aria-pressed={!!selectedKf.roving}
-              disabled={selIdx <= 0 || selIdx >= (track?.keyframes.length ?? 0) - 1}
-              onClick={toggleRoving}
-              title="Rove across time for constant speed"
-            >
-              <Icon name="stopwatch" size="sm" /> Roving
-            </button>
-            <button
-              type="button"
-              className={styles.actionChip}
-              onClick={() => copyEase(makeKeyframeId(primary, prop, selectedKf.t))}
-              title="Copy this keyframe's easing"
-            >
-              <Icon name="copy" size="sm" /> Copy Ease
-            </button>
-            <button
-              type="button"
-              className={styles.actionChip}
-              disabled={!hasCopiedEase}
-              onClick={() => pasteEase([makeKeyframeId(primary, prop, selectedKf.t)])}
-              title={hasCopiedEase ? 'Paste the copied easing here' : 'Nothing copied yet'}
-            >
-              <Icon name="download" size="sm" /> Paste Ease
-            </button>
-          </div>
-
-          {/* Bezier influence (%) — only for custom easing. */}
-          {selectedKf.easing === 'bezier' ? (
-            <div className={styles.numeric}>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Ease Out</span>
-                <ValueField
-                  value={Math.round((selectedKf.bezier?.[0] ?? DEFAULT_BEZIER[0]) * 100)}
-                  min={0} max={100} precision={0} unit="%"
-                  onChange={(v) => setInfluence('out', v)}
-                  aria-label="ease out influence"
-                />
-              </label>
-              <label className={styles.field}>
-                <span className={styles.fieldLabel}>Ease In</span>
-                <ValueField
-                  value={Math.round((1 - (selectedKf.bezier?.[2] ?? DEFAULT_BEZIER[2])) * 100)}
-                  min={0} max={100} precision={0} unit="%"
-                  onChange={(v) => setInfluence('in', v)}
-                  aria-label="ease in influence"
-                />
-              </label>
-            </div>
-          ) : null}
-        </div>
-      )}
-      </>
       ) : (
-        <div className={styles.hint}>No keyframes on “{prop}” — drive it with an expression below.</div>
+        <div className={styles.body} role="tabpanel" aria-label="Keyframe curve">
+          <MotionPathBlock nodeId={primary} />
+          {!prop ? (
+            <EmptyState
+              compact
+              icon="keyframe"
+              title="No keyframes"
+              message="Add a keyframe on the timeline, apply a preset, or switch to Bounce to generate motion from scratch."
+            />
+          ) : (
+            <>
+              <div className={styles.graphWell}>
+                <div className={styles.graphHead}>
+                  <div className={styles.props} role="radiogroup" aria-label="Animated property">
+                    {propList.map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        className={cn(styles.propChip, p === prop && styles.propChipOn)}
+                        role="radio"
+                        aria-checked={p === prop}
+                        onClick={() => { setProp(p); setSelT(null); }}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                  <div className={styles.modeToggle} role="radiogroup" aria-label="Graph mode">
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={graphMode === 'value'}
+                      className={cn(styles.modeChip, graphMode === 'value' && styles.modeChipOn)}
+                      onClick={() => setGraphMode('value')}
+                    >
+                      Value
+                    </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={graphMode === 'speed'}
+                      className={cn(styles.modeChip, graphMode === 'speed' && styles.modeChipOn)}
+                      onClick={() => setGraphMode('speed')}
+                    >
+                      Speed
+                    </button>
+                  </div>
+                </div>
+
+              {track && bounds ? (
+                <>
+                  <svg
+                    ref={svgRef}
+                    className={styles.graph}
+                    viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+                    preserveAspectRatio="none"
+                    onPointerDown={() => setSelT(null)}
+                  >
+                    <g className={styles.grid}>
+                      {[0.25, 0.5, 0.75].map((f) => {
+                        const y = PAD + f * (VIEW_H - 2 * PAD);
+                        return <line key={`h${f}`} x1={PAD} y1={y} x2={VIEW_W - PAD} y2={y} />;
+                      })}
+                      {[0.25, 0.5, 0.75].map((f) => {
+                        const x = PAD + f * (VIEW_W - 2 * PAD);
+                        return <line key={`v${f}`} x1={x} y1={PAD} x2={x} y2={VIEW_H - PAD} />;
+                      })}
+                    </g>
+                    <rect x={PAD} y={PAD} width={VIEW_W - 2 * PAD} height={VIEW_H - 2 * PAD} className={styles.frame} />
+                    <text className={styles.axisLabel} x={2} y={PAD + 4} textAnchor="start">
+                      {formatAxis(bounds.vmax)}
+                    </text>
+                    <text className={styles.axisLabel} x={2} y={VIEW_H - PAD} textAnchor="start">
+                      {formatAxis(bounds.vmin)}
+                    </text>
+                    <text className={styles.axisLabel} x={PAD} y={VIEW_H - 4} textAnchor="start">
+                      {bounds.t0.toFixed(2)}s
+                    </text>
+                    <text className={styles.axisLabel} x={VIEW_W - PAD} y={VIEW_H - 4} textAnchor="end">
+                      {bounds.t1.toFixed(2)}s
+                    </text>
+                    {playheadX !== null && (
+                      <line className={styles.playhead} x1={playheadX} y1={PAD} x2={playheadX} y2={VIEW_H - PAD} />
+                    )}
+                    {path ? <path d={path} className={styles.curve} /> : null}
+                    {handlePts ? (
+                      <g className={styles.bezier}>
+                        <line className={styles.bezierLine} x1={handlePts.a.x} y1={handlePts.a.y} x2={handlePts.h1.x} y2={handlePts.h1.y} />
+                        <line className={styles.bezierLine} x1={handlePts.b.x} y1={handlePts.b.y} x2={handlePts.h2.x} y2={handlePts.h2.y} />
+                        <circle className={styles.bezierHandle} cx={handlePts.h1.x} cy={handlePts.h1.y} r={5} onPointerDown={(e) => onHandleGrab(0, e)} />
+                        <circle className={styles.bezierHandle} cx={handlePts.h2.x} cy={handlePts.h2.y} r={5} onPointerDown={(e) => onHandleGrab(1, e)} />
+                      </g>
+                    ) : null}
+                    {track.keyframes.map((k) => (
+                      <g key={k.t}>
+                        <circle
+                          cx={xOf(k.t)}
+                          cy={yOf(kfY(k))}
+                          r={11}
+                          className={styles.pointHit}
+                          onPointerDown={(e) => onPointGrab(k.t, e)}
+                        />
+                        <circle
+                          cx={xOf(k.t)}
+                          cy={yOf(kfY(k))}
+                          r={k.t === selT ? 6 : 5}
+                          className={cn(styles.point, k.t === selT && styles.pointSel, k.roving && styles.pointRoving)}
+                          onPointerDown={(e) => onPointGrab(k.t, e)}
+                        />
+                      </g>
+                    ))}
+                  </svg>
+
+                  {!selectedKf && (
+                    <p className={styles.graphHint}>Click a keyframe to edit its value and easing.</p>
+                  )}
+                </>
+              ) : (
+                <p className={styles.graphHint}>No keyframes on “{prop}” — drive it with an expression below.</p>
+              )}
+              </div>
+
+                  {selectedKf ? (
+                    <div className={styles.inspector}>
+                      <h3 className={styles.sectionLabel}>Easing</h3>
+                      <div className={styles.easings} role="radiogroup" aria-label="Easing">
+                        {EASINGS.map((e) => {
+                          const isActive = (selectedKf.easing ?? 'linear') === e.kind;
+                          return (
+                            <button
+                              key={e.kind}
+                              type="button"
+                              role="radio"
+                              aria-checked={isActive}
+                              className={cn(styles.easeChip, isActive && styles.easeChipOn)}
+                              onClick={() => setEasing(e.kind)}
+                              title={`Apply ${e.label} easing`}
+                            >
+                              <svg className={styles.easePreview} viewBox="0 0 24 16" aria-hidden>
+                                <path d={EASE_PREVIEW[e.kind]} />
+                              </svg>
+                              <span>{e.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className={styles.controls}>
+                        <div className={styles.numeric}>
+                          <label className={styles.field}>
+                            <span className={styles.fieldLabel}>Value</span>
+                            <ValueField
+                              value={selectedKf.value}
+                              precision={2}
+                              onChange={(v) =>
+                                runAnimEdit(
+                                  'Set keyframe value',
+                                  () => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { value: v }),
+                                  `kf-value:${primary}:${prop}:${selectedKf.t}`,
+                                )
+                              }
+                              aria-label="keyframe value"
+                            />
+                          </label>
+                          <label className={styles.field}>
+                            <span className={styles.fieldLabel}>Time</span>
+                            <ValueField
+                              value={selectedKf.t}
+                              precision={2}
+                              unit="s"
+                              min={0}
+                              onChange={(t) => {
+                                runAnimEdit(
+                                  'Set keyframe time',
+                                  () => defaultAnimation.updateKeyframe(primary, prop, selectedKf.t, { t }),
+                                  `kf-time:${primary}:${prop}`,
+                                );
+                                setSelT(t);
+                              }}
+                              aria-label="keyframe time"
+                            />
+                          </label>
+                        </div>
+
+                        <div className={styles.actions}>
+                          <button type="button" className={styles.actionChip} onClick={applyEasyEase} title="Easy Ease (F9)">
+                            <Icon name="ease" size="sm" /> Easy Ease
+                          </button>
+                          <button
+                            type="button"
+                            className={cn(styles.actionChip, selectedKf.roving && styles.actionChipOn)}
+                            aria-pressed={!!selectedKf.roving}
+                            disabled={selIdx <= 0 || selIdx >= (track?.keyframes.length ?? 0) - 1}
+                            onClick={toggleRoving}
+                            title="Rove across time for constant speed"
+                          >
+                            <Icon name="stopwatch" size="sm" /> Roving
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.actionChip}
+                            onClick={() => copyEase(makeKeyframeId(primary, prop, selectedKf.t))}
+                            title="Copy this keyframe's easing"
+                          >
+                            <Icon name="copy" size="sm" /> Copy Ease
+                          </button>
+                          <button
+                            type="button"
+                            className={styles.actionChip}
+                            disabled={!hasCopiedEase}
+                            onClick={() => pasteEase([makeKeyframeId(primary, prop, selectedKf.t)])}
+                            title={hasCopiedEase ? 'Paste the copied easing here' : 'Nothing copied yet'}
+                          >
+                            <Icon name="download" size="sm" /> Paste Ease
+                          </button>
+                        </div>
+
+                        {selectedKf.easing === 'bezier' ? (
+                          <div className={styles.numeric}>
+                            <label className={styles.field}>
+                              <span className={styles.fieldLabel}>Ease Out</span>
+                              <ValueField
+                                value={Math.round((selectedKf.bezier?.[0] ?? DEFAULT_BEZIER[0]) * 100)}
+                                min={0} max={100} precision={0} unit="%"
+                                onChange={(v) => setInfluence('out', v)}
+                                aria-label="ease out influence"
+                              />
+                            </label>
+                            <label className={styles.field}>
+                              <span className={styles.fieldLabel}>Ease In</span>
+                              <ValueField
+                                value={Math.round((1 - (selectedKf.bezier?.[2] ?? DEFAULT_BEZIER[2])) * 100)}
+                                min={0} max={100} precision={0} unit="%"
+                                onChange={(v) => setInfluence('in', v)}
+                                aria-label="ease in influence"
+                              />
+                            </label>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
+              <ExpressionEditor nodeId={primary} prop={prop} />
+            </>
+          )}
+        </div>
       )}
-
-      {/* Copy/paste an easing curve between keyframes moved UP into the
-          selected-keyframe action row. It came from the deleted left-sidebar
-          Flow panel and landed here, below the expression editor — a control
-          acting on the selected keyframe, placed past the section that has
-          nothing to do with keyframes. */}
-
-      {/* Expression editor — drives this property with a formula each frame. */}
-      <ExpressionEditor nodeId={primary} prop={prop} />
     </div>
   );
 }

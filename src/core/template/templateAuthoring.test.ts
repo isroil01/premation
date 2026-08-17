@@ -46,6 +46,11 @@ describe('template authoring', () => {
     expect(readAuthoredFields()).toHaveLength(0);
   });
 
+  it('exposes a public slug id from the layer name', () => {
+    const f = exposeNodeAsField('tpl_headline')!;
+    expect(f.id).toMatch(/^[a-z][a-zA-Z0-9]*$/);
+  });
+
   it('an authored field drives a real edit', () => {
     const f = exposeNodeAsField('tpl_headline')!;
     expect(writeTemplateField(f, 'Launch Day')).toBe(true);

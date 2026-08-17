@@ -14,6 +14,7 @@ import { HistoryPanel } from '@layout/History/HistoryPanel';
 import { ProjectPanel } from '@layout/Project/ProjectPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
+import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { PluginsDockPanel, pluginPanelRenderers } from '@layout/Plugins/PluginPanel';
 import { PluginsMarketplacePanel } from '@layout/Plugins/PluginsMarketplacePanel';
@@ -49,7 +50,7 @@ import { splitKind } from '@core/plugins/layerKindSchema';
 import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
-import { ActiveTemplateFields } from '@layout/Templates/TemplateFieldsPanel';
+import { ActiveTemplateFields, TemplateAuthoringSection } from '@layout/Templates/TemplateFieldsPanel';
 import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
 import { useTemplateStore } from '@stores/templateStore';
 import { CompositingControls } from '@layout/Inspector/CompositingControls';
@@ -1159,10 +1160,34 @@ export function AssetsPanel(): JSX.Element {
  * Rigging, Graph, Effects, Presets, Render and Plugins stay separate tabs on
  * purpose — those are editors and modes, not properties of the selection.
  */
+const LAYER_KIND_LABEL: Record<string, string> = {
+  shape: 'Shape',
+  text: 'Text',
+  image: 'Image',
+  video: 'Video',
+  group: 'Group',
+  null: 'Null',
+  camera: 'Camera',
+  light: 'Light',
+  audio: 'Audio',
+  svg: 'SVG',
+  particle: 'Particle',
+};
+
+function layerKindLabel(kind: string): string {
+  const custom = splitKind(kind);
+  if (custom) return custom.kindId;
+  return LAYER_KIND_LABEL[kind] ?? kind;
+}
+
 export function PropertiesPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
   const primary = selected[0] ?? null;
   const [query, setQuery] = useState('');
+  useSceneRevision((s) => s.rev);
+  const node = primary ? defaultSceneGraph.getNode(primary) : null;
+  const kind = node ? readNodeKind(node) : null;
+  const layerName = node?.name?.trim() || primary;
 
   return (
     <Panel
@@ -1170,37 +1195,37 @@ export function PropertiesPanel(): JSX.Element {
       title="Properties"
       icon="settings"
       hideHeader
+      noScroll
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'properties' })}
     >
-      {primary && (
-        <div className={styles.searchRow}>
-          <Input
-            placeholder="Search properties…"
-            size="sm"
-            fullWidth
-            leftIcon="search"
-            value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
-          />
+      <div className={styles.inspectorShell}>
+        {primary && node && (
+          <div className={styles.layerHead}>
+            <span className={styles.layerKind}>{layerKindLabel(kind ?? '')}</span>
+            <span className={styles.layerName} title={layerName}>{layerName}</span>
+          </div>
+        )}
+        {primary && (
+          <div className={styles.searchRow}>
+            <Input
+              placeholder="Search properties…"
+              size="sm"
+              fullWidth
+              leftIcon="search"
+              value={query}
+              onChange={(e) => setQuery(e.currentTarget.value)}
+            />
+          </div>
+        )}
+        <div className={styles.inspectorBody}>
+          <InspectorContent nodeId={primary} query={query} />
+          <div className={styles.inspectorExtras}>
+            <MographParamsSection />
+            <TemplateFieldsSection />
+            <TemplateAuthoringSection />
+            <VersionHistorySection />
+          </div>
         </div>
-      )}
-      <InspectorContent nodeId={primary} query={query} />
-      {/* An inserted Motion GFX element's own blanks — its text and colours.
-          Renders nothing unless the selection is inside one, and sits beside
-          the template fields below because it is the same idea scoped to one
-          element rather than the whole composition. */}
-      <div style={{ padding: '0 14px' }}>
-        <MographParamsSection />
-      </div>
-      {/* Applied-template fields — the "fill in the blanks" surface. Shown only
-          when a template is actually applied, so it costs nothing otherwise. */}
-      <TemplateFieldsSection />
-      {/* Project-level, selection-independent — renders only under LOCAL_FIRST.
-          It sits below the accordion rather than inside it because it is not a
-          property of the selected layer, and an accordion row that collapses to
-          nothing would be worse than a quiet block that renders nothing. */}
-      <div style={{ padding: '0 14px' }}>
-        <VersionHistorySection />
       </div>
     </Panel>
   );
@@ -1282,12 +1307,11 @@ function renderInspector(items: AccordionItem[], query: string): JSX.Element {
  * these three groups were three separate tabs, so the sequence only existed in
  * the user's head.
  *
- * defaultOpen is deliberately stingier than it was when these lived in three
- * tabs. Sections that were the only content of their own tab could afford to
- * start open; in a single column, ten open sections is a scroll, not an
- * inspector. Spatial and kind-specific sections start open because they are
- * why you selected the layer; the secondary style and behaviour sections start
- * closed. A search match still force-opens anything it matches.
+ * defaultOpen is stingy on purpose. Transform and the kind-specific section
+ * (Text, Camera, Fill & Stroke, …) start open — that is why you selected the
+ * layer. Parent, Blend, Time, Switches and style add-ons start closed, so the
+ * first screen is an inspector, not a scroll. A search match still force-opens
+ * anything it matches.
  */
 function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
   // Hook before any early return — the group section's "Enter group" needs it.
@@ -1349,7 +1373,7 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
       id: 'compositing',
       title: 'Blend & Matte',
       icon: 'layers',
-      defaultOpen: true,
+      defaultOpen: false,
       content: <CompositingControls nodeId={nodeId} />,
     });
   }
@@ -1359,7 +1383,7 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
       id: 'parenting',
       title: 'Parent & Link',
       icon: 'layers',
-      defaultOpen: true,
+      defaultOpen: false,
       content: <ParentControl nodeId={nodeId} />,
     });
   }
@@ -2269,11 +2293,7 @@ export function LibraryPanel(): JSX.Element {
 function TemplateFieldsSection(): JSX.Element | null {
   const active = useTemplateStore((s) => s.active);
   if (!active) return null;
-  return (
-    <div style={{ padding: '0 14px' }}>
-      <ActiveTemplateFields />
-    </div>
-  );
+  return <ActiveTemplateFields />;
 }
 
 export function getAllPanelRenderers(): Record<string, () => ReactNode> {
@@ -2303,6 +2323,7 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     rig: () => <RigPanel />,
     motion: () => <MotionEditorPanel />,
     effects: () => <EffectsPanel />,
+    effectControls: () => <EffectControlsPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
     plugins: () => <PluginsDockPanel />,

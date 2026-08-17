@@ -638,7 +638,10 @@ export class AppTextureProvider implements TextureProvider {
     // The bake belongs in the key: it changes the TEXTURE, so two layers on the
     // same file with different styles must not share one upload, and editing a
     // style has to invalidate what is already there.
-    const bakeSig = bake ? `#bake=${JSON.stringify(bake)}` : '';
+    // The chosen bake RESOLUTION tier belongs in the key: zooming in must
+    // re-bake sharper, and without this the first (possibly low-res) bake
+    // would be served forever. Quantized so panning/zooming does not thrash.
+    const bakeSig = bake ? `#bake=${JSON.stringify(bake)}#rq=${this.bakeResolutionTier()}` : '';
     // Live SVG scrubbing: quantize to centiseconds so adjacent frames share a
     // decode when the playhead barely moves, while still invalidating on scrub.
     const timeSig = mediaTime !== undefined && Number.isFinite(mediaTime)
@@ -1323,14 +1326,45 @@ export class AppTextureProvider implements TextureProvider {
     return this.ensureCanvas(slot, w, h);
   }
 
+  /**
+   * Device-px-per-comp-unit quantized to a small ladder. This decides how many
+   * pixels an image BAKE is worth: the baked texture is only ever sampled at
+   * the layer's on-screen size, so baking a 4K source shown at 400 px through
+   * a 30-effect chain at native resolution was 8 M pixels × 30 passes of work
+   * whose extra detail no one could see. Quantized so zoom/pan does not
+   * re-bake every frame; keyed into the cache signature so crossing a tier
+   * re-bakes at the new resolution.
+   */
+  private bakeResolutionTier(): number {
+    const s = this.rasterScale || 1;
+    if (s <= 0.28) return 0.25;
+    if (s <= 0.55) return 0.5;
+    if (s <= 1.05) return 1;
+    if (s <= 1.55) return 1.5;
+    if (s <= 2.1) return 2;
+    if (s <= 3.1) return 3;
+    return 4;
+  }
+
   private async bakeImageBitmap(
     bitmap: ImageBitmap,
     bake: ImageBakeSpec,
     premultipliedFile: boolean | undefined,
   ): Promise<ImageBitmap | null> {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (!(w > 0) || !(h > 0)) return null;
+    const srcW = bitmap.width;
+    const srcH = bitmap.height;
+    if (!(srcW > 0) || !(srcH > 0)) return null;
+    // Bake at the resolution the layer is DISPLAYED at (plus headroom for
+    // resampling quality), never above the source. Effect pixel-lengths are
+    // already normalised through `scaleEffectLengths(effects, k)`, so the
+    // chain is resolution-independent by construction — only sharpness beyond
+    // what the screen can show is given up, and zooming in re-bakes sharper
+    // via the tier in the cache key.
+    const BAKE_HEADROOM = 1.5;
+    const needW = bake.width > 0 ? bake.width * this.bakeResolutionTier() * BAKE_HEADROOM : srcW;
+    const factor = Math.min(1, Math.max(0.05, needW / srcW));
+    const w = Math.max(1, Math.round(srcW * factor));
+    const h = Math.max(1, Math.round(srcH * factor));
     try {
       const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
@@ -1340,7 +1374,9 @@ export class AppTextureProvider implements TextureProvider {
       ctx.globalAlpha = 1;
       ctx.filter = 'none';
       ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(bitmap, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, 0, 0, w, h);
       const k = bake.width > 0 ? w / bake.width : 1;
       // MASK FIRST, matching the vector path. An interior style is generated
       // from the layer's silhouette, and for a masked layer that silhouette is
@@ -1407,7 +1443,9 @@ export class AppTextureProvider implements TextureProvider {
           && (/^data:image\/svg\+xml/i.test(src) || /\.svg(\?|#|$)/i.test(src))
         ) {
           const { rasterizeSvgAtTime } = await import('../svg/liveSvgRaster');
-          bitmap = await rasterizeSvgAtTime(src, mediaTime);
+          // Interactive playback rasters at 1024 px and caches frames; exact
+          // media timing (export / harness) pays for the full 2048 px raster.
+          bitmap = await rasterizeSvgAtTime(src, mediaTime, { exportQuality: this.exactMediaTiming });
         } else {
           bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
         }

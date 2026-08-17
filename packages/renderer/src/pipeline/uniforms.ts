@@ -9,6 +9,7 @@ import type { Mat3 } from '../core/math/Mat3';
 import type { Mat4 } from '../core/math/Mat4';
 import type { Rect } from '../core/math/geometry';
 import { toWorkingColor } from '../shaders/linearWorkingSpace';
+import { packSrcSpaceFlags } from '../shaders/colorPipeline';
 
 /** Floats occupied by a std140 mat3x3 (3 padded columns). */
 export const MAT3_STD140_FLOATS = 12;
@@ -262,7 +263,7 @@ export function packColorRows(ct: ColorTransform, out: Float32Array, floatOffset
 }
 
 /** Textured material uniform: mat3 mvp + vec4 uvRect + vec4 tint + 3 colour rows
- *  + srcSpace (x=1 when the sampled texture is already linear working-space). */
+ *  + srcSpace (x=sampleLinear, y=aces working, z=aces ODT). */
 export function packTextured(
   mvp: Mat3,
   uvRect: Rect,
@@ -276,7 +277,11 @@ export function packTextured(
   o = packRect(uvRect, out, o);
   o = packColor(tint, out, o, opacity);
   o = packColorRows(color, out, o);
-  out[o + 0] = sampleLinear ? 1 : 0;
+  const [sx, sy, sz, sw] = packSrcSpaceFlags(sampleLinear);
+  out[o + 0] = sx;
+  out[o + 1] = sy;
+  out[o + 2] = sz;
+  out[o + 3] = sw;
   return out;
 }
 
@@ -296,7 +301,11 @@ export function packTextured3D(
   o = packRect(uvRect, out, o);
   o = packColor(tint, out, o, opacity);
   o = packColorRows(color, out, o);
-  out[o + 0] = sampleLinear ? 1 : 0;
+  const [sx, sy, sz, sw] = packSrcSpaceFlags(sampleLinear);
+  out[o + 0] = sx;
+  out[o + 1] = sy;
+  out[o + 2] = sz;
+  out[o + 3] = sw;
   o += 4;
   packShade3D(out, o, shade);
   return out;
@@ -320,11 +329,13 @@ export function packDeformedMesh(
   let o = packMat3(mvp, out, 0);
   o = packColor(tint, out, o, opacity);
   o = packColorRows(color, out, o);
-  out[o + 0] = sampleLinear ? 1 : 0;
+  const [sx, sy, sz, sw] = packSrcSpaceFlags(sampleLinear);
+  out[o + 0] = sx;
+  out[o + 1] = sy;
+  out[o + 2] = sz;
+  out[o + 3] = sw;
   return out;
 }
-
-/** Blur material uniform: mat3 mvp + vec4 uvRect + vec4 blurParams (dirX, dirY, radiusPx, 0). */
 export function packBlur(
   mvp: Mat3,
   uvRect: Rect,
@@ -687,6 +698,112 @@ export function packLightRays(
   out[o + 0] = opacity; out[o + 1] = falloff; out[o + 2] = rotation; out[o + 3] = spreadArc; o += 4;
   out[o + 0] = seed; out[o + 1] = composite; out[o + 2] = 0; out[o + 3] = 0; o += 4;
   writeWorkingRgba(color, out, o);
+  return out;
+}
+
+// ── Round-six per-pixel colour ports ─────────────────────────────────
+//
+// Colours in these blocks are RAW sRGB fractions, not working-space: the CPU
+// kernels (the parity reference) do their maths on sRGB bytes, so the shader
+// must see the same numbers — `writeWorkingRgba` here would grade in a
+// different space than the reference bakes in.
+
+/** Vignette — p0 = (amount, inner, feather, roundness); p1 = (cx, cy, aspect, 0); fxBox. */
+export function packVignetteFx(
+  mvp: Mat3, uvRect: Rect,
+  amount: number, inner: number, feather: number, roundness: number,
+  cx: number, cy: number, aspect: number,
+  fxBox: Rect,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = amount; out[o + 1] = inner; out[o + 2] = feather; out[o + 3] = roundness; o += 4;
+  out[o + 0] = cx; out[o + 1] = cy; out[o + 2] = aspect; out[o + 3] = 0; o += 4;
+  packRect(fxBox, out, o);
+  return out;
+}
+
+/** Black & White — p0 = (reds, yellows, greens, cyans); p1 = (blues, magentas, tintOn, tintH); p2 = (tintS, 0, 0, 0). */
+export function packBlackAndWhite(
+  mvp: Mat3, uvRect: Rect,
+  reds: number, yellows: number, greens: number, cyans: number,
+  blues: number, magentas: number, tintOn: number, tintH: number, tintS: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = reds; out[o + 1] = yellows; out[o + 2] = greens; out[o + 3] = cyans; o += 4;
+  out[o + 0] = blues; out[o + 1] = magentas; out[o + 2] = tintOn; out[o + 3] = tintH; o += 4;
+  out[o + 0] = tintS; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
+/** Tritone — p0 = (shadows.rgb, blend); p1 = (midtones.rgb, 0); p2 = (highlights.rgb, 0). */
+export function packTritone(
+  mvp: Mat3, uvRect: Rect,
+  sr: number, sg: number, sb: number, blend: number,
+  mr: number, mg: number, mb: number,
+  hr: number, hg: number, hb: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = sr; out[o + 1] = sg; out[o + 2] = sb; out[o + 3] = blend; o += 4;
+  out[o + 0] = mr; out[o + 1] = mg; out[o + 2] = mb; out[o + 3] = 0; o += 4;
+  out[o + 0] = hr; out[o + 1] = hg; out[o + 2] = hb; out[o + 3] = 0;
+  return out;
+}
+
+/** Photo Filter — p0 = (gel.rgb, density); p1 = (preserveLuminosity, 0, 0, 0). */
+export function packPhotoFilter(
+  mvp: Mat3, uvRect: Rect,
+  r: number, g: number, b: number, density: number, preserveLuminosity: boolean,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = r; out[o + 1] = g; out[o + 2] = b; out[o + 3] = density; o += 4;
+  out[o + 0] = preserveLuminosity ? 1 : 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
+/** Threshold — p0 = (level, 0, 0, 0). */
+export function packThreshold(mvp: Mat3, uvRect: Rect, level: number): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = level; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
+/** Vibrance — p0 = (vibrance, saturation, 0, 0). */
+export function packVibrance(mvp: Mat3, uvRect: Rect, vibrance: number, saturation: number): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = vibrance; out[o + 1] = saturation; out[o + 2] = 0; out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * Round-six waves 2–3 share one shape: mvp + uvRect + N param vec4s + fxBox.
+ * `rows` is the param vec4s in struct order; each shader's struct declares the
+ * matching count (pinned per shader by uniformPackerSize.test).
+ */
+export function packFxBlock(
+  mvp: Mat3, uvRect: Rect,
+  rows: ReadonlyArray<readonly [number, number, number, number]>,
+  fxBox: Rect,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + rows.length * 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  for (const r of rows) {
+    out[o + 0] = r[0]; out[o + 1] = r[1]; out[o + 2] = r[2]; out[o + 3] = r[3];
+    o += 4;
+  }
+  packRect(fxBox, out, o);
   return out;
 }
 
