@@ -55,6 +55,8 @@ import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { bumpScene } from '@stores/sceneStore';
+import { useOnionSkinStore } from '@stores/onionSkinStore';
+import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { addPaintStroke, type PaintMode } from '@core/paint/paintStrokes';
 import { compToLayerLocal, isPaintableKind, localBrushSize } from '@core/paint/paintCoords';
@@ -141,6 +143,8 @@ export interface UseWorkspaceArgs {
   overlayCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   /** RAM-preview blit layer (optional — the aux viewport has none). */
   cacheCanvasRef?: React.RefObject<HTMLCanvasElement | null>;
+  /** Onion-skin ghost layer (optional, same reason). */
+  onionCanvasRef?: React.RefObject<HTMLCanvasElement | null>;
   stageRef: React.RefObject<HTMLElement | null>;
   sceneRev: number;
   time: number;
@@ -149,7 +153,7 @@ export interface UseWorkspaceArgs {
 }
 
 export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderError: string | null } {
-  const { contentCanvasRef, overlayCanvasRef, cacheCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
+  const { contentCanvasRef, overlayCanvasRef, cacheCanvasRef, onionCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
 
   const backendRef = useRef<RenderBackend | null>(null);
   const dprRef = useRef(1);
@@ -300,6 +304,21 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     let animRev = 0;
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
 
+    const onionPainter = createOnionSkinPainter({
+      content: () => contentCanvasRef?.current ?? null,
+      target: () => onionCanvasRef?.current ?? null,
+      settings: () => useOnionSkinStore.getState(),
+      // The comp's own frame range. Ghosts outside it are dropped rather than
+      // clamped, so the first frame does not wear a stack of identical ghosts.
+      bounds: () => {
+        const c = compRef.current;
+        const f = c.fps || 60;
+        const start = c.startFrame ?? 0;
+        return { min: start, max: start + Math.round((c.durationSeconds || 0) * f) };
+      },
+      visibleClass: workspaceStyles.onionCanvasVisible ?? 'onionCanvasVisible',
+    });
+
     const paintChrome = (): void => {
       paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current, creationDragRef.current, paintDragRef.current?.mode ?? 'paint');
       paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
@@ -324,28 +343,30 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const playing = tab?.playing === true;
       const fps = compRef.current.fps || 60;
       const frame = Math.round(timeRef.current * fps);
+      // Everything that changes pixels goes in the key; a change clears the RAM
+      // cache wholesale. Built from scalars rather than JSON.stringify — this
+      // runs every frame while playing, including on the cache-hit path below.
+      //
+      // Computed unconditionally rather than inside `if (playing)` because the
+      // ONION SKINS memoize on it too, and they only ever run while PAUSED —
+      // leaving it in the playing branch would have left them with no way to
+      // tell an edit from a mouse move.
+      const view = controller.getView();
+      const ov = overlaysRef.current;
+      const mb = motionBlurRef.current;
+      const roiK = useGuidesStore.getState().roi;
+      const invalidationKey = [
+        sceneRevRef.current, animRev, focusKeyRef.current,
+        compRef.current.id, compRef.current.width, compRef.current.height, fps,
+        camera3dModeRef.current, draft3dRef.current ? 1 : 0,
+        useRenderQualityStore.getState().resolution,
+        view.scale, view.offsetX, view.offsetY,
+        ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridSpacing, ov.gridSubdivisions, ov.gridStyle, ov.gridColor, ov.proportionalGrid ? 1 : 0, ov.proportionalColumns, ov.proportionalRows, ov.safeArea ? 1 : 0,
+        mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
+        roiK ? `${roiK.x},${roiK.y},${roiK.width},${roiK.height}` : '-',
+      ].join(':');
       if (playing) {
-        // Everything that changes pixels goes in the key; a change clears all.
-        // Built from scalars rather than JSON.stringify — this runs every frame
-        // while playing, including on the cache-hit path below.
-        const view = controller.getView();
-        const ov = overlaysRef.current;
-        const mb = motionBlurRef.current;
-        const roiK = useGuidesStore.getState().roi;
-        viewportFrameCache.setKey(
-          [
-            sceneRevRef.current, animRev, focusKeyRef.current,
-            compRef.current.id, compRef.current.width, compRef.current.height, fps,
-            camera3dModeRef.current, draft3dRef.current ? 1 : 0,
-            useRenderQualityStore.getState().resolution,
-            view.scale, view.offsetX, view.offsetY,
-            ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridSpacing, ov.gridSubdivisions, ov.gridStyle, ov.gridColor, ov.proportionalGrid ? 1 : 0, ov.proportionalColumns, ov.proportionalRows, ov.safeArea ? 1 : 0,
-            mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
-            roiK ? `${roiK.x},${roiK.y},${roiK.width},${roiK.height}` : '-',
-          ].join(':'),
-          content.width,
-          content.height,
-        );
+        viewportFrameCache.setKey(invalidationKey, content.width, content.height);
         const hit = viewportFrameCache.get(frame);
         const cacheCanvas = cacheCanvasRef?.current;
         if (hit && cacheCanvas) {
@@ -371,37 +392,57 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Anything that renders for real must reveal the live canvas again.
       cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
 
-      b.renderFrame({
-        ...buildSnapshot(
-          defaultSceneGraph,
-          defaultAnimation,
-          timeRef.current,
-          focusRef.current,
-          overlaysRef.current,
-          controller.getView(),
-          motionBlurRef.current,
-          // rootId scopes the render to the ACTIVE composition's subtree. Without
-          // it, buildSnapshot flattens every root and draws all comps stacked on
-          // top of each other — and the preview (which DOES pass rootId) then
-          // showed a different picture than the editor. Both scope the same now.
-          {
-            ...compRef.current,
-            rootId: compRef.current.id,
-            compSizeOf,
-            // Custom views resolve to a pre-built override camera; ortho /
-            // active pass straight through (resolveViewCameraInput reads the
-            // live store, so the closure never freezes a stale view).
-            ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
-            draft3d: draft3dRef.current,
-            useProxies: useProxiesRef.current,
-          },
-        ),
-        // The only producer of `snapshot.roi`. Read live from the store so the
-        // region takes effect on the very next frame after the menu toggles it.
-        roi: useGuidesStore.getState().roi ?? undefined,
-        // Ortho / custom views must not be cropped to the comp rect.
-        viewIsActiveCamera: camera3dModeRef.current === 'active',
-      });
+      // `ghost` renders the same scene with a TRANSPARENT background, the same
+      // way a precomp does, so onion skins layer over each other and over the
+      // live frame instead of each one painting an opaque plate over the last.
+      const renderAt = (t: number, ghost = false): void => {
+        b.renderFrame({
+          ...buildSnapshot(
+            defaultSceneGraph,
+            defaultAnimation,
+            t,
+            focusRef.current,
+            overlaysRef.current,
+            controller.getView(),
+            motionBlurRef.current,
+            // rootId scopes the render to the ACTIVE composition's subtree. Without
+            // it, buildSnapshot flattens every root and draws all comps stacked on
+            // top of each other — and the preview (which DOES pass rootId) then
+            // showed a different picture than the editor. Both scope the same now.
+            {
+              ...compRef.current,
+              rootId: compRef.current.id,
+              compSizeOf,
+              // Custom views resolve to a pre-built override camera; ortho /
+              // active pass straight through (resolveViewCameraInput reads the
+              // live store, so the closure never freezes a stale view).
+              ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
+              draft3d: draft3dRef.current,
+              useProxies: useProxiesRef.current,
+              ...(ghost ? { transparent: true, backgroundPaint: undefined } : {}),
+            },
+          ),
+          // The only producer of `snapshot.roi`. Read live from the store so the
+          // region takes effect on the very next frame after the menu toggles it.
+          roi: useGuidesStore.getState().roi ?? undefined,
+          // Ortho / custom views must not be cropped to the comp rect.
+          viewIsActiveCamera: camera3dModeRef.current === 'active',
+        });
+      };
+
+      // ── Onion skins ────────────────────────────────────────────────
+      //
+      // Each ghost costs a FULL comp render, so this is gated three ways: off
+      // by default, never while playing, and memoized on a signature that moves
+      // only when the ghosts would actually differ (playhead, settings, edit,
+      // view). A hover or a selection change must not re-render the set.
+      //
+      // Ghosts are rendered BEFORE the live frame because every render
+      // overwrites the same content canvas — the live frame has to be the last
+      // thing in it when this function returns.
+      onionPainter.paint(renderAt, frame, fps, playing, invalidationKey);
+
+      renderAt(timeRef.current);
 
       // Offer the freshly rendered frame to the RAM preview. Copying FROM a
       // WebGL canvas into a 2D one is allowed (the reverse is not), and it must
@@ -503,6 +544,22 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       }
     });
 
+    // Onion-skin settings are read off the store INSIDE render(), so changing
+    // one has to ask for a repaint or nothing happens until something else
+    // does — the toggle would flip, the ghosts would not appear, and the
+    // feature would read as broken. (It did, before this subscription.)
+    let lastOnion = useOnionSkinStore.getState();
+    const onionSub = useOnionSkinStore.subscribe((s) => {
+      if (
+        s.enabled !== lastOnion.enabled || s.before !== lastOnion.before
+        || s.after !== lastOnion.after || s.step !== lastOnion.step
+        || s.opacity !== lastOnion.opacity || s.colorize !== lastOnion.colorize
+      ) {
+        lastOnion = s;
+        controller.requestRender();
+      }
+    });
+
     // Content also depends on the animation engine (keyframe edits, playback).
     const animSub = getEventBus().on('AnimationChanged', () => {
       animRev++; // invalidates the frame cache key
@@ -539,6 +596,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       window.removeEventListener('resize', sizeAll);
       ro.disconnect();
       qualitySub();
+      onionSub();
       animSub.dispose();
       nodeSub.dispose();
       playSub();

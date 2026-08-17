@@ -20,6 +20,7 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useRenderQualityStore, RESOLUTION_LABELS, RESOLUTION_PERCENT, type PreviewResolution } from '@stores/renderQualityStore';
+import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { useUIStore } from '@stores/uiStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 
@@ -69,6 +70,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
 
   const draftQuality = useRenderQualityStore((s) => s.draft);
   const setDraftQuality = useRenderQualityStore((s) => s.setDraft);
+  const onionEnabled = useOnionSkinStore((s) => s.enabled);
+  const toggleOnion = useOnionSkinStore((s) => s.toggle);
   const updateComp = useCompositionStore((s) => s.update);
   // Horizontal scroll mirror from Timeline → GraphEditor for pixel-alignment
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -346,6 +349,24 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 onClick={() => setDraftQuality(!draftQuality)}
               >
                 <Icon name="zap" size="sm" />
+              </button>
+
+              <button
+                type="button"
+                className={onionEnabled ? styles.toggleIconActive : styles.toggleIcon}
+                // The cost is in the title because it is not guessable: each
+                // ghost is a full comp render, so this is not a free overlay
+                // like the grid — and that is why it never runs during playback.
+                title={
+                  onionEnabled
+                    ? 'Onion Skinning (Active) — ghosts of nearby frames, while paused'
+                    : 'Onion Skinning (Inactive)'
+                }
+                aria-label="Onion Skinning"
+                aria-pressed={onionEnabled}
+                onClick={toggleOnion}
+              >
+                <Icon name="layers" size="sm" />
               </button>
 
               {/* Row Height Size Changer Button */}

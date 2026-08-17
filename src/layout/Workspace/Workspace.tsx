@@ -154,6 +154,9 @@ export function WorkspaceViewport({
   // RAM-preview blit layer — see `.cacheCanvas`. Sits between the content and
   // the interaction overlay so cached pixels replace the render, not the chrome.
   const cacheRef   = useRef<HTMLCanvasElement | null>(null);
+  // Onion-skin ghosts — see `.onionCanvas`. Above content and cache, below the
+  // interaction overlay.
+  const onionRef   = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const { focus, focusKey } = useFocusContext();
 
@@ -161,6 +164,7 @@ export function WorkspaceViewport({
   const { ready, renderError } = useWorkspace({
     contentCanvasRef: canvasRef,
     cacheCanvasRef: cacheRef,
+    onionCanvasRef: onionRef,
     overlayCanvasRef: overlayRef,
     stageRef,
     sceneRev,
@@ -367,6 +371,7 @@ export function WorkspaceViewport({
           {transparent && <TransparencyGrid />}
           <canvas ref={canvasRef} className={styles.canvas} />
           <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
+          <canvas ref={onionRef} className={styles.onionCanvas} data-workspace-onion="" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
           {/* Scene loading indicator — until the backend paints its first frame. */}
           {!ready && !renderError && (

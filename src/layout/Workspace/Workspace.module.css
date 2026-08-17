@@ -135,6 +135,7 @@
 /* Scene content (below) + interaction overlay (above, receives input). */
 .canvas,
 .cacheCanvas,
+.onionCanvas,
 .overlay {
   display: block;
   position: absolute;
@@ -157,6 +158,20 @@
 }
 
 .cacheCanvasVisible {
+  display: block;
+}
+
+/* Onion-skin ghosts. ABOVE the content and cache layers, because the ghosts are
+   rendered with a transparent background and have to composite over whichever
+   of those is currently showing — underneath, the opaque live frame would hide
+   them completely. Below the interaction overlay, so handles and guides stay on
+   top of the ghosts rather than being tinted by them. */
+.onionCanvas {
+  pointer-events: none;
+  display: none;
+}
+
+.onionCanvasVisible {
   display: block;
 }
 
