@@ -57,6 +57,7 @@ import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { bumpScene } from '@stores/sceneStore';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
+import { memoizedSceneContentHash } from '@core/rendering/sceneContentHash';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { addPaintStroke, type PaintMode } from '@core/paint/paintStrokes';
 import { compToLayerLocal, isPaintableKind, localBrushSize } from '@core/paint/paintCoords';
@@ -355,8 +356,22 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const ov = overlaysRef.current;
       const mb = motionBlurRef.current;
       const roiK = useGuidesStore.getState().roi;
+      // The scene's CONTENT, not its revision counter.
+      //
+      // A counter answers "did anything change?" and nothing else, and that
+      // cost in two places: an UNDO bumped the rev and threw away a cache whose
+      // pixels were now identical to the ones it had just evicted, and a
+      // counter that resets to 0 every launch cannot identify a scene across a
+      // restart — which is why the disk tier still purges on open.
+      //
+      // Memoized ON those counters, so it costs one scene walk per EDIT rather
+      // than one per frame; the counters keep doing the O(1) job they are
+      // actually good at.
+      const contentKey = memoizedSceneContentHash(
+        defaultSceneGraph, defaultAnimation, sceneRevRef.current, animRev,
+      );
       const invalidationKey = [
-        sceneRevRef.current, animRev, focusKeyRef.current,
+        contentKey, focusKeyRef.current,
         compRef.current.id, compRef.current.width, compRef.current.height, fps,
         camera3dModeRef.current, draft3dRef.current ? 1 : 0,
         useRenderQualityStore.getState().resolution,

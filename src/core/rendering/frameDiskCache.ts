@@ -26,12 +26,19 @@
  * win — caching a whole work area instead of two seconds — does not depend on
  * surviving a restart.
  *
- * Making it survive one is a separate, larger change with a clear prerequisite:
- * a CONTENT-DERIVED key (a hash of the scene and animation state) instead of a
- * revision counter. That is worth doing on its own merits — it would also stop
- * an undo from clearing a cache whose pixels are identical to what it already
- * held — but it is a correctness change to the key, not a storage feature, and
- * doing it under cover of "add a disk cache" is how you ship the bug above.
+ * **That prerequisite has since landed** (`sceneContentHash.ts`, 2026-08-17):
+ * the key is now a hash of the scene and animation content, memoized on the
+ * revision counters, so it identifies a scene rather than merely noticing that
+ * one changed. Persisted frames are therefore no longer ambiguous, and `open()`
+ * purging is now conservatism rather than necessity.
+ *
+ * What still stands between here and surviving a restart is EVICTION, not
+ * identity: `setGeneration` clears the store wholesale, because exactly one
+ * generation was ever live. Persistence means keeping several — the previous
+ * session's, this one's, and whatever the user undoes back into — under one
+ * budget, with a policy for which to drop first. That is a real change to this
+ * file rather than a flag flip, and doing it as a flag flip is how the cache
+ * grows without bound across sessions until the quota kills it.
  *
  * ── Why look-ahead rather than a fallback read ──────────────────────────────
  *
