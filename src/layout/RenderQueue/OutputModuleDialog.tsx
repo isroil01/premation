@@ -14,6 +14,7 @@ import {
   isBuiltinOutputTemplate,
   applyOutputTemplate,
 } from '@core/export/outputTemplates';
+import { customPrompt } from '@components/Modal/Dialogs';
 import styles from './OutputModuleDialog.module.css';
 
 export interface OutputSettings {
@@ -72,12 +73,13 @@ export function OutputModuleDialog({
   const [quality, setQuality] = useState<ExportQuality>('high');
   const supportsAlpha = ALPHA_FORMATS.has(format);
 
-  // Templates. `templatesRev` exists because the list lives in localStorage,
-  // not React state — bumping it after a save/delete is what re-renders the
-  // dropdown with the new entry.
-  const [templatesRev, setTemplatesRev] = useState(0);
+  // Templates. The list lives in localStorage, not React state, so `setTemplatesRev`
+  // after a save/delete is what re-renders the dropdown — and the list is simply
+  // re-read each render rather than memoized on the rev, because a dialog
+  // re-renders a handful of times and a localStorage read is nothing.
+  const [, setTemplatesRev] = useState(0);
   const [selectedTemplate, setSelectedTemplate] = useState('');
-  const templates = useMemo(() => listOutputTemplates(), [templatesRev]);
+  const templates = listOutputTemplates();
 
   const applyTemplate = (name: string): void => {
     setSelectedTemplate(name);
@@ -97,8 +99,10 @@ export function OutputModuleDialog({
     setTransparent(out.transparent && ALPHA_FORMATS.has(out.format));
   };
 
-  const saveAsTemplate = (): void => {
-    const name = window.prompt('Template name', selectedTemplate || 'My Template');
+  const saveAsTemplate = async (): Promise<void> => {
+    // customPrompt, not window.prompt — the latter does not exist in Electron,
+    // so Save would silently do nothing in the packaged app.
+    const name = await customPrompt('Save Template', 'Template name', selectedTemplate || 'My Template');
     if (!name) return;
     saveOutputTemplate({
       name,
