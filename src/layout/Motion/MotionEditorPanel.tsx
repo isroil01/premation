@@ -24,6 +24,7 @@ import { Tabs } from '@components/Tabs';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { ExpressionEditor } from './ExpressionEditor';
 import { BounceSection } from './BounceSection';
+import { EaseLibrarySection } from './EaseLibrarySection';
 import { MotionControls } from '@layout/Inspector/MotionControls';
 import styles from './MotionEditorPanel.module.css';
 
@@ -493,6 +494,13 @@ export function MotionEditorPanel(): JSX.Element {
                           );
                         })}
                       </div>
+
+                      <EaseLibrarySection
+                        nodeId={primary}
+                        prop={prop}
+                        t={selectedKf.t}
+                        bezier={selectedKf.bezier}
+                      />
 
                       <div className={styles.controls}>
                         <div className={styles.numeric}>

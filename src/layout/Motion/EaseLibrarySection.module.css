@@ -1,0 +1,115 @@
+/* The ease library grid.
+ *
+ * Deliberately mirrors `.easeChip` in MotionEditorPanel.module.css rather than
+ * inventing a second control language: same radius, same border token, same
+ * three states, same selected treatment (fill + border carry it, the label
+ * stays at full contrast — see the note there for the measured reason).
+ * The chips are wider because a curve thumbnail needs the horizontal room a
+ * 26px interpolation glyph does not. */
+
+.families {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Label column + curves, so the three directions of a family line up in a
+   column across every row and can be compared vertically. */
+.family {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.familyLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  text-align: right;
+  line-height: var(--line-height-tight);
+}
+
+.curves {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+
+.curveChip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: var(--space-1) 2px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-0);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  line-height: var(--line-height-tight);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.curveChip:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.curveChip:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.curveChip:active {
+  transform: translateY(1px);
+}
+
+.curveChipOn {
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.curveThumb {
+  width: 100%;
+  height: auto;
+  /* The Back curves draw outside the padded band on purpose — clipping them
+     would hide the single property that distinguishes the family. */
+  overflow: visible;
+}
+
+.curve {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The 0 and 1 lines. Subtle enough to read as a scale rather than as content,
+   present enough that an overshoot is visibly an overshoot. */
+.guide {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.curveName {
+  font-size: var(--font-size-micro);
+}
+
+.note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-tight);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .curveChip {
+    transition: none;
+  }
+}

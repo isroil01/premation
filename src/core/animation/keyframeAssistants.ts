@@ -23,6 +23,7 @@ import { parseKeyframeId, expandKeyframeProp, setDataKeyframeEasing } from '@mot
 import type { BezierHandles, EasingKind, PropPath } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import type { PresetTrack } from '@core/animation/animationPresets';
+import { easePresetById, type EasePresetId } from '@core/animation/easePresets';
 import {
   addTextAnimator,
   updateAnimator,
@@ -243,8 +244,16 @@ export function applyTrackingReveal(
  *   EaseIn  → easing: 'bezier', EASY_EASE_IN_BEZIER  (strong in only)
  *   EaseOut → easing: 'bezier', EASY_EASE_OUT_BEZIER (strong out only)
  *   Hold    → easing: 'hold'   (step function)
+ *
+ * The five names above are the AE interpolation types. Every OTHER id accepted
+ * here is a curve from the ease library (`easePresets.ts`) — `expo-out`,
+ * `back-inOut`, … — which resolves to `easing: 'bezier'` with that curve's
+ * handles. Both kinds go through this one entry point on purpose: the timeline
+ * pills, the F9 chords, the property menu and the Graph panel's curve grid then
+ * cannot disagree about what applying an easing means, and all four inherit the
+ * data-track and merged-Position handling below for free.
  */
-export type EasingPreset = 'Linear' | 'Ease' | 'EaseIn' | 'EaseOut' | 'Hold';
+export type EasingPreset = 'Linear' | 'Ease' | 'EaseIn' | 'EaseOut' | 'Hold' | EasePresetId;
 
 /** The (easing, bezier) a preset resolves to — shared by scalar and data paths. */
 function presetCurve(preset: EasingPreset): { easing: EasingKind; bezier?: BezierHandles } {
@@ -254,6 +263,14 @@ function presetCurve(preset: EasingPreset): { easing: EasingKind; bezier?: Bezie
     case 'EaseIn': return { easing: 'bezier', bezier: EASY_EASE_IN_BEZIER };
     case 'EaseOut': return { easing: 'bezier', bezier: EASY_EASE_OUT_BEZIER };
     case 'Hold': return { easing: 'hold' };
+    default: {
+      const curve = easePresetById(preset);
+      // Unreachable through the type, but an id can arrive from persisted state
+      // or a command registry. Falling back to Easy Ease keeps a stale id from
+      // silently writing a LINEAR curve, which reads as "the button did
+      // nothing" rather than as the error it is.
+      return { easing: 'bezier', bezier: curve?.bezier ?? EASY_EASE_BEZIER };
+    }
   }
 }
 
