@@ -73,3 +73,8 @@ skills-lock.json
 /test-results
 /playwright-report
 /blob-report
+
+# Personal VS Code multi-root workspaces. These are per-developer editor state
+# (which folders someone happens to have open together), not project config —
+# one of them had been sitting untracked inside src/ for a while.
+*.code-workspace
