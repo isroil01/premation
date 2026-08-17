@@ -157,11 +157,19 @@ ports as-is. There is no architectural limit on sampling a track away from the
 current frame — `sampleRaw` reads keyframes only, deliberately bypassing the
 expression so `valueAtTime` cannot recurse through itself.
 
-There is still **no named easing-preset registry**: easing is bezier handles plus
-the assistants in `keyframeAssistants.ts`. `BOUNCE_EASE` in
-`animationPresets.ts` is a single cubic-bezier (`0.175, 0.885, 0.32, 1.275`)
-commented "Elastic bounce" — a bezier has one overshoot and cannot express a
-decaying bounce, so the name overstates it.
+**Named easing presets ship** (2026-08-17, `easePresets.ts`): 8 families × 3
+directions, applied through the same `applyEasingToKeyframes` entry point as F9
+and the timeline pills, with a curve grid in the Graph panel. `EasingPreset`
+widened to admit their ids, so every easing surface resolves them identically
+and they inherit the data-track and merged-Position handling for free.
+
+Elastic and Bounce are deliberately NOT in that table. Both oscillate around
+their target with decaying amplitude, which no single cubic segment can trace —
+`BOUNCE_EASE` in `animationPresets.ts` is one cubic-bezier (`0.175, 0.885,
+0.32, 1.275`) commented "Elastic bounce", and a bezier has exactly one
+overshoot, so the name overstates it. They are GENERATORS and live in
+`bounce.ts`. A test guards their absence, so the next reader does not "fix" it
+by adding a lookalike bezier.
 
 **Bounce is a keyframe assistant** (`bounceTracks` / `bounceKeyframes`, menu:
 Bounce Keyframes), not an ease — it generates decaying keys with amplitude *and*
@@ -464,12 +472,19 @@ to describe is gone: `gizmo3dSnapping` was deleted with nine sibling symbols and
   right-click → "Add to Essential Properties" (`__essentialProps` on the root).
   When anything is published, the instance panel lists only that curated set
   (including nested layers). Empty still falls back to every overridable prop
-  on direct children. Still missing: non-numeric overrides (colour / text —
-  `evaluateNode` is number-only).
-- **The frame cache is memory-only.** `renderCache.ts` and `videoFrameCache.ts`
-  are both in-process and budgeted; `diskCache` is zero hits and nothing survives
-  a restart. AE's disk cache is what makes iterating on a heavy comp bearable on
-  day three.
+  on direct children. **Non-numeric overrides shipped 2026-08-17**: `text`,
+  `fill` and `color` join the numeric set via `OVERRIDE_PROP_KINDS`. Colour was
+  the awkward one — it is stored as a hex string but ANIMATED as three channels
+  (`fill_r/_g/_b`), so an override has to suppress those too or a keyframed
+  colour repaints over it every frame.
+- **The frame cache has a disk tier as of 2026-08-17** (`frameDiskCache.ts`) —
+  PNG blobs in a byte-budgeted LRU, read back ahead of the playhead, so a looped
+  work area longer than the ~60 frames RAM holds stops re-rendering every pass.
+  It is **session-scoped on purpose**: the invalidation key is built from
+  revision COUNTERS that reset to 0 each launch, so a persisted frame cannot be
+  told apart from a different project's. Surviving a restart — which is what
+  makes day three bearable in AE — needs a CONTENT-DERIVED key first, and that
+  is a correctness change to the key rather than a storage feature.
 - **No render-settings or output-module templates** (`renderSettings`: zero;
   `outputModule`: 2). Every queue entry is configured from scratch.
 - **Pre-1.0**, with breaking `.motion` format changes still expected.
@@ -1808,3 +1823,72 @@ of the actively-developed plugin system and are current. `3d-layer-model.md`,
 `BONE_AND_PUPPET_RIGGING.md` are subsystem deep-dives. `COMPOSITING_PLAN.md` is
 a **historical delivery ledger**, retained only because four source files cite
 its F-numbers — it is not a statement of current state.
+
+---
+
+### Corrected 2026-08-17 — seven features shipped, and three walls behind them
+
+A session opened by asking whether an AE-parity assessment was accurate. It was
+not, and the reason is this document's oldest failure mode: the assessment had
+been written from `README.md` and `ROADMAP.md`, whose effect count was still the
+superseded 154, and whose preset figure — 39 — is a number no registry derives
+at all. Seven of the "missing" features it listed already shipped. §0's rule
+earned its keep again: a number in §1 is under test, a sentence anywhere is a
+claim.
+
+(Phrased around those numbers rather than before them, because the propagation
+guard flagged the first draft of this paragraph — exactly as it flagged the
+entry that introduced it. Intended behaviour, and worth leaving visible twice.)
+
+So the entries below exist to keep this file from doing the same thing to the
+next reader.
+
+| §4 said | Now |
+|---|---|
+| "no named easing-preset registry" | **Ships** — `easePresets.ts`, 8 families × 3 directions, through the existing `applyEasingToKeyframes` entry point |
+| "the frame cache is memory-only… `diskCache` is zero hits" | **A disk tier ships** (`frameDiskCache.ts`), session-scoped by necessity — see below |
+| Essential Properties "still missing: non-numeric overrides" | **`text` / `fill` / `color` ship**, with colour's three animated channels suppressed |
+| Onion skinning absent | **Ships** (`onionSkin.ts` + painter), paused-only |
+| Cloners absent | **Ship** (`cloner.ts`), three modes, Step + Random effectors, order- and layer-driven falloff |
+| Rigid-body physics absent | **Ships** (`rigidBody.ts`) on `SimulationCache`, hand-written — see below |
+
+**Three things are blocked on a subsystem, not on effort.** Each was scoped this
+session and each turned out to be a rewrite of a path rather than a feature
+behind it. Recording them so the next plan does not budget them as small:
+
+1. **Cross-session frame caching** needs a CONTENT-DERIVED invalidation key. The
+   current one is built from `sceneRevision` and the animation revision —
+   monotonic counters that reset to 0 every launch, so a persisted frame is
+   indistinguishable from a different project's. Worth doing anyway: it would
+   also stop an undo from clearing a cache whose pixels are identical to what it
+   already held.
+2. **Variable font axes** remain unreachable, exactly as the 2026-08-12 entry
+   found — and re-confirmed here rather than re-litigated. `ctx.font` is a CSS
+   shorthand with no `font-variation-settings`, so this is a different text
+   rasterization path (glyph shaping carrying variation coordinates), the same
+   prerequisite outline-based extrusion wants.
+3. **Cloning along a path** hits the ordering: `pathPoints` is resolved deep
+   inside `buildSnapshot`'s per-layer loop, long after `expandCloners` runs. A
+   second copy of that resolution at expansion time is precisely the drift this
+   document exists to prevent, so path mode wants the resolution moved, not
+   duplicated.
+
+**Physics is hand-written, and that was a decision rather than an oversight.**
+Rapier arrives as WASM, which here means loosening the CSP to allow
+`wasm-unsafe-eval` — a security-policy change, made for a falling-box effect,
+that then applies to every page the renderer loads. It also adds a second
+determinism story beside `SimulationCache`'s strict one. The honest limit of the
+result is stated in its own header and in the panel: **bodies translate but do
+not spin**, so colliders are axis-aligned. Joints, ragdolls or continuous
+collision are the point at which to revisit the dependency — with a concrete
+need, not in advance.
+
+**What none of this had: visual verification.** Every feature above is covered
+by tests and by wiring guards, and none of it was seen running. The automation
+browser pane loads the app with `document.hidden === true`, so
+`requestAnimationFrame` never fires (measured: 0 callbacks in 2s) and the
+viewport render loop — which `WorkspaceController.requestRender()` schedules
+through rAF — never ticks. Anything downstream of a rendered frame therefore
+stays empty there: the RAM cache, the disk tier, the onion skins, the cloner.
+That is an environment limit rather than a finding about the code, but it is the
+reason these seven land with a caveat instead of a screenshot.
