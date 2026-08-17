@@ -26,6 +26,7 @@ import {
   type ClonerConfig,
   type ClonerMode,
   type FalloffShape,
+  type FalloffSource,
 } from '@core/scene/cloner';
 import styles from './TransformSection.module.css';
 
@@ -66,6 +67,11 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
   const count = cloneCount({ ...cfg, enabled: true });
   const capped = count >= MAX_CLONES;
+
+  // Candidate field drivers: the cloner's siblings, minus itself. A cloner
+  // driven by its own position would move its field with every clone it placed.
+  const siblings = (node.parent ? defaultSceneGraph.getChildren(node.parent) : [])
+    .filter((s) => s.id !== nodeId);
 
   return (
     <>
@@ -164,8 +170,44 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           </InspectorRow>
           {cfg.falloff.shape !== 'none' && (
             <>
-              <InspectorRow label="Center"><ValueField value={cfg.falloff.position} min={0} max={1} precision={2} onChange={(v) => write({ falloff: { ...cfg.falloff, position: v } })} aria-label="Falloff center" /></InspectorRow>
-              <InspectorRow label="Width"><ValueField value={cfg.falloff.width} min={0} max={1} precision={2} onChange={(v) => write({ falloff: { ...cfg.falloff, width: v } })} aria-label="Falloff width" /></InspectorRow>
+              <InspectorRow label="Driven By" align="center">
+                <select
+                  className={styles.select}
+                  style={{ width: 110 }}
+                  value={cfg.falloff.source}
+                  onChange={(e) => write({ falloff: { ...cfg.falloff, source: e.target.value as FalloffSource } })}
+                  aria-label="Falloff source"
+                >
+                  <option value="order">Clone Order</option>
+                  <option value="layer">Layer</option>
+                </select>
+              </InspectorRow>
+
+              {cfg.falloff.source === 'layer' ? (
+                <>
+                  <InspectorRow label="Layer" align="center">
+                    <select
+                      className={styles.select}
+                      style={{ width: 110 }}
+                      value={cfg.falloff.layerId}
+                      onChange={(e) => write({ falloff: { ...cfg.falloff, layerId: e.target.value } })}
+                      aria-label="Field layer"
+                    >
+                      {/* An explicit empty option, so "none chosen" is a state
+                          you can see and return to rather than whichever layer
+                          happened to sort first. */}
+                      <option value="">— none —</option>
+                      {siblings.map((s) => <option key={s.id} value={s.id}>{s.name ?? s.id}</option>)}
+                    </select>
+                  </InspectorRow>
+                  <InspectorRow label="Radius"><ValueField value={cfg.falloff.radius} min={0} precision={1} onChange={(v) => write({ falloff: { ...cfg.falloff, radius: v } })} aria-label="Field radius" /></InspectorRow>
+                </>
+              ) : (
+                <>
+                  <InspectorRow label="Center"><ValueField value={cfg.falloff.position} min={0} max={1} precision={2} onChange={(v) => write({ falloff: { ...cfg.falloff, position: v } })} aria-label="Falloff center" /></InspectorRow>
+                  <InspectorRow label="Width"><ValueField value={cfg.falloff.width} min={0} max={1} precision={2} onChange={(v) => write({ falloff: { ...cfg.falloff, width: v } })} aria-label="Falloff width" /></InspectorRow>
+                </>
+              )}
               <InspectorRow label="Invert" align="center">
                 <div className={styles.control}>
                   <Checkbox checked={cfg.falloff.invert} onChange={(e) => write({ falloff: { ...cfg.falloff, invert: e.target.checked } })} aria-label="Invert falloff" />

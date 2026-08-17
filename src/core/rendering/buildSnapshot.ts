@@ -31,7 +31,7 @@ import { readNodeMotionBlur, motionBlurSampleTimes, adaptiveMotionBlurSamples, t
 import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core/paint/fill';
 import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
-import { localMatrix, worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
+import { localMatrix, worldTransformOf, worldMatrixOf, localUnderParent, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
 import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
@@ -515,13 +515,52 @@ export function buildSnapshot(
       __overriddenProps: ovProps,
     } as unknown as SceneNode;
   };
+  /**
+   * Where a cloner's driving layer sits, expressed in the CLONER's own frame.
+   *
+   * Computed over the RAW graph rather than the expanded list, because
+   * expansion is what this feeds — the `localOf`/`parentOf` further down do not
+   * exist yet, and depending on them would be circular. That is sound: a field
+   * driver is an ordinary layer, never a clone, so the raw graph already has
+   * everything needed.
+   *
+   * `localUnderParent`, not a plain position subtraction: subtracting world
+   * positions is right only while the cloner sits unrotated at scale 1, which
+   * is precisely the kind of thing that looks correct until someone animates a
+   * rotation and the field starts sliding the wrong way.
+   */
+  const rawLocalOf: LocalOf = (id) => {
+    const n = graph.getNode(id);
+    if (!n) return null;
+    const b = readBase(n as SceneNode);
+    const av = rawAnim.evaluateNode(id, t);
+    const sc = av.get('scale');
+    return {
+      x: av.get('x') ?? b.x,
+      y: av.get('y') ?? b.y,
+      rotation: av.get('rotation') ?? b.rotation,
+      scaleX: av.get('scaleX') ?? sc ?? b.scaleX,
+      scaleY: av.get('scaleY') ?? sc ?? b.scaleY,
+    };
+  };
+  const rawParentOf: ParentOf = (id) => graph.getNode(id)?.parent ?? null;
+  const rawWorldCache = new Map<string, Matrix2D>();
+  const fieldOf = (clonerId: string, layerId: string): { x: number; y: number } | null => {
+    if (!graph.getNode(layerId) || !graph.getNode(clonerId)) return null;
+    const fieldW = worldMatrixOf(layerId, rawLocalOf, rawParentOf, rawWorldCache);
+    const clonerW = worldMatrixOf(clonerId, rawLocalOf, rawParentOf, rawWorldCache);
+    if (!fieldW || !clonerW) return null;
+    const rel = localUnderParent(fieldW, clonerW);
+    return { x: rel.x, y: rel.y };
+  };
+
   const nodes = expandCloners(expandCompInstances(
     graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
   // AFTER `materializeForFrame`, never before: a graph node view exposes
   // `transform` and friends through prototype getters, and the spread in
   // `applyOwnOverrides` drops them — `readBase` then died on an undefined
   // transform. A materialized node is a plain object, so the spread is safe.
-  ).map(materializeForFrame).map(applyOwnOverrides));
+  ).map(materializeForFrame).map(applyOwnOverrides), fieldOf);
   const anySolo = nodes.some((n) => n.solo === true);
 
   const rawController = getTimelineController();

@@ -15,6 +15,7 @@ import {
   DEFAULT_CLONER,
   MAX_CLONES,
   type ClonerConfig,
+  type ClonerFalloff,
 } from './cloner';
 
 const cfg = (patch: Partial<ClonerConfig> = {}): ClonerConfig => ({
@@ -22,6 +23,8 @@ const cfg = (patch: Partial<ClonerConfig> = {}): ClonerConfig => ({
   enabled: true,
   ...patch,
 });
+
+const fo = (p: Partial<ClonerFalloff>): ClonerFalloff => ({ ...DEFAULT_CLONER.falloff, ...p });
 
 const xs = (c: ClonerConfig): number[] => clonerPlan(c).map((p) => Math.round(p.x * 1000) / 1000);
 const ys = (c: ClonerConfig): number[] => clonerPlan(c).map((p) => Math.round(p.y * 1000) / 1000);
@@ -186,19 +189,19 @@ describe('the random effector', () => {
 describe('falloff', () => {
   it('reaches everything when shaped none', () => {
     for (let i = 0; i < 5; i++) {
-      expect(falloffWeight(i, 5, { shape: 'none', position: 0.5, width: 0.1, invert: false })).toBe(1);
+      expect(falloffWeight(i, 5, fo({ shape: 'none', position: 0.5, width: 0.1, invert: false }))).toBe(1);
     }
   });
 
   it('linear peaks at the centre and reaches zero at the width', () => {
-    const f = { shape: 'linear' as const, position: 0, width: 0.5, invert: false };
+    const f = fo(fo({ shape: 'linear', position: 0, width: 0.5, invert: false }));
     expect(falloffWeight(0, 5, f)).toBeCloseTo(1, 6);   // t=0, at centre
     expect(falloffWeight(2, 5, f)).toBeCloseTo(0, 6);   // t=0.5, at the edge
     expect(falloffWeight(4, 5, f)).toBeCloseTo(0, 6);   // t=1, outside
   });
 
   it('invert flips which clones are affected', () => {
-    const base = { shape: 'linear' as const, position: 0, width: 0.5, invert: false };
+    const base = fo(fo({ shape: 'linear', position: 0, width: 0.5, invert: false }));
     expect(falloffWeight(0, 5, { ...base, invert: true })).toBeCloseTo(0, 6);
     expect(falloffWeight(4, 5, { ...base, invert: true })).toBeCloseTo(1, 6);
   });
@@ -206,14 +209,14 @@ describe('falloff', () => {
   it('a zero width still reaches the centre clone', () => {
     // Otherwise the control has a dead end at one extreme: drag width to 0 and
     // the effector silently switches off entirely.
-    const f = { shape: 'linear' as const, position: 0, width: 0, invert: false };
+    const f = fo(fo({ shape: 'linear', position: 0, width: 0, invert: false }));
     expect(falloffWeight(0, 5, f)).toBe(1);
     expect(falloffWeight(1, 5, f)).toBe(0);
   });
 
   it('radial is smooth at its edge, unlike linear', () => {
-    const lin = { shape: 'linear' as const, position: 0.5, width: 0.5, invert: false };
-    const rad = { shape: 'radial' as const, position: 0.5, width: 0.5, invert: false };
+    const lin = fo(fo({ shape: 'linear', position: 0.5, width: 0.5, invert: false }));
+    const rad = fo(fo({ shape: 'radial', position: 0.5, width: 0.5, invert: false }));
     // Just inside the edge the cosine shoulder is already close to zero, while
     // the straight ramp still carries visible weight — that is the seam the
     // radial shape exists to avoid.
@@ -226,14 +229,14 @@ describe('falloff', () => {
     const p = clonerPlan(cfg({
       mode: 'linear', count: 3, offsetX: 100,
       step: { ...DEFAULT_CLONER.step, y: 100 },
-      falloff: { shape: 'linear', position: 0, width: 0.4, invert: false },
+      falloff: fo({ shape: 'linear', position: 0, width: 0.4, invert: false }),
     }));
     expect(p.map((c) => c.x)).toEqual([-100, 0, 100]); // layout untouched
     expect(p[2]!.y).toBe(0);                            // last clone unaffected
   });
 
   it('a single clone does not divide by zero', () => {
-    expect(falloffWeight(0, 1, { shape: 'linear', position: 0.5, width: 0.5, invert: false }))
+    expect(falloffWeight(0, 1, fo({ shape: 'linear', position: 0.5, width: 0.5, invert: false })))
       .toBeGreaterThanOrEqual(0);
   });
 });

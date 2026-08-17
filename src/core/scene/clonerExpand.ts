@@ -31,7 +31,17 @@
 
 import type { SceneNode } from '@core/types';
 import { renderComponentsOf } from './SceneGraph';
-import { clonerPlan, cloneCount, DEFAULT_CLONER, type ClonerConfig, type CloneTransform } from './cloner';
+import { clonerPlan, cloneCount, DEFAULT_CLONER, type ClonerConfig, type CloneTransform, type FieldCenter } from './cloner';
+
+/**
+ * Where the driving layer sits, in the CLONER's local frame.
+ *
+ * Supplied by the caller because resolving it needs the scene graph, the
+ * animation engine and the parent chain — none of which belong in an expansion
+ * pass. Returning null (missing layer, no resolver) means "no field", and the
+ * effectors then apply at full strength rather than being zeroed.
+ */
+export type FieldResolver = (clonerId: string, layerId: string) => FieldCenter | null;
 
 /** Stored on the layer's fx component. */
 export const CLONER_PROP = '__cloner';
@@ -85,7 +95,7 @@ function subtreeOf(nodes: ReadonlyArray<SceneNode>, rootId: string): SceneNode[]
  * Returns the input array unchanged when no node carries a cloner, so the
  * common case allocates nothing.
  */
-export function expandCloners(nodes: SceneNode[]): SceneNode[] {
+export function expandCloners(nodes: SceneNode[], fieldOf?: FieldResolver): SceneNode[] {
   const cloners = nodes.filter((n) => readNodeCloner(n) !== null);
   if (cloners.length === 0) return nodes;
 
@@ -118,7 +128,12 @@ export function expandCloners(nodes: SceneNode[]): SceneNode[] {
       continue;
     }
     const cfg = readNodeCloner(node)!;
-    const plan = clonerPlan(cfg);
+    // Resolved HERE rather than inside the plan: the plan is pure, and finding
+    // where a layer sits needs the graph, the animation and the parent chain.
+    const field = cfg.falloff.source === 'layer' && cfg.falloff.layerId
+      ? fieldOf?.(node.id, cfg.falloff.layerId) ?? null
+      : null;
+    const plan = clonerPlan(cfg, field);
     const sub = subtrees.get(node.id)!;
     for (const clone of plan) {
       const prefix = `${node.id}~c${clone.index}::`;

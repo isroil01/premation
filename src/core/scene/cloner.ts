@@ -52,14 +52,37 @@ export interface ClonerStep {
   opacity: number;
 }
 
+/**
+ * What the falloff measures distance FROM.
+ *
+ * `order` is position in the clone sequence — cheap, and what a plain stagger
+ * wants. `layer` is the distance in space from another layer, which is the one
+ * that makes a cloner feel alive: park a null in the middle of a grid, animate
+ * it across, and the clones react as it passes. That is the MoGraph effector
+ * idea, and it is a different measurement rather than a different curve.
+ */
+export type FalloffSource = 'order' | 'layer';
+
 export interface ClonerFalloff {
   shape: FalloffShape;
-  /** 0..1 position of the falloff centre along the clone order. */
+  source: FalloffSource;
+  /** 0..1 position of the falloff centre along the clone order (`order` only). */
   position: number;
-  /** 0..1 half-width. At 0 only the exact centre is affected. */
+  /** 0..1 half-width in clone order (`order` only). At 0 only the exact centre. */
   width: number;
+  /** Layer whose position drives the field (`layer` only). */
+  layerId: string;
+  /** Field radius in px (`layer` only). */
+  radius: number;
   /** Invert, so the falloff masks OUT the middle instead of in. */
   invert: boolean;
+}
+
+/** Where the driving layer sits, in the CLONER's local frame — the same frame
+ *  the clone offsets are expressed in, so the two are directly comparable. */
+export interface FieldCenter {
+  x: number;
+  y: number;
 }
 
 export interface ClonerConfig {
@@ -98,7 +121,10 @@ export const DEFAULT_CLONER: ClonerConfig = {
   alignToRadius: false,
   step: { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0 },
   random: { seed: 1, position: 0, rotation: 0, scale: 0 },
-  falloff: { shape: 'none', position: 0.5, width: 0.5, invert: false },
+  falloff: {
+    shape: 'none', source: 'order', position: 0.5, width: 0.5,
+    layerId: '', radius: 300, invert: false,
+  },
 };
 
 /** Where one clone sits, relative to the cloner layer's own transform. */
@@ -151,14 +177,43 @@ export function cloneCount(cfg: ClonerConfig): number {
  * thing. Position-in-order is what MoGraph's plain effectors use too.
  */
 export function falloffWeight(i: number, total: number, f: ClonerFalloff): number {
-  if (f.shape === 'none') return 1;
+  if (f.shape === 'none' || f.source !== 'order') return 1;
   const t = total <= 1 ? 0 : i / (total - 1);
-  const d = Math.abs(t - f.position);
-  const w = Math.max(0, Math.min(1, f.width));
+  return shoulder(Math.abs(t - f.position), Math.max(0, Math.min(1, f.width)), f);
+}
+
+/**
+ * Falloff weight from the distance between a clone and the driving layer.
+ *
+ * Returns 1 — full effect, i.e. the field is simply not applied — when there is
+ * no centre to measure from. A field pointing at a deleted layer must not
+ * silently zero every effector: that reads as "the cloner broke", not as "the
+ * driver is missing", and the user has no way to tell which.
+ */
+export function fieldWeight(
+  clone: { x: number; y: number },
+  f: ClonerFalloff,
+  center: FieldCenter | null,
+): number {
+  if (f.shape === 'none' || f.source !== 'layer') return 1;
+  if (!center) return 1;
+  const d = Math.hypot(clone.x - center.x, clone.y - center.y);
+  return shoulder(d, Math.max(0, f.radius), f);
+}
+
+/**
+ * The shared curve: distance `d` against half-width `w`, shaped and inverted.
+ *
+ * One implementation for both sources on purpose. They measure different things
+ * — clone order versus pixels — but "linear" and "radial" have to mean the same
+ * shape in each, or switching the source would silently change the feel as well
+ * as the measurement.
+ */
+function shoulder(d: number, w: number, f: ClonerFalloff): number {
   let weight: number;
   if (w <= 0) {
     // A zero width still has to be reachable, or the control has a dead end at
-    // one extreme — only the exact centre clone is affected.
+    // one extreme — only what sits exactly at the centre is affected.
     weight = d < 1e-6 ? 1 : 0;
   } else if (f.shape === 'linear') {
     weight = Math.max(0, 1 - d / w);
@@ -214,7 +269,7 @@ function basePosition(i: number, cfg: ClonerConfig, total: number): { x: number;
  * Effectors are applied AFTER the arrangement and are scaled by the falloff, so
  * "random position" scatters the layout rather than replacing it.
  */
-export function clonerPlan(cfg: ClonerConfig): CloneTransform[] {
+export function clonerPlan(cfg: ClonerConfig, field: FieldCenter | null = null): CloneTransform[] {
   const total = cloneCount(cfg);
   if (total === 0) return [];
   const out: CloneTransform[] = [];
@@ -222,7 +277,9 @@ export function clonerPlan(cfg: ClonerConfig): CloneTransform[] {
 
   for (let i = 0; i < total; i++) {
     const base = basePosition(i, cfg, total);
-    const w = falloffWeight(i, total, cfg.falloff);
+    // Exactly one of these does anything — `source` selects which — but both
+    // are consulted so the falloff has a single weight regardless of source.
+    const w = falloffWeight(i, total, cfg.falloff) * fieldWeight(base, cfg.falloff, field);
     // Normalised position in the order drives the step ramp. With one clone
     // there is no ramp to speak of, and dividing by zero would make it NaN.
     const t = total <= 1 ? 0 : i / (total - 1);
