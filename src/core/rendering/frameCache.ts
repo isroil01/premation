@@ -12,7 +12,16 @@
  * Canvas copies (not ImageBitmap) keep everything synchronous; the byte budget
  * caps memory (a 1080p frame at dpr 1 is ~8 MB, so the default 512 MB budget
  * holds ~60 full-res frames — far more at preview resolutions).
+ *
+ * An optional DISK TIER sits underneath (`frameDiskCache.ts`) and holds the
+ * frames this budget cannot. It is deliberately not consulted on a miss — `get`
+ * is synchronous and the render loop cannot await a database, so a read that
+ * started on a miss would always land too late to be drawn. Instead every `get`
+ * asks the tier to pull the NEXT few frames in, so the playhead finds them
+ * already here. See that file's header for why the tier is session-scoped.
  */
+
+import type { FrameDiskCache } from './frameDiskCache';
 
 export class FrameCache {
   private frames = new Map<number, HTMLCanvasElement>();
@@ -22,9 +31,23 @@ export class FrameCache {
   private version = 0;
   private readonly maxBytes: number;
   private readonly listeners = new Set<() => void>();
+  private disk: FrameDiskCache | null = null;
 
   constructor(maxBytes = 512 * 1024 * 1024) {
     this.maxBytes = maxBytes;
+  }
+
+  /** Attach the disk tier. Optional: without one this is exactly the RAM LRU it
+   *  has always been, which is what the web edition and every test get. */
+  attachDisk(disk: FrameDiskCache | null): void {
+    this.disk = disk;
+    if (disk && this.key) disk.setGeneration(this.key);
+  }
+
+  /** Spans held on disk but not in RAM, in seconds — for the cache bar's
+   *  second tier. Empty when there is no disk cache. */
+  diskRanges(fps: number): Array<{ start: number; end: number }> {
+    return this.disk?.ranges(fps) ?? [];
   }
 
   /** Bumped on every put/clear — cheap subscription primitive for the UI. */
@@ -49,6 +72,9 @@ export class FrameCache {
     if (sized !== this.key) {
       this.key = sized;
       this.clearFrames();
+      // The disk tier turns over with RAM: it is the same invalidation, and a
+      // generation that outlived its key would serve pre-edit pixels.
+      this.disk?.setGeneration(sized);
     }
     this.bytesPerFrame = Math.max(1, width * height * 4);
   }
@@ -61,8 +87,18 @@ export class FrameCache {
     return Math.max(2, Math.floor(this.maxBytes / this.bytesPerFrame));
   }
 
-  /** The cached frame's canvas, or null. Touches LRU order. */
+  /** The cached frame's canvas, or null. Touches LRU order.
+   *
+   *  Also asks the disk tier to pull the frames just AHEAD of this one into
+   *  RAM — on a hit as well as a miss, because during smooth playback every
+   *  frame is a hit and that is exactly when the look-ahead has to keep
+   *  running. */
   get(frame: number): HTMLCanvasElement | null {
+    this.disk?.prefetch(
+      frame,
+      (f) => this.frames.has(f),
+      (f, image) => this.insert(f, image, image.width, image.height),
+    );
     const c = this.frames.get(frame);
     if (!c) return null;
     const i = this.order.indexOf(frame);
@@ -71,9 +107,24 @@ export class FrameCache {
     return c;
   }
 
-  /** Copy `source` in as the render of `frame` (evicting LRU past budget). */
+  /** Copy `source` in as the render of `frame` (evicting LRU past budget), and
+   *  write it through to the disk tier so it outlives RAM eviction. */
   put(frame: number, source: HTMLCanvasElement): void {
     if (source.width < 1 || source.height < 1) return;
+    this.insert(frame, source, source.width, source.height);
+    this.disk?.write(frame, source);
+  }
+
+  /**
+   * Take a frame into RAM WITHOUT writing it back to disk.
+   *
+   * The promotion path from the disk tier lands here. Routing it through `put`
+   * instead would re-encode and re-store a frame that was just read from the
+   * store — a loop that costs the most on exactly the heavy comps this tier is
+   * for.
+   */
+  private insert(frame: number, source: CanvasImageSource, width: number, height: number): void {
+    if (width < 1 || height < 1) return;
     let c = this.frames.get(frame);
     if (!c) {
       c = document.createElement('canvas');
@@ -84,9 +135,9 @@ export class FrameCache {
       if (i !== -1) this.order.splice(i, 1);
       this.order.push(frame);
     }
-    if (c.width !== source.width || c.height !== source.height) {
-      c.width = source.width;
-      c.height = source.height;
+    if (c.width !== width || c.height !== height) {
+      c.width = width;
+      c.height = height;
     }
     // The pixel copy is guarded (jsdom has no 2D context), but the LRU
     // bookkeeping + notification must run regardless so eviction and the

@@ -1205,6 +1205,17 @@ function Timeline({
         >
           <Ruler ticks={ticks} height={rulerHeight} width={laneWidth} onPointerDown={onPlayheadDown} />
 
+          {/* Disk-tier cache bar. Drawn BEFORE the RAM bar and one lane lower,
+              so where both hold a frame the green one is what you see. */}
+          {model.diskCachedRanges?.map((r, i) => (
+            <div
+              key={`diskcache_${i}`}
+              className={styles.diskCacheBar}
+              style={{ left: TIMELINE_LEFT_OFFSET + r.start * pps, width: Math.max(1, (r.end - r.start) * pps), top: rulerHeight - 1 }}
+              aria-hidden
+            />
+          ))}
+
           {/* RAM-preview cache bar */}
           {model.cachedRanges?.map((r, i) => (
             <div

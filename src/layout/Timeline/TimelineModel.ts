@@ -205,6 +205,10 @@ export interface TimelineModel {
   /** Frame-cache coverage (seconds) — the REAL RAM-preview state, drawn as a
    *  thin green bar under the ruler. */
   cachedRanges?: ReadonlyArray<{ start: number; end: number }>;
+  /** Disk-tier coverage (seconds) — frames that survived RAM eviction and get
+   *  read back ahead of the playhead. Drawn as a fainter blue bar beneath the
+   *  green one, and kept separate because the two are different promises. */
+  diskCachedRanges?: ReadonlyArray<{ start: number; end: number }>;
   /** Snap to grid (UI hint; engine may ignore). */
   snapToGrid?: boolean;
   /** Total height of the track header column. */

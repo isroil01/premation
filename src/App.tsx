@@ -23,6 +23,7 @@ import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToKeyframes } from '@core/animation/keyframeAssistants';
 import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
 import { viewportFrameCache } from '@core/rendering/frameCache';
+import { createViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
@@ -744,9 +745,31 @@ function EditorShellInner(): JSX.Element {
     return getTimelineController().getWorkArea() ?? undefined;
   }, [markerRev]);
 
+  // The disk tier under the RAM cache, so a looped work area longer than ~2s
+  // stops re-rendering from scratch on every pass.
+  //
+  // OPEN BEFORE ATTACH. `open()` purges what the previous session left (its
+  // frames are keyed by revision counters that have since reset — see
+  // frameDiskCache.ts). Attaching first would let the render loop write frames
+  // that the purge then deletes, so the cache would silently drop everything
+  // from its first few hundred milliseconds.
+  useEffect(() => {
+    const disk = createViewportDiskCache();
+    if (!disk) return;
+    let cancelled = false;
+    void disk.open().then(() => {
+      if (!cancelled) viewportFrameCache.attachDisk(disk);
+    });
+    return () => {
+      cancelled = true;
+      viewportFrameCache.attachDisk(null);
+    };
+  }, []);
+
   // RAM-preview coverage for the timeline's green cache bar — throttled to
   // 250ms so per-frame cache puts during playback don't thrash React.
   const [cachedRanges, setCachedRanges] = useState<ReadonlyArray<{ start: number; end: number }>>([]);
+  const [diskCachedRanges, setDiskCachedRanges] = useState<ReadonlyArray<{ start: number; end: number }>>([]);
   useEffect(() => {
     let pending: ReturnType<typeof setTimeout> | null = null;
     const off = viewportFrameCache.onChange(() => {
@@ -754,6 +777,7 @@ function EditorShellInner(): JSX.Element {
       pending = setTimeout(() => {
         pending = null;
         setCachedRanges(viewportFrameCache.ranges(compFps || 30));
+        setDiskCachedRanges(viewportFrameCache.diskRanges(compFps || 30));
       }, 250);
     });
     return () => {
@@ -781,8 +805,9 @@ function EditorShellInner(): JSX.Element {
     markers,
     tracks: focusTracks,
     cachedRanges,
+    diskCachedRanges,
     ...(workArea ? { workArea } : {}),
-  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges, activeTime]);
+  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges, diskCachedRanges, activeTime]);
 
   // Real-time playback clock: pumps the Timeline Engine while `playing` is set.
   usePlaybackClock();
