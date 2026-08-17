@@ -49,6 +49,7 @@ import { findLayerKind, findKindFor } from '@core/plugins/layerKindRegistry';
 import { splitKind } from '@core/plugins/layerKindSchema';
 import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
+import { ClonerSection } from '@layout/Inspector/ClonerSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
 import { ActiveTemplateFields, TemplateAuthoringSection } from '@layout/Templates/TemplateFieldsPanel';
 import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
@@ -1498,6 +1499,14 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
       content: <TextAnimatorControls nodeId={nodeId} />,
     });
   }
+
+  // Cloner is NOT kind-gated: any layer that draws can be multiplied, and a
+  // group is the obvious thing to clone. Closed by default — it is off until
+  // switched on, and an open panel of inert controls is noise on every layer.
+  items.push({
+    id: 'cloner', title: 'Cloner', icon: 'grid',
+    content: <ClonerSection nodeId={nodeId} />,
+  });
 
   // Shapes / media: full Fill & Stroke. Text layers already own Character Color
   // in Text — Appearance still mounts for Stroke (and corner radius is N/A),

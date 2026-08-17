@@ -70,6 +70,7 @@ import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { planDofStrips, layerCornerDepths } from './dofStrips';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides, type OverrideValue } from '@core/scene/compInstanceOverrides';
+import { expandCloners, cloneOffsetOf } from '@core/scene/clonerExpand';
 import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
@@ -514,13 +515,13 @@ export function buildSnapshot(
       __overriddenProps: ovProps,
     } as unknown as SceneNode;
   };
-  const nodes = expandCompInstances(
+  const nodes = expandCloners(expandCompInstances(
     graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
   // AFTER `materializeForFrame`, never before: a graph node view exposes
   // `transform` and friends through prototype getters, and the spread in
   // `applyOwnOverrides` drops them — `readBase` then died on an undefined
   // transform. A materialized node is a plain object, so the spread is safe.
-  ).map(materializeForFrame).map(applyOwnOverrides);
+  ).map(materializeForFrame).map(applyOwnOverrides));
   const anySolo = nodes.some((n) => n.solo === true);
 
   const rawController = getTimelineController();
@@ -1439,7 +1440,15 @@ export function buildSnapshot(
     const size = SIZE[layerKind];
     const name = (node.name ?? '').toLowerCase();
     const ghost = focus?.isGhost(node.id) ?? false;
-    const baseOpacity = a?.has('opacity') ? (a.get('opacity') as number) / 100 : base.opacity;
+    // Cloner: MULTIPLIES the resolved opacity rather than replacing it, so a
+    // clone of a 50%-opacity layer at the faded end of a step ramp is fainter
+    // than the source rather than equal to the ramp value. Same reasoning as
+    // scale below — a cloner describes a variation ON the layer, not a
+    // substitute for it. Additive/multiplicative is also why this cannot use
+    // the Essential Properties suppression path, which REPLACES.
+    const cloneOff = cloneOffsetOf(node);
+    const baseOpacity = (a?.has('opacity') ? (a.get('opacity') as number) / 100 : base.opacity)
+      * (cloneOff ? cloneOff.opacity / 100 : 1);
     // Resolve effect amounts once (keyframed → sampled) — the CSS `filter` for
     // Canvas2D, and the structured list attached to the layer for the GPU path.
     // readNodeRenderEffects (not readNodeEffects) so the layer's `fx` switch
@@ -1630,6 +1639,22 @@ export function buildSnapshot(
     let sx = scaleX;
     let sy = scaleY;
     let rot = world.rotation;
+    // Cloner offset, applied to the RESOLVED transform.
+    //
+    // It has to land here rather than be patched into the components, because a
+    // cloner OFFSETS what the layer already resolves to — including its
+    // animation. Patching `x` on the clone's Transform would be outvoted by a
+    // keyframed x every frame (the dead-control shape compInstanceOverrides
+    // documents), and suppressing the track instead would throw the animation
+    // away, which is the opposite of what a cloner is for: the clones are meant
+    // to move WITH the layer, spread apart from each other.
+    if (cloneOff) {
+      px += cloneOff.x;
+      py += cloneOff.y;
+      rot += cloneOff.rotation;
+      sx *= cloneOff.scaleX;
+      sy *= cloneOff.scaleY;
+    }
     // Auto-orient (E4): a flagged, moving layer faces its direction of travel.
     if (!is3D && readNodeAutoOrient(node)) {
       const ang = autoOrientAngleDeg(node, remapOf(node.id)(t), anim);
