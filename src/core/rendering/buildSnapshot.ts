@@ -656,9 +656,30 @@ export function buildSnapshot(
   const remapOf = (id: string): (tt: number) => number => {
     const hit = remapCache.get(id);
     if (hit) return hit;
-    const fn = buildRemap(id);
+    let fn = buildRemap(id);
+    // Cloner cascade: a clone with a time offset plays its animation that many
+    // seconds behind the source. Applied at COMP time — outside every clip map,
+    // loop and precomp remap — because "this copy runs 0.3s behind" is a
+    // statement about the composition's clock, not the layer's internal one.
+    // The offset lives on the clone ROOT; a cloned group's children find it by
+    // walking up, so the whole subtree delays together.
+    const cascade = cloneTimeOffsetOf(id);
+    if (cascade !== 0) {
+      const inner = fn;
+      fn = (tt: number) => inner(tt - cascade);
+    }
     remapCache.set(id, fn);
     return fn;
+  };
+  /** Nearest ancestor clone root's time offset, or 0. Bounded walk. */
+  const cloneTimeOffsetOf = (id: string): number => {
+    let cur = nodeById.get(id);
+    for (let i = 0; cur && i < 64; i++) {
+      const off = cloneOffsetOf(cur);
+      if (off) return off.timeOffset ?? 0;
+      cur = cur.parent != null ? nodeById.get(cur.parent) : undefined;
+    }
+    return 0;
   };
   /**
    * Memoized exactly like `valuesOf` below — `remapOf` is called ~12× per node

@@ -145,6 +145,9 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
           <InspectorRow label="Rotation"><ValueField value={cfg.step.rotation} unit="°" precision={1} onChange={(v) => write({ step: { ...cfg.step, rotation: v } })} aria-label="Step rotation" /></InspectorRow>
           <InspectorRow label="Scale"><ValueField value={cfg.step.scale} precision={2} onChange={(v) => write({ step: { ...cfg.step, scale: v } })} aria-label="Step scale" /></InspectorRow>
           <InspectorRow label="Opacity"><ValueField value={cfg.step.opacity} unit="%" precision={0} onChange={(v) => write({ step: { ...cfg.step, opacity: v } })} aria-label="Step opacity" /></InspectorRow>
+          {/* The cascade: seconds the LAST clone's animation runs behind the
+              first. One keyframed layer becomes a staggered wave. */}
+          <InspectorRow label="Time"><ValueField value={cfg.step.time} unit="s" precision={2} onChange={(v) => write({ step: { ...cfg.step, time: v } })} aria-label="Step time (cascade)" /></InspectorRow>
 
           {/* Random — hashed from the clone index, so the scatter is the same
               whether you scrubbed to a frame or played to it. */}
@@ -201,6 +204,9 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                     </select>
                   </InspectorRow>
                   <InspectorRow label="Radius"><ValueField value={cfg.falloff.radius} min={0} precision={1} onChange={(v) => write({ falloff: { ...cfg.falloff, radius: v } })} aria-label="Field radius" /></InspectorRow>
+                  {/* Positive parts the clones around the driver; negative
+                      gathers them onto it. */}
+                  <InspectorRow label="Push"><ValueField value={cfg.falloff.push} precision={1} onChange={(v) => write({ falloff: { ...cfg.falloff, push: v } })} aria-label="Field push" /></InspectorRow>
                 </>
               ) : (
                 <>

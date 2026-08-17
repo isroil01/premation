@@ -50,6 +50,14 @@ export interface ClonerStep {
   scale: number;
   /** Added to opacity in PERCENT across the range (-100 → last clone gone). */
   opacity: number;
+  /**
+   * Animation delay in SECONDS across the range — the cascade effector. The
+   * last clone plays its animation this far behind the first, so one keyframed
+   * layer becomes a wave of staggered copies. Applied by the renderer as a
+   * time-remap on each clone, which is why it lives on the transform rather
+   * than being folded into x/y here: the plan does not know the animation.
+   */
+  time: number;
 }
 
 /**
@@ -74,6 +82,13 @@ export interface ClonerFalloff {
   layerId: string;
   /** Field radius in px (`layer` only). */
   radius: number;
+  /**
+   * Radial displacement in px (`layer` only): clones inside the field are
+   * pushed AWAY from the driver (negative pulls them in). This is what makes a
+   * moving null part the grid as it passes, rather than merely modulating the
+   * other effectors.
+   */
+  push: number;
   /** Invert, so the falloff masks OUT the middle instead of in. */
   invert: boolean;
 }
@@ -119,11 +134,11 @@ export const DEFAULT_CLONER: ClonerConfig = {
   startAngle: -90,
   arc: 360,
   alignToRadius: false,
-  step: { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0 },
+  step: { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0, time: 0 },
   random: { seed: 1, position: 0, rotation: 0, scale: 0 },
   falloff: {
     shape: 'none', source: 'order', position: 0.5, width: 0.5,
-    layerId: '', radius: 300, invert: false,
+    layerId: '', radius: 300, push: 0, invert: false,
   },
 };
 
@@ -137,6 +152,8 @@ export interface CloneTransform {
   scaleY: number;
   /** 0..100, matching the layer opacity scale. */
   opacity: number;
+  /** Seconds this clone's animation runs BEHIND the source — the cascade. */
+  timeOffset: number;
 }
 
 /** Hard cap. Each clone is a real renderable, so this is a performance cliff,
@@ -289,11 +306,28 @@ export function clonerPlan(cfg: ClonerConfig, field: FieldCenter | null = null):
     const rr = hash11(i, 3, seed) * cfg.random.rotation;
     const rs = hash11(i, 4, seed) * cfg.random.scale;
 
+    // The push field: displace along the ray FROM the driver, scaled by the
+    // field weight — so clones part around a passing null and close behind it.
+    // Only meaningful with a field centre; at the exact centre the direction is
+    // undefined, and no push beats a deterministic-but-arbitrary shove.
+    let pushX = 0;
+    let pushY = 0;
+    if (field && cfg.falloff.source === 'layer' && cfg.falloff.push !== 0) {
+      const dx = base.x - field.x;
+      const dy = base.y - field.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 1e-9) {
+        const fw = fieldWeight(base, cfg.falloff, field);
+        pushX = (dx / dist) * cfg.falloff.push * fw;
+        pushY = (dy / dist) * cfg.falloff.push * fw;
+      }
+    }
+
     const scale = 1 + (cfg.step.scale * t + rs) * w;
     out.push({
       index: i,
-      x: base.x + (cfg.step.x * t + rx) * w,
-      y: base.y + (cfg.step.y * t + ry) * w,
+      x: base.x + (cfg.step.x * t + rx) * w + pushX,
+      y: base.y + (cfg.step.y * t + ry) * w + pushY,
       rotation: base.rot + (cfg.step.rotation * t + rr) * w,
       // Scale is clamped at zero: a negative scale mirrors the layer, which is
       // never what a "smaller towards the end" ramp meant, and reads as clones
@@ -301,6 +335,10 @@ export function clonerPlan(cfg: ClonerConfig, field: FieldCenter | null = null):
       scaleX: Math.max(0, scale),
       scaleY: Math.max(0, scale),
       opacity: Math.max(0, Math.min(100, 100 + cfg.step.opacity * t * w)),
+      // Clamped at zero on the ramp side by construction (t and w are 0..1),
+      // but a NEGATIVE step.time is legitimate: the cascade then runs ahead
+      // instead of behind.
+      timeOffset: cfg.step.time * t * w,
     });
   }
   return out;
