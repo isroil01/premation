@@ -50,6 +50,7 @@ import { splitKind } from '@core/plugins/layerKindSchema';
 import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
 import { ClonerSection } from '@layout/Inspector/ClonerSection';
+import { PhysicsSection } from '@layout/Inspector/PhysicsSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
 import { ActiveTemplateFields, TemplateAuthoringSection } from '@layout/Templates/TemplateFieldsPanel';
 import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
@@ -1506,6 +1507,13 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   items.push({
     id: 'cloner', title: 'Cloner', icon: 'grid',
     content: <ClonerSection nodeId={nodeId} />,
+  });
+
+  // Physics, same reasoning as Cloner: any layer can be a body, and a static
+  // wall is as likely to be a group as a shape.
+  items.push({
+    id: 'physics', title: 'Physics', icon: 'zap',
+    content: <PhysicsSection nodeId={nodeId} />,
   });
 
   // Shapes / media: full Fill & Stroke. Text layers already own Character Color

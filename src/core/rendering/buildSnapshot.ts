@@ -71,6 +71,9 @@ import { planDofStrips, layerCornerDepths } from './dofStrips';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides, type OverrideValue } from '@core/scene/compInstanceOverrides';
 import { expandCloners, cloneOffsetOf } from '@core/scene/clonerExpand';
+import { readNodePhysics, physicsPosesAt } from '@core/simulation/physicsBodies';
+import type { BodySeed } from '@core/simulation/rigidBody';
+import { usePhysicsStore } from '@stores/physicsStore';
 import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
@@ -565,6 +568,45 @@ export function buildSnapshot(
 
   const rawController = getTimelineController();
   const fps = rawController.timeline.getFrameRate().fps;
+  // Read once per snapshot, not per layer: the world is the same for every body
+  // and a per-layer read would be a store subscription inside the hot loop.
+  const physicsWorldSettings = usePhysicsStore.getState();
+
+  /**
+   * Rigid-body poses for this composition.
+   *
+   * A PRE-PASS, because bodies collide with each other: every body has to be
+   * known before any one of them can be placed, so the per-layer loop below
+   * cannot build this incrementally. Seeds come from `readBase` — the layer's
+   * AUTHORED pose, which is where the simulated history begins.
+   */
+  const physicsSeeds: BodySeed[] = [];
+  for (const n of nodes) {
+    const cfg = readNodePhysics(n);
+    if (!cfg) continue;
+    const pb = readBase(n);
+    physicsSeeds.push({
+      id: n.id, x: pb.x, y: pb.y,
+      width: pb.width ?? 100, height: pb.height ?? 100,
+      cfg,
+    });
+  }
+  const physicsPoses = physicsSeeds.length
+    ? physicsPosesAt(
+        comp.rootId ?? 'comp',
+        physicsSeeds,
+        {
+          gravityX: physicsWorldSettings.gravityX,
+          gravityY: physicsWorldSettings.gravityY,
+          bounds: physicsWorldSettings.useCompBounds
+            ? { left: 0, top: 0, right: comp.width, bottom: comp.height }
+            : null,
+          iterations: physicsWorldSettings.iterations,
+        },
+        fps,
+        Math.round(t * (fps || 30)),
+      )
+    : null;
 
   // Parenting: each layer's on-screen transform is its local transform composed
   // with its parent chain's world transform (E3). Groups/nulls don't draw but
@@ -1678,6 +1720,21 @@ export function buildSnapshot(
     let sx = scaleX;
     let sy = scaleY;
     let rot = world.rotation;
+    /**
+     * Physics REPLACES the position, where the cloner offsets it.
+     *
+     * A dynamic body's position IS the solver's output — there is nothing to
+     * add it to. Keyframed x/y on a simulated layer is therefore overridden,
+     * not blended: blending would produce a body that is neither where physics
+     * put it nor where you keyframed it, and no way to tell which half was
+     * responsible for any given frame. Static bodies are never in this map, so
+     * a keyframed wall still animates and still collides.
+     */
+    const simPose = physicsPoses?.get(node.id);
+    if (simPose) {
+      px = simPose.x;
+      py = simPose.y;
+    }
     // Cloner offset, applied to the RESOLVED transform.
     //
     // It has to land here rather than be patched into the components, because a
