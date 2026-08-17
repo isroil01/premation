@@ -56,20 +56,80 @@ export const COMP_OVERRIDES_PROP = '__compOverrides';
 export const COMP_ESSENTIAL_PROPS = '__essentialProps';
 
 /**
- * The properties an instance may override.
+ * The properties an instance may override, and what TYPE each carries.
  *
- * Deliberately the numeric Transform set and nothing else: these are the ones
- * `readBase` sources from the Transform component AND `evaluateNode` can carry
- * as a track, so both halves of the resolution rule above apply to all of them
- * uniformly. Widening this list means checking that BOTH paths exist for the
- * new property — a colour or a text string does not travel through
- * `evaluateNode`, which returns `Map<PropPath, number>`.
+ * This started as the numeric Transform set, because those are the props
+ * `readBase` sources from a component AND `evaluateNode` can carry as a track,
+ * so both halves of the resolution rule above applied to all of them
+ * uniformly. Widening it meant answering, per property, where its ANIMATED
+ * value comes from — because a property whose animated half is missed is
+ * exactly the silent-no-op failure the header describes.
+ *
+ * The answers, verified against `buildSnapshot`:
+ *
+ *   x/y/rotation/scaleX/scaleY/opacity  numeric; animated as themselves.
+ *   text                                a string on a component. There is no
+ *                                       numeric track for it — `evaluateNode`
+ *                                       returns `Map<PropPath, number>` — so
+ *                                       the static patch is the only source and
+ *                                       nothing can outvote it.
+ *   fill / color                        strings on a component, but ANIMATED AS
+ *                                       THREE SEPARATE CHANNELS (`fill_r/_g/_b`,
+ *                                       `color_r/_g/_b`; see buildSnapshot's
+ *                                       `a?.has('fill_r')` branch). Overriding
+ *                                       `fill` therefore has to suppress all
+ *                                       three, or a keyframed colour repaints
+ *                                       over the override on every frame. That
+ *                                       is what {@link ANIMATED_CHANNELS} is for.
+ *
+ * Adding a property here means doing that same trace. "It has no track" is a
+ * claim to verify, not to assume — `fill` looks trackless until you find the
+ * channels.
  */
-export const OVERRIDABLE_PROPS = ['x', 'y', 'rotation', 'scaleX', 'scaleY', 'opacity'] as const;
-export type OverridableProp = (typeof OVERRIDABLE_PROPS)[number];
+export const OVERRIDE_PROP_KINDS = {
+  x: 'number',
+  y: 'number',
+  rotation: 'number',
+  scaleX: 'number',
+  scaleY: 'number',
+  opacity: 'number',
+  text: 'text',
+  fill: 'color',
+  color: 'color',
+} as const;
+
+export const OVERRIDABLE_PROPS = Object.keys(OVERRIDE_PROP_KINDS) as ReadonlyArray<OverridableProp>;
+export type OverridableProp = keyof typeof OVERRIDE_PROP_KINDS;
+export type OverrideKind = (typeof OVERRIDE_PROP_KINDS)[OverridableProp];
+/** What an override can hold. Numbers for Transform, strings for text/colour. */
+export type OverrideValue = number | string;
+
+/**
+ * Animated channels a property is really keyframed as, when they differ from
+ * its own name. Suppressing only `fill` would leave `fill_r/_g/_b` live, and
+ * the track would repaint over the override every frame — wired control,
+ * no effect, no error.
+ */
+const ANIMATED_CHANNELS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  fill: ['fill_r', 'fill_g', 'fill_b'],
+  color: ['color_r', 'color_g', 'color_b'],
+};
 
 export function isOverridableProp(p: string): p is OverridableProp {
-  return (OVERRIDABLE_PROPS as ReadonlyArray<string>).includes(p);
+  return Object.prototype.hasOwnProperty.call(OVERRIDE_PROP_KINDS, p);
+}
+
+export function overrideKindOf(p: string): OverrideKind | null {
+  return isOverridableProp(p) ? OVERRIDE_PROP_KINDS[p] : null;
+}
+
+/** True when `value` is the right shape for `prop`. A document can carry
+ *  anything; a string landing where a number is read renders as NaN. */
+export function isValidOverrideValue(prop: string, value: unknown): value is OverrideValue {
+  const kind = overrideKindOf(prop);
+  if (kind === null) return false;
+  if (kind === 'number') return typeof value === 'number' && Number.isFinite(value);
+  return typeof value === 'string';
 }
 
 /**
@@ -150,14 +210,18 @@ export function parseOverrideKey(key: string): { origNodeId: string; prop: strin
 }
 
 /** Every override stored on this instance. Empty map for a non-instance. */
-export function readCompOverrides(node: SceneNode | undefined): ReadonlyMap<string, number> {
-  const out = new Map<string, number>();
+export function readCompOverrides(node: SceneNode | undefined): ReadonlyMap<string, OverrideValue> {
+  const out = new Map<string, OverrideValue>();
   if (!node) return out;
   for (const c of renderComponentsOf(node)) {
     const bag = (c.props as Record<string, unknown>)[COMP_OVERRIDES_PROP];
     if (!bag || typeof bag !== 'object') continue;
     for (const [k, v] of Object.entries(bag as Record<string, unknown>)) {
-      if (typeof v === 'number' && Number.isFinite(v) && parseOverrideKey(k)) out.set(k, v);
+      const parsed = parseOverrideKey(k);
+      // Validated per PROPERTY, not just "is it a primitive": a stored string
+      // under `x` would reach the renderer and come out as NaN, which shows up
+      // as a layer that has vanished rather than as a bad value.
+      if (parsed && isValidOverrideValue(parsed.prop, v)) out.set(k, v);
     }
   }
   return out;
@@ -168,7 +232,7 @@ export function readCompOverride(
   node: SceneNode | undefined,
   origNodeId: string,
   prop: string,
-): number | undefined {
+): OverrideValue | undefined {
   return readCompOverrides(node).get(overrideKey(origNodeId, prop));
 }
 
@@ -183,16 +247,19 @@ export function setCompOverride(
   instanceId: string,
   origNodeId: string,
   prop: string,
-  value: number | undefined,
+  value: OverrideValue | undefined,
 ): void {
   const node = defaultSceneGraph.getNode(instanceId);
   if (!node) return;
   const fx = node.components.find((c) => c.type === 'fx');
   if (!fx) return;
-  const next: Record<string, number> = {};
+  const next: Record<string, OverrideValue> = {};
   for (const [k, v] of readCompOverrides(node)) next[k] = v;
   const key = overrideKey(origNodeId, prop);
-  if (value === undefined || !Number.isFinite(value)) delete next[key];
+  // Clearing is `undefined`. Anything else that fails validation is dropped
+  // rather than stored — the write path is the last place a bad value can be
+  // stopped before it becomes part of the document.
+  if (value === undefined || !isValidOverrideValue(prop, value)) delete next[key];
   else next[key] = value;
   defaultSceneGraph.writeProp(instanceId, fx.id, COMP_OVERRIDES_PROP, next);
   bumpScene();
@@ -204,7 +271,7 @@ export function clearCompOverridesFor(instanceId: string, origNodeId: string): v
   if (!node) return;
   const fx = node.components.find((c) => c.type === 'fx');
   if (!fx) return;
-  const next: Record<string, number> = {};
+  const next: Record<string, OverrideValue> = {};
   for (const [k, v] of readCompOverrides(node)) {
     if (parseOverrideKey(k)?.origNodeId !== origNodeId) next[k] = v;
   }
@@ -221,7 +288,7 @@ export function clearCompOverridesFor(instanceId: string, origNodeId: string): v
  * there is nothing to do, so the hot path can bail without allocating.
  */
 export function overriddenPropsFor(
-  overrides: ReadonlyMap<string, number>,
+  overrides: ReadonlyMap<string, OverrideValue>,
   origNodeId: string,
 ): ReadonlySet<string> | null {
   if (overrides.size === 0) return null;
@@ -230,6 +297,11 @@ export function overriddenPropsFor(
     const parsed = parseOverrideKey(k);
     if (parsed?.origNodeId !== origNodeId) continue;
     (out ??= new Set()).add(parsed.prop);
+    // A colour is keyframed as three numeric channels, not under its own name,
+    // so suppressing `fill` alone leaves `fill_r/_g/_b` live and the track
+    // repaints over the override every frame. Same silent-no-op the module
+    // header exists to prevent, one indirection further out.
+    for (const channel of ANIMATED_CHANNELS[parsed.prop] ?? []) out.add(channel);
   }
   return out;
 }
@@ -241,7 +313,7 @@ export function overriddenPropsFor(
  */
 export function applyOverridesToComponents(
   components: SceneNode['components'],
-  overrides: ReadonlyMap<string, number>,
+  overrides: ReadonlyMap<string, OverrideValue>,
   origNodeId: string,
 ): SceneNode['components'] {
   if (overrides.size === 0) return components;
@@ -256,11 +328,16 @@ export function applyOverridesToComponents(
   // So each prop is written to the LAST component that already declares it,
   // which is by construction the one `readBase` would have believed. A prop no
   // component declares falls back to Transform.
-  const patches = new Map<number, Record<string, number>>();
+  const patches = new Map<number, Record<string, OverrideValue>>();
   const transformIdx = components.findIndex((c) => c.type === 'Transform');
   for (const prop of OVERRIDABLE_PROPS) {
     const v = overrides.get(overrideKey(origNodeId, prop));
     if (v === undefined) continue;
+    // Kind-checked HERE as well as on read, because this is the function that
+    // writes into the render tree and it takes a plain Map — a number stored
+    // under `fill` would be handed to the renderer as a colour and come out as
+    // nothing at all. Cheap, and the last line of defence.
+    if (!isValidOverrideValue(prop, v)) continue;
     let idx = -1;
     for (let i = 0; i < components.length; i++) {
       if (prop in (components[i]!.props as Record<string, unknown>)) idx = i;

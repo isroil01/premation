@@ -69,7 +69,7 @@ import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
 import { planDofStrips, layerCornerDepths } from './dofStrips';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
-import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides } from '@core/scene/compInstanceOverrides';
+import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides, type OverrideValue } from '@core/scene/compInstanceOverrides';
 import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
@@ -198,7 +198,7 @@ export interface SnapshotComp {
    * referenced comp's OWN node ids, because this pass walks the real nodes
    * rather than clones. Set by the renderer itself; callers never pass it.
    */
-  compOverrides?: ReadonlyMap<string, number>;
+  compOverrides?: ReadonlyMap<string, OverrideValue>;
 }
 
 /** Nesting cap for recursive composition rendering. */

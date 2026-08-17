@@ -257,6 +257,45 @@ describe('the animated half — the dead-control guard', () => {
     const c = snapshot().layers.find((l) => l.id === 'inst1')!;
     expect(c.precompLayers!.find((l) => l.id === 'inst1::b_shape')!.x).toBe(777);
   });
+
+  // ── Colour: the same guard, one indirection further out ──────────────
+  //
+  // A colour is STORED as `fill` and KEYFRAMED as `fill_r/_g/_b`. Suppressing
+  // only `fill` leaves those three live, `buildSnapshot`'s `a?.has('fill_r')`
+  // branch wins, and the override is repainted over on every frame — the exact
+  // dead-control shape this describe block exists for, on the property most
+  // likely to be templated.
+
+  const layerFill = (instId: string): string | undefined => {
+    const c = snapshot().layers.find((l) => l.id === instId)!;
+    return c.precompLayers!.find((l) => l.id === `${instId}::b_shape`)!.fill;
+  };
+
+  it('overrides a STATIC fill per instance', () => {
+    addShape('b_shape', 'comp_b');
+    addInstance('inst1', 'comp_root', 'comp_b');
+    addInstance('inst2', 'comp_root', 'comp_b');
+    setCompOverride('inst1', 'b_shape', 'fill', '#00ff00');
+    expect(layerFill('inst1')).toBe('#00ff00');
+    expect(layerFill('inst2')).toBe('#f00');
+  });
+
+  it('overrides a KEYFRAMED fill, beating the fill_r/_g/_b channels', () => {
+    addShape('b_shape', 'comp_b');
+    addInstance('inst1', 'comp_root', 'comp_b');
+    addInstance('inst2', 'comp_root', 'comp_b');
+    // Colour tracks are 0..1, not 0..255. Blue.
+    defaultAnimation.setKeyframe('b_shape', 'fill_r', 0, 0);
+    defaultAnimation.setKeyframe('b_shape', 'fill_g', 0, 0);
+    defaultAnimation.setKeyframe('b_shape', 'fill_b', 0, 1);
+
+    setCompOverride('inst1', 'b_shape', 'fill', '#00ff00');
+
+    expect(layerFill('inst1')).toBe('#00ff00');
+    // The un-overridden instance still animates, so the suppression is scoped
+    // to the instance rather than disabling the track outright.
+    expect(layerFill('inst2')?.toLowerCase()).toContain('0000ff');
+  });
 });
 
 describe('pure helpers', () => {
@@ -274,7 +313,18 @@ describe('pure helpers', () => {
 
   it('ignores a key naming a property outside the overridable set', () => {
     const comps = [{ id: 't', type: 'Transform', props: { x: 1 } }] as unknown as SceneNode['components'];
+    expect(applyOverridesToComponents(comps, new Map([[overrideKey('n', 'blendMode'), 5]]), 'n')).toBe(comps);
+  });
+
+  it('ignores a value of the WRONG KIND for an overridable property', () => {
+    // `fill` IS overridable now, but it is a colour string. A number stored
+    // under it — from an older document, or a bad write — must not reach the
+    // renderer, which would hand its colour parser a number and draw nothing.
+    const comps = [{ id: 't', type: 'Transform', props: { x: 1 } }] as unknown as SceneNode['components'];
     expect(applyOverridesToComponents(comps, new Map([[overrideKey('n', 'fill'), 5]]), 'n')).toBe(comps);
+    // …and the converse: a string under a numeric prop, which would reach the
+    // transform as NaN and make the layer vanish.
+    expect(applyOverridesToComponents(comps, new Map([[overrideKey('n', 'x'), '12']]), 'n')).toBe(comps);
   });
 });
 

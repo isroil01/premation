@@ -5,6 +5,8 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { defaultAnimation } from '@motion/animation';
 import { useSceneRevision } from '@stores/sceneStore';
+import { openContextMenu } from '@stores/contextMenuStore';
+import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
 import { resolveChannelColor } from '@core/effects/effects';
 
 
@@ -89,9 +91,23 @@ export function ColorKfRow({
     }
   };
 
+  // Right-click promotes this colour to an Essential Property, the same way the
+  // numeric transform rows do. Deliberately NOT via `buildPropertyMenu`: that
+  // builder is shaped for a numeric, keyframeable property, and a colour is
+  // stored as a string and keyframed as three channels, so most of what it adds
+  // would be wrong here. Only the promotion entry applies, and it is shared.
+  const onContextMenu = (e: React.MouseEvent): void => {
+    // The shared builder leads with a separator, which only makes sense when it
+    // follows other entries.
+    const items = essentialPropMenuItems(nodeId, propPrefix).filter((i) => !i.separator);
+    if (items.length === 0) return; // not promotable — leave the native menu
+    e.preventDefault();
+    openContextMenu(e.clientX, e.clientY, items);
+  };
+
   return (
     <InspectorRow label={label} align="center">
-      <div className={styles.control}>
+      <div className={styles.control} onContextMenu={onContextMenu}>
         <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
           <Checkbox 
             checked={animated} 

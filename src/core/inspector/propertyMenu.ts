@@ -185,24 +185,38 @@ export function buildPropertyMenu(ctx: PropertyMenuContext): ContextMenuItem[] {
     });
   }
 
-  // Essential Properties promotion — AE's source-side half. Only for the
-  // numeric overridable set, and only when this layer sits inside a real
-  // composition root (property-menu unit tests use a bare id with no graph
-  // node, so they stay free of this entry).
-  if (isOverridableProp(prop)) {
-    const root = compositionRootOf(nodeId);
-    if (root && root !== nodeId) {
-      const promoted = isEssentialProp(root, nodeId, prop);
-      items.push({ id: 'sep-essential', separator: true });
-      items.push({
-        id: 'essential-toggle',
-        label: promoted ? 'Remove from Essential Properties' : 'Add to Essential Properties',
-        onSelect: () => {
-          setEssentialProp(root, nodeId, prop, !promoted);
-        },
-      });
-    }
-  }
+  items.push(...essentialPropMenuItems(nodeId, prop));
 
   return items;
+}
+
+/**
+ * The "Add to / Remove from Essential Properties" entry for one property.
+ *
+ * Extracted so the COLOUR and TEXT rows can offer promotion too. Those rows do
+ * not go through `buildPropertyMenu`: it is shaped for a numeric, keyframeable
+ * property (`value: number`, `setValue`), and a colour is neither — it is
+ * stored as a string and keyframed as three channels. Rebuilding this entry at
+ * each of those call sites is how the label and the storage key drift apart,
+ * so there is one implementation and both surfaces call it.
+ *
+ * Empty when the property is not overridable, or the layer is not inside a real
+ * composition root — property-menu unit tests use a bare id with no graph node,
+ * so they stay free of this entry.
+ */
+export function essentialPropMenuItems(nodeId: string, prop: string): ContextMenuItem[] {
+  if (!isOverridableProp(prop)) return [];
+  const root = compositionRootOf(nodeId);
+  if (!root || root === nodeId) return [];
+  const promoted = isEssentialProp(root, nodeId, prop);
+  return [
+    { id: 'sep-essential', separator: true },
+    {
+      id: 'essential-toggle',
+      label: promoted ? 'Remove from Essential Properties' : 'Add to Essential Properties',
+      onSelect: () => {
+        setEssentialProp(root, nodeId, prop, !promoted);
+      },
+    },
+  ];
 }

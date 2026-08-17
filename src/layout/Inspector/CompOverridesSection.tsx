@@ -9,9 +9,17 @@
  * those (any depth — the engine already resolves grandchild overrides). When
  * none are published yet, it keeps the pre-promotion fallback: every overridable
  * prop on each direct child, so existing projects keep working.
+ *
+ * The set is no longer numeric-only, so a row's editor depends on the property's
+ * KIND (`OVERRIDE_PROP_KINDS`): a number field, a colour picker, or a text
+ * input. Reading the inherited value differs by kind too — see `inheritedValue`,
+ * where colour is the awkward case because it is stored as a hex string but
+ * animated as three separate channels.
  */
 
 import { ValueField } from '@components/ValueField';
+import { ColorPicker } from '@components/ColorPicker';
+import { Input } from '@components/Input';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -26,7 +34,9 @@ import {
   setCompOverride,
   clearCompOverridesFor,
   isOverridableProp,
+  OVERRIDE_PROP_KINDS,
   type OverridableProp,
+  type OverrideValue,
 } from '@core/scene/compInstanceOverrides';
 import type { SceneNode } from '@core/types';
 import styles from './ParentControl.module.css';
@@ -34,14 +44,21 @@ import ta from './TextAnimatorControls.module.css';
 
 const LABEL: Record<OverridableProp, string> = {
   x: 'X', y: 'Y', rotation: 'Rotation', scaleX: 'Scale X', scaleY: 'Scale Y', opacity: 'Opacity',
+  text: 'Source Text', fill: 'Fill', color: 'Color',
 };
 
 /** Sensible identity for a property no component declares. */
-const FALLBACK: Record<OverridableProp, number> = {
+const FALLBACK: Record<OverridableProp, OverrideValue> = {
   x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1, opacity: 100,
+  text: '', fill: '#ffffff', color: '#ffffff',
 };
 
 const UNIT: Partial<Record<OverridableProp, string>> = { rotation: '°', opacity: '%' };
+
+/** 0..1 channel → two hex digits. Colour tracks are normalised, not 0..255. */
+function hex2(v: number): string {
+  return Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, '0');
+}
 
 /**
  * What this property would be WITHOUT an override: the animated value when the
@@ -51,16 +68,42 @@ const UNIT: Partial<Record<OverridableProp, string>> = { rotation: '°', opacity
  * the same rule `applyOverridesToComponents` targets when it decides which
  * component to patch. Three places agreeing on one rule is the point; if this
  * one drifts the field displays a value the renderer never uses.
+ *
+ * Colour is the awkward one, and it is awkward in the same way everywhere: it
+ * is STORED as a hex string but ANIMATED as three 0..1 channels, so reading the
+ * inherited value of a keyframed colour means rebuilding the hex from
+ * `<prop>_r/_g/_b`. Reading the component alone would show the un-animated
+ * colour and the field would disagree with the canvas.
  */
-function inheritedValue(source: SceneNode, prop: OverridableProp, t: number): number {
-  if (defaultAnimation.isAnimated(source.id, prop)) {
+function inheritedValue(source: SceneNode, prop: OverridableProp, t: number): OverrideValue {
+  const kind = OVERRIDE_PROP_KINDS[prop];
+
+  if (kind === 'color') {
+    const ch = (c: 'r' | 'g' | 'b'): number | undefined => {
+      const path = `${prop}_${c}`;
+      if (!defaultAnimation.isAnimated(source.id, path)) return undefined;
+      const v = defaultAnimation.sample(source.id, path, t);
+      return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+    };
+    const r = ch('r'); const g = ch('g'); const b = ch('b');
+    if (r !== undefined && g !== undefined && b !== undefined) {
+      return `#${hex2(r)}${hex2(g)}${hex2(b)}`;
+    }
+  }
+
+  if (kind === 'number' && defaultAnimation.isAnimated(source.id, prop)) {
     const v = defaultAnimation.sample(source.id, prop, t);
     if (typeof v === 'number' && Number.isFinite(v)) return v;
   }
-  let found: number | undefined;
+
+  let found: OverrideValue | undefined;
   for (const c of source.components) {
     const v = (c.props as Record<string, unknown>)[prop];
-    if (typeof v === 'number' && Number.isFinite(v)) found = v;
+    if (kind === 'number') {
+      if (typeof v === 'number' && Number.isFinite(v)) found = v;
+    } else if (typeof v === 'string') {
+      found = v;
+    }
   }
   return found ?? FALLBACK[prop];
 }
@@ -160,8 +203,9 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
               const key = overrideKey(source.id, prop);
               const overridden = overrides.has(key);
               const value = overridden
-                ? (overrides.get(key) as number)
+                ? overrides.get(key)!
                 : inheritedValue(source, prop, time);
+              const kind = OVERRIDE_PROP_KINDS[prop];
               return (
                 <div className={ta.paramRow} key={prop}>
                   <button
@@ -176,13 +220,35 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                     }}
                   />
                   <span className={ta.paramLabel}>{LABEL[prop]}</span>
-                  <ValueField
-                    value={value}
-                    onChange={(v) => setCompOverride(nodeId, source.id, prop, v)}
-                    unit={UNIT[prop]}
-                    precision={2}
-                    aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
-                  />
+                  {kind === 'number' ? (
+                    <ValueField
+                      value={value as number}
+                      onChange={(v) => setCompOverride(nodeId, source.id, prop, v)}
+                      unit={UNIT[prop]}
+                      precision={2}
+                      aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
+                    />
+                  ) : kind === 'color' ? (
+                    <ColorPicker
+                      value={String(value)}
+                      onChange={(hex) => setCompOverride(nodeId, source.id, prop, hex)}
+                      compact
+                      // No alpha: the override is written back as the layer's
+                      // colour string, and the renderer's colour channels carry
+                      // no alpha of their own — an 8-digit hex would set an
+                      // opacity that nothing reads.
+                      alpha={false}
+                      aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
+                    />
+                  ) : (
+                    <Input
+                      size="sm"
+                      value={String(value)}
+                      onChange={(e) => setCompOverride(nodeId, source.id, prop, e.target.value)}
+                      fullWidth
+                      aria-label={`${LABEL[prop]} on ${source.name ?? source.id}`}
+                    />
+                  )}
                 </div>
               );
             })}
