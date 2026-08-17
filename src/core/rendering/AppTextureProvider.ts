@@ -286,6 +286,18 @@ export interface ImageBakeSpec {
 interface ImageEntry {
   kind: 'image';
   src: string;
+  /**
+   * The DECODE identity — `src` without the bake suffix, so it carries the fill
+   * colour, the alpha mode and the media time but not the effect chain.
+   *
+   * Kept separately because `unbaked` may only be reused across a change that
+   * cannot alter the decoded pixels, and `src` cannot answer that: it has the
+   * bake appended, so an exact compare rejects every legitimate re-bake, while
+   * a prefix compare accepts `blob:x` against `blob:x#premul`. Recorded at
+   * `setImage` time, so it is also immune to `premultipliedFile` being
+   * rewritten once a bake lands.
+   */
+  fileId: string;
   /** Effect chain to bake into the bitmap (see imageNeedsCpuBake). */
   bake?: ImageBakeSpec;
   /** The FILE's alpha mode, carried to the upload. See the alpha invariant. */
@@ -655,10 +667,17 @@ export class AppTextureProvider implements TextureProvider {
     // Dropping it for a 1×1 transparent placeholder is the "eye blink": every
     // Inner Glow / Stroke / Fill tweak replaced the entry with ready:false,
     // so get() drew nothing until the async bake landed.
-    const sameFile = !!existing && existing.src.startsWith(src);
+    // Compared on the DECODE identity, not on `src`: the alpha mode is baked
+    // into the decode (`decodeOptions` multiplies a straight file and passes a
+    // premultiplied one through), so carrying `unbaked` across a flip would
+    // serve pixels decoded under the old setting forever — Interpret Footage ▸
+    // Alpha would appear to do nothing. A `startsWith(src)` test cannot see
+    // that, and misses the premul→straight direction outright.
+    const sameFile = !!existing && existing.fileId === fileId;
     const entry: ImageEntry = {
       kind: 'image',
       src: fullKey,
+      fileId,
       bake,
       texture: existing?.texture ?? null,
       bitmap: existing?.bitmap ?? null,

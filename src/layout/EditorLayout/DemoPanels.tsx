@@ -1202,7 +1202,7 @@ export function PropertiesPanel(): JSX.Element {
         {primary && node && (
           <div className={styles.layerHead}>
             <span className={styles.layerKind}>{layerKindLabel(kind ?? '')}</span>
-            <span className={styles.layerName} title={layerName}>{layerName}</span>
+            <span className={styles.layerName} title={layerName ?? undefined}>{layerName}</span>
           </div>
         )}
         {primary && (

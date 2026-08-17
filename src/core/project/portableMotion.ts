@@ -13,7 +13,7 @@
 import { unzipSync, strFromU8, strToU8 } from 'fflate';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { encodeBundle, decodeBundle, parseLegacyDocument, isLegacySceneFile } from './bundle/bundleCodec';
-import { zipBytes } from '@core/export/zip';
+import { zipBytes, type ZipEntry } from '@core/export/zip';
 import { migrateDocument, DocumentVersionError } from './migrations';
 import { findMissingAssets, type MissingAssetRef } from './missingAssets';
 
@@ -140,7 +140,11 @@ export async function embedLiveAssets(doc: EditorDocument): Promise<{
 /** Pack a document (and optional embedded assets) into a `.motion` zip. */
 export function packPortableMotion(doc: EditorDocument, assets: readonly PortableAsset[] = []): Uint8Array {
   const bundle = encodeBundle(doc);
-  const entries = Object.entries(bundle.files).map(([name, text]) => ({
+  // Annotated as ZipEntry[] rather than inferred: inference from `strToU8`
+  // alone narrows `data` to an ArrayBuffer-backed Uint8Array, which then
+  // rejects the asset bytes pushed below — the array element type has to be
+  // the one `zipBytes` actually consumes.
+  const entries: ZipEntry[] = Object.entries(bundle.files).map(([name, text]) => ({
     name,
     data: strToU8(text),
   }));

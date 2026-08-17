@@ -71,7 +71,7 @@ rediscovered in git history and believed a second time.
 | AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 9 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
 | Stores | 42 | `src/stores/*.ts` |
-| Packages | 12 | `packages/*` |
+| Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
 
@@ -91,9 +91,9 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        40 Zustand stores
+                          ├── src/stores/*        42 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
-                          └── packages/*          12 workspace packages
+                          └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
                                 ├── animation   tracks, easing, expressions
                                 ├── renderer    WebGPU → WebGL2 → Null

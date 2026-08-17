@@ -75,7 +75,6 @@ import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/cont
 import { readNodeCornerPin } from '@core/scene/cornerPin';
 import type { PropPath } from '@motion/animation';
 import { Project3D, Matrix4Math, type Matrix2D, type Matrix4 } from '@motion/scene';
-import type { LayerMask } from '@core/effects/mask';
 import { Color } from '@motion/renderer';
 
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -1523,11 +1522,16 @@ export function buildSnapshot(
       || typeof rawH !== 'number'
       || (rawW === 100 && rawH === 100)
     );
+    // The `typeof` re-tests are redundant with `solidUnseeded` — which is
+    // already true whenever either dimension is not a number — but the compiler
+    // cannot narrow `rawW`/`rawH` through a separate boolean const, and without
+    // them `layerW`/`layerH` widen to `number | undefined` and poison every
+    // geometry call downstream.
     let layerW = isSolid
-      ? (solidUnseeded ? comp.width : rawW)
+      ? (solidUnseeded || typeof rawW !== 'number' ? comp.width : rawW)
       : (measuredText?.w ?? (typeof rawW === 'number' ? rawW : size.w));
     let layerH = isSolid
-      ? (solidUnseeded ? comp.height : rawH)
+      ? (solidUnseeded || typeof rawH !== 'number' ? comp.height : rawH)
       : (measuredText?.h ?? (typeof rawH === 'number' ? rawH : size.h));
 
     // Audio Waveform generator (envelope, not spectrum): a referenced audio

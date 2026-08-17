@@ -374,9 +374,16 @@ describe('headless parity: mapped scene renders through the GPU pipeline', () =>
     ]));
 
     renderer.render(vp, scene);
-    // BackgroundPass (1) + ShapePass (2 visible shapes); the hidden layer was
-    // dropped by the mapper so it never reaches the GPU.
-    expect(backend.stats().draws).toBe(3);
+    // BackgroundPass (1) + ShapePass (2 visible shapes) + the scene blit (1);
+    // the hidden layer was dropped by the mapper so it never reaches the GPU.
+    //
+    // The blit is the fourth draw because LINEAR_INTERMEDIATE_STORAGE keeps the
+    // render targets in linear light, so every frame — even one with no effects
+    // — ends in an EffectPass running `scene-blit` to encode sRGB for the
+    // canvas. Asserting the pass names too, so that a future regression that
+    // adds a draw somewhere else cannot be absorbed by bumping this number.
+    expect(backend.passLog).toEqual(['clear', 'background', 'composition', 'effect']);
+    expect(backend.stats().draws).toBe(4);
     renderer.dispose();
   });
 });

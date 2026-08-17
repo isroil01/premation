@@ -20,6 +20,10 @@ export default tseslint.config(
     ignores: [
       'dist/**',
       'dist-electron/**',
+      // The render worker's page bundle. Same status as dist/ — a build
+      // artifact, gitignored, and 1,951 of the 1,953 errors on the run that
+      // added it. It is not nested under dist/, so it needs its own entry.
+      '**/dist-render/**',
       'build/**',
       'node_modules/**',
       'coverage/**',

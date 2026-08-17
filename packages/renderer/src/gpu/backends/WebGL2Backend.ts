@@ -48,6 +48,11 @@ interface NativeTexture {
   texture: WebGLTexture;
   format: TextureFormat;
 }
+/** A linked GLSL program, as carried on a `ShaderModuleHandle`'s `native`.
+ *  Distinct from {@link NativePipeline}, which pairs one with its draw state. */
+interface NativeProgram {
+  program: WebGLProgram;
+}
 interface NativePipeline {
   program: WebGLProgram;
   blend: BlendMode;

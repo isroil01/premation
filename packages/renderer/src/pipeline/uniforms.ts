@@ -200,7 +200,10 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
     out[o + 1] = l.y;
     out[o + 2] = l.z;
     out[o + 3] = LIGHT3D_TYPE_ID[l.type];
-    const lc = toWorkingColor(l.color);
+    // A light has no alpha — `Shade3DLight.color` is rgb by design — but the
+    // working-space transfer is defined on `Color`. Opaque is the identity here:
+    // only .r/.g/.b are read back out.
+    const lc = toWorkingColor({ ...l.color, a: 1 });
     out[o + 4] = lc.r;
     out[o + 5] = lc.g;
     out[o + 6] = lc.b;

@@ -177,9 +177,9 @@ export function createStatefulParticleSim(
       // Integrate living particles.
       for (let i = 0; i < n; i++) {
         if (s.alive[i]! < 0.5) continue;
-        let vx = s.vx[i]! * damping + cfg.gravityX * dt;
+        const vx = s.vx[i]! * damping + cfg.gravityX * dt;
         let vy = s.vy[i]! * damping + cfg.gravityY * dt;
-        let x = s.x[i]! + vx * dt;
+        const x = s.x[i]! + vx * dt;
         let y = s.y[i]! + vy * dt;
         const age = s.age[i]! + dt;
         if (age >= s.life[i]!) {

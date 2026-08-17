@@ -52,7 +52,11 @@ function suggestedName(): string {
 type SavePicker = (opts: {
   suggestedName: string;
   types: Array<{ description: string; accept: Record<string, string[]> }>;
-}) => Promise<{ createWritable: () => Promise<{ write: (d: BufferSource) => Promise<void>; close: () => Promise<void> }> }>;
+  // `write` is typed to what THIS file passes — a Uint8Array — rather than the
+  // spec's `BufferSource`. Under TS 5.7 a bare Uint8Array is
+  // `Uint8Array<ArrayBufferLike>` and no longer satisfies `BufferSource`, and
+  // this is a local shape describing one call site, not the DOM lib's contract.
+}) => Promise<{ createWritable: () => Promise<{ write: (d: Uint8Array) => Promise<void>; close: () => Promise<void> }> }>;
 
 async function writeViaFilePicker(bytes: Uint8Array, filename: string): Promise<string | null> {
   const picker = (window as unknown as { showSaveFilePicker?: SavePicker }).showSaveFilePicker;

@@ -607,7 +607,7 @@ export function EffectsPanel(): JSX.Element {
 
       <div className={styles.sectionTitle}>Masks</div>
       {!hasSelection && (
-        <p className={styles.hint} style={{ margin: '0 0 8px', fontSize: 11, color: 'var(--color-text-tertiary)' }}>
+        <p className={styles.hint} style={{ margin: '0 0 8px', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
           Select a layer, then draw with Mask Rectangle / Ellipse / Pen in the toolbar.
         </p>
       )}
@@ -703,7 +703,7 @@ export function EffectsPanel(): JSX.Element {
                     }
                     style={{
                       width: '100%',
-                      fontSize: 11,
+                      fontSize: 'var(--font-size-xs)',
                       padding: '2px 6px',
                       borderRadius: 4,
                       border: '1px solid var(--color-border, #333)',

@@ -81,7 +81,11 @@ export function compositionRootOf(nodeId: string): string | null {
   for (let i = 0; i < 64 && cur; i++) {
     const n = defaultSceneGraph.getNode(cur);
     if (!n) return null;
-    if (n.parent === null) return n.id;
+    // `== null` so an ABSENT parent counts as a root the same as an explicit
+    // null one. Testing `=== null` alone let an undefined parent fall through
+    // to the assignment, exit the loop on the next condition check and report
+    // "no root" for a node that is one.
+    if (n.parent == null) return n.id;
     cur = n.parent;
   }
   return null;

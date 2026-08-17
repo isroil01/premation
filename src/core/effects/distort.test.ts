@@ -12,7 +12,7 @@
 import {
   bulgeData, twirlData, spherizeData, cornerPinData, defaultCorners, remap,
 } from './distort';
-import { applyCanvas2dEffect, isCanvas2dOnlyEffect } from './canvas2dEffects';
+import { applyCanvas2dEffect, hasCanvas2dImplementation } from './canvas2dEffects';
 import { EFFECT_DEFS, defaultParams, type Effect, type EffectParams, type EffectType } from './effects';
 
 const W = 64, H = 64;
@@ -269,7 +269,12 @@ describe('the Distort family reaches the bake chain', () => {
   ];
 
   it.each(CASES)('%s changes pixels through applyCanvas2dEffect', (type, params) => {
-    expect(isCanvas2dOnlyEffect(type)).toBe(true);
+    // `hasCanvas2dImplementation`, NOT `isCanvas2dOnlyEffect`: Bulge, Twirl and
+    // Spherize gained GPU shaders in round five (`fxRoundSix.ts`), so they no
+    // longer FORCE a bake. What still has to hold is that they can come along
+    // when a layer is baked for some other reason — the GPU effect list is
+    // dropped for a baked layer, so Canvas2D is their only route there.
+    expect(hasCanvas2dImplementation(type)).toBe(true);
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d')!;
