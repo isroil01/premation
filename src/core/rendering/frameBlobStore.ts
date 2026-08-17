@@ -25,7 +25,19 @@ export interface FrameBlobStore {
   /** Every key currently held. Used to reconcile the index at boot. */
   keys(): Promise<string[]>;
   clear(): Promise<void>;
+  /**
+   * The persisted index of what the store holds, as opaque JSON — which
+   * generations, which frames, how many bytes. OPTIONAL: a store without a
+   * manifest still works, but the cache then cannot trust anything a previous
+   * session left (it cannot know the byte sizes without reading every blob),
+   * so it falls back to purging at open. Present on the IndexedDB store.
+   */
+  readManifest?(): Promise<string | null>;
+  writeManifest?(json: string): Promise<void>;
 }
+
+/** Reserved key the manifest lives under — never a frame. */
+export const MANIFEST_KEY = '__manifest__';
 
 const DB_NAME = 'motion-frame-cache-db';
 const STORE_NAME = 'frames';
@@ -88,11 +100,21 @@ export class IndexedDbFrameStore implements FrameBlobStore {
   }
 
   async keys(): Promise<string[]> {
-    return (await this.tx('readonly', (s) => promisify(s.getAllKeys()))) as string[] ?? [];
+    const all = (await this.tx('readonly', (s) => promisify(s.getAllKeys()))) as string[] ?? [];
+    return all.filter((k) => k !== MANIFEST_KEY);
   }
 
   async clear(): Promise<void> {
     await this.tx('readwrite', (s) => promisify(s.clear()));
+  }
+
+  async readManifest(): Promise<string | null> {
+    const v = await this.tx('readonly', (s) => promisify(s.get(MANIFEST_KEY)));
+    return typeof v === 'string' ? v : null;
+  }
+
+  async writeManifest(json: string): Promise<void> {
+    await this.tx('readwrite', (s) => promisify(s.put(json, MANIFEST_KEY)));
   }
 }
 

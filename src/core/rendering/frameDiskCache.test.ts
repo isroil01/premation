@@ -167,15 +167,33 @@ describe('the byte budget', () => {
 });
 
 describe('generation turnover', () => {
-  it('abandons the old generation and clears the store', async () => {
+  it('PARKS the old generation instead of deleting it', async () => {
+    // The exchange the content-derived key makes possible: an outgoing
+    // generation keeps its blobs, and returns whole if its key comes back.
     const { store, cache } = makeCache();
     cache.write(1, canvas());
     await flush();
     cache.setGeneration('g2');
-    expect(cache.has(1)).toBe(false);
+    expect(cache.has(1)).toBe(false);       // not servable under g2…
     expect(cache.storedBytes).toBe(0);
+    expect(cache.retainedGenerations).toBe(1);
     await flush();
-    expect(store.map.size).toBe(0);
+    expect(store.map.size).toBe(1);         // …but still on disk.
+  });
+
+  it('an undo whose key RETURNS gets its frames back without a render', async () => {
+    const { cache } = makeCache();
+    cache.write(1, canvas());
+    cache.write(2, canvas());
+    await flush();
+    cache.setGeneration('g2');              // the edit
+    expect(cache.has(1)).toBe(false);
+    cache.setGeneration('g1');              // the undo — same content hash
+    expect(cache.has(1)).toBe(true);
+    expect(cache.has(2)).toBe(true);
+    // g2 held no frames, and an EMPTY generation is not parked — parking it
+    // would be bookkeeping for nothing and would count against the cap.
+    expect(cache.retainedGenerations).toBe(0);
   });
 
   it('setting the SAME generation keeps the frames', async () => {

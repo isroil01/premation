@@ -26,19 +26,29 @@
  * win — caching a whole work area instead of two seconds — does not depend on
  * surviving a restart.
  *
- * **That prerequisite has since landed** (`sceneContentHash.ts`, 2026-08-17):
- * the key is now a hash of the scene and animation content, memoized on the
- * revision counters, so it identifies a scene rather than merely noticing that
- * one changed. Persisted frames are therefore no longer ambiguous, and `open()`
- * purging is now conservatism rather than necessity.
+ * **Both halves have since landed** (2026-08-17). Identity first
+ * (`sceneContentHash.ts`): the key is a hash of the scene and animation
+ * content, memoized on the revision counters, so it names a scene rather than
+ * merely noticing that one changed. Then RETENTION, in this file: a generation
+ * that stops being live is no longer deleted — it is parked, and comes back
+ * whole if its key returns. That is what makes two things work that never did:
  *
- * What still stands between here and surviving a restart is EVICTION, not
- * identity: `setGeneration` clears the store wholesale, because exactly one
- * generation was ever live. Persistence means keeping several — the previous
- * session's, this one's, and whatever the user undoes back into — under one
- * budget, with a policy for which to drop first. That is a real change to this
- * file rather than a flag flip, and doing it as a flag flip is how the cache
- * grows without bound across sessions until the quota kills it.
+ *  • **Undo gets its frames back.** The content hash returns to its previous
+ *    value, `setGeneration` finds that generation parked, and every frame it
+ *    held is immediately servable again — nothing is re-rendered.
+ *  • **A restart inherits the previous session.** A MANIFEST (see
+ *    `FrameBlobStore.readManifest`) records which generations hold which
+ *    frames at what size; `open()` reconciles it against the blobs actually
+ *    present — orphan blobs are deleted, manifest rows without blobs are
+ *    dropped — and parks the survivors. When the project loads and produces
+ *    the same content hash, the disk cache is warm from launch.
+ *
+ * The budget is GLOBAL across generations, oldest generation evicted first and
+ * wholesale: a parked generation is speculative value, and half of one is
+ * barely better than none. The live generation still evicts frame-by-frame,
+ * LRU. A store without a manifest (anything but IndexedDB) cannot know what a
+ * previous session's blobs weigh without reading them all, so it keeps the old
+ * behaviour: purge at open, retention within the session only.
  *
  * ── Why look-ahead rather than a fallback read ──────────────────────────────
  *
@@ -71,10 +81,25 @@ export interface FrameDiskCacheOptions {
   /** Byte budget for the tier. Default 4 GB — frames are PNG, so a 1080p frame
    *  of typical motion-graphics content lands well under its 8 MB raw size. */
   maxBytes?: number;
+  /**
+   * Generations kept at once, the live one included. Default 4: the current
+   * state, the state one undo back, and a couple more. Each parked generation
+   * is a full work area of PNGs, so this is a real multiplier on disk use —
+   * which is why it is a count and not "whatever fits".
+   */
+  maxGenerations?: number;
   /** Injected so tests do not need a canvas. Returns null when encoding fails. */
   encode?: (canvas: HTMLCanvasElement) => Promise<Blob | null>;
   /** Injected for the same reason. */
   decode?: (blob: Blob) => Promise<DecodedFrame | null>;
+}
+
+/** Manifest schema. Versioned so a future shape change reads as "no manifest"
+ *  rather than as garbage — the failure mode is then a cold cache, not a wrong
+ *  one. Generations are ordered OLDEST FIRST; age is the eviction order. */
+interface ManifestV1 {
+  v: 1;
+  gens: Array<{ id: string; frames: Array<[frame: number, bytes: number]> }>;
 }
 
 /** PNG, not WebP: a preview that shows different pixels than the render is a
@@ -101,14 +126,24 @@ async function defaultDecode(blob: Blob): Promise<DecodedFrame | null> {
 export class FrameDiskCache {
   private readonly store: FrameBlobStore;
   private readonly maxBytes: number;
+  private readonly maxGenerations: number;
   private readonly encode: (canvas: HTMLCanvasElement) => Promise<Blob | null>;
   private readonly decode: (blob: Blob) => Promise<DecodedFrame | null>;
 
-  /** frame → bytes, for the frames this generation holds. The LRU index lives
-   *  here rather than in the store so eviction costs no database round trips. */
+  /** frame → bytes, for the frames the LIVE generation holds. The LRU index
+   *  lives here rather than in the store so eviction costs no round trips. */
   private index = new Map<number, number>();
   private order: number[] = [];
   private bytes = 0;
+
+  /**
+   * Parked generations, oldest first (Map preserves insertion order, and age
+   * IS the eviction order). Each is frame → bytes for a generation that
+   * stopped being live but whose blobs are still on disk, waiting for its key
+   * to come back — an undo, or a relaunch of the same project.
+   */
+  private retained = new Map<string, Map<number, number>>();
+  private retainedBytes = 0;
 
   /** Generation token. Every stored key carries it, so a key change makes the
    *  previous generation unreachable in one assignment — no scan, no await. */
@@ -116,20 +151,75 @@ export class FrameDiskCache {
   private writing = new Set<number>();
   private reading = new Set<number>();
   private opened = false;
+  private persistScheduled = false;
 
   constructor(opts: FrameDiskCacheOptions) {
     this.store = opts.store;
     this.maxBytes = opts.maxBytes ?? 4 * 1024 * 1024 * 1024;
+    this.maxGenerations = Math.max(1, opts.maxGenerations ?? 4);
     this.encode = opts.encode ?? defaultEncode;
     this.decode = opts.decode ?? defaultDecode;
   }
 
-  /** Discard anything a previous session left. See the header: those frames are
-   *  keyed by a counter that has since reset, so they cannot be trusted. */
+  /**
+   * Adopt what a previous session left — or discard it, when the store cannot
+   * say what it is.
+   *
+   * With a manifest: reconcile it against the blobs actually present. A blob
+   * without a manifest row is an orphan (a write that landed after the last
+   * manifest flush) and is deleted; a manifest row without its blob is dropped.
+   * What survives is parked, and comes back the moment its generation key is
+   * set — which for a reloaded project is the first render.
+   *
+   * Without a manifest the old contract holds: purge. The alternative would be
+   * reading every blob just to learn its size, which on a cold start is the
+   * exact IO storm a cache exists to avoid.
+   */
   async open(): Promise<void> {
     if (this.opened) return;
     this.opened = true;
-    await this.store.clear();
+    if (!this.store.readManifest || !this.store.writeManifest) {
+      await this.store.clear();
+      return;
+    }
+    let manifest: ManifestV1 | null = null;
+    try {
+      const raw = await this.store.readManifest();
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && (parsed as ManifestV1).v === 1) {
+          manifest = parsed as ManifestV1;
+        }
+      }
+    } catch {
+      manifest = null;
+    }
+    if (!manifest) {
+      // No manifest (first run) or an unreadable one (future version, corrupt
+      // write). Either way the blobs cannot be trusted — cold cache, not wrong.
+      await this.store.clear();
+      return;
+    }
+
+    const present = new Set(await this.store.keys());
+    const orphans: string[] = [];
+    for (const gen of manifest.gens) {
+      const frames = new Map<number, number>();
+      for (const [frame, size] of gen.frames) {
+        if (present.has(`${gen.id}#${frame}`)) {
+          frames.set(frame, size);
+          this.retainedBytes += size;
+          present.delete(`${gen.id}#${frame}`);
+        }
+      }
+      if (frames.size > 0) this.retained.set(gen.id, frames);
+    }
+    // Whatever remains in `present` has no manifest row — unaccounted bytes.
+    for (const key of present) orphans.push(key);
+    if (orphans.length) await this.store.delete(orphans);
+
+    this.enforceCaps();
+    this.schedulePersist();
   }
 
   get storedFrames(): number {
@@ -140,17 +230,57 @@ export class FrameDiskCache {
     return this.bytes;
   }
 
-  /** Point the tier at a new invalidation key. The old generation is abandoned
-   *  immediately and swept in the background — correctness does not wait on IO. */
+  /** Parked generations currently held (live excluded). */
+  get retainedGenerations(): number {
+    return this.retained.size;
+  }
+
+  /** Bytes across the LIVE generation and every parked one. */
+  get totalBytes(): number {
+    return this.bytes + this.retainedBytes;
+  }
+
+  /**
+   * Point the tier at a new invalidation key.
+   *
+   * The outgoing generation is PARKED, not deleted — its blobs stay on disk
+   * and its index moves to `retained`. If the incoming key names a parked
+   * generation (an undo whose content hash returns, a reloaded project), that
+   * generation is promoted whole and every frame it held is immediately
+   * servable. This exchange is the entire payoff of the content-derived key.
+   */
   setGeneration(generation: string): void {
     if (generation === this.generation) return;
-    this.generation = generation;
-    this.index.clear();
+
+    if (this.generation && this.index.size > 0) {
+      this.retained.set(this.generation, this.index);
+      this.retainedBytes += this.bytes;
+    }
+    this.index = new Map();
     this.order = [];
     this.bytes = 0;
+    // In-flight encodes/decodes for the old generation check the token and
+    // abandon themselves; clearing here just lets new work start immediately.
     this.writing.clear();
     this.reading.clear();
-    void this.store.clear();
+    this.generation = generation;
+
+    const parked = this.retained.get(generation);
+    if (parked) {
+      this.retained.delete(generation);
+      this.index = parked;
+      // Ascending frame order is the honest LRU seed for a promoted
+      // generation: nothing has been "recently used", and the playhead
+      // usually moves forward, so the earliest frames are the safest to shed.
+      this.order = [...parked.keys()].sort((a, b) => a - b);
+      for (const size of parked.values()) {
+        this.bytes += size;
+        this.retainedBytes -= size;
+      }
+    }
+
+    this.enforceCaps();
+    this.schedulePersist();
   }
 
   private keyFor(frame: number): string {
@@ -194,11 +324,35 @@ export class FrameDiskCache {
     else this.bytes -= this.index.get(frame)!;
     this.index.set(frame, bytes);
     this.bytes += bytes;
-    this.evict();
+    this.enforceCaps();
+    this.schedulePersist();
   }
 
-  private evict(): void {
+  /**
+   * Hold the two caps: generation count, then the GLOBAL byte budget.
+   *
+   * Parked generations go first, oldest first, WHOLESALE — a parked generation
+   * is speculative value, and half of one is barely better than none. Only
+   * when nothing is parked does the live generation shed frames, LRU.
+   */
+  private enforceCaps(): void {
     const drop: string[] = [];
+
+    const dropOldestRetained = (): void => {
+      const oldest = this.retained.keys().next();
+      if (oldest.done) return;
+      const frames = this.retained.get(oldest.value)!;
+      for (const [frame, size] of frames) {
+        this.retainedBytes -= size;
+        drop.push(`${oldest.value}#${frame}`);
+      }
+      this.retained.delete(oldest.value);
+    };
+
+    while (this.retained.size > this.maxGenerations - 1) dropOldestRetained();
+    while (this.bytes + this.retainedBytes > this.maxBytes && this.retained.size > 0) {
+      dropOldestRetained();
+    }
     while (this.bytes > this.maxBytes && this.order.length > 0) {
       const frame = this.order.shift()!;
       this.bytes -= this.index.get(frame) ?? 0;
@@ -206,6 +360,28 @@ export class FrameDiskCache {
       drop.push(this.keyFor(frame));
     }
     if (drop.length) void this.store.delete(drop);
+  }
+
+  /**
+   * Persist the manifest, coalesced to one write per microtask turn — `track`
+   * fires once per encoded frame, and a store write per frame would double the
+   * IO this tier performs.
+   */
+  private schedulePersist(): void {
+    if (!this.store.writeManifest || this.persistScheduled) return;
+    this.persistScheduled = true;
+    void Promise.resolve().then(() => {
+      this.persistScheduled = false;
+      const gens: ManifestV1['gens'] = [];
+      for (const [id, frames] of this.retained) {
+        gens.push({ id, frames: [...frames.entries()] });
+      }
+      if (this.generation && this.index.size > 0) {
+        gens.push({ id: this.generation, frames: [...this.index.entries()] });
+      }
+      const manifest: ManifestV1 = { v: 1, gens };
+      void this.store.writeManifest!(JSON.stringify(manifest));
+    });
   }
 
   /**
@@ -276,12 +452,14 @@ export class FrameDiskCache {
     return out;
   }
 
-  /** Drop everything, on disk and in the index. Backs a Purge control and is
-   *  what a user reaches for when the quota is full. */
+  /** Drop everything — live, parked, and the manifest. Backs a Purge control
+   *  and is what a user reaches for when the quota is full. */
   async purge(): Promise<void> {
     this.index.clear();
     this.order = [];
     this.bytes = 0;
+    this.retained.clear();
+    this.retainedBytes = 0;
     this.writing.clear();
     this.reading.clear();
     await this.store.clear();
@@ -292,10 +470,11 @@ export class FrameDiskCache {
  * The viewport's disk tier, or null where no store exists (jsdom, and any
  * runtime without IndexedDB).
  *
- * ORDER MATTERS AT THE CALL SITE: `open()` purges the previous session, so the
- * tier must be opened BEFORE it is attached to the RAM cache. Attaching first
- * lets the render loop write frames that the purge then deletes — a cache that
- * silently drops everything written in its first few hundred milliseconds.
+ * ORDER MATTERS AT THE CALL SITE: `open()` reconciles (or, without a manifest,
+ * purges) the previous session, so the tier must be opened BEFORE it is
+ * attached to the RAM cache. Attaching first lets the render loop write frames
+ * that the reconcile then deletes as orphans — a cache that silently drops
+ * everything written in its first few hundred milliseconds.
  */
 export function createViewportDiskCache(): FrameDiskCache | null {
   if (!frameStoreAvailable()) return null;

@@ -115,7 +115,7 @@ describe('promotion', () => {
 });
 
 describe('invalidation', () => {
-  it('a new key turns the disk tier over too', async () => {
+  it('a new key turns the disk tier over: nothing served, blobs PARKED', async () => {
     const { store, ram } = setup();
     ram.put(1, sourceCanvas());
     await flush();
@@ -123,17 +123,30 @@ describe('invalidation', () => {
 
     ram.setKey('k2', 4, 4);
     await flush();
-    expect(store.map.size).toBe(0);
+    // The bar and the servable set are empty under the new key — that is the
+    // correctness half. The blob stays parked on disk, waiting for k1's
+    // content hash to return (an undo), which is the retention half.
     expect(ram.diskRanges(30)).toEqual([]);
+    expect(store.map.size).toBe(1);
+  });
+
+  it('the OLD key returning serves its frames again — the undo path', async () => {
+    const { ram } = setup();
+    ram.put(1, sourceCanvas());
+    await flush();
+    ram.setKey('k2', 4, 4);
+    expect(ram.diskRanges(30)).toEqual([]);
+    ram.setKey('k1', 4, 4);
+    expect(ram.diskRanges(30)).toEqual([{ start: 1 / 30, end: 2 / 30 }]);
   });
 
   it('a resize is an invalidation, because the key carries the size', async () => {
-    const { store, ram } = setup();
+    const { ram } = setup();
     ram.put(1, sourceCanvas());
     await flush();
     ram.setKey('k1', 8, 8);
     await flush();
-    expect(store.map.size).toBe(0);
+    expect(ram.diskRanges(30)).toEqual([]);
   });
 
   it('attaching a disk tier adopts the key already in force', async () => {
