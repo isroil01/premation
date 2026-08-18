@@ -163,6 +163,31 @@ describe('physics replaces, rather than blends with, keyframes', () => {
   });
 });
 
+describe('rotation reaching the renderer', () => {
+  it('a spinning body drives the LAYER rotation', () => {
+    // A tilted box with Spin on falls, lands on a corner, and rotates flat —
+    // the layer's rendered rotation must be the solver's angle, not the
+    // authored 25°.
+    addBox('a', 400, 300, { rotate: true, restitution: 0, friction: 0.4 });
+    defaultSceneGraph.writeProp('a', 'a_t', 'rotation', 25);
+    const settled = layer(6, 'a').rotation;
+    const offFlat = Math.min(Math.abs(settled % 90), 90 - Math.abs(settled % 90));
+    expect(offFlat).toBeLessThan(5);
+    expect(settled).not.toBeCloseTo(25, 0);
+  });
+
+  it('a rotation-LOCKED body keeps its keyframed rotation', () => {
+    // The opt-out must not become a rotation freeze: the solver owns position,
+    // the layer keeps owning rotation.
+    addBox('a', 400, 100, {});
+    defaultAnimation.setKeyframe('a', 'rotation', 0, 0, 'linear');
+    defaultAnimation.setKeyframe('a', 'rotation', 2, 180, 'linear');
+    expect(layer(2, 'a').rotation).toBeCloseTo(180, 0);
+    // …while position is still simulated.
+    expect(layer(2, 'a').y).toBeGreaterThan(100);
+  });
+});
+
 describe('scrubbing', () => {
   it('a hostile access order gives the same answer as playing through', () => {
     addBox('a', 400, 100, { restitution: 0.5 });

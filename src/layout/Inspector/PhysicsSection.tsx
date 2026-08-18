@@ -80,6 +80,18 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
 
           {cfg.kind === 'dynamic' && (
             <>
+              <InspectorRow label="Spin" align="center">
+                <div className={styles.control}>
+                  <Checkbox
+                    checked={cfg.rotate}
+                    onChange={(e) => write({ rotate: e.target.checked })}
+                    aria-label="Allow rotation"
+                  />
+                  <span style={{ marginLeft: 8, fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+                    {cfg.rotate ? 'Tumbles and rolls' : 'Translates only'}
+                  </span>
+                </div>
+              </InspectorRow>
               <InspectorRow label="Mass">
                 <ValueField value={cfg.mass} min={0.01} precision={2} onChange={(v) => write({ mass: v })} aria-label="Mass" />
               </InspectorRow>
@@ -119,8 +131,9 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
           </InspectorRow>
 
           <p className={styles.sectionNote} style={{ marginTop: 6 }}>
-            Bodies translate but do not spin — colliders are axis-aligned.
-            Physics replaces a dynamic layer’s keyframed position.
+            Physics replaces a dynamic layer’s keyframed position — and its
+            rotation too, once Spin is on. Spin is off by default so scenes
+            simulated before it existed replay identically.
           </p>
         </>
       )}

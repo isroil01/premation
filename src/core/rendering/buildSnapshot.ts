@@ -587,6 +587,9 @@ export function buildSnapshot(
     const pb = readBase(n);
     physicsSeeds.push({
       id: n.id, x: pb.x, y: pb.y,
+      // The authored rotation seeds the body's starting ANGLE, so a layer
+      // placed at 25° begins its tumble from 25° rather than snapping flat.
+      rotation: pb.rotation,
       width: pb.width ?? 100, height: pb.height ?? 100,
       cfg,
     });
@@ -1755,6 +1758,9 @@ export function buildSnapshot(
     if (simPose) {
       px = simPose.x;
       py = simPose.y;
+      // Present only for bodies that opted into spin — see physicsPosesAt.
+      // A rotation-locked body keeps its own (possibly keyframed) rotation.
+      if (simPose.rotation !== undefined) rot = simPose.rotation;
     }
     // Cloner offset, applied to the RESOLVED transform.
     //

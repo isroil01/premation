@@ -72,15 +72,17 @@ function signatureOf(seeds: ReadonlyArray<BodySeed>, world: PhysicsWorld, fps: n
     g: [world.gravityX, world.gravityY],
     b: world.bounds,
     it: world.iterations,
-    s: seeds.map((s) => [s.id, s.x, s.y, s.width, s.height, s.cfg.kind, s.cfg.shape, s.cfg.mass, s.cfg.restitution, s.cfg.friction, s.cfg.damping]),
+    s: seeds.map((s) => [s.id, s.x, s.y, s.rotation ?? 0, s.width, s.height, s.cfg.kind, s.cfg.shape, s.cfg.mass, s.cfg.restitution, s.cfg.friction, s.cfg.damping, s.cfg.rotate]),
   });
 }
 
 /**
  * Simulated poses at `frame`, keyed by node id. Empty when nothing simulates.
  *
- * Returns positions only — the solver does not rotate bodies, and inventing a
- * rotation here would be a lie about what was computed. See `rigidBody.ts`.
+ * `rotation` (degrees, matching the layer property) is present only for bodies
+ * that OPTED INTO spin — reporting an angle for a rotation-locked body would
+ * overwrite the layer's own keyframed rotation with a constant 0, turning the
+ * opt-out into a rotation freeze.
  */
 export function physicsPosesAt(
   compKey: string,
@@ -88,8 +90,8 @@ export function physicsPosesAt(
   world: PhysicsWorld,
   fps: number,
   frame: number,
-): Map<string, { x: number; y: number }> {
-  const out = new Map<string, { x: number; y: number }>();
+): Map<string, { x: number; y: number; rotation?: number }> {
+  const out = new Map<string, { x: number; y: number; rotation?: number }>();
   if (seeds.length === 0) return out;
 
   const signature = signatureOf(seeds, world, fps);
@@ -107,7 +109,11 @@ export function physicsPosesAt(
     // layer's own transform says, including any animation on it. Overriding
     // them with the solver's copy would freeze a keyframed wall in place.
     if (b.invMass === 0) continue;
-    out.set(b.id, { x: b.x, y: b.y });
+    out.set(b.id, {
+      x: b.x,
+      y: b.y,
+      ...(b.invInertia !== 0 ? { rotation: (b.angle * 180) / Math.PI } : {}),
+    });
   }
   return out;
 }
