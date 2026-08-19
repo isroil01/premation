@@ -1,11 +1,20 @@
 /**
- * Track Motion — AE's point tracker, on the exact decoder.
+ * Track Motion — AE's tracker family, on the exact decoder.
  *
- * The section owns the WORKFLOW (place point → track → apply); everything
- * that computes lives in core/tracking. The track point itself is placed by
- * dragging the handle the TrackPointOverlay draws on the canvas — this panel
- * only reports it, because a coordinate you can see on the footage beats a
- * number field you have to guess into.
+ * The section owns the WORKFLOW (mode → place points → track → apply);
+ * everything that computes lives in core/tracking. Points are placed by
+ * dragging the handles the TrackPointOverlay draws on the canvas — this
+ * panel only reports them, because a coordinate you can see on the footage
+ * beats a number field you have to guess into.
+ *
+ * Modes:
+ *   Follow     — one point; apply as position keyframes on any layer.
+ *   Stabilize  — one point; apply INVERSE motion to this layer, pinning the
+ *                feature where it started.
+ *   Corner pin — four points; keyframe a Corner Pin effect on a target
+ *                layer (screen replacement).
+ *   Track mask — this layer's mask vertices are the points; tracking writes
+ *                mask keyframes directly (rotoscoping's first step).
  *
  * Tracking runs on the ORIGINAL media through ExactVideoSource, never the
  * proxy and never a seeked <video> — the samples are measured on the frames
@@ -17,12 +26,14 @@ import { Button } from '@components/Button';
 import { InspectorRow } from '@components/Inspector';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSceneRevision } from '@stores/sceneStore';
-import { useTrackerStore } from '@stores/trackerStore';
+import { useTrackerStore, type TrackerMode } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { trackVideoLayer } from '@core/tracking/trackVideoLayer';
-import { applyTrackToLayer } from '@core/tracking/applyTrack';
+import { trackVideoLayerPoints } from '@core/tracking/trackVideoLayer';
+import { applyTrackToLayer, applyStabilizeToLayer, applyCornerPinTrack } from '@core/tracking/applyTrack';
+import { trackLayerMask } from '@core/tracking/maskTrack';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
+import { getNodeMask } from '@core/effects/mask';
 import { webCodecsAvailable } from '@core/video/exactVideoSource';
 
 /** Shared <select> chrome — matches BoneControls/PuppetControls. */
@@ -44,9 +55,24 @@ const noteStyle: React.CSSProperties = {
 const FEATURE_SIZES = [5, 10, 15, 20];
 const SEARCH_SIZES = [12, 24, 40, 60];
 
+const MODE_LABELS: Record<TrackerMode, string> = {
+  follow: 'Follow (position)',
+  stabilize: 'Stabilize',
+  corner: 'Corner pin',
+  mask: 'Track mask',
+};
+
+const MODE_HINTS: Record<TrackerMode, string> = {
+  follow: 'Drag the point onto the feature to follow, track, then apply as position keyframes on a target layer.',
+  stabilize: 'Drag the point onto the feature to lock, track, then apply — this layer moves inversely so the feature stays put.',
+  corner: 'Drag the four corners onto the surface to replace (TL, TR, BR, BL), track, then pin a target layer onto them.',
+  mask: 'Tracks every vertex of this layer’s mask and writes mask keyframes — the mask follows the footage.',
+};
+
 export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
-  const point = useTrackerStore((s) => s.point);
+  const mode = useTrackerStore((s) => s.mode);
+  const points = useTrackerStore((s) => s.points);
   const featureHalf = useTrackerStore((s) => s.featureHalf);
   const searchHalf = useTrackerStore((s) => s.searchHalf);
   const tracking = useTrackerStore((s) => s.tracking);
@@ -62,20 +88,18 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
 
   const node = defaultSceneGraph.getNode(nodeId);
   const src = sourceDisplaySize(nodeId);
+  const maskPoints = node ? getNodeMask(nodeId).paths.reduce((n, p) => n + p.points.length, 0) : 0;
 
-  // Opening the section for a layer arms the overlay for it, and seeds the
-  // point at frame centre so there is a handle to grab at all.
+  // Opening the section for a layer arms the overlay for it and seeds the
+  // mode's points so there are handles to grab at all.
   useEffect(() => {
     store.getState().activate(nodeId);
-    if (!store.getState().point && src) {
-      store.getState().setPoint(src.width / 2, src.height / 2);
-    }
-  }, [nodeId, src?.width, src?.height]);
+    if (src) store.getState().seedPoints(src.width, src.height);
+  }, [nodeId, src?.width, src?.height, mode]);
 
   const targets = useMemo(() => {
     if (!node) return [];
-    const siblings = node.parent ? defaultSceneGraph.getChildren(node.parent) : [node];
-    return siblings;
+    return node.parent ? defaultSceneGraph.getChildren(node.parent) : [node];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
   }, [node, useSceneRevision((s) => s.rev)]);
 
@@ -85,18 +109,54 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
     return <p style={noteStyle}>Tracking needs WebCodecs, which this runtime does not have.</p>;
   }
 
+  const endCompTime = Math.max(time, durationSeconds - 1 / fps);
+
+  const targetName = (id: string): string =>
+    targets.find((t) => t.id === id)?.name || (id === nodeId ? 'this layer' : id);
+
+  const summarize = (tracks: { length: number }[], status: string, extra = ''): string => {
+    const n = tracks[0]?.length ?? 0;
+    const outcome =
+      status === 'lost'
+        ? 'lost — samples up to the loss are kept'
+        : status === 'cancelled'
+          ? 'cancelled'
+          : 'completed';
+    return `Tracked ${tracks.length} point${tracks.length === 1 ? '' : 's'} × ${n} frames (${outcome})${extra}`;
+  };
+
   const onTrack = async (): Promise<void> => {
-    const p = store.getState().point;
-    if (!p || tracking) return;
+    if (tracking) return;
     store.getState().beginTracking();
     try {
-      const r = await trackVideoLayer({
+      if (mode === 'mask') {
+        // Mask mode tracks AND applies in one action — its points come from
+        // the mask, and the result has nowhere else to go.
+        const r = await trackLayerMask({
+          nodeId,
+          startCompTime: time,
+          endCompTime,
+          fps,
+          featureHalf,
+          searchHalf,
+          onProgress: (f) => {
+            store.getState().setProgress(f);
+            return store.getState().tracking;
+          },
+        });
+        store.getState().finishTracking(
+          null,
+          `Tracked ${r.vertices} mask vertices, wrote ${r.keyframes} mask keyframes (${r.status}).`,
+        );
+        return;
+      }
+      const pts = store.getState().points;
+      const r = await trackVideoLayerPoints({
         nodeId,
         startCompTime: time,
-        endCompTime: Math.max(time, durationSeconds - 1 / fps),
+        endCompTime,
         fps,
-        startX: p.x,
-        startY: p.y,
+        points: pts,
         featureHalf,
         searchHalf,
         onProgress: (f) => {
@@ -104,27 +164,10 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
           return store.getState().tracking; // cleared store = cancelled
         },
       });
-      const coasted = r.samples.filter((s) => s.coasted).length;
-      const measured = r.samples.length - coasted;
-      const avg =
-        measured > 0
-          ? r.samples.filter((s) => !s.coasted).reduce((a, s) => a + s.confidence, 0) / measured
-          : 0;
-      const outcome =
-        r.status === 'lost'
-          ? 'lost the feature — samples up to the loss are kept'
-          : r.status === 'cancelled'
-            ? 'cancelled'
-            : 'completed';
+      const coasted = r.tracks.flat().filter((s) => s.coasted).length;
       store.getState().finishTracking(
-        {
-          samples: r.samples,
-          sourceWidth: r.sourceWidth,
-          sourceHeight: r.sourceHeight,
-          status: r.status,
-        },
-        `Tracked ${r.samples.length} frames (${outcome}) · confidence ${avg.toFixed(2)}` +
-          (coasted > 0 ? ` · ${coasted} coasted` : ''),
+        { tracks: r.tracks, sourceWidth: r.sourceWidth, sourceHeight: r.sourceHeight, status: r.status },
+        summarize(r.tracks, r.status, coasted > 0 ? ` · ${coasted} coasted` : ''),
       );
     } catch (e) {
       store.getState().finishTracking(null, e instanceof Error ? e.message : String(e));
@@ -133,33 +176,75 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
 
   const onApply = (): void => {
     if (!result) return;
-    const n = applyTrackToLayer({
-      videoNodeId: nodeId,
-      targetNodeId: targetId,
-      samples: result.samples,
-      sourceWidth: result.sourceWidth,
-      sourceHeight: result.sourceHeight,
-      comp,
-    });
-    store.getState().finishTracking(
-      result,
-      n > 0 ? `Applied ${n} keyframes to “${targetName(targetId)}”.` : 'Nothing to apply.',
-    );
+    let n = 0;
+    let what = '';
+    if (mode === 'follow') {
+      n = applyTrackToLayer({
+        videoNodeId: nodeId,
+        targetNodeId: targetId,
+        samples: result.tracks[0] ?? [],
+        sourceWidth: result.sourceWidth,
+        sourceHeight: result.sourceHeight,
+        comp,
+      });
+      what = `position keyframes to “${targetName(targetId)}”`;
+    } else if (mode === 'stabilize') {
+      n = applyStabilizeToLayer({
+        videoNodeId: nodeId,
+        samples: result.tracks[0] ?? [],
+        sourceWidth: result.sourceWidth,
+        sourceHeight: result.sourceHeight,
+        comp,
+      });
+      what = 'stabilizing keyframes to this layer';
+    } else if (mode === 'corner') {
+      n = applyCornerPinTrack({
+        videoNodeId: nodeId,
+        targetNodeId: targetId,
+        tracks: result.tracks,
+        sourceWidth: result.sourceWidth,
+        sourceHeight: result.sourceHeight,
+        comp,
+      });
+      what = `corner-pin keyframes to “${targetName(targetId)}”`;
+    }
+    store.getState().finishTracking(result, n > 0 ? `Applied ${n} ${what}.` : 'Nothing to apply.');
   };
 
-  const targetName = (id: string): string =>
-    targets.find((t) => t.id === id)?.name || (id === nodeId ? 'this layer' : id);
+  const canTrack = mode === 'mask' ? maskPoints > 0 : points.length > 0;
+  const applyLabel =
+    mode === 'follow'
+      ? 'Apply as position keyframes'
+      : mode === 'stabilize'
+        ? 'Stabilize this layer'
+        : 'Pin target to corners';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <p style={noteStyle}>
-        Drag the track point on the footage to the feature to follow, then track from the playhead.
-      </p>
-      <InspectorRow label="Point">
-        <span style={noteStyle}>
-          {point ? `${point.x.toFixed(1)}, ${point.y.toFixed(1)} px` : '—'}
-        </span>
+      <InspectorRow label="Mode">
+        <select
+          style={selectStyle}
+          value={mode}
+          onChange={(e) => store.getState().setMode(e.target.value as TrackerMode, src.width, src.height)}
+        >
+          {(Object.keys(MODE_LABELS) as TrackerMode[]).map((m) => (
+            <option key={m} value={m}>{MODE_LABELS[m]}</option>
+          ))}
+        </select>
       </InspectorRow>
+      <p style={noteStyle}>{MODE_HINTS[mode]}</p>
+      {mode === 'mask' && maskPoints === 0 && (
+        <p style={noteStyle} role="status">
+          This layer has no mask — draw one with the mask tools first.
+        </p>
+      )}
+      {mode !== 'mask' && (
+        <InspectorRow label={points.length > 1 ? 'Points' : 'Point'}>
+          <span style={noteStyle}>
+            {points.map((p) => `${p.x.toFixed(0)},${p.y.toFixed(0)}`).join(' · ') || '—'}
+          </span>
+        </InspectorRow>
+      )}
       <InspectorRow label="Feature size">
         <select
           style={selectStyle}
@@ -182,27 +267,33 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
           ))}
         </select>
       </InspectorRow>
-      <Button size="sm" onClick={onTrack} disabled={tracking || !point}>
-        {tracking ? `Tracking… ${Math.round(progress * 100)}%` : 'Track (playhead → end)'}
+      <Button size="sm" onClick={onTrack} disabled={tracking || !canTrack}>
+        {tracking
+          ? `Tracking… ${Math.round(progress * 100)}%`
+          : mode === 'mask'
+            ? 'Track mask (playhead → end)'
+            : 'Track (playhead → end)'}
       </Button>
       {note && (
         <p style={noteStyle} role="status">
           {note}
         </p>
       )}
-      {result && result.samples.length > 1 && (
+      {result && mode !== 'mask' && (result.tracks[0]?.length ?? 0) > 1 && (
         <>
-          <InspectorRow label="Apply to">
-            <select style={selectStyle} value={targetId} onChange={(e) => setTargetId(e.target.value)}>
-              {targets.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.id === nodeId ? `${t.name || 'this layer'} (this layer)` : t.name || t.id}
-                </option>
-              ))}
-            </select>
-          </InspectorRow>
+          {(mode === 'follow' || mode === 'corner') && (
+            <InspectorRow label={mode === 'corner' ? 'Pin layer' : 'Apply to'}>
+              <select style={selectStyle} value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+                {targets.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.id === nodeId ? `${t.name || 'this layer'} (this layer)` : t.name || t.id}
+                  </option>
+                ))}
+              </select>
+            </InspectorRow>
+          )}
           <Button size="sm" onClick={onApply}>
-            Apply as position keyframes
+            {applyLabel}
           </Button>
         </>
       )}

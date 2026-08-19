@@ -67,14 +67,18 @@ storage layer.
   frame-by-frame stepped an ffmpeg fixture with pixel readback, and the
   render path's cache reported all 24 frames decoded for the composited
   clip. Still open: the tracking/rotoscoping column — now UN-gated.
-- **After Effects parity.** Point tracking SHIPPED 2026-08-20: Track Motion
-  on video layers (`src/core/tracking/` — NCC matching with Lucas-Kanade
-  sub-pixel refinement, anchor-template drift correction, occlusion coasting)
-  runs on the exact decoder and applies as position keyframes on any layer,
-  one undo step. Still open on that column: rotoscoping, multi-point/corner
-  tracks, stabilize mode. Beyond tracking: more of the effect set, richer
-  expression bindings. Open an issue for the specific gap you hit — that is
-  far more useful than a general "more parity" wish.
+- **After Effects parity.** The tracking column SHIPPED 2026-08-20, all four
+  modes: Track Motion on video layers (`src/core/tracking/` — NCC matching
+  with Lucas-Kanade sub-pixel refinement, anchor-template drift correction,
+  occlusion coasting) runs on the exact decoder, walks any number of points
+  through one decode pass, and applies as **Follow** (position keyframes on
+  any layer), **Stabilize** (inverse motion on the footage), **Corner pin**
+  (keyframes a Corner Pin effect on a target — screen replacement), or
+  **Track mask** (every mask vertex tracked, written as mask keyframes —
+  rotoscoping's first step). Still open on the column: a roto brush /
+  edge-aware masks, 2-point rotation+scale solves. Beyond tracking: more of
+  the effect set, richer expression bindings. Open an issue for the specific
+  gap you hit — that is far more useful than a general "more parity" wish.
 - **Timeline and graph-editor polish.** The graph editor is capable but not yet
   pleasant for dense compositions.
 - **Performance on large projects.** The engine handles high layer counts, but

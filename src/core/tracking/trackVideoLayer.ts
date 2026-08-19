@@ -30,7 +30,7 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { demuxMp4 } from '@core/video/mp4Demuxer';
 import { ExactVideoSource, webCodecsAvailable } from '@core/video/exactVideoSource';
 import { lumaFromRGBA, type LumaPlane } from './patchMatch';
-import { trackPoint, type TrackSample } from './tracker';
+import { trackPoints, type TrackSample } from './tracker';
 import { sourceDisplaySize } from './trackerSource';
 
 export interface CompTrackSample {
@@ -66,6 +66,19 @@ export interface VideoTrackResult {
   status: 'completed' | 'lost' | 'cancelled';
 }
 
+export interface MultiVideoTrackRequest extends Omit<VideoTrackRequest, 'startX' | 'startY'> {
+  /** Feature centres in source DISPLAY px at the START comp time. */
+  points: ReadonlyArray<{ x: number; y: number }>;
+}
+
+export interface MultiVideoTrackResult {
+  /** One comp-sample list per input point, same order. */
+  tracks: CompTrackSample[][];
+  sourceWidth: number;
+  sourceHeight: number;
+  status: 'completed' | 'lost' | 'cancelled';
+}
+
 /** Draw a decoded frame once and hand back its luma. One canvas, reused. */
 function makeLumaReader(width: number, height: number): (frame: CanvasImageSource) => LumaPlane {
   const canvas = document.createElement('canvas');
@@ -80,7 +93,7 @@ function makeLumaReader(width: number, height: number): (frame: CanvasImageSourc
   };
 }
 
-export async function trackVideoLayer(req: VideoTrackRequest): Promise<VideoTrackResult> {
+export async function trackVideoLayerPoints(req: MultiVideoTrackRequest): Promise<MultiVideoTrackResult> {
   if (!webCodecsAvailable()) {
     throw new Error('Tracking needs WebCodecs, which this runtime does not have.');
   }
@@ -133,12 +146,11 @@ export async function trackVideoLayer(req: VideoTrackRequest): Promise<VideoTrac
     const toCodedY = demuxed.codedHeight / display.height;
 
     const readLuma = makeLumaReader(demuxed.codedWidth, demuxed.codedHeight);
-    const result = await trackPoint({
+    const result = await trackPoints({
       frameAt: async (idx) => readLuma((await source.frameAt(idx)) as unknown as CanvasImageSource),
       fromFrame: srcFrom,
       toFrame: srcTo,
-      startX: req.startX * toCodedX,
-      startY: req.startY * toCodedY,
+      points: req.points.map((p) => ({ x: p.x * toCodedX, y: p.y * toCodedY })),
       featureHalf: req.featureHalf,
       searchHalf: req.searchHalf,
       onProgress: (done, total) => req.onProgress?.(done / total),
@@ -147,22 +159,25 @@ export async function trackVideoLayer(req: VideoTrackRequest): Promise<VideoTrac
     // Read the comp samples out of the source-frame walk. A comp frame whose
     // source frame the walk never reached (lost/cancelled early) is dropped —
     // a keyframe with no measurement behind it is not a keyframe.
-    const byFrame = new Map<number, TrackSample>();
-    for (const s of result.samples) byFrame.set(s.frame, s);
-    const samples: CompTrackSample[] = [];
-    for (let i = 0; i < compFrames.length; i++) {
-      const s = byFrame.get(srcOfComp[i]!);
-      if (!s) continue;
-      samples.push({
-        compTime: compFrames[i]! / req.fps,
-        x: s.x / toCodedX,
-        y: s.y / toCodedY,
-        confidence: s.confidence,
-        coasted: s.coasted,
-      });
-    }
+    const tracks: CompTrackSample[][] = result.tracks.map((trackSamples) => {
+      const byFrame = new Map<number, TrackSample>();
+      for (const s of trackSamples) byFrame.set(s.frame, s);
+      const samples: CompTrackSample[] = [];
+      for (let i = 0; i < compFrames.length; i++) {
+        const s = byFrame.get(srcOfComp[i]!);
+        if (!s) continue;
+        samples.push({
+          compTime: compFrames[i]! / req.fps,
+          x: s.x / toCodedX,
+          y: s.y / toCodedY,
+          confidence: s.confidence,
+          coasted: s.coasted,
+        });
+      }
+      return samples;
+    });
     return {
-      samples,
+      tracks,
       sourceWidth: display.width,
       sourceHeight: display.height,
       status: result.status,
@@ -170,4 +185,16 @@ export async function trackVideoLayer(req: VideoTrackRequest): Promise<VideoTrac
   } finally {
     source.close();
   }
+}
+
+/** One point — the multi-point drive with a party of one. */
+export async function trackVideoLayer(req: VideoTrackRequest): Promise<VideoTrackResult> {
+  const { startX, startY, ...rest } = req;
+  const r = await trackVideoLayerPoints({ ...rest, points: [{ x: startX, y: startY }] });
+  return {
+    samples: r.tracks[0] ?? [],
+    sourceWidth: r.sourceWidth,
+    sourceHeight: r.sourceHeight,
+    status: r.status,
+  };
 }

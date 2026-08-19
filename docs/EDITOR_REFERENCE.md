@@ -2009,9 +2009,43 @@ so every panel-imported video had no width/height/duration and
 `footageSourceOf` reported 0×0. Fixed in place; the tracker section was the
 first consumer strict enough to notice.
 
-Still open on this column: rotoscoping, multi-point and corner-pin tracks,
-stabilize mode, and `setVideoBaked` (Canvas2D-bake path) still seeks the
-element. Verification:
+The rest of the column landed the same day: `tracker.ts` grew `trackPoints`
+(N points through ONE decode walk — each frame decoded once, every live
+point matches against it; a lost point's track ends, the others walk on),
+`trackVideoLayerPoints` drives it, and three more apply paths joined
+`applyTrackToLayer`:
+
+- **Stabilize** (`applyStabilizeToLayer`): inverse motion on the video layer
+  itself, planned entirely against the ORIGINAL transform before writing
+  (the planExpressionBake discipline), correction converted to parent space
+  by differencing two `fromComp` points so a rotated parent bends the delta
+  correctly. Verified live: after applying, the tracked feature projected to
+  the SAME comp point at every sampled time — spread 0.0 in both axes.
+- **Corner pin** (`applyCornerPinTrack`): keyframes the target's Corner Pin
+  EFFECT (top-left-origin OFFSET space against `defaultCorners`) — the
+  effect is added with an EXPLICIT id before any `effect.<id>.<param>` track
+  is written (the addEffect-returns-void trap is documented at its
+  declaration), tracks created via `setKeyframes` directly because
+  `writeEffectParams` only keyframes params whose stopwatch is already on.
+  Verified live: 4 corners × 300 frames at confidence 1.00, 8 params
+  keyframed, quad stayed a rigid 24×24 square riding the target.
+- **Track mask** (`maskTrack.ts`): every vertex of the layer's mask becomes
+  a track point (one walk), and the result is written as `maskAnim`
+  keyframes through the EXISTING snapshot system (`readNodeMaskAt` is the
+  renderer's only entry), spliced so keyframes outside the tracked range
+  survive. Bezier handles travel rigidly with their vertex; a lost vertex
+  freezes (index-paired interpolation needs every keyframe to carry every
+  point). Like every other mask write, NOT in the undo history — mask state
+  lives on fx props, outside the animation diff. Verified live: 4 vertices ×
+  300 keyframes, displacement within a source pixel of ground truth.
+
+UI: `TrackMotionSection` gained a mode select (Follow / Stabilize / Corner
+pin / Track mask); `TrackPointOverlay` draws however many points the mode
+carries (corner mode: labelled TL/TR/BR/BL plus the quad outline).
+
+Still open on this column: a roto brush / edge-aware masks, 2-point
+rotation+scale solves, and `setVideoBaked` (Canvas2D-bake path) still seeks
+the element. Verification:
 decode discipline and cache policy are test-pinned, AND the real-machine
 pass ran 2026-08-19 in a real Chromium tab — frame-by-frame mode stepped
 `tiny-ipp.mp4` with actual pixel readback from the dialog canvas (non-blank,

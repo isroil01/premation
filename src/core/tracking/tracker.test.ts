@@ -1,4 +1,4 @@
-import { trackPoint } from './tracker';
+import { trackPoint, trackPoints } from './tracker';
 import type { LumaPlane } from './patchMatch';
 
 function plane(width: number, height: number, f: (x: number, y: number) => number): LumaPlane {
@@ -151,6 +151,45 @@ describe('trackPoint', () => {
     });
     expect(r.status).toBe('cancelled');
     expect(r.samples.length).toBeLessThanOrEqual(6);
+  });
+
+  it('tracks several points through ONE walk, each with its own life', async () => {
+    // Two blobs moving in opposite directions; the second vanishes at frame 5
+    // and never returns. The first must complete untouched; the second must
+    // die after its coast budget while the walk keeps going.
+    const twoBlobs = (f: number) => (x: number, y: number): number => {
+      const a = Math.exp(-((x - (20 + 2 * f)) ** 2 + (y - 24) ** 2) / (2 * 2.5 ** 2));
+      const bAmp = f >= 5 ? 0 : 0.6;
+      const b = Math.exp(-((x - (76 - 2 * f)) ** 2 + (y - 72) ** 2) / (2 * 2.5 ** 2));
+      const texture = 0.05 * Math.sin(x * 1.3) * Math.cos(y * 0.7);
+      return 0.3 + 0.6 * a + bAmp * b + texture;
+    };
+    const decoded: number[] = [];
+    const r = await trackPoints({
+      frameAt: (f) => {
+        decoded.push(f);
+        return Promise.resolve(plane(96, 96, twoBlobs(f)));
+      },
+      fromFrame: 0,
+      toFrame: 14,
+      points: [
+        { x: 20, y: 24 },
+        { x: 76, y: 72 },
+      ],
+      featureHalf: 6,
+      searchHalf: 6,
+      maxCoastFrames: 3,
+    });
+    expect(r.status).toBe('completed'); // point A carried the walk to the end
+    // Each frame decoded exactly once for BOTH points.
+    expect(decoded).toEqual(Array.from({ length: 15 }, (_, i) => i));
+    const [a, b] = r.tracks;
+    expect(a!).toHaveLength(15);
+    const lastA = a![a!.length - 1]!;
+    expect(Math.abs(lastA.x - (20 + 2 * 14))).toBeLessThan(0.5);
+    // Point B died: samples stop after the coast budget ran out.
+    expect(b!.length).toBeLessThan(15);
+    expect(b![b!.length - 1]!.coasted).toBe(true);
   });
 
   it('pulls frames strictly one at a time, in order', async () => {
