@@ -26,6 +26,7 @@ import {
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
+import { exactVideoFrames } from './exactVideoFrames';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
 import { layerIsBaked } from '@core/effects/effectBake';
@@ -636,25 +637,21 @@ export class MotionRendererBackend implements RenderBackend {
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
                 this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid);
               } else if (layer.frameBlend) {
-                // Frame Mix: feed both bracket frames. Cache hits upload the
-                // exact decoded canvases; misses queue a decode (onChange →
-                // re-render) and fall back to element-seeked frames near each
-                // bracket time — nearest-frame until the cache lands.
+                // Frame Mix: feed both bracket frames. The exact decoder is
+                // asked first; then the legacy seek cache; misses queue a
+                // decode (AnimationChanged → re-render) and fall back to
+                // element-seeked frames near each bracket time.
                 const ka = `vfa:${layer.id}`;
                 const kb = `vfb:${layer.id}`;
                 activeKeys.add(ka);
                 activeKeys.add(kb);
-                const fa = viewportVideoFrames.get(layer.src, layer.frameBlend.a);
-                const fb = viewportVideoFrames.get(layer.src, layer.frameBlend.b);
-                if (fa) this.textures!.setFrame(ka, fa, `t:${layer.frameBlend.a}`);
-                else this.textures!.setVideo(ka, layer.src, layer.frameBlend.a);
-                if (fb) this.textures!.setFrame(kb, fb, `t:${layer.frameBlend.b}`);
-                else this.textures!.setVideo(kb, layer.src, layer.frameBlend.b);
+                this.feedVideoFrame(ka, layer.src, layer.frameBlend.a);
+                this.feedVideoFrame(kb, layer.src, layer.frameBlend.b);
               } else {
                 const key = `asset:${layer.id}`;
                 activeKeys.add(key);
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
-                this.textures!.setVideo(key, layer.src, targetTime);
+                this.feedVideoFrame(key, layer.src, targetTime, /* plain */ true);
               }
             } else if (layer.kind === 'text') {
               const key = `text:${layer.id}`;
@@ -879,10 +876,42 @@ export class MotionRendererBackend implements RenderBackend {
   }
 
   takeMediaWaits(): Promise<void>[] {
-    if (this.textures?.takeMediaWaits) {
-      return this.textures.takeMediaWaits();
+    // The exact decoder's inflight work joins the legacy seek waits so the
+    // export convergence loop also settles onto exact frames — an exported
+    // frame must never be the `exact: false` nearest-neighbour a live
+    // repaint would have corrected a tick later.
+    const legacy = this.textures?.takeMediaWaits ? this.textures.takeMediaWaits() : [];
+    const exact = exactVideoFrames.waits();
+    return exact.length > 0 ? [...legacy, ...exact] : legacy;
+  }
+
+  /**
+   * Feed one video texture key for `timeSec`: exact decoded frame when the
+   * WebCodecs path has one, legacy paths otherwise.
+   *
+   * Fallback order is exact → (frame-blend only) legacy seek cache → live
+   * element seek. When the legacy element path is used, any stale frame
+   * entry under the key must be released — frame entries shadow video
+   * entries in the texture lookup, so a leftover exact frame would keep
+   * winning after the source went `unavailable`.
+   */
+  private feedVideoFrame(key: string, src: string, timeSec: number, plain = false): void {
+    const exact = exactVideoFrames.get(src, timeSec);
+    if (exact.state === 'frame') {
+      // Signature is the presentation index: a repeated render of the same
+      // frame skips the re-upload, a landed decode (new index) re-uploads.
+      this.textures!.setFrame(key, exact.canvas, `xv:${exact.presIndex}`);
+      return;
     }
-    return [];
+    if (!plain) {
+      const legacy = viewportVideoFrames.get(src, timeSec);
+      if (legacy) {
+        this.textures!.setFrame(key, legacy, `t:${timeSec}`);
+        return;
+      }
+    }
+    this.textures!.releaseFrame?.(key);
+    this.textures!.setVideo(key, src, timeSec);
   }
 
   dispose(): void {
@@ -898,6 +927,7 @@ export class MotionRendererBackend implements RenderBackend {
     // hidden <video> and frame canvases alive for the whole page lifetime.
     this.textures?.dispose();
     viewportVideoFrames.clear();
+    exactVideoFrames.clear();
     // Before the renderer goes. The subscription outlives this object
     // otherwise — the effect registry is module state, so a stale listener
     // would keep compiling shaders into a registry attached to a disposed

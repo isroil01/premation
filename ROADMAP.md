@@ -53,15 +53,20 @@ storage layer.
 
 ## Next
 
-- **A real video decoder — subsystem SHIPPED 2026-08-19, renderer integration
-  open.** `src/core/video/` is the WebCodecs path: mp4box demux (pure JS, so
-  the demux and the GOP/B-frame index are jest-pinned against real ffmpeg
+- **A real video decoder — subsystem AND renderer swap SHIPPED 2026-08-19.**
+  `src/core/video/` is the WebCodecs path: mp4box demux (pure JS, so the
+  demux and the GOP/B-frame index are jest-pinned against real ffmpeg
   fixtures), a frame index answering "which samples decode frame N", and
-  `ExactVideoSource` (feed key→target, flush, cache the GOP). First consumer:
-  the footage preview's Frame-by-frame mode. Still open, in order: a
-  real-machine visual pass on that mode, then swapping `videoFrameCache` /
-  the render path onto it — the tracking/rotoscoping column stays gated on
-  THAT swap, not on the subsystem existing.
+  `ExactVideoSource` (feed key→target, flush, cache the GOP). Consumers: the
+  footage preview's Frame-by-frame mode, and the RENDER PATH —
+  `exactVideoFrames.ts` serves exact frames to viewport and export first,
+  with the element-seek path (`videoFrameCache`) as the permanent fallback
+  tier for WebM/odd containers, oversized files and WebCodecs-less runtimes.
+  Export exactness rides the existing `takeMediaWaits` convergence loop.
+  Real-machine visual pass: DONE the same day, in a real Chromium tab —
+  frame-by-frame stepped an ffmpeg fixture with pixel readback, and the
+  render path's cache reported all 24 frames decoded for the composited
+  clip. Still open: the tracking/rotoscoping column — now UN-gated.
 - **After Effects parity.** Rotoscoping, more of the effect set, richer
   expression bindings. Open an issue for the specific gap you hit — that is far
   more useful than a general "more parity" wish.

@@ -127,7 +127,10 @@ function useExactStepper(asset: ImportedAsset): {
         // Land where the player was paused, not back at 0 — stepping exists
         // to inspect the moment you were just looking at.
         const t = videoRef.current?.currentTime ?? 0;
-        show(src, src.frameIndexAt(Math.round(t * 1e6)));
+        // +1µs: frame starts in the index are fractional microseconds, so an
+        // integer-µs query at an exact boundary (t = N/fps) lands just below
+        // frame N's start and resolves N-1. Same bias as exactVideoFrames.
+        show(src, src.frameIndexAt(Math.round(t * 1e6) + 1));
       })
       .catch((e: unknown) => {
         setNote(`Frame-by-frame unavailable: ${e instanceof Error ? e.message : String(e)}`);

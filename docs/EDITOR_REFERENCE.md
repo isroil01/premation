@@ -1957,7 +1957,38 @@ pads the LAST sample's duration by that same delay (the duration test asserted
 
 First consumer: footage preview's Frame-by-frame mode (`videoRef` hands the
 pause point to the exact path, so stepping starts where you were looking).
-NOT yet consumed by: the renderer (`videoFrameCache` header says why, in
-place), export, tracking. Verification honesty: decode discipline is
-test-pinned; actual decoded pixels need the user's machine — jsdom has no
-WebCodecs and the automation pane cannot composite.
+
+### Corrected again 2026-08-19 — the renderer swap landed
+
+"NOT yet consumed by: the renderer, export, tracking" outlived its truth the
+same day it was written. `src/core/rendering/exactVideoFrames.ts` is the
+renderer's exact tier: same synchronous `get()` + AnimationChanged-repaint
+contract as `videoFrameCache`, backed by `demuxMp4` → `ExactVideoSource`,
+serving canvases keyed by PRESENTATION INDEX (the upload signature, so a
+repeated render never re-uploads). `MotionRendererBackend.feedVideoFrame`
+asks exact → legacy seek cache (frame blend only) → live element seek, and
+releases any stale frame entry before an element fallback because frame
+entries shadow video entries in `getTexture`. Export exactness: the cache's
+inflight loads/decodes are merged into `takeMediaWaits`, so the existing
+convergence loop settles onto exact frames — an `exact: false`
+nearest-neighbour can paint the viewport for a tick but can never ship in an
+export. Fallback is sticky per source (`unavailable`): WebM/odd-MOV,
+files over the in-memory demux cap, unsupported codecs and WebCodecs-less
+runtimes stay on the element path for the whole session, because flapping
+between exact and approximate frames on one source looks like a bug.
+
+One boundary fact worth keeping (it cost a test failure to learn): frame
+starts in the index are FRACTIONAL microseconds (cts/timescale × 1e6), while
+a rounded integer-µs query at an exact frame boundary (t = N/fps) lands just
+below them and resolves the previous frame. The cache biases its query +1µs —
+three orders of magnitude under any frame duration, exactly enough to make
+the timeline's own playhead times resolve the frame they name.
+
+Still open on this column: tracking/rotoscoping itself (now un-gated), and
+`setVideoBaked` (Canvas2D-bake path) still seeks the element. Verification:
+decode discipline and cache policy are test-pinned, AND the real-machine
+pass ran 2026-08-19 in a real Chromium tab — frame-by-frame mode stepped
+`tiny-ipp.mp4` with actual pixel readback from the dialog canvas (non-blank,
+content drifting across frames, timestamps exact), and after Add-at-Playhead
+the render cache reported `ready` with all 24 frames decoded
+(294,912 bytes — exactly 24 × 64×48×4) and zero console errors.

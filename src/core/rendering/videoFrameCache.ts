@@ -17,14 +17,17 @@
  * relies on (`onseeked` → `AnimationChanged` → re-render), so it introduces no
  * new asynchrony contract; it just remembers what it decoded.
  *
- * Deliberately NOT WebCodecs — CORRECTED 2026-08-19: the subsystem this
- * paragraph said would be needed now EXISTS (`@core/video`: mp4box demux →
- * frame index → `ExactVideoSource`), with the footage preview's frame-by-frame
- * mode as its first consumer. This cache stays on the HTMLVideoElement path
- * ON PURPOSE for now: it feeds the render loop, and swapping the renderer's
- * decode path is gated on the exact path surviving a real-machine visual pass
- * first — approximate-but-proven beats exact-but-unverified in the pixel
- * pipeline. When that pass lands, this cache is the second consumer.
+ * Deliberately NOT WebCodecs — CORRECTED 2026-08-19 (twice): the subsystem
+ * this paragraph said would be needed now EXISTS (`@core/video`: mp4box demux
+ * → frame index → `ExactVideoSource`), and later the same day the renderer
+ * swap LANDED: `exactVideoFrames.ts` is the render path's first choice for
+ * video pixels (see `MotionRendererBackend.feedVideoFrame`). This cache is
+ * now the FALLBACK tier, and that is a permanent role, not a leftover: the
+ * exact path only speaks WebCodecs + in-memory MP4 demux, so WebM/odd-MOV
+ * sources, files too large to demux in memory, unsupported codecs and
+ * WebCodecs-less runtimes all still render through this element-seek path.
+ * Frame blending asks this cache after the exact cache and before a raw
+ * element seek.
  *
  * FRAME RATE — RESOLVED 2026-07-30; this block used to read "KNOWN LIMIT — we
  * do not know the source's frame rate" and it is kept, corrected, because that

@@ -1141,6 +1141,20 @@ export class AppTextureProvider implements TextureProvider {
   }
 
   /**
+   * Free the frame entry under `key`, if any. Frame entries SHADOW video
+   * entries in `getTexture` (they must — an exact decoded frame beats a
+   * seeked element), so a caller that switches a key from `setFrame` back to
+   * `setVideo` has to release the frame first or the stale exact frame keeps
+   * winning the lookup forever.
+   */
+  releaseFrame(key: string): void {
+    const existing = this.frameEntries.get(key);
+    if (!existing) return;
+    this.resources.freeTexture(existing.poolKey);
+    this.frameEntries.delete(key);
+  }
+
+  /**
    * Register/refresh a particle emitter's rasterized field for this frame.
    * The simulation is a pure function of (config, time) — see particleSim —
    * so the field is deterministic at any scrub time; the content signature
