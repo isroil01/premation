@@ -95,6 +95,10 @@ import type { TimelineKeyframeRef } from '@layout/Timeline';
 import type { KeyId, NodeId } from '@app-types/common';
 import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
+import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
+import { useAssetStore } from '@stores/assetStore';
+import { customPrompt } from '@components/Modal';
 
 /**
  * The value a property HAS at `layerT`: the sampled keyframe when the property
@@ -1136,9 +1140,97 @@ function EditorShellInner(): JSX.Element {
   };
   const handleClipContextMenu = (clipId: string, x: number, y: number): void => {
     const c = getTimelineController();
+    const layer = c.timeline.getLayer(clipId);
+    const nodeId = layer?.sourceId;
+    const node = nodeId ? defaultSceneGraph.getNode(nodeId) : null;
+    const tComp = node?.components.find((comp) => comp.type === 'Transform');
+    const assetId = (tComp?.props?.assetId as string | undefined) ?? (tComp?.props?.__assetId as string | undefined);
+    const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : null;
+    const time = nodeId ? getNodeLayerTime(nodeId) : null;
+
     openContextMenu(x, y, [
-      { id: 'split', label: 'Split at playhead', onSelect: () => c.splitClip(clipId, c.currentSeconds) },
-      { id: 'delete', label: 'Delete clip', danger: true, onSelect: () => c.deleteLayer(clipId) },
+      {
+        id: 'split',
+        label: 'Split Layer at Playhead (Ctrl+Shift+D)',
+        onSelect: () => {
+          c.splitClip(clipId, c.currentSeconds);
+          bumpScene();
+        },
+      },
+      {
+        id: 'trim-in',
+        label: 'Trim In to Playhead (Alt+[)',
+        onSelect: () => {
+          if (nodeId) c.trimSelectedStartToPlayhead([nodeId]);
+          else c.trimClipTo(clipId, 'start', c.currentSeconds);
+          bumpScene();
+        },
+      },
+      {
+        id: 'trim-out',
+        label: 'Trim Out to Playhead (Alt+])',
+        onSelect: () => {
+          if (nodeId) c.trimSelectedEndToPlayhead([nodeId]);
+          else c.trimClipTo(clipId, 'end', c.currentSeconds);
+          bumpScene();
+        },
+      },
+      { id: 'sep-time', separator: true },
+      {
+        id: 'time-stretch',
+        label: 'Time Stretch…',
+        disabled: !nodeId,
+        onSelect: async () => {
+          if (!nodeId || !time) return;
+          const raw = await customPrompt('Time Stretch', 'Enter new stretch percentage (100% = original speed):', String(time.stretch));
+          if (raw !== null) {
+            const parsed = parseFloat(raw);
+            if (!isNaN(parsed) && parsed >= 1 && parsed <= 1000) {
+              updateNodeLayerTime(nodeId, { stretch: parsed });
+              bumpScene();
+            }
+          }
+        },
+      },
+      {
+        id: 'time-reverse',
+        label: time?.reverse ? 'Restore Forward Playback' : 'Time-Reverse Layer',
+        disabled: !nodeId,
+        onSelect: () => {
+          if (!nodeId || !time) return;
+          updateNodeLayerTime(nodeId, { reverse: !time.reverse });
+          bumpScene();
+        },
+      },
+      {
+        id: 'freeze-frame',
+        label: time?.freeze ? 'Unfreeze Frame' : 'Freeze Frame at Playhead',
+        disabled: !nodeId,
+        onSelect: () => {
+          if (!nodeId || !time) return;
+          if (time.freeze) {
+            updateNodeLayerTime(nodeId, { freeze: false });
+          } else {
+            const fps = c.timeline.getFrameRate().fps;
+            const clipStartSec = layer ? layer.start / fps : 0;
+            const freezeAt = Math.max(0, c.currentSeconds - clipStartSec);
+            updateNodeLayerTime(nodeId, { freeze: true, freezeTime: freezeAt });
+          }
+          bumpScene();
+        },
+      },
+      ...(asset
+        ? [
+            { id: 'sep-footage', separator: true },
+            {
+              id: 'interpret-footage',
+              label: 'Interpret Footage… (Ctrl+Alt+G)',
+              onSelect: () => openInterpretFootage(asset),
+            },
+          ]
+        : []),
+      { id: 'sep-del', separator: true },
+      { id: 'delete', label: 'Delete Clip (Del)', danger: true, onSelect: () => c.deleteLayer(clipId) },
     ]);
   };
 

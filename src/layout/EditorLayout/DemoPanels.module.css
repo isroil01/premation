@@ -1213,9 +1213,8 @@
 }
 
 /* ── Assets: footage readout ─────────────────────────────────────────
-   Pinned under the list, one row: name on the left, the facts on the right.
-   Same tokens as the rows above it so it reads as part of the panel, with a
-   top border so it reads as a FOOTER rather than another row. */
+   Pinned under the list or as a header card: name on the left, facts on the right.
+   Same tokens as the rows above it so it reads as part of the panel. */
 .assetMetaFooter {
   display: flex;
   align-items: center;
@@ -1242,3 +1241,104 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* ── Assets: AE Top Footage Header Card ────────────────────────────── */
+.assetHeaderCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.assetHeaderThumb {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.assetHeaderThumbImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.assetHeaderDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.assetHeaderName {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assetHeaderFacts {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Assets: AE Bottom Action Dock ────────────────────────────────── */
+.assetBottomDock {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  flex: 0 0 auto;
+}
+
+.dockBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.dockBtn:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.dockBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.dockBtnDropActive {
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+

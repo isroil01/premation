@@ -69,6 +69,7 @@ import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
 import { openFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -566,6 +567,7 @@ export function AssetsPanel(): JSX.Element {
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
   /** Off by default: the shelf is the user's imports, not the app's output. */
   const [showDerived, setShowDerived] = useState(false);
+  const [dockCompDropActive, setDockCompDropActive] = useState(false);
 
   /** Anchor for Shift-range selection — the last row clicked without Shift. */
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
@@ -812,6 +814,12 @@ export function AssetsPanel(): JSX.Element {
         disabled: many,
         onSelect: () => openFootagePreview(asset),
       },
+      {
+        id: 'interpret-footage',
+        label: 'Interpret Footage… (Ctrl+Alt+G)',
+        disabled: many,
+        onSelect: () => openInterpretFootage(asset),
+      },
       // Offered ONLY when exactly one image/video layer is selected — an entry
       // that is always present and usually fails teaches people not to open
       // the menu. Keyframes, effects and masks on the layer survive; only the
@@ -926,6 +934,10 @@ export function AssetsPanel(): JSX.Element {
   /** Asset ids in the order they are DRAWN — what Shift-range walks over. */
   const orderedAssetIds = rows.filter((r) => r.kind === 'asset').map((r) => r.key);
 
+  const singleSelectedAsset = selectedAssetIds.size === 1
+    ? assets.find((x) => x.id === [...selectedAssetIds][0]) ?? null
+    : null;
+
   return (
     <Panel
       id="assets"
@@ -946,92 +958,60 @@ export function AssetsPanel(): JSX.Element {
         />
       </div>
 
-      <div className={styles.assetTools}>
-        <button type="button" className={styles.toolBtnPrimary} onClick={() => fileInputRef.current?.click()} title="Import media files">
-          <Icon name="upload" size="sm" /> Import
-        </button>
-        <button type="button" className={styles.toolBtn} onClick={() => folderInputRef.current?.click()} title="Import a folder (keeps its structure)">
-          <Icon name="folder-open" size="sm" /> Folder
-        </button>
-        <button type="button" className={styles.toolBtn} onClick={handleNewFolder} title="New folder">
-          <Icon name="folder-plus" size="sm" /> New
-        </button>
-        {/*
-          Only rendered when there is something to reveal. A permanent toggle
-          for a category most projects never produce spends toolbar width
-          explaining a concept the user has not met — and once they have met it,
-          the count is the part that makes it make sense.
-        */}
-        {derivedCount > 0 && (
-          <button
-            type="button"
-            className={showDerived ? styles.toolBtnPrimary : styles.toolBtn}
-            onClick={() => setShowDerived((v) => !v)}
-            title={
-              showDerived
-                ? 'Hide generated images (duplicates and rasterized copies)'
-                : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
-            }
-          >
-            <Icon name="sparkles" size="sm" /> {derivedCount}
-          </button>
-        )}
-        <input
-          type="file"
-          ref={fileInputRef}
-          className={styles.fileInput}
-          multiple
-          accept="image/*,video/*,audio/*"
-          onChange={handleFileChange}
-        />
-        {/* webkitdirectory lets the user pick a whole folder to import (non-standard
-            attrs spread as any — widely supported in Chromium/Electron). */}
-        <input
-          type="file"
-          ref={folderInputRef}
-          className={styles.fileInput}
-          multiple
-          onChange={handleFolderChange}
-          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-        />
-      </div>
+      {/* AE Top Footage Header Card — shown when a single asset is selected */}
+      {singleSelectedAsset && (() => {
+        const m = singleSelectedAsset.metadata ?? {};
+        const parts: string[] = [];
+        if (m.width && m.height) parts.push(`${Math.round(m.width * (singleSelectedAsset.interpret?.par ?? 1))}×${m.height}`);
+        if (m.duration && m.duration > 0) parts.push(`${m.duration.toFixed(2)}s`);
+        if (m.fps && m.fps > 0) parts.push(`${m.fps % 1 === 0 ? m.fps : m.fps.toFixed(3)} fps`);
+        if (m.hasAudioTrack) parts.push('audio');
+        parts.push(formatBytes(singleSelectedAsset.size));
 
-      {/*
-        The selection bar. Present only while something is selected.
+        return (
+          <div className={`${styles.assetHeaderCard} ${styles.assetMetaFooter}`} data-asset-meta="">
+            <div className={styles.assetHeaderThumb}>
+              {singleSelectedAsset.thumbSrc ? (
+                <img src={singleSelectedAsset.thumbSrc} alt={singleSelectedAsset.name} className={styles.assetHeaderThumbImg} />
+              ) : (
+                <Icon
+                  name={ASSET_TYPE_ICON[singleSelectedAsset.type] ?? 'file'}
+                  size="md"
+                  className={`${styles.assetGlyph} ${ASSET_TYPE_CLASS[singleSelectedAsset.type] ?? styles.assetGlyphFile}`}
+                />
+              )}
+            </div>
+            <div className={styles.assetHeaderDetails}>
+              <span className={styles.assetHeaderName} title={singleSelectedAsset.name}>
+                {singleSelectedAsset.name}
+              </span>
+              <span className={styles.assetHeaderFacts} title={parts.join(' · ')}>
+                {parts.join(' · ')}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
-        This panel deliberately has no per-row delete — a destructive target
-        that sits permanently under the cursor eventually gets hit by accident,
-        which is why those were removed in favour of right-click. A bar that
-        appears only once a selection exists keeps that property: it is not
-        under any row, it cannot be reached without first selecting, and it
-        makes the count visible, which is the number the confirm is about.
-      */}
-      {selectedAssetIds.size > 0 && (
-        <div className={styles.assetSelectionBar}>
-          <span className={styles.assetSelectionCount}>
-            {selectedAssetIds.size} selected
-          </span>
-          <button
-            type="button"
-            className={styles.toolBtn}
-            onClick={() => { setSelectedAssetIds(new Set()); setSelectionAnchor(null); }}
-          >
-            Clear
-          </button>
-          <button
-            type="button"
-            className={styles.toolBtnDanger}
-            onClick={() => { void deleteSelectedAssets(); }}
-            title={`Delete ${selectedAssetIds.size} selected asset${selectedAssetIds.size === 1 ? '' : 's'} (Del)`}
-          >
-            <Icon name="trash" size="sm" /> Delete
-          </button>
-        </div>
-      )}
+      {/* Hidden file inputs for media and folder imports */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        className={styles.fileInput}
+        multiple
+        accept="image/*,video/*,audio/*"
+        onChange={handleFileChange}
+      />
+      <input
+        type="file"
+        ref={folderInputRef}
+        className={styles.fileInput}
+        multiple
+        onChange={handleFolderChange}
+        {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+      />
 
-      {/* Column headings, as in Explorer's details view and AE's project panel.
-          Rendered once above the list rather than repeated per row, which is
-          what lets Type and Size line up into columns you can scan down. */}
+      {/* Column headings, as in Explorer's details view and AE's project panel */}
       <div className={styles.assetHead}>
         <span className={styles.assetHeadName}>Name</span>
         <span className={styles.assetHeadType}>Type</span>
@@ -1040,26 +1020,12 @@ export function AssetsPanel(): JSX.Element {
 
       {/*
         Del deletes the selection, Ctrl/Cmd+A takes all of it, Escape drops it.
-
-        `tabIndex` is what makes this reachable at all — the keys are bound
-        HERE rather than on the window because the app already binds Delete to
-        removing the selected LAYERS. A global handler would have to guess
-        which selection the user meant, and would guess wrong whenever both
-        have one; scoping it to the focused panel means the question never
-        arises.
-
-        `data-shortcut-claim` is what makes the binding actually FIRE.
-        `ShortcutManager` listens on window in the capture phase and stops
-        propagation on any chord it matches, so without this the handler below
-        is unreachable for Delete and Ctrl+A — correct code that never runs.
-        Only these three chords are claimed; everything else still reaches the
-        global command, so Space keeps playing from here.
       */}
       <div
         className={styles.body}
         style={{ padding: '2px 0' }}
         tabIndex={0}
-        data-shortcut-claim="delete backspace Ctrl+a Meta+a"
+        data-shortcut-claim="delete backspace Ctrl+a Meta+a Ctrl+Alt+g Meta+Alt+g"
         onKeyDown={(e) => {
           if (e.key === 'Delete' || e.key === 'Backspace') {
             if (selectedAssetIds.size === 0) return;
@@ -1067,6 +1033,14 @@ export function AssetsPanel(): JSX.Element {
             e.stopPropagation();
             void deleteSelectedAssets();
             return;
+          }
+          if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'g' || e.key === 'G')) {
+            if (singleSelectedAsset) {
+              e.preventDefault();
+              e.stopPropagation();
+              openInterpretFootage(singleSelectedAsset);
+              return;
+            }
           }
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
             e.preventDefault();
@@ -1104,9 +1078,6 @@ export function AssetsPanel(): JSX.Element {
                     if (renamingId === row.folder.id) return;
                     setCurrentFolderId(row.folder.id);
                     toggleFolder(row.folder.id);
-                    // Selecting a folder is still a selection change: leaving a
-                    // file highlighted while browsing elsewhere is what made the
-                    // old panel look like everything was selected at once.
                     setSelectedAssetIds(new Set());
                     setSelectionAnchor(null);
                   }}
@@ -1125,9 +1096,6 @@ export function AssetsPanel(): JSX.Element {
                     size="sm"
                     className={styles.assetTwisty}
                   />
-                  {/* No wrapper around the glyph. The bordered tile that used to
-                      sit here made every row look like a card in a list of
-                      cards; a file row is a line of text with an icon on it. */}
                   <Icon name={expandedFolders.has(row.folder.id) ? 'folder-open' : 'folder'} size="md" className={styles.assetGlyphFolder} />
                   {renamingId === row.folder.id ? (
                     <input
@@ -1144,9 +1112,6 @@ export function AssetsPanel(): JSX.Element {
                   ) : (
                     <span className={styles.assetRowName}>{row.folder.name}</span>
                   )}
-                  {/* No item count. It was a number that changed as you worked
-                      and that nobody acts on — the contents are one click away
-                      and now visible in place. */}
                   <span className={styles.assetRowType}>Folder</span>
                   <span className={styles.assetRowSize} />
                 </div>
@@ -1162,18 +1127,10 @@ export function AssetsPanel(): JSX.Element {
                   onDoubleClick={() => openFootagePreview(row.asset)}
                   onContextMenu={(e) => openAssetMenu(row.asset, e)}
                   onDragStart={(e) => {
-                    // Folder-move (this panel) reads text/asset-id; a canvas drop
-                    // reads the typed payload.
                     e.dataTransfer.setData('text/asset-id', row.asset.id);
                     setCanvasDrag(e, { kind: 'asset', assetId: row.asset.id });
                   }}
                 >
-                  {/* A TYPE icon, not a thumbnail. Thumbnails made every row a
-                      different height's worth of visual weight, decoded media
-                      just to draw a 16px square, and told you least about the
-                      files that look alike — which is most of a real library.
-                      Explorer and AE both show the kind, and the kind is what
-                      you scan for. */}
                   <Icon
                     name={ASSET_TYPE_ICON[row.asset.type] ?? 'file'}
                     size="md"
@@ -1189,29 +1146,100 @@ export function AssetsPanel(): JSX.Element {
         )}
       </div>
 
-      {/* The footage readout, as AE's project panel has it: select a clip and
-          the panel answers "what IS this" — pixels, length, rate — without a
-          dialog. One selection only: a summary of nine files answers nothing.
-          fps is shown only when a real probe filled it in; the browser cannot
-          report a video's rate and printing the comp's here would be a lie
-          wearing units (see ImportedAsset.metadata.fps). */}
-      {selectedAssetIds.size === 1 && (() => {
-        const sel = assets.find((x) => x.id === [...selectedAssetIds][0]);
-        if (!sel) return null;
-        const m = sel.metadata ?? {};
-        const parts: string[] = [];
-        if (m.width && m.height) parts.push(`${Math.round(m.width * (sel.interpret?.par ?? 1))}×${m.height}`);
-        if (m.duration && m.duration > 0) parts.push(`${m.duration.toFixed(2)}s`);
-        if (m.fps && m.fps > 0) parts.push(`${m.fps % 1 === 0 ? m.fps : m.fps.toFixed(3)} fps`);
-        if (m.hasAudioTrack) parts.push('audio');
-        parts.push(formatBytes(sel.size));
-        return (
-          <div className={styles.assetMetaFooter} data-asset-meta="">
-            <span className={styles.assetMetaName} title={sel.name}>{sel.name}</span>
-            <span className={styles.assetMetaFacts}>{parts.join(' · ')}</span>
-          </div>
-        );
-      })()}
+      {/* AE Project Bottom Action Dock */}
+      <div className={styles.assetBottomDock}>
+        <button
+          type="button"
+          className={`${styles.dockBtn}${dockCompDropActive ? ` ${styles.dockBtnDropActive}` : ''}`}
+          disabled={!singleSelectedAsset || singleSelectedAsset.type === 'audio'}
+          title="Create New Composition from Footage (or drag & drop footage here)"
+          onClick={() => {
+            if (singleSelectedAsset) void createCompositionFromFootage(singleSelectedAsset);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDockCompDropActive(true);
+          }}
+          onDragLeave={() => setDockCompDropActive(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDockCompDropActive(false);
+            const assetId = e.dataTransfer.getData('text/asset-id');
+            const dropped = assets.find((a) => a.id === assetId);
+            if (dropped && dropped.type !== 'audio') {
+              void createCompositionFromFootage(dropped);
+            }
+          }}
+        >
+          <Icon name="component" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          title="New Folder"
+          onClick={handleNewFolder}
+        >
+          <Icon name="folder-plus" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          title="Import Folder (keeps folder structure)…"
+          onClick={() => folderInputRef.current?.click()}
+        >
+          <Icon name="folder-open" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          title="Import Media Files…"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Icon name="upload" size="sm" />
+        </button>
+
+        {derivedCount > 0 && (
+          <button
+            type="button"
+            className={`${styles.dockBtn}${showDerived ? ` ${styles.dockBtnDropActive}` : ''}`}
+            onClick={() => setShowDerived((v) => !v)}
+            title={
+              showDerived
+                ? 'Hide generated images (duplicates and rasterized copies)'
+                : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
+            }
+          >
+            <Icon name="sparkles" size="sm" />
+          </button>
+        )}
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          disabled={!singleSelectedAsset}
+          title="Interpret Footage… (Ctrl+Alt+G)"
+          onClick={() => {
+            if (singleSelectedAsset) openInterpretFootage(singleSelectedAsset);
+          }}
+        >
+          <Icon name="sliders-h" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          disabled={selectedAssetIds.size === 0}
+          title={`Delete Selected Asset${selectedAssetIds.size > 1 ? 's' : ''} (Del)`}
+          onClick={() => {
+            void deleteSelectedAssets();
+          }}
+        >
+          <Icon name="trash" size="sm" />
+        </button>
+      </div>
     </Panel>
   );
 }
