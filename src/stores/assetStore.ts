@@ -674,7 +674,40 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
               // Downscaled preview so the panel doesn't decode full-res originals.
               thumb = await makeImageThumb(file);
               if (thumb) asset.thumbSrc = URL.createObjectURL(thumb);
+            } else if (type === 'video') {
+              // Same element pass as addAsset. This path skipped it for years,
+              // so every PANEL-imported video (vs drag-to-canvas) had no
+              // width/height/duration — footageSourceOf reported 0×0, insert
+              // sizing fell back, and everything downstream that asks "how big
+              // is this source" quietly degraded. Parallel within the chunk,
+              // so the batch stays fast.
+              await new Promise<void>((resolve) => {
+                const video = document.createElement('video');
+                video.onloadedmetadata = () => {
+                  asset.metadata = {
+                    width: video.videoWidth,
+                    height: video.videoHeight,
+                    duration: video.duration,
+                  };
+                  resolve();
+                };
+                video.onerror = () => resolve();
+                video.src = src;
+              });
+            } else if (type === 'audio') {
+              await new Promise<void>((resolve) => {
+                const audio = new Audio();
+                audio.onloadedmetadata = () => {
+                  asset.metadata = { duration: audio.duration };
+                  resolve();
+                };
+                audio.onerror = () => resolve();
+                audio.src = src;
+              });
             }
+            // Real stream facts where a demuxer exists (desktop + ffprobe) —
+            // corrects duration, adds fps/PAR/audio facts. No-op on web.
+            await applyProbe(file, asset);
             return { asset, thumb };
           })
         );

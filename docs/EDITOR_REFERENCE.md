@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 9 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 44 | `src/stores/*.ts` |
+| Stores | 45 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        44 Zustand stores
+                          ├── src/stores/*        45 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -1984,8 +1984,34 @@ below them and resolves the previous frame. The cache biases its query +1µs —
 three orders of magnitude under any frame duration, exactly enough to make
 the timeline's own playhead times resolve the frame they name.
 
-Still open on this column: tracking/rotoscoping itself (now un-gated), and
-`setVideoBaked` (Canvas2D-bake path) still seeks the element. Verification:
+Tracking landed the next day (2026-08-20): `src/core/tracking/` — Track
+Motion on video layers. Three-layer split: `patchMatch.ts` (pure matcher:
+zero-mean NCC over an integer search window, then Lucas-Kanade gradient
+refinement because a parabolic peak fit alone pixel-locks and a CHAINED
+tracker integrates that bias into a walk-off), `tracker.ts` (policy: chained
+reference for appearance evolution + frame-0 anchor template for drift
+correction — the standard template-update-problem answer — plus velocity
+prediction and occlusion coasting), `trackVideoLayer.ts` (the seam: comp
+frame → `compToKeyframeTime` → media seconds → exact decoder presentation
+index, so the frame matched is the frame rendered). Apply writes x/y
+keyframes through the video layer's live transform per sample time
+(`applyTrack.ts`), spliced like Motion Sketch, one `runAnimEdit` undo step.
+UI: `TrackMotionSection` (video-layer inspector) + `TrackPointOverlay`
+(EffectHandleOverlay-pattern SVG, draggable point in SOURCE pixels — see
+`trackerSource.ts` for the one grid rule). Verified end-to-end in a real
+Chromium tab against a synthetic ffmpeg clip with known motion: 300 comp
+frames tracked at confidence 1.00, end position within a pixel of ground
+truth, applied keyframes matching the hand-computed space chain exactly.
+
+Found while wiring it: `addAssetsBatch` — the Assets panel's import path —
+never read video/audio element metadata (only single-file `addAsset` did),
+so every panel-imported video had no width/height/duration and
+`footageSourceOf` reported 0×0. Fixed in place; the tracker section was the
+first consumer strict enough to notice.
+
+Still open on this column: rotoscoping, multi-point and corner-pin tracks,
+stabilize mode, and `setVideoBaked` (Canvas2D-bake path) still seeks the
+element. Verification:
 decode discipline and cache policy are test-pinned, AND the real-machine
 pass ran 2026-08-19 in a real Chromium tab — frame-by-frame mode stepped
 `tiny-ipp.mp4` with actual pixel readback from the dialog canvas (non-blank,

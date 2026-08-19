@@ -35,6 +35,7 @@ import { AlignSection } from '@layout/Inspector/AlignSection';
 import { TextSection } from '@layout/Inspector/TextSection';
 import { StylePresetsSection } from '@layout/Inspector/StylePresetsSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
+import { TrackMotionSection } from '@layout/Inspector/TrackMotionSection';
 import { SvgSection, RevertSvgRow } from '@layout/Inspector/SvgSection';
 import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
@@ -1352,6 +1353,7 @@ const SECTION_KEYWORDS: Record<string, string> = {
   custom: 'settings camera light particle audio volume',
   svg: 'svg vector path import',
   media: 'source trim speed fit crop volume',
+  tracker: 'track motion tracker point feature stabilize follow',
   precomp: 'precompose group children focus',
   info: 'null object controller',
   // Style
@@ -1554,6 +1556,12 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
       id: 'media', title: 'Media Settings', icon: 'image', defaultOpen: true,
       content: <MediaSection nodeId={nodeId} />,
     });
+    if (kind === 'video') {
+      items.push({
+        id: 'tracker', title: 'Track Motion', icon: 'crosshair',
+        content: <TrackMotionSection nodeId={nodeId} />,
+      });
+    }
   } else if (kind === 'group') {
     const childrenCount = defaultSceneGraph.getChildren(nodeId).length;
     items.push({

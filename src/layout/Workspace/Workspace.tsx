@@ -61,6 +61,7 @@ import { TextEditOverlay } from './TextEditOverlay';
 import { PuppetOverlay } from './PuppetOverlay';
 import { EffectHandleOverlay } from './EffectHandleOverlay';
 import { BoneOverlay } from './BoneOverlay';
+import { TrackPointOverlay } from './TrackPointOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
 import { AxisWidgetOverlay } from './AxisWidgetOverlay';
 import { useGizmo3d } from './useGizmo3d';
@@ -394,6 +395,7 @@ export function WorkspaceViewport({
           <PuppetOverlay />
           <EffectHandleOverlay />
           <BoneOverlay />
+          <TrackPointOverlay />
           {/* Mounts for the whole 3D SCENE, not for the selection: the ground
               plane and comp frame are how you orient yourself in a side view,
               so gating them on "a 3D layer is selected" hid them in exactly
