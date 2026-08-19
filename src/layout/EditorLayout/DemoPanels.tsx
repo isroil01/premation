@@ -67,6 +67,8 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusStore } from '@stores/focusStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
+import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { openFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -779,6 +781,22 @@ export function AssetsPanel(): JSX.Element {
         },
       },
       {
+        // The clip starts where the playhead is parked — assembling order, AE's
+        // drag-to-timeline behaviour. Kept as a second verb rather than a mode:
+        // both start points are legitimate, and a toggle that silently changes
+        // what "Add" means is how a clip lands 40s away from where you looked.
+        id: 'add-at-playhead',
+        label: many ? `Add ${count} at Playhead` : 'Add at Playhead',
+        onSelect: () => {
+          if (!many) { void insertMediaAtPlayhead(asset); return; }
+          for (const id of orderedAssetIds) {
+            if (!selectedAssetIds.has(id)) continue;
+            const a = assets.find((x) => x.id === id);
+            if (a) void insertMediaAtPlayhead(a);
+          }
+        },
+      },
+      {
         // AE's canonical first move: the comp takes the clip's size (PAR-
         // corrected), duration and probed frame rate, and the clip lands at
         // full frame. Single-selection only — one comp per gesture; a batch
@@ -788,6 +806,26 @@ export function AssetsPanel(): JSX.Element {
         disabled: many,
         onSelect: () => { void createCompositionFromFootage(asset); },
       },
+      {
+        id: 'preview',
+        label: 'Preview…',
+        disabled: many,
+        onSelect: () => openFootagePreview(asset),
+      },
+      // Offered ONLY when exactly one image/video layer is selected — an entry
+      // that is always present and usually fails teaches people not to open
+      // the menu. Keyframes, effects and masks on the layer survive; only the
+      // pixels change. AE's Alt-drag replace, as a click.
+      ...(() => {
+        const target = replaceableSelectedLayer();
+        if (!target || many || asset.type === 'audio') return [];
+        const name = defaultSceneGraph.getNode(target)?.name ?? 'layer';
+        return [{
+          id: 'use-as-source',
+          label: `Use as Source for “${name}”`,
+          onSelect: () => { retargetLayerSource(target, asset); },
+        }];
+      })(),
       { id: 'sep-a', separator: true },
       {
         id: 'delete',
@@ -1121,7 +1159,7 @@ export function AssetsPanel(): JSX.Element {
                   title={row.asset.name}
                   draggable
                   onClick={(e) => selectAsset(row.asset.id, e, orderedAssetIds)}
-                  onDoubleClick={() => insertMedia(row.asset)}
+                  onDoubleClick={() => openFootagePreview(row.asset)}
                   onContextMenu={(e) => openAssetMenu(row.asset, e)}
                   onDragStart={(e) => {
                     // Folder-move (this panel) reads text/asset-id; a canvas drop
