@@ -47,6 +47,10 @@ function configSignature(cfg: ParticleConfig, fps: number): string {
     turbulence: cfg.turbulence ?? 0,
     turbulenceScale: cfg.turbulenceScale ?? 100,
     turbulenceSpeed: cfg.turbulenceSpeed ?? 1,
+    // Trail geometry is part of the STATE SHAPE (the ring is allocated per
+    // config), so a length/spacing change must rebuild the history.
+    trailLength: cfg.trailLength ?? 0,
+    trailSpacing: cfg.trailSpacing ?? 1 / 30,
   });
 }
 

@@ -82,6 +82,15 @@ export interface ParticleConfig {
   turbulenceScale?: number;
   /** How fast the field evolves (both modes). 1 = normal. */
   turbulenceSpeed?: number;
+  /**
+   * Trail ghost points per particle (0 = off, capped at 24). NOT keyframeable
+   * on purpose, unlike the field params: in stateful mode the trail is part of
+   * the simulation STATE, so animating its length would change the state shape
+   * and reset the sim cache on every frame of the ramp.
+   */
+  trailLength?: number;
+  /** Seconds between trail points. */
+  trailSpacing?: number;
 }
 
 export interface Particle {
@@ -97,6 +106,14 @@ export interface Particle {
   /** Normalised age 0..1 (0 = just born). */
   age01: number;
   shape: ParticleShape;
+  /**
+   * Past positions, NEWEST FIRST, for the trail renderer. Absent when trails
+   * are off, so pre-trail outputs compare byte-identical. Ballistic mode
+   * evaluates its own closed form at trailing ages — exact and stateless;
+   * stateful mode records real history, which is what lets a trail show the
+   * path from BEFORE a bounce.
+   */
+  trail?: Array<{ x: number; y: number }>;
 }
 
 export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
@@ -132,6 +149,8 @@ export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
   turbulence: 0,
   turbulenceScale: 100,
   turbulenceSpeed: 1,
+  trailLength: 0,
+  trailSpacing: 1 / 30,
 };
 
 /** Read a node's particle config off its `fx` component, filling in every
@@ -282,6 +301,25 @@ export function simulateParticles(cfg: ParticleConfig, time: number): Particle[]
     const opacity = lerp(cfg.opacityStart, cfg.opacityEnd, age01);
     const rotation = cfg.spin * age;
 
+    // Trails: the SAME closed form at trailing ages. Points before birth are
+    // skipped rather than clamped — a newborn has a short trail, not a stack
+    // of ghosts on the emitter.
+    let trail: Array<{ x: number; y: number }> | undefined;
+    const trailN = Math.min(24, Math.max(0, Math.floor(cfg.trailLength ?? 0)));
+    if (trailN > 0) {
+      const spacing = Math.max(1 / 240, cfg.trailSpacing ?? 1 / 30);
+      trail = [];
+      for (let k = 1; k <= trailN; k++) {
+        const ta = age - k * spacing;
+        if (ta < 0) break;
+        const tw = wanderOffset(i, ta, cfg);
+        trail.push({
+          x: ox + v0x * ta + 0.5 * ax * ta * ta + tw.x,
+          y: oy + v0y * ta + 0.5 * ay * ta * ta + tw.y,
+        });
+      }
+    }
+
     out.push({
       x,
       y,
@@ -291,6 +329,7 @@ export function simulateParticles(cfg: ParticleConfig, time: number): Particle[]
       rotation,
       age01,
       shape: cfg.shape,
+      ...(trail && trail.length > 0 ? { trail } : {}),
     });
   }
 

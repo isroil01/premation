@@ -38,15 +38,38 @@ function toSprites(
 ): ParticleSprite[] {
   const cx = fieldW / 2;
   const cy = fieldH / 2;
-  return particles.map((p) => ({
-    x: cx + p.x,
-    y: cy + p.y,
-    size: p.size,
-    rotation: p.rotation,
-    color: p.color,
-    opacity: p.opacity,
-    shape: p.shape,
-  }));
+  const out: ParticleSprite[] = [];
+  for (const p of particles) {
+    // Trail ghosts BEFORE the head, oldest first, so under normal blending the
+    // particle paints over its own trail rather than under it. Opacity and
+    // size taper toward the tail; colour is the particle's own, so an additive
+    // field reads as a glowing streak rather than a grey smear.
+    if (p.trail) {
+      const n = p.trail.length;
+      for (let k = n - 1; k >= 0; k--) {
+        const fade = (n - k) / (n + 1); // oldest ≈ 1/(n+1), newest ≈ n/(n+1)
+        out.push({
+          x: cx + p.trail[k]!.x,
+          y: cy + p.trail[k]!.y,
+          size: p.size * (0.35 + 0.65 * fade),
+          rotation: p.rotation,
+          color: p.color,
+          opacity: p.opacity * fade * 0.7,
+          shape: p.shape,
+        });
+      }
+    }
+    out.push({
+      x: cx + p.x,
+      y: cy + p.y,
+      size: p.size,
+      rotation: p.rotation,
+      color: p.color,
+      opacity: p.opacity,
+      shape: p.shape,
+    });
+  }
+  return out;
 }
 
 /**
@@ -71,7 +94,7 @@ export function particleSprites(
     const cache = statefulParticleCache(key, cfg, fps);
     const frame = Math.max(0, Math.floor(time * fps + 1e-9));
     const state = cache.stateAt(frame);
-    return toSprites(particlesFromSoA(state, cfg), fieldW, fieldH);
+    return toSprites(particlesFromSoA(state, cfg, { frame, fps }), fieldW, fieldH);
   }
   return toSprites(simulateParticles(cfg, time), fieldW, fieldH);
 }

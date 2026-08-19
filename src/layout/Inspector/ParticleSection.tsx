@@ -148,6 +148,36 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
             scrub-free), stateful mode swirls (real curl-noise force). Scale is
             stateful-only — the wander has no spatial field to scale. */}
         {Num('turbulence', 'Turbulence', cfg.simMode === 'stateful' ? 'px/s²' : 'px')}
+        {/* Trails are plain rows, not Num rows, on purpose: Num makes a param
+            KEYFRAMEABLE, and in stateful mode the trail ring is part of the
+            state shape — animating its length would rebuild the sim on every
+            frame of the ramp. Same reasoning as the bounce params above. */}
+        <div className={styles.popoverRow}>
+          <div style={{ width: 13 }} />
+          <span className={styles.popoverLabel}>Trail</span>
+          <ValueField
+            value={cfg.trailLength ?? 0}
+            min={0}
+            max={24}
+            precision={0}
+            onChange={(v) => set('trailLength', Number(v))}
+            aria-label="Trail points"
+          />
+        </div>
+        {(cfg.trailLength ?? 0) > 0 && (
+          <div className={styles.popoverRow}>
+            <div style={{ width: 13 }} />
+            <span className={styles.popoverLabel}>Trail Gap</span>
+            <ValueField
+              value={cfg.trailSpacing ?? 1 / 30}
+              min={1 / 240}
+              precision={3}
+              unit="s"
+              onChange={(v) => set('trailSpacing', Number(v))}
+              aria-label="Trail spacing seconds"
+            />
+          </div>
+        )}
         {cfg.simMode === 'stateful' && Num('turbulenceScale', 'Turb. Scale', 'px')}
         {Num('turbulenceSpeed', 'Turb. Speed', '×')}
         {Num('spin', 'Spin', '°/s')}

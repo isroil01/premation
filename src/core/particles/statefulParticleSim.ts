@@ -44,6 +44,16 @@ export interface ParticleSoA {
   emitAcc: Float64Array;
   /** Next birth index for hash salts. */
   nextId: Float64Array;
+  /**
+   * Position history ring, `ringSize` slots per particle, interleaved x,y.
+   * Length 0 when trails are off, so a trail-free sim carries no dead weight.
+   * The write head is derived from the frame (`frame % ringSize`), so the ring
+   * needs no per-particle cursor — every live particle writes every frame.
+   */
+  trailRing: Float64Array;
+  /** Frames each slot has been alive — bounds how far back its ring is REAL,
+   *  so a fresh particle cannot exhume the previous occupant's trail. */
+  aliveFrames: Float64Array;
 }
 
 function hash01(i: number, salt: number, seed: number): number {
@@ -65,8 +75,31 @@ function lerpColor(a: string, b: string, t: number, alpha: number): string {
   return `rgba(${r},${g},${bl},${al})`;
 }
 
-function alloc(n: number): ParticleSoA {
+/**
+ * The trail ring's geometry, derived in ONE place: the sim writes with it and
+ * `particlesFromSoA` reads with it, and two derivations would let the reader
+ * walk a different ring than the writer filled. Ring slots are points × stride
+ * frames, capped — the ring is cloned into every SimulationCache snapshot, so
+ * history is priced in frames.
+ */
+export function trailRingSpec(
+  cfg: Pick<ParticleConfig, 'trailLength' | 'trailSpacing'>,
+  fps: number,
+): { points: number; stride: number; ringSize: number } {
+  const points = Math.min(24, Math.max(0, Math.floor(cfg.trailLength ?? 0)));
+  const stride = Math.max(1, Math.round((cfg.trailSpacing ?? 1 / 30) * Math.max(1, fps)));
+  // +1: the head slot holds the CURRENT frame, so reaching back the full
+  // points×stride needs that many slots BESIDES it. At exactly points×stride
+  // the oldest read wrapped onto the head and the trail's last point was a
+  // phantom copy of the particle's own position — found by probing, invisible
+  // in the maths.
+  return { points, stride, ringSize: points > 0 ? Math.min(121, points * stride + 1) : 0 };
+}
+
+function alloc(n: number, ringSize: number): ParticleSoA {
   return {
+    trailRing: new Float64Array(n * ringSize * 2),
+    aliveFrames: new Float64Array(n),
     id: new Float64Array(n),
     x: new Float64Array(n),
     y: new Float64Array(n),
@@ -82,6 +115,8 @@ function alloc(n: number): ParticleSoA {
 
 function cloneState(s: ParticleSoA): ParticleSoA {
   return {
+    trailRing: s.trailRing.slice(),
+    aliveFrames: s.aliveFrames.slice(),
     id: s.id.slice(),
     x: s.x.slice(),
     y: s.y.slice(),
@@ -132,6 +167,7 @@ function spawnInto(
   s.age[slot] = 0;
   s.life[slot] = life;
   s.alive[slot] = 1;
+  s.aliveFrames[slot] = 0;
 }
 
 function findFreeSlot(s: ParticleSoA): number {
@@ -165,10 +201,11 @@ export function createStatefulParticleSim(
   const restitution = Math.max(0, Math.min(1, opts.restitution));
   const damping = Math.max(0, Math.min(1, opts.damping));
   const birthPerFrame = Math.max(0, cfg.birthRate) / fps;
+  const { ringSize } = trailRingSpec(cfg, fps);
 
   return {
     init(): ParticleSoA {
-      const s = alloc(n);
+      const s = alloc(n, ringSize);
       s.emitAcc[0] = 0;
       s.nextId[0] = 0;
       return s;
@@ -204,6 +241,15 @@ export function createStatefulParticleSim(
         s.vx[i] = vx;
         s.vy[i] = vy;
         s.age[i] = age;
+        // Record AFTER integration and bounce, so the trail shows where the
+        // particle actually was — including the corner of a bounce, which is
+        // the one thing the closed form can never draw.
+        if (ringSize > 0) {
+          const head = ((frame % ringSize) + ringSize) % ringSize;
+          s.trailRing[(i * ringSize + head) * 2] = x;
+          s.trailRing[(i * ringSize + head) * 2 + 1] = y;
+          s.aliveFrames[i] = s.aliveFrames[i]! + 1;
+        }
       }
 
       // Emit.
@@ -227,7 +273,29 @@ export function createStatefulParticleSim(
 export function particlesFromSoA(
   s: ParticleSoA,
   cfg: ParticleConfig,
+  /** Frame the state corresponds to + fps — needed to locate the ring head.
+   *  Omitted (older callers, trail-free configs) → no trails are read. */
+  opts?: { frame?: number; fps?: number },
 ): Particle[] {
+  const spec = opts?.fps !== undefined ? trailRingSpec(cfg, opts.fps) : null;
+  const readTrail = (i: number): Array<{ x: number; y: number }> | undefined => {
+    if (!spec || spec.ringSize === 0 || opts?.frame === undefined) return undefined;
+    if (s.trailRing.length < s.alive.length * spec.ringSize * 2) return undefined;
+    const { ringSize, stride, points } = spec;
+    const head = ((opts.frame % ringSize) + ringSize) % ringSize;
+    // Only as far back as this SLOT has been alive — a fresh particle in a
+    // recycled slot must not exhume the previous occupant's trail.
+    const maxBack = Math.min(points * stride, ringSize - 1, Math.max(0, s.aliveFrames[i]! - 1));
+    const out: Array<{ x: number; y: number }> = [];
+    for (let k = stride; k <= maxBack; k += stride) {
+      const slot = ((head - k) % ringSize + ringSize) % ringSize;
+      out.push({
+        x: s.trailRing[(i * ringSize + slot) * 2]!,
+        y: s.trailRing[(i * ringSize + slot) * 2 + 1]!,
+      });
+    }
+    return out.length > 0 ? out : undefined;
+  };
   const out: Particle[] = [];
   const shape: ParticleShape = cfg.shape;
   for (let i = 0; i < s.alive.length; i++) {
@@ -237,7 +305,9 @@ export function particlesFromSoA(
     const age01 = life > 0 ? Math.min(1, age / life) : 1;
     const size = Math.max(0, lerp(cfg.sizeStart, cfg.sizeEnd, age01));
     const opacity = lerp(cfg.opacityStart, cfg.opacityEnd, age01);
+    const trail = readTrail(i);
     out.push({
+      ...(trail ? { trail } : {}),
       x: s.x[i]!,
       y: s.y[i]!,
       size,
