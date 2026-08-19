@@ -86,6 +86,11 @@ const bridge = {
     clearRecovery: (projectId: string) => ipcRenderer.invoke('index:clearRecovery', projectId),
   },
 
+  thumbs: {
+    write: (hash: string, bytes: Uint8Array) => ipcRenderer.invoke('thumb:write', hash, bytes),
+    read: (hash: string) => ipcRenderer.invoke('thumb:read', hash),
+  },
+
   popout: {
     spawnWindow: (panelId: string) => ipcRenderer.invoke('popout:spawnWindow', panelId),
   },

@@ -14,6 +14,7 @@
 
 import { captureDocument, restoreDocument } from '@core/api/cloudDocument';
 import { baselineHistory } from '@stores/historyStore';
+import { recordProjectOpened, recordProjectSaved } from '@core/localIndex/indexWriter';
 import { BundleRepository } from './BundleRepository';
 import { ProjectBundleService } from './ProjectBundleService';
 import type { VersionEntry, VersionKind } from './VersionStore';
@@ -44,7 +45,12 @@ export function isBundlePath(path: string): boolean {
 
 /** Capture the live document and persist it to the bundle at `root`. */
 export async function saveProjectBundle(root: string, repo = getBundleRepository()): Promise<void> {
-  await repo.save(root, captureDocument());
+  const doc = captureDocument();
+  await repo.save(root, doc);
+  // The index write comes AFTER the disk write and never gates it — see
+  // indexWriter's header. This is the call whose absence left the whole
+  // local index empty from the day it shipped.
+  await recordProjectSaved(root, doc);
 }
 
 /**
@@ -60,6 +66,7 @@ export async function openProjectBundle(root: string, repo = getBundleRepository
   // the seeded starter scene from boot, so one Ctrl+Z replaces the project the
   // user just opened.
   baselineHistory('Open');
+  await recordProjectOpened(root, doc);
   return true;
 }
 
@@ -75,7 +82,9 @@ export async function saveProjectBundleVersion(
   label?: string,
   svc = getProjectBundleService(),
 ): Promise<void> {
-  await svc.save(root, captureDocument(), { version: { kind, ...(label != null ? { label } : {}) } });
+  const doc = captureDocument();
+  await svc.save(root, doc, { version: { kind, ...(label != null ? { label } : {}) } });
+  await recordProjectSaved(root, doc);
 }
 
 /** List a bundle's version history (newest first). */

@@ -12,6 +12,7 @@ import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Providers } from '@providers/Providers';
 import { CloudThumbnailWorker } from '../components/CloudThumbnailWorker';
+import { LocalThumbnailWorker } from '../components/LocalThumbnailWorker';
 import { getProjectManager, getFileManager } from '@core/services/coreServices';
 import { CloudAutosave } from '../components/CloudAutosave';
 import { ReadOnlyBanner } from '../components/ReadOnlyBanner';
@@ -133,6 +134,10 @@ export function EditorPage(): JSX.Element {
         {projectId ? <ProjectLoader projectId={projectId} /> : null}
         {projectId ? <CloudAutosave projectId={projectId} /> : null}
         {projectId ? <CloudThumbnailWorker projectId={projectId} /> : null}
+        {/* The local edition's thumbnail capture — same policy, disk sink.
+            Mounted for the whole session; it resolves the current bundle per
+            capture and no-ops without one (or without a desktop bridge). */}
+        {!cloudProjectsEnabled() ? <LocalThumbnailWorker /> : null}
         {/*
           The read-only bar sits ABOVE the shell in a flex column so it pushes the
           editor down rather than floating over the canvas — a locked document is

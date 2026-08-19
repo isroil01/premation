@@ -33,12 +33,17 @@ Pre-1.0. Expect rough edges in the UI and occasional breaking changes to the
 
 ## Now
 
-### A local project browser
+### A local project browser — SHIPPED 2026-08-20
 
-The local edition opens straight into the editor because the existing dashboard
-is cloud-backed. Recent files work, but there is no home surface for browsing
-local projects, thumbnails or version history. The local index (SQLite) and
-version store already exist and are tested; they need a UI.
+The start screen is now a real project browser: a card grid backed by the
+local index (comp facts, save revision, thumbnail), joined with the MRU for
+anything the index has not seen. What made it possible was less UI than
+plumbing — the index had a full API, an IPC bridge and tests but ZERO
+writers, so it had been empty since it shipped. Saves and opens now write it
+(`indexWriter.ts`), a `LocalThumbnailWorker` captures project thumbnails to
+a content-addressed cache dir (`thumb:*` IPC), and the `thumbHash` column
+the SQLite schema always had finally gets values. In a browser tab it
+degrades to the MRU list, as before.
 
 ### Finish verifying local-first on-device
 

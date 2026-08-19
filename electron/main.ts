@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
+import { registerThumbIpc } from './thumbCache';
 import { registerAiKeyIpc } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
@@ -1112,6 +1113,7 @@ app.whenReady().then(() => {
   registerBundleIpc();
   registerBlobIpc();
   registerIndexIpc(app);
+  registerThumbIpc(app);
   registerRenderIpc();
   registerPopoutIpc();
   registerOAuthIpc();

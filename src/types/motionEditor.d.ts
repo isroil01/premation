@@ -280,6 +280,15 @@ export interface MotionEditorApi {
     listRecovery?(projectId: string): Promise<unknown[]>;
     clearRecovery?(projectId: string): Promise<void>;
   };
+  /**
+   * Content-addressed thumbnail cache in <userData>/thumbs — the disk sink
+   * behind `ProjectIndexRow.thumbHash`. Derived data only; absent in the
+   * browser, where cards render facts without an image.
+   */
+  thumbs?: {
+    write?(hash: string, bytes: Uint8Array): Promise<boolean>;
+    read?(hash: string): Promise<Uint8Array | null>;
+  };
   window?: {
     minimize?(): Promise<void>;
     maximize?(): Promise<void>;
