@@ -139,6 +139,17 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
         {Num('spread', 'Spread', '°', 0, 360)}
         {Num('gravityX', 'Gravity X', 'px/s²')}
         {Num('gravityY', 'Gravity Y', 'px/s²')}
+        {/* Wind is constant acceleration like gravity — a separate pair rather
+            than "just add it to gravity" because wind is the thing you animate
+            and zero out, and gravity is the thing you set once. */}
+        {Num('windX', 'Wind X', 'px/s²')}
+        {Num('windY', 'Wind Y', 'px/s²')}
+        {/* One amplitude, two characters: ballistic mode wanders (closed-form,
+            scrub-free), stateful mode swirls (real curl-noise force). Scale is
+            stateful-only — the wander has no spatial field to scale. */}
+        {Num('turbulence', 'Turbulence', cfg.simMode === 'stateful' ? 'px/s²' : 'px')}
+        {cfg.simMode === 'stateful' && Num('turbulenceScale', 'Turb. Scale', 'px')}
+        {Num('turbulenceSpeed', 'Turb. Speed', '×')}
         {Num('spin', 'Spin', '°/s')}
 
         <div className={styles.popoverRow}>

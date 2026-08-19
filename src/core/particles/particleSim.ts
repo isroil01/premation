@@ -12,6 +12,7 @@
  */
 
 import { parseHex } from '@core/effects/canvas2dEffects';
+import { wanderOffset } from './particleField';
 import { parseColorChannels, channelsToColor } from '@core/effects/effects';
 import type { SceneNode } from '@core/types';
 
@@ -69,6 +70,18 @@ export interface ParticleConfig {
   bounceRestitution?: number;
   /** Air damping per frame 0..1 when simMode=stateful. 1 = none. */
   bounceDamping?: number;
+  /** Constant wind acceleration px/s² — folds into the ballistic closed form
+   *  exactly as gravity does, so scrubbing stays free. */
+  windX?: number;
+  windY?: number;
+  /** Turbulence amplitude. Ballistic mode: max wander displacement in px.
+   *  Stateful mode: curl-noise force in px/s². Zero = off, byte-identical to
+   *  configs that predate the field. */
+  turbulence?: number;
+  /** Spatial scale of the stateful curl field, px per noise cell. */
+  turbulenceScale?: number;
+  /** How fast the field evolves (both modes). 1 = normal. */
+  turbulenceSpeed?: number;
 }
 
 export interface Particle {
@@ -114,6 +127,11 @@ export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
   bounceFloor: 160,
   bounceRestitution: 0.65,
   bounceDamping: 0.998,
+  windX: 0,
+  windY: 0,
+  turbulence: 0,
+  turbulenceScale: 100,
+  turbulenceSpeed: 1,
 };
 
 /** Read a node's particle config off its `fx` component, filling in every
@@ -131,6 +149,10 @@ export const PARTICLE_NUMERIC_KEYS = [
   'emitterWidth', 'emitterHeight', 'birthRate', 'lifetime', 'lifetimeRandom',
   'speed', 'speedRandom', 'direction', 'spread', 'gravityX', 'gravityY',
   'spin', 'sizeStart', 'sizeEnd', 'opacityStart', 'opacityEnd',
+  // The field params. Being in this list is what makes them KEYFRAMEABLE —
+  // `resolveParticleConfig` samples `particle.<key>` generically, so a wind
+  // that rises over the shot needs nothing beyond this entry.
+  'windX', 'windY', 'turbulence', 'turbulenceScale', 'turbulenceSpeed',
 ] as const;
 export type ParticleNumericKey = (typeof PARTICLE_NUMERIC_KEYS)[number];
 
@@ -248,8 +270,14 @@ export function simulateParticles(cfg: ParticleConfig, time: number): Particle[]
       oy = Math.sin(ang) * rad;
     }
 
-    const x = ox + v0x * age + 0.5 * cfg.gravityX * age * age;
-    const y = oy + v0y * age + 0.5 * cfg.gravityY * age * age;
+    // Wind is just more constant acceleration, so it lives inside the same
+    // closed form as gravity — scrubbing stays free. Turbulence is a seeded
+    // wander displacement, zero at birth (see particleField.ts).
+    const ax = cfg.gravityX + (cfg.windX ?? 0);
+    const ay = cfg.gravityY + (cfg.windY ?? 0);
+    const wander = wanderOffset(i, age, cfg);
+    const x = ox + v0x * age + 0.5 * ax * age * age + wander.x;
+    const y = oy + v0y * age + 0.5 * ay * age * age + wander.y;
     const size = Math.max(0, lerp(cfg.sizeStart, cfg.sizeEnd, age01));
     const opacity = lerp(cfg.opacityStart, cfg.opacityEnd, age01);
     const rotation = cfg.spin * age;

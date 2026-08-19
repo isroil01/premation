@@ -40,6 +40,13 @@ function configSignature(cfg: ParticleConfig, fps: number): string {
     bounceFloor: cfg.bounceFloor ?? 160,
     bounceRestitution: cfg.bounceRestitution ?? 0.65,
     bounceDamping: cfg.bounceDamping ?? 0.998,
+    // The field params shape every step, so they are part of the history —
+    // omitting one here means a turbulence tweak silently replays the OLD sim.
+    windX: cfg.windX ?? 0,
+    windY: cfg.windY ?? 0,
+    turbulence: cfg.turbulence ?? 0,
+    turbulenceScale: cfg.turbulenceScale ?? 100,
+    turbulenceSpeed: cfg.turbulenceSpeed ?? 1,
   });
 }
 

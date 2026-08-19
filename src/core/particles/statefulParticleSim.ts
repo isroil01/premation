@@ -6,11 +6,13 @@
  * `SimulationCache.stateAt(f)` can scrub and export bit-identically.
  *
  * First slice: continuous emission + ballistic integrate + optional floor
- * bounce. Turbulence, trails, collisions between particles, 3D, and
- * layer-as-particle stay out of scope.
+ * bounce. Wind and curl-noise turbulence joined 2026-08-18 (particleField.ts).
+ * Trails, collisions between particles, 3D, and layer-as-particle stay out of
+ * scope.
  */
 
 import { parseHex } from '@core/effects/canvas2dEffects';
+import { curlForce } from './particleField';
 import type { Simulation } from '@core/simulation/simulationCore';
 import type { Particle, ParticleConfig, ParticleShape } from './particleSim';
 
@@ -172,13 +174,17 @@ export function createStatefulParticleSim(
       return s;
     },
 
-    step(prev: ParticleSoA): ParticleSoA {
+    step(prev: ParticleSoA, frame: number): ParticleSoA {
       const s = prev;
       // Integrate living particles.
       for (let i = 0; i < n; i++) {
         if (s.alive[i]! < 0.5) continue;
-        const vx = s.vx[i]! * damping + cfg.gravityX * dt;
-        let vy = s.vy[i]! * damping + cfg.gravityY * dt;
+        // Wind is constant acceleration alongside gravity; turbulence is the
+        // curl-noise force sampled AT the particle — a pure function of
+        // (position, time, seed), which is what keeps the replay contract.
+        const turb = curlForce(s.x[i]!, s.y[i]!, frame * dt, cfg);
+        const vx = s.vx[i]! * damping + (cfg.gravityX + (cfg.windX ?? 0) + turb.x) * dt;
+        let vy = s.vy[i]! * damping + (cfg.gravityY + (cfg.windY ?? 0) + turb.y) * dt;
         const x = s.x[i]! + vx * dt;
         let y = s.y[i]! + vy * dt;
         const age = s.age[i]! + dt;
