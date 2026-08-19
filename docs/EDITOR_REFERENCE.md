@@ -302,14 +302,17 @@ for footage work is keying (`keylight`, with despill/choke/softness, plus
 `corner-pin` / `bezier-warp` — i.e. you can key and you can pin a corner **by
 hand**, but nothing solves the motion for you.
 
-**The footage decode path is an `HTMLVideoElement`, not a decoder.**
-`videoFrameCache.ts` says so in its own header, deliberately: a real
-`VideoDecoder` would give true random access and exact frame boundaries, but it
-needs a container demuxer (mp4box or equivalent) — "a subsystem, not a change".
-So seeking is `seek → onseeked → repaint`, and frame boundaries are approximate
-and browser-dependent. That is the remaining ceiling on treating this as a video
-editor rather than a motion tool, and it is upstream of tracking: a tracker
-cannot be more frame-accurate than the decoder feeding it.
+**The RENDERER'S footage decode path is an `HTMLVideoElement`; the real
+decoder now exists beside it (corrected 2026-08-19).** The subsystem this
+paragraph used to say was missing shipped: `src/core/video/` demuxes MP4s with
+mp4box (pure JS — demux and GOP/B-frame index are jest-pinned against real
+ffmpeg fixtures), and `ExactVideoSource` drives a WebCodecs `VideoDecoder` for
+true random access on exact frame boundaries. Its first consumer is the footage
+preview's Frame-by-frame mode. The RENDER path still seeks an element
+(`seek → onseeked → repaint`, approximate boundaries) on purpose, until the
+exact path survives a real-machine visual pass — so the ceiling on
+tracking/rotoscoping is now the renderer INTEGRATION, no longer the missing
+subsystem.
 
 **Read the next two paragraphs before repeating the older version of this
 claim.** Proxies and footage interpretation both **exist**, and the frame-rate
@@ -525,9 +528,11 @@ Lottie export, and price.
    references. Remaining: broader glow polish (and any further generators).
 
 Motion tracking is a much larger project serving a different audience and should
-not be sequenced against these. Note also that it is **gated behind the decoder**
-(Tier 1): a tracker cannot be more frame-accurate than the `HTMLVideoElement`
-feeding it, so "add tracking" is really "add a demuxer, then add tracking".
+not be sequenced against these. Note also that it is **gated behind the
+decoder's renderer integration** (Tier 1): the demuxer + WebCodecs subsystem
+exists as of 2026-08-19 (`src/core/video/`), but a tracker cannot be more
+frame-accurate than the frames the RENDER path feeds it, and that path is
+still the `HTMLVideoElement` until the exact path passes a visual check.
 
 ---
 
@@ -1924,3 +1929,35 @@ And closing a dead export the working agreements flag: `FrameDiskCache.purge()`
 now has its one caller — a Preview-disk-cache row in Customize ▸ Appearance
 with a size readout (parked generations included) and a Purge button. Output
 templates (above) closed the render-settings gap the same day.
+
+### Corrected 2026-08-19 — the decoder wall fell; the fixture corrected the test
+
+The last standing Tier-1 blocker — "a real `VideoDecoder` needs a container
+demuxer; a subsystem, not a change" — is no longer a wall. `src/core/video/`:
+
+- **`mp4Demuxer.ts`** — mp4box (new dependency, pure JS, no WASM — the CSP
+  objection that ruled out Rapier does not apply, and pure-JS is why the demux
+  runs in jest against real ffmpeg fixtures rather than being taken on faith).
+  Out: WebCodecs codec string, avcC/hvcC description (box header stripped),
+  sample table in decode order.
+- **`frameIndex.ts`** — the pure arithmetic of random access: presentation
+  order from cts (B-delay normalized away), GOP keyframe per frame, and the
+  feed-through index (running max of decode index — a B-frame needs the FUTURE
+  reference that sits earlier in decode order).
+- **`exactVideoSource.ts`** — the session: feed [key .. feed-through], flush
+  (which both forces emission and legally resets to needing a key — random
+  access and flush-per-request are the same design), cache every frame the
+  flush emits so stepping forward is cache hits. `DecoderIO` seam because
+  jsdom has no WebCodecs — the fake pins the full feeding discipline.
+
+Two fixture-taught facts worth keeping: ffmpeg parks the B-frame delay in the
+container (cts starts at 1024, not 0 — normalization is load-bearing), and it
+pads the LAST sample's duration by that same delay (the duration test asserted
+800000µs from arithmetic; the file said 833334 and the file was right).
+
+First consumer: footage preview's Frame-by-frame mode (`videoRef` hands the
+pause point to the exact path, so stepping starts where you were looking).
+NOT yet consumed by: the renderer (`videoFrameCache` header says why, in
+place), export, tracking. Verification honesty: decode discipline is
+test-pinned; actual decoded pixels need the user's machine — jsdom has no
+WebCodecs and the automation pane cannot composite.

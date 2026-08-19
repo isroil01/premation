@@ -45,6 +45,29 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Frame-by-frame transport. Sits between stage and facts, and only exists
+   while the exact decoder is driving the stage — a transport over the native
+   player would promise precision the player cannot deliver. */
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.transportReadout {
+  flex: 1;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.exactNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
 /* The commit actions. A row, wrapping on narrow modals — never a dropdown:
    these four ARE the workflow, and hiding them behind a disclosure would
    re-create the problem the viewer solves. */

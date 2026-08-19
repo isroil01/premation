@@ -53,12 +53,15 @@ storage layer.
 
 ## Next
 
-- **A real video decoder.** The footage path is an `HTMLVideoElement`, so seeks
-  are approximate and frame boundaries are browser-dependent. Replacing it with
-  WebCodecs needs a container demuxer (mp4box or equivalent) — a subsystem, not
-  a change, and a new dependency. It is listed first because it sits UPSTREAM of
-  the whole tracking/rotoscoping column: a tracker cannot be more frame-accurate
-  than the decoder feeding it.
+- **A real video decoder — subsystem SHIPPED 2026-08-19, renderer integration
+  open.** `src/core/video/` is the WebCodecs path: mp4box demux (pure JS, so
+  the demux and the GOP/B-frame index are jest-pinned against real ffmpeg
+  fixtures), a frame index answering "which samples decode frame N", and
+  `ExactVideoSource` (feed key→target, flush, cache the GOP). First consumer:
+  the footage preview's Frame-by-frame mode. Still open, in order: a
+  real-machine visual pass on that mode, then swapping `videoFrameCache` /
+  the render path onto it — the tracking/rotoscoping column stays gated on
+  THAT swap, not on the subsystem existing.
 - **After Effects parity.** Rotoscoping, more of the effect set, richer
   expression bindings. Open an issue for the specific gap you hit — that is far
   more useful than a general "more parity" wish.

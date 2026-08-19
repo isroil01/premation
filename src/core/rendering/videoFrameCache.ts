@@ -17,10 +17,14 @@
  * relies on (`onseeked` → `AnimationChanged` → re-render), so it introduces no
  * new asynchrony contract; it just remembers what it decoded.
  *
- * Deliberately NOT WebCodecs. A real `VideoDecoder` would give true random
- * access and exact frame boundaries, but it needs a demuxer for the container
- * (mp4box or equivalent) — a subsystem, not a change. This gets real blended
- * pixels out of the decoder the app already has.
+ * Deliberately NOT WebCodecs — CORRECTED 2026-08-19: the subsystem this
+ * paragraph said would be needed now EXISTS (`@core/video`: mp4box demux →
+ * frame index → `ExactVideoSource`), with the footage preview's frame-by-frame
+ * mode as its first consumer. This cache stays on the HTMLVideoElement path
+ * ON PURPOSE for now: it feeds the render loop, and swapping the renderer's
+ * decode path is gated on the exact path surviving a real-machine visual pass
+ * first — approximate-but-proven beats exact-but-unverified in the pixel
+ * pipeline. When that pass lands, this cache is the second consumer.
  *
  * FRAME RATE — RESOLVED 2026-07-30; this block used to read "KNOWN LIMIT — we
  * do not know the source's frame rate" and it is kept, corrected, because that
