@@ -30,7 +30,12 @@ import { useTrackerStore, type TrackerMode } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { trackVideoLayerPoints } from '@core/tracking/trackVideoLayer';
-import { applyTrackToLayer, applyStabilizeToLayer, applyCornerPinTrack } from '@core/tracking/applyTrack';
+import {
+  applyTrackToLayer,
+  applyStabilizeToLayer,
+  applyCornerPinTrack,
+  applyTransformTrack,
+} from '@core/tracking/applyTrack';
 import { trackLayerMask } from '@core/tracking/maskTrack';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
 import { getNodeMask } from '@core/effects/mask';
@@ -57,6 +62,7 @@ const SEARCH_SIZES = [12, 24, 40, 60];
 
 const MODE_LABELS: Record<TrackerMode, string> = {
   follow: 'Follow (position)',
+  transform: 'Follow + rotation & scale',
   stabilize: 'Stabilize',
   corner: 'Corner pin',
   mask: 'Track mask',
@@ -64,6 +70,8 @@ const MODE_LABELS: Record<TrackerMode, string> = {
 
 const MODE_HINTS: Record<TrackerMode, string> = {
   follow: 'Drag the point onto the feature to follow, track, then apply as position keyframes on a target layer.',
+  transform:
+    'Two points: the ANCHOR drives position, the anchor→reference vector drives rotation and scale. Put both on the same rigid surface.',
   stabilize: 'Drag the point onto the feature to lock, track, then apply — this layer moves inversely so the feature stays put.',
   corner: 'Drag the four corners onto the surface to replace (TL, TR, BR, BL), track, then pin a target layer onto them.',
   mask: 'Tracks every vertex of this layer’s mask and writes mask keyframes — the mask follows the footage.',
@@ -99,7 +107,15 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
 
   const targets = useMemo(() => {
     if (!node) return [];
-    return node.parent ? defaultSceneGraph.getChildren(node.parent) : [node];
+    // NOT getChildren(node.parent): on a fresh unsaved project layers hang
+    // off the VIRTUAL 'comp_root' — a fallback id with no engine node — and
+    // getChildren of a non-node is []. traverse sees every registered node,
+    // so same-parent comparison works for real and virtual parents alike.
+    const sameParent: typeof node[] = [];
+    defaultSceneGraph.traverse((n) => {
+      if ((n.parent ?? null) === (node.parent ?? null)) sameParent.push(n);
+    });
+    return sameParent.length > 0 ? sameParent : [node];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
   }, [node, useSceneRevision((s) => s.rev)]);
 
@@ -188,6 +204,16 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
         comp,
       });
       what = `position keyframes to “${targetName(targetId)}”`;
+    } else if (mode === 'transform') {
+      n = applyTransformTrack({
+        videoNodeId: nodeId,
+        targetNodeId: targetId,
+        tracks: result.tracks,
+        sourceWidth: result.sourceWidth,
+        sourceHeight: result.sourceHeight,
+        comp,
+      });
+      what = `position/rotation/scale keyframes to “${targetName(targetId)}”`;
     } else if (mode === 'stabilize') {
       n = applyStabilizeToLayer({
         videoNodeId: nodeId,
@@ -215,9 +241,11 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
   const applyLabel =
     mode === 'follow'
       ? 'Apply as position keyframes'
-      : mode === 'stabilize'
-        ? 'Stabilize this layer'
-        : 'Pin target to corners';
+      : mode === 'transform'
+        ? 'Apply position, rotation & scale'
+        : mode === 'stabilize'
+          ? 'Stabilize this layer'
+          : 'Pin target to corners';
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -281,7 +309,7 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
       )}
       {result && mode !== 'mask' && (result.tracks[0]?.length ?? 0) > 1 && (
         <>
-          {(mode === 'follow' || mode === 'corner') && (
+          {(mode === 'follow' || mode === 'transform' || mode === 'corner') && (
             <InspectorRow label={mode === 'corner' ? 'Pin layer' : 'Apply to'}>
               <select style={selectStyle} value={targetId} onChange={(e) => setTargetId(e.target.value)}>
                 {targets.map((t) => (

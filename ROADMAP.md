@@ -75,8 +75,10 @@ storage layer.
   any layer), **Stabilize** (inverse motion on the footage), **Corner pin**
   (keyframes a Corner Pin effect on a target — screen replacement), or
   **Track mask** (every mask vertex tracked, written as mask keyframes —
-  rotoscoping's first step). Still open on the column: a roto brush /
-  edge-aware masks, 2-point rotation+scale solves. Beyond tracking: more of
+  rotoscoping's first step), and **Follow + rotation & scale** (2-point
+  solve: anchor drives position, the anchor→reference vector drives
+  rotation and scale, angle-unwrapped past ±180°). Still open on the
+  column: a roto brush / edge-aware masks. Beyond tracking: more of
   the effect set, richer expression bindings. Open an issue for the specific
   gap you hit — that is far more useful than a general "more parity" wish.
 - **Timeline and graph-editor polish.** The graph editor is capable but not yet

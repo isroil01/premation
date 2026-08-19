@@ -202,6 +202,19 @@ export function TrackPointOverlay(): JSX.Element | null {
           strokeWidth={1}
         />
       )}
+      {mode === 'transform' && screenPts.length === 2 && (
+        // The anchor→reference vector IS the measurement — draw it so both
+        // points read as one instrument, not two unrelated dots.
+        <line
+          x1={screenPts[0]!.x}
+          y1={screenPts[0]!.y}
+          x2={screenPts[1]!.x}
+          y2={screenPts[1]!.y}
+          stroke="rgba(255, 209, 102, 0.6)"
+          strokeDasharray="6 4"
+          strokeWidth={1}
+        />
+      )}
       {points[0] && (
         <>
           <polygon points={boxPoints(points[0], featureHalf)} fill="none" stroke="#ffffff" strokeWidth={1} />
@@ -220,9 +233,9 @@ export function TrackPointOverlay(): JSX.Element | null {
           <circle cx={s.x} cy={s.y} r={POINT_R} fill="#ffd166" stroke="#101014" strokeWidth={1} />
           <line x1={s.x - POINT_R} y1={s.y} x2={s.x + POINT_R} y2={s.y} stroke="#101014" strokeWidth={1} />
           <line x1={s.x} y1={s.y - POINT_R} x2={s.x} y2={s.y + POINT_R} stroke="#101014" strokeWidth={1} />
-          {mode === 'corner' && (
+          {(mode === 'corner' || mode === 'transform') && (
             <text x={s.x + 8} y={s.y - 8} fontSize={10} fill="#ffd166" style={{ userSelect: 'none' }}>
-              {CORNER_LABELS[i]}
+              {mode === 'corner' ? CORNER_LABELS[i] : i === 0 ? 'A' : 'B'}
             </text>
           )}
         </g>

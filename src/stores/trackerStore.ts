@@ -14,6 +14,8 @@
  *
  * Modes and their point count:
  *   follow    — 1 point; Apply writes position keyframes on a target layer.
+ *   transform — 2 points (anchor, reference); Apply writes position +
+ *               rotation + scale keyframes on a target layer.
  *   stabilize — 1 point; Apply writes inverse motion on the video layer.
  *   corner    — 4 points (TL, TR, BR, BL); Apply keyframes a Corner Pin
  *               effect on a target layer.
@@ -24,7 +26,7 @@
 import { create } from 'zustand';
 import type { CompTrackSample } from '@core/tracking/trackVideoLayer';
 
-export type TrackerMode = 'follow' | 'stabilize' | 'corner' | 'mask';
+export type TrackerMode = 'follow' | 'transform' | 'stabilize' | 'corner' | 'mask';
 
 export interface TrackerResult {
   /** One track per point, in point order. */
@@ -37,11 +39,11 @@ export interface TrackerResult {
 }
 
 export function pointCountFor(mode: TrackerMode): number {
-  return mode === 'corner' ? 4 : mode === 'mask' ? 0 : 1;
+  return mode === 'corner' ? 4 : mode === 'transform' ? 2 : mode === 'mask' ? 0 : 1;
 }
 
-/** Seed positions for a mode, in source px. Corner points start at an inset
- *  quad so all four handles are visible and grabbable, not stacked. */
+/** Seed positions for a mode, in source px. Multi-point modes start spread
+ *  out so every handle is visible and grabbable, not stacked. */
 export function seedPointsFor(mode: TrackerMode, w: number, h: number): Array<{ x: number; y: number }> {
   if (mode === 'corner') {
     const ix = w * 0.25;
@@ -51,6 +53,12 @@ export function seedPointsFor(mode: TrackerMode, w: number, h: number): Array<{ 
       { x: w - ix, y: iy },
       { x: w - ix, y: h - iy },
       { x: ix, y: h - iy },
+    ];
+  }
+  if (mode === 'transform') {
+    return [
+      { x: w * 0.35, y: h / 2 },
+      { x: w * 0.65, y: h / 2 },
     ];
   }
   if (mode === 'mask') return [];

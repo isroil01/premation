@@ -187,6 +187,131 @@ export function applyStabilizeToLayer(opts: StabilizeOptions): number {
   return xKfs.length;
 }
 
+export interface TransformTrackOptions {
+  /** The tracked video layer — the space the samples were measured in. */
+  videoNodeId: string;
+  /** The layer that receives position/rotation/scale keyframes. */
+  targetNodeId: string;
+  /** Two tracks: [anchor, reference]. The anchor drives position; the
+   *  anchor→reference vector drives rotation and scale. */
+  tracks: ReadonlyArray<readonly CompTrackSample[]>;
+  sourceWidth: number;
+  sourceHeight: number;
+  comp: { width: number; height: number; rootId?: string };
+  /** Write rotation keyframes (default true). */
+  rotation?: boolean;
+  /** Write scale keyframes (default true). */
+  scale?: boolean;
+}
+
+/**
+ * Two-point solve: position from the anchor point, rotation and scale from
+ * the anchor→reference vector — AE's Track Motion with the Rotation and
+ * Scale boxes ticked.
+ *
+ * Everything is measured in the TARGET'S PARENT space (comp space when
+ * unparented): the angle of the vector, its length ratio against the first
+ * frame, and the anchor position. Measuring in comp space and writing into
+ * a rotated parent would double-count the parent's rotation.
+ *
+ * Rotation is UNWRAPPED across samples (each delta is brought within ±180°
+ * of the previous frame's) — atan2 alone would snap 179°→−179° and the
+ * interpolator would spin the layer the wrong way round through the cut.
+ *
+ * Rotation and scale are DELTAS composed onto the target's own sampled
+ * base at each time, like stabilize composes position — a target that
+ * already rotates keeps its animation plus the tracked motion.
+ *
+ * Frames where either track lacks a sample are skipped for all five
+ * params — position keyframes without matching rotation keyframes would
+ * shear the motion apart at the exact frames where tracking was weakest.
+ */
+export function applyTransformTrack(opts: TransformTrackOptions): number {
+  const target = defaultSceneGraph.getNode(opts.targetNodeId);
+  if (!target || opts.tracks.length !== 2) return 0;
+  const g = readGeometry(target);
+  if (!g) return 0;
+  const wantRotation = opts.rotation ?? true;
+  const wantScale = opts.scale ?? true;
+  const parentId = target.parent ?? null;
+
+  // Index the reference track by time; walk the anchor track.
+  const refByTime = new Map<number, CompTrackSample>();
+  for (const s of opts.tracks[1]!) refByTime.set(s.compTime, s);
+
+  const toParent = (x: number, y: number, compTime: number): [number, number] | null => {
+    const c = trackSampleToComp(opts.videoNodeId, x, y, compTime, opts.sourceWidth, opts.sourceHeight, opts.comp);
+    if (!c) return null;
+    if (!parentId) return [c.x, c.y];
+    const space = layerSpaceAt(parentId, compTime, opts.comp);
+    return space ? space.fromComp([c.x, c.y]) : null;
+  };
+
+  const xKfs: Keyframe[] = [];
+  const yKfs: Keyframe[] = [];
+  const rotKfs: Keyframe[] = [];
+  const sxKfs: Keyframe[] = [];
+  const syKfs: Keyframe[] = [];
+  let baseAngle: number | null = null;
+  let baseLength: number | null = null;
+  let prevAngleDelta = 0;
+  for (const a of opts.tracks[0]!) {
+    const b = refByTime.get(a.compTime);
+    if (!b) continue;
+    const pa = toParent(a.x, a.y, a.compTime);
+    const pb = toParent(b.x, b.y, a.compTime);
+    if (!pa || !pb) continue;
+    const vx = pb[0] - pa[0];
+    const vy = pb[1] - pa[1];
+    const len = Math.hypot(vx, vy);
+    if (len < 1e-6) continue; // coincident points measure nothing
+    const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
+    if (baseAngle === null || baseLength === null) {
+      baseAngle = angle;
+      baseLength = len;
+    }
+    let angleDelta = angle - baseAngle;
+    // Unwrap: keep each frame's delta within half a turn of the previous.
+    while (angleDelta - prevAngleDelta > 180) angleDelta -= 360;
+    while (angleDelta - prevAngleDelta < -180) angleDelta += 360;
+    prevAngleDelta = angleDelta;
+    const scaleRatio = len / baseLength;
+
+    const t = compToKeyframeTime(opts.targetNodeId, a.compTime);
+    xKfs.push({ t, value: pa[0], easing: 'linear' });
+    yKfs.push({ t, value: pa[1], easing: 'linear' });
+    if (wantRotation) {
+      const baseRot = defaultAnimation.sample(opts.targetNodeId, 'rotation', t) ?? g.rotationDeg ?? 0;
+      rotKfs.push({ t, value: baseRot + angleDelta, easing: 'linear' });
+    }
+    if (wantScale) {
+      const baseSx = defaultAnimation.sample(opts.targetNodeId, 'scaleX', t) ?? g.scaleX ?? 1;
+      const baseSy = defaultAnimation.sample(opts.targetNodeId, 'scaleY', t) ?? g.scaleY ?? 1;
+      sxKfs.push({ t, value: baseSx * scaleRatio, easing: 'linear' });
+      syKfs.push({ t, value: baseSy * scaleRatio, easing: 'linear' });
+    }
+  }
+  if (xKfs.length === 0) return 0;
+
+  const existingOf = (prop: string): readonly Keyframe[] =>
+    defaultAnimation.tracksFor(opts.targetNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
+
+  runAnimEdit('Apply Motion Track (rotation & scale)', () => {
+    defaultAnimation.batch(() => {
+      defaultAnimation.setKeyframes(opts.targetNodeId, 'x', spliceRecordedRange(existingOf('x'), xKfs));
+      defaultAnimation.setKeyframes(opts.targetNodeId, 'y', spliceRecordedRange(existingOf('y'), yKfs));
+      if (rotKfs.length > 0) {
+        defaultAnimation.setKeyframes(opts.targetNodeId, 'rotation', spliceRecordedRange(existingOf('rotation'), rotKfs));
+      }
+      if (sxKfs.length > 0) {
+        defaultAnimation.setKeyframes(opts.targetNodeId, 'scaleX', spliceRecordedRange(existingOf('scaleX'), sxKfs));
+        defaultAnimation.setKeyframes(opts.targetNodeId, 'scaleY', spliceRecordedRange(existingOf('scaleY'), syKfs));
+      }
+    });
+  });
+  return xKfs.length;
+}
+
 /** Corner Pin param keys in the tracker's corner order (TL, TR, BR, BL) and
  *  the rest position each offset resolves against (`defaultCorners`). */
 const CORNER_KEYS: ReadonlyArray<{ xKey: string; yKey: string; rest: (w: number, h: number) => { x: number; y: number } }> = [
