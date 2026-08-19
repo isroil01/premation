@@ -19,6 +19,10 @@ Added 2026-08-17: a named ease-curve library, a disk tier under the frame cache,
 onion skinning, text and colour Essential Properties, cloners with effectors and
 layer-driven fields, and 2D rigid-body physics.
 
+Added 2026-08-18: the frame cache is keyed on scene content and survives undo
+and restart; output-module templates; cloner cascade, push and path modes; and
+physics rotation (opt-in per body — real OBBs, contact torque, rolling).
+
 The engine is one GPU render graph (WebGPU, falling back to WebGL2) shared by the
 viewport and the exporter, covered by golden-image render tests.
 
@@ -55,10 +59,6 @@ storage layer.
   a change, and a new dependency. It is listed first because it sits UPSTREAM of
   the whole tracking/rotoscoping column: a tracker cannot be more frame-accurate
   than the decoder feeding it.
-- **A content-derived frame-cache key.** The disk tier is session-scoped because
-  the current key is built from revision counters that reset each launch. A
-  content hash would let frames survive a restart, and would stop an undo from
-  clearing a cache whose pixels are unchanged.
 - **After Effects parity.** Rotoscoping, more of the effect set, richer
   expression bindings. Open an issue for the specific gap you hit — that is far
   more useful than a general "more parity" wish.

@@ -25,8 +25,22 @@
  * on scrub is unusable for anything you intend to render.
  */
 
+import { arcTable, pointAndTangentAtLength } from './trimPath';
+
 /** How the clones are arranged before any effector runs. */
-export type ClonerMode = 'linear' | 'grid' | 'radial';
+export type ClonerMode = 'linear' | 'grid' | 'radial' | 'path';
+
+/**
+ * A driving path for `mode: 'path'`, in the CLONER's local frame — resolved by
+ * the caller (the renderer knows the graph; the plan does not). `closed`
+ * changes the spacing divisor exactly the way a radial wrap does: a closed
+ * loop must not put the last clone on the first, an open run must reach both
+ * ends.
+ */
+export interface PathGeometry {
+  points: Array<{ x: number; y: number }>;
+  closed: boolean;
+}
 
 /** Which clones an effector reaches, and how strongly. */
 export type FalloffShape = 'none' | 'linear' | 'radial';
@@ -115,8 +129,10 @@ export interface ClonerConfig {
   startAngle: number;
   /** Degrees of ring to fill. 360 wraps. */
   arc: number;
-  /** Rotate each clone to face out along the ring. */
+  /** Rotate each clone to face out along the ring / along the path tangent. */
   alignToRadius: boolean;
+  /** Layer whose outline drives `mode: 'path'`. */
+  pathLayerId: string;
   step: ClonerStep;
   random: ClonerRandom;
   falloff: ClonerFalloff;
@@ -134,6 +150,7 @@ export const DEFAULT_CLONER: ClonerConfig = {
   startAngle: -90,
   arc: 360,
   alignToRadius: false,
+  pathLayerId: '',
   step: { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0, time: 0 },
   random: { seed: 1, position: 0, rotation: 0, scale: 0 },
   falloff: {
@@ -244,7 +261,32 @@ function shoulder(d: number, w: number, f: ClonerFalloff): number {
 }
 
 /** The base arrangement, before effectors. */
-function basePosition(i: number, cfg: ClonerConfig, total: number): { x: number; y: number; rot: number } {
+function basePosition(
+  i: number,
+  cfg: ClonerConfig,
+  total: number,
+  path: PathGeometry | null,
+): { x: number; y: number; rot: number } {
+  if (cfg.mode === 'path') {
+    // No path (missing driver, wrong layer kind) falls through to the LINEAR
+    // arrangement rather than stacking every clone at the origin — same
+    // philosophy as a missing field driver: the cloner must stay visibly a
+    // cloner, so the broken half is the path picker, not the whole control.
+    if (path && path.points.length >= 2) {
+      const table = arcTable(path.points, path.closed);
+      // Same divisor rule as radial: a closed loop divides by n (the last
+      // clone must not land on the first), an open run divides by n-1 (a line
+      // has two ends and the clones should reach both).
+      const denom = path.closed ? total : Math.max(1, total - 1);
+      const at = pointAndTangentAtLength(table, (table.total * i) / denom);
+      return {
+        x: at.x,
+        y: at.y,
+        rot: cfg.alignToRadius ? (at.angle * 180) / Math.PI : 0,
+      };
+    }
+  }
+
   if (cfg.mode === 'grid') {
     const cols = Math.max(1, Math.floor(cfg.countX));
     const rows = Math.max(1, Math.floor(cfg.countY));
@@ -286,14 +328,14 @@ function basePosition(i: number, cfg: ClonerConfig, total: number): { x: number;
  * Effectors are applied AFTER the arrangement and are scaled by the falloff, so
  * "random position" scatters the layout rather than replacing it.
  */
-export function clonerPlan(cfg: ClonerConfig, field: FieldCenter | null = null): CloneTransform[] {
+export function clonerPlan(cfg: ClonerConfig, field: FieldCenter | null = null, path: PathGeometry | null = null): CloneTransform[] {
   const total = cloneCount(cfg);
   if (total === 0) return [];
   const out: CloneTransform[] = [];
   const seed = cfg.random.seed | 0;
 
   for (let i = 0; i < total; i++) {
-    const base = basePosition(i, cfg, total);
+    const base = basePosition(i, cfg, total, path);
     // Exactly one of these does anything — `source` selects which — but both
     // are consulted so the falloff has a single weight regardless of source.
     const w = falloffWeight(i, total, cfg.falloff) * fieldWeight(base, cfg.falloff, field);

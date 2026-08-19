@@ -478,5 +478,14 @@ export class FrameDiskCache {
  */
 export function createViewportDiskCache(): FrameDiskCache | null {
   if (!frameStoreAvailable()) return null;
-  return new FrameDiskCache({ store: new IndexedDbFrameStore() });
+  const cache = new FrameDiskCache({ store: new IndexedDbFrameStore() });
+  active = cache;
+  return cache;
+}
+
+/** The live viewport tier, for surfaces outside the render loop — the settings
+ *  dialog's size readout and Purge button. Null until the viewport mounts. */
+let active: FrameDiskCache | null = null;
+export function activeViewportDiskCache(): FrameDiskCache | null {
+  return active;
 }

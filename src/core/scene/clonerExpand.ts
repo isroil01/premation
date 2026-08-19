@@ -31,7 +31,7 @@
 
 import type { SceneNode } from '@core/types';
 import { renderComponentsOf } from './SceneGraph';
-import { clonerPlan, cloneCount, DEFAULT_CLONER, type ClonerConfig, type CloneTransform, type FieldCenter } from './cloner';
+import { clonerPlan, cloneCount, DEFAULT_CLONER, type ClonerConfig, type CloneTransform, type FieldCenter, type PathGeometry } from './cloner';
 
 /**
  * Where the driving layer sits, in the CLONER's local frame.
@@ -42,6 +42,15 @@ import { clonerPlan, cloneCount, DEFAULT_CLONER, type ClonerConfig, type CloneTr
  * effectors then apply at full strength rather than being zeroed.
  */
 export type FieldResolver = (clonerId: string, layerId: string) => FieldCenter | null;
+
+/**
+ * The driving layer's outline in the CLONER's local frame, for `mode: 'path'`.
+ * Same division of labour as {@link FieldResolver}: resolving it needs the
+ * graph, the animation engine and both world matrices, none of which belong in
+ * an expansion pass. Null means "no usable path" and the plan falls back to a
+ * linear arrangement rather than stacking clones at the origin.
+ */
+export type PathResolver = (clonerId: string, layerId: string) => PathGeometry | null;
 
 /** Stored on the layer's fx component. */
 export const CLONER_PROP = '__cloner';
@@ -95,7 +104,7 @@ function subtreeOf(nodes: ReadonlyArray<SceneNode>, rootId: string): SceneNode[]
  * Returns the input array unchanged when no node carries a cloner, so the
  * common case allocates nothing.
  */
-export function expandCloners(nodes: SceneNode[], fieldOf?: FieldResolver): SceneNode[] {
+export function expandCloners(nodes: SceneNode[], fieldOf?: FieldResolver, pathOf?: PathResolver): SceneNode[] {
   const cloners = nodes.filter((n) => readNodeCloner(n) !== null);
   if (cloners.length === 0) return nodes;
 
@@ -133,7 +142,10 @@ export function expandCloners(nodes: SceneNode[], fieldOf?: FieldResolver): Scen
     const field = cfg.falloff.source === 'layer' && cfg.falloff.layerId
       ? fieldOf?.(node.id, cfg.falloff.layerId) ?? null
       : null;
-    const plan = clonerPlan(cfg, field);
+    const path = cfg.mode === 'path' && cfg.pathLayerId
+      ? pathOf?.(node.id, cfg.pathLayerId) ?? null
+      : null;
+    const plan = clonerPlan(cfg, field, path);
     const sub = subtrees.get(node.id)!;
     for (const clone of plan) {
       const prefix = `${node.id}~c${clone.index}::`;

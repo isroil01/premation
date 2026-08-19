@@ -34,6 +34,7 @@ const MODES: ReadonlyArray<{ value: ClonerMode; label: string }> = [
   { value: 'linear', label: 'Linear' },
   { value: 'grid', label: 'Grid' },
   { value: 'radial', label: 'Radial' },
+  { value: 'path', label: 'Path' },
 ];
 
 const FALLOFFS: ReadonlyArray<{ value: FalloffShape; label: string }> = [
@@ -120,6 +121,34 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             <>
               <InspectorRow label="Offset X"><ValueField value={cfg.offsetX} precision={1} onChange={(v) => write({ offsetX: v })} aria-label="Offset X" /></InspectorRow>
               <InspectorRow label="Offset Y"><ValueField value={cfg.offsetY} precision={1} onChange={(v) => write({ offsetY: v })} aria-label="Offset Y" /></InspectorRow>
+            </>
+          )}
+
+          {cfg.mode === 'path' && (
+            <>
+              <InspectorRow label="Path" align="center">
+                <select
+                  className={styles.select}
+                  style={{ width: 110 }}
+                  value={cfg.pathLayerId}
+                  onChange={(e) => write({ pathLayerId: e.target.value })}
+                  aria-label="Path layer"
+                >
+                  {/* An explicit empty option, same as the field driver: "none
+                      chosen" is a state you can see and return to. Without a
+                      path the clones fall back to a linear run. */}
+                  <option value="">— none —</option>
+                  {siblings.map((sib) => <option key={sib.id} value={sib.id}>{sib.name ?? sib.id}</option>)}
+                </select>
+              </InspectorRow>
+              <InspectorRow label="Follow" align="center">
+                <div className={styles.control}>
+                  <Checkbox checked={cfg.alignToRadius} onChange={(e) => write({ alignToRadius: e.target.checked })} aria-label="Follow path tangent" />
+                  <span style={{ marginLeft: 8, fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+                    {cfg.alignToRadius ? 'Faces along the path' : 'Keeps own rotation'}
+                  </span>
+                </div>
+              </InspectorRow>
             </>
           )}
 

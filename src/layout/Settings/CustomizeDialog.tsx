@@ -35,6 +35,8 @@ import {
 } from '@core/commands/shortcutOverrides';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { getThemeManager } from '@core/services/coreServices';
+import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
+import { viewportFrameCache } from '@core/rendering/frameCache';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import type { KeyChord } from '@app-types/common';
@@ -459,6 +461,13 @@ function AppearanceTab(): JSX.Element {
         </div>
       </div>
 
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Preview disk cache</span>
+        <div className={styles.rowRight}>
+          <PreviewCacheControl />
+        </div>
+      </div>
+
       <p className={styles.hint}>
         The accent tints buttons, selection and the playhead. Empty follows the theme.
         <br />
@@ -490,6 +499,46 @@ function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string }> {
     // edition does not ship the assistant at all, so it has no key to enter.
     ...(aiEnabled() ? ([{ id: 'ai' as const, label: 'AI' }]) : []),
   ];
+}
+
+/**
+ * Size readout + Purge for the preview disk tier.
+ *
+ * This is `FrameDiskCache.purge()`'s ONE caller — the export existed for a
+ * dialog that had not been built, which is the dead-export shape this repo's
+ * working agreements flag. The readout counts parked generations too, because
+ * they are exactly the bytes a user wondering "why is this app holding 3 GB"
+ * is looking at. Purge also clears the RAM tier: AE's purge does, and a purge
+ * that leaves the green bar lit reads as a button that did nothing.
+ */
+function PreviewCacheControl(): JSX.Element {
+  const [, bump] = useState(0);
+  const disk = activeViewportDiskCache();
+  if (!disk) {
+    return <span className={styles.hint}>Unavailable in this environment.</span>;
+  }
+  const mb = disk.totalBytes / (1024 * 1024);
+  const parked = disk.retainedGenerations;
+  return (
+    <>
+      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
+        {mb < 1 ? '< 1' : Math.round(mb)} MB
+        {parked > 0 ? ` · ${parked} parked state${parked === 1 ? '' : 's'}` : ''}
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          void disk.purge().then(() => {
+            viewportFrameCache.clear();
+            bump((n) => n + 1);
+          });
+        }}
+      >
+        Purge
+      </Button>
+    </>
+  );
 }
 
 function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): JSX.Element {

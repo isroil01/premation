@@ -74,11 +74,11 @@ import { expandCloners, cloneOffsetOf } from '@core/scene/clonerExpand';
 import { readNodePhysics, physicsPosesAt } from '@core/simulation/physicsBodies';
 import type { BodySeed } from '@core/simulation/rigidBody';
 import { usePhysicsStore } from '@stores/physicsStore';
-import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
+import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand, nodeWorldOutline } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
 import type { PropPath } from '@motion/animation';
-import { Project3D, Matrix4Math, type Matrix2D, type Matrix4 } from '@motion/scene';
+import { Project3D, Matrix4Math, Matrix, type Matrix2D, type Matrix4 } from '@motion/scene';
 import { Color } from '@motion/renderer';
 
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -557,13 +557,64 @@ export function buildSnapshot(
     return { x: rel.x, y: rel.y };
   };
 
+  /**
+   * A path layer's outline, expressed in the CLONER's frame — the driver for
+   * `mode: 'path'`. Shares everything with `fieldOf` above: raw graph, raw
+   * world matrices, and the same reasoning about why (expansion is what this
+   * feeds; a driver is an ordinary layer, never a clone).
+   *
+   * The outline itself comes from `nodeWorldOutline` — the SAME resolution the
+   * boolean ops use (primitive outline vs Geometry points vs animated
+   * `path.points`) — so the clones sit on the curve that is actually drawn,
+   * not on a second implementation of it that drifts.
+   */
+  const pathOf = (clonerId: string, layerId: string): { points: Array<{ x: number; y: number }>; closed: boolean } | null => {
+    const n = graph.getNode(layerId);
+    if (!n || !graph.getNode(clonerId)) return null;
+    const av = rawAnim.evaluateNode(layerId, t);
+    // WORLD pose through the parent chain, like the live-boolean caller: a
+    // path layer inside a moving null must carry the null's motion.
+    const w = worldTransformOf(layerId, rawLocalOf, rawParentOf, rawWorldCache);
+    const outline = nodeWorldOutline(
+      n as SceneNode,
+      (prop) => {
+        if (prop === 'x') return w.x;
+        if (prop === 'y') return w.y;
+        if (prop === 'rotation') return w.rotation;
+        if (prop === 'scaleX') return w.scaleX;
+        if (prop === 'scaleY') return w.scaleY;
+        return av.get(prop);
+      },
+      () => {
+        const pts = rawAnim.sampleData(layerId, 'path.points', t);
+        if (!Array.isArray(pts) || pts.length < 3) return undefined;
+        if (typeof pts[0] !== 'object' || pts[0] === null || !('x' in (pts[0] as object))) return undefined;
+        return (pts as Array<{ x: number; y: number; inX?: number; inY?: number; outX?: number; outY?: number }>).map(
+          (q) => ({ x: q.x, y: q.y, inX: q.inX ?? q.x, inY: q.inY ?? q.y, outX: q.outX ?? q.x, outY: q.outY ?? q.y }),
+        );
+      },
+    );
+    if (!outline) return null;
+    // World → the cloner's local frame, so the plan's output lands in the same
+    // space every other clone offset is expressed in. Inverting the matrix
+    // (rather than subtracting positions) is what keeps a ROTATED or scaled
+    // cloner honest — same lesson the field resolver already carries.
+    const clonerW = worldMatrixOf(clonerId, rawLocalOf, rawParentOf, rawWorldCache);
+    if (!clonerW) return null;
+    const inv = Matrix.invert(clonerW);
+    return {
+      closed: outline.closed,
+      points: outline.points.map((pt) => Matrix.transformPoint(inv, pt)),
+    };
+  };
+
   const nodes = expandCloners(expandCompInstances(
     graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
   // AFTER `materializeForFrame`, never before: a graph node view exposes
   // `transform` and friends through prototype getters, and the spread in
   // `applyOwnOverrides` drops them — `readBase` then died on an undefined
   // transform. A materialized node is a plain object, so the spread is safe.
-  ).map(materializeForFrame).map(applyOwnOverrides), fieldOf);
+  ).map(materializeForFrame).map(applyOwnOverrides), fieldOf, pathOf);
   const anySolo = nodes.some((n) => n.solo === true);
 
   const rawController = getTimelineController();

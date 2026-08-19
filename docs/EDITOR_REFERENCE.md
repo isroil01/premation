@@ -485,8 +485,11 @@ to describe is gone: `gizmo3dSnapping` was deleted with nine sibling symbols and
   told apart from a different project's. Surviving a restart — which is what
   makes day three bearable in AE — needs a CONTENT-DERIVED key first, and that
   is a correctness change to the key rather than a storage feature.
-- **No render-settings or output-module templates** (`renderSettings`: zero;
-  `outputModule`: 2). Every queue entry is configured from scratch.
+- **Output-module templates ship** (2026-08-18, `outputTemplates.ts`): named
+  render-settings bundles with built-ins, applied from the queue dialog.
+  Resolution is stored as a SCALE — "Half Res" saved from an HD comp still
+  means half on a 4K one — and duration is never stored, because how long a
+  comp runs is a fact about the comp.
 - **Pre-1.0**, with breaking `.motion` format changes still expected.
 - **No collaboration** — removed by choice, but still a loss against Rive/Jitter.
 - **No ecosystem**: no plugin market with content in it, no template marketplace,
@@ -1892,3 +1895,32 @@ through rAF — never ticks. Anything downstream of a rendered frame therefore
 stays empty there: the RAM cache, the disk tier, the onion skins, the cloner.
 That is an environment limit rather than a finding about the code, but it is the
 reason these seven land with a caveat instead of a screenshot.
+
+
+---
+
+### Corrected 2026-08-18 — two of yesterday's three walls fell on inspection
+
+Yesterday's entry named three subsystem walls. Re-examined rather than
+re-cited, two of them were not walls:
+
+| Yesterday said | Today |
+|---|---|
+| Cross-session frame caching needs a content-derived key first | The key landed same-day; **retention landed today** (`frameDiskCache.ts`): generations are PARKED, not deleted — an undo gets its frames back with zero re-renders, and a manifest lets a restart inherit the previous session warm |
+| Cloning along a path "wants the resolution moved, not duplicated" | It wanted neither — the resolution already existed as `nodeWorldPolygon` for boolean ops. `nodeWorldOutline` was EXTRACTED from it (open-path support added), and the cloner's path mode resolves through the same function the booleans use. The wall was a failure to find prior art, recorded as such |
+| Variable font axes are a text-rasterization subsystem | Still true. Re-confirmed, not re-attempted |
+
+Also superseding yesterday's physics caveat: **rotation ships** (`rigidBody.ts`),
+opt-in per body. The compat mechanism is structural — a locked body carries
+`invInertia = 0`, every angular term vanishes, and the algebra reduces exactly
+to the translation-only solver, so pre-rotation scenes replay bit-identically.
+With Spin on: real OBBs (SAT + clipped two-point manifold), impulses at the
+contact point, circles that roll from friction alone. Three solver bugs were
+caught by tests before shipping — sequential per-point impulses spinning
+symmetric hits, manifold depth measured from the reference centre instead of
+its face, and a wall-contact tie window that swallowed sub-pixel contacts.
+
+And closing a dead export the working agreements flag: `FrameDiskCache.purge()`
+now has its one caller — a Preview-disk-cache row in Customize ▸ Appearance
+with a size readout (parked generations included) and a Purge button. Output
+templates (above) closed the render-settings gap the same day.
