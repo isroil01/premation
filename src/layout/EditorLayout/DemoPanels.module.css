@@ -1211,3 +1211,34 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
+
+/* ── Assets: footage readout ─────────────────────────────────────────
+   Pinned under the list, one row: name on the left, the facts on the right.
+   Same tokens as the rows above it so it reads as part of the panel, with a
+   top border so it reads as a FOOTER rather than another row. */
+.assetMetaFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1);
+  min-width: 0;
+}
+
+.assetMetaName {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.assetMetaFacts {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

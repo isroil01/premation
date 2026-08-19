@@ -66,6 +66,7 @@ import { TimeControls } from '@layout/Effects/TimeControls';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusStore } from '@stores/focusStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -777,6 +778,16 @@ export function AssetsPanel(): JSX.Element {
           }
         },
       },
+      {
+        // AE's canonical first move: the comp takes the clip's size (PAR-
+        // corrected), duration and probed frame rate, and the clip lands at
+        // full frame. Single-selection only — one comp per gesture; a batch
+        // version would open N tabs and bury the user.
+        id: 'comp-from-footage',
+        label: 'New Comp from Footage',
+        disabled: many,
+        onSelect: () => { void createCompositionFromFootage(asset); },
+      },
       { id: 'sep-a', separator: true },
       {
         id: 'delete',
@@ -1139,6 +1150,30 @@ export function AssetsPanel(): JSX.Element {
           </div>
         )}
       </div>
+
+      {/* The footage readout, as AE's project panel has it: select a clip and
+          the panel answers "what IS this" — pixels, length, rate — without a
+          dialog. One selection only: a summary of nine files answers nothing.
+          fps is shown only when a real probe filled it in; the browser cannot
+          report a video's rate and printing the comp's here would be a lie
+          wearing units (see ImportedAsset.metadata.fps). */}
+      {selectedAssetIds.size === 1 && (() => {
+        const sel = assets.find((x) => x.id === [...selectedAssetIds][0]);
+        if (!sel) return null;
+        const m = sel.metadata ?? {};
+        const parts: string[] = [];
+        if (m.width && m.height) parts.push(`${Math.round(m.width * (sel.interpret?.par ?? 1))}×${m.height}`);
+        if (m.duration && m.duration > 0) parts.push(`${m.duration.toFixed(2)}s`);
+        if (m.fps && m.fps > 0) parts.push(`${m.fps % 1 === 0 ? m.fps : m.fps.toFixed(3)} fps`);
+        if (m.hasAudioTrack) parts.push('audio');
+        parts.push(formatBytes(sel.size));
+        return (
+          <div className={styles.assetMetaFooter} data-asset-meta="">
+            <span className={styles.assetMetaName} title={sel.name}>{sel.name}</span>
+            <span className={styles.assetMetaFacts}>{parts.join(' · ')}</span>
+          </div>
+        );
+      })()}
     </Panel>
   );
 }
