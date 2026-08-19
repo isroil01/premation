@@ -51,6 +51,12 @@ export interface ParticleSoA {
    * needs no per-particle cursor — every live particle writes every frame.
    */
   trailRing: Float64Array;
+  /** Depth px and z velocity — simulated always, projected only when the
+   *  config's perspective is on. */
+  z: Float64Array;
+  vz: Float64Array;
+  /** 0 = emitter-born, 1 = sub-emitted child. Children never sub-emit. */
+  generation: Float64Array;
   /** Frames each slot has been alive — bounds how far back its ring is REAL,
    *  so a fresh particle cannot exhume the previous occupant's trail. */
   aliveFrames: Float64Array;
@@ -99,6 +105,9 @@ export function trailRingSpec(
 function alloc(n: number, ringSize: number): ParticleSoA {
   return {
     trailRing: new Float64Array(n * ringSize * 2),
+    z: new Float64Array(n),
+    vz: new Float64Array(n),
+    generation: new Float64Array(n),
     aliveFrames: new Float64Array(n),
     id: new Float64Array(n),
     x: new Float64Array(n),
@@ -116,6 +125,9 @@ function alloc(n: number, ringSize: number): ParticleSoA {
 function cloneState(s: ParticleSoA): ParticleSoA {
   return {
     trailRing: s.trailRing.slice(),
+    z: s.z.slice(),
+    vz: s.vz.slice(),
+    generation: s.generation.slice(),
     aliveFrames: s.aliveFrames.slice(),
     id: s.id.slice(),
     x: s.x.slice(),
@@ -162,11 +174,46 @@ function spawnInto(
   s.id[slot] = i;
   s.x[slot] = ox;
   s.y[slot] = oy;
+  s.z[slot] = (hash01(i, 6, seed) - 0.5) * (cfg.emitterDepth ?? 0);
+  s.vz[slot] = (hash01(i, 8, seed) * 2 - 1) * (cfg.speedZ ?? 0);
+  s.generation[slot] = 0;
   s.vx[slot] = Math.cos(dir) * speed;
   s.vy[slot] = Math.sin(dir) * speed;
   s.age[slot] = 0;
   s.life[slot] = life;
   s.alive[slot] = 1;
+  s.aliveFrames[slot] = 0;
+}
+
+/** Current visual radius of a live slot — the size ramp at its age, halved. */
+function radiusAt(s: ParticleSoA, i: number, cfg: ParticleConfig): number {
+  const life = s.life[i]!;
+  const a01 = life > 0 ? Math.min(1, s.age[i]! / life) : 1;
+  return Math.max(0, lerp(cfg.sizeStart, cfg.sizeEnd, a01)) / 2;
+}
+
+/** Spawn one sub-emitted child at a burst point. Generation 1: never bursts. */
+function spawnChildInto(
+  s: ParticleSoA,
+  slot: number,
+  childId: number,
+  at: { x: number; y: number; z: number },
+  cfg: ParticleConfig,
+): void {
+  const seed = cfg.seed | 0;
+  const dir = hash01(childId, 30, seed) * Math.PI * 2;
+  const speed = (cfg.subSpeed ?? 120) * (0.5 + hash01(childId, 31, seed));
+  s.id[slot] = childId;
+  s.x[slot] = at.x;
+  s.y[slot] = at.y;
+  s.z[slot] = at.z;
+  s.vz[slot] = 0;
+  s.vx[slot] = Math.cos(dir) * speed;
+  s.vy[slot] = Math.sin(dir) * speed;
+  s.age[slot] = 0;
+  s.life[slot] = Math.max(0.05, cfg.subLifetime ?? 0.6);
+  s.alive[slot] = 1;
+  s.generation[slot] = 1;
   s.aliveFrames[slot] = 0;
 }
 
@@ -202,6 +249,10 @@ export function createStatefulParticleSim(
   const damping = Math.max(0, Math.min(1, opts.damping));
   const birthPerFrame = Math.max(0, cfg.birthRate) / fps;
   const { ringSize } = trailRingSpec(cfg, fps);
+  const subDeath = cfg.subEmit === 'death';
+  const subBounce = cfg.subEmit === 'bounce';
+  const collide = cfg.collide === true;
+  const collideRest = Math.max(0, Math.min(1, cfg.collideRestitution ?? 0.7));
 
   return {
     init(): ParticleSoA {
@@ -213,6 +264,10 @@ export function createStatefulParticleSim(
 
     step(prev: ParticleSoA, frame: number): ParticleSoA {
       const s = prev;
+      /** Sub-emit events collected DURING integration and spawned after it —
+       *  spawning mid-loop would let a child be integrated in its birth frame
+       *  or, worse, recycle the slot of a particle the loop has not reached. */
+      const births: Array<{ x: number; y: number; z: number; parentId: number }> = [];
       // Integrate living particles.
       for (let i = 0; i < n; i++) {
         if (s.alive[i]! < 0.5) continue;
@@ -226,18 +281,29 @@ export function createStatefulParticleSim(
         let y = s.y[i]! + vy * dt;
         const age = s.age[i]! + dt;
         if (age >= s.life[i]!) {
+          // A dying PARENT can burst. Children (generation 1) never do — one
+          // generation, or a firework cascades unbounded.
+          if (subDeath && s.generation[i]! < 0.5) {
+            births.push({ x: s.x[i]!, y: s.y[i]!, z: s.z[i]!, parentId: s.id[i]! });
+          }
           s.alive[i] = 0;
           continue;
         }
         // Floor bounce — the history-dependent interrupt closed-form cannot do.
         if (y >= floorY) {
           y = floorY;
-          if (vy > 0) vy = -vy * restitution;
+          if (vy > 0) {
+            if (subBounce && s.generation[i]! < 0.5) {
+              births.push({ x, y, z: s.z[i]!, parentId: s.id[i]! });
+            }
+            vy = -vy * restitution;
+          }
           // Kill near-rest contact chatter (resting on the floor).
           if (Math.abs(vy) < 0.5) vy = 0;
         }
         s.x[i] = x;
         s.y[i] = y;
+        s.z[i] = s.z[i]! + s.vz[i]! * dt;
         s.vx[i] = vx;
         s.vy[i] = vy;
         s.age[i] = age;
@@ -249,6 +315,51 @@ export function createStatefulParticleSim(
           s.trailRing[(i * ringSize + head) * 2] = x;
           s.trailRing[(i * ringSize + head) * 2 + 1] = y;
           s.aliveFrames[i] = s.aliveFrames[i]! + 1;
+        }
+      }
+
+      // Particle-particle collisions: equal-mass circles, push-apart plus a
+      // restitution impulse along the normal. O(n²) in fixed index order —
+      // deterministic, and at the 500-particle cap still cheap. 2D on purpose:
+      // z is a projection axis here, and colliding in a depth nobody tuned
+      // would separate visually-overlapping particles for invisible reasons.
+      if (collide) {
+        for (let i = 0; i < n; i++) {
+          if (s.alive[i]! < 0.5) continue;
+          const ri = radiusAt(s, i, cfg);
+          for (let j = i + 1; j < n; j++) {
+            if (s.alive[j]! < 0.5) continue;
+            const dx = s.x[j]! - s.x[i]!;
+            const dy = s.y[j]! - s.y[i]!;
+            const r = ri + radiusAt(s, j, cfg);
+            const dist = Math.hypot(dx, dy);
+            if (dist >= r || r <= 0) continue;
+            const nx = dist < 1e-9 ? 1 : dx / dist;
+            const ny = dist < 1e-9 ? 0 : dy / dist;
+            const push = (r - dist) / 2;
+            s.x[i]! -= nx * push;
+            s.y[i]! -= ny * push;
+            s.x[j]! += nx * push;
+            s.y[j]! += ny * push;
+            const vn = (s.vx[j]! - s.vx[i]!) * nx + (s.vy[j]! - s.vy[i]!) * ny;
+            if (vn < 0) {
+              const jn = (-(1 + collideRest) * vn) / 2;
+              s.vx[i]! -= jn * nx;
+              s.vy[i]! -= jn * ny;
+              s.vx[j]! += jn * nx;
+              s.vy[j]! += jn * ny;
+            }
+          }
+        }
+      }
+
+      // Spawn the collected sub-emit bursts.
+      for (const b of births) {
+        const count = Math.min(16, Math.max(0, Math.floor(cfg.subCount ?? 0)));
+        for (let k = 0; k < count; k++) {
+          const slot = findFreeSlot(s);
+          const j = (b.parentId | 0) * 977 + k;
+          spawnChildInto(s, slot, j, b, cfg);
         }
       }
 
@@ -306,11 +417,16 @@ export function particlesFromSoA(
     const size = Math.max(0, lerp(cfg.sizeStart, cfg.sizeEnd, age01));
     const opacity = lerp(cfg.opacityStart, cfg.opacityEnd, age01);
     const trail = readTrail(i);
+    // Children render at the config's size ramp scaled down — same ramp, same
+    // colours, smaller, which is what makes a burst read as debris OF the
+    // parent rather than as a second emitter.
+    const genScale = s.generation[i]! >= 0.5 ? Math.max(0, cfg.subSizeScale ?? 0.5) : 1;
     out.push({
       ...(trail ? { trail } : {}),
+      z: s.z[i]!,
       x: s.x[i]!,
       y: s.y[i]!,
-      size,
+      size: size * genScale,
       color: lerpColor(cfg.colorStart, cfg.colorEnd, age01, opacity),
       opacity,
       rotation: cfg.spin * age,

@@ -148,6 +148,61 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
             scrub-free), stateful mode swirls (real curl-noise force). Scale is
             stateful-only — the wander has no spatial field to scale. */}
         {Num('turbulence', 'Turbulence', cfg.simMode === 'stateful' ? 'px/s²' : 'px')}
+        {/* Depth axis — simulated always, PROJECTED only when Perspective is
+            on, so flipping perspective changes the look, never the motion. */}
+        {Num('emitterDepth', 'Depth', 'px')}
+        {Num('speedZ', 'Speed Z', 'px/s')}
+        {Num('perspective', 'Perspective', 'px')}
+        {/* Collisions and sub-emit are plain rows like the bounce params —
+            both shape the stateful HISTORY, and their toggles/selects have no
+            meaningful in-between to keyframe anyway. */}
+        {cfg.simMode === 'stateful' && (
+          <div className={styles.popoverRow}>
+            <div style={{ width: 13 }} />
+            <span className={styles.popoverLabel}>Collide</span>
+            <input
+              type="checkbox"
+              checked={cfg.collide ?? false}
+              onChange={(e) => set('collide', e.target.checked)}
+              aria-label="Particle collisions"
+            />
+          </div>
+        )}
+        <div className={styles.popoverRow}>
+          <div style={{ width: 13 }} />
+          <span className={styles.popoverLabel}>Sub-Emit</span>
+          <select
+            className={styles.select}
+            style={{ width: 110 }}
+            value={cfg.subEmit ?? 'off'}
+            onChange={(e) => set('subEmit', e.target.value as 'off' | 'death' | 'bounce')}
+            aria-label="Sub-emitter trigger"
+          >
+            <option value="off">Off</option>
+            <option value="death">On Death</option>
+            {/* A bounce is history — the closed-form emitter has none. */}
+            {cfg.simMode === 'stateful' && <option value="bounce">On Bounce</option>}
+          </select>
+        </div>
+        {(cfg.subEmit ?? 'off') !== 'off' && (
+          <>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Burst</span>
+              <ValueField value={cfg.subCount ?? 8} min={0} max={16} precision={0} onChange={(v) => set('subCount', Number(v))} aria-label="Children per burst" />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Burst Speed</span>
+              <ValueField value={cfg.subSpeed ?? 120} min={0} precision={0} unit="px/s" onChange={(v) => set('subSpeed', Number(v))} aria-label="Child speed" />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Burst Life</span>
+              <ValueField value={cfg.subLifetime ?? 0.6} min={0.05} precision={2} unit="s" onChange={(v) => set('subLifetime', Number(v))} aria-label="Child lifetime" />
+            </div>
+          </>
+        )}
         {/* Trails are plain rows, not Num rows, on purpose: Num makes a param
             KEYFRAMEABLE, and in stateful mode the trail ring is part of the
             state shape — animating its length would rebuild the sim on every

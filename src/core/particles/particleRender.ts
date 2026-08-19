@@ -35,11 +35,25 @@ function toSprites(
   particles: Particle[],
   fieldW: number,
   fieldH: number,
+  perspective = 0,
 ): ParticleSprite[] {
   const cx = fieldW / 2;
   const cy = fieldH / 2;
   const out: ParticleSprite[] = [];
-  for (const p of particles) {
+  // With perspective on, FAR particles paint first so near ones cover them —
+  // the painter's algorithm, and the whole reason z is worth sorting by.
+  // Without it, authored order stands (sorting a flat field would reshuffle
+  // additive overlap for no visual change).
+  const ordered = perspective > 0
+    ? [...particles].sort((a, b) => b.z - a.z)
+    : particles;
+  /** Projected scale at a particle's depth; 1 when perspective is off. Depth
+   *  is clamped just in front of the focal point rather than culled — a
+   *  particle blowing up to fill the frame reads as "came at the camera",
+   *  which is what it did. */
+  const scaleAt = (z: number): number =>
+    perspective > 0 ? perspective / Math.max(perspective * 0.1, perspective + z) : 1;
+  for (const p of ordered) {
     // Trail ghosts BEFORE the head, oldest first, so under normal blending the
     // particle paints over its own trail rather than under it. Opacity and
     // size taper toward the tail; colour is the particle's own, so an additive
@@ -48,10 +62,11 @@ function toSprites(
       const n = p.trail.length;
       for (let k = n - 1; k >= 0; k--) {
         const fade = (n - k) / (n + 1); // oldest ≈ 1/(n+1), newest ≈ n/(n+1)
+        const ts = scaleAt(p.z);
         out.push({
-          x: cx + p.trail[k]!.x,
-          y: cy + p.trail[k]!.y,
-          size: p.size * (0.35 + 0.65 * fade),
+          x: cx + p.trail[k]!.x * ts,
+          y: cy + p.trail[k]!.y * ts,
+          size: p.size * (0.35 + 0.65 * fade) * ts,
           rotation: p.rotation,
           color: p.color,
           opacity: p.opacity * fade * 0.7,
@@ -59,10 +74,11 @@ function toSprites(
         });
       }
     }
+    const sc = scaleAt(p.z);
     out.push({
-      x: cx + p.x,
-      y: cy + p.y,
-      size: p.size,
+      x: cx + p.x * sc,
+      y: cy + p.y * sc,
+      size: p.size * sc,
       rotation: p.rotation,
       color: p.color,
       opacity: p.opacity,
@@ -94,9 +110,9 @@ export function particleSprites(
     const cache = statefulParticleCache(key, cfg, fps);
     const frame = Math.max(0, Math.floor(time * fps + 1e-9));
     const state = cache.stateAt(frame);
-    return toSprites(particlesFromSoA(state, cfg, { frame, fps }), fieldW, fieldH);
+    return toSprites(particlesFromSoA(state, cfg, { frame, fps }), fieldW, fieldH, cfg.perspective ?? 0);
   }
-  return toSprites(simulateParticles(cfg, time), fieldW, fieldH);
+  return toSprites(simulateParticles(cfg, time), fieldW, fieldH, cfg.perspective ?? 0);
 }
 
 /** Canvas composite op for the intra-field transfer mode ('add' = glow). */

@@ -51,6 +51,18 @@ function configSignature(cfg: ParticleConfig, fps: number): string {
     // config), so a length/spacing change must rebuild the history.
     trailLength: cfg.trailLength ?? 0,
     trailSpacing: cfg.trailSpacing ?? 1 / 30,
+    // Depth, collisions and sub-emit all shape the step history. perspective
+    // and subSizeScale deliberately absent: they are render-time projections
+    // of the same state, and resetting the sim for them would erase history a
+    // slider was only trying to LOOK at differently.
+    emitterDepth: cfg.emitterDepth ?? 0,
+    speedZ: cfg.speedZ ?? 0,
+    collide: cfg.collide ?? false,
+    collideRestitution: cfg.collideRestitution ?? 0.7,
+    subEmit: cfg.subEmit ?? 'off',
+    subCount: cfg.subCount ?? 8,
+    subSpeed: cfg.subSpeed ?? 120,
+    subLifetime: cfg.subLifetime ?? 0.6,
   });
 }
 
