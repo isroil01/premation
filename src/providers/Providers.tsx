@@ -1874,12 +1874,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             },
           });
           registry.register({
-            // AE's Project panel: the list of compositions.
-            id: asCommandId('view.project'), label: 'Project', icon: 'folder',
-            enabled: () => true,
-            execute: () => useLayoutStore.getState().openPanel('project'),
-          });
-          registry.register({
             // The left-sidebar Effect Controls panel — applied effects for the
             // selected layer. Used to target 'effects' (the right-sidebar
             // library) because 'effectControls' was never registered; F3 and

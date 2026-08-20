@@ -11,7 +11,6 @@ import { useMemo, useState, useRef, useEffect, type ReactNode } from 'react';
 import { Panel } from '@components/Panel';
 import { Button } from '@components/Button';
 import { HistoryPanel } from '@layout/History/HistoryPanel';
-import { ProjectPanel } from '@layout/Project/ProjectPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
 import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
@@ -2441,7 +2440,6 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     // straight from this map — so a pop-out window deep-linked at /popout/ai
     // would have re-mounted the whole panel around the gate.
     ...(aiEnabled() ? { ai: () => <AiChatPanel /> } : {}),
-    project:   () => <ProjectPanel />,
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,
     presets: () => <MotionPresetsPanel />,

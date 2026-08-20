@@ -27,11 +27,14 @@ export interface CompositionSettings {
    * True on the AUTO-MINTED comp a fresh document carries (the engine needs a
    * root; After Effects' "no compositions yet" state cannot exist here), and
    * cleared the moment the user makes it theirs. While a project holds only
-   * pristine, layerless comps: the Project panel lists no compositions, the
-   * viewport shows the two start cards, and the first New Composition / From
-   * Footage ADOPTS this comp (configures it in place) instead of stacking a
-   * second one beside a "Main Comp" nobody created. Old documents lack the
-   * field, which correctly reads as "real" — a saved project's comp is owned.
+   * pristine, layerless comps: the comp tab reads "(none)", the viewport
+   * shows the two start cards, and the first New Composition / From Footage
+   * ADOPTS this comp (configures it in place) instead of stacking a second
+   * one beside a "Main Comp" nobody created. Deleting the LAST comp re-mints
+   * one of these (see deleteComposition) — that is what "deleting the only
+   * comp" means to the user: back to the empty project. Old documents lack
+   * the field, which correctly reads as "real" — a saved project's comp is
+   * owned.
    */
   pristine?: boolean;
   width: number;

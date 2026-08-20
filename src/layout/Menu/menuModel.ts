@@ -133,9 +133,9 @@ export const APP_MENU: MenuGroupModel[] = [
     items: [
       // "New Composition…" was removed on the rationale that compositions are
       // created only from the dashboard, one project per composition. That is
-      // no longer true: `openNewCompositionDialog` is live in the Project panel
-      // and the whole dialog is built, so the menu was simply missing an entry
-      // for a working feature.
+      // no longer true: `openNewCompositionDialog` is live in the empty-comp
+      // start cards and the Composition panel menu, so the menu was simply
+      // missing an entry for a working feature.
       { commandId: 'comp.new', label: 'New Composition…' },
       { commandId: 'comp.settings', label: 'Composition Settings…' },
       { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
@@ -225,7 +225,6 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.commandPalette', label: 'Command Palette' },
       { commandId: 'view.presentation', label: 'Present (Preview)' },
       { separator: true },
-      { commandId: 'view.project', label: 'Project' },
       { commandId: 'view.history', label: 'History' },
       { commandId: 'view.effectControls', label: 'Effect Controls' },
       { commandId: 'view.renderQueue', label: 'Render Queue' },

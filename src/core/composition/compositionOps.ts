@@ -175,13 +175,18 @@ export function duplicateComposition(id: string): string | null {
 /**
  * Remove a composition, its layers and its tab.
  *
- * Refuses to delete the last composition — a project with no comp has nowhere
- * to put a layer, and the Scene panel would render an empty shell.
+ * Deleting the LAST composition is allowed and lands on After Effects' empty
+ * project: the engine still needs a root to exist (see
+ * `CompositionSettings.pristine`), so a fresh PRISTINE comp is minted in its
+ * place — which the whole UI reads as "no compositions yet" ("(none)" comp
+ * tab, the two start cards, nothing listed). It used to refuse instead, which
+ * made an unwanted empty comp the one thing in the project that could not be
+ * deleted.
  */
 export function deleteComposition(id: string): boolean {
   const state = useProjectStore.getState();
-  if (Object.keys(state.comps).length <= 1) return false;
   if (!state.comps[id]) return false;
+  const wasLast = Object.keys(state.comps).length <= 1;
 
   for (const tab of Object.values(state.tabs)) {
     if (tab.compositionId === id) state.actions.closeTab(tab.id);
@@ -196,6 +201,14 @@ export function deleteComposition(id: string): boolean {
   }
   defaultSceneGraph.removeNode(id);
   state.actions.removeComp(id);
+
+  if (wasLast) {
+    // Same scaffolding a fresh document carries. Deliberately NO tab opened:
+    // an open tab would name the comp in the strip, and the state being
+    // presented is "no compositions", not "a new one you didn't ask for".
+    const newId = useProjectStore.getState().actions.createComp({ name: 'Composition 1', pristine: true });
+    defaultSceneGraph.addNode(compRootNode(newId, 'Composition 1'));
+  }
 
   useSelectionStore.getState().clear();
   bumpScene();

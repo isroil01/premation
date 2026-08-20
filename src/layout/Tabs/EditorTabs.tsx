@@ -34,6 +34,9 @@ import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { openFootagePreview, useLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
+import { deleteComposition } from '@core/composition/compositionOps';
+import { flattenComposition } from '@core/scene/sceneDerive';
+import { customConfirm } from '@components/Modal';
 import styles from './EditorTabs.module.css';
 
 export interface EditorTabsProps {
@@ -258,6 +261,30 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
                   id: 'view-lock',
                   label: viewMode === 'fixed' ? 'Unlock View' : 'Lock View',
                   onSelect: () => useWorkspaceViewStore.getState().toggleMode(),
+                },
+                { id: 'sep2', separator: true },
+                {
+                  id: 'delete-comp',
+                  label: 'Delete Composition',
+                  icon: 'trash',
+                  danger: true,
+                  // "(none)" — the pristine empty state — has nothing to
+                  // delete; every real comp, including an empty one and the
+                  // last one, deletes (the last lands back on this state).
+                  disabled: activePristine || !useProjectStore.getState().activeTabId,
+                  onSelect: async () => {
+                    const st = useProjectStore.getState();
+                    const compId = st.activeTabId ? st.tabs[st.activeTabId]?.compositionId : undefined;
+                    if (!compId) return;
+                    const comp = st.comps[compId];
+                    const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+                    const warn = layers > 0
+                      ? `Delete “${comp?.name ?? 'this composition'}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+                      : `Delete “${comp?.name ?? 'this composition'}”?`;
+                    if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+                      deleteComposition(compId);
+                    }
+                  },
                 },
               ]);
             }}

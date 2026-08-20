@@ -285,10 +285,20 @@ describe('deleteComposition', () => {
     expect(defaultAnimation.tracksFor(id)).toHaveLength(0);
   });
 
-  it('refuses to delete the last composition', () => {
-    // A project with no comp has nowhere to put a layer.
-    expect(deleteComposition('comp_root')).toBe(false);
-    expect(useProjectStore.getState().comps.comp_root).toBeDefined();
+  it('deleting the last composition lands on the empty project — a fresh pristine comp', () => {
+    // The engine still needs a root, but the USER asked for zero comps: the
+    // deleted one goes, and a pristine scaffolding comp (the "(none)" state)
+    // stands in — unlisted, unadopted, with no tab open.
+    expect(deleteComposition('comp_root')).toBe(true);
+
+    const comps = Object.values(useProjectStore.getState().comps);
+    expect(useProjectStore.getState().comps.comp_root).toBeUndefined();
+    expect(defaultSceneGraph.getNode('comp_root')).toBeUndefined();
+    expect(comps).toHaveLength(1);
+    expect(comps[0]!.pristine).toBe(true);
+    // The replacement has a scene root and no open tab of its own.
+    expect(defaultSceneGraph.getNode(comps[0]!.id)).toBeDefined();
+    expect(Object.values(useProjectStore.getState().tabs).some((t) => t.compositionId === comps[0]!.id)).toBe(false);
   });
 
   it('ignores an unknown id', () => {
