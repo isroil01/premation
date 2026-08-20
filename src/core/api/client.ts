@@ -949,10 +949,15 @@ export const api = {
         force: opts?.force,
       },
     ).then(asKeyPage),
-  createApiKey: (name: string) =>
+  createApiKey: (name: string, opts?: { scopes?: string[]; expiresAt?: string | null }) =>
     request<CreatedApiKey>('/v1/keys', {
       method: 'POST',
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({
+        name,
+        // Omitted (not null) when unset: the server applies its default grant.
+        ...(opts?.scopes?.length ? { scopes: opts.scopes } : {}),
+        ...(opts?.expiresAt ? { expiresAt: opts.expiresAt } : {}),
+      }),
     }).then(tap(['api-keys'])),
   revokeApiKey: (id: string) =>
     request<{ revoked: boolean }>(`/v1/keys/${id}`, { method: 'DELETE' }).then(tap(['api-keys'])),

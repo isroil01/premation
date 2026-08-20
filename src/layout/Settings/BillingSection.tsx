@@ -219,20 +219,80 @@ export function BillingSection(): JSX.Element | null {
 
   return (
     <div className={styles.section}>
-      {/*
-        The status line, straight from the server.
-        A previous version of this panel stated flatly that "there are no platform
-        AI credits to manage" while the backend granted 25 on signup and metered
-        every run against them — two halves of one product telling the user
-        opposite things. The fix then was to read the real status; the fix now is
-        that there is only one place the status is written at all.
-      */}
+      {/* 1. Current Plan Status Hero */}
       {summary ? (
-        <p className={blocked ? styles.statusBlocked : styles.intro}>{summary.statusMessage}</p>
+        <div className={styles.statusHero}>
+          <div className={styles.statusHeroLeft}>
+            <div className={styles.statusHeroIcon}>
+              <Icon name="sparkles" size="md" />
+            </div>
+            <div>
+              <div className={styles.planTitleRow}>
+                <h3 className={styles.currentPlanName}>{summary.plan.name} Plan</h3>
+                <span
+                  className={
+                    paymentNeedsAttention
+                      ? styles.badgeWarning
+                      : cancellationPending
+                        ? styles.badgeNeutral
+                        : styles.badgeActive
+                  }
+                >
+                  {paymentNeedsAttention
+                    ? 'Payment Past Due'
+                    : cancellationPending
+                      ? 'Cancellation Scheduled'
+                      : access?.reason === 'trial'
+                        ? `Trial (${access.daysRemaining ?? 0}d left)`
+                        : isBeta
+                          ? 'Beta Access'
+                          : 'Active Subscription'}
+                </span>
+              </div>
+              <p className={blocked ? styles.statusBlocked : styles.intro}>
+                {summary.statusMessage}
+              </p>
+            </div>
+          </div>
+
+          <div className={styles.statusHeroMeta}>
+            <div className={styles.metaStat}>
+              <span className={styles.metaLabel}>Member since</span>
+              <span className={styles.metaValue}>
+                {new Date(summary.memberSince).toLocaleDateString()}
+              </span>
+            </div>
+            {summary.currentPeriodEnd ? (
+              <div className={styles.metaStat}>
+                <span className={styles.metaLabel}>
+                  {summary.subscriptionStatus === 'cancelled'
+                    ? 'Access paid through'
+                    : 'Current period ends'}
+                </span>
+                <span className={styles.metaValue}>
+                  {new Date(summary.currentPeriodEnd).toLocaleDateString()}
+                </span>
+              </div>
+            ) : null}
+            {access?.writeEndsAt ? (
+              <div className={styles.metaStat}>
+                <span className={styles.metaLabel}>
+                  {access.write ? 'Full access until' : 'Ended'}
+                </span>
+                <span className={styles.metaValue}>
+                  {new Date(access.writeEndsAt).toLocaleDateString()}
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </div>
       ) : (
-        <p className={styles.intro}>Loading your plan…</p>
+        <div className={styles.statusHero}>
+          <p className={styles.intro}>Loading your plan details…</p>
+        </div>
       )}
 
+      {/* 2. Alerts & Notices */}
       {summary && paymentNeedsAttention ? (
         <div className={styles.paymentWarning} role="alert">
           <Icon name="warning" size="sm" className={styles.warningIcon} />
@@ -274,9 +334,9 @@ export function BillingSection(): JSX.Element | null {
           </Button>
         </div>
       ) : null}
+
       {summary && !summary.emailVerified && !isBeta && (
         <div className={styles.callout}>
-          {/* No `mail` glyph in the set; `info` is the closest honest one. */}
           <Icon name="info" size="sm" className={styles.calloutIcon} />
           <div className={styles.calloutBody}>
             <strong>Confirm your email to start your {summary.trialDays}-day trial.</strong>
@@ -290,30 +350,100 @@ export function BillingSection(): JSX.Element | null {
         </div>
       )}
 
-      {error ? <p className={styles.error}>{error}</p> : null}
-      {notice ? <p className={styles.notice}>{notice}</p> : null}
+      {error ? (
+        <div className={styles.errorAlert} role="alert">
+          <Icon name="warning" size="sm" />
+          <span>{error}</span>
+        </div>
+      ) : null}
+
+      {notice ? (
+        <div className={styles.noticeAlert} role="status">
+          <Icon name="check" size="sm" />
+          <span>{notice}</span>
+        </div>
+      ) : null}
 
       {summary ? (
         <>
-          <div className={styles.usageRow}>
-            <span>Member since {new Date(summary.memberSince).toLocaleDateString()}</span>
-            {summary.subscriptionStatus ? (
-              <span>Subscription: {summary.subscriptionStatus.replace(/_/g, ' ')}</span>
-            ) : null}
-            {summary.currentPeriodEnd ? (
-              <span>
-                {summary.subscriptionStatus === 'cancelled' ? 'Access paid through' : 'Current period ends'}{' '}
-                {new Date(summary.currentPeriodEnd).toLocaleDateString()}
-              </span>
-            ) : null}
-            {access?.writeEndsAt ? (
-              <span>
-                {access.write ? 'Full access until' : 'Ended'}{' '}
-                {new Date(access.writeEndsAt).toLocaleDateString()}
-              </span>
-            ) : null}
+          {/* 3. Tiered Plan Cards */}
+          <div className={styles.plansSectionHeader}>
+            <h3 className={styles.sectionTitle}>Available Subscription Plans</h3>
+            <p className={styles.sectionDesc}>
+              Choose the plan that fits your production workflow. Upgrade or downgrade anytime.
+            </p>
           </div>
 
+          <div className={styles.plans}>
+            {plans.map((p) => {
+              const current = p.id === summary.plan.id;
+              const intent = planIntent(summary.plan, p, {
+                cancelled: cancellationPending,
+                hasSubscription: summary.hasSubscription,
+              });
+              const thisBusy = busy === p.id;
+              return (
+                <article
+                  key={p.id}
+                  className={`${styles.plan} ${current ? styles.planCurrent : ''} ${p.highlighted ? styles.planHighlighted : ''}`}
+                  aria-current={current ? 'true' : undefined}
+                >
+                  <div className={styles.planBadges}>
+                    {p.highlighted ? <span className={styles.popularTag}>Recommended</span> : <span />}
+                    {current ? <span className={styles.currentTag}>Current Plan</span> : null}
+                  </div>
+                  <div className={styles.planHead}>
+                    <h4 className={styles.planName}>{p.name}</h4>
+                    <p className={styles.priceBlock}>
+                      <span className={styles.priceAmount}>{p.priceLabel}</span>
+                      <span className={styles.priceInterval}>
+                        {p.priceCents > 0 ? `/${p.interval === 'year' ? 'year' : 'month'}` : ' · no card'}
+                      </span>
+                    </p>
+                  </div>
+
+                  {p.description ? <p className={styles.planDescription}>{p.description}</p> : null}
+
+                  <ul className={styles.features}>
+                    {p.features.map((f) => (
+                      <li key={f} className={styles.feature}>
+                        <Icon name="check" size="sm" className={styles.featureTick} />
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                    <li className={styles.feature}>
+                      <Icon
+                        name={p.apiEnabled ? 'check' : 'close'}
+                        size="sm"
+                        className={p.apiEnabled ? styles.featureTick : styles.featureCross}
+                      />
+                      <span>{p.apiEnabled ? 'Automation API & Webhooks' : 'No Automation API'}</span>
+                    </li>
+                  </ul>
+
+                  <div className={styles.planFoot}>
+                    {intent.kind === 'current' ? (
+                      <Button variant="secondary" size="sm" fullWidth disabled>
+                        {intent.label}
+                      </Button>
+                    ) : (
+                      <Button
+                        variant={intent.kind === 'cancel' ? 'ghost' : 'primary'}
+                        size="sm"
+                        fullWidth
+                        disabled={busy !== null}
+                        onClick={() => void choosePlan(p)}
+                      >
+                        {thisBusy ? 'Working…' : intent.label}
+                      </Button>
+                    )}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          {/* 4. Comparison Matrix */}
           {plans.length > 1 ? (
             <div className={styles.comparisonWrap}>
               <table className={styles.comparison}>
@@ -378,81 +508,22 @@ export function BillingSection(): JSX.Element | null {
             </div>
           ) : null}
 
-          <div className={styles.plans}>
-            {plans.map((p) => {
-              const current = p.id === summary.plan.id;
-              const intent = planIntent(summary.plan, p, {
-                cancelled: cancellationPending,
-                hasSubscription: summary.hasSubscription,
-              });
-              const thisBusy = busy === p.id;
-              return (
-                <article
-                  key={p.id}
-                  className={`${styles.plan} ${current ? styles.planCurrent : ''} ${p.highlighted ? styles.planHighlighted : ''}`}
-                  aria-current={current ? 'true' : undefined}
-                >
-                  <div className={styles.planBadges}>
-                    {p.highlighted ? <span className={styles.popularTag}>Recommended</span> : <span />}
-                    {current ? <span className={styles.currentTag}>Current</span> : null}
-                  </div>
-                  <div className={styles.planHead}>
-                    <h4 className={styles.planName}>{p.name}</h4>
-                    <p className={styles.priceBlock}>
-                      <span className={styles.priceAmount}>{p.priceLabel}</span>
-                      <span className={styles.priceInterval}>
-                        {p.priceCents > 0 ? `/${p.interval === 'year' ? 'year' : 'month'}` : ' · no card'}
-                      </span>
-                    </p>
-                  </div>
-
-                  {p.description ? <p className={styles.planDescription}>{p.description}</p> : null}
-
-                  <ul className={styles.features}>
-                    {p.features.map((f) => (
-                      <li key={f} className={styles.feature}>
-                        <Icon name="check" size="sm" className={styles.featureTick} />
-                        <span>{f}</span>
-                      </li>
-                    ))}
-                  </ul>
-
-                  <div className={styles.planFoot}>
-                    {intent.kind === 'current' ? (
-                      <Button variant="secondary" size="sm" fullWidth disabled>
-                        {intent.label}
-                      </Button>
-                    ) : (
-                      <Button
-                        variant={intent.kind === 'cancel' ? 'ghost' : 'primary'}
-                        size="sm"
-                        fullWidth
-                        disabled={busy !== null}
-                        onClick={() => void choosePlan(p)}
-                      >
-                        {thisBusy ? 'Working…' : intent.label}
-                      </Button>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-
-          <div className={styles.actions}>
-            {/*
-              Only shown when there is actually a subscription behind it. A
-              "Manage subscription" button that answers `no_subscription` is worse
-              than no button, and the server would refuse it anyway.
-            */}
-            {summary.hasSubscription && (
-              <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void portal()}>
-                {busy === 'portal' ? 'Opening…' : 'Manage payment method'}
+          {/* 5. Secondary Management & Security Actions */}
+          <div className={styles.footerManagement}>
+            <div className={styles.actions}>
+              {summary.hasSubscription && (
+                <Button variant="secondary" size="sm" disabled={busy !== null} onClick={() => void portal()}>
+                  {busy === 'portal' ? 'Opening portal…' : 'Manage payment method'}
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void resync()}>
+                {busy === 'resync' ? 'Checking…' : 'Already paid? Refresh status'}
               </Button>
-            )}
-            <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void resync()}>
-              {busy === 'resync' ? 'Checking…' : 'Already paid? Refresh'}
-            </Button>
+            </div>
+            <div className={styles.securityNote}>
+              <Icon name="lock" size="sm" />
+              <span>Payments processed securely with Stripe / Lemon Squeezy. Cancel or change plans anytime.</span>
+            </div>
           </div>
         </>
       ) : null}
@@ -461,3 +532,4 @@ export function BillingSection(): JSX.Element | null {
 }
 
 export default BillingSection;
+

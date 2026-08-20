@@ -1,64 +1,519 @@
-.quotas {
+/* Developer & Automation API Section */
+
+.developerContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+/* 1. Header Hero */
+.headerHero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-surface);
+  flex-wrap: wrap;
+}
+
+.headerHeroContent {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.headerTitleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.headerIconBadge {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.headerTitle {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 2px;
+}
+
+.headerDesc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+  margin: 0;
+  max-width: 680px;
+}
+
+.apiStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+  color: var(--color-success);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.statusDotActive {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+
+/* 2. Upgrade Callout (When Plan Lacks API) */
+.upgradeHeroCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
+  border-radius: var(--radius-surface);
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--color-surface-1));
+  flex-wrap: wrap;
+}
+
+.upgradeHeroLeft {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  flex: 1;
+  min-width: 280px;
+}
+
+.lockIconWrap {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-warning) 20%, transparent);
+  color: var(--color-warning);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.upgradeHeroText {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.upgradeHeroTitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.upgradeHeroDesc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.featureList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.featureItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.featureTick {
+  color: var(--color-success);
+  flex-shrink: 0;
+}
+
+.upgradeHeroAction {
+  flex-shrink: 0;
+}
+
+/* 3. Usage & Quotas Grid */
+.usageGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.metricCard {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-surface);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.metricHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.metricLabel {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.metricValue {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.progressBarTrack {
+  height: 6px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progressBarFill {
+  height: 100%;
+  width: 100%;
+  background: var(--color-primary);
+  border-radius: 999px;
+  /* Scaled, not width-animated: transform stays on the compositor. The TSX
+     sets `--fill` (0–1) instead of an inline width. */
+  transform-origin: left center;
+  transform: scaleX(var(--fill, 0));
+  transition: transform 240ms ease;
+}
+
+.metricSubtext {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+}
+
+.allowanceInfo {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+/* 4. One-time Secret Callout */
+.secretCallout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 50%, transparent);
+  border-radius: var(--radius-surface);
+  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-surface-1));
+}
+
+.secretHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.secretIconBadge {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.secretTitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  display: block;
+}
+
+.secretDesc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  margin: 2px 0 0;
+}
+
+.secretInputRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.secretField {
+  flex: 1;
+  min-width: 240px;
+  padding: 8px 12px;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  outline: none;
+}
+
+/* 5. Generic Card */
+.card {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-surface);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.cardTitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0 0 2px;
+}
+
+.cardDesc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.cardDesc code {
+  font-family: var(--font-family-mono);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+
+/* Form Styles */
+.createForm {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.quota {
+.formInputRow {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.inputWrapper {
+  flex: 1 1 260px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
 }
 
-.quotaHeader {
+.inputLabel {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.createBtn {
+  flex-shrink: 0;
+}
+
+/* Scope + expiry controls in the create form. Chips share the preset chips'
+   visual language; the checked state borrows the primary tint the rest of the
+   page uses for active elements. */
+.optionsRow {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
 }
 
-.allowance {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+.scopesGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
 }
 
-.upgradeCallout {
+.scopeChips {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
-  border-radius: var(--radius-surface);
-  background: color-mix(in srgb, var(--color-warning) 9%, transparent);
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.scopeChip,
+.scopeChipOn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-subtle);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+  transition: all 120ms ease;
+  user-select: none;
+}
+
+.scopeChip:hover {
+  background: rgba(255, 255, 255, 0.1);
   color: var(--color-text-primary);
 }
 
-.upgradeCallout strong,
-.secretCallout strong {
-  font-size: var(--font-size-sm);
+.scopeChipOn {
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  color: var(--color-text-primary);
 }
 
-.upgradeCallout p {
-  margin: 3px 0 0;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
+/* The checkbox is the accessible control; the chip is its skin. */
+.scopeCheckbox {
+  appearance: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  margin: 0;
 }
 
-.secretCallout {
+.scopeChipOn .scopeCheckbox {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.expiryGroup {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--color-warning) 45%, transparent);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-2);
+  gap: 6px;
 }
 
-.rowActions {
+.expirySelect {
+  padding: 4px 8px;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.presetsRow {
   display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.presetsLabel {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  margin-right: 2px;
+}
+
+.presetChip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.presetChip:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.presetChip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.errorAlert {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+}
+
+.errorIcon {
+  flex-shrink: 0;
+}
+
+/* 6. Keys Table */
+.tableWrap {
+  overflow-x: auto;
+}
+
+.keyNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.keyNameText {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.keyPrefixBadge {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro);
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+  color: var(--color-text-tertiary);
+}
+
+.dateText {
+  color: var(--color-text-primary);
 }
 
 .meta {
@@ -67,13 +522,164 @@
   color: var(--color-text-tertiary);
 }
 
-.emptyCell {
-  color: var(--color-text-secondary);
+.statusPillActive,
+.statusPillRevoked {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
 }
 
-@media (max-width: 560px) {
-  .upgradeCallout {
-    align-items: flex-start;
-    flex-direction: column;
+.statusPillActive {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  color: var(--color-success);
+}
+
+.statusPillRevoked {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text-tertiary);
+}
+
+.dotActive,
+.dotRevoked {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.dotActive {
+  background: var(--color-success);
+}
+
+.dotRevoked {
+  background: var(--color-text-muted);
+}
+
+.revokedRow {
+  opacity: 0.65;
+}
+
+.emptyCell {
+  text-align: center;
+  padding: 28px !important;
+}
+
+.emptyWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.emptyIcon {
+  opacity: 0.4;
+}
+
+.spinningIcon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
+
+.revokeBtn {
+  color: var(--color-danger);
+}
+
+.revokeBtn:hover {
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+}
+
+/* 7. Code Section */
+.codeSection {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-surface);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-0);
+  overflow: hidden;
+}
+
+.codeTabs {
+  display: flex;
+  align-items: center;
+  background: var(--color-surface-2);
+  border-bottom: 1px solid var(--color-border-subtle);
+  padding: 0 8px;
+  gap: 2px;
+}
+
+.codeTab {
+  padding: 8px 12px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.codeTab:hover {
+  color: var(--color-text-primary);
+}
+
+.codeTabActive {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.codeTabSpacer {
+  flex: 1;
+}
+
+.copyCodeBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: var(--radius-control);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+  transition: all 120ms ease;
+}
+
+.copyCodeBtn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-subtle);
+}
+
+.codeBlock {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+  color: var(--color-text-primary);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+@media (max-width: 640px) {
+  .upgradeHeroCard {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+

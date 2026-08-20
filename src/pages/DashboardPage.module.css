@@ -820,8 +820,13 @@
 
 .progressFill {
   height: 100%;
+  width: 100%;
   background: var(--color-primary);
-  transition: width 0.3s ease;
+  /* Scaled, not width-animated: transform stays on the compositor. The TSX
+     sets `--fill` (0–1) instead of an inline width. */
+  transform-origin: left center;
+  transform: scaleX(var(--fill, 0));
+  transition: transform 0.3s ease;
 }
 
 .progressText {
@@ -837,6 +842,17 @@
   width: 100%;
   margin-left: auto;
   margin-right: auto;
+}
+
+/* Developer & Billing Wide Panels */
+.developerPanel,
+.billingPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 1040px;
+  width: 100%;
+  margin: 0 auto;
 }
 
 /* Settings Tab Panel */

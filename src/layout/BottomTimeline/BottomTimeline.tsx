@@ -25,9 +25,14 @@ import { useUIStore } from '@stores/uiStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 
 import { useFocusStore } from '@stores/focusStore';
+import { openContextMenu } from '@stores/contextMenuStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { flattenComposition } from '@core/scene/sceneDerive';
+import { deleteComposition, duplicateComposition } from '@core/composition/compositionOps';
+import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
+import { customConfirm } from '@components/Modal';
 import { ViewportTools } from '@layout/Workspace/ViewportTools';
 import styles from './BottomTimeline.module.css';
 
@@ -386,30 +391,85 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         )}
       </header>
 
-      {/* ── Timeline Tabs — real project tabs (main comp + opened groups).
-            Hidden while there is only the main comp and no focus breadcrumb —
-            a single static tab is pure noise between the header and tracks. ── */}
-      {!isCollapsed && (tabOrder.length > 1 || focusPath.length > 0) && (
+      {/* ── Timeline Tabs — After Effects style: Render Queue and Comp tabs ── */}
+      {!isCollapsed && (
         <div className={styles.tabBar}>
-          {tabOrder.map((tid, idx) => {
-            const tab = projectTabs[tid];
-            if (!tab) return null;
-            const node = defaultSceneGraph.getNode(tab.compositionId);
-            const label =
-              comps[tab.compositionId]?.name ?? node?.name ?? tab.title ?? tab.compositionId;
-            const isActive = tid === activeTabId && focusPath.length === 0;
-            return (
-              <div key={tid} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-                {idx > 0 && <span className={styles.tabChevron} aria-hidden>|</span>}
-                <button
-                  type="button"
-                  className={cn(styles.tab, isActive && styles.tabActive)}
-                  onClick={() => {
-                    setActiveTab(tid);
-                    jumpToFocus(-1);
-                  }}
-                >
-                  {label}
+          <button
+            type="button"
+            className={styles.tab}
+            onClick={() => useLayoutStore.getState().openPanel('renderQueue')}
+            title="Open Render Queue"
+          >
+            <Icon name="queue" size="sm" />
+            <span>Render Queue</span>
+          </button>
+          <span className={styles.tabChevron} aria-hidden>|</span>
+          {tabOrder.length === 0 ? (
+            <button
+              type="button"
+              className={cn(styles.tab, styles.tabActive)}
+              title="Composition (none)"
+            >
+              <span>(none)</span>
+            </button>
+          ) : (
+            tabOrder.map((tid, idx) => {
+              const tab = projectTabs[tid];
+              if (!tab) return null;
+              const node = defaultSceneGraph.getNode(tab.compositionId);
+              const label =
+                comps[tab.compositionId]?.name ?? node?.name ?? tab.title ?? tab.compositionId;
+              const isActive = tid === activeTabId && focusPath.length === 0;
+              // Right-click comp management — with the duplicate Project bin
+              // gone, the comp tab IS the composition's handle, so it carries
+              // the operations AE puts on a comp item. Delete always works:
+              // deleting the last comp lands on the "(none)" empty state.
+              const openCompTabMenu = (e: React.MouseEvent): void => {
+                e.preventDefault();
+                const compId = tab.compositionId;
+                openContextMenu(e.clientX, e.clientY, [
+                  {
+                    id: 'settings',
+                    label: 'Composition Settings…',
+                    icon: 'settings',
+                    onSelect: () => {
+                      // The settings dialog edits the ACTIVE comp.
+                      setActiveTab(tid);
+                      openCompositionSettings();
+                    },
+                  },
+                  { id: 'duplicate', label: 'Duplicate', icon: 'copy', onSelect: () => duplicateComposition(compId) },
+                  { id: 'sep', separator: true },
+                  {
+                    id: 'delete',
+                    label: 'Delete Composition',
+                    icon: 'trash',
+                    danger: true,
+                    onSelect: async () => {
+                      const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+                      const warn = layers > 0
+                        ? `Delete “${label}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+                        : `Delete “${label}”?`;
+                      if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+                        deleteComposition(compId);
+                      }
+                    },
+                  },
+                ]);
+              };
+              return (
+                <div key={tid} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+                  {idx > 0 && <span className={styles.tabChevron} aria-hidden>|</span>}
+                  <button
+                    type="button"
+                    className={cn(styles.tab, isActive && styles.tabActive)}
+                    onClick={() => {
+                      setActiveTab(tid);
+                      jumpToFocus(-1);
+                    }}
+                    onContextMenu={openCompTabMenu}
+                  >
+                    {label}
                   {idx > 0 && (
                     <span
                       className={styles.tabClose}
@@ -435,7 +495,8 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 </button>
               </div>
             );
-          })}
+          })
+        )}
           {focusPath.map((id, idx) => {
             const node = defaultSceneGraph.getNode(id);
             const name = node?.name || id;

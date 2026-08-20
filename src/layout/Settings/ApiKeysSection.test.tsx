@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ApiKeysSection } from './ApiKeysSection';
 import { api } from '@core/api/client';
@@ -59,7 +59,7 @@ describe('ApiKeysSection', () => {
     expect(screen.getByText(/Expires/)).toBeInTheDocument();
   });
 
-  it('blocks key creation and offers plans when the contract disables API access', async () => {
+  it('locks the whole page when the contract disables API access', async () => {
     jest.mocked(api.getApiUsage).mockResolvedValueOnce({
       period: '2026-08',
       renderJobs: 0,
@@ -72,14 +72,36 @@ describe('ApiKeysSection', () => {
     const onViewPlans = jest.fn();
     render(<MemoryRouter><ApiKeysSection onViewPlans={onViewPlans} /></MemoryRouter>);
 
-    const create = await screen.findByRole('button', { name: 'Create API key' });
-    await waitFor(() => expect(create).toBeDisabled());
+    expect(
+      await screen.findByText(/Automation API access is not included in this plan/),
+    ).toBeInTheDocument();
+    // Locked means GONE, not disabled: no create form, no quickstart snippets,
+    // no quota cards — a disabled console read as available-but-broken.
+    expect(screen.queryByRole('button', { name: 'Create API key' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Quickstart/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    // But keys minted under the old plan stay visible and revocable.
+    expect(await screen.findByText('Production workflow')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revoke' })).toBeInTheDocument();
     // The route to billing is the OWNING PAGE's to know — this component used
     // to navigate to `/dashboard`, which does not exist in every edition.
     fireEvent.click(screen.getByRole('button', { name: 'View plans' }));
     expect(onViewPlans).toHaveBeenCalled();
-    fireEvent.click(create);
     expect(api.createApiKey).not.toHaveBeenCalled();
+  });
+
+  it('renders neither the open console nor the upgrade pitch while access is unknown', async () => {
+    // /v1/usage unreachable: the page must not guess in either direction.
+    jest.mocked(api.getApiUsage).mockRejectedValueOnce(new Error('network down'));
+    render(<MemoryRouter><ApiKeysSection /></MemoryRouter>);
+
+    expect(
+      await screen.findByText(/Could not load your plan's API access/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Create API key' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Automation API access is not included in this plan/),
+    ).not.toBeInTheDocument();
   });
 
   it('omits the plans route when the build has no billing surface', async () => {

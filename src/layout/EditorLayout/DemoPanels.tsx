@@ -1425,8 +1425,8 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     return (
       <EmptyState
         icon="mouse-pointer"
-        title="No selection"
-        message="Select a layer on the canvas or in the Scene panel to edit its properties."
+        title="Properties: No Selection"
+        message="Select a layer to view and adjust its transform, appearance, and effects."
       />
     );
   }
