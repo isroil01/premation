@@ -60,6 +60,12 @@ import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
 import { memoizedSceneContentHash } from '@core/rendering/sceneContentHash';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { addPaintStroke, type PaintMode } from '@core/paint/paintStrokes';
+import { getNodeLayerTime, updateNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
+import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
+import { assetIdOf } from '@core/source/sourceInfo';
+import { sourceDisplaySize } from '@core/tracking/trackerSource';
+import { useTrackerStore } from '@stores/trackerStore';
+import { useAssetStore } from '@stores/assetStore';
 import { compToLayerLocal, isPaintableKind, localBrushSize } from '@core/paint/paintCoords';
 import { usePaintStore } from '@stores/paintStore';
 import { useInfoStore } from '@stores/infoStore';
@@ -1501,12 +1507,110 @@ function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
   ];
 }
 
+/**
+ * The Video submenu — the footage verbs, gathered where the footage IS.
+ *
+ * Every one of these already existed, spread across the Effects panel's Time
+ * controls, the Inspector's Track Motion section and the Assets panel's
+ * right-click. Users reported reaching for them on the LAYER and finding
+ * nothing; a right-click on the clip is where an editor's muscle memory goes.
+ * The submenu routes to the same single implementations — nothing here is a
+ * second copy of a behaviour.
+ */
+function videoContextMenuItems(id: string): ContextMenuItem {
+  const time = getNodeLayerTime(id);
+  const playhead = (() => {
+    const ws = useWorkspaceStore.getState();
+    return (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
+  })();
+  const speed = (label: string, stretch: number): ContextMenuItem => ({
+    id: `spd-${stretch}`,
+    label,
+    icon: time.stretch === stretch ? 'check' : undefined,
+    onSelect: () => updateNodeLayerTime(id, { stretch }),
+  });
+  const blend = (label: string, mode: FrameBlend): ContextMenuItem => ({
+    id: `fb-${mode}`,
+    label,
+    icon: time.frameBlend === mode ? 'check' : undefined,
+    onSelect: () => updateNodeLayerTime(id, { frameBlend: mode }),
+  });
+  return {
+    id: 'video',
+    label: 'Video',
+    children: [
+      // Speed is the USER's word; stretch is the model's (200% stretch = half
+      // speed). The labels speak speed so nobody does the reciprocal in their
+      // head mid-edit.
+      { id: 'speed', label: 'Speed', children: [
+        speed('25% (4× slower)', 400),
+        speed('50% (2× slower)', 200),
+        speed('100% (normal)', 100),
+        speed('200% (2× faster)', 50),
+        speed('400% (4× faster)', 25),
+      ] },
+      { id: 'reverse', label: time.reverse ? 'Un-reverse' : 'Reverse', onSelect: () => updateNodeLayerTime(id, { reverse: !time.reverse }) },
+      {
+        id: 'freeze',
+        label: time.freeze ? 'Un-freeze Frame' : 'Freeze Frame at Playhead',
+        onSelect: () => updateNodeLayerTime(id, time.freeze
+          ? { freeze: false }
+          : { freeze: true, freezeTime: playhead }),
+      },
+      { id: 'fb', label: 'Frame Blending', children: [
+        blend('Off', 'none'),
+        blend('Frame Mix', 'mix'),
+        blend('Pixel Motion (smooth slow-mo)', 'pixelMotion'),
+      ] },
+      { id: 'sep-v1', separator: true },
+      {
+        id: 'stab',
+        label: 'Stabilize (smooth)…',
+        onSelect: () => {
+          const src = sourceDisplaySize(id);
+          useTrackerStore.getState().setMode('smooth', src?.width ?? 0, src?.height ?? 0);
+          useUIStore.getState().notify({
+            level: 'info',
+            message: 'Smooth Stabilize armed — open Inspector ▸ Track Motion and press Track.',
+            durationMs: 4000,
+          });
+        },
+      },
+      {
+        id: 'track',
+        label: 'Track Motion…',
+        onSelect: () => {
+          const src = sourceDisplaySize(id);
+          useTrackerStore.getState().setMode('follow', src?.width ?? 0, src?.height ?? 0);
+          useUIStore.getState().notify({
+            level: 'info',
+            message: 'Tracker armed — drag the point in the viewport, then Track in Inspector ▸ Track Motion.',
+            durationMs: 4000,
+          });
+        },
+      },
+      { id: 'sep-v2', separator: true },
+      {
+        id: 'interpret',
+        label: 'Interpret Footage…',
+        onSelect: () => {
+          const assetId = assetIdOf(defaultSceneGraph.getNode(id)!);
+          const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
+          if (asset) openInterpretFootage(asset);
+          else useUIStore.getState().notify({ level: 'info', message: 'This layer has no importable source to interpret.', durationMs: 2600 });
+        },
+      },
+    ],
+  };
+}
+
 function nodeContextMenuItems(id: string): ContextMenuItem[] {
   const node = defaultSceneGraph.getNode(id);
   const hidden = node?.visible === false;
   const locked = (node as { locked?: boolean } | undefined)?.locked === true;
   const solo = (node as { solo?: boolean } | undefined)?.solo === true;
   const isGroup = node ? readNodeKind(node) === 'group' : false;
+  const isVideo = node ? readNodeKind(node) === 'video' : false;
   const toggleVisible = (): void => {
     const n = defaultSceneGraph.getNode(id);
     if (!n) return;
@@ -1546,6 +1650,8 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
       { id: 'kf-op', label: 'Opacity', onSelect: () => addKeyframesAtPlayhead(id, 'Opacity', ['opacity']) },
       { id: 'kf-all', label: 'All Transform', onSelect: () => addKeyframesAtPlayhead(id, 'Transform', ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']) },
     ] },
+    // Footage verbs on the footage itself — see videoContextMenuItems.
+    ...(isVideo ? [videoContextMenuItems(id), { id: 'sep-vid', separator: true } as ContextMenuItem] : []),
     { id: 'sep1', separator: true },
     { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleVisible },
     { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked() },
