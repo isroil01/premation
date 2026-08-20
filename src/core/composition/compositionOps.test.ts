@@ -8,7 +8,7 @@
  * effectively did not exist.
  */
 
-import { createComposition, deleteComposition, duplicateComposition, renameComposition } from './compositionOps';
+import { createComposition, createOrAdoptComposition, deleteComposition, duplicateComposition, pristineCompToAdopt, renameComposition } from './compositionOps';
 import { defaultAnimation } from '@motion/animation';
 import { useProjectStore } from '@stores/projectStore';
 import { buildSnapshot } from '@core/rendering/buildSnapshot';
@@ -49,6 +49,48 @@ beforeEach(() => {
       id: 'comp_root', name: 'Main', width: 1920, height: 1080, fps: 30,
       durationSeconds: 10, background: '#101014', transparent: false, startFrame: 0,
     },
+  });
+});
+
+describe('createOrAdoptComposition — the pristine-comp adoption', () => {
+  const markPristine = (): void => {
+    useProjectStore.getState().actions.updateComp('comp_root', { pristine: true });
+  };
+
+  it('a pristine, layerless comp is ADOPTED: configured in place, no second comp', () => {
+    markPristine();
+    const id = createOrAdoptComposition({ name: 'Mine', width: 800, height: 600, fps: 24 });
+    expect(id).toBe('comp_root');
+    const comps = useProjectStore.getState().comps;
+    expect(Object.keys(comps)).toHaveLength(1);
+    expect(comps.comp_root!.name).toBe('Mine');
+    expect(comps.comp_root!.width).toBe(800);
+    expect(comps.comp_root!.pristine).toBeUndefined();
+    // The scene root carries the name the panels show.
+    expect(defaultSceneGraph.getNode('comp_root')!.name).toBe('Mine');
+  });
+
+  it('a pristine comp the user has DRAWN INTO is theirs by use — never adopted', () => {
+    markPristine();
+    addLayer('mine', 'comp_root');
+    const id = createOrAdoptComposition({ name: 'Second' });
+    expect(id).not.toBe('comp_root');
+    expect(Object.keys(useProjectStore.getState().comps)).toHaveLength(2);
+    expect(useProjectStore.getState().comps.comp_root!.name).toBe('Main');
+  });
+
+  it('a real (non-pristine) comp is never adopted', () => {
+    const id = createOrAdoptComposition({ name: 'Second' });
+    expect(id).not.toBe('comp_root');
+    expect(Object.keys(useProjectStore.getState().comps)).toHaveLength(2);
+  });
+
+  it('pristineCompToAdopt reports the adoptable comp, and only then', () => {
+    expect(pristineCompToAdopt()).toBeNull();
+    markPristine();
+    expect(pristineCompToAdopt()).toBe('comp_root');
+    addLayer('used', 'comp_root');
+    expect(pristineCompToAdopt()).toBeNull();
   });
 });
 

@@ -63,6 +63,50 @@ export function createComposition(init: Partial<CompositionSettings> = {}): stri
   return id;
 }
 
+/**
+ * The auto-minted comp a first creation should ADOPT, or null.
+ *
+ * Adoptable means pristine (see `CompositionSettings.pristine`) AND layerless
+ * — a pristine comp the user has already drawn into is theirs by use, and
+ * configuring it out from under their content would be theft, not adoption.
+ */
+export function pristineCompToAdopt(): string | null {
+  const comps = useProjectStore.getState().comps;
+  for (const c of Object.values(comps)) {
+    if (!c.pristine) continue;
+    const node = defaultSceneGraph.getNode(c.id);
+    if (!node || flattenComposition(defaultSceneGraph, c.id).length <= 1) return c.id;
+  }
+  return null;
+}
+
+/**
+ * Create a composition — or, when the project holds only the auto-minted
+ * pristine comp, CONFIGURE THAT ONE instead of stacking a second beside it.
+ *
+ * This is what makes the start cards behave like After Effects: a fresh
+ * project has "no compositions" as far as the user can see, and the first New
+ * Composition / New Comp From Footage produces exactly one comp — theirs —
+ * not theirs plus a phantom "Main Comp" nobody asked for.
+ */
+export function createOrAdoptComposition(init: Partial<CompositionSettings> = {}): string {
+  const adoptId = pristineCompToAdopt();
+  if (!adoptId) return createComposition(init);
+
+  const actions = useProjectStore.getState().actions;
+  const name = init.name ?? 'Composition 1';
+  // `pristine: undefined` — the whole point of the call is that this comp is
+  // now the user's.
+  actions.updateComp(adoptId, { ...init, id: adoptId, name, pristine: undefined });
+  const root = defaultSceneGraph.getNode(adoptId);
+  if (root) root.name = name;
+  actions.openTab(adoptId, [adoptId], name);
+  getTimelineController().syncFromScene(adoptId);
+  useSelectionStore.getState().clear();
+  bumpScene();
+  return adoptId;
+}
+
 /** Rename a composition. The scene root carries the name the panels show. */
 export function renameComposition(id: string, name: string): void {
   const trimmed = name.trim();
@@ -204,7 +248,9 @@ export async function createCompositionFromFootage(asset: ImportedAsset): Promis
   // "shot_04". AE does the same.
   const name = asset.name.replace(/\.[a-z0-9]+$/i, '') || asset.name;
 
-  const id = createComposition({ name, width, height, durationSeconds, fps });
+  // Adopt the fresh project's pristine comp rather than leaving a phantom
+  // "Composition 1" beside the one the footage just defined.
+  const id = createOrAdoptComposition({ name, width, height, durationSeconds, fps });
   await insertMedia(asset);
   return id;
 }

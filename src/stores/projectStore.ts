@@ -23,6 +23,17 @@ export interface TabInfo {
 export interface CompositionSettings {
   id: string;
   name: string;
+  /**
+   * True on the AUTO-MINTED comp a fresh document carries (the engine needs a
+   * root; After Effects' "no compositions yet" state cannot exist here), and
+   * cleared the moment the user makes it theirs. While a project holds only
+   * pristine, layerless comps: the Project panel lists no compositions, the
+   * viewport shows the two start cards, and the first New Composition / From
+   * Footage ADOPTS this comp (configures it in place) instead of stacking a
+   * second one beside a "Main Comp" nobody created. Old documents lack the
+   * field, which correctly reads as "real" — a saved project's comp is owned.
+   */
+  pristine?: boolean;
   width: number;
   height: number;
   fps: number;

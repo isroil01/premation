@@ -148,6 +148,13 @@ export function WorkspaceViewport({
   // layers under the virtual comp_root with no active tab, so that case falls
   // back to the whole-graph scan rather than showing cards over live content.
   const activeCompId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
+  // The cards are the "no compositions yet" state, so a comp the USER made —
+  // via the dialog, from footage, or the dashboard — dismisses them even while
+  // it is still empty: an empty comp shows its frame, exactly as AE's does.
+  // Only the auto-minted pristine comp keeps them up. Without this gate,
+  // clicking "New Composition" and creating one left the cards covering the
+  // brand-new comp — the create looked like it did nothing.
+  const allCompsPristine = useProjectStore((s) => Object.values(s.comps).every((c) => c.pristine === true));
   const sceneIsEmpty = useMemo(() => {
     if (activeCompId && defaultSceneGraph.getNode(activeCompId)) {
       return !flattenComposition(defaultSceneGraph, activeCompId)
@@ -446,7 +453,7 @@ export function WorkspaceViewport({
               drop handler are the drop targets — and steps aside the moment
               the user picks a creation tool, preserving the draw-the-first-
               shape-directly workflow the local edition promises. */}
-          {sceneIsEmpty && ready && !renderError && !creationToolActive && (
+          {sceneIsEmpty && allCompsPristine && ready && !renderError && !creationToolActive && (
             <EmptyCompositionView />
           )}
           {/* Scene loading indicator — until the backend paints its first frame. */}

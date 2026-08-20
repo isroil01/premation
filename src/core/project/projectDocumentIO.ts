@@ -53,7 +53,7 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
     version: '1.1.0',
     scene: sceneProjectIO.createEmpty(name),
     animation: { tracks: {}, expressions: {} },
-    comps: { [ROOT_COMP_ID]: { id: ROOT_COMP_ID, name: 'Main Comp', ...DEFAULT_COMP_SETTINGS } },
+    comps: { [ROOT_COMP_ID]: { id: ROOT_COMP_ID, name: 'Composition 1', pristine: true, ...DEFAULT_COMP_SETTINGS } },
     motionBlur: { ...DEFAULT_MOTION_BLUR_SETTINGS },
     guides: { ...DEFAULT_GUIDES_SETTINGS },
     colorManagement: { ...DEFAULT_COLOR_MANAGEMENT_SETTINGS },

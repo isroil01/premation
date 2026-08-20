@@ -322,8 +322,25 @@ function saveAssignments(assets: ImportedAsset[]): void {
 function releaseAsset(asset: ImportedAsset): void {
   if (asset.src.startsWith('blob:')) URL.revokeObjectURL(asset.src);
   if (asset.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(asset.thumbSrc);
-  void AssetDatabase.deleteAsset(asset.id).catch(() => undefined);
-  if (isAuthenticated()) void api.deleteAsset(asset.id).catch(() => undefined);
+  // Persistence failures must be LOUD: the row leaves the list either way, so
+  // a swallowed failure here is precisely the "I deleted it and it came back
+  // after reload" report — the store said gone, the disk/cloud still had it.
+  void AssetDatabase.deleteAsset(asset.id).catch(() => {
+    useUIStore.getState().notify({
+      level: 'warning',
+      message: `“${asset.name}” was removed from the project but could not be deleted from local storage — it may reappear after a reload.`,
+      durationMs: 5000,
+    });
+  });
+  if (isAuthenticated()) {
+    void api.deleteAsset(asset.id).catch(() => {
+      useUIStore.getState().notify({
+        level: 'warning',
+        message: `“${asset.name}” was removed locally but the cloud copy could not be deleted — it may reappear after a reload.`,
+        durationMs: 5000,
+      });
+    });
+  }
 }
 
 function loadSources(): Record<string, AssetSource> {

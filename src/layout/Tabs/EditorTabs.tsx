@@ -21,6 +21,7 @@ import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { SCENE_TAB_ID, useEditorTabStore, type EditorTab } from '@stores/editorTabStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useAssetStore } from '@stores/assetStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -55,7 +56,17 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
 
   const activeTab = tabs.find((t) => t.id === activeId);
   const sceneActive = activeId === SCENE_TAB_ID;
-  const compName = useCompositionStore((s) => s.name);
+  // A pristine, never-adopted, still-empty comp reads as "(none)" — the AE
+  // fresh-project state — even though the engine keeps a root under the hood.
+  // Drawing into it makes it real by use, flag or no flag.
+  const rawCompName = useCompositionStore((s) => s.name);
+  const activePristine = useProjectStore((s) => {
+    const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+    if (!id || s.comps[id]?.pristine !== true) return false;
+    const node = defaultSceneGraph.getNode(id);
+    return !node || node.children.length === 0;
+  });
+  const compName = activePristine ? '' : rawCompName;
 
   // Footage tab: last-viewed asset first, else the selected video layer's own
   // source. Layer tab: Focus Mode isolation over the single selected layer.
