@@ -1808,7 +1808,7 @@ export function DashboardPage(): JSX.Element {
                 onClick={() => {
                   const input = document.createElement('input');
                   input.type = 'file';
-                  input.accept = 'video/*,.mp4,.mov,.webm,.m4v';
+                  input.accept = 'video/*,.mp4,.mov,.webm,.m4v,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv';
                   input.onchange = () => {
                     const f = input.files?.[0];
                     if (f) chooseSetupFootage(f);

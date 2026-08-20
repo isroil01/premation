@@ -8,6 +8,8 @@ import { importLocalAsset } from '@core/assets/local/importLocalAsset';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import { isPersistableProxy, type ProxyRecord } from '@core/assets/proxy';
 import { probeMedia } from '@core/assets/mediaProbe';
+import { maybeIngestForImport } from '@core/assets/ingest';
+import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 
 export interface ImportedAsset {
@@ -491,6 +493,12 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
 
     addAsset: async (file: File, folderId: string | null = null, opts: AddAssetOptions = {}) => {
       const source: AssetSource = opts.source ?? 'user';
+      // Ingest: footage the browser cannot decode (ProRes/DNxHD .mov, MXF,
+      // AVI…) is transcoded to a playable file BEFORE any branch below, so the
+      // bundle, IndexedDB and the object URL all store something every decode
+      // path can actually read. No-op off the desktop. See assets/ingest.ts.
+      file = (await maybeIngestForImport(file, (msg) =>
+        useUIStore.getState().notify({ level: 'info', message: msg, durationMs: 4000 }))) ?? file;
       // Local-first: content-address the bytes into the open
       // project bundle and render from disk — never upload. Falls through to the
       // in-memory object-URL path (still upload-free) if no bundle is open.
@@ -647,6 +655,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         const chunk = items.slice(i, i + CHUNK);
         const chunkResults = await Promise.all(
           chunk.map(async ({ file, folderId }) => {
+            // Same ingest gate as addAsset — this path historically skipped
+            // shared steps (see the element-pass note below) and paid for it.
+            file = (await maybeIngestForImport(file, (msg) =>
+              useUIStore.getState().notify({ level: 'info', message: msg, durationMs: 4000 }))) ?? file;
             const id = `asset_${shortId()}`;
             const src = URL.createObjectURL(file);
             let type: 'image' | 'video' | 'audio' = 'image';
