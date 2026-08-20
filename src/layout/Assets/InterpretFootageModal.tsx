@@ -12,6 +12,7 @@ import { Button } from '@components/Button';
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { bumpScene } from '@stores/sceneStore';
 import type { AlphaInterpretation, FootageInterpretation } from '@core/source/sourceInfo';
+import { canProbePulldown, probePulldown } from '@core/video/pulldownProbe';
 import styles from './InterpretFootageModal.module.css';
 
 const PAR_PRESETS: Array<{ label: string; value: number }> = [
@@ -60,6 +61,41 @@ function InterpretFootageBody({
   const [fieldsMode, setFieldsMode] = useState<'off' | 'upper' | 'lower'>(
     currentInterpret.fields ?? 'off',
   );
+  // 3:2 pulldown detection — decodes a short window and looks for the
+  // phase-locked field-repeat cadence (see core/video/pulldownDetect.ts).
+  const [pulldownStatus, setPulldownStatus] = useState<string | null>(null);
+  const [detecting, setDetecting] = useState(false);
+  const onDetectPulldown = async (): Promise<void> => {
+    if (detecting) return;
+    setDetecting(true);
+    setPulldownStatus('Analyzing 40 frames…');
+    try {
+      const report = await probePulldown(asset.src, (f) =>
+        setPulldownStatus(`Analyzing… ${Math.round(f * 100)}%`));
+      if (report.telecine) {
+        // The cadence says telecine; NTSC telecine carriers are lower-field
+        // -first in overwhelming practice, so that is the default the user
+        // can still override. Field separation kills the comb TODAY; full
+        // inverse telecine (re-weaving 23.976p) is future work.
+        setFieldsMode('lower');
+        setPulldownStatus(
+          `3:2 pulldown detected (confidence ${(report.confidence * 100).toFixed(0)}%, ` +
+          `${report.repeats} field repeats / ${report.transitions} transitions). ` +
+          'Separate Fields set to Lower — the content is film-rate under a video wrapper; ' +
+          'consider conforming to 23.976 fps.',
+        );
+      } else {
+        setPulldownStatus(
+          `No 3:2 cadence found (confidence ${(report.confidence * 100).toFixed(0)}%). ` +
+          'This looks progressive or natively interlaced.',
+        );
+      }
+    } catch (err) {
+      setPulldownStatus(`Detection failed: ${(err as Error).message}`);
+    } finally {
+      setDetecting(false);
+    }
+  };
 
   const handleSave = () => {
     const patch: FootageInterpretation = {
@@ -197,6 +233,21 @@ function InterpretFootageBody({
             For interlaced tape-era footage showing comb teeth on motion. Files don&apos;t record
             field order — DV is lower-first, most broadcast HD upper-first. Leave off for modern files.
           </p>
+          {canProbePulldown() && (
+            <button
+              type="button"
+              className={styles.select}
+              style={{ cursor: 'pointer', marginTop: 6 }}
+              disabled={detecting}
+              onClick={() => void onDetectPulldown()}
+              title="Decode a short window and look for the 3:2 telecine field cadence"
+            >
+              {detecting ? 'Detecting…' : 'Detect 3:2 Pulldown'}
+            </button>
+          )}
+          {pulldownStatus && (
+            <p className={styles.hint} role="status">{pulldownStatus}</p>
+          )}
         </div>
       )}
 
