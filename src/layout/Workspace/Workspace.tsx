@@ -42,8 +42,7 @@ import {
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
-import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
-import { Icon } from '@components/Icon';
+import { EmptyCompositionView } from './EmptyCompositionView';
 import { insertCursorItem } from '@core/library/cursorLibrary';
 import { insertUiComponent } from '@core/library/uiKitLibrary';
 import { insertMographItem } from '@core/library/mographLibrary';
@@ -146,6 +145,12 @@ export function WorkspaceViewport({
     return !hasContent;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
   }, [sceneRev]);
+  // Tools that CREATE content dismiss the empty-comp surface: reaching for
+  // the pen or a shape is the third way to start, and the surface must not
+  // stand between the tool and the canvas. Navigation/selection tools keep it
+  // up — there is nothing to select or pan over yet.
+  const activeTool = useUIStore((s) => s.activeTool);
+  const creationToolActive = !['select', 'direct-select', 'rotate', 'pan-behind', 'hand', 'zoom', 'move'].includes(activeTool);
   const transparent = useCompositionStore((s) => s.transparent);
   const workspaceMode = useWorkspaceViewStore((s) => s.mode);
   // Multi-view (AE-style): '2' shrinks the interactive stage to the left half
@@ -266,7 +271,7 @@ export function WorkspaceViewport({
     if (files && files.length > 0) {
       e.preventDefault();
       const media = Array.from(files).filter((f) =>
-        /^(video|image|audio)\//.test(f.type) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|mp3|wav|m4a|aac|ogg)$/i.test(f.name));
+        /^(video|image|audio)\//.test(f.type) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|mp3|wav|m4a|aac|ogg|mxf|avi|wmv|flv|mts|m2ts|mpg|mpeg|vob|ts|mkv)$/i.test(f.name));
       if (media.length === 0) {
         useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
         return;
@@ -420,72 +425,16 @@ export function WorkspaceViewport({
           <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
           <canvas ref={onionRef} className={styles.onionCanvas} data-workspace-onion="" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
-          {/* Blank-comp start cards — AE's empty Composition panel, verbatim:
-              two CLICKABLE cards, "New Composition" and "New Composition From
-              Footage", not a passive hint. The container passes pointer events
-              through except on the cards themselves; an empty comp has nothing
-              under them to steal clicks from. Gone the moment anything exists
-              or a drag is in flight (the drop outline speaks then — dropping a
-              video is the third way in and keeps working). */}
-          {sceneIsEmpty && ready && !renderError && !dragOver && (
-            <div
-              data-workspace-empty-hint=""
-              style={{
-                position: 'absolute', inset: 0, display: 'flex',
-                alignItems: 'center', justifyContent: 'center', gap: 24,
-                pointerEvents: 'none',
-              }}
-            >
-              {([
-                {
-                  icon: 'shape' as const,
-                  label: 'New Composition',
-                  title: 'Set up a blank composition — size, frame rate, duration',
-                  onClick: () => openNewCompositionDialog(),
-                },
-                {
-                  icon: 'video' as const,
-                  label: 'New Composition From Footage',
-                  title: 'Pick a video — the composition takes its size and length, and the clip lands at full frame. (Dropping a file here does the same.)',
-                  onClick: () => {
-                    const input = document.createElement('input');
-                    input.type = 'file';
-                    input.accept = 'video/*,image/*,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg';
-                    input.onchange = async () => {
-                      const f = input.files?.[0];
-                      if (!f) return;
-                      const asset = await useAssetStore.getState().addAsset(f);
-                      await createCompositionFromFootage(asset);
-                    };
-                    input.click();
-                  },
-                },
-              ]).map((card) => (
-                <button
-                  key={card.label}
-                  type="button"
-                  title={card.title}
-                  onClick={() => void card.onClick()}
-                  style={{
-                    pointerEvents: 'auto', cursor: 'pointer',
-                    width: 240, height: 220,
-                    display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', gap: 18,
-                    background: 'var(--color-surface, #1b1b1f)',
-                    border: '1px solid var(--color-border, rgba(255,255,255,0.12))',
-                    borderRadius: 6,
-                    color: 'var(--color-text, #c8c8d0)',
-                    fontSize: 'var(--font-size-lg)', lineHeight: 1.4, textAlign: 'center',
-                    padding: 16,
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-primary, #4c8dff)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border, rgba(255,255,255,0.12))'; }}
-                >
-                  <Icon name={card.icon} size={48} />
-                  <span>{card.label}</span>
-                </button>
-              ))}
-            </div>
+          {/* Blank-comp start surface — After Effects' empty Composition
+              panel, as a REPLACEMENT: opaque over the stage, so no comp frame
+              or grid implies a composition that doesn't meaningfully exist.
+              The canvases stay mounted beneath it (GPU init is not free).
+              It stays up during a file drag — its footage card and the root's
+              drop handler are the drop targets — and steps aside the moment
+              the user picks a creation tool, preserving the draw-the-first-
+              shape-directly workflow the local edition promises. */}
+          {sceneIsEmpty && ready && !renderError && !creationToolActive && (
+            <EmptyCompositionView />
           )}
           {/* Scene loading indicator — until the backend paints its first frame. */}
           {!ready && !renderError && (
