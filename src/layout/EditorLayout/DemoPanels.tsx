@@ -66,16 +66,22 @@ import { TimeControls } from '@layout/Effects/TimeControls';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusStore } from '@stores/focusStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
-import { createCompositionFromFootage } from '@core/composition/compositionOps';
+import {
+  createCompositionFromFootage,
+  deleteComposition,
+  duplicateComposition,
+} from '@core/composition/compositionOps';
 import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
 import { openFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
+import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { useProjectStore } from '@stores/projectStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renameLayer } from '@core/scene/renameLayer';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import {
   insertMedia,
   toggleSelectedLocked,
@@ -545,6 +551,12 @@ export function AssetsPanel(): JSX.Element {
   const renameFolder = useAssetStore((s) => s.renameFolder);
   const removeFolder = useAssetStore((s) => s.removeFolder);
   const moveAssetToFolder = useAssetStore((s) => s.moveAssetToFolder);
+  // Compositions live in the same bin as footage — AE's Project panel model.
+  // Pristine scaffolding comps are hidden; the UI treats those as "(none)".
+  const comps = useProjectStore((s) => s.comps);
+  const openTab = useProjectStore((s) => s.actions.openTab);
+  const setActiveTab = useProjectStore((s) => s.actions.setActiveTab);
+  const projectTabs = useProjectStore((s) => s.tabs);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
@@ -565,6 +577,8 @@ export function AssetsPanel(): JSX.Element {
   // Multi-select: clicking asset rows toggles them into this set; the bulk bar
   // then adds them together.
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
+  /** Composition selection — mutual with assets, like AE Project panel items. */
+  const [selectedCompIds, setSelectedCompIds] = useState<Set<string>>(() => new Set());
   /** Off by default: the shelf is the user's imports, not the app's output. */
   const [showDerived, setShowDerived] = useState(false);
   const [dockCompDropActive, setDockCompDropActive] = useState(false);
@@ -586,6 +600,7 @@ export function AssetsPanel(): JSX.Element {
    */
   const selectAsset = (id: string, e: React.MouseEvent, ordered: string[]): void => {
     e.stopPropagation();
+    setSelectedCompIds(new Set());
     if (e.shiftKey && selectionAnchor) {
       const a = ordered.indexOf(selectionAnchor);
       const b = ordered.indexOf(id);
@@ -607,6 +622,43 @@ export function AssetsPanel(): JSX.Element {
     }
     setSelectedAssetIds(new Set([id]));
     setSelectionAnchor(id);
+  };
+
+  const selectComp = (id: string, e: React.MouseEvent, ordered: string[]): void => {
+    e.stopPropagation();
+    setSelectedAssetIds(new Set());
+    if (e.shiftKey && selectionAnchor) {
+      const a = ordered.indexOf(selectionAnchor);
+      const b = ordered.indexOf(id);
+      if (a !== -1 && b !== -1) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelectedCompIds(new Set(ordered.slice(lo, hi + 1)));
+        return;
+      }
+    }
+    if (e.metaKey || e.ctrlKey) {
+      setSelectedCompIds((cur) => {
+        const next = new Set(cur);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      setSelectionAnchor(id);
+      return;
+    }
+    setSelectedCompIds(new Set([id]));
+    setSelectionAnchor(id);
+  };
+
+  /** Open (or focus) a composition the AE way — double-click / Open. */
+  const openComposition = (compId: string): void => {
+    const existing = Object.values(projectTabs).find((t) => t.compositionId === compId);
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
+    const name = comps[compId]?.name ?? compId;
+    openTab(compId, [compId], name);
   };
 
   // Import loose files into the current folder and drop them on the canvas.
@@ -737,6 +789,56 @@ export function AssetsPanel(): JSX.Element {
       { confirmLabel: 'Delete', isDanger: true },
     );
     if (ok) removeFolder(folder.id);
+  };
+
+  /**
+   * Delete one composition — AE Project panel Delete.
+   * Deleting the last real comp remints a pristine empty state ("(none)").
+   */
+  const deleteCompRow = async (compId: string): Promise<void> => {
+    const comp = comps[compId];
+    if (!comp || comp.pristine) return;
+    const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+    const warn = layers > 0
+      ? `Delete “${comp.name}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+      : `Delete “${comp.name}”?`;
+    if (!(await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' }))) return;
+    deleteComposition(compId);
+    setSelectedCompIds((cur) => {
+      const next = new Set(cur);
+      next.delete(compId);
+      return next;
+    });
+  };
+
+  const deleteSelectedComps = async (): Promise<void> => {
+    const ids = [...selectedCompIds].filter((id) => comps[id] && !comps[id]?.pristine);
+    if (ids.length === 0) return;
+    if (ids.length === 1) {
+      await deleteCompRow(ids[0]!);
+      return;
+    }
+    const names = ids.map((id) => comps[id]?.name ?? id);
+    const shown = names.slice(0, 5).map((n) => `• ${n}`).join('\n');
+    const rest = names.length - Math.min(names.length, 5);
+    const ok = await customConfirm(
+      `Delete ${ids.length} compositions`,
+      `${shown}${rest > 0 ? `\n…and ${rest} more` : ''}\n\nLayers inside each composition are removed too.`,
+      { confirmLabel: `Delete ${ids.length}`, isDanger: true },
+    );
+    if (!ok) return;
+    for (const id of ids) deleteComposition(id);
+    setSelectedCompIds(new Set());
+    setSelectionAnchor(null);
+  };
+
+  /** Delete whatever the bin currently has selected — comps or footage. */
+  const deleteSelection = async (): Promise<void> => {
+    if (selectedCompIds.size > 0) {
+      await deleteSelectedComps();
+      return;
+    }
+    await deleteSelectedAssets();
   };
 
   /*

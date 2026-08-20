@@ -27,6 +27,8 @@ import { usePluginStore } from '@stores/pluginStore';
 import { collectPluginReferences, type DocumentPluginReference } from '@core/plugins/customLayers';
 import { migratePluginBindings } from '@core/plugins/bindingMigration';
 import { captureProjectStorage, restoreProjectStorage } from '@core/plugins/pluginStorage';
+import { rebindAssetSrcs } from '@core/scene/assetRebind';
+import { useAssetStore } from '@stores/assetStore';
 import type { SceneNode } from '@core/types';
 
 export interface EditorDocument {
@@ -206,4 +208,11 @@ export function restoreDocument(doc: EditorDocument): void {
   if (doc.motionBlur) useMotionBlurStore.getState().restore(doc.motionBlur);
   if (doc.guides) useGuidesStore.getState().restore(doc.guides);
   if (doc.colorManagement) useColorManagementStore.getState().restore(doc.colorManagement);
+
+  // The document's media srcs are object URLs from whichever session WROTE it
+  // — dead on arrival by definition. Repoint them at the live library by
+  // assetId (see assetRebind.ts). Assets may still be hydrating at boot; the
+  // asset store runs the same rebind when hydration lands, so whichever
+  // finishes second completes the repair.
+  rebindAssetSrcs(useAssetStore.getState().assets);
 }

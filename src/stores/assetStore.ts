@@ -11,6 +11,7 @@ import { probeMedia } from '@core/assets/mediaProbe';
 import { maybeIngestForImport } from '@core/assets/ingest';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
+import { rebindAssetSrcs } from '@core/scene/assetRebind';
 
 export interface ImportedAsset {
   id: string;
@@ -964,6 +965,11 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           );
           for (const ha of fresh) s.assets.push(ha);
         });
+        // The urls minted above are NEW — any already-restored document still
+        // points its layers at the dead ones it was saved with. Reconnect by
+        // assetId (see assetRebind.ts); restoreDocument runs the same call for
+        // the opposite arrival order.
+        rebindAssetSrcs(get().assets);
       } catch (err) {
         console.error('[AssetStore] failed to initialize from IndexedDB:', err);
       }

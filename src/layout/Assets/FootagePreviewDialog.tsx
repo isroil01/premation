@@ -273,6 +273,16 @@ function createLastPreviewStore(): UseBoundStore<StoreApi<{ asset: ImportedAsset
   }));
 }
 
+/**
+ * Forget the last-viewed asset. Called when a PROJECT opens: the memory is
+ * per-working-session, and without this the Footage tab in a freshly opened
+ * (even empty) project kept naming whatever clip the PREVIOUS project had in
+ * its viewer — a label with no referent in the project on screen.
+ */
+export function clearLastFootagePreview(): void {
+  useLastFootagePreview.setState({ asset: null });
+}
+
 /** Open the viewer for one asset. The modal id is fixed so double-clicking a
  *  second clip REPLACES the viewer rather than stacking a pile of them. */
 export function openFootagePreview(asset: ImportedAsset): void {

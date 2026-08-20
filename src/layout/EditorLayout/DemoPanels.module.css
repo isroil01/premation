@@ -1060,6 +1060,8 @@
 .assetGlyphImage { color: #4aa96c; }
 .assetGlyphVideo { color: #7c6cf0; }
 .assetGlyphAudio { color: #d9578b; }
+/* Composition — AE Project panel purple-ish accent for comps vs footage. */
+.assetGlyphComp { color: #5b9fd4; }
 /* Anything we have no kind for. The only grey glyph, so "unknown" reads as
    unknown rather than as another type. */
 .assetGlyphFile { color: var(--color-text-tertiary); }

@@ -23,6 +23,7 @@ import { useHistoryStore } from '@stores/historyStore';
 import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 import { takePendingFootage } from '@core/project/pendingFootage';
+import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { useAssetStore } from '@stores/assetStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { insertMedia } from '@core/scene/sceneInsert';
@@ -65,6 +66,10 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
           useHistoryStore.getState().record('Open', true);
           const ws = useWorkspaceStore.getState();
           if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
+          // The Footage viewer's memory is per-project-session: without this,
+          // a freshly opened (even empty) project's Footage tab kept naming
+          // whatever clip the PREVIOUS project last previewed.
+          clearLastFootagePreview();
           // "Start from a video": the setup modal parked the chosen File; now
           // that THIS project is open and the engine is live, import it and
           // land it at full frame. One-shot by construction (`take` clears), so

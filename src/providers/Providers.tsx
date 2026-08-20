@@ -27,6 +27,7 @@ import { bumpScene } from '@stores/sceneStore';
 import { openProjectPath } from '@core/project/openProjectPath';
 import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectIO';
 import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
+import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openModal } from '@stores/modalStore';
 import { customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
@@ -1209,6 +1210,9 @@ function buildProjectCommands(): ReadonlyArray<Command> {
           return;
         }
         notify(`Opened “${opened.name}”`, 'success');
+        // Same per-project reset the cloud loader does: the Footage tab must
+        // not carry the previous project's last-previewed clip name.
+        clearLastFootagePreview();
         if (opened.missing.length) offerRelink(opened.missing);
       },
     },

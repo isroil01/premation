@@ -306,103 +306,12 @@ export function DashboardPage(): JSX.Element {
     setAssetPage((p) => (p.offset === 0 ? p : { ...p, offset: 0 }));
   }, [currentFolderId, assetTypeFilter]);
 
-  const PRESET_TEMPLATES = [
-    {
-      id: 'reel',
-      title: 'Social Reel / Story',
-      desc: '1080 × 1920 · 60 fps · 15s',
-      icon: 'camera' as const,
-      width: 1080,
-      height: 1920,
-      fps: 60,
-      duration: 15,
-      badge: '9:16 Portrait',
-      color: 'var(--color-primary)',
-    },
-    {
-      id: 'youtube',
-      title: 'YouTube 4K Video',
-      desc: '3840 × 2160 · 30 fps · 30s',
-      icon: 'video' as const,
-      width: 3840,
-      height: 2160,
-      fps: 30,
-      duration: 30,
-      badge: '16:9 4K',
-      color: 'var(--color-primary)',
-    },
-    {
-      id: 'lottie',
-      title: 'Vector Lottie',
-      desc: '512 × 512 · 60 fps · 5s',
-      icon: 'sparkles' as const,
-      width: 512,
-      height: 512,
-      fps: 60,
-      duration: 5,
-      badge: '1:1 Square',
-      color: 'var(--color-success)',
-    },
-    {
-      id: 'mograph',
-      title: 'Motion Graphic HD',
-      desc: '1920 × 1080 · 60 fps · 10s',
-      icon: 'layout' as const,
-      width: 1920,
-      height: 1080,
-      fps: 60,
-      duration: 10,
-      badge: '16:9 HD',
-      color: 'var(--color-warning)',
-    },
-  ];
-
-  const onQuickCreatePreset = async (title: string, width: number, height: number, fps: number, durationSeconds: number) => {
-    setCreating(true);
-    try {
-      clearRecovery();
-      // The comp id MUST be the scene root's id ('comp_root' — see
-      // projectDocumentIO's ROOT_COMP_ID contract). This used to mint
-      // `comp_${Date.now()}` against a 'comp_root' scene, so every new project
-      // opened on a composition whose scene node did not exist: layers landed
-      // under the real root while the Project panel's composition showed
-      // empty — footage apparently floating outside any comp.
-      const initialComp: CompositionSettings = {
-        id: 'comp_root',
-        name: title,
-        width,
-        height,
-        fps,
-        durationSeconds,
-        background: '#101014',
-        transparent: false,
-        startFrame: 0,
-      };
-      useCompositionStore.setState(initialComp);
-      getTimelineController().setFrameRate(fps);
-      getTimelineController().setDurationSeconds(durationSeconds);
-      const scene = sceneProjectIO.createEmpty(title);
-      // The scene root carries the name the panels show (see renameComposition).
-      if (scene.nodes[0]) scene.nodes[0].name = title;
-      const initialDoc: EditorDocument = {
-        version: '1.1.0',
-        scene,
-        animation: { tracks: {}, expressions: {} },
-        comps: { comp_root: initialComp },
-      };
-      const p = await create(title, initialDoc);
-      if (!p?.id) throw new Error('Failed to create project.');
-      navigate(`/editor/${p.id}`);
-    } catch (err) {
-      useUIStore.getState().notify({
-        level: 'error',
-        message: `Failed to launch preset: ${(err as Error).message}`,
-        durationMs: 4000,
-      });
-    } finally {
-      setCreating(false);
-    }
-  };
+  // NOTE: the "Quick Start Launchpad" (four one-click preset-project cards)
+  // was removed 2026-08-20 at the user's request. Project creation now has
+  // exactly TWO ways in, both inside the Create Project modal: a blank
+  // composition, or from an uploaded video — one door, clearly labelled,
+  // instead of three surfaces that each created projects slightly differently.
+  // The modal's size presets cover what the launchpad offered.
 
   // The newest project in the LIBRARY, not the newest on this page: sorting the
   // loaded rows meant "pick up where you left off" pointed at whatever was on
@@ -737,38 +646,6 @@ export function DashboardPage(): JSX.Element {
                 </div>
               </div>
             )}
-
-            {/* Quick Start Presets Launchpad */}
-            <div className={styles.launchpadSection}>
-              <div className={styles.sectionHeaderRow}>
-                <h2 className={styles.sectionTitle}>
-                  Quick Start Launchpad
-                  <span className={styles.sectionHint}>1-click composition setup</span>
-                </h2>
-              </div>
-              <div className={styles.launchpadGrid}>
-                {PRESET_TEMPLATES.map((tmpl) => (
-                  <button
-                    type="button"
-                    key={tmpl.id}
-                    className={styles.launchpadCard}
-                    disabled={creating}
-                    onClick={() => {
-                      void onQuickCreatePreset(tmpl.title, tmpl.width, tmpl.height, tmpl.fps, tmpl.duration);
-                    }}
-                  >
-                    <div className={styles.launchpadHeader}>
-                      <div className={styles.launchpadIcon} style={{ background: `color-mix(in srgb, ${tmpl.color} 15%, transparent)`, color: tmpl.color }}>
-                        <Icon name={tmpl.icon} size="md" />
-                      </div>
-                      <span className={styles.launchpadBadge}>{tmpl.badge}</span>
-                    </div>
-                    <div className={styles.launchpadTitle}>{tmpl.title}</div>
-                    <div className={styles.launchpadDesc}>{tmpl.desc}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
 
             {/* Stats Summary Cards Row */}
             <div className={styles.statsGrid}>
