@@ -30,6 +30,18 @@ function findParPreset(val: number): string {
   return match ? String(match.value) : 'custom';
 }
 
+/**
+ * AE's phase notation: W = whole frame, S = split (field-shared) frame. With
+ * the A/A frame at index `phase`, the cycle A/A, B/B, B/C, C/D, D/D reads
+ * W W S S W rotated to start wherever the file's frame 0 lands in it.
+ */
+function pulldownPhaseLabel(phase: number): string {
+  const base = 'WWSSW';
+  let s = '';
+  for (let i = 0; i < 5; i++) s += base[(((i - phase) % 5) + 5) % 5];
+  return s;
+}
+
 function InterpretFootageBody({
   asset,
   close,
@@ -61,6 +73,12 @@ function InterpretFootageBody({
   const [fieldsMode, setFieldsMode] = useState<'off' | 'upper' | 'lower'>(
     currentInterpret.fields ?? 'off',
   );
+  // Remove Pulldown: the detected (or user-picked) 3:2 cadence phase, null =
+  // off. When set, the exact decode path serves inverse-telecined progressive
+  // film frames and Separate Fields is moot (see sourceInfo.pulldownPhase).
+  const [pulldownPhase, setPulldownPhase] = useState<number | null>(
+    typeof currentInterpret.pulldownPhase === 'number' ? currentInterpret.pulldownPhase : null,
+  );
   // 3:2 pulldown detection — decodes a short window and looks for the
   // phase-locked field-repeat cadence (see core/video/pulldownDetect.ts).
   const [pulldownStatus, setPulldownStatus] = useState<string | null>(null);
@@ -72,17 +90,17 @@ function InterpretFootageBody({
     try {
       const report = await probePulldown(asset.src, (f) =>
         setPulldownStatus(`Analyzing… ${Math.round(f * 100)}%`));
-      if (report.telecine) {
-        // The cadence says telecine; NTSC telecine carriers are lower-field
-        // -first in overwhelming practice, so that is the default the user
-        // can still override. Field separation kills the comb TODAY; full
-        // inverse telecine (re-weaving 23.976p) is future work.
-        setFieldsMode('lower');
+      if (report.telecine && report.phase !== null) {
+        // A positive detect arms the removal itself: the decode path re-weaves
+        // whole 23.976 film frames, so field separation is switched off rather
+        // than on — bobbing progressive frames would only halve their detail.
+        setPulldownPhase(report.phase);
+        setFieldsMode('off');
         setPulldownStatus(
           `3:2 pulldown detected (confidence ${(report.confidence * 100).toFixed(0)}%, ` +
           `${report.repeats} field repeats / ${report.transitions} transitions). ` +
-          'Separate Fields set to Lower — the content is film-rate under a video wrapper; ' +
-          'consider conforming to 23.976 fps.',
+          `Remove Pulldown armed at phase ${pulldownPhaseLabel(report.phase)} — ` +
+          'playback now re-weaves whole progressive film frames.',
         );
       } else {
         setPulldownStatus(
@@ -103,9 +121,13 @@ function InterpretFootageBody({
       par: parPreset === 'custom' ? customPar : parseFloat(parPreset),
       alpha: alphaMode,
       loopCount: Math.max(0, Math.round(loopCount)),
-      // 'off' stores as absent — progressive is the unmarked state, so an
-      // untouched asset round-trips without a fields key at all.
-      ...(fieldsMode !== 'off' ? { fields: fieldsMode } : {}),
+      // 'off' stores as an EXPLICIT undefined — setInterpretation merges by
+      // key and only deletes what the patch names, so omitting the key would
+      // leave a previously saved value alive behind an Off in the dialog.
+      // Remove Pulldown wins over Separate Fields (the frames it serves are
+      // progressive), so arming one clears the other.
+      fields: pulldownPhase === null && fieldsMode !== 'off' ? fieldsMode : undefined,
+      pulldownPhase: pulldownPhase !== null ? pulldownPhase : undefined,
     };
 
     useAssetStore.getState().setInterpretation(asset.id, patch);
@@ -223,7 +245,14 @@ function InterpretFootageBody({
           <select
             className={styles.select}
             value={fieldsMode}
-            onChange={(e) => setFieldsMode(e.target.value as 'off' | 'upper' | 'lower')}
+            onChange={(e) => {
+              const v = e.target.value as 'off' | 'upper' | 'lower';
+              setFieldsMode(v);
+              // The two treatments are exclusive: choosing a field order by
+              // hand disarms Remove Pulldown rather than silently outranking
+              // it at save time.
+              if (v !== 'off') setPulldownPhase(null);
+            }}
           >
             <option value="off">Off (progressive)</option>
             <option value="upper">Upper Field First</option>
@@ -232,6 +261,30 @@ function InterpretFootageBody({
           <p className={styles.hint}>
             For interlaced tape-era footage showing comb teeth on motion. Files don&apos;t record
             field order — DV is lower-first, most broadcast HD upper-first. Leave off for modern files.
+          </p>
+          <h4 className={styles.sectionTitle} style={{ marginTop: 10 }}>Remove Pulldown</h4>
+          <select
+            className={styles.select}
+            value={pulldownPhase === null ? 'off' : String(pulldownPhase)}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === 'off') { setPulldownPhase(null); return; }
+              setPulldownPhase(parseInt(v, 10));
+              // Removal serves progressive frames — separating fields on top
+              // of it would halve the detail the weave restores.
+              setFieldsMode('off');
+            }}
+          >
+            <option value="off">Off</option>
+            {[0, 1, 2, 3, 4].map((p) => (
+              <option key={p} value={String(p)}>
+                {pulldownPhaseLabel(p)}
+              </option>
+            ))}
+          </select>
+          <p className={styles.hint}>
+            Inverse telecine for 29.97 video mastered from 24 fps film: re-weaves whole progressive
+            film frames from the 3:2 field cadence. Use Detect below to find the phase automatically.
           </p>
           {canProbePulldown() && (
             <button

@@ -636,11 +636,15 @@ export class MotionRendererBackend implements RenderBackend {
                 const key = `asset:${layer.id}`;
                 activeKeys.add(key);
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
-                this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid, layer.fieldsSource);
+                // The bake path decodes through the legacy element and cannot
+                // weave — bob a pulldown source so the baked frame is at
+                // least comb-free (same trade as feedVideoFrame's fallback).
+                const bakeFields = layer.fieldsSource ?? (layer.pulldownSource !== undefined ? 'lower' : undefined);
+                this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid, bakeFields);
               } else if (layer.frameBlend?.mode === 'pixelMotion') {
                 const key = `vfm:${layer.id}`;
                 activeKeys.add(key);
-                this.feedPixelMotion(key, layer.src, layer.frameBlend, layer.fieldsSource);
+                this.feedPixelMotion(key, layer.src, layer.frameBlend, layer.fieldsSource, layer.pulldownSource);
               } else if (layer.frameBlend) {
                 // Frame Mix: feed both bracket frames. The exact decoder is
                 // asked first; then the legacy seek cache; misses queue a
@@ -650,13 +654,13 @@ export class MotionRendererBackend implements RenderBackend {
                 const kb = `vfb:${layer.id}`;
                 activeKeys.add(ka);
                 activeKeys.add(kb);
-                this.feedVideoFrame(ka, layer.src, layer.frameBlend.a, false, layer.fieldsSource);
-                this.feedVideoFrame(kb, layer.src, layer.frameBlend.b, false, layer.fieldsSource);
+                this.feedVideoFrame(ka, layer.src, layer.frameBlend.a, false, layer.fieldsSource, layer.pulldownSource);
+                this.feedVideoFrame(kb, layer.src, layer.frameBlend.b, false, layer.fieldsSource, layer.pulldownSource);
               } else {
                 const key = `asset:${layer.id}`;
                 activeKeys.add(key);
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
-                this.feedVideoFrame(key, layer.src, targetTime, /* plain */ true, layer.fieldsSource);
+                this.feedVideoFrame(key, layer.src, targetTime, /* plain */ true, layer.fieldsSource, layer.pulldownSource);
               }
             } else if (layer.kind === 'text') {
               const key = `text:${layer.id}`;
@@ -900,25 +904,32 @@ export class MotionRendererBackend implements RenderBackend {
    * entries in the texture lookup, so a leftover exact frame would keep
    * winning after the source went `unavailable`.
    */
-  private feedVideoFrame(key: string, src: string, timeSec: number, plain = false, fields?: 'upper' | 'lower'): void {
-    const exact = exactVideoFrames.get(src, timeSec);
+  private feedVideoFrame(key: string, src: string, timeSec: number, plain = false, fields?: 'upper' | 'lower', pulldown?: number): void {
+    const exact = exactVideoFrames.get(src, timeSec, pulldown);
     if (exact.state === 'frame') {
       // Signature is the presentation index: a repeated render of the same
       // frame skips the re-upload, a landed decode (new index) re-uploads.
       // Fields joins the signature so toggling Interpret Footage re-uploads
       // the SAME frame with the other treatment instead of being skipped.
+      // (Pulldown removal needs no marker of its own — it changes the
+      // presentation index, which is already the signature.)
       this.textures!.setFrame(key, exact.canvas, `xv:${exact.presIndex}:f${fields ?? ''}`, fields);
       return;
     }
+    // The legacy paths cannot weave a film frame back together, so while the
+    // exact decoder warms (or when the source can never decode exactly) a
+    // pulldown source is BOBBED instead — telecine carriers are lower-field-
+    // first in overwhelming practice, and one field beats visible comb.
+    const legacyFields = fields ?? (pulldown !== undefined ? 'lower' : undefined);
     if (!plain) {
       const legacy = viewportVideoFrames.get(src, timeSec);
       if (legacy) {
-        this.textures!.setFrame(key, legacy, `t:${timeSec}:f${fields ?? ''}`, fields);
+        this.textures!.setFrame(key, legacy, `t:${timeSec}:f${legacyFields ?? ''}`, legacyFields);
         return;
       }
     }
     this.textures!.releaseFrame?.(key);
-    this.textures!.setVideo(key, src, timeSec, fields);
+    this.textures!.setVideo(key, src, timeSec, legacyFields);
   }
 
   /** Reused output surface for Pixel Motion, per texture key. */
@@ -938,9 +949,10 @@ export class MotionRendererBackend implements RenderBackend {
     src: string,
     fb: { a: number; b: number; weight: number },
     fields?: 'upper' | 'lower',
+    pulldown?: number,
   ): void {
-    const ea = exactVideoFrames.get(src, fb.a);
-    const eb = exactVideoFrames.get(src, fb.b);
+    const ea = exactVideoFrames.get(src, fb.a, pulldown);
+    const eb = exactVideoFrames.get(src, fb.b, pulldown);
     if (ea.state === 'frame' && eb.state === 'frame') {
       // Warp signature: the frame PAIR plus the weight. The same rendered comp
       // frame re-requests this dozens of times (media-settle passes, repaints
@@ -956,7 +968,7 @@ export class MotionRendererBackend implements RenderBackend {
         const out = renderPixelMotion(`${src}|${ea.presIndex}|${eb.presIndex}`, ea.canvas, eb.canvas, fb.weight, entry.canvas);
         if (!out) {
           // Canvas step failed — degrade to nearest-frame via the ladder.
-          this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields);
+          this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields, pulldown);
           return;
         }
         entry.sig = sig;
@@ -964,7 +976,7 @@ export class MotionRendererBackend implements RenderBackend {
       this.textures!.setFrame(key, entry.canvas, sig, fields);
       return;
     }
-    this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields);
+    this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields, pulldown);
   }
 
   dispose(): void {

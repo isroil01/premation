@@ -40,6 +40,7 @@ import {
   webCodecsAvailable,
   type DecodedFrameLike,
 } from '@core/video/exactVideoSource';
+import { pulldownFrameFor } from '@core/video/pulldownDetect';
 
 /** Frames are captured at source resolution; 512MB is ~65 1080p frames. */
 const DEFAULT_BUDGET_BYTES = 512 * 1024 * 1024;
@@ -153,8 +154,17 @@ export class ExactVideoFrameCache {
    * `frame` may be inexact (nearest neighbour) while the real decode is in
    * flight; `pending` while the source is still demuxing; `unavailable` when
    * this source can never decode exactly — callers then use the legacy path.
+   *
+   * `pulldownPhase` (Interpret Footage ▸ Remove Pulldown) remaps the resolved
+   * presentation index through the inverse-telecine mapping
+   * (`pulldownFrameFor`): most video frames are served as the whole film frame
+   * they carry, and once per 5-frame cycle the film frame that exists only as
+   * fields split across two video frames is re-WOVEN from both — full vertical
+   * resolution, no comb, every served frame a true progressive film frame.
+   * Woven results are cached like decoded frames, under a fractional index no
+   * real presentation index can collide with.
    */
-  get(src: string, timeSec: number): ExactFrameResult {
+  get(src: string, timeSec: number, pulldownPhase?: number): ExactFrameResult {
     const entry = this.ensure(src);
     if (entry.state === 'unavailable') return { state: 'unavailable' };
     if (entry.state === 'loading') return { state: 'pending' };
@@ -168,16 +178,44 @@ export class ExactVideoFrameCache {
     // of magnitude under any real frame duration, so mid-frame times are
     // unaffected.
     const presIdx = entry.source.frameIndexAt(Math.max(0, Math.round(timeSec * 1e6) + 1));
-    const hit = entry.frames.get(presIdx);
-    if (hit) {
-      this.touch(entry, presIdx);
-      return { state: 'frame', canvas: hit.canvas, presIndex: presIdx, exact: true };
+    const target =
+      pulldownPhase !== undefined
+        ? pulldownFrameFor(presIdx, pulldownPhase)
+        : ({ kind: 'plain', index: presIdx } as const);
+
+    if (target.kind === 'weave') {
+      const woven = entry.frames.get(target.index);
+      if (woven) {
+        this.touch(entry, target.index);
+        return { state: 'frame', canvas: woven.canvas, presIndex: target.index, exact: true };
+      }
+      // Both source frames must be decoded before the weave exists. Request
+      // what is missing; each landed decode repaints and this re-runs.
+      const top = entry.frames.get(target.top);
+      const bottom = entry.frames.get(target.bottom);
+      if (top && bottom) {
+        const canvas = this.weaveCanvas(top.canvas, bottom.canvas);
+        this.store(entry, target.index, canvas, canvas.width * canvas.height * 4);
+        return { state: 'frame', canvas, presIndex: target.index, exact: true };
+      }
+      if (!top) this.requestDecode(src, entry, target.top);
+      if (!bottom) this.requestDecode(src, entry, target.bottom);
+      return this.nearest(entry, target.index);
     }
 
-    this.requestDecode(src, entry, presIdx);
+    const hit = entry.frames.get(target.index);
+    if (hit) {
+      this.touch(entry, target.index);
+      return { state: 'frame', canvas: hit.canvas, presIndex: target.index, exact: true };
+    }
 
-    // Nearest decoded neighbour while the target is in flight — bounded scan,
-    // the frame map is at most a few dozen entries under the byte budget.
+    this.requestDecode(src, entry, target.index);
+    return this.nearest(entry, target.index);
+  }
+
+  /** Nearest decoded neighbour while the target is in flight — bounded scan,
+   *  the frame map is at most a few dozen entries under the byte budget. */
+  private nearest(entry: ReadyEntry, presIdx: number): ExactFrameResult {
     let bestIdx = -1;
     let bestDist = Infinity;
     for (const idx of entry.frames.keys()) {
@@ -192,6 +230,43 @@ export class ExactVideoFrameCache {
       return { state: 'frame', canvas: near.canvas, presIndex: bestIdx, exact: false };
     }
     return { state: 'pending' };
+  }
+
+  /**
+   * Re-weave one progressive film frame from two telecined video frames: even
+   * rows (the top field) from `top`, odd rows (the bottom field) from
+   * `bottom`. Both carry the SAME film frame in those fields — that is what
+   * the pulldown mapping guarantees — so the result is a whole frame, not a
+   * comb. Degrades to a copy of `top` when 2D contexts are unavailable
+   * (jsdom, exhausted contexts): bookkeeping still runs, pixels stay honest
+   * to at least one field.
+   */
+  private weaveCanvas(top: HTMLCanvasElement, bottom: HTMLCanvasElement): HTMLCanvasElement {
+    const w = top.width;
+    const h = top.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx || w < 1 || h < 2) return canvas;
+    try {
+      ctx.drawImage(top, 0, 0);
+      const bctx = bottom.getContext('2d', { willReadFrequently: true });
+      if (!bctx) return canvas;
+      const img = ctx.getImageData(0, 0, w, h);
+      const bh = Math.min(h, bottom.height);
+      const bw = Math.min(w, bottom.width);
+      const bimg = bctx.getImageData(0, 0, bw, bh);
+      const rowBytes = w * 4;
+      const bRowBytes = bw * 4;
+      for (let y = 1; y < bh; y += 2) {
+        img.data.set(bimg.data.subarray(y * bRowBytes, y * bRowBytes + bRowBytes), y * rowBytes);
+      }
+      ctx.putImageData(img, 0, 0);
+    } catch {
+      // Tainted/unreadable — the top-field draw already landed, keep it.
+    }
+    return canvas;
   }
 
   /** True once `src` has settled to the sticky legacy-only state. */
@@ -308,7 +383,12 @@ export class ExactVideoFrameCache {
     // Cache owns the frame — draw, never close (see ExactVideoSource header).
     if (ctx) ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
 
-    const bytes = w * h * 4;
+    this.store(entry, presIdx, canvas, w * h * 4);
+  }
+
+  /** LRU insert shared by decoded and woven frames. */
+  private store(entry: ReadyEntry, presIdx: number, canvas: HTMLCanvasElement, bytes: number): void {
+    if (entry.frames.has(presIdx)) return;
     entry.frames.set(presIdx, { canvas, bytes });
     entry.order.push(presIdx);
     entry.bytes += bytes;

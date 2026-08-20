@@ -2382,9 +2382,13 @@ export function buildSnapshot(
       // including layers in other compositions — rather than being re-set per
       // layer.
       ...(footageSourceOf(node)?.alpha === 'premultiplied' ? { premultipliedSource: true } : {}),
-      ...((): { fieldsSource?: 'upper' | 'lower' } => {
-        const f = footageSourceOf(node)?.fields;
-        return f ? { fieldsSource: f } : {};
+      ...((): { fieldsSource?: 'upper' | 'lower'; pulldownSource?: number } => {
+        const source = footageSourceOf(node);
+        // Mutually exclusive by construction: footageSourceOf suppresses
+        // `fields` while Remove Pulldown is set (the served frames are
+        // progressive — see sourceInfo.ts).
+        if (source?.pulldownPhase !== undefined) return { pulldownSource: source.pulldownPhase };
+        return source?.fields ? { fieldsSource: source.fields } : {};
       })(),
     };
 

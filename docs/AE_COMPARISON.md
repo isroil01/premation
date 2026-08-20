@@ -29,7 +29,7 @@
 | Frame blending | Frame Mix + **Pixel Motion** (deterministic optical-flow warp, shipped 2026-08-20; real-footage visual pass pending) | Frame Mix + Pixel Motion | Parity |
 | Responsive/protected time | `responsiveTime.ts` regions | Responsive Design — Time | Parity |
 | Markers | Comp + layer markers, duration, color (`layerMarkers`, `markerShortcuts`) | Comp + layer markers, cue points | Parity |
-| Interpret Footage | fps, PAR, alpha, looping, **Separate Fields (upper/lower, deterministic single-field bob — shipped 2026-08-20)** | Same + 3:2 pulldown removal | Near parity — pulldown detection still open |
+| Interpret Footage | fps, PAR, alpha, looping, **Separate Fields (upper/lower, deterministic single-field bob — shipped 2026-08-20)**, **3:2 pulldown detect + Remove Pulldown (inverse telecine in the exact decode path — shipped 2026-08-20)** | Same | Parity |
 
 ### 2.2 Keyframes & expressions
 
@@ -103,7 +103,7 @@
 8. glTF/3D model import — *explicitly out of scope by design; listed for honesty, not planned*
 
 **🟢 Tier 3 — niche/finishing**
-9. 3:2 pulldown removal (field separation shipped; telecine detection is the remainder)
+9. ~~3:2 pulldown removal~~ — **shipped 2026-08-20**: cadence detection with phase, and inverse telecine in the exact decode path (whole-frame remap + one field re-weave per cycle)
 10. Variable-font wdth/slnt axes (weight shipped; the other axes need a non-shorthand rasterization path)
 11. HDR (PQ/HLG) delivery
 12. `.mogrt` interchange with Premiere

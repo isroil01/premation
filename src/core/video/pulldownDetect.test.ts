@@ -5,7 +5,7 @@
  * same A/A, B/B, B/C, C/D, D/D cycle the module's header derives.
  */
 
-import { detectPulldown, splitFields, type FieldPair } from './pulldownDetect';
+import { detectPulldown, pulldownFrameFor, splitFields, type FieldPair } from './pulldownDetect';
 
 const W = 32;
 const H = 24;
@@ -42,10 +42,20 @@ function telecine(filmFrames: Float32Array[]): FieldPair[] {
 const film = (n: number): Float32Array[] => Array.from({ length: n }, (_, i) => filmLuma(i));
 
 describe('detectPulldown', () => {
-  it('detects clean 2-3 telecine with high confidence', () => {
+  it('detects clean 2-3 telecine with high confidence, at phase 0', () => {
     const report = detectPulldown(telecine(film(24))); // 6 cycles, 30 frames
     expect(report.telecine).toBe(true);
     expect(report.confidence).toBeGreaterThan(0.8);
+    // The stream starts on the cycle boundary — the A/A frame is frame 0.
+    expect(report.phase).toBe(0);
+  });
+
+  it('reports the cadence phase of a stream that starts mid-cycle', () => {
+    // Drop the first two video frames: the A/A frames (old indices 0, 5, 10…)
+    // now sit at 3, 8, 13… — phase 3.
+    const report = detectPulldown(telecine(film(24)).slice(2));
+    expect(report.telecine).toBe(true);
+    expect(report.phase).toBe(3);
   });
 
   it('progressive video (every frame distinct) does not detect', () => {
@@ -76,6 +86,33 @@ describe('detectPulldown', () => {
   it('is deterministic', () => {
     const frames = telecine(film(24));
     expect(detectPulldown(frames)).toEqual(detectPulldown(frames));
+  });
+});
+
+describe('pulldownFrameFor', () => {
+  it('maps one full phase-0 cycle to A, B, B, woven C, D', () => {
+    // F0=A/A, F1=B/B, F2=B/C, F3=C/D, F4=D/D.
+    expect(pulldownFrameFor(0, 0)).toEqual({ kind: 'plain', index: 0 }); // A
+    expect(pulldownFrameFor(1, 0)).toEqual({ kind: 'plain', index: 1 }); // B
+    expect(pulldownFrameFor(2, 0)).toEqual({ kind: 'plain', index: 1 }); // B again — F2's top field IS B
+    expect(pulldownFrameFor(3, 0)).toEqual({ kind: 'weave', top: 3, bottom: 2, index: 2.5 }); // C, fields only
+    expect(pulldownFrameFor(4, 0)).toEqual({ kind: 'plain', index: 4 }); // D
+    // Next cycle repeats the shape.
+    expect(pulldownFrameFor(7, 0)).toEqual({ kind: 'plain', index: 6 });
+    expect(pulldownFrameFor(8, 0)).toEqual({ kind: 'weave', top: 8, bottom: 7, index: 7.5 });
+  });
+
+  it('honours a non-zero phase', () => {
+    // Phase 2: the A/A frame sits at index 2, so the split pair is at 4 and 5.
+    expect(pulldownFrameFor(2, 2)).toEqual({ kind: 'plain', index: 2 });
+    expect(pulldownFrameFor(4, 2)).toEqual({ kind: 'plain', index: 3 });
+    expect(pulldownFrameFor(5, 2)).toEqual({ kind: 'weave', top: 5, bottom: 4, index: 4.5 });
+  });
+
+  it('never indexes off the front of the file', () => {
+    // Phase 2 puts frame 0 at cycle position 3 (the weave slot) — but there is
+    // no frame -1 to weave with, so it is served as-is.
+    expect(pulldownFrameFor(0, 2)).toEqual({ kind: 'plain', index: 0 });
   });
 });
 

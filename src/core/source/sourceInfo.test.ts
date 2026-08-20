@@ -74,6 +74,27 @@ describe('footage sources', () => {
   it('is null for a layer with no asset', () => {
     expect(footageSourceOf(node('video'))).toBeNull();
   });
+
+  it('Remove Pulldown suppresses Separate Fields — the served frames are progressive', () => {
+    assets.push({
+      id: 'a1', type: 'video', src: 'x',
+      metadata: { width: 720, height: 480, duration: 5, fps: 29.97 },
+      interpret: { pulldownPhase: 3, fields: 'lower' },
+    });
+    const s = footageSourceOf(node('video', { assetId: 'a1' }))!;
+    expect(s.pulldownPhase).toBe(3);
+    expect(s.fields).toBeUndefined();
+  });
+
+  it('an out-of-range pulldown phase reads as off, like an invalid field order', () => {
+    assets.push({
+      id: 'a1', type: 'video', src: 'x',
+      metadata: { width: 720, height: 480, duration: 5 },
+      interpret: { pulldownPhase: 7 },
+    });
+    expect(interpretationOf('a1').pulldownPhase).toBeUndefined();
+    expect(footageSourceOf(node('video', { assetId: 'a1' }))?.pulldownPhase).toBeUndefined();
+  });
 });
 
 describe('composition sources — the same questions, answered', () => {

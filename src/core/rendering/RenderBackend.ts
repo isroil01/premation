@@ -397,6 +397,15 @@ export interface RenderLayer {
    * decode path (exact, legacy cache, element) see clean frames.
    */
   fieldsSource?: 'upper' | 'lower';
+  /**
+   * Interpret Footage ▸ Remove Pulldown: the 3:2 cadence phase (0–4). When
+   * present the exact decode path serves inverse-telecined progressive film
+   * frames (see `video/pulldownDetect.ts` ▸ `pulldownFrameFor`), and
+   * `fieldsSource` is absent by construction (`footageSourceOf` suppresses
+   * it). Legacy fallback paths cannot weave, so they bob instead — comb never
+   * reaches the screen either way.
+   */
+  pulldownSource?: number;
   /** Digest of the fields that determine this layer's OWN rasterized pixels
    *  (geometry + fills/strokes/text/masks + pre-DOF effects + width/height),
    *  excluding transform + compositing. Computed once in buildSnapshot (see

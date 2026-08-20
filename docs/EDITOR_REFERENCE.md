@@ -332,8 +332,15 @@ pixels only — every timing and geometry fact keeps reading the original asset'
 `metadata` and `interpret` through `sourceOf`, so a proxy cannot drift out of
 alignment with its source by construction.
 
-What genuinely remains missing from this column: **pulldown removal**, and a
-placeholder/offline-media workflow.
+3:2 pulldown is handled end to end: `pulldownDetect.ts` finds the phase-locked
+field-repeat cadence (Interpret Footage ▸ Detect), and Remove Pulldown
+(`interpret.pulldownPhase`) makes the exact decode path serve inverse-telecined
+progressive film frames — `pulldownFrameFor` remaps frame indices, re-weaving
+the one film frame per cycle that exists only as fields split across two video
+frames (`ExactVideoFrameCache.weaveCanvas`). Legacy fallback paths bob instead.
+
+What genuinely remains missing from this column: a placeholder/offline-media
+workflow.
 
 **Depth of field is still not per-pixel.** `dofEffectOf` pushes a Gaussian
 `blur` from one depth sample; there is still no DOF pass in `packages/renderer`
@@ -645,7 +652,7 @@ test; it did not occur to me that a code *comment* is prose too.
 | §4 claimed (2026-08-11, morning) | Reality |
 |---|---|
 | "No proxies. All 74 `proxy` hits are *network* proxy" | **False.** `src/core/assets/proxy.ts` + `proxyManager.ts` + three test files are a measured proxy system with an export-polarity invariant. The "all network" claim came from listing the first ten alphabetical matches, which happened to be `aiTransport.ts` / `csp.ts` — a sampling artifact stated as a census |
-| "No footage interpretation — no alpha interpretation, conform-frame-rate or loop count" | **False.** `sourceInfo.ts` holds `FootageInterpretation` with exactly those fields, stored per-asset. **Pulldown removal** is the only named item genuinely absent |
+| "No footage interpretation — no alpha interpretation, conform-frame-rate or loop count" | **False.** `sourceInfo.ts` holds `FootageInterpretation` with exactly those fields, stored per-asset. **Pulldown removal** was the one named item genuinely absent at the time (shipped 2026-08-20: detection + inverse telecine in the exact decode path) |
 | "The source frame rate is unknown" (Tier 1) | **False, and fixed 12 days before it was written.** `mediaProbe.ts` (2026-07-30) defines three tiers — `probed` (desktop + ffprobe: rate, duration, PAR, codec, audio inventory), `elementOnly`, `none`. It is *wired*: `buildSnapshot.ts:1811` reads `footageSourceOf(node)?.fps ?? fps`. Verifying the read path, not just the existence of the module, is what settled this |
 | Quoted `videoFrameCache.ts`'s "KNOWN LIMIT" header as current | The header was written 2026-07-21 and **superseded 2026-07-30**. The file's own `bracketFrames` already takes `fps` as a parameter; the caller supplies the probed rate. A comment describing a limit is not evidence the limit still holds |
 

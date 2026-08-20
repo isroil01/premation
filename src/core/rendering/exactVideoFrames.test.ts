@@ -193,6 +193,63 @@ describe('ExactVideoFrameCache', () => {
     expect(cache.stats('a.mp4')).toBeNull();
   });
 
+  describe('pulldown removal (Interpret Footage ▸ Remove Pulldown)', () => {
+    it('serves the duplicate whole frame for the first split slot', async () => {
+      const stub = stubSource();
+      const cache = new ExactVideoFrameCache(1024 * 1024, loaderFor(stub), () => true);
+      cache.get('a.mp4', 2 / FPS, 0);
+      await flush(); // load
+      cache.get('a.mp4', 2 / FPS, 0);
+      await flush(); // decode
+      // Frame 2 is B/C — its whole film frame is frame 1, which is what the
+      // mapping decodes and serves.
+      const r = cache.get('a.mp4', 2 / FPS, 0);
+      expect(r).toMatchObject({ state: 'frame', presIndex: 1, exact: true });
+      expect(stub.decoded).toEqual([1]);
+    });
+
+    it('weaves the fields-only film frame from both carriers and caches it', async () => {
+      const stub = stubSource();
+      const cache = new ExactVideoFrameCache(1024 * 1024, loaderFor(stub), () => true);
+      cache.get('a.mp4', 3 / FPS, 0);
+      await flush(); // load
+      // Frame 3 is C/D: film frame C only exists as fields across frames 2
+      // and 3 — BOTH are requested.
+      expect(cache.get('a.mp4', 3 / FPS, 0).state).toBe('pending');
+      await flush(); // decodes land
+      const r = cache.get('a.mp4', 3 / FPS, 0);
+      expect(r).toMatchObject({ state: 'frame', presIndex: 2.5, exact: true });
+      expect(new Set(stub.decoded)).toEqual(new Set([2, 3]));
+      // The weave is cached under its synthetic index: re-asking neither
+      // decodes nor rebuilds.
+      const again = cache.get('a.mp4', 3 / FPS, 0);
+      expect(again).toMatchObject({ state: 'frame', presIndex: 2.5, exact: true });
+      expect((again as { canvas: HTMLCanvasElement }).canvas).toBe((r as { canvas: HTMLCanvasElement }).canvas);
+      expect(cache.stats('a.mp4')!.frames).toBe(3); // frames 2, 3, and the weave
+    });
+
+    it('whole-frame slots pass through untouched', async () => {
+      const stub = stubSource();
+      const cache = new ExactVideoFrameCache(1024 * 1024, loaderFor(stub), () => true);
+      cache.get('a.mp4', 5 / FPS, 0);
+      await flush();
+      cache.get('a.mp4', 5 / FPS, 0);
+      await flush();
+      // Frame 5 opens the second cycle (A/A) — served as itself.
+      expect(cache.get('a.mp4', 5 / FPS, 0)).toMatchObject({ state: 'frame', presIndex: 5, exact: true });
+    });
+
+    it('without a phase the mapping is not applied', async () => {
+      const stub = stubSource();
+      const cache = new ExactVideoFrameCache(1024 * 1024, loaderFor(stub), () => true);
+      cache.get('a.mp4', 3 / FPS);
+      await flush();
+      cache.get('a.mp4', 3 / FPS);
+      await flush();
+      expect(cache.get('a.mp4', 3 / FPS)).toMatchObject({ state: 'frame', presIndex: 3, exact: true });
+    });
+  });
+
   it('a load that resolves after clear() closes the late source instead of resurrecting it', async () => {
     let resolveLoad: ((v: LoadedExactSource) => void) | null = null;
     const stub = stubSource();
