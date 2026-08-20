@@ -57,12 +57,19 @@ function InterpretFootageBody({
   const initialLoop = currentInterpret.loopCount ?? 1;
   const [loopCount, setLoopCount] = useState<number>(initialLoop);
 
+  const [fieldsMode, setFieldsMode] = useState<'off' | 'upper' | 'lower'>(
+    currentInterpret.fields ?? 'off',
+  );
+
   const handleSave = () => {
     const patch: FootageInterpretation = {
       conformFps: useConform ? Math.max(0.1, conformFps) : undefined,
       par: parPreset === 'custom' ? customPar : parseFloat(parPreset),
       alpha: alphaMode,
       loopCount: Math.max(0, Math.round(loopCount)),
+      // 'off' stores as absent — progressive is the unmarked state, so an
+      // untouched asset round-trips without a fields key at all.
+      ...(fieldsMode !== 'off' ? { fields: fieldsMode } : {}),
     };
 
     useAssetStore.getState().setInterpretation(asset.id, patch);
@@ -169,6 +176,26 @@ function InterpretFootageBody({
           </select>
           <p className={styles.hint}>
             Straight is standard for PNG, ProRes 4444 and WebM. Premultiplied prevents black fringing on rendered elements.
+          </p>
+        </div>
+      )}
+
+      {/* ── Fields (interlaced sources only — video, not stills) ── */}
+      {asset.type === 'video' && (
+        <div className={styles.section}>
+          <h4 className={styles.sectionTitle}>Separate Fields</h4>
+          <select
+            className={styles.select}
+            value={fieldsMode}
+            onChange={(e) => setFieldsMode(e.target.value as 'off' | 'upper' | 'lower')}
+          >
+            <option value="off">Off (progressive)</option>
+            <option value="upper">Upper Field First</option>
+            <option value="lower">Lower Field First</option>
+          </select>
+          <p className={styles.hint}>
+            For interlaced tape-era footage showing comb teeth on motion. Files don&apos;t record
+            field order — DV is lower-first, most broadcast HD upper-first. Leave off for modern files.
           </p>
         </div>
       )}

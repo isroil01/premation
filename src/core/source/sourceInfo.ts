@@ -78,6 +78,16 @@ export interface FootageInterpretation {
    * Only a BLACK matte is supported; see §21.
    */
   alpha?: AlphaInterpretation;
+  /**
+   * Interlaced footage's field order (After Effects' Interpret Footage ▸
+   * Separate Fields). Absent = progressive, which is every modern file and the
+   * pre-existing behaviour. Like `alpha`, this is a user-stated fact: files do
+   * not reliably record their field order, and DV/tape-era formats disagree
+   * about which field leads. The renderer removes combing by rebuilding the
+   * other field from the kept one (see `rendering/deinterlace.ts` for exactly
+   * what is and is not implemented).
+   */
+  fields?: 'upper' | 'lower';
 }
 
 /** Interpret Footage ▸ Alpha. Ignore and Invert Alpha are not implemented —
@@ -110,6 +120,9 @@ export interface SourceInfo {
   /** How RGB relates to alpha. See FootageInterpretation.alpha — nothing in a
    *  file records this, so it is always the user's setting or the default. */
   alpha: AlphaInterpretation;
+  /** Field order for interlaced footage; absent = progressive. Like `alpha`,
+   *  always the user's setting. See FootageInterpretation.fields. */
+  fields?: 'upper' | 'lower';
 }
 
 /** The comp facts `sourceOf` needs. Injected, because the renderer must not
@@ -132,7 +145,7 @@ export function assetIdOf(node: SceneNode): string | null {
 }
 
 /** Stored interpretation for a file, with defaults filled in. */
-export function interpretationOf(assetId: string): Required<Omit<FootageInterpretation, 'conformFps'>> & { conformFps?: number } {
+export function interpretationOf(assetId: string): Required<Omit<FootageInterpretation, 'conformFps' | 'fields'>> & { conformFps?: number; fields?: 'upper' | 'lower' } {
   const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
   const i = asset?.interpret ?? {};
   return {
@@ -142,6 +155,9 @@ export function interpretationOf(assetId: string): Required<Omit<FootageInterpre
     // Straight is both the AE default and the EXISTING behaviour, so nothing
     // renders differently until someone sets this deliberately.
     alpha: i.alpha ?? 'straight',
+    // Validated rather than passed through: a stored value that is neither
+    // field order must read as progressive, not as a truthy mystery string.
+    ...(i.fields === 'upper' || i.fields === 'lower' ? { fields: i.fields } : {}),
   };
 }
 
@@ -173,6 +189,7 @@ export function footageSourceOf(node: SceneNode): SourceInfo | null {
     par: i.par,
     loopCount: i.loopCount,
     alpha: i.alpha,
+    ...(i.fields ? { fields: i.fields } : {}),
   };
 }
 

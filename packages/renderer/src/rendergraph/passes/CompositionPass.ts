@@ -2126,8 +2126,19 @@ export class CompositionPass extends RenderPass {
         if (backdropTex && layerTex) {
           // m[0] -> cr0.x = blend id; m[1] -> cr0.y = preserve-transparency flag.
           // Two independent inputs, because the two features compose.
+          // m[2] -> cr0.z = dissolve seed: the comp frame index for Dancing
+          // Dissolve (36), 0 for everything else — which is what pins plain
+          // Dissolve's (35) speckle in place. m[3]/m[4] -> cr1.xy = comp size,
+          // so the dissolve hash lands on the COMP pixel grid and a zoomed
+          // preview, a fit preview and the export all draw the same pattern.
+          const compSize = ctx.scene.composition.size;
           const mode = {
-            m: [r.advancedBlend ?? 0, r.preserveTransparency ? 1 : 0, 0, 0, 0, 0, 0, 0, 0],
+            m: [
+              r.advancedBlend ?? 0,
+              r.preserveTransparency ? 1 : 0,
+              r.advancedBlend === 36 ? (ctx.scene.dissolveFrame ?? 0) : 0,
+              compSize.width, compSize.height, 0, 0, 0, 0,
+            ],
             offset: [0, 0, 0],
           };
           const combineCmds = new CommandBuffer();

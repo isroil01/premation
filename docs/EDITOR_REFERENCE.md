@@ -62,9 +62,9 @@ rediscovered in git history and believed a second time.
 | Registry | Count | Source of truth |
 |---|---|---|
 | Effects | 174 | `src/core/effects/effects.ts` → `EffectType` |
-| Blend modes | 36 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
+| Blend modes | 38 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
-| Path operators | 8 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
+| Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
 | Light types | 4 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
@@ -187,8 +187,8 @@ included), effect-scoped masking, and protected time regions. Track mattes
 Shutter angle, shutter **phase**, and **adaptive sampling** — all three.
 
 ### Shapes
-Eight **chainable** path operators: `zigzag`, `roundCorners`, `pucker`, `twist`,
-`offset`, `roughen`, `trim`, `repeater`. The chain reorders, and the schema-1.3.0
+Nine **chainable** path operators: `zigzag`, `roundCorners`, `pucker`, `twist`,
+`offset`, `roughen`, `trim`, `repeater`, `wiggleTransform`. The chain reorders, and the schema-1.3.0
 migration re-keys keyframe tracks onto the new operator ids. AE permits one trim
 and one repeater per shape; so does this (`pathOps.ts` resolves each with
 `find`), which is parity rather than a limit.
@@ -425,29 +425,51 @@ registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
 GPU shader. The count is now phrased as "174 effects" rather than as a bare
 figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
-**Uniform mask feather only.** `MaskPoint` carries x/y plus handles and one
-scalar feather per path. AE's variable-width feather — the tool for organic
-matte blending — has nowhere to store its per-point width.
+**Variable-width mask feather LANDED** (2026-08-20). `MaskPoint` gained an
+optional per-vertex feather diameter; any vertex carrying one routes the whole
+path through the distance-field renderer (`maskFeather.ts`: hard coverage →
+3-4 chamfer signed distance → nearest-outline-sample width, grid-bucketed →
+smoothstep ramp straddling the edge), with the width interpolating along the
+outline between vertices. Absent overrides mean the uniform blur renderer,
+byte-identical to before. The width rides mask animation like every other
+vertex quantity, and the matte cache signature digests it (the parity guard
+caught that within minutes of the field existing — see
+`maskSignatureParity.test.ts`, doing exactly the job it was built for).
 
-**No Wiggle Transform shape operator.** The `wiggle()` *expression* is complete;
-the shape operator is a different feature and is absent. **Wiggle Paths, listed
-here earlier the same day, DOES exist** — stored as `roughen`, which is why a
+**Wiggle Transform LANDED** (2026-08-20, `wiggleTransform` in `pathOps.ts`):
+chain-level like Trim and the Repeater, one temporal-noise affine transform per
+run — so Repeater → Wiggle Transform makes every copy wander independently,
+and `correlation` dials the swarm back into one body. Landing it also fixed a
+real bug: `resolveOne` never carried `correlation` through `resolvePathOps`,
+so Wiggle Paths' Correlation control worked in unit tests (which call
+`roughen()` directly) and did nothing in the render path. **Wiggle Paths, listed
+here earlier as missing, DOES exist** — stored as `roughen`, which is why a
 grep for `wigglePath` found nothing. See §5's correction; it gained the
 Correlation parameter it had been missing.
 
-**Frame blending is Frame Mix only.** Added 2026-08-11. `buildSnapshot.ts:1796`
-returns `undefined` unless `frameBlend === 'mix'`; `pixel motion` and
-`opticalFlow` are zero hits. AE offers Frame Mix *and* Pixel Motion, and Pixel
-Motion is the one people actually reach for on retimed footage. Every slow-motion
-shot here therefore gets AE's worse mode — which is a shame, because the rest of
-the retiming stack (spatial tangents, roving keys, `timeRemap` sampling on
-precomps, and now a real source frame rate) is well built. Note the dependency:
-real optical flow wants exact source frames, so it sits behind the decoder
+**Pixel Motion LANDED** (2026-08-20). `frameBlend` now carries a mode: `mix`
+keeps the two-quad cross-dissolve, `pixelMotion` renders ONE quad sampling a
+motion-compensated in-between (`rendering/pixelMotionFlow.ts` — deterministic
+block-matched flow at a downscaled raster, symmetric warp-blend at full res;
+`rendering/pixelMotion.ts` caches flow per frame PAIR, the expensive half).
+The dependency this entry predicted held: it is built directly on the exact
+decoder's frames (`feedPixelMotion` in MotionRendererBackend), degrading to
+nearest-frame while either bracket is still decoding — never a hole, never a
+half-warped guess — and to Frame Mix wherever flow reports no texture.
+Synthetic-frame suite proves recovery of known motion to sub-pixel, endpoint
+identity and determinism; a real-footage on-machine pass is still owed.
+The old text stood here since 2026-08-11 saying Pixel Motion was the mode
+people actually reach for on retimed footage, and that the decoder
 problem in Tier 1.
 
-**Two blend modes short:** Dissolve and Dancing Dissolve. Both are per-pixel
-stochastic, and the real cost is a preview↔export determinism contract, not the
-blend maths. Classic Color Burn/Dodge/Difference currently render identically to
+**Dissolve and Dancing Dissolve LANDED** (2026-08-20, combine ids 35/36): the
+determinism contract this entry flagged as the real cost is met the way Roughen
+met it — an integer hash of (comp-grid pixel, seed) in both shader dialects, no
+clock in the shader. Plain Dissolve hashes with seed 0 so its speckle holds
+still; Dancing's seed is the comp frame index, computed by the adapter
+(`FrameScene.dissolveFrame`) from the same playhead export renders, so preview
+at any zoom and the export boil identically. That makes the mode table all 38
+of AE's 38. Classic Color Burn/Dodge/Difference still render identically to
 their modern counterparts — kept for round-tripping and picker parity, and
 documented as such rather than silently wrong.
 

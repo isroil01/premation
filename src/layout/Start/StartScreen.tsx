@@ -42,6 +42,8 @@ import type { ProjectIndexRow } from '@core/localIndex/types';
 import { thumbUrl } from '@core/localIndex/thumbCache';
 import { isLocalFirst } from '@core/config/flags';
 import { ProjectCommands } from '@layout/Menu';
+import { useAssetStore } from '@stores/assetStore';
+import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { asCommandId } from '@app-types/common';
 import { Button } from '@components/Button';
 import { useUIStore } from '@stores/uiStore';
@@ -186,6 +188,31 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
 
         <div className={styles.actions}>
           <Button variant="primary" onClick={() => void run(ProjectCommands.New)}>New Project</Button>
+          {/* AE's second way in, visible at the start: new project, then the
+              picked clip imports and the comp conforms to it (size, duration,
+              probed fps) via the same createCompositionFromFootage the Assets
+              panel uses. */}
+          <Button
+            variant="secondary"
+            onClick={() => {
+              const input = document.createElement('input');
+              input.type = 'file';
+              input.accept = 'video/*,.mp4,.mov,.webm,.m4v';
+              input.onchange = async () => {
+                const f = input.files?.[0];
+                if (!f) return;
+                await run(ProjectCommands.New);
+                // New can be declined (the unsaved-changes confirmation) —
+                // importing into no project would drop the clip on the floor.
+                if (!getProjectManager().getState().current) return;
+                const asset = await useAssetStore.getState().addAsset(f);
+                await createCompositionFromFootage(asset);
+              };
+              input.click();
+            }}
+          >
+            New from Video…
+          </Button>
           <Button variant="secondary" onClick={() => void run(ProjectCommands.Open)}>Open…</Button>
         </div>
 

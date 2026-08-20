@@ -26,6 +26,7 @@ import {
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
+import { renderPixelMotion } from './pixelMotion';
 import { exactVideoFrames } from './exactVideoFrames';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
@@ -635,7 +636,11 @@ export class MotionRendererBackend implements RenderBackend {
                 const key = `asset:${layer.id}`;
                 activeKeys.add(key);
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
-                this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid);
+                this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid, layer.fieldsSource);
+              } else if (layer.frameBlend?.mode === 'pixelMotion') {
+                const key = `vfm:${layer.id}`;
+                activeKeys.add(key);
+                this.feedPixelMotion(key, layer.src, layer.frameBlend, layer.fieldsSource);
               } else if (layer.frameBlend) {
                 // Frame Mix: feed both bracket frames. The exact decoder is
                 // asked first; then the legacy seek cache; misses queue a
@@ -645,13 +650,13 @@ export class MotionRendererBackend implements RenderBackend {
                 const kb = `vfb:${layer.id}`;
                 activeKeys.add(ka);
                 activeKeys.add(kb);
-                this.feedVideoFrame(ka, layer.src, layer.frameBlend.a);
-                this.feedVideoFrame(kb, layer.src, layer.frameBlend.b);
+                this.feedVideoFrame(ka, layer.src, layer.frameBlend.a, false, layer.fieldsSource);
+                this.feedVideoFrame(kb, layer.src, layer.frameBlend.b, false, layer.fieldsSource);
               } else {
                 const key = `asset:${layer.id}`;
                 activeKeys.add(key);
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
-                this.feedVideoFrame(key, layer.src, targetTime, /* plain */ true);
+                this.feedVideoFrame(key, layer.src, targetTime, /* plain */ true, layer.fieldsSource);
               }
             } else if (layer.kind === 'text') {
               const key = `text:${layer.id}`;
@@ -895,23 +900,71 @@ export class MotionRendererBackend implements RenderBackend {
    * entries in the texture lookup, so a leftover exact frame would keep
    * winning after the source went `unavailable`.
    */
-  private feedVideoFrame(key: string, src: string, timeSec: number, plain = false): void {
+  private feedVideoFrame(key: string, src: string, timeSec: number, plain = false, fields?: 'upper' | 'lower'): void {
     const exact = exactVideoFrames.get(src, timeSec);
     if (exact.state === 'frame') {
       // Signature is the presentation index: a repeated render of the same
       // frame skips the re-upload, a landed decode (new index) re-uploads.
-      this.textures!.setFrame(key, exact.canvas, `xv:${exact.presIndex}`);
+      // Fields joins the signature so toggling Interpret Footage re-uploads
+      // the SAME frame with the other treatment instead of being skipped.
+      this.textures!.setFrame(key, exact.canvas, `xv:${exact.presIndex}:f${fields ?? ''}`, fields);
       return;
     }
     if (!plain) {
       const legacy = viewportVideoFrames.get(src, timeSec);
       if (legacy) {
-        this.textures!.setFrame(key, legacy, `t:${timeSec}`);
+        this.textures!.setFrame(key, legacy, `t:${timeSec}:f${fields ?? ''}`, fields);
         return;
       }
     }
     this.textures!.releaseFrame?.(key);
-    this.textures!.setVideo(key, src, timeSec);
+    this.textures!.setVideo(key, src, timeSec, fields);
+  }
+
+  /** Reused output surface for Pixel Motion, per texture key. */
+  private pixelMotionOut = new Map<string, { canvas: HTMLCanvasElement; sig: string }>();
+
+  /**
+   * Feed the motion-compensated in-between for a Pixel Motion layer.
+   *
+   * Needs BOTH bracket frames from the exact decoder. While either is still
+   * decoding (`exactVideoFrames.get` queues the decode and its wait joins
+   * `takeMediaWaits`, so export settles onto the real thing), the ordinary
+   * video ladder feeds the NEAREST bracket under the same key — nearest-frame,
+   * never a hole, and never a half-warped guess.
+   */
+  private feedPixelMotion(
+    key: string,
+    src: string,
+    fb: { a: number; b: number; weight: number },
+    fields?: 'upper' | 'lower',
+  ): void {
+    const ea = exactVideoFrames.get(src, fb.a);
+    const eb = exactVideoFrames.get(src, fb.b);
+    if (ea.state === 'frame' && eb.state === 'frame') {
+      // Warp signature: the frame PAIR plus the weight. The same rendered comp
+      // frame re-requests this dozens of times (media-settle passes, repaints
+      // with a parked playhead); recomputing a full-res warp for an identical
+      // signature would be the whole cost of the feature paid for nothing.
+      const sig = `pm:${ea.presIndex}:${eb.presIndex}:${fb.weight.toFixed(4)}:f${fields ?? ''}`;
+      let entry = this.pixelMotionOut.get(key);
+      if (!entry) {
+        entry = { canvas: document.createElement('canvas'), sig: '' };
+        this.pixelMotionOut.set(key, entry);
+      }
+      if (entry.sig !== sig) {
+        const out = renderPixelMotion(`${src}|${ea.presIndex}|${eb.presIndex}`, ea.canvas, eb.canvas, fb.weight, entry.canvas);
+        if (!out) {
+          // Canvas step failed — degrade to nearest-frame via the ladder.
+          this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields);
+          return;
+        }
+        entry.sig = sig;
+      }
+      this.textures!.setFrame(key, entry.canvas, sig, fields);
+      return;
+    }
+    this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields);
   }
 
   dispose(): void {

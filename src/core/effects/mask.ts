@@ -15,6 +15,10 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+// Function-level cycle with maskFeather.ts (it builds its outline from
+// maskSegments here) — safe because both sides touch the other only inside
+// function bodies, never at module evaluation.
+import { hasVariableFeather, paintVariableFeatherPath } from './maskFeather';
 
 /**
  * How a mask combines with the matte accumulated from the masks above it.
@@ -46,6 +50,17 @@ export interface MaskPoint {
   /** Outgoing handle (absolute). Equal to (x,y) for a corner. */
   outX: number;
   outY: number;
+  /**
+   * Per-vertex feather DIAMETER override, px (AE's variable-width feather).
+   *
+   * Absent means "use the path's own `feather`" — which is every stored
+   * document, so nothing renders differently until a vertex opts in. When ANY
+   * vertex on a path carries one, the whole path renders through the
+   * distance-field painter (`maskFeather.ts`), with the width interpolated
+   * along the outline between vertices — the uniform blur has one radius and
+   * cannot express that.
+   */
+  feather?: number;
 }
 
 export interface MaskPath {
@@ -359,6 +374,15 @@ export function paintMaskMatte(
     g.globalCompositeOperation = maskModeToComposite(path.mode);
     const op = path.opacity ?? 1;
     g.globalAlpha = op < 0 ? 0 : op > 1 ? 1 : op;
+    // Variable-width feather (any vertex with its own value) renders through
+    // the distance-field painter — a blur has one radius and cannot vary the
+    // softness along the outline. Falls back to the uniform path when the
+    // scratch context is unavailable, so headless runtimes lose the variation,
+    // not the mask.
+    if (hasVariableFeather(path) && paintVariableFeatherPath(g, path, w, h)) {
+      g.restore();
+      continue;
+    }
     // Feather is a diameter in AE terms; blur takes a radius.
     if (path.feather > 0) g.filter = `blur(${path.feather / 2}px)`;
     g.fillStyle = '#fff';
@@ -393,6 +417,13 @@ function lerpPoint(p: MaskPoint, q: MaskPoint, f: number): MaskPoint {
     x: lerp(p.x, q.x, f), y: lerp(p.y, q.y, f),
     inX: lerp(p.inX, q.inX, f), inY: lerp(p.inY, q.inY, f),
     outX: lerp(p.outX, q.outX, f), outY: lerp(p.outY, q.outY, f),
+    // Per-vertex feather rides the same interpolation as every other vertex
+    // quantity. One side lacking it means "the path's uniform value" — no
+    // number to lerp toward, so the animated side's value carries (snapping to
+    // undefined mid-tween would flash the whole path back to uniform).
+    ...(typeof p.feather === 'number' || typeof q.feather === 'number'
+      ? { feather: lerp(p.feather ?? q.feather ?? 0, q.feather ?? p.feather ?? 0, f) }
+      : {}),
   };
 }
 
@@ -551,4 +582,33 @@ export function removeMaskPath(nodeId: string, pathId: string): void {
  */
 export function setMaskPoints(nodeId: string, pathId: string, points: MaskPoint[], t?: number): void {
   updateMaskPath(nodeId, pathId, { points }, t);
+}
+
+/**
+ * Set (or clear, with undefined) one vertex's feather override — the write
+ * behind the variable-width feather rows. Clearing removes the KEY rather than
+ * writing 0: an absent override means "the path's uniform value", and a path
+ * whose every override is cleared drops back to the plain blur renderer.
+ */
+export function setMaskPointFeather(
+  nodeId: string,
+  pathId: string,
+  pointIndex: number,
+  feather: number | undefined,
+  t?: number,
+): void {
+  editMaskAt(nodeId, t, (mask) => ({
+    paths: mask.paths.map((p) => {
+      if (p.id !== pathId) return p;
+      const points = p.points.map((pt, i) => {
+        if (i !== pointIndex) return pt;
+        if (feather === undefined) {
+          const { feather: _drop, ...rest } = pt;
+          return rest as MaskPoint;
+        }
+        return { ...pt, feather: Math.max(0, feather) };
+      });
+      return { ...p, points };
+    }),
+  }));
 }

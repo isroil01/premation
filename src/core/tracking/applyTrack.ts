@@ -36,6 +36,7 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { readGeometry } from '@core/workspace/geometry';
 import { addEffect, getNodeEffects, effectPropPath } from '@core/effects/effects';
 import type { CompTrackSample } from './trackVideoLayer';
+import { applySim, simRotation, simScale, type Sim } from './globalMotion';
 
 export interface ApplyTrackOptions {
   /** The tracked video layer — the space the samples were measured in. */
@@ -307,6 +308,102 @@ export function applyTransformTrack(opts: TransformTrackOptions): number {
         defaultAnimation.setKeyframes(opts.targetNodeId, 'scaleX', spliceRecordedRange(existingOf('scaleX'), sxKfs));
         defaultAnimation.setKeyframes(opts.targetNodeId, 'scaleY', spliceRecordedRange(existingOf('scaleY'), syKfs));
       }
+    });
+  });
+  return xKfs.length;
+}
+
+export interface SmoothStabilizeOptions {
+  videoNodeId: string;
+  /** Per-frame corrections in SOURCE DISPLAY px (globalMotion sims), aligned
+   *  with `compFrames`. */
+  corrections: readonly Sim[];
+  compFrames: readonly number[];
+  fps: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  comp: { width: number; height: number; rootId?: string };
+}
+
+/**
+ * Smooth (dense) stabilization: write the per-frame similarity corrections as
+ * position + rotation + scale keyframes on the video layer.
+ *
+ * Position rides the corrected frame CENTER — measured through the layer's
+ * ORIGINAL transform on both sides (the planExpressionBake discipline all the
+ * apply paths share), converted to parent space by differencing `fromComp`
+ * points. Rotation and scale are deltas composed onto the layer's own sampled
+ * base, exactly as `applyTransformTrack` composes its two-point solve.
+ *
+ * The correction similarity pivots at the source frame's centre; the layer's
+ * rotation/scale pivot at its ANCHOR. For the default centred anchor the two
+ * coincide and the mapping is exact; a re-anchored layer gets first-order
+ * accuracy, which is a documented approximation, not a surprise.
+ */
+export function applySmoothStabilize(opts: SmoothStabilizeOptions): number {
+  const node = defaultSceneGraph.getNode(opts.videoNodeId);
+  if (!node || opts.corrections.length === 0) return 0;
+  if (opts.corrections.length !== opts.compFrames.length) return 0;
+  const g = readGeometry(node);
+  if (!g) return 0;
+  const parentId = node.parent ?? null;
+  const cx = opts.sourceWidth / 2;
+  const cy = opts.sourceHeight / 2;
+
+  const xKfs: Keyframe[] = [];
+  const yKfs: Keyframe[] = [];
+  const rotKfs: Keyframe[] = [];
+  const sxKfs: Keyframe[] = [];
+  const syKfs: Keyframe[] = [];
+  let prevRotDelta = 0;
+  for (let i = 0; i < opts.corrections.length; i++) {
+    const corr = opts.corrections[i]!;
+    const compTime = opts.compFrames[i]! / opts.fps;
+    const [wx, wy] = applySim(corr, cx, cy);
+    const from = trackSampleToComp(opts.videoNodeId, cx, cy, compTime, opts.sourceWidth, opts.sourceHeight, opts.comp);
+    const to = trackSampleToComp(opts.videoNodeId, wx, wy, compTime, opts.sourceWidth, opts.sourceHeight, opts.comp);
+    if (!from || !to) continue;
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    if (parentId) {
+      const parentSpace = layerSpaceAt(parentId, compTime, opts.comp);
+      if (!parentSpace) continue;
+      const a = parentSpace.fromComp([to.x, to.y]);
+      const b = parentSpace.fromComp([from.x, from.y]);
+      dx = a[0] - b[0];
+      dy = a[1] - b[1];
+    }
+    let rotDelta = (simRotation(corr) * 180) / Math.PI;
+    // Unwrap frame-to-frame like the two-point solve does.
+    while (rotDelta - prevRotDelta > 180) rotDelta -= 360;
+    while (rotDelta - prevRotDelta < -180) rotDelta += 360;
+    prevRotDelta = rotDelta;
+    const k = simScale(corr);
+
+    const t = compToKeyframeTime(opts.videoNodeId, compTime);
+    const baseX = defaultAnimation.sample(opts.videoNodeId, 'x', t) ?? g.x;
+    const baseY = defaultAnimation.sample(opts.videoNodeId, 'y', t) ?? g.y;
+    const baseRot = defaultAnimation.sample(opts.videoNodeId, 'rotation', t) ?? g.rotationDeg ?? 0;
+    const baseSx = defaultAnimation.sample(opts.videoNodeId, 'scaleX', t) ?? g.scaleX ?? 1;
+    const baseSy = defaultAnimation.sample(opts.videoNodeId, 'scaleY', t) ?? g.scaleY ?? 1;
+    xKfs.push({ t, value: baseX + dx, easing: 'linear' });
+    yKfs.push({ t, value: baseY + dy, easing: 'linear' });
+    rotKfs.push({ t, value: baseRot + rotDelta, easing: 'linear' });
+    sxKfs.push({ t, value: baseSx * k, easing: 'linear' });
+    syKfs.push({ t, value: baseSy * k, easing: 'linear' });
+  }
+  if (xKfs.length === 0) return 0;
+
+  const existingOf = (prop: string): readonly Keyframe[] =>
+    defaultAnimation.tracksFor(opts.videoNodeId).find((tr) => tr.prop === prop)?.keyframes ?? [];
+
+  runAnimEdit('Smooth Stabilize', () => {
+    defaultAnimation.batch(() => {
+      defaultAnimation.setKeyframes(opts.videoNodeId, 'x', spliceRecordedRange(existingOf('x'), xKfs));
+      defaultAnimation.setKeyframes(opts.videoNodeId, 'y', spliceRecordedRange(existingOf('y'), yKfs));
+      defaultAnimation.setKeyframes(opts.videoNodeId, 'rotation', spliceRecordedRange(existingOf('rotation'), rotKfs));
+      defaultAnimation.setKeyframes(opts.videoNodeId, 'scaleX', spliceRecordedRange(existingOf('scaleX'), sxKfs));
+      defaultAnimation.setKeyframes(opts.videoNodeId, 'scaleY', spliceRecordedRange(existingOf('scaleY'), syKfs));
     });
   });
   return xKfs.length;

@@ -26,7 +26,7 @@
 import { create } from 'zustand';
 import type { CompTrackSample } from '@core/tracking/trackVideoLayer';
 
-export type TrackerMode = 'follow' | 'transform' | 'stabilize' | 'corner' | 'mask';
+export type TrackerMode = 'follow' | 'transform' | 'stabilize' | 'smooth' | 'corner' | 'mask';
 
 export interface TrackerResult {
   /** One track per point, in point order. */
@@ -39,7 +39,8 @@ export interface TrackerResult {
 }
 
 export function pointCountFor(mode: TrackerMode): number {
-  return mode === 'corner' ? 4 : mode === 'transform' ? 2 : mode === 'mask' ? 0 : 1;
+  // Smooth stabilize is DENSE — the flow grid is its points, so it places none.
+  return mode === 'corner' ? 4 : mode === 'transform' ? 2 : mode === 'mask' || mode === 'smooth' ? 0 : 1;
 }
 
 /** Seed positions for a mode, in source px. Multi-point modes start spread
@@ -61,7 +62,7 @@ export function seedPointsFor(mode: TrackerMode, w: number, h: number): Array<{ 
       { x: w * 0.65, y: h / 2 },
     ];
   }
-  if (mode === 'mask') return [];
+  if (mode === 'mask' || mode === 'smooth') return [];
   return [{ x: w / 2, y: h / 2 }];
 }
 

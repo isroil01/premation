@@ -32,12 +32,14 @@ describe('isBlendMode', () => {
     }
   });
 
-  test('rejects modes that are named in the plan but not yet implemented', () => {
-    // Real AE modes we deliberately do NOT ship yet (M5). If one starts
-    // validating without its shader branch, a document could store a mode that
-    // renders as Normal with no signal.
-    for (const notYet of ['dissolve', 'dancing-dissolve']) {
-      expect(isBlendMode(notYet)).toBe(false);
+  test('accepts the Dissolve pair (M5) — their shader branch shipped', () => {
+    // These spent the project's whole life as the deliberately-rejected pair
+    // (a mode validating without its shader branch would store fine and render
+    // as Normal with no signal). Combine ids 35/36 landed 2026-08-20, so the
+    // guard flips: rejecting them now would DROP the mode from any document
+    // that stored it.
+    for (const m of ['dissolve', 'dancing-dissolve']) {
+      expect(isBlendMode(m)).toBe(true);
     }
   });
 });
@@ -61,11 +63,11 @@ describe('readNodeBlend', () => {
 });
 
 describe('BLEND_MODES table', () => {
-  test('ships 36 of AE\'s 38, with the 2 absentees accounted for', () => {
-    // 38 - 36 = 2: Dissolve and Dancing Dissolve (M5). If this number moves
-    // without a milestone landing, something was added without a shader branch
-    // behind it.
-    expect(BLEND_MODES).toHaveLength(36);
+  test('ships all 38 of AE\'s 38', () => {
+    // The last two, Dissolve and Dancing Dissolve (M5), landed 2026-08-20 with
+    // shader ids 35/36 behind them. If this number moves again, something was
+    // added without a shader branch behind it — check BLEND_COMBINE first.
+    expect(BLEND_MODES).toHaveLength(38);
   });
 
   test('normal leads, and every mode is unique', () => {

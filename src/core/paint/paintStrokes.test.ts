@@ -1,6 +1,23 @@
 import { normalizeStroke, strokeBounds, readNodePaint, type PaintStroke } from './paintStrokes';
 import type { SceneNode } from '@core/types';
 
+describe('normalizeStroke — clone stamp', () => {
+  it('accepts clone mode and carries its offsets (defaulting to 0)', () => {
+    const s = normalizeStroke({ points: [{ x: 0, y: 0 }], mode: 'clone', cloneOffsetX: 30, cloneOffsetY: -12 }, 'c1');
+    expect(s.mode).toBe('clone');
+    expect(s.cloneOffsetX).toBe(30);
+    expect(s.cloneOffsetY).toBe(-12);
+    const d = normalizeStroke({ points: [{ x: 0, y: 0 }], mode: 'clone' }, 'c2');
+    expect(d.cloneOffsetX).toBe(0);
+    expect(d.cloneOffsetY).toBe(0);
+  });
+
+  it('non-clone strokes carry NO offset keys — the field is clone-only', () => {
+    const s = normalizeStroke({ points: [{ x: 0, y: 0 }], mode: 'paint', cloneOffsetX: 5 } as never, 'p1');
+    expect('cloneOffsetX' in s).toBe(false);
+  });
+});
+
 describe('normalizeStroke', () => {
   test('fills defaults', () => {
     const s = normalizeStroke({ points: [{ x: 0, y: 0 }] }, 'id1');

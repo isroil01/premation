@@ -100,6 +100,12 @@ function advancedBlendId(mode: LayerBlendMode | undefined): number {
     case 'stencil-luma': return 32;
     case 'silhouette-alpha': return 33;
     case 'silhouette-luma': return 34;
+    // ── M5 (stochastic): coverage becomes a per-pixel coin flip. The shader
+    // hashes the COMP-GRID pixel (comp size rides cr1.xy) so preview at any
+    // zoom and export produce the same speckle. Dancing's re-roll comes from
+    // `FrameScene.dissolveFrame` riding cr0.z — no clock in the shader. ──
+    case 'dissolve': return 35;
+    case 'dancing-dissolve': return 36;
     default: return 0; // normal / add → simple fixed-function blend
   }
 }
@@ -1595,6 +1601,15 @@ function flattenLayers(
         parentOpacity * layer.opacity,
         result,
       );
+    } else if (layer.kind === 'video' && layer.frameBlend && layer.frameBlend.mode === 'pixelMotion') {
+      // Pixel Motion: ONE renderable sampling the motion-compensated
+      // in-between the texture feed computes (optical-flow warp of the two
+      // bracket frames — see rendering/pixelMotion.ts). The feed falls back to
+      // the ordinary `vfm:` video ladder when either bracket frame has not
+      // decoded yet, so the degradation is nearest-frame, never a hole.
+      const r = layerToRenderable(layer, parentMatrix, parentOpacity);
+      r.textureKey = `vfm:${layer.id}`;
+      result.push(r);
     } else if (layer.kind === 'video' && layer.frameBlend) {
       // Frame blending (Frame Mix): the two decoded frames bracketing the
       // playhead cross-dissolve — frame A full, frame B at the sub-frame
@@ -1756,6 +1771,13 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
     },
     renderables,
     hasEffects,
+    // Dancing Dissolve's re-roll: the comp FRAME INDEX, computed here where the
+    // playhead is known, so the shader needs no clock and export (which renders
+    // the same snapshot times) speckles identically to preview. Rounded, not
+    // floored — buildSnapshot's own frame derivations round, and a float time a
+    // hair under the boundary flooring to the previous frame would make one
+    // frame's speckle appear twice.
+    dissolveFrame: Math.round((snapshot.time ?? 0) * (snapshot.fps ?? 30)),
     ...(has3d ? { camera3d: snapshot.camera3d } : {}),
     ...(has3d && snapshot.lights3d && snapshot.lights3d.length > 0 ? { lights3d: snapshot.lights3d } : {}),
   };

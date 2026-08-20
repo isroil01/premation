@@ -41,6 +41,7 @@ import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake, applyEffectChain } from '@core/effects/effectBake';
 import { scaleEffectLengths, type Effect } from '@core/effects/effects';
+import { deinterlaceData, deinterlaceInto, type FieldOrder } from './deinterlace';
 import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
@@ -489,6 +490,9 @@ const SEEK_EPSILON = 0.05;
 const FIRST_DECODE_NUDGE = 0.0005;
 
 export class AppTextureProvider implements TextureProvider {
+  /** Shared scratch surface for field separation — sequential per-call use,
+   *  resized by `deinterlaceInto`, so one canvas serves every video key. */
+  private readonly fieldsWork: HTMLCanvasElement = document.createElement('canvas');
   /** Fired when an async decode finishes and a texture becomes ready. */
   onChange: (() => void) | null = null;
 
@@ -969,7 +973,7 @@ export class AppTextureProvider implements TextureProvider {
    * every frame, so there is no signature cache). Returns the placeholder via
    * get until the element has decoded a frame.
    */
-  setVideo(key: string, src: string, timeSec: number): void {
+  setVideo(key: string, src: string, timeSec: number, fields?: FieldOrder): void {
     let entry = this.videoEntries.get(key);
     if (!entry || entry.src !== src) {
       // Swapping the source must release the outgoing element and its texture —
@@ -1037,6 +1041,15 @@ export class AppTextureProvider implements TextureProvider {
       entry.h = h;
       entry.poolKey = `vid:${key}:${w}x${h}`;
     }
+    if (fields) {
+      // Deinterlace via the shared work canvas; the copy this costs only
+      // happens for footage the user has MARKED interlaced.
+      const clean = deinterlaceInto(this.fieldsWork, v, w, h, fields);
+      if (clean) {
+        this.resources.writeTexture(entry.texture, { type: 'canvas', canvas: clean });
+        return;
+      }
+    }
     this.resources.writeTexture(entry.texture, { type: 'video', video: v });
   }
 
@@ -1047,8 +1060,10 @@ export class AppTextureProvider implements TextureProvider {
    * `setFrame`. Signature includes source time so paused scrubbing caches;
    * playback pays per unique frame only when styles need the bake.
    */
-  setVideoBaked(key: string, src: string, timeSec: number, bake: ImageBakeSpec): void {
+  setVideoBaked(key: string, src: string, timeSec: number, bake: ImageBakeSpec, fields?: FieldOrder): void {
     // Ensure the element is seeked via the normal path (creates entry, seeks).
+    // Fields is NOT forwarded: the raw element upload is only the placeholder
+    // this bake replaces, and the deinterlace happens below, before effects.
     this.setVideo(key, src, timeSec);
     const entry = this.videoEntries.get(key);
     if (!entry || entry.video.readyState < HAVE_CURRENT_DATA || !entry.hasSeeked) return;
@@ -1066,6 +1081,13 @@ export class AppTextureProvider implements TextureProvider {
       ctx.filter = 'none';
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(v, 0, 0);
+      if (fields) {
+        // Before the effect chain: effects sampling a combed frame would smear
+        // the comb teeth into their output.
+        const image = ctx.getImageData(0, 0, w, h);
+        deinterlaceData(image.data, w, h, fields);
+        ctx.putImageData(image, 0, 0);
+      }
       const k = bake.width > 0 ? w / bake.width : 1;
       if (bake.mask && bake.mask.paths.length > 0) {
         const matte = this.nextBakeScratch(w, h);
@@ -1103,7 +1125,7 @@ export class AppTextureProvider implements TextureProvider {
       const oc = out.getContext('2d');
       if (!oc) return;
       oc.drawImage(canvas, 0, 0);
-      this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}`);
+      this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}:f${fields ?? ''}`);
     } catch {
       /* leave the raw video upload from setVideo in place */
     }
@@ -1114,10 +1136,18 @@ export class AppTextureProvider implements TextureProvider {
    * for Frame Mix). The signature dedupes uploads — pass the source time so a
    * new frame re-uploads and a repeat render doesn't.
    */
-  setFrame(key: string, canvas: HTMLCanvasElement, signature: string): void {
+  setFrame(key: string, canvas: HTMLCanvasElement, signature: string, fields?: FieldOrder): void {
     if (canvas.width < 1 || canvas.height < 1) return;
     const existing = this.frameEntries.get(key);
     if (existing && existing.signature === signature) return;
+    if (fields) {
+      // Interpret Footage ▸ Fields: rebuild the discarded field before the
+      // frame reaches the GPU. On failure (no 2d context) the raw frame
+      // uploads — combing, not a missing layer. The caller's signature already
+      // carries the field order, so toggling it re-uploads.
+      const clean = deinterlaceInto(this.fieldsWork, canvas, canvas.width, canvas.height, fields);
+      if (clean) canvas = clean;
+    }
     // ONE texture per key, rewritten in place — the setVideo/setParticles pattern.
     //
     // This used to include `signature` (the source TIME) in the pool key, so every
@@ -1656,7 +1686,9 @@ export class AppTextureProvider implements TextureProvider {
     // one omitted mode/feather/opacity/expansion, so editing any of them
     // couldn't even trigger a re-rasterize (on top of the paint ignoring them).
     const ptsSig = layer.mask.paths.map((path) =>
-      path.points.map((p) => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') +
+      // `p.feather` is the per-vertex width override — variable feather redraws
+      // the whole matte, so it must invalidate like any coordinate.
+      path.points.map((p) => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY},${p.feather ?? ''}`).join('|') +
       `|inv:${path.inverted}|m:${path.mode}|f:${path.feather}|o:${path.opacity ?? 1}|e:${path.expansion ?? 0}|c:${path.closed}`,
     ).join('||');
     const signature = `${layer.width}x${layer.height}|mask:${ptsSig}`;

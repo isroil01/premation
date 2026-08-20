@@ -28,9 +28,11 @@ describe('blendDropdownItems', () => {
   it('emits a header above each multi-mode section', () => {
     const items = blendDropdownItems('normal', () => undefined);
     const headers = items.filter((i) => i.type === 'label').map((i) => (i as { label: string }).label);
-    // Normal is a section of one and gets no header — a heading over a single
-    // item reads as noise rather than structure.
-    expect(headers).toEqual(['Subtractive', 'Additive', 'Complex', 'Difference', 'HSL', 'Utility', 'Matte']);
+    // A section of one gets no header — a heading over a single item reads as
+    // noise rather than structure. Normal WAS that section until the Dissolve
+    // pair (M5) joined it; at three modes its header carries real structure,
+    // and it is AE's own menu grouping.
+    expect(headers).toEqual(['Normal', 'Subtractive', 'Additive', 'Complex', 'Difference', 'HSL', 'Utility', 'Matte']);
   });
 
   it('offers every mode as a selectable item', () => {

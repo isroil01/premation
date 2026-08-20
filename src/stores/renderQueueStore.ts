@@ -18,7 +18,9 @@ import {
   renderVideo,
   downloadBlob,
   renderGifBlob,
+  createResumableVideoRender,
   type ExportOptions,
+  type ResumableVideoRender,
 } from '@core/export/exportManager';
 import { canEncodeLocally, type VideoFormat } from '@core/export/videoSink';
 import { DEFAULT_COMPOSITION } from './compositionStore';
@@ -70,6 +72,14 @@ export interface RenderJob {
   background?: string;
   /** Encoder quality tier. Draft renders fast and looks it. */
   quality?: 'high' | 'medium' | 'draft';
+  /**
+   * A paused render's live state: the open sink (staged frames intact on disk)
+   * and the offset the loop stops resuming at. Present only between a pause and
+   * the resume/removal that consumes it; never serialized — the sink is an
+   * in-memory handle, so quitting the app still loses a partial render (as AE's
+   * queue does), but a PAUSE no longer does.
+   */
+  _resume?: { render: ResumableVideoRender; nextOffset: number };
 }
 
 interface RenderQueueState {
@@ -160,12 +170,12 @@ type JobOutput =
       discard(): Promise<void>;
     };
 
-/** Render one queued job to a file. */
+/** Render one queued job to a file — or pause partway, keeping its staged frames. */
 async function renderJob(
   job: RenderJob,
   onProgress: (f: number) => void,
   signal: AbortSignal,
-): Promise<JobOutput> {
+): Promise<JobOutput | { kind: 'paused'; resume: NonNullable<RenderJob['_resume']> }> {
   const opts = jobOptions(job);
 
   if (job.format === 'png-sequence' || job.format === 'jpg-sequence') {
@@ -179,6 +189,31 @@ async function renderJob(
     return { kind: 'blob', blob: await renderGifBlob(opts, onProgress, signal), ext: 'gif' };
   }
 
+  // ── The resumable path (desktop) ──
+  // A paused job keeps its open sink — frames already staged on disk stay
+  // there — and comes back at the exact frame the loop stopped on. Pausing
+  // used to abort the render outright: the sink was disposed, the staging dir
+  // deleted, and Resume meant re-rendering from frame 0.
+  const render = job._resume?.render
+    ?? await createResumableVideoRender(opts, job.format);
+  if (render) {
+    const from = job._resume?.nextOffset ?? 0;
+    try {
+      const res = await render.run(from, onProgress, signal);
+      if (!res.done) return { kind: 'paused', resume: { render, nextOffset: res.nextOffset } };
+      const result = await render.finish();
+      return result.kind === 'blob'
+        ? { kind: 'blob', blob: result.blob, ext: result.ext }
+        : { kind: 'file', ext: result.ext, frames: result.frames, save: result.save, saveTo: result.saveTo, discard: result.discard };
+    } catch (e) {
+      // run() disposed on real errors; finish() failures still hold the sink.
+      // Either way the job is FAILED now, so nothing may keep a resume handle.
+      await render.dispose().catch(() => undefined);
+      throw e;
+    }
+  }
+
+  // Browser fallback: streaming sinks can't pause, so the one-shot path stays.
   const result = await renderVideo(opts, job.format, onProgress, signal);
   return result.kind === 'blob'
     ? { kind: 'blob', blob: result.blob, ext: result.ext }
@@ -210,6 +245,9 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   },
 
   removeJob(id) {
+    // A removed job's paused sink must not leak its staging dir.
+    const doomed = get().jobs.find((j) => j.id === id);
+    void doomed?._resume?.render.dispose().catch(() => undefined);
     set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id) }));
   },
 
@@ -218,7 +256,9 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
     if (!src) return;
     const newId = `rq_${Date.now()}_${jobSeq++}`;
     set((s) => ({
-      jobs: [...s.jobs, { ...src, id: newId, status: 'queued', progress: 0, elapsedMs: undefined, error: undefined }],
+      // `_resume` is stripped: it holds a live sink, and two jobs sharing one
+      // staging dir would interleave their frames into a single file.
+      jobs: [...s.jobs, { ...src, id: newId, status: 'queued', progress: 0, elapsedMs: undefined, error: undefined, _resume: undefined }],
     }));
   },
 
@@ -272,6 +312,16 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
         };
         try {
           const output = await renderJob(job, onProgress, abort.signal);
+          if (output.kind === 'paused') {
+            // Back to the queue holding its staged frames and its progress —
+            // the whole point. `startAll` picks it up where it stopped.
+            get().updateJob(job.id, {
+              status: 'queued',
+              progress: output.resume.nextOffset / output.resume.render.totalFrames,
+              _resume: output.resume,
+            });
+            break;
+          }
           const name = `${job.outputPath.replace(/\.[^/.]+$/, '').split('/').pop() || 'render'}.${output.ext}`;
           let savedTo: string | null = name;
           if (output.kind === 'blob') {
@@ -291,9 +341,13 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
             progress: 1,
             elapsedMs: Date.now() - started,
             outputPath: savedTo,
+            _resume: undefined,
           });
         } catch (e) {
           if (abort.signal.aborted) {
+            // Non-resumable paths (sequences, browser sinks) still lose their
+            // partial work on pause — the resumable path never reaches here
+            // aborted, it returns 'paused' instead.
             get().updateJob(job.id, { status: 'queued', progress: 0 });
             break;
           }
@@ -302,6 +356,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
             progress: 0,
             error: e instanceof Error ? e.message : String(e),
             elapsedMs: Date.now() - started,
+            _resume: undefined,
           });
         }
       }
@@ -310,13 +365,19 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   },
 
   pauseAll() {
-    // The abort signal stops the frame loop and disposes the sink, which kills
-    // any running ffmpeg child and removes its staging directory.
+    // The abort signal stops the frame loop. On the resumable (desktop) path
+    // the sink STAYS OPEN — staged frames survive on disk, the job returns to
+    // the queue carrying `_resume`, and Start picks it up at the exact frame it
+    // stopped on. Non-resumable paths (sequences, browser streaming sinks)
+    // still discard, as they always did.
     get()._abort?.abort();
     set({ isRunning: false, _abort: null });
   },
 
   skipJob(id) {
-    set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, status: 'skipped' } : j)) }));
+    // Skipping a paused job abandons its partial render — release the staging.
+    const skipped = get().jobs.find((j) => j.id === id);
+    void skipped?._resume?.render.dispose().catch(() => undefined);
+    set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, status: 'skipped', _resume: undefined } : j)) }));
   },
 }));

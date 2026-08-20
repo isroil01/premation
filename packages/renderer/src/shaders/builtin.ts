@@ -695,6 +695,40 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     co = d.rgb * k;
     ao = ad * k;
     skipEncode = true;
+  } else if (mode == 35 || mode == 36) {
+    // ── M5 (35-36): Dissolve / Dancing Dissolve ──
+    // Not a blend: coverage becomes a COIN FLIP. Each comp-grid pixel shows
+    // the source at full opacity with probability equal to its coverage (as1,
+    // which already folds texture alpha × layer opacity), else the backdrop
+    // passes through untouched. The hash is the same integer mix Roughen uses
+    // — deterministic, no clock in the shader — and the grid is the COMP's
+    // (comp size on cr1.xy), so a zoomed preview and the export speckle
+    // identically. cr0.z is 0 for Dissolve (a pattern that holds still) and
+    // the frame index for Dancing (a pattern that boils).
+    let px = u32(clamp(floor(uv.x * obj.cr1.x), 0.0, 16777215.0));
+    let py = u32(clamp(floor(uv.y * obj.cr1.y), 0.0, 16777215.0));
+    let dk = u32(max(obj.cr0.z, 0.0) + 0.5);
+    var h : u32 = (px + 1u) * 374761393u + (py + 1u) * 668265263u + dk * 2246822519u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    let n = f32(h) / 4294967296.0;
+    if (n < as1) {
+      // Shown: the source's own colour, hard and opaque — dissolve trades
+      // translucency for speckle density. Straight colour in STORAGE space,
+      // so no linear round-trip and no encode below.
+      co = min(s.rgb / max(as1, 1e-6), vec3<f32>(1.0));
+      ao = 1.0;
+      // Preserve Underlying Transparency composes here too: the speckle is
+      // clipped to the backdrop's coverage instead of adding opacity.
+      if (obj.cr0.y > 0.5) {
+        co = co * ad;
+        ao = ad;
+      }
+    } else {
+      co = d.rgb;
+      ao = ad;
+    }
+    skipEncode = true;
   }
   // ── Preserve Underlying Transparency (cr0.y) ──
   // Independent of the blend mode, because it composes with every blend: the
@@ -706,7 +740,8 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // exactly where it is meant to be clipped by it.
   // Not applied to the matte family (31-34): those contribute no colour of
   // their own and scale the whole backdrop, so "clip me to the backdrop" is not
-  // a meaningful composition with them.
+  // a meaningful composition with them — nor to dissolve (35-36), which
+  // composed it inside its own branch.
   if (obj.cr0.y > 0.5 && mode < 31) {
     co = ad * (as1 * B + (1.0 - as1) * cb);
     ao = ad;
@@ -774,6 +809,33 @@ void main() {
     co = d.rgb * k;
     ao = ad * k;
     skipEncode = true;
+  } else if (mode == 35 || mode == 36) {
+    // ── M5 (35-36): Dissolve / Dancing Dissolve ──
+    // Coverage becomes a per-pixel coin flip on the COMP grid (comp size on
+    // cr1.xy); cr0.z is 0 for Dissolve, the frame index for Dancing. Integer
+    // hash, so both dialects and every zoom agree. Must match the WGSL branch
+    // above.
+    uint px = uint(clamp(floor(vUv.x * cr1.x), 0.0, 16777215.0));
+    uint py = uint(clamp(floor(vUv.y * cr1.y), 0.0, 16777215.0));
+    uint dk = uint(max(cr0.z, 0.0) + 0.5);
+    uint h = (px + 1u) * 374761393u + (py + 1u) * 668265263u + dk * 2246822519u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    float n = float(h) / 4294967296.0;
+    if (n < as1) {
+      // Shown: hard, opaque source colour in storage space — no encode below.
+      co = min(s.rgb / max(as1, 1e-6), vec3(1.0));
+      ao = 1.0;
+      // Preserve Underlying Transparency clips the speckle to the backdrop.
+      if (cr0.y > 0.5) {
+        co = co * ad;
+        ao = ad;
+      }
+    } else {
+      co = d.rgb;
+      ao = ad;
+    }
+    skipEncode = true;
   }
   // ── Preserve Underlying Transparency (cr0.y) ──
   // Independent of the blend mode, because it composes with every blend: the
@@ -785,7 +847,8 @@ void main() {
   // exactly where it is meant to be clipped by it.
   // Not applied to the matte family (31-34): those contribute no colour of
   // their own and scale the whole backdrop, so "clip me to the backdrop" is not
-  // a meaningful composition with them.
+  // a meaningful composition with them — nor to dissolve (35-36), which
+  // composed it inside its own branch.
   if (cr0.y > 0.5 && mode < 31) {
     co = ad * (as1 * B + (1.0 - as1) * cb);
     ao = ad;

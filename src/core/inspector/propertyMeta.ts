@@ -309,6 +309,16 @@ const STATIC: Record<string, MetaSpec> = {
     step: 1, precision: 0, defaultValue: null, resettable: false, order: ORDER.text,
   },
   fontSize: { ...PX('Font Size', 'text', ORDER.text), min: 1, defaultValue: 48 },
+  // Variable-font weight, continuous 1–1000 (AE 26's keyframeable wght axis).
+  // Canvas honours fractional numeric weights on variable fonts through the
+  // ordinary font shorthand, which is what makes this animatable at all; the
+  // other axes (wdth/slnt) do not survive that shorthand and are filed, not
+  // faked. Static (non-variable) fonts snap to their nearest real weight —
+  // the browser's fallback, not ours.
+  fontWeight: {
+    label: 'Font Weight', group: 'text', type: 'number', unit: '',
+    min: 1, max: 1000, step: 1, precision: 0, defaultValue: 400, resettable: true, order: ORDER.text,
+  },
   letterSpacing: PX('Letter Spacing', 'text', ORDER.text),
   lineHeight: { ...MULT('Line Height', 'text', ORDER.text), min: 0, defaultValue: 1.2, step: 0.01 },
 };
@@ -489,7 +499,7 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
 const PATHOP_TYPE_LABEL: Record<string, string> = {
   zigzag: 'Zig-Zag', roundCorners: 'Round Corners', pucker: 'Pucker & Bloat',
   twist: 'Twist', offset: 'Offset Paths', roughen: 'Wiggle Paths', trim: 'Trim Paths',
-  repeater: 'Repeater', none: 'Path Operator',
+  repeater: 'Repeater', wiggleTransform: 'Wiggle Transform', none: 'Path Operator',
 };
 const PATHOP_PARAM_LABEL: Record<string, Record<string, string>> = {
   roundCorners: { amount: 'Radius', detail: 'Steps' },
@@ -504,6 +514,13 @@ const PATHOP_PARAM_LABEL: Record<string, Record<string, string>> = {
     copies: 'Copies', offset: 'Offset', anchorX: 'Anchor X', anchorY: 'Anchor Y',
     offsetX: 'Position X', offsetY: 'Position Y', offsetRotation: 'Rotation',
     offsetScale: 'Scale', offsetOpacity: 'Opacity',
+  },
+  // Matching the inspector card, so the timeline never shows "Wiggletransform
+  // Wigglerotation". `amount` is this operator's position amplitude.
+  wiggleTransform: {
+    amount: 'Position', wiggleRotation: 'Rotation', wiggleScale: 'Scale',
+    anchorX: 'Anchor X', anchorY: 'Anchor Y',
+    wigglesPerSecond: 'Wiggles/Second', correlation: 'Correlation',
   },
 };
 const PATHOP_PERCENT_PARAMS = new Set(['start', 'end', 'offset']);

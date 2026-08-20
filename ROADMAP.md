@@ -71,7 +71,8 @@ storage layer.
   Real-machine visual pass: DONE the same day, in a real Chromium tab —
   frame-by-frame stepped an ffmpeg fixture with pixel readback, and the
   render path's cache reported all 24 frames decoded for the composited
-  clip. Still open: the tracking/rotoscoping column — now UN-gated.
+  clip. The tracking column has since landed on top of it — see the next
+  bullet.
 - **After Effects parity.** The tracking column SHIPPED 2026-08-20, all four
   modes: Track Motion on video layers (`src/core/tracking/` — NCC matching
   with Lucas-Kanade sub-pixel refinement, anchor-template drift correction,
@@ -102,7 +103,9 @@ storage layer.
 
 ## Later
 
-- **Audio.** Waveform display and basic audio layers exist; real mixing does not.
+- **Audio.** Waveform display, audio layers, offline mixdown, dB automation,
+  per-clip effects and the `audio` expression all exist (`src/core/audio/`).
+  What does not: a mixing console — buses, sends, and live metering.
 - **Plugin ecosystem.** The sandbox, permission model and signing all ship. What
   is missing is discovery outside the hosted registry, and more host API surface
   for plugin authors.

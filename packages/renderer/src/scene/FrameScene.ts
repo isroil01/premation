@@ -687,6 +687,15 @@ export interface FrameScene {
   /** True if any layer in the frame has post-processing effects. */
   hasEffects?: boolean;
   /**
+   * The comp frame index, for Dancing Dissolve's per-frame re-roll (advanced
+   * blend id 36). Scene-wide rather than per-renderable because it is a fact
+   * about the FRAME, not the layer — and the adapter computes it from the
+   * playhead, so the shader stays clock-free and export matches preview.
+   * Absent (an adapter that predates it, `emptyScene`) means 0: Dancing
+   * Dissolve degrades to plain Dissolve rather than to noise.
+   */
+  dissolveFrame?: number;
+  /**
    * 3D camera for the depth-tested layer path: column-major 4×4 view and
    * projection (world → homogeneous COMP-space clip; the 2D pan/zoom camera is
    * lifted on top at draw time). Present when the frame contains 3D layers;

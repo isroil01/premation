@@ -89,7 +89,9 @@ describe('MaskPath → cache signature parity', () => {
     expect(fields.sort()).toEqual(
       ['closed', 'expansion', 'feather', 'id', 'inverted', 'mode', 'name', 'opacity', 'points'].sort(),
     );
-    expect(pointFields.length).toBe(6);
+    // 7 since per-vertex `feather` (variable-width feather) joined the anchor
+    // and its two handles.
+    expect(pointFields.length).toBe(7);
   });
 
   it.each(['closed', 'expansion', 'feather', 'id', 'inverted', 'mode', 'name', 'opacity', 'points'])(

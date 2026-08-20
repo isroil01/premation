@@ -323,6 +323,108 @@ export async function renderVideo(
   }
 }
 
+/**
+ * A video render the queue can PAUSE and RESUME without losing staged frames.
+ *
+ * The desktop sink already makes this cheap: every frame lands as an image in a
+ * per-job temp dir and ffmpeg encodes ONCE at the end from `frame_%04d` — so a
+ * paused render is nothing more exotic than "the loop stopped after frame N and
+ * the files for 0..N are still there". Resume restarts the loop at N+1, staging
+ * into the SAME sink; nothing already rendered is re-rendered or re-encoded.
+ *
+ * `run` treats the abort signal as PAUSE, not failure: it resolves with the
+ * next offset instead of throwing, and deliberately does NOT dispose the sink —
+ * disposal is exactly the thing a pause must not do (it deletes the staging
+ * dir, which was the entire pre-existing behaviour this replaces). Real errors
+ * still throw, after disposing.
+ *
+ * Session-scoped on purpose: the sink handle lives in memory, so quitting the
+ * app still loses the partial render (as AE's queue does). What a pause no
+ * longer loses is the work.
+ *
+ * Frames staged before a pause reflect the project AS IT WAS — editing between
+ * pause and resume produces a file that changes content mid-way. That is
+ * inherent to resumable rendering, not a bug to fix here.
+ */
+export interface ResumableVideoRender {
+  /** Frames in the export range — the denominator for progress. */
+  totalFrames: number;
+  /**
+   * Render frames starting at `fromOffset` (0-based within the export range)
+   * into the sink. Resolves `{done: true}` after the last frame stages, or
+   * `{done: false, nextOffset}` when the signal fired mid-run.
+   */
+  run(
+    fromOffset: number,
+    onProgress?: (f: number) => void,
+    signal?: AbortSignal,
+  ): Promise<{ done: true } | { done: false; nextOffset: number }>;
+  /** Encode the staged frames into the deliverable. */
+  finish(): Promise<VideoSinkResult>;
+  /** Abandon the render and delete the staging dir. */
+  dispose(): Promise<void>;
+}
+
+/**
+ * A resumable render, or null where resuming is impossible — the browser sinks
+ * stream their encode as frames arrive, so a paused stream has no staging to
+ * come back to. Callers fall back to the one-shot `renderVideo` there.
+ */
+export async function createResumableVideoRender(
+  opts: ExportOptions,
+  format: VideoFormat,
+): Promise<ResumableVideoRender | null> {
+  if (!canEncodeLocally()) return null;
+  const audio = await exportAudioBytes(opts);
+  const sink = createVideoSink({
+    format,
+    width: opts.width,
+    height: opts.height,
+    fps: opts.fps,
+    quality: opts.quality ?? 'high',
+    transparent: !!opts.comp?.transparent,
+    ...(audio ? { audioWav: audio } : {}),
+  });
+  if (!sink) return null;
+
+  const params = offlineParams(opts);
+  const { start, end } = resolveRange(params);
+  const totalFrames = end - start + 1;
+
+  return {
+    totalFrames,
+    async run(fromOffset, onProgress, signal) {
+      let staged = fromOffset;
+      try {
+        await renderOffline(
+          // The loop's own range does the skipping: nothing before the resume
+          // point is rendered, let alone re-staged.
+          { ...params, startFrame: start + fromOffset, endFrame: end },
+          async (canvas, frame) => {
+            // `frame` is 0-based within THIS run; the sink needs the offset
+            // within the whole export range, or a resume would restage over
+            // frame_0000 and the encode would begin mid-composition.
+            await sink.addFrame(canvas, fromOffset + frame);
+            staged = fromOffset + frame + 1;
+            onProgress?.((staged / totalFrames) * 0.95);
+          },
+          signal,
+        );
+        return { done: true };
+      } catch (err) {
+        if (isAbortError(err)) return { done: false, nextOffset: staged };
+        await sink.dispose();
+        throw err;
+      }
+    },
+    async finish() {
+      const result = await sink.finish();
+      return result;
+    },
+    dispose: () => sink.dispose(),
+  };
+}
+
 /** Why a format can't be produced here, in terms the user can act on. */
 function unsupportedFormatMessage(format: VideoFormat): string {
   if (format === 'webm') {

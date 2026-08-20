@@ -22,6 +22,11 @@ import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { useHistoryStore } from '@stores/historyStore';
 import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
+import { takePendingFootage } from '@core/project/pendingFootage';
+import { useAssetStore } from '@stores/assetStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { insertMedia } from '@core/scene/sceneInsert';
+import { getTimelineController } from '@core/timeline/TimelineController';
 
 /**
  * Opens the:projectId project into the already-booted editor, once, through
@@ -60,6 +65,31 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
           useHistoryStore.getState().record('Open', true);
           const ws = useWorkspaceStore.getState();
           if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
+          // "Start from a video": the setup modal parked the chosen File; now
+          // that THIS project is open and the engine is live, import it and
+          // land it at full frame. One-shot by construction (`take` clears), so
+          // a reload or a different project can never replay it. The modal
+          // already conformed the comp to the clip's probed size/duration; the
+          // editor's deeper probe refines fps afterwards when it can (the
+          // browser cannot report a video's frame rate — see ImportedAsset).
+          const footage = takePendingFootage();
+          if (footage) {
+            try {
+              const asset = await useAssetStore.getState().addAsset(footage);
+              await insertMedia(asset);
+              const probedFps = asset.metadata?.fps;
+              if (probedFps && probedFps > 0) {
+                useCompositionStore.getState().update({ fps: probedFps });
+                getTimelineController().setFrameRate(probedFps);
+              }
+            } catch (err) {
+              useUIStore.getState().notify({
+                level: 'warning',
+                message: `The project opened, but the video could not be imported: ${(err as Error).message}`,
+                durationMs: 5000,
+              });
+            }
+          }
         }
       } catch (err) {
         if (cancelled) return;

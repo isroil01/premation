@@ -1034,11 +1034,31 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // with a checkbox someone remembered to tick" — its whole identity is
         // that it erases, so it must not be able to lay down colour because a
         // shared setting happened to be on `paint` when it started.
+        const dragMode = erasing ? 'erase' : usePaintStore.getState().mode;
+        if (dragMode === 'clone') {
+          // Clone stamp aiming: Alt-click SETS the source and lays no paint —
+          // the classic gesture. A stroke without an aimed source has nothing
+          // to sample, so it refuses with the reason instead of painting
+          // nothing silently.
+          if (e.altKey) {
+            usePaintStore.getState().set({ cloneSource: { x: cp.x, y: cp.y } });
+            useUIStore.getState().notify({ level: 'info', message: 'Clone source set.', durationMs: 1400 });
+            return;
+          }
+          if (!usePaintStore.getState().cloneSource) {
+            useUIStore.getState().notify({
+              level: 'info',
+              message: 'Alt-click to set the clone source first.',
+              durationMs: 2600,
+            });
+            return;
+          }
+        }
         paintDragRef.current = {
           nodeId: node.id,
           comp: [cp],
           screen: [local(e)],
-          mode: erasing ? 'erase' : usePaintStore.getState().mode,
+          mode: dragMode,
         };
         try {
           overlay.setPointerCapture(e.pointerId);
@@ -1243,8 +1263,17 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         if (node) {
           const s = usePaintStore.getState();
           const points = pd.comp.map((cp) => compToLayerLocal(node, cp));
+          // Clone offset: source − first dab, converted to layer-local like the
+          // points themselves so a transformed layer samples the right texels.
+          const cloneOffset = (() => {
+            if (pd.mode !== 'clone' || !s.cloneSource || pd.comp.length === 0) return null;
+            const src = compToLayerLocal(node, { x: s.cloneSource.x, y: s.cloneSource.y });
+            const first = points[0]!;
+            return { x: src.x - first.x, y: src.y - first.y };
+          })();
           addPaintStroke(pd.nodeId, {
             points,
+            ...(cloneOffset ? { cloneOffsetX: cloneOffset.x, cloneOffsetY: cloneOffset.y } : {}),
             // Size + colour are shared with the freehand brush (Tool Options bar).
             // Size is a comp-pixel diameter → convert to the layer's local units
             // so a scaled-up layer doesn't turn one stroke into a giant blob.

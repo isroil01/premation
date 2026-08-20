@@ -2213,7 +2213,8 @@ export function buildSnapshot(
       // for footage — blending a shape would mean nothing, its "frames" are
       // continuous keyframes.
       frameBlend: (() => {
-        if (readNodeLayerTime(node)?.frameBlend !== 'mix') return undefined;
+        const fbMode = readNodeLayerTime(node)?.frameBlend;
+        if (fbMode !== 'mix' && fbMode !== 'pixelMotion') return undefined;
         if (layerKind !== 'video') return undefined;
         const st = (() => {
           const remapped = anim.sample(node.id, 'timeRemap', t) ?? anim.sample(node.id, 'precompTime', t);
@@ -2231,7 +2232,7 @@ export function buildSnapshot(
         const sourceFps = footageSourceOf(node)?.fps ?? fps;
         const bracket = bracketFrames(st, sourceFps);
         // Exactly on a frame boundary there is nothing to blend toward.
-        return bracket.weight > 1e-3 ? bracket : undefined;
+        return bracket.weight > 1e-3 ? { ...bracket, mode: fbMode } : undefined;
       })(),
       // Fill opacity — stored 0..100 like `opacity`, emitted 0..1. Absent
       // stays undefined rather than defaulting to 1, so a layer that never
@@ -2333,7 +2334,13 @@ export function buildSnapshot(
       // when a track exists, else fall back to the static base prop.
       fontSize: a?.get('fontSize') ?? base.fontSize,
       fontFamily: base.fontFamily,
-      fontWeight: base.fontWeight,
+      // Animated weight beats the static string — continuous (not rounded), so
+      // a variable font's wght axis actually glides instead of stepping through
+      // the nine named stops. Clamped to CSS's 1–1000.
+      fontWeight: (() => {
+        const w = a?.get('fontWeight');
+        return w !== undefined ? String(Math.max(1, Math.min(1000, w))) : base.fontWeight;
+      })(),
       fontStyle: base.fontStyle,
       letterSpacing: a?.get('letterSpacing') ?? base.letterSpacing,
       lineHeight: a?.get('lineHeight') ?? base.lineHeight,
@@ -2370,10 +2377,15 @@ export function buildSnapshot(
         const uv = size ? coverUvRect(size, slot) : null;
         return uv ? { uvRect: uv } : {};
       })(),
-      // Interpret Footage ▸ Alpha. Read from the ASSET's interpretation, so one
-      // correction fixes every layer using that file — including layers in
-      // other compositions — rather than being re-set per layer.
+      // Interpret Footage ▸ Alpha and ▸ Fields. Read from the ASSET's
+      // interpretation, so one correction fixes every layer using that file —
+      // including layers in other compositions — rather than being re-set per
+      // layer.
       ...(footageSourceOf(node)?.alpha === 'premultiplied' ? { premultipliedSource: true } : {}),
+      ...((): { fieldsSource?: 'upper' | 'lower' } => {
+        const f = footageSourceOf(node)?.fields;
+        return f ? { fieldsSource: f } : {};
+      })(),
     };
 
     // Per-quad Lambert lighting (Material Options → Accepts Lights, default

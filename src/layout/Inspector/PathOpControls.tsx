@@ -39,6 +39,10 @@ const TYPES: { id: PathOpType; label: string }[] = [
   // AE's name for this operator. The stored id stays `roughen` so existing
   // projects keep loading — the label is what was wrong, not the data.
   { id: 'roughen', label: 'Wiggle Paths' },
+  // Chain-level like Trim and the Repeater: one random affine transform per
+  // RUN, so downstream of a Repeater every copy wanders independently. That
+  // order sensitivity is the operator's whole point — see applyWiggleTransform.
+  { id: 'wiggleTransform', label: 'Wiggle Transform' },
   // Trim is an operator like any other since document version 1.4.0. It had its
   // own inspector section and its own fixed slot after the chain, which made its
   // position unchangeable — and the position is exactly what matters: trimming
@@ -108,6 +112,18 @@ function paramsFor(type: PathOpType): ReadonlyArray<ParamSpec> {
       { param: 'offsetRotation', label: 'Rotation', unit: '°', signed: true },
       { param: 'offsetScale', label: 'Scale', min: 0, step: 0.02 },
       { param: 'offsetOpacity', label: 'Opacity', min: 0, max: 1, step: 0.02 },
+    ];
+  }
+  if (type === 'wiggleTransform') {
+    // AE's Wiggle Transform rows: three amplitudes and the pivot. The
+    // amplitudes are magnitudes (the noise is signed), so their floor is 0;
+    // the pivot is a position and goes both ways.
+    return [
+      { param: 'amount', label: 'Position', unit: 'px', min: 0 },
+      { param: 'wiggleRotation', label: 'Rotation', unit: '°', min: 0 },
+      { param: 'wiggleScale', label: 'Scale', unit: '%', min: 0 },
+      { param: 'anchorX', label: 'Anchor X', unit: 'px', signed: true },
+      { param: 'anchorY', label: 'Anchor Y', unit: 'px', signed: true },
     ];
   }
   const { amount, detail } = paramLabels(type);
@@ -351,9 +367,12 @@ function PathOpCard({
           unit={row.unit}
         />
       ))}
-      {/* Roughen is the only temporal operator: the others are a pure function
-          of the outline, so a wiggle rate would be a dead control on them. */}
-      {op.type === 'roughen' && (
+      {/* The two temporal operators share these rows: the others are a pure
+          function of the outline, so a wiggle rate would be a dead control on
+          them. Correlation answers the same question at different granularity —
+          Roughen: how alike neighbouring POINTS move; Wiggle Transform: how
+          alike the RUNS (repeater copies) move. */}
+      {(op.type === 'roughen' || op.type === 'wiggleTransform') && (
         <>
           <ParamRow
             nodeId={nodeId}

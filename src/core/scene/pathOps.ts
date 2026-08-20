@@ -23,7 +23,8 @@ import { bumpScene } from '@stores/sceneStore';
 import { repeaterCopies, defaultRepeater, type Repeater, type RepeaterComposite } from '@core/scene/repeater';
 
 export type PathOpType =
-  | 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen' | 'trim' | 'repeater';
+  | 'none' | 'zigzag' | 'roundCorners' | 'pucker' | 'twist' | 'offset' | 'roughen' | 'trim' | 'repeater'
+  | 'wiggleTransform';
 
 /**
  * One continuous run of geometry flowing through the chain.
@@ -75,13 +76,30 @@ export interface PathOp {
   /** Zig-Zag ridges per edge, or Round-Corners arc steps. */
   detail: number;
   /**
-   * Roughen only — how many times per second the displacement re-randomizes
-   * (AE's Wiggles/Second). 0 freezes the noise, which is what every operator
-   * did before this existed, so an old project loads pixel-identical.
+   * Roughen and Wiggle Transform — how many times per second the noise
+   * re-randomizes (AE's Wiggles/Second). 0 freezes it, which is what every
+   * operator did before this existed, so an old project loads pixel-identical.
    */
   wigglesPerSecond?: number;
-  /** Roughen only — decorrelates two layers that would otherwise wiggle alike. */
+  /** Roughen and Wiggle Transform — decorrelates two layers that would
+   *  otherwise wiggle alike. */
   seed?: number;
+  /**
+   * Wiggle Transform only — maximum rotation wiggle, degrees. The noise is
+   * signed, so this is an amplitude: ±this many degrees at the extremes.
+   * `amount` carries the position amplitude (px per axis) for this operator,
+   * the same slot every deformer's primary knob lives in.
+   */
+  wiggleRotation?: number;
+  /**
+   * Wiggle Transform only — maximum scale wiggle, PERCENT. ±20 swings each
+   * run between 0.8× and 1.2×, pivoting on `anchorX`/`anchorY` — the same
+   * pivot fields the repeater uses, and the same idea: "turn and grow about
+   * this point", so sharing the slot is the honest spelling, not a collision
+   * (an operator is exactly one type; `pathop.<id>.anchorX` cannot be
+   * ambiguous).
+   */
+  wiggleScale?: number;
   /**
    * Roughen only — AE's Wiggle Paths **Correlation**, percent 0..100.
    *
@@ -103,6 +121,13 @@ export interface PathOp {
    * **Defaults to 0**, which is exactly the previous behaviour, so every
    * existing project renders identically. AE's own default is 50, but a default
    * that re-shapes shipped work is not a default worth matching.
+   *
+   * On **Wiggle Transform** the same field answers the same question one level
+   * up: how alike the RUNS move — which downstream of a Repeater means how
+   * alike the COPIES wiggle. 0 gives every copy its own independent transform
+   * (the swarm), 100 moves them as one body. Same word, same idea, same slot;
+   * a second `copyCorrelation` param would be the drift this file keeps
+   * refusing to start.
    */
   correlation?: number;
   /** Trim only — start of the visible range, percent 0..100. */
@@ -178,6 +203,7 @@ export const PATHOP_PARAMS = [
   // a path can start rigid and shred as it moves, which is a real effect.
   // Animating a seed just scrubs through unrelated noise fields.
   'amount', 'detail', 'wigglesPerSecond', 'correlation',
+  'wiggleRotation', 'wiggleScale',
   'start', 'end', 'offset',
   'copies', 'offsetX', 'offsetY', 'offsetRotation', 'offsetScale', 'offsetOpacity',
   'anchorX', 'anchorY',
@@ -242,10 +268,27 @@ export function defaultRepeaterOp(): PathOp {
   };
 }
 
+/**
+ * A freshly added Wiggle Transform. Visible immediately — 10 px of position
+ * wiggle at AE's 2 wiggles/second — for the same reason `defaultPathOp`'s
+ * zigzag ships with amplitude 20: an operator that appears to do nothing reads
+ * as broken, not as awaiting input. Correlation matches AE's 50 here because
+ * this operator is NEW — there is no shipped work for the default to re-shape,
+ * which was the whole argument for Roughen keeping 0.
+ */
+export function defaultWiggleTransformOp(): PathOp {
+  return {
+    id: newPathOpId(), type: 'wiggleTransform', amount: 10, detail: 0,
+    wigglesPerSecond: 2, seed: 0, correlation: 50,
+    wiggleRotation: 0, wiggleScale: 0, anchorX: 0, anchorY: 0,
+  };
+}
+
 /** Fresh operator of `type` — what the Effects & Presets browser adds. */
 export function defaultPathOpOf(type: PathOpType): PathOp {
   if (type === 'trim') return defaultTrimOp();
   if (type === 'repeater') return defaultRepeaterOp();
+  if (type === 'wiggleTransform') return defaultWiggleTransformOp();
   if (type === 'none') return { id: newPathOpId(), type: 'none', amount: 0, detail: 0 };
   return { ...defaultPathOp(), type };
 }
@@ -259,6 +302,7 @@ export const PATH_OP_CATALOG: ReadonlyArray<{ type: PathOpType; label: string }>
   { type: 'twist', label: 'Twist' },
   { type: 'offset', label: 'Offset Paths' },
   { type: 'roughen', label: 'Wiggle Paths' },
+  { type: 'wiggleTransform', label: 'Wiggle Transform' },
   { type: 'repeater', label: 'Repeater' },
 ];
 
@@ -536,6 +580,40 @@ export function offsetPath(pts: readonly Pt[], closed: boolean, amount: number):
  * magnitude — the normal-only version had. What changed is only where that
  * displacement points.
  */
+/**
+ * The temporal noise both wiggling operators sample — Roughen per point,
+ * Wiggle Transform per run. Extracted verbatim from `roughen` (the constants
+ * and the smoothstep are byte-identical, which its determinism tests pin), so
+ * "what a wiggle sounds like" is written down exactly once.
+ *
+ * Deterministic hash — no Math.random, so preview and export agree and a
+ * scrub back to the same frame redraws the same shape. Mixing the time bucket
+ * `k` and `seed` into the hash (rather than perturbing the index) keeps
+ * neighbouring indices uncorrelated at every instant. `ch` selects a CHANNEL
+ * of the same field, so every channel inherits the seed and the cross-fade
+ * with no second copy of this machinery.
+ *
+ * The returned sampler cross-fades between whole-numbered noise fields so a
+ * value travels between random configurations instead of snapping. `phase` is
+ * already time × wiggles-per-second, so phase 0 collapses to a static hash.
+ * Outputs stay in [-1, 1]: a lerp between two bounded values is bounded, which
+ * is what lets callers promise "amplitude is the most it can move".
+ */
+function temporalNoise(phase: number, seed: number): (i: number, ch?: number) => number {
+  const hash = (i: number, k: number, ch = 0): number => {
+    let h = (i + 1) * 374761393 + k * 668265263 + seed * 2246822519 + ch * 2654435761;
+    h = (h ^ (h >>> 13)) * 1274126177;
+    return (((h ^ (h >>> 16)) >>> 0) / 4294967296) * 2 - 1;
+  };
+  const k0 = Math.floor(phase);
+  const frac = phase - k0;
+  const smooth = frac * frac * (3 - 2 * frac);
+  return (i: number, ch = 0): number => {
+    if (smooth === 0) return hash(i, k0, ch);
+    return hash(i, k0, ch) + (hash(i, k0 + 1, ch) - hash(i, k0, ch)) * smooth;
+  };
+}
+
 export function roughen(
   pts: readonly Pt[],
   closed: boolean,
@@ -565,31 +643,7 @@ export function roughen(
   }
   if (!closed) dense.push(pts[n - 1]!);
   const m = dense.length;
-  // Deterministic hash — no Math.random, so preview and export agree and a
-  // scrub back to the same frame redraws the same shape. Mixing the time
-  // bucket `k` and `seed` in here (rather than perturbing the index) keeps
-  // neighbouring points uncorrelated at every instant.
-  //
-  // `ch` selects the CHANNEL: 0 is the signed displacement magnitude, 1 the
-  // rotation of its direction away from the normal. Folded into the same mix
-  // rather than hashed separately, so both channels inherit the seed, the time
-  // cross-fade and correlation for free.
-  const hash = (i: number, k: number, ch = 0): number => {
-    let h = (i + 1) * 374761393 + k * 668265263 + seed * 2246822519 + ch * 2654435761;
-    h = (h ^ (h >>> 13)) * 1274126177;
-    return (((h ^ (h >>> 16)) >>> 0) / 4294967296) * 2 - 1;
-  };
-  // Smoothly cross-fade between whole-numbered noise fields so the outline
-  // travels between random configurations instead of snapping between them.
-  // `phase` is already time × wiggles-per-second, so phase 0 (the default and
-  // every pre-existing project) collapses to exactly the old static hash.
-  const k0 = Math.floor(phase);
-  const frac = phase - k0;
-  const smooth = frac * frac * (3 - 2 * frac);
-  const rnd = (i: number, ch = 0): number => {
-    if (smooth === 0) return hash(i, k0, ch);
-    return hash(i, k0, ch) + (hash(i, k0 + 1, ch) - hash(i, k0, ch)) * smooth;
-  };
+  const rnd = temporalNoise(phase, seed);
   /**
    * Correlation blends each point's own noise toward ONE path-wide value, so
    * neighbours stop being independent. Index -1 is reserved for that shared
@@ -676,7 +730,7 @@ function fxProps(node: SceneNode): Record<string, unknown> | undefined {
   return node.components.find((c) => c.type === 'fx')?.props as Record<string, unknown> | undefined;
 }
 
-const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater'];
+const PATH_OP_TYPES: readonly PathOpType[] = ['none', 'zigzag', 'roundCorners', 'pucker', 'twist', 'offset', 'roughen', 'trim', 'repeater', 'wiggleTransform'];
 
 function isPathOpType(v: unknown): v is PathOpType {
   return typeof v === 'string' && (PATH_OP_TYPES as readonly string[]).includes(v);
@@ -723,6 +777,10 @@ function coercePathOp(raw: unknown): PathOp | null {
     // unchanged. AE defaults this to 50; matching that here would re-shape every
     // Wiggle Paths already in a project.
     correlation: Math.max(0, Math.min(100, num(o.correlation, 0))),
+    // Wiggle Transform's two amplitudes. 0 = no wiggle on that channel, which
+    // makes a malformed stored entry inert rather than jittery.
+    wiggleRotation: Math.max(0, num(o.wiggleRotation, 0)),
+    wiggleScale: Math.max(0, num(o.wiggleScale, 0)),
     start: num(o.start, 0),
     end: num(o.end, 100),
     offset: num(o.offset, 0),
@@ -760,6 +818,11 @@ function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
     // so a keyframe that dips below zero cannot run the noise backwards.
     wigglesPerSecond: Math.max(0, v('wigglesPerSecond', op.wigglesPerSecond ?? 0)),
     seed: op.seed ?? 0,
+    correlation: Math.max(0, Math.min(100, v('correlation', op.correlation ?? 0))),
+    // Amplitudes cannot be negative — a keyframe dipping below zero would
+    // double back on itself rather than mean anything.
+    wiggleRotation: Math.max(0, v('wiggleRotation', op.wiggleRotation ?? 0)),
+    wiggleScale: Math.max(0, v('wiggleScale', op.wiggleScale ?? 0)),
     // Trim's three, sampled the same way. NOT clamped: `offset` wraps by
     // design, and start/end past 0..100 is how a draw-on overshoots and
     // settles — `trimSegments` already normalizes the window.
@@ -793,7 +856,7 @@ function resolveOne(op: PathOp, av: Map<string, number> | undefined): PathOp {
 export function resolvePathOps(node: SceneNode, av: Map<string, number> | undefined): PathOp[] {
   return readPathOps(node)
     .map((op) => resolveOne(op, av))
-    .filter((op) => op.type !== 'none' && !isInertTrim(op) && !isInertRepeater(op));
+    .filter((op) => op.type !== 'none' && !isInertTrim(op) && !isInertRepeater(op) && !isInertWiggleTransform(op));
 }
 
 /**
@@ -811,6 +874,17 @@ export function resolvePathOps(node: SceneNode, av: Map<string, number> | undefi
  */
 function isInertRepeater(op: PathOp): boolean {
   return op.type === 'repeater' && (op.copies ?? 1) <= 1;
+}
+
+/**
+ * A Wiggle Transform with every amplitude at zero. Dropped for the reason the
+ * other inert forms are: a live chain converts the layer's primitive to an
+ * explicit path, and an operator moving nothing must not square off a rounded
+ * rect as its only visible effect.
+ */
+function isInertWiggleTransform(op: PathOp): boolean {
+  return op.type === 'wiggleTransform'
+    && op.amount <= 0 && (op.wiggleRotation ?? 0) <= 0 && (op.wiggleScale ?? 0) <= 0;
 }
 
 /**
@@ -969,6 +1043,60 @@ function applyRepeater(runs: readonly PolyRun[], op: PathOp): PolyRun[] {
 }
 
 /**
+ * Wiggle Transform — AE's shape operator of the same name. Each RUN gets one
+ * smoothly-varying random affine transform: translate by up to ±`amount` px
+ * per axis, rotate by up to ±`wiggleRotation`°, scale by up to ±`wiggleScale`%
+ * — rotation and scale pivoting on (`anchorX`, `anchorY`).
+ *
+ * Chain-level (like Trim and the Repeater) rather than per-point, because the
+ * run index IS the identity the noise hashes on — which is what makes the
+ * classic AE combo work here with the orders reversed from a deformer's
+ * indifference: Repeater THEN Wiggle Transform gives every copy its own
+ * independent wander (each copy is its own run); Wiggle Transform then
+ * Repeater moves the ladder as one body (one run wiggles, then is copied).
+ *
+ * `correlation` blends each run's noise toward one shared value (index -1,
+ * per channel — the same construction Roughen uses per point), so the swarm
+ * can be dialed continuously into a school of fish.
+ *
+ * The transform is baked into geometry, so `strokeScale` carries the scale
+ * factor exactly as the Repeater's does — a wiggled-small copy must not draw
+ * with its original stroke width.
+ */
+function applyWiggleTransform(runs: readonly PolyRun[], op: PathOp, timeSec: number): PolyRun[] {
+  const pos = Math.max(0, op.amount);
+  const rotAmp = Math.max(0, op.wiggleRotation ?? 0);
+  const sclAmp = Math.max(0, op.wiggleScale ?? 0);
+  const rnd = temporalNoise(timeSec * (op.wigglesPerSecond ?? 0), op.seed ?? 0);
+  const c = Math.max(0, Math.min(100, op.correlation ?? 0)) / 100;
+  const n = (i: number, ch: number): number => {
+    const own = rnd(i, ch);
+    return c === 0 ? own : own + (rnd(-1, ch) - own) * c;
+  };
+  const ax = op.anchorX ?? 0;
+  const ay = op.anchorY ?? 0;
+  return runs.map((r, i) => {
+    const dx = pos * n(i, 0);
+    const dy = pos * n(i, 1);
+    const ang = rotAmp * n(i, 2) * DEG;
+    // Scale is clamped at 0 rather than allowed to mirror: an amplitude past
+    // 100% flipping copies inside-out reads as a glitch, not as more wiggle.
+    const s = Math.max(0, 1 + (sclAmp / 100) * n(i, 3));
+    const cos = Math.cos(ang) * s;
+    const sin = Math.sin(ang) * s;
+    return {
+      closed: r.closed,
+      pts: r.pts.map((p): Pt => ({
+        x: (p.x - ax) * cos - (p.y - ay) * sin + ax + dx,
+        y: (p.x - ax) * sin + (p.y - ay) * cos + ay + dy,
+      })),
+      opacity: r.opacity,
+      strokeScale: (r.strokeScale ?? 1) * s,
+    };
+  });
+}
+
+/**
  * Fold the whole chain over a list of runs.
  *
  * Order is significant and is the point of the feature: Round Corners then
@@ -994,6 +1122,10 @@ export function applyPathOpChain(
     }
     if (op.type === 'repeater') {
       out = applyRepeater(out, op);
+      continue;
+    }
+    if (op.type === 'wiggleTransform') {
+      out = applyWiggleTransform(out, op, timeSec);
       continue;
     }
     // Spread, so a per-run `opacity`/`strokeScale` set by an upstream repeater

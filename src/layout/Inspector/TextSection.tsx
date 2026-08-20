@@ -411,6 +411,13 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
           </select>
         </div>
 
+        {/* The keyframeable, CONTINUOUS weight (1–1000) — the variable-font
+            wght axis. The select above stays the discrete static picker; an
+            animated track on `fontWeight` overrides it at render, same
+            precedence every other animatable text prop has. No run key: axis
+            animation is a layer-level property, per-character weight styling
+            remains the select's static job. */}
+        {renderTextPropInner('Weight (Variable)', 'fontWeight', Number(fontWeight ?? 400) || 400, (v) => setFontWeight(String(Math.round(v))))}
         {renderTextPropInner('Size', 'fontSize', fontSizeVal, setFontSize, 'px', 32, 'fontSize')}
         {renderTextPropInner('Tracking', 'letterSpacing', letterSpacingVal, setLetterSpacing, 'px', 0, 'letterSpacing')}
         {/* Leading is a paragraph property, not a character one — it has no

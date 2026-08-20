@@ -30,6 +30,7 @@ import { useTrackerStore, type TrackerMode } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { trackVideoLayerPoints } from '@core/tracking/trackVideoLayer';
+import { smoothStabilizeVideoLayer } from '@core/tracking/smoothStabilize';
 import {
   applyTrackToLayer,
   applyStabilizeToLayer,
@@ -64,6 +65,7 @@ const MODE_LABELS: Record<TrackerMode, string> = {
   follow: 'Follow (position)',
   transform: 'Follow + rotation & scale',
   stabilize: 'Stabilize',
+  smooth: 'Smooth stabilize (dense)',
   corner: 'Corner pin',
   mask: 'Track mask',
 };
@@ -73,6 +75,8 @@ const MODE_HINTS: Record<TrackerMode, string> = {
   transform:
     'Two points: the ANCHOR drives position, the anchor→reference vector drives rotation and scale. Put both on the same rigid surface.',
   stabilize: 'Drag the point onto the feature to lock, track, then apply — this layer moves inversely so the feature stays put.',
+  smooth:
+    'No points to place: dense optical flow measures the camera’s motion everywhere, the path is smoothed, and this layer is keyframed to remove the shake while deliberate moves survive. Analyze and apply happen in one action.',
   corner: 'Drag the four corners onto the surface to replace (TL, TR, BR, BL), track, then pin a target layer onto them.',
   mask: 'Tracks every vertex of this layer’s mask and writes mask keyframes — the mask follows the footage.',
 };
@@ -166,6 +170,23 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
         );
         return;
       }
+      if (mode === 'smooth') {
+        // Like mask mode, smooth tracks AND applies in one action — its
+        // "points" are the whole flow grid, and the result is keyframes.
+        const r = await smoothStabilizeVideoLayer({
+          nodeId,
+          startCompTime: time,
+          endCompTime,
+          fps,
+          comp,
+          onProgress: (f: number) => store.getState().setProgress(f),
+        });
+        store.getState().finishTracking(
+          null,
+          `Stabilized: fitted ${r.fittedPairs}/${r.totalPairs} frame pairs, wrote ${r.keyframes} keyframes per property.`,
+        );
+        return;
+      }
       const pts = store.getState().points;
       const r = await trackVideoLayerPoints({
         nodeId,
@@ -237,7 +258,7 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
     store.getState().finishTracking(result, n > 0 ? `Applied ${n} ${what}.` : 'Nothing to apply.');
   };
 
-  const canTrack = mode === 'mask' ? maskPoints > 0 : points.length > 0;
+  const canTrack = mode === 'mask' ? maskPoints > 0 : mode === 'smooth' ? true : points.length > 0;
   const applyLabel =
     mode === 'follow'
       ? 'Apply as position keyframes'
@@ -266,7 +287,7 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
           This layer has no mask — draw one with the mask tools first.
         </p>
       )}
-      {mode !== 'mask' && (
+      {mode !== 'mask' && mode !== 'smooth' && (
         <InspectorRow label={points.length > 1 ? 'Points' : 'Point'}>
           <span style={noteStyle}>
             {points.map((p) => `${p.x.toFixed(0)},${p.y.toFixed(0)}`).join(' · ') || '—'}

@@ -216,6 +216,24 @@ describe('snapshotToFrameScene', () => {
     expect(id('stencil-luma')).toBe(32);
     expect(id('silhouette-alpha')).toBe(33);
     expect(id('silhouette-luma')).toBe(34);
+    // M5, same wire format: renumbering these repaints every dissolve as an
+    // unrelated blend.
+    expect(id('dissolve')).toBe(35);
+    expect(id('dancing-dissolve')).toBe(36);
+  });
+
+  test('threads the comp frame index for Dancing Dissolve, and 0 when unstated', () => {
+    // The shader has no clock: Dancing Dissolve's per-frame re-roll IS this
+    // number. Rounded from the playhead so a float time a hair under a frame
+    // boundary cannot repeat the previous frame's speckle.
+    const scene = snapshotToFrameScene({
+      ...snapshot([layer({ blend: 'dancing-dissolve' })]),
+      time: 2.5, fps: 24,
+    });
+    expect(scene.dissolveFrame).toBe(60);
+    // A snapshot with no playhead (thumbnails, tests) pins the pattern at
+    // frame 0 rather than leaving it undefined for the pass to guess at.
+    expect(snapshotToFrameScene(snapshot([layer({})])).dissolveFrame).toBe(0);
   });
 
   test('every blend mode maps to a distinct combine id', () => {
@@ -409,6 +427,26 @@ describe('frame blending (Frame Mix) on the GPU path', () => {
     const scene = snapshotToFrameScene(snapshot([layer({ id: 'v', kind: 'video' })]));
     expect(scene.renderables.filter((r) => r.id.startsWith('v')).length).toBe(1);
     expect(scene.renderables.find((r) => r.id === 'v')!.textureKey).toBe('asset:v');
+  });
+
+  test('Pixel Motion emits ONE renderable sampling the warped in-between', () => {
+    // One quad, full opacity — the motion compensation happened in the texture
+    // feed (rendering/pixelMotion.ts); a second cross-fade here would re-ghost
+    // the frame the warp exists to de-ghost.
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'v', kind: 'video', opacity: 0.8, frameBlend: { a: 0.1, b: 0.1333, weight: 0.25, mode: 'pixelMotion' } }),
+    ]));
+    const rs = scene.renderables.filter((r) => r.id.startsWith('v'));
+    expect(rs).toHaveLength(1);
+    expect(rs[0]!.textureKey).toBe('vfm:v');
+    expect(rs[0]!.opacity).toBeCloseTo(0.8);
+  });
+
+  test("an explicit mode 'mix' keeps the two-renderable cross-dissolve", () => {
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'v', kind: 'video', frameBlend: { a: 0.1, b: 0.1333, weight: 0.25, mode: 'mix' } }),
+    ]));
+    expect(scene.renderables.filter((r) => r.id.startsWith('v'))).toHaveLength(2);
   });
 });
 

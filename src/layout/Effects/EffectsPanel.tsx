@@ -49,6 +49,7 @@ import {
   getNodeMask,
   addMaskPath,
   updateMaskPath,
+  setMaskPointFeather,
   removeMaskPath,
   rectangleMask,
   ellipseMask,
@@ -719,6 +720,38 @@ export function EffectsPanel(): JSX.Element {
                   <ValueField value={m.feather} min={0} max={200} precision={0} unit="px"
                     onChange={(v) => updateMaskPath(primary, m.id, { feather: v }, maskTime)} aria-label="Mask feather" />
                 </PropertyRow>
+                {/* Variable-width feather: one row per vertex. A vertex with
+                    its own value overrides the uniform Feather above and the
+                    softness interpolates along the outline between vertices
+                    (the distance-field renderer in maskFeather.ts). Right-side
+                    clear button drops the override — every override cleared
+                    returns the path to the plain blur renderer. */}
+                <PropertyRow label="Per-Vertex" compact>
+                  <Checkbox
+                    checked={m.points.some((pt) => typeof pt.feather === 'number')}
+                    onChange={() => {
+                      const on = m.points.some((pt) => typeof pt.feather === 'number');
+                      // Toggle ON seeds every vertex at the uniform value (so
+                      // nothing visibly changes until a vertex is edited);
+                      // toggle OFF clears every override.
+                      m.points.forEach((_, i) =>
+                        setMaskPointFeather(primary, m.id, i, on ? undefined : m.feather, maskTime));
+                    }}
+                    aria-label={`Variable feather for Mask ${i + 1}`}
+                    style={{ width: 14, height: 14 }}
+                  />
+                </PropertyRow>
+                {m.points.some((pt) => typeof pt.feather === 'number') &&
+                  m.points.map((pt, vi) => (
+                    <PropertyRow key={vi} label={`  V${vi + 1}`} compact>
+                      <ValueField
+                        value={Math.round(pt.feather ?? m.feather)}
+                        min={0} max={200} precision={0} unit="px"
+                        onChange={(v) => setMaskPointFeather(primary, m.id, vi, v, maskTime)}
+                        aria-label={`Mask ${i + 1} vertex ${vi + 1} feather`}
+                      />
+                    </PropertyRow>
+                  ))}
                 <PropertyRow label="Opacity" compact>
                   <ValueField value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
                     onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 }, maskTime)} aria-label="Mask opacity" />

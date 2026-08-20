@@ -167,6 +167,10 @@ export interface RenderLayer {
     b: number;
     /** How far between them, 0..1 — the later frame's alpha. */
     weight: number;
+    /** 'mix' cross-dissolves the brackets; 'pixelMotion' warps them along
+     *  estimated optical flow first (smooth slow motion). Absent means 'mix'
+     *  — the field predates the mode, and mix is what it always did. */
+    mode?: 'mix' | 'pixelMotion';
   };
   /** Sub-frame transform samples for motion blur (accumulated by the backend).
    *  Present only when motion blur is on and the layer actually moves. */
@@ -384,6 +388,15 @@ export interface RenderLayer {
    * premultiplied by the time it is sampled, so there is nothing left to select.
    */
   premultipliedSource?: boolean;
+  /**
+   * Interpret Footage ▸ Fields: the field order of interlaced source video,
+   * absent for progressive (every modern file, and the previous behaviour).
+   * Consumed by the texture feed like `premultipliedSource`: the provider
+   * deinterlaces the decoded frame (single-field bob, see
+   * `rendering/deinterlace.ts`) before upload, so both GPU backends and every
+   * decode path (exact, legacy cache, element) see clean frames.
+   */
+  fieldsSource?: 'upper' | 'lower';
   /** Digest of the fields that determine this layer's OWN rasterized pixels
    *  (geometry + fills/strokes/text/masks + pre-DOF effects + width/height),
    *  excluding transform + compositing. Computed once in buildSnapshot (see

@@ -38,7 +38,7 @@ import { readNodePuppet } from '@core/rig/puppet';
 import { updateDropShadow, updateOuterGlow } from '@core/effects/layerStyles';
 
 import {
-  addPathOp, defaultPathOp, newPathOpId, readPathOps, readTrimOp,
+  addPathOp, defaultPathOpOf, newPathOpId, readPathOps, readTrimOp,
   ensureTrimOp, updatePathOp, updateRepeaterOp, pathOpPropPath, type PathOp,
 } from '@core/scene/pathOps';
 
@@ -1423,6 +1423,7 @@ const PATH_OP_ALIASES: Record<string, PathOp['type']> = {
   roundCorners: 'roundCorners',
   offset: 'offset',
   roughen: 'roughen',
+  wiggleTransform: 'wiggleTransform',
 };
 
 const addPathOperatorHandler: AiTool['handler'] = (input, ctx) => {
@@ -1442,14 +1443,17 @@ const addPathOperatorHandler: AiTool['handler'] = (input, ctx) => {
     );
   }
 
-  const base = defaultPathOp();
+  // The TYPE's own defaults, not zigzag's: a wiggleTransform must inherit its
+  // 2 wiggles/second and correlation 50 or an unspecified call adds a frozen
+  // wiggle — an operator that appears to do nothing.
+  const base = defaultPathOpOf(type);
   const op: PathOp = {
+    ...base,
     id: newPathOpId(),
     type,
     amount: i.amount ?? base.amount,
     detail: i.detail ?? base.detail,
-    wigglesPerSecond: Math.max(0, i.wigglesPerSecond ?? 0),
-    seed: base.seed,
+    wigglesPerSecond: Math.max(0, i.wigglesPerSecond ?? base.wigglesPerSecond ?? 0),
   };
   // Push onto the CHAIN. `fx.pathOp` — the single slot this used to write — was
   // replaced by `fx.pathOps` in document version 1.3.0, and the reader

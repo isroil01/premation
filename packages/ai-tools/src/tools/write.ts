@@ -893,15 +893,17 @@ export const addPathOperatorDef: AiToolDef = {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
       op: {
         type: 'string',
-        enum: ['zigzag', 'pucker', 'puckerBloat', 'twist', 'roundCorners', 'offset', 'roughen'],
+        enum: ['zigzag', 'pucker', 'puckerBloat', 'twist', 'roundCorners', 'offset', 'roughen', 'wiggleTransform'],
         description:
           'zigzag: sawtooth the outline. pucker: negative amount pulls corners in, positive bloats them ' +
           '(puckerBloat is an alias). twist: rotate proportionally to distance from centre. ' +
-          'roundCorners: corner radius. offset: grow/shrink the outline. roughen: noise displacement.',
+          'roundCorners: corner radius. offset: grow/shrink the outline. roughen: noise displacement. ' +
+          'wiggleTransform: random position wander per run — placed AFTER a repeater, every copy ' +
+          'wanders independently (amount = max px).',
       },
-      amount: { type: 'number', description: 'Strength/radius of the deformation.' },
+      amount: { type: 'number', description: 'Strength/radius of the deformation. For wiggleTransform: max position wander in px.' },
       detail: { type: 'number', description: 'Segment count for zigzag / roughen. Higher is finer.' },
-      wigglesPerSecond: { type: 'number', minimum: 0, description: 'Roughen only — animates the noise with no keyframe. 0 is static.' },
+      wigglesPerSecond: { type: 'number', minimum: 0, description: 'Roughen and wiggleTransform — animates the noise with no keyframe. 0 is static (wiggleTransform defaults to 2 when omitted).' },
     },
   },
 };

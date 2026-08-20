@@ -9,6 +9,7 @@ import { Pagination } from '@components/Pagination';
 import { Modal, customConfirm } from '@components/Modal';
 import { Button } from '@components/Button';
 import { useUIStore } from '@stores/uiStore';
+import { setPendingFootage } from '@core/project/pendingFootage';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';
 import { ApiKeysSection } from '@layout/Settings/ApiKeysSection';
 import { BillingSection } from '@layout/Settings/BillingSection';
@@ -256,6 +257,30 @@ export function DashboardPage(): JSX.Element {
   const [setupDuration, setSetupDuration] = useState(10);
   const [setupBg, setSetupBg] = useState('#101014');
   const [setupTransparent, setSetupTransparent] = useState(false);
+  // "Start from a video" — AE's second way in, made visible at the moment it
+  // matters. The chosen file is probed IN the modal (a metadata-only <video>
+  // element: size and duration; the browser cannot report fps, the editor's
+  // deeper probe refines that after import) so the fields below prefill to
+  // exactly what the comp will be, still editable. The File itself rides
+  // `pendingFootage` to the editor, which imports it and drops it in at full
+  // frame.
+  const [setupFootage, setSetupFootage] = useState<File | null>(null);
+
+  const chooseSetupFootage = (file: File): void => {
+    setSetupFootage(file);
+    setSetupTitle(file.name.replace(/\.[a-z0-9]+$/i, '') || file.name);
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => {
+      if (v.videoWidth > 0) setSetupWidth(clampDimension(v.videoWidth));
+      if (v.videoHeight > 0) setSetupHeight(clampDimension(v.videoHeight));
+      if (Number.isFinite(v.duration) && v.duration > 0) setSetupDuration(clampDuration(v.duration));
+      URL.revokeObjectURL(url);
+    };
+    v.onerror = () => URL.revokeObjectURL(url);
+    v.src = url;
+  };
 
   // NOTE: this page deliberately reads no editor preferences any more. It used
   // to subscribe to the WHOLE preference store — `usePreferenceStore` with no
@@ -383,6 +408,7 @@ export function DashboardPage(): JSX.Element {
     setSetupDuration(10);
     setSetupBg('#101014');
     setSetupTransparent(false);
+    setSetupFootage(null);
     setSetupModalOpen(true);
   };
 
@@ -421,6 +447,10 @@ export function DashboardPage(): JSX.Element {
       getTimelineController().setFrameRate(fps);
       getTimelineController().setDurationSeconds(durationSeconds);
       getTimelineController().seekSeconds(0);
+      // Starting from a video: the File rides the handoff; the editor's
+      // ProjectLoader imports it and lands it at full frame the moment the
+      // project opens. The comp fields above were prefilled from its probe.
+      if (setupFootage) setPendingFootage(setupFootage);
       setSetupModalOpen(false);
       navigate(`/editor/${p.id}`);
     } catch (err) {
@@ -1033,7 +1063,7 @@ export function DashboardPage(): JSX.Element {
                         <td>
                           <div className={styles.progressCellWrapper}>
                             <div className={styles.progressBar}>
-                              <div className={styles.progressFill} style={{ width: `${Math.round(job.progress * 100)}%` }} />
+                              <div className={styles.progressFill} style={{ '--fill': Math.min(1, job.progress) } as React.CSSProperties} />
                             </div>
                             <span className={styles.progressText}>{Math.round(job.progress * 100)}%</span>
                           </div>
@@ -1262,16 +1292,14 @@ export function DashboardPage(): JSX.Element {
 
       case 'billing':
         return (
-          <div className={styles.settingsPanel}>
-            <div className={styles.settingsCard} id="billing-settings">
-              <BillingSection />
-            </div>
+          <div className={styles.billingPanel} id="billing-settings">
+            <BillingSection />
           </div>
         );
 
       case 'developer':
         return (
-          <div className={styles.settingsPanel}>
+          <div className={styles.developerPanel}>
             <ApiKeysSection onViewPlans={() => openTab('billing')} />
           </div>
         );
@@ -1759,6 +1787,48 @@ export function DashboardPage(): JSX.Element {
         persistent={creating}
       >
         <form className={styles.modalForm} onSubmit={onLaunchWorkspace}>
+          {/* The two ways in, said up front — AE's blank comp vs new-comp-from-
+              footage, as a visible choice instead of a buried context menu. */}
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>Start from</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <button
+                type="button"
+                className={setupFootage ? styles.btnSecondary : styles.btnPrimary}
+                onClick={() => setSetupFootage(null)}
+                title="An empty composition at the settings below"
+              >
+                <Icon name="plus" size="sm" />
+                <span>Blank composition</span>
+              </button>
+              <button
+                type="button"
+                className={setupFootage ? styles.btnPrimary : styles.btnSecondary}
+                title="Pick a video — the composition takes its size and length, and the clip lands at full frame"
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'video/*,.mp4,.mov,.webm,.m4v';
+                  input.onchange = () => {
+                    const f = input.files?.[0];
+                    if (f) chooseSetupFootage(f);
+                  };
+                  input.click();
+                }}
+              >
+                <Icon name="image" size="sm" />
+                <span>{setupFootage ? 'Change video…' : 'From a video…'}</span>
+              </button>
+            </div>
+            {setupFootage && (
+              <div className={styles.fieldNote} style={{ marginTop: 6 }}>
+                Starting from <strong>{setupFootage.name}</strong> — the settings below were
+                read from the clip and stay editable. It will be imported and placed at
+                full frame.
+              </div>
+            )}
+          </div>
+
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>Project / Composition Name</label>
             <input

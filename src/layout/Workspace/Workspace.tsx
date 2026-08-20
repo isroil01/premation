@@ -24,7 +24,7 @@
  * `@motion/workspace` engine via {@link useWorkspace}.
  */
 
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
 import { cn } from '@utils/cn';
 import { useActiveWorkspace, useWorkspaceStore } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -39,6 +39,11 @@ import {
   insertMedia,
   setNodeWorldPosition,
 } from '@core/scene/sceneInsert';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind } from '@core/scene/sceneDerive';
+import { createCompositionFromFootage } from '@core/composition/compositionOps';
+import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
+import { Icon } from '@components/Icon';
 import { insertCursorItem } from '@core/library/cursorLibrary';
 import { insertUiComponent } from '@core/library/uiKitLibrary';
 import { insertMographItem } from '@core/library/mographLibrary';
@@ -133,6 +138,14 @@ export function WorkspaceViewport({
 }: WorkspaceViewportProps): JSX.Element {
   const time     = useActiveWorkspace()?.time ?? 0;
   const sceneRev = useSceneRevision((s) => s.rev);
+  // The blank-comp moment — AE's two ways in, said out loud. Recomputed per
+  // scene revision; disappears the instant anything exists.
+  const sceneIsEmpty = useMemo(() => {
+    let hasContent = false;
+    defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
+    return !hasContent;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
+  }, [sceneRev]);
   const transparent = useCompositionStore((s) => s.transparent);
   const workspaceMode = useWorkspaceViewStore((s) => s.mode);
   // Multi-view (AE-style): '2' shrinks the interactive stage to the left half
@@ -225,7 +238,11 @@ export function WorkspaceViewport({
   const [dragOver, setDragOver] = useState(false);
 
   const onDragOverCanvas = useCallback((e: DragEvent<HTMLDivElement>): void => {
-    if (!hasCanvasDrag(e)) return; // let unrelated drags (tab reorder, files) pass
+    // OS file drags are OURS now: dropping footage on the canvas is the first
+    // gesture everyone tries ("here is my video, edit it"), and it used to
+    // dead-end silently. Internal app drags keep their existing routing.
+    const isFileDrag = !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+    if (!hasCanvasDrag(e) && !isFileDrag) return; // let unrelated drags (tab reorder) pass
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setDragOver(true);
@@ -238,8 +255,37 @@ export function WorkspaceViewport({
   }, []);
 
   const onDropCanvas = useCallback(async (e: DragEvent<HTMLDivElement>): Promise<void> => {
-    const payload = readCanvasDrag(e);
     setDragOver(false);
+    // ── OS files: the "upload a video and edit it" gesture ──────────────
+    // AE's two ways in, as one drop: onto an EMPTY comp, a video conforms the
+    // comp to itself (size, duration, probed fps — `createCompositionFromFootage`,
+    // AE's new-comp-from-footage); onto a comp with content, it lands as a
+    // layer like any Assets-panel add. Either way the file is imported first,
+    // so it shows in Assets and survives re-use.
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      e.preventDefault();
+      const media = Array.from(files).filter((f) =>
+        /^(video|image|audio)\//.test(f.type) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|mp3|wav|m4a|aac|ogg)$/i.test(f.name));
+      if (media.length === 0) {
+        useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
+        return;
+      }
+      const imported = await useAssetStore.getState().addAssetsBatch(media.map((file) => ({ file })));
+      // "Empty" = no content layers anywhere in the scene. Counting the comp
+      // root's children breaks on fresh unsaved projects (layers hang off the
+      // virtual comp_root), so ask the nodes themselves.
+      let hasContent = false;
+      defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
+      const first = imported[0];
+      if (!hasContent && imported.length === 1 && first && first.type === 'video') {
+        await createCompositionFromFootage(first);
+        return;
+      }
+      for (const asset of imported) await insertMedia(asset);
+      return;
+    }
+    const payload = readCanvasDrag(e);
     if (!payload) return; // not one of ours
     e.preventDefault();
     const stage = stageRef.current;
@@ -374,6 +420,73 @@ export function WorkspaceViewport({
           <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
           <canvas ref={onionRef} className={styles.onionCanvas} data-workspace-onion="" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
+          {/* Blank-comp start cards — AE's empty Composition panel, verbatim:
+              two CLICKABLE cards, "New Composition" and "New Composition From
+              Footage", not a passive hint. The container passes pointer events
+              through except on the cards themselves; an empty comp has nothing
+              under them to steal clicks from. Gone the moment anything exists
+              or a drag is in flight (the drop outline speaks then — dropping a
+              video is the third way in and keeps working). */}
+          {sceneIsEmpty && ready && !renderError && !dragOver && (
+            <div
+              data-workspace-empty-hint=""
+              style={{
+                position: 'absolute', inset: 0, display: 'flex',
+                alignItems: 'center', justifyContent: 'center', gap: 24,
+                pointerEvents: 'none',
+              }}
+            >
+              {([
+                {
+                  icon: 'shape' as const,
+                  label: 'New Composition',
+                  title: 'Set up a blank composition — size, frame rate, duration',
+                  onClick: () => openNewCompositionDialog(),
+                },
+                {
+                  icon: 'video' as const,
+                  label: 'New Composition From Footage',
+                  title: 'Pick a video — the composition takes its size and length, and the clip lands at full frame. (Dropping a file here does the same.)',
+                  onClick: () => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'video/*,image/*,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg';
+                    input.onchange = async () => {
+                      const f = input.files?.[0];
+                      if (!f) return;
+                      const asset = await useAssetStore.getState().addAsset(f);
+                      await createCompositionFromFootage(asset);
+                    };
+                    input.click();
+                  },
+                },
+              ]).map((card) => (
+                <button
+                  key={card.label}
+                  type="button"
+                  title={card.title}
+                  onClick={() => void card.onClick()}
+                  style={{
+                    pointerEvents: 'auto', cursor: 'pointer',
+                    width: 240, height: 220,
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center', gap: 18,
+                    background: 'var(--color-surface, #1b1b1f)',
+                    border: '1px solid var(--color-border, rgba(255,255,255,0.12))',
+                    borderRadius: 6,
+                    color: 'var(--color-text, #c8c8d0)',
+                    fontSize: 'var(--font-size-lg)', lineHeight: 1.4, textAlign: 'center',
+                    padding: 16,
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'var(--color-primary, #4c8dff)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border, rgba(255,255,255,0.12))'; }}
+                >
+                  <Icon name={card.icon} size={48} />
+                  <span>{card.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {/* Scene loading indicator — until the backend paints its first frame. */}
           {!ready && !renderError && (
             <div className={styles.loading} data-workspace-loading="">

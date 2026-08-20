@@ -104,6 +104,15 @@ export function ToolOptionsBar(): JSX.Element | null {
                 />
               </Row>
             )}
+            {activeTool === 'paint' && (
+              <Row label="Clone">
+                <Checkbox
+                  checked={paint.mode === 'clone'}
+                  onChange={() => paint.set({ mode: paint.mode === 'clone' ? 'paint' : 'clone' })}
+                  title="Clone stamp — paints the layer's own content from an offset source. Alt-click the canvas to set the source."
+                />
+              </Row>
+            )}
             <Row label="Opacity">
               <ValueField value={Math.round(paint.opacity * 100)} unit="%" min={0} max={100} precision={0} onChange={(v) => paint.set({ opacity: Number(v) / 100 })} />
             </Row>
