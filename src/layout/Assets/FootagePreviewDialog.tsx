@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
 import { insertMedia } from '@core/scene/sceneInsert';
@@ -259,9 +260,23 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
   );
 }
 
+/**
+ * The most recently viewed asset — what the tab strip's Footage tab shows and
+ * reopens, the way AE's Footage viewer holds what was last opened in it.
+ * A store (not module state) so the tab label re-renders when it changes.
+ */
+export const useLastFootagePreview = createLastPreviewStore();
+function createLastPreviewStore(): UseBoundStore<StoreApi<{ asset: ImportedAsset | null; set: (a: ImportedAsset) => void }>> {
+  return create<{ asset: ImportedAsset | null; set: (a: ImportedAsset) => void }>((set) => ({
+    asset: null,
+    set: (asset) => set({ asset }),
+  }));
+}
+
 /** Open the viewer for one asset. The modal id is fixed so double-clicking a
  *  second clip REPLACES the viewer rather than stacking a pile of them. */
 export function openFootagePreview(asset: ImportedAsset): void {
+  useLastFootagePreview.getState().set(asset);
   openModal({
     id: 'footage-preview',
     title: asset.name,

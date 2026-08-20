@@ -21,6 +21,18 @@ import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { SCENE_TAB_ID, useEditorTabStore, type EditorTab } from '@stores/editorTabStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import { useAssetStore } from '@stores/assetStore';
+import { useSceneRevision } from '@stores/sceneStore';
+import { useFocusStore } from '@stores/focusStore';
+import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
+import { openContextMenu } from '@stores/contextMenuStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { assetIdOf } from '@core/source/sourceInfo';
+import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { openFootagePreview, useLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
+import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import styles from './EditorTabs.module.css';
 
 export interface EditorTabsProps {
@@ -44,6 +56,28 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   const activeTab = tabs.find((t) => t.id === activeId);
   const sceneActive = activeId === SCENE_TAB_ID;
   const compName = useCompositionStore((s) => s.name);
+
+  // Footage tab: last-viewed asset first, else the selected video layer's own
+  // source. Layer tab: Focus Mode isolation over the single selected layer.
+  const lastPreviewed = useLastFootagePreview((s) => s.asset);
+  const selectionIds = useSelectionStore((s) => s.ids);
+  const assets = useAssetStore((s) => s.assets);
+  useSceneRevision((s) => s.rev);
+  const singleSelectedLayer = selectionIds.length === 1 ? selectionIds[0]! : null;
+  const selectedAsset = (() => {
+    if (!singleSelectedLayer) return null;
+    const node = defaultSceneGraph.getNode(singleSelectedLayer);
+    const assetId = node ? assetIdOf(node) : null;
+    return assetId ? assets.find((a) => a.id === assetId) ?? null : null;
+  })();
+  const footageAsset = lastPreviewed ?? (selectedAsset?.type === 'video' ? selectedAsset : null);
+  const isolatedId = useFocusStore((s) => s.isolatedId);
+  const layerTabName = isolatedId
+    ? defaultSceneGraph.getNode(isolatedId)?.name ?? null
+    : singleSelectedLayer
+      ? defaultSceneGraph.getNode(singleSelectedLayer)?.name ?? null
+      : null;
+  const viewMode = useWorkspaceViewStore((s) => s.mode);
 
   /**
    * Ctrl/Cmd+W closes the active tab — and never Scene.
@@ -81,27 +115,69 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
     <div className={styles.root}>
       <div className={styles.strip} role="tablist" aria-label="Editor tabs" ref={stripRef}>
         {/*
-          Scene's tab, labelled with the COMPOSITION's name rather than the word
-          "Scene". The composition name used to live in a bar of its own above
-          the canvas; naming the tab after what it contains says the same thing
-          in a row that already exists, and "Scene" said nothing a user could not
-          see. It is purely a tab — clicking it comes back to the canvas and
-          nothing else. Composition Settings opens from its own button in the
-          status bar, so this does not have to be two controls wearing one hat.
-
-          No close button, ever — it is the background, not a document, and a
-          strip with nothing in it is not a valid state.
+          Composition's tab, labelled with the COMPOSITION's name like After Effects:
+          "Composition: <compName>" or "Composition (none)"
         */}
         <button
           type="button"
           role="tab"
           aria-selected={sceneActive}
           className={cn(styles.tab, sceneActive && styles.tabActive)}
-          title={compName}
+          title={`Composition: ${compName || 'none'}`}
           onClick={() => activate(SCENE_TAB_ID)}
         >
-          <Icon name="frame" size="sm" />
-          <span className={styles.tabLabel}>{compName}</span>
+          <Icon name="shape" size="sm" />
+          <span className={styles.tabLabel}>Composition {compName ? `(${compName})` : '(none)'}</span>
+        </button>
+
+        {/*
+          AE's Footage and Layer viewer tabs, wired to what this editor
+          actually has rather than shipped as dead chrome:
+
+          FOOTAGE holds the last asset opened in the footage viewer (the way
+          AE's viewer holds what was last opened) and reopens it; before
+          anything has been viewed it offers the selected video layer's own
+          source. Truly nothing to show → disabled "(none)".
+
+          LAYER is Focus Mode's isolate: with one layer selected, it isolates
+          that layer (everything else ghosts — this editor's layer viewer);
+          while isolation is active it reads as the active tab and clicking
+          exits. No single selection and no isolation → disabled "(none)".
+        */}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={false}
+          className={styles.tab}
+          disabled={!footageAsset}
+          title={footageAsset ? `Footage: ${footageAsset.name}` : 'Footage (none) — double-click a clip in Assets, or select a video layer'}
+          onClick={() => { if (footageAsset) openFootagePreview(footageAsset); }}
+        >
+          <span className={styles.tabLabel}>Footage {footageAsset ? `(${footageAsset.name})` : '(none)'}</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!!isolatedId}
+          className={cn(styles.tab, isolatedId && styles.tabActive)}
+          disabled={!isolatedId && !singleSelectedLayer}
+          title={
+            isolatedId
+              ? `Layer: ${layerTabName ?? ''} — click to exit isolation`
+              : singleSelectedLayer
+                ? `Isolate “${layerTabName ?? ''}” (everything else ghosts)`
+                : 'Layer (none) — select one layer to isolate it'
+          }
+          onClick={() => {
+            if (isolatedId) { useFocusStore.getState().exitOne(); return; }
+            if (singleSelectedLayer) {
+              activate(SCENE_TAB_ID);
+              useFocusStore.getState().isolate(singleSelectedLayer);
+            }
+          }}
+        >
+          <span className={styles.tabLabel}>Layer {layerTabName ? `(${layerTabName})` : '(none)'}</span>
         </button>
 
         {tabs.map((tab) => (
@@ -123,8 +199,6 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
             <Icon name="plugin" size="sm" />
             <span className={styles.tabLabel}>{tab.title}</span>
             <span
-              // A span, not a nested <button>: a button inside a button is
-              // invalid markup and browsers resolve it inconsistently.
               role="button"
               tabIndex={-1}
               aria-label={`Close ${tab.title}`}
@@ -136,18 +210,62 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
           </button>
         ))}
 
-        {tabs.length > 0 && (
+        <div className={styles.panelActions}>
+          {/* View lock — the workspace's fixed/free camera mode. Fixed frames
+              and centres the comp and disables panning; free is the infinite
+              canvas. The button reflects the live mode. */}
           <button
             type="button"
-            className={styles.overflow}
-            aria-haspopup="menu"
-            aria-expanded={overflowOpen}
-            onClick={() => setOverflowOpen((v) => !v)}
-            title="All open tabs"
+            className={styles.panelActionBtn}
+            title={viewMode === 'fixed' ? 'View locked (comp framed & centred) — click to unlock' : 'Lock view — frame the comp and disable panning'}
+            aria-label="Lock view"
+            aria-pressed={viewMode === 'fixed'}
+            style={viewMode === 'fixed' ? { color: 'var(--color-primary, #4c8dff)' } : undefined}
+            onClick={() => useWorkspaceViewStore.getState().toggleMode()}
           >
-            <Icon name="chevron-down" size="sm" />
+            <Icon name="lock" size="sm" />
           </button>
-        )}
+          <button
+            type="button"
+            className={styles.panelActionBtn}
+            title="Composition panel menu"
+            aria-label="Composition panel menu"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              openContextMenu(r.left, r.bottom + 4, [
+                { id: 'new-comp', label: 'New Composition…', onSelect: () => openNewCompositionDialog() },
+                { id: 'settings', label: 'Composition Settings…', onSelect: () => openCompositionSettings() },
+                { id: 'sep', separator: true },
+                {
+                  id: 'fit',
+                  label: 'Fit Composition in View',
+                  onSelect: () => {
+                    try { getWorkspaceController().fitComposition(); getWorkspaceController().requestRender(); } catch { /* engine not ready */ }
+                  },
+                },
+                {
+                  id: 'view-lock',
+                  label: viewMode === 'fixed' ? 'Unlock View' : 'Lock View',
+                  onSelect: () => useWorkspaceViewStore.getState().toggleMode(),
+                },
+              ]);
+            }}
+          >
+            <Icon name="menu" size="sm" />
+          </button>
+          {tabs.length > 0 && (
+            <button
+              type="button"
+              className={styles.overflow}
+              aria-haspopup="menu"
+              aria-expanded={overflowOpen}
+              onClick={() => setOverflowOpen((v) => !v)}
+              title="All open tabs"
+            >
+              <Icon name="chevron-down" size="sm" />
+            </button>
+          )}
+        </div>
       </div>
 
       {overflowOpen && (

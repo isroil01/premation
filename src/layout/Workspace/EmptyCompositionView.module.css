@@ -39,40 +39,35 @@
   justify-content: center;
   gap: 20px;
   padding: 32px 24px 28px;
-  background: #1b1b1e;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* The sidebar panels' own surface, per request — the cards read as part of
+     the app's chrome, not floating chips. Flat AE look: no border, no shadow,
+     no motion on hover; the state changes are background and text only. */
+  background: var(--color-panel);
+  border: none;
   border-radius: 8px;
   color: #c4c4cc;
   text-align: center;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
   transition:
-    background 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1),
-    color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    background 0.15s ease,
+    color 0.15s ease;
   outline: none;
   user-select: none;
 }
 
 .card:hover {
-  background: #242429;
-  border-color: var(--color-primary, #4c8dff);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(76, 141, 255, 0.3);
+  background: var(--color-surface-2);
   color: #ffffff;
 }
 
 .card:focus-visible {
-  border-color: var(--color-primary, #4c8dff);
-  box-shadow: 0 0 0 2px var(--color-primary, #4c8dff);
+  /* Keyboard focus still has to be visible without the border coming back. */
+  outline: 2px solid var(--color-primary, #4c8dff);
+  outline-offset: 2px;
 }
 
 .cardDragOver {
-  background: #232a3b !important;
-  border-color: var(--color-primary, #4c8dff) !important;
-  transform: scale(1.02);
-  box-shadow: 0 0 24px rgba(76, 141, 255, 0.4) !important;
+  background: var(--color-surface-2) !important;
+  color: #ffffff;
 }
 
 .iconContainer {
