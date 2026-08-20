@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
 import { cn } from '@utils/cn';
-import { useActiveWorkspace, useWorkspaceStore } from '@stores/projectStore';
+import { useActiveWorkspace, useWorkspaceStore, useProjectStore } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
@@ -40,7 +40,7 @@ import {
   setNodeWorldPosition,
 } from '@core/scene/sceneInsert';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { readNodeKind, flattenComposition } from '@core/scene/sceneDerive';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { EmptyCompositionView } from './EmptyCompositionView';
 import { insertCursorItem } from '@core/library/cursorLibrary';
@@ -137,14 +137,27 @@ export function WorkspaceViewport({
 }: WorkspaceViewportProps): JSX.Element {
   const time     = useActiveWorkspace()?.time ?? 0;
   const sceneRev = useSceneRevision((s) => s.rev);
-  // The blank-comp moment — AE's two ways in, said out loud. Recomputed per
-  // scene revision; disappears the instant anything exists.
+  // The blank-comp moment — AE's two ways in, said out loud.
+  //
+  // Scoped to the ACTIVE composition, not the whole scene graph: this used to
+  // traverse every comp, so content in ANY composition hid the cards for an
+  // empty one, and an empty comp kept them hidden while a sibling had layers
+  // — exactly backwards once a project holds more than one comp. No active
+  // comp at all (its tab deleted, none opened) is ALSO the empty state, which
+  // is AE's behaviour when every viewer is closed. Fresh unsaved projects park
+  // layers under the virtual comp_root with no active tab, so that case falls
+  // back to the whole-graph scan rather than showing cards over live content.
+  const activeCompId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
   const sceneIsEmpty = useMemo(() => {
+    if (activeCompId && defaultSceneGraph.getNode(activeCompId)) {
+      return !flattenComposition(defaultSceneGraph, activeCompId)
+        .some((n) => readNodeKind(n) !== 'group');
+    }
     let hasContent = false;
     defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
     return !hasContent;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
-  }, [sceneRev]);
+  }, [sceneRev, activeCompId]);
   // Tools that CREATE content dismiss the empty-comp surface: reaching for
   // the pen or a shape is the third way to start, and the surface must not
   // stand between the tool and the canvas. Navigation/selection tools keep it

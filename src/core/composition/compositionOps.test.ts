@@ -230,6 +230,19 @@ describe('deleteComposition', () => {
     expect(defaultSceneGraph.getNode('keep')).toBeDefined();
   });
 
+  it('takes the layers\' animation with it — no orphan tracks in the document', () => {
+    const id = createComposition({ name: 'Second' });
+    addLayer('animated_gone', id);
+    defaultAnimation.setKeyframe('animated_gone', 'x', 0, 42);
+    defaultAnimation.setKeyframe(id, 'timeRemap', 0, 0); // comp-level track on the root
+
+    deleteComposition(id);
+
+    // clearNode drops the whole node entry; tracksFor of a cleared node is [].
+    expect(defaultAnimation.tracksFor('animated_gone')).toHaveLength(0);
+    expect(defaultAnimation.tracksFor(id)).toHaveLength(0);
+  });
+
   it('refuses to delete the last composition', () => {
     // A project with no comp has nowhere to put a layer.
     expect(deleteComposition('comp_root')).toBe(false);

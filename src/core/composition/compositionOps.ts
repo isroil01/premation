@@ -142,6 +142,14 @@ export function deleteComposition(id: string): boolean {
   for (const tab of Object.values(state.tabs)) {
     if (tab.compositionId === id) state.actions.closeTab(tab.id);
   }
+  // Animation goes with the comp — gathered BEFORE removeNode takes the
+  // subtree, and including the root itself (comp-level tracks like timeRemap
+  // live there). Undo restores it: History snapshots scene + animation
+  // together. Without this every deleted comp left its whole cast's tracks
+  // orphaned in the document forever.
+  for (const node of flattenComposition(defaultSceneGraph, id)) {
+    defaultAnimation.clearNode(node.id);
+  }
   defaultSceneGraph.removeNode(id);
   state.actions.removeComp(id);
 

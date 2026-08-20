@@ -361,8 +361,14 @@ export function DashboardPage(): JSX.Element {
     setCreating(true);
     try {
       clearRecovery();
+      // The comp id MUST be the scene root's id ('comp_root' — see
+      // projectDocumentIO's ROOT_COMP_ID contract). This used to mint
+      // `comp_${Date.now()}` against a 'comp_root' scene, so every new project
+      // opened on a composition whose scene node did not exist: layers landed
+      // under the real root while the Project panel's composition showed
+      // empty — footage apparently floating outside any comp.
       const initialComp: CompositionSettings = {
-        id: `comp_${Date.now()}`,
+        id: 'comp_root',
         name: title,
         width,
         height,
@@ -375,11 +381,14 @@ export function DashboardPage(): JSX.Element {
       useCompositionStore.setState(initialComp);
       getTimelineController().setFrameRate(fps);
       getTimelineController().setDurationSeconds(durationSeconds);
+      const scene = sceneProjectIO.createEmpty(title);
+      // The scene root carries the name the panels show (see renameComposition).
+      if (scene.nodes[0]) scene.nodes[0].name = title;
       const initialDoc: EditorDocument = {
-        version: '1.0.0',
-        scene: sceneProjectIO.createEmpty(title),
+        version: '1.1.0',
+        scene,
         animation: { tracks: {}, expressions: {} },
-        comp: initialComp,
+        comps: { comp_root: initialComp },
       };
       const p = await create(title, initialDoc);
       if (!p?.id) throw new Error('Failed to create project.');
@@ -424,8 +433,10 @@ export function DashboardPage(): JSX.Element {
       const height = clampDimension(setupHeight);
       const fps = clampFps(setupFps);
       const durationSeconds = clampDuration(setupDuration);
+      // Same ROOT_COMP_ID contract as the quick-create path above: the comp id
+      // and the scene root id must agree, or the project opens on a phantom.
       const initialComp: CompositionSettings = {
-        id: `comp_${Date.now()}`,
+        id: 'comp_root',
         name: compName,
         width,
         height,
@@ -435,11 +446,13 @@ export function DashboardPage(): JSX.Element {
         transparent: setupTransparent,
         startFrame: 0,
       };
+      const scene = sceneProjectIO.createEmpty(compName);
+      if (scene.nodes[0]) scene.nodes[0].name = compName;
       const initialDoc: EditorDocument = {
-        version: '1.0.0',
-        scene: sceneProjectIO.createEmpty(compName),
+        version: '1.1.0',
+        scene,
         animation: { tracks: {}, expressions: {} },
-        comp: initialComp,
+        comps: { comp_root: initialComp },
       };
       const p = await create(compName, initialDoc);
       if (!p?.id) throw new Error('The server did not return a project id.');
