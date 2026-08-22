@@ -40,7 +40,7 @@ const CENTER = { x: 240, y: 180 };
 /** Camera shared by every scene here, matching the rest of the 3D family. */
 const CAM = { z: -1000, focalLength: 1000 };
 
-function scene(id: string, description: string, build: Scene['build']): Scene {
+function scene(id: string, description: string, build: Scene['build'], tolerance?: number): Scene {
   return defineScene({
     id,
     description,
@@ -53,6 +53,7 @@ function scene(id: string, description: string, build: Scene['build']): Scene {
     // EffectDef.gpuOnly's note), and the subject is a depth-tested 3D solid
     // — the one thing the deleted backend never drew. GPU is the reference.
     oracle: 'gpu',
+    ...(tolerance !== undefined ? { tolerance } : {}),
     build,
   });
 }
@@ -213,9 +214,12 @@ function sliceDensityScenes(): Scene[] {
     }));
     graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: CAM }));
   };
+  // Raised tolerance: many thin slice plates × depth-tested AA puts ~1–2% of pixels
+  // on glyph fringe rows, and those rows wobble between SwiftShader builds/OSes.
+  const sliceTol = 0.025;
   return [
-    scene('ext-text-depth-40', 'Extruded text at depth 40 — the shallow control, always solid.', build(40)),
-    scene('ext-text-depth-300', 'Extruded text at depth 300 — must be as solid as the shallow control, not combed.', build(300)),
+    scene('ext-text-depth-40', 'Extruded text at depth 40 — the shallow control, always solid.', build(40), sliceTol),
+    scene('ext-text-depth-300', 'Extruded text at depth 300 — must be as solid as the shallow control, not combed.', build(300), sliceTol),
   ];
 }
 
