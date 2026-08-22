@@ -255,7 +255,11 @@ export async function psdLayerToPngFile(layer: PsdLayer, docName: string): Promi
   canvas.height = layer.height;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('PSD: no 2d context');
-  ctx.putImageData(new ImageData(layer.rgba, layer.width, layer.height), 0, 0);
+  ctx.putImageData(
+    new ImageData(new Uint8ClampedArray(layer.rgba), layer.width, layer.height),
+    0,
+    0,
+  );
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PSD: PNG encode failed'))), 'image/png');
   });

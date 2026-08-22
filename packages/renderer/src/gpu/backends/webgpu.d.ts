@@ -16,6 +16,7 @@ interface GPUBuffer {
   unmap(): void;
 }
 interface GPUTexture {
+  readonly format: string;
   createView(desc?: Record<string, unknown>): GPUTextureView;
   destroy(): void;
 }

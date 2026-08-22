@@ -394,7 +394,7 @@ function registerRenderIpc(): void {
       proc.on('error', () => resolve(null));
       proc.on('close', () => resolve(text || null));
     });
-    libx265Available = !!out && /\bV[\.F]{3,}.*\blibx265\b|\blibx265\b/.test(out);
+    libx265Available = !!out && /\bV[.F]{3,}.*\blibx265\b|\blibx265\b/.test(out);
     return libx265Available;
   };
 

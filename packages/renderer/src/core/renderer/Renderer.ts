@@ -7,6 +7,7 @@
  */
 
 import type { RenderBackend, RenderSurface } from '../../gpu/RenderBackend';
+import type { TextureFormat } from '../../gpu/types';
 import { ResourceManager, type ResourceManagerOptions, type ResourceManagerStats } from '../../gpu/ResourceManager';
 import type { RenderTargetHandle } from '../../gpu/types';
 import { ShaderRegistry } from '../../shaders/ShaderRegistry';

@@ -101,7 +101,7 @@ describe('effect parameters', () => {
 
 describe('layer styles', () => {
   it('reads through the binding, in the units the track holds', () => {
-    setLayerStyles('a', { dropShadow: { color: '#000', opacity: 0.5, distance: 8, angle: 135, blur: 4 } });
+    setLayerStyles('a', { dropShadow: { enabled: true, color: '#000', opacity: 0.5, distance: 8, angle: 135, blur: 4 } });
     // `distance` maps 1:1...
     expect(readStaticPropertyValue('a', effectPropPath('layerstyle:dropShadow', 'distance'))).toBe(8);
     // ...and the 0..1 opacity is carried as the effect's 0..100 percentage.
@@ -109,7 +109,7 @@ describe('layer styles', () => {
   });
 
   it('writes back in the style\'s own units', () => {
-    setLayerStyles('a', { dropShadow: { color: '#000', opacity: 0.5, distance: 8, angle: 135, blur: 4 } });
+    setLayerStyles('a', { dropShadow: { enabled: true, color: '#000', opacity: 0.5, distance: 8, angle: 135, blur: 4 } });
     expect(writeStaticPropertyValue('a', effectPropPath('layerstyle:dropShadow', 'opacity'), 25)).toBe(true);
     expect(readStaticPropertyValue('a', effectPropPath('layerstyle:dropShadow', 'opacity'))).toBe(25);
   });

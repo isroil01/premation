@@ -1203,7 +1203,7 @@ export class AppTextureProvider implements TextureProvider {
       }
     }
     if (bw !== w || bh !== h) {
-      const canvas = this.ensureCanvas(`vplay:${key}`, bw, bh);
+      const canvas = this.ensureCanvas('work', bw, bh);
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.imageSmoothingEnabled = true;

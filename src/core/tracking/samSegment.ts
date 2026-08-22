@@ -115,7 +115,7 @@ function classicalSegment(req: SamSegmentRequest): SamSegmentResult {
     fgSeeds.push({ x: w / 2, y: h / 2, tolerance: 40 });
   }
 
-  let mask = grabCutMatte(rgba, w, h, fgSeeds, {
+  const mask = grabCutMatte(rgba, w, h, fgSeeds, {
     unknownRadius: 10,
     iterations: 6,
     featherPx: 0,

@@ -69,7 +69,7 @@ rediscovered in git history and believed a second time.
 | Light types | 4 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
-| Export formats | 11 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
+| Export formats | 17 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
 | Stores | 45 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 

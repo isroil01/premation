@@ -53,7 +53,7 @@ export function floatToHalf(f: number): number {
   if (a < 2 ** -24) return sign; // underflow to zero
   if (a < 2 ** -14) return sign | Math.round(a * 2 ** 24); // subnormal
   const exp = Math.floor(Math.log2(a));
-  let frac = a / 2 ** exp - 1;
+  const frac = a / 2 ** exp - 1;
   let e = exp + 15;
   let m = Math.round(frac * 1024);
   if (m === 1024) { m = 0; e += 1; }
@@ -164,7 +164,7 @@ export async function decodeExr(buf: ArrayBuffer): Promise<ExrImage> {
   if (version & 0x800) throw new Error('Deep EXR is not supported.');
   if (version & 0x1000) throw new Error('Multi-part EXR is not supported — export a single part.');
 
-  let channels: ChannelSpec[] = [];
+  const channels: ChannelSpec[] = [];
   let compression = -1;
   let dataWindow: { xMin: number; yMin: number; xMax: number; yMax: number } | null = null;
   let lineOrder = 0;

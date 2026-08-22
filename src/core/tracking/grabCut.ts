@@ -131,8 +131,8 @@ export function grabCutMatte(
 
   let out = new Uint8Array(labels.length);
   for (let i = 0; i < labels.length; i++) out[i] = labels[i] === 2 ? 255 : 0;
-  out = morphOpen(out, width, height, 1);
-  out = morphClose(out, width, height, 1);
+  out = new Uint8Array(morphOpen(out, width, height, 1));
+  out = new Uint8Array(morphClose(out, width, height, 1));
   if ((opts.featherPx ?? 0) > 0) {
     return refineRotoMatte(rgba, out, width, height, {
       morphRadius: 1,

@@ -77,7 +77,7 @@ describe('the tree exists before anything is animated', () => {
   });
 
   it('lists a layer style the same way, under its own group', () => {
-    setLayerStyles('a', { dropShadow: { color: '#000', opacity: 0.5, distance: 8, angle: 135, blur: 4 } });
+    setLayerStyles('a', { dropShadow: { enabled: true, color: '#000', opacity: 0.5, distance: 8, angle: 135, blur: 4 } });
     const rows = buildStaticPropertyTree('a').filter((r) => r.group === 'styles');
     const paths = rows.flatMap((r) => r.members);
     expect(paths).toEqual(expect.arrayContaining([effectPropPath('layerstyle:dropShadow', 'distance')]));
