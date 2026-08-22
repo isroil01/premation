@@ -20,6 +20,9 @@ const bridge = {
   file: {
     read: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
     write: (filePath: string, contents: string) => ipcRenderer.invoke('file:write', filePath, contents),
+    readBytes: (filePath: string) => ipcRenderer.invoke('file:readBytes', filePath),
+    writeBytes: (filePath: string, bytes: Uint8Array) =>
+      ipcRenderer.invoke('file:writeBytes', filePath, bytes),
   },
 
   bundle: {
@@ -81,6 +84,11 @@ const bridge = {
     addRecovery: (row: unknown) => ipcRenderer.invoke('index:addRecovery', row),
     listRecovery: (projectId: string) => ipcRenderer.invoke('index:listRecovery', projectId),
     clearRecovery: (projectId: string) => ipcRenderer.invoke('index:clearRecovery', projectId),
+  },
+
+  thumbs: {
+    write: (hash: string, bytes: Uint8Array) => ipcRenderer.invoke('thumb:write', hash, bytes),
+    read: (hash: string) => ipcRenderer.invoke('thumb:read', hash),
   },
 
   popout: {

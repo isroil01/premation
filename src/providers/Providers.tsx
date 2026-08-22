@@ -21,12 +21,13 @@ import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { cutSelection, copySelection, pasteSelection, hasClipboardContent } from '@core/commands/clipboard';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { buildSaaSAd } from '@core/scene/seedSaaSAd';
-import { buildComplexShowcase } from '@core/scene/seedComplexShowcase';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
 import { openProjectPath } from '@core/project/openProjectPath';
+import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectIO';
+import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
+import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
@@ -74,8 +75,8 @@ import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
+import { loadBlockTower } from '@core/scene/seedBlockTower';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
-import { seedDemoAnimation } from '@core/animation/seedDemoAnimation';
 import { resolveLayerRef, defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
@@ -92,7 +93,7 @@ import {
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioPlaybackBridge } from '@core/audio/useAudioPlayback';
@@ -110,6 +111,7 @@ import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
+import { deleteComposition } from '@core/composition/compositionOps';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -117,6 +119,51 @@ interface ProvidersProps {
 
 function notify(message: string, level: 'info' | 'success' | 'warning' | 'error' = 'info'): void {
   useUIStore.getState().notify({ level, message, durationMs: 2600 });
+}
+
+/**
+ * Save As, in a browser that cannot show a save dialog.
+ *
+ * `BrowserFileAdapter.chooseSavePath` has no picker outside Chromium, and used
+ * to answer with the suggested filename anyway — so Save As wrote into the
+ * localStorage virtual FS, under a destination the user never chose, with no
+ * window of any kind. That is the "Save As does nothing" report.
+ *
+ * `saveToComputer` always reaches somewhere real (File System Access picker →
+ * Electron dialog → download) and writes the portable `.motion` package rather
+ * than a bare serialized blob, so it is also the better artifact.
+ */
+async function saveAsPortableFile(name: string): Promise<boolean> {
+  const result = await saveToComputer(name);
+  if (result.status === 'cancelled') {
+    notify('Save cancelled', 'info');
+    return false;
+  }
+  if (result.status === 'failed') {
+    notify(result.error ?? 'Could not save the project', 'error');
+    return false;
+  }
+  // The document is now on disk, so the unsaved indicator must clear exactly as
+  // it does for the other save paths.
+  afterProjectSaved();
+  notify(`Saved “${name}.motion” to your computer`, 'success');
+  return true;
+}
+
+/**
+ * True when plain `Save` has nowhere to route a never-saved document.
+ *
+ * `pm.save()` with no path delegates to `pm.saveAs()`, which asks the adapter
+ * for a destination. In a browser with no File System Access API that request
+ * now answers `null` (it used to invent a filename), so Ctrl+S on a scratch
+ * document would report "cancelled" and write nothing.
+ *
+ * Deliberately NOT `!== 'electron'`: the cloud adapter does have a destination
+ * for a pathless document — it creates a backend project — and in the cloud
+ * editor that is what Ctrl+S should do. Only the browser is stuck.
+ */
+function needsPortableSaveFallback(): boolean {
+  return getFileManager().environment === 'browser';
 }
 
 /**
@@ -468,7 +515,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
        * independently and leaving the batch as mixed as it started.
        */
       id: asCommandId('layer.toggleGuide'),
-      label: 'Guide Layer (exclude from render)',
+      label: 'Guide Layer (omit from export)',
       icon: 'eye-off',
       enabled: () => useSelectionStore.getState().ids.length > 0,
       execute: () => {
@@ -476,11 +523,15 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (ids.length === 0) return;
         const next = !isGuideLayer(ids[0]!);
         for (const id of ids) setGuideLayer(id, next);
-        const plural = ids.length > 1 ? 's' : '';
+        const plural = ids.length > 1;
         notify(
           next
-            ? `Guide layer${plural} — hidden from render and export`
-            : `No longer a guide layer${plural}`,
+            ? plural
+              ? 'Guide layers — visible while editing, omitted from export'
+              : 'Guide layer — visible while editing, omitted from export'
+            : plural
+              ? 'No longer guide layers'
+              : 'No longer a guide layer',
           'success',
         );
       },
@@ -825,36 +876,6 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
   ];
 }
 
-function buildExampleCommands(): ReadonlyArray<Command> {
-  const load = (label: string, build: () => void) => async (): Promise<void> => {
-    const dirty = useProjectStore.getState().activeTabId
-      ? useProjectStore.getState().tabs[useProjectStore.getState().activeTabId!]?.dirty
-      : false;
-    if (dirty && !await customConfirm('Load Example', `Load "${label}"? This replaces the current scene and your unsaved changes will be lost.`, { isDanger: true, confirmLabel: 'Load' })) {
-      return;
-    }
-    build();
-    getTimelineController().syncFromScene();
-    bumpScene();
-    notify(`Loaded ${label}`, 'success');
-  };
-
-  return [
-    {
-      id: asCommandId('scene.loadSaaSAd'),
-      label: 'Load: Nova AI — SaaS Ad',
-      enabled: () => true,
-      execute: load('Nova AI — SaaS Ad', () => { buildSaaSAd(); }),
-    },
-    {
-      id: asCommandId('scene.loadShowcase'),
-      label: 'Load: Complex Showcase',
-      enabled: () => true,
-      execute: load('Complex Showcase', () => { buildComplexShowcase(); }),
-    },
-  ];
-}
-
 function buildProjectCommands(): ReadonlyArray<Command> {
   return [
     // "New Composition…" was removed — compositions are created from the
@@ -870,12 +891,105 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => openNewCompositionDialog(),
     },
     {
+      id: asCommandId('comp.multicam'),
+      label: 'New Multicam from Library…',
+      icon: 'layers',
+      enabled: () => useAssetStore.getState().assets.filter((a) => a.type === 'video' || a.type === 'image').length >= 2,
+      execute: async () => {
+        const vids = useAssetStore.getState().assets.filter((a) => a.type === 'video' || a.type === 'image');
+        if (vids.length < 2) return;
+        const { createMulticamComposition } = await import('@core/composition/multicam');
+        try {
+          await createMulticamComposition(vids.slice(0, Math.min(8, vids.length)));
+        } catch (e) {
+          console.error(e);
+        }
+      },
+    },
+    ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => ({
+      id: asCommandId(`comp.multicamAngle${n}`),
+      label: `Multicam Cut → Angle ${n}`,
+      shortcut: { key: String(n), alt: true },
+      enabled: () => true,
+      execute: async () => {
+        const { switchMulticamAngle } = await import('@core/composition/multicam');
+        switchMulticamAngle(n);
+      },
+    })),
+    {
+      id: asCommandId('comp.multicamViewer'),
+      label: 'Multicam Viewer…',
+      icon: 'layers',
+      enabled: () => true,
+      execute: async () => {
+        const { openMulticamViewer } = await import('@layout/Multicam/MulticamViewer');
+        openMulticamViewer();
+      },
+    },
+    {
+      id: asCommandId('comp.multicamSync'),
+      label: 'Sync Multicam by Audio',
+      icon: 'audio',
+      enabled: () => true,
+      execute: async () => {
+        const { alignMulticamByAudio } = await import('@core/composition/multicam');
+        const report = await alignMulticamByAudio();
+        useUIStore.getState().notify({
+          level: report.shifted > 0 ? 'success' : 'info',
+          message: report.note,
+          durationMs: 5000,
+        });
+      },
+    },
+    {
       id: asCommandId('comp.settings'),
       label: 'Composition Settings…',
       shortcut: { key: 'k', meta: true },
       enabled: () => true,
       execute: () => {
         openCompositionSettings();
+      },
+    },
+    {
+      // AE: select a composition in the Project panel and press Delete.
+      // Menu home for the same op when the Assets bin isn't focused.
+      id: asCommandId('comp.delete'),
+      label: 'Delete Composition',
+      icon: 'trash',
+      enabled: () => {
+        const st = useProjectStore.getState();
+        const tabId = st.activeTabId;
+        if (!tabId) return false;
+        const compId = st.tabs[tabId]?.compositionId;
+        if (!compId) return false;
+        const comp = st.comps[compId];
+        return Boolean(comp && !comp.pristine);
+      },
+      execute: async () => {
+        const st = useProjectStore.getState();
+        const tabId = st.activeTabId;
+        if (!tabId) return;
+        const compId = st.tabs[tabId]?.compositionId;
+        if (!compId) return;
+        const comp = st.comps[compId];
+        if (!comp || comp.pristine) return;
+        const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+        const warn = layers > 0
+          ? `Delete “${comp.name}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+          : `Delete “${comp.name}”?`;
+        if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+          deleteComposition(compId);
+        }
+      },
+    },
+    {
+      id: asCommandId('scene.loadBlockTower'),
+      label: 'Load: Block Tower',
+      description: 'Shapes hop, stack into a tower, then burst into pieces.',
+      icon: 'component',
+      enabled: () => true,
+      execute: async () => {
+        if (await loadBlockTower()) notify('Loaded Block Tower', 'success');
       },
     },
     {
@@ -1160,9 +1274,6 @@ function buildProjectCommands(): ReadonlyArray<Command> {
             notify('Open cancelled', 'info');
             return;
           }
-          // Shared with the start screen's recent list — see openProjectPath,
-          // which also re-baselines undo so the first Ctrl+Z after an open
-          // cannot step back into the previous document.
           const opened = await openProjectPath(dir);
           if (opened) {
             notify(`Opened “${opened.name}”`, 'success');
@@ -1171,20 +1282,22 @@ function buildProjectCommands(): ReadonlyArray<Command> {
           }
           return;
         }
-        // Cloud projects have no file picker — send the user to the dashboard,
-        // which is the real "choose a project" surface.
-        if (getFileManager().environment === 'api') {
-          notify('Choose a project from your dashboard', 'info');
-          window.location.hash = '#/';
+        // Packed `.motion` zip (browser + cloud edition). Cloud projects stay
+        // on the dashboard; this is File → Open Project for a local file.
+        const opened = await openLocalMotionFile();
+        if (opened.status === 'cancelled') {
+          notify('Open cancelled', 'info');
           return;
         }
-        const ref = await getProjectManager().open();
-        if (ref) {
-          bumpScene();
-          notify(`Opened “${ref.name}”`, 'success');
-        } else {
-          notify('Open cancelled', 'info');
+        if (opened.status === 'failed') {
+          notify(opened.error ?? 'Could not open that project', 'error');
+          return;
         }
+        notify(`Opened “${opened.name}”`, 'success');
+        // Same per-project reset the cloud loader does: the Footage tab must
+        // not carry the previous project's last-previewed clip name.
+        clearLastFootagePreview();
+        if (opened.missing.length) offerRelink(opened.missing);
       },
     },
     {
@@ -1196,8 +1309,16 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         // A document with no destination yet routes to Save As inside the
         // manager, so this covers the "no project open" case too — which used
         // to bail out and report success without writing anything.
-        const before = getProjectManager().getState().current?.path ?? null;
-        reportSave(await getProjectManager().save(), { forkedFrom: before });
+        const pm = getProjectManager();
+        const before = pm.getState().current?.path ?? null;
+        // ...and in a browser with no picker, that internal Save As has nowhere
+        // to route to, so Ctrl+S on a never-saved document would just report
+        // "cancelled". Take the portable-file path instead.
+        if (!before && needsPortableSaveFallback()) {
+          await saveAsPortableFile(pm.getState().current?.name ?? 'Untitled');
+          return;
+        }
+        reportSave(await pm.save(), { forkedFrom: before });
       },
     },
     {
@@ -1205,29 +1326,80 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       label: 'Save As…',
       shortcut: { key: 's', meta: true, shift: true },
       enabled: () => true,
+      /**
+       * Save As means ONE thing in every build: a save dialog, and a file
+       * wherever on this machine the user points it.
+       *
+       * It used to mean three. On desktop it opened a native dialog; in a
+       * browser without the File System Access API it opened nothing and wrote
+       * to a localStorage virtual FS; and in the cloud editor it opened nothing
+       * and forked a project on the SERVER — so the one build most people use
+       * had a Save As that could not put a file on their laptop at all. That
+       * is not a variant of Save As, it is a different command, and it has its
+       * own entry now (Save Copy to Cloud…).
+       *
+       * Desktop still routes through `pm.saveAs`, which is already a native
+       * dialog AND writes the local-first `.motion` bundle that Sync Project
+       * reconciles against — sending it down the portable path would silently
+       * turn a syncable bundle into a flat archive.
+       */
       execute: async () => {
         const pm = getProjectManager();
         const before = pm.getState().current?.path ?? null;
         // The CURRENT name, not a hardcoded "Untitled" — Increment and Save
         // right below has always read it, and a Save As that proposes the
         // wrong filename is a Save As that quietly makes a second "Untitled".
-        const suggested = pm.getState().current?.name ?? 'Untitled';
-        let name = suggested;
-        // Cloud has no native save dialog at all — `chooseSavePath` silently
-        // creates a project named after whatever it is handed. Without asking,
-        // every cloud Save As produced another "Untitled" in the dashboard and
-        // the user never got a chance to name the copy.
-        if (getFileManager().environment === 'api') {
-          const entered = await customPrompt(
-            'Save As',
-            'This creates a copy of the project. What should it be called?',
-            suggested,
-            { placeholder: 'Project name', confirmLabel: 'Save copy' },
-          );
-          if (!entered?.trim()) { notify('Save cancelled', 'info'); return; }
-          name = entered.trim();
+        const name = pm.getState().current?.name ?? 'Untitled';
+        if (getFileManager().environment === 'electron') {
+          reportSave(await pm.saveAs(name), { forkedFrom: before });
+          return;
         }
-        reportSave(await pm.saveAs(name), { forkedFrom: before });
+        await saveAsPortableFile(name);
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.SaveCopyToCloud),
+      label: 'Save Copy to Cloud…',
+      /**
+       * What Save As used to do in the cloud editor: fork the project on the
+       * server. Kept, because forking a cloud project is a real thing to want —
+       * it just is not what "Save As" says, and it was the reason Save As
+       * could not write a file.
+       */
+      enabled: () => getFileManager().environment === 'api',
+      execute: async () => {
+        const pm = getProjectManager();
+        const before = pm.getState().current?.path ?? null;
+        const entered = await customPrompt(
+          'Save Copy to Cloud',
+          'This creates a copy of the project in your cloud workspace. What should it be called?',
+          pm.getState().current?.name ?? 'Untitled',
+          { placeholder: 'Project name', confirmLabel: 'Save copy' },
+        );
+        if (!entered?.trim()) { notify('Save cancelled', 'info'); return; }
+        reportSave(await pm.saveAs(entered.trim()), { forkedFrom: before });
+      },
+    },
+    {
+      id: asCommandId(ProjectCommands.SaveToComputer),
+      // Named for what distinguishes it from Save As on the desktop: a single
+      // portable `.motion` archive with assets embedded, rather than the
+      // local-first directory bundle. "Save to Computer" said nothing, now that
+      // Save As also saves to the computer.
+      label: 'Save Portable Copy…',
+      enabled: () => true,
+      execute: async () => {
+        const name = getProjectManager().getState().current?.name ?? 'Untitled';
+        const result = await saveToComputer(name);
+        if (result.status === 'cancelled') {
+          notify('Save cancelled', 'info');
+          return;
+        }
+        if (result.status === 'failed') {
+          notify(result.error ?? 'Could not save to computer', 'error');
+          return;
+        }
+        notify(`Saved “${name}.motion” to your computer`, 'success');
       },
     },
     {
@@ -1403,8 +1575,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           enabled: () => getCommandSystem().getHistory().canRedo(),
           execute: () => performRedo(),
         });
-
-        for (const cmd of buildExampleCommands()) registry.register(cmd);
 
         getShortcutManager().rehydrateFromRegistry();
 
@@ -1792,20 +1962,16 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             },
           });
           registry.register({
-            // AE's Project panel: the list of compositions.
-            id: asCommandId('view.project'), label: 'Project', icon: 'folder',
-            enabled: () => true,
-            execute: () => useLayoutStore.getState().openPanel('project'),
-          });
-          registry.register({
-            // Targets the 'effects' panel registered in App.tsx. This used to
-            // open 'effectControls', an id that is never registered — and both
-            // openPanel and togglePanel bail on an unknown id, so the menu item
-            // and F3 silently did nothing.
-            id: asCommandId('view.effectControls'), label: 'Effect Controls', icon: 'keyframe',
+            // The left-sidebar Effect Controls panel — applied effects for the
+            // selected layer. Used to target 'effects' (the right-sidebar
+            // library) because 'effectControls' was never registered; F3 and
+            // the Window menu therefore opened the browser you add FROM, not
+            // the stack you edit. Both ids exist now, and this one is the
+            // AE shortcut's actual job.
+            id: asCommandId('view.effectControls'), label: 'Effect Controls', icon: 'stopwatch',
             shortcut: { key: 'F3' },
             enabled: () => true,
-            execute: () => useLayoutStore.getState().openPanel('effects'),
+            execute: () => useLayoutStore.getState().openPanel('effectControls'),
           });
           registry.register({
             // Toggles the graph editor itself. This used to collapse the whole
@@ -1884,7 +2050,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // panel list a completely different (demo) composition.
         if (!isPopoutWindow()) {
           try { seedDefaultScene(); } catch { /* ignore */ }
-          try { seedDemoAnimation(); } catch { /* ignore */ }
         }
         try { void useAssetStore.getState().initialize(); } catch { /* ignore */ }
 

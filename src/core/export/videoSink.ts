@@ -23,7 +23,9 @@
  * refuses to finish with zero.
  */
 
-export type VideoFormat = 'mp4' | 'webm' | 'gif' | 'mov';
+import { createHdrMasteringAccumulator } from './hdrTransfer';
+
+export type VideoFormat = 'mp4' | 'webm' | 'gif' | 'mov' | 'hdr10' | 'hlg';
 
 export type ExportQuality = 'high' | 'medium' | 'draft';
 
@@ -49,6 +51,8 @@ export type VideoSinkResult =
       kind: 'file';
       ext: string;
       frames: number;
+      /** Encoder used for HDR (libx265 when available, else libx264 high10). */
+      videoCodec?: string;
       /** Ask the user where to put it. Null if they cancelled. */
       save(defaultName: string): Promise<string | null>;
       /** Drop it into an already-chosen folder without a dialog. */
@@ -56,7 +60,7 @@ export type VideoSinkResult =
       /** Discard the encoded file and its staging directory. */
       discard(): Promise<void>;
     }
-  | { kind: 'blob'; ext: string; frames: number; blob: Blob };
+  | { kind: 'blob'; ext: string; frames: number; blob: Blob; videoCodec?: string };
 
 export interface VideoSink {
   /** Encode one rendered frame. Called once per frame, in order. */
@@ -94,12 +98,16 @@ class FfmpegSink implements VideoSink {
   private jobId: string | null = null;
   private frames = 0;
   private readonly params: VideoSinkParams;
-  /** PNG staging preserves alpha; JPEG is smaller and faster for opaque output. */
+  /** PNG staging preserves alpha; JPEG is smaller and faster for opaque output.
+   *  HDR10/HLG always stage PNG so the PQ/HLG-baked signal survives. */
   private readonly frameExt: 'jpg' | 'png';
+  private readonly hdrTransfer: 'pq' | 'hlg' | null;
+  private readonly hdrStats = createHdrMasteringAccumulator(1000);
 
   constructor(params: VideoSinkParams) {
     this.params = params;
-    this.frameExt = params.transparent ? 'png' : 'jpg';
+    this.hdrTransfer = params.format === 'hdr10' ? 'pq' : params.format === 'hlg' ? 'hlg' : null;
+    this.frameExt = params.transparent || this.hdrTransfer ? 'png' : 'jpg';
   }
 
   private bridge(): NonNullable<NonNullable<Window['motionEditor']>['render']> {
@@ -120,10 +128,24 @@ class FfmpegSink implements VideoSink {
 
   async addFrame(canvas: HTMLCanvasElement, index: number): Promise<void> {
     const jobId = await this.ensureJob();
+    let frameCanvas = canvas;
+    if (this.hdrTransfer) {
+      // Measure MaxCLL/MaxFALL on display buffer (approx linear via undo-sRGB)
+      // before baking the OETF into staging PNGs.
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (ctx) {
+        try {
+          const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          this.hdrStats.accumulateLinearFrame(data, false);
+        } catch { /* tainted canvas — skip stats */ }
+      }
+      const { canvasWithHdrTransfer } = await import('./hdrTransfer');
+      frameCanvas = canvasWithHdrTransfer(canvas, this.hdrTransfer);
+    }
     const bytes =
       this.frameExt === 'png'
-        ? await canvasBytes(canvas, 'image/png')
-        : await canvasBytes(canvas, 'image/jpeg', STAGE_JPEG_QUALITY);
+        ? await canvasBytes(frameCanvas, 'image/png')
+        : await canvasBytes(frameCanvas, 'image/jpeg', STAGE_JPEG_QUALITY);
     await this.bridge().stageFrame!(jobId, index, bytes, this.frameExt);
     this.frames++;
   }
@@ -134,11 +156,17 @@ class FfmpegSink implements VideoSink {
     }
     const r = this.bridge();
     const jobId = this.jobId;
-    const { frames } = await r.encode!(jobId, {
-      format: this.params.format,
+    // Container is always mp4 for HDR presets; codec/tags differ inside ffmpeg.
+    const encodeFormat = this.params.format === 'hdr10' || this.params.format === 'hlg'
+      ? 'mp4'
+      : this.params.format;
+    const mastering = this.hdrTransfer ? this.hdrStats.finish() : undefined;
+    const { frames, videoCodec } = await r.encode!(jobId, {
+      format: encodeFormat,
       fps: this.params.fps,
       hasAudio: !!this.params.audioWav,
       quality: this.params.quality ?? 'high',
+      ...(this.hdrTransfer ? { hdr: this.hdrTransfer, hdrMastering: mastering } : {}),
     });
     // The staging dir (and the encoded file in it) outlives finish — the caller
     // still has to place the output. Whoever consumes the result is responsible
@@ -148,14 +176,14 @@ class FfmpegSink implements VideoSink {
       await r.cleanJob?.(jobId).catch(() => undefined);
     };
 
+    const ext = encodeFormat;
     return {
       kind: 'file',
-      ext: this.params.format,
+      ext,
       frames,
+      ...(videoCodec ? { videoCodec } : {}),
       save: async (defaultName: string) => {
         const saved = await r.save?.(jobId, defaultName);
-        // A cancelled dialog leaves the file staged so nothing is lost silently;
-        // it is only cleaned once the outcome is settled either way.
         await cleanup();
         return saved?.path ?? null;
       },

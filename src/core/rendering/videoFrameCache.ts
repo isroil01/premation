@@ -17,10 +17,17 @@
  * relies on (`onseeked` → `AnimationChanged` → re-render), so it introduces no
  * new asynchrony contract; it just remembers what it decoded.
  *
- * Deliberately NOT WebCodecs. A real `VideoDecoder` would give true random
- * access and exact frame boundaries, but it needs a demuxer for the container
- * (mp4box or equivalent) — a subsystem, not a change. This gets real blended
- * pixels out of the decoder the app already has.
+ * Deliberately NOT WebCodecs — CORRECTED 2026-08-19 (twice): the subsystem
+ * this paragraph said would be needed now EXISTS (`@core/video`: mp4box demux
+ * → frame index → `ExactVideoSource`), and later the same day the renderer
+ * swap LANDED: `exactVideoFrames.ts` is the render path's first choice for
+ * video pixels (see `MotionRendererBackend.feedVideoFrame`). This cache is
+ * now the FALLBACK tier, and that is a permanent role, not a leftover: the
+ * exact path only speaks WebCodecs + in-memory MP4 demux, so WebM/odd-MOV
+ * sources, files too large to demux in memory, unsupported codecs and
+ * WebCodecs-less runtimes all still render through this element-seek path.
+ * Frame blending asks this cache after the exact cache and before a raw
+ * element seek.
  *
  * FRAME RATE — RESOLVED 2026-07-30; this block used to read "KNOWN LIMIT — we
  * do not know the source's frame rate" and it is kept, corrected, because that

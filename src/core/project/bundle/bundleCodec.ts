@@ -39,6 +39,7 @@ interface TimelineChunk {
   timelines?: EditorDocument['timelines'];
   motionBlur?: EditorDocument['motionBlur'];
   guides?: EditorDocument['guides'];
+  colorManagement?: EditorDocument['colorManagement'];
 }
 
 /** Contents of `meta.json`. */
@@ -75,6 +76,7 @@ export function encodeBundle(doc: EditorDocument, hash: HashFn = hashString): Mo
     timelines: doc.timelines,
     motionBlur: doc.motionBlur,
     guides: doc.guides,
+    colorManagement: doc.colorManagement,
   };
   if (!isEmptyChunk(timeline)) chunkText[CHUNK.timeline] = serialize(timeline);
 
@@ -122,6 +124,7 @@ export function decodeBundle(files: Record<string, string>): EditorDocument {
   if (timeline.timelines) doc.timelines = timeline.timelines;
   if (timeline.motionBlur) doc.motionBlur = timeline.motionBlur;
   if (timeline.guides) doc.guides = timeline.guides;
+  if (timeline.colorManagement) doc.colorManagement = timeline.colorManagement;
   if (meta.comps) doc.comps = meta.comps;
   if (meta.comp) doc.comp = meta.comp;
   return doc;

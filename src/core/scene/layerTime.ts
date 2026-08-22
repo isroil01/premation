@@ -13,7 +13,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
 
-export type FrameBlend = 'none' | 'mix';
+export type FrameBlend = 'none' | 'mix' | 'pixelMotion';
 
 export interface LayerTime {
   /** Playback speed as a percentage of the source: 100 = normal, 200 = half
@@ -46,6 +46,10 @@ export const DEFAULT_LAYER_TIME: LayerTime = {
 export const FRAME_BLENDS: ReadonlyArray<{ value: FrameBlend; label: string }> = [
   { value: 'none', label: 'Off' },
   { value: 'mix', label: 'Frame Mix' },
+  // Optical-flow warp between the bracket frames — the smooth-slow-motion
+  // mode. Deterministic CPU flow + warp (see rendering/pixelMotionFlow.ts);
+  // costs real per-frame work, which is why it is a mode and not the default.
+  { value: 'pixelMotion', label: 'Pixel Motion' },
 ];
 
 /** True when the config leaves time unchanged (lets callers skip remapping). */
@@ -77,7 +81,7 @@ function normalize(v: unknown): LayerTime {
     reverse: o.reverse === true,
     freeze: o.freeze === true,
     freezeTime: Number.isFinite(o.freezeTime) ? (o.freezeTime as number) : 0,
-    frameBlend: o.frameBlend === 'mix' ? 'mix' : 'none',
+    frameBlend: o.frameBlend === 'mix' || o.frameBlend === 'pixelMotion' ? o.frameBlend : 'none',
   };
 }
 

@@ -19,6 +19,7 @@ import { defaultAnimation } from '@motion/animation';
 import { DEFAULT_COMP_SETTINGS } from '@stores/projectStore';
 import { DEFAULT_MOTION_BLUR_SETTINGS } from '@stores/motionBlurStore';
 import { DEFAULT_GUIDES_SETTINGS } from '@stores/guidesStore';
+import { DEFAULT_COLOR_MANAGEMENT_SETTINGS } from '@stores/colorManagementStore';
 
 /**
  * The composition id `sceneProjectIO.createEmpty` gives the root node, and the
@@ -52,9 +53,10 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
     version: '1.1.0',
     scene: sceneProjectIO.createEmpty(name),
     animation: { tracks: {}, expressions: {} },
-    comps: { [ROOT_COMP_ID]: { id: ROOT_COMP_ID, name: 'Main Comp', ...DEFAULT_COMP_SETTINGS } },
+    comps: { [ROOT_COMP_ID]: { id: ROOT_COMP_ID, name: 'Composition 1', pristine: true, ...DEFAULT_COMP_SETTINGS } },
     motionBlur: { ...DEFAULT_MOTION_BLUR_SETTINGS },
     guides: { ...DEFAULT_GUIDES_SETTINGS },
+    colorManagement: { ...DEFAULT_COLOR_MANAGEMENT_SETTINGS },
   }),
 
   capture: () => captureDocument(),

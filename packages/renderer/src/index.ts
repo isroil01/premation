@@ -45,6 +45,25 @@ export { ShaderRegistry } from './shaders/ShaderRegistry';
 export { ShaderCache } from './shaders/ShaderCache';
 export { BUILTIN_SHADERS, type ShaderSource } from './shaders/builtin';
 export {
+  LINEAR_WORKING_SPACE,
+  LINEAR_INTERMEDIATE_STORAGE,
+  HARDWARE_SRGB_UPLOADS,
+  displayReferredUploadFormat,
+  isSrgbTextureFormat,
+  needsEncodeBlit,
+  toWorkingColor,
+} from './shaders/linearWorkingSpace';
+export {
+  setActiveColorPipeline,
+  getActiveColorPipeline,
+  DEFAULT_COLOR_PIPELINE,
+  intermediateFloatFormat,
+  type ColorPipelineConfig,
+  type WorkingSpace,
+  type DisplayTransform,
+  type IntermediateBitDepth,
+} from './shaders/colorPipeline';
+export {
   MaterialSystem,
   SOLID_MATERIAL,
   TEXTURED_MATERIAL,
@@ -102,6 +121,8 @@ export {
   invertProjective,
   isConvexQuad,
   isIdentityQuad,
+  fitHomography,
+  unitQuadThrough,
   UNIT_QUAD,
   type Quad,
 } from './core/math/Homography';

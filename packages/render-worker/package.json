@@ -1,0 +1,16 @@
+{
+  "name": "@motion/render-worker",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Private POST /render service for motion-back's Automation API — renders an EditorDocument to mp4 through the editor's own offline export path.",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "build": "vite build --config vite.render.config.ts",
+    "start": "electron electron/main.cjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "smoke": "node smoke.mjs",
+    "smoke:tiktok": "node tiktok-smoke.mjs",
+    "benchmark": "node benchmark.mjs",
+    "dev": "npm run build && npm run start"
+  }
+}

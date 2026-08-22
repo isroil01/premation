@@ -6,8 +6,8 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packBend, packPerspective, packSpotlight, packArithmetic, packPluginEffect } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
+import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -391,11 +391,13 @@ export class CompositionPass extends RenderPass {
 
   /** Resolve a renderable's colour texture: frame-local precomp targets first,
    *  then the app texture provider. */
-  private texFor(ctx: RenderPassContext, key: string | undefined): { texture: TextureHandle } | null {
+  private texFor(ctx: RenderPassContext, key: string | undefined): { texture: TextureHandle; sampleLinear?: boolean } | null {
     if (!key) return null;
     const pre = this.precompTex.get(key);
-    if (pre) return { texture: pre };
-    return ctx.services.textures.get(key);
+    // Precomp RTs live in working space when LINEAR_INTERMEDIATE_STORAGE is on.
+    if (pre) return { texture: pre, sampleLinear: true };
+    const res = ctx.services.textures.get(key);
+    return res ? { texture: res.texture, sampleLinear: res.sampleLinear } : null;
   }
 
   /** Build the draw commands for one renderable (solid / textured / masked / LUT)
@@ -427,14 +429,14 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, !!tex.sampleLinear);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, opacity, blend, toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix);
-      else if (tex) emitLayerTexture(ctx, r, { texture: tex.texture, sampler: smp(), uv }, opacity, cmds, modelOverride, blendOverride);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), opacity, blend, tex.texture, smp(), lut.texture, uv, r.colorMatrix, !!tex.sampleLinear);
+      else if (tex) emitLayerTexture(ctx, r, { texture: tex.texture, sampler: smp(), uv }, opacity, cmds, modelOverride, blendOverride, !!tex.sampleLinear);
     }
     return cmds;
   }
@@ -504,6 +506,24 @@ export class CompositionPass extends RenderPass {
     let curName = pool[0];
 
     for (const effect of effects) {
+      // Skip no-op spatial passes — a zero-radius blur/glow still cost a full
+      // viewport ping-pong, and stacks of five-plus effects amplify that.
+      if (
+        (effect.type === 'blur' || effect.type === 'glow') && effect.radiusPx <= 0
+      ) continue;
+      if (effect.type === 'drop-shadow' && effect.radiusPx <= 0
+        && Math.abs(effect.offsetX) < 0.01 && Math.abs(effect.offsetY) < 0.01) continue;
+      if (effect.type === 'sharpen' && Math.abs(effect.amount) < 0.0001) continue;
+      if (effect.type === 'noise' && Math.abs(effect.amount) < 0.0001) continue;
+      // Spotlight with ambient≈1 and no intensity boost is a no-op multiply —
+      // skip the full-viewport pass (and avoid wiping an adjustment-layer scene
+      // into a cleared transparent target for nothing).
+      if (
+        effect.type === 'spotlight'
+        && effect.ambient >= 0.999
+        && Math.abs(effect.intensity) < 0.0001
+      ) continue;
+
       const free = pool.filter((n) => n !== curName);
       const f0 = free[0];
       const f1 = free[1];
@@ -538,7 +558,7 @@ export class CompositionPass extends RenderPass {
       */
       if (effect.type === 'plugin' && effect.capturesOrigin) {
         const originCmds = new CommandBuffer();
-        emitTextured(originCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+        emitTextured(originCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv, undefined, true);
         const encO = beginViewportPass(
           ctx, 'fx-origin', writeAttachment(ctx, PLUGIN_ORIGIN, Color.transparent()),
         );
@@ -618,7 +638,7 @@ export class CompositionPass extends RenderPass {
         // rPx = 0 — from the original in curName, since f1 ≠ curName).
         const compCmds = new CommandBuffer();
         if (effect.type === 'blur') {
-          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), targetUv);
+          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), targetUv, undefined, true);
         } else if (effect.type === 'glow') {
           // emitSilhouette, not emitTextured: the glow is the blurred ALPHA
           // filled with the glow colour. Tinting instead returned
@@ -639,7 +659,7 @@ export class CompositionPass extends RenderPass {
             emitSilhouette(compCmds, mvp, glowColor, 0.4, 'screen', wideTex, clampSampler(), targetUv);
           }
           emitSilhouette(compCmds, mvp, glowColor, 1, 'screen', blurredTex, clampSampler(), targetUv);
-          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv, undefined, true);
         } else {
           // The shadow copy is the whole buffer shifted. In screen space that
           // is the visible world rect translated by the offset; in layer space
@@ -663,7 +683,7 @@ export class CompositionPass extends RenderPass {
           // is the absorbing element of a multiply — every non-black shadow
           // colour was returning layerRGB × shadowRGB.
           emitSilhouette(compCmds, shadowMvp, effect.color ?? Color.fromHex('rgba(0,0,0,0.55)'), 1, 'normal', blurredTex, clampSampler(), targetUv);
-          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv);
+          emitTextured(compCmds, mvp, Color.white(), 1, 'normal', curTex, clampSampler(), targetUv, undefined, true);
         }
         const encC = beginViewportPass(ctx, 'fx-comp', writeAttachment(ctx, f1, Color.transparent()));
         services.quad.execute(encC, compCmds);
@@ -829,6 +849,189 @@ export class CompositionPass extends RenderPass {
           uniforms: packArithmetic(mvp, targetUv, effect.operator, effect.r, effect.g, effect.b, effect.clip),
           texture: curTex, sampler: clampSampler(),
         });
+      } else if (effect.type === 'vignette') {
+        cmds.add({
+          batchKey: 'vignette', material: VIGNETTE_MATERIAL, blend: 'normal',
+          uniforms: packVignetteFx(
+            mvp, targetUv,
+            effect.amount, effect.inner, effect.feather, effect.roundness,
+            effect.cx, effect.cy, effect.aspect,
+            // The LAYER's box within the chain buffer — same reason Bend/Beam
+            // resolve against it: on the 2D route the buffer is screen space.
+            fxBox,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'black-and-white') {
+        cmds.add({
+          batchKey: 'black-and-white', material: BLACK_AND_WHITE_MATERIAL, blend: 'normal',
+          uniforms: packBlackAndWhite(
+            mvp, targetUv,
+            effect.reds, effect.yellows, effect.greens, effect.cyans,
+            effect.blues, effect.magentas, effect.tintOn, effect.tintH, effect.tintS,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'tritone') {
+        cmds.add({
+          batchKey: 'tritone', material: TRITONE_MATERIAL, blend: 'normal',
+          uniforms: packTritone(
+            mvp, targetUv,
+            effect.sr, effect.sg, effect.sb, effect.blend,
+            effect.mr, effect.mg, effect.mb,
+            effect.hr, effect.hg, effect.hb,
+          ),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'photo-filter') {
+        cmds.add({
+          batchKey: 'photo-filter', material: PHOTO_FILTER_MATERIAL, blend: 'normal',
+          uniforms: packPhotoFilter(mvp, targetUv, effect.r, effect.g, effect.b, effect.density, effect.preserveLuminosity),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'threshold') {
+        cmds.add({
+          batchKey: 'threshold', material: THRESHOLD_MATERIAL, blend: 'normal',
+          uniforms: packThreshold(mvp, targetUv, effect.level),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'vibrance') {
+        cmds.add({
+          batchKey: 'vibrance', material: VIBRANCE_MATERIAL, blend: 'normal',
+          uniforms: packVibrance(mvp, targetUv, effect.vibrance, effect.saturation),
+          texture: curTex, sampler: clampSampler(),
+        });
+      // ── Round-six waves 2–3: one packer shape, per-effect param rows ──
+      } else if (effect.type === 'mirror') {
+        cmds.add({
+          batchKey: 'mirror', material: MIRROR_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.nx, effect.ny],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'offset') {
+        cmds.add({
+          batchKey: 'offset', material: OFFSET_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.tx, effect.ty, effect.keep, 0],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'bulge') {
+        cmds.add({
+          batchKey: 'bulge', material: BULGE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.amount],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'twirl') {
+        cmds.add({
+          batchKey: 'twirl', material: TWIRL_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.maxAngle],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'spherize') {
+        cmds.add({
+          batchKey: 'spherize', material: SPHERIZE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.amount],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'kaleidoscope') {
+        cmds.add({
+          batchKey: 'kaleidoscope', material: KALEIDOSCOPE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.rot, effect.srcA],
+            [effect.seg, effect.scale, effect.lw, effect.lh],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'ripple') {
+        cmds.add({
+          batchKey: 'ripple', material: RIPPLE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.amplitude],
+            [effect.frequency, effect.phase, effect.decay, effect.lw],
+            [effect.lh, 0, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'chromatic-aberration') {
+        cmds.add({
+          batchKey: 'chromatic-aberration', material: CHROMATIC_ABERRATION_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.amount, effect.linear ? 1 : 0, effect.lvx, effect.lvy],
+            [effect.falloffExp, effect.cx, effect.cy, effect.maxR],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'magnify') {
+        cmds.add({
+          batchKey: 'magnify', material: MAGNIFY_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cx, effect.cy, effect.radius, effect.scale],
+            [effect.square ? 1 : 0, effect.feather, effect.lw, effect.lh],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'mosaic') {
+        cmds.add({
+          batchKey: 'mosaic', material: MOSAIC_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cols, effect.rows, effect.sharp ? 1 : 0, 0],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'find-edges') {
+        cmds.add({
+          batchKey: 'find-edges', material: FIND_EDGES_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.invert ? 1 : 0, effect.blend, 0, 0],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'emboss') {
+        cmds.add({
+          batchKey: 'emboss', material: EMBOSS_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.dx, effect.dy, effect.k, effect.keep],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'color-emboss') {
+        cmds.add({
+          batchKey: 'color-emboss', material: COLOR_EMBOSS_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.ox, effect.oy, effect.k, effect.blend],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
+      } else if (effect.type === 'halftone') {
+        cmds.add({
+          batchKey: 'halftone', material: HALFTONE_MATERIAL, blend: 'normal',
+          uniforms: packFxBlock(mvp, targetUv, [
+            [effect.cell, effect.ca, effect.sa, effect.k],
+            [effect.inkR, effect.inkG, effect.inkB, effect.colorize ? 1 : 0],
+            [effect.paperR, effect.paperG, effect.paperB, effect.blend],
+            [effect.lw, effect.lh, 0, 0],
+          ], fxBox),
+          texture: curTex, sampler: clampSampler(),
+        });
       } else if (effect.type === 'bend') {
         cmds.add({
           batchKey: 'bend', material: BEND_MATERIAL, blend: 'normal',
@@ -908,6 +1111,84 @@ export class CompositionPass extends RenderPass {
           ),
           texture: curTex, sampler: clampSampler(),
         });
+      } else if (effect.type === 'light-sweep') {
+        if (effect.intensity <= 0 || effect.sweepWidth <= 0) {
+          // no-op — keep curTex
+        } else {
+          const rad = (effect.angle * Math.PI) / 180;
+          const cos = Math.cos(rad);
+          const sin = Math.sin(rad);
+          // Same geometry as `drawLightSweep`: travel along the angle across the
+          // layer's projected span; band width is comp px → target UV via k.
+          const span = Math.abs(fxBox.width * cos) + Math.abs(fxBox.height * sin);
+          const cx = fxBox.x + fxBox.width * 0.5 + cos * (effect.position - 0.5) * span;
+          const cy = fxBox.y + fxBox.height * 0.5 + sin * (effect.position - 0.5) * span;
+          const k = (kx / viewport.pixelSize.width + ky / viewport.pixelSize.height) / 2;
+          const half = Math.max(0.5, effect.sweepWidth) * 0.5 * k;
+          cmds.add({
+            batchKey: 'light-sweep', material: LIGHT_SWEEP_MATERIAL, blend: 'normal',
+            uniforms: packLightSweep(
+              mvp, targetUv,
+              cx - cos * half, cy - sin * half,
+              cx + cos * half, cy + sin * half,
+              effect.softness, effect.intensity, effect.composite,
+              effect.color,
+            ),
+            texture: curTex, sampler: clampSampler(),
+          });
+        }
+      } else if (effect.type === 'lens-flare') {
+        if (effect.brightness <= 0) {
+          // no-op
+        } else {
+          // Centre is an offset from the LAYER mid in composition px — same as
+          // applyLensFlare(w/2+centerX, …). Radii scale with max(box) like the
+          // CPU path's span = max(w,h).
+          const kxUv = kx / viewport.pixelSize.width;
+          const kyUv = ky / viewport.pixelSize.height;
+          const midX = fxBox.x + fxBox.width * 0.5;
+          const midY = fxBox.y + fxBox.height * 0.5;
+          const cx = midX + effect.centerX * kxUv;
+          const cy = midY + effect.centerY * kyUv;
+          const span = Math.max(fxBox.width, fxBox.height);
+          const coreR = span * 0.06 * effect.scale;
+          const haloR = span * 0.35 * effect.scale;
+          const streakH = Math.max(coreR * 0.12, 1e-6);
+          cmds.add({
+            batchKey: 'lens-flare', material: LENS_FLARE_MATERIAL, blend: 'normal',
+            uniforms: packLensFlare(
+              mvp, targetUv,
+              cx, cy, midX, midY,
+              effect.brightness, coreR, haloR, streakH,
+              effect.color,
+            ),
+            texture: curTex, sampler: clampSampler(),
+          });
+        }
+      } else if (effect.type === 'light-rays') {
+        if (effect.opacity <= 0 || effect.rayLength <= 0) {
+          // no-op
+        } else {
+          const kxUv = kx / viewport.pixelSize.width;
+          const kyUv = ky / viewport.pixelSize.height;
+          const k = (kxUv + kyUv) / 2;
+          const midX = fxBox.x + fxBox.width * 0.5;
+          const midY = fxBox.y + fxBox.height * 0.5;
+          const cx = midX + effect.centerX * kxUv;
+          const cy = midY + effect.centerY * kyUv;
+          const arc = effect.spread > 1e-5 ? effect.spread * Math.PI * 2 : Math.PI * 2;
+          cmds.add({
+            batchKey: 'light-rays', material: LIGHT_RAYS_MATERIAL, blend: 'normal',
+            uniforms: packLightRays(
+              mvp, targetUv,
+              cx, cy, effect.rayLength * k, Math.min(128, effect.rayCount),
+              effect.opacity, effect.falloff, effect.rotation, arc,
+              effect.seed, effect.composite,
+              effect.color,
+            ),
+            texture: curTex, sampler: clampSampler(),
+          });
+        }
       } else if (effect.type === 'noise') {
         cmds.add({
           batchKey: 'noise', material: NOISE_MATERIAL, blend: 'normal',
@@ -1131,7 +1412,7 @@ export class CompositionPass extends RenderPass {
     // Settle the result into `dest` (scratch targets are reused immediately after).
     const clampSampler = services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     const copy = new CommandBuffer();
-    emitTextured(copy, screenMvp(), Color.white(), 1, 'none', res.tex, clampSampler, targetSampleUv(ctx));
+    emitTextured(copy, screenMvp(), Color.white(), 1, 'none', res.tex, clampSampler, targetSampleUv(ctx), undefined, true);
     const encC = beginViewportPass(ctx, 'layer-settle', writeAttachment(ctx, dest, Color.transparent()));
     services.quad.execute(encC, copy);
     encC.end();
@@ -1199,7 +1480,7 @@ export class CompositionPass extends RenderPass {
           const masked = ctx.services.backend.renderTargetTexture(ctx.target(BLUR_TARGET2)!);
           if (masked) {
             const copyCmds = new CommandBuffer();
-            emitTextured(copyCmds, screenMvp(), Color.white(), 1, 'none', masked, clampSampler(), targetUv);
+            emitTextured(copyCmds, screenMvp(), Color.white(), 1, 'none', masked, clampSampler(), targetUv, undefined, true);
             const encC = beginViewportPass(ctx, 'precomp-settle', writeAttachment(ctx, targetName, Color.transparent()));
             services.quad.execute(encC, copyCmds);
             encC.end();
@@ -1259,14 +1540,14 @@ export class CompositionPass extends RenderPass {
       const maskTex = services.textures.get(r.maskTextureKey);
       let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
       if (isSolid && !tex) tex = services.textures.get('texture:white');
-      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix);
+      if (maskTex && tex) emitMaskedTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), maskTex.texture, uv, r.colorMatrix, !!tex.sampleLinear);
     } else if (isSolid && r.color) {
       emitSolid(cmds, mvp, r.color, 1, 'normal', toSolidShape(r.sdf));
     } else if (isTextured && r.textureKey) {
       const tex = this.texFor(ctx, r.textureKey);
       const lut = r.lutTextureKey ? services.textures.get(r.lutTextureKey) : undefined;
-      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix);
-      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix);
+      if (tex && lut) emitLutTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), lut.texture, uv, r.colorMatrix, !!tex.sampleLinear);
+      else if (tex) emitTextured(cmds, mvp, r.color ?? Color.white(), 1, 'normal', tex.texture, smp(), uv, r.colorMatrix, !!tex.sampleLinear);
     }
     return cmds;
   }
@@ -1450,7 +1731,7 @@ export class CompositionPass extends RenderPass {
           // transparent, so writing depth there would punch a rectangular hole
           // through anything behind it — an extruded object's own side walls,
           // most visibly. It still depth-tests, so it is occluded correctly.
-          emitTextured3D(cmds, fxMvp, tint, r.opacity, r.blend, resolved.tex, clampSampler(), targetUv, undefined, fxShade, false);
+          emitTextured3D(cmds, fxMvp, tint, r.opacity, r.blend, resolved.tex, clampSampler(), targetUv, undefined, fxShade, false, true);
           pendingResolved = true;
         }
         continue;
@@ -1462,7 +1743,7 @@ export class CompositionPass extends RenderPass {
         let tex = isTextured && r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
         if (isSolid && !tex) tex = services.textures.get('texture:white');
         if (maskTex && tex) {
-          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade);
+          emitMaskedTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), maskTex.texture, uv, r.colorMatrix, shade, !!tex.sampleLinear);
         }
       } else if (isSolid && r.color) {
         emitSolid3D(cmds, mvp, tint, r.opacity, r.blend, toSolidShape(r.sdf), shade);
@@ -1471,7 +1752,7 @@ export class CompositionPass extends RenderPass {
         // Known limitation: no LUT variant in the 3D material set — a 3D layer
         // carrying a colour LUT keeps its affine grade rows but skips the LUT
         // remap inside a depth group (rare combination).
-        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade);
+        if (tex) emitTextured3D(cmds, mvp, tint, r.opacity, r.blend, tex.texture, clampSampler(), uv, r.colorMatrix, shade, true, !!tex.sampleLinear);
       }
     }
     flush();
@@ -1635,9 +1916,9 @@ export class CompositionPass extends RenderPass {
       const lut = r.adjustment.lutTextureKey ? services.textures.get(r.adjustment.lutTextureKey) : undefined;
       const mvp = screenMvp();
       if (lut) {
-        emitLutTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), lut.texture, targetUv, r.adjustment.colorMatrix);
+        emitLutTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), lut.texture, targetUv, r.adjustment.colorMatrix, true);
       } else {
-        emitTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), targetUv, r.adjustment.colorMatrix);
+        emitTextured(copyCmds, mvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), targetUv, r.adjustment.colorMatrix, true);
       }
       const encCopy = beginViewportPass(ctx, 'adjust-copy', writeAttachment(ctx, LAYER_TARGET, Color.transparent()));
       services.quad.execute(encCopy, copyCmds);
@@ -1657,7 +1938,7 @@ export class CompositionPass extends RenderPass {
       // finalTex is an offscreen target — sample with the backend-correct UV.
       // (An identity UV here vertically flipped the whole scene on WebGL
       // whenever a grade-only adjustment layer took this branch.)
-      emitTextured(applyCmds, mvp, Color.white(), 1, 'normal', finalTex, clampSampler(), targetUv);
+      emitTextured(applyCmds, mvp, Color.white(), 1, 'normal', finalTex, clampSampler(), targetUv, undefined, true);
       const encGrade = beginViewportPass(ctx, 'adjust-apply', writeAttachment(ctx, st.out, Color.transparent()));
       services.quad.execute(encGrade, applyCmds);
       encGrade.end();
@@ -1727,7 +2008,7 @@ export class CompositionPass extends RenderPass {
         const t2 = half ? BACKDROP_HALF2 : BLUR_TARGET2;
 
         const copyCmds = new CommandBuffer();
-        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full);
+        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full, undefined, true);
         // The copy IS the downsample: the same full-screen quad drawn into a
         // half-size target, filtered down by the sampler on the way in.
         const encCopy = half
@@ -1802,11 +2083,11 @@ export class CompositionPass extends RenderPass {
               maskTexture: layerTex,
             });
           } else {
-            emitMaskedTextured(mainCmds, fullMvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), layerTex, full);
+            emitMaskedTextured(mainCmds, fullMvp, Color.white(), 1, 'normal', blurredTex, clampSampler(), layerTex, full, undefined, true);
             // Plain backdrop blur keeps the layer's own colour on top — that is
             // how a translucent frosted panel gets its fill. Glass supplies its
             // own tint, so it skips this (see above).
-            emitTextured(mainCmds, fullMvp, Color.white(), 1, r.blend, layerTex, clampSampler(), full);
+            emitTextured(mainCmds, fullMvp, Color.white(), 1, r.blend, layerTex, clampSampler(), full, undefined, true);
           }
         }
         return;
@@ -1838,7 +2119,7 @@ export class CompositionPass extends RenderPass {
         const layerTex = this.layerIntoTarget(ctx, r, r.opacity, LAYER_TARGET, byId);
         // 2. copy backdrop out (can't sample a target while writing it).
         const copyCmds = new CommandBuffer();
-        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full);
+        emitTextured(copyCmds, fullMvp, Color.white(), 1, 'normal', sceneTex, clampSampler(), full, undefined, true);
         const encCopy = beginViewportPass(ctx, 'blend-backdrop', writeAttachment(ctx, MATTE_TARGET, Color.transparent()));
         services.quad.execute(encCopy, copyCmds);
         encCopy.end();
@@ -1847,8 +2128,19 @@ export class CompositionPass extends RenderPass {
         if (backdropTex && layerTex) {
           // m[0] -> cr0.x = blend id; m[1] -> cr0.y = preserve-transparency flag.
           // Two independent inputs, because the two features compose.
+          // m[2] -> cr0.z = dissolve seed: the comp frame index for Dancing
+          // Dissolve (36), 0 for everything else — which is what pins plain
+          // Dissolve's (35) speckle in place. m[3]/m[4] -> cr1.xy = comp size,
+          // so the dissolve hash lands on the COMP pixel grid and a zoomed
+          // preview, a fit preview and the export all draw the same pattern.
+          const compSize = ctx.scene.composition.size;
           const mode = {
-            m: [r.advancedBlend ?? 0, r.preserveTransparency ? 1 : 0, 0, 0, 0, 0, 0, 0, 0],
+            m: [
+              r.advancedBlend ?? 0,
+              r.preserveTransparency ? 1 : 0,
+              r.advancedBlend === 36 ? (ctx.scene.dissolveFrame ?? 0) : 0,
+              compSize.width, compSize.height, 0, 0, 0, 0,
+            ],
             offset: [0, 0, 0],
           };
           const combineCmds = new CommandBuffer();
@@ -1889,7 +2181,8 @@ export class CompositionPass extends RenderPass {
               clampSampler(),
               maskTex.texture,
               r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 },
-              r.colorMatrix
+              r.colorMatrix,
+              !!tex.sampleLinear,
             );
           }
         }
@@ -1904,9 +2197,9 @@ export class CompositionPass extends RenderPass {
           if (lut) {
             // Levels/Curves/Posterize on the GPU: remap through the LUT texture
             // after the affine grade (the second sampler the binding fix enabled).
-            emitLutTextured(mainCmds, mvpFor(viewport, r.modelMatrix), r.color ?? Color.white(), r.opacity, r.blend, tex.texture, smp, lut.texture, uv, r.colorMatrix);
+            emitLutTextured(mainCmds, mvpFor(viewport, r.modelMatrix), r.color ?? Color.white(), r.opacity, r.blend, tex.texture, smp, lut.texture, uv, r.colorMatrix, !!tex.sampleLinear);
           } else {
-            emitLayerTexture(ctx, r, { texture: tex.texture, sampler: smp, uv }, r.opacity, mainCmds);
+            emitLayerTexture(ctx, r, { texture: tex.texture, sampler: smp, uv }, r.opacity, mainCmds, undefined, undefined, !!tex.sampleLinear);
           }
         }
       }
@@ -1949,6 +2242,8 @@ export class CompositionPass extends RenderPass {
         Color.white(), 1, r.blend, layerTex,
         clampSampler(),
         targetUv,
+        undefined,
+        true,
       );
       return;
     }
@@ -2016,6 +2311,8 @@ export class CompositionPass extends RenderPass {
       Color.white(), r.opacity, r.blend, effectTex,
       clampSampler(),
       targetUv,
+      undefined,
+      true,
     );
   }
 }

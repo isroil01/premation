@@ -35,6 +35,11 @@ function fullDoc(): EditorDocument {
     timelines: { main: { version: 1, duration: 336 } } as never,
     motionBlur: { enabled: true } as never,
     guides: { horizontal: [10], vertical: [] } as never,
+    colorManagement: {
+      workingSpace: 'aces-cg',
+      displayTransform: 'aces',
+      bitDepth: 32,
+    },
   };
 }
 
@@ -117,6 +122,7 @@ describe('incremental save (diffChunks)', () => {
     delete stripped.timelines;
     delete stripped.motionBlur;
     delete stripped.guides;
+    delete stripped.colorManagement;
     const next = encodeBundle(stripped).manifest;
     const { changed, removed } = diffChunks(prev, next);
     expect(removed).toEqual([CHUNK.timeline]);

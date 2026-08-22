@@ -16,6 +16,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { api } from '@core/api/client';
 import { useAuthStore } from '@stores/authStore';
+import { useEntitlementStore } from '@stores/entitlementStore';
 import styles from './AuthPage.module.css';
 
 const RESEND_COOLDOWN_S = 60;
@@ -64,6 +65,7 @@ export function VerifyEmailPage(): JSX.Element {
     try {
       await api.confirmEmail(code);
       markEmailVerified();
+      await useEntitlementStore.getState().refresh({ force: true });
       navigate('/dashboard', { replace: true });
     } catch (err) {
       setError(messageOf(err, 'That code did not work. Check it and try again.'));

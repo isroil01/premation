@@ -7,11 +7,14 @@ import { Logo } from '@components/Logo';
 import { Checkbox } from '@components/Checkbox';
 import { Pagination } from '@components/Pagination';
 import { Modal, customConfirm } from '@components/Modal';
-import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
 import { useUIStore } from '@stores/uiStore';
+import { setPendingFootage } from '@core/project/pendingFootage';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';
+import { ApiKeysSection } from '@layout/Settings/ApiKeysSection';
+import { BillingSection } from '@layout/Settings/BillingSection';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { billingEnabled } from '@core/config/edition';
 import {
   SIZE_PRESETS, SIZE_GROUPS, FPS_PRESETS, DURATION_PRESETS,
   MIN_DIMENSION, MAX_DIMENSION, MIN_FPS, MAX_FPS, MIN_DURATION, MAX_DURATION,
@@ -46,7 +49,42 @@ function timeAgo(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-type TabType = 'home' | 'projects' | 'assets' | 'plugins' | 'renders' | 'trash' | 'settings';
+/**
+ * Dashboard destinations.
+ *
+ * `billing` and `developer` used to be CARDS inside `settings`, which made that
+ * page a scroll of four unrelated concerns — account, subscription, assistant,
+ * API keys — and left two first-class surfaces with no address of their own.
+ * "Show me my plan" was a link to a scroll POSITION
+ * (`?tab=settings&section=billing`, followed by a `scrollIntoView`), which is
+ * what a missing page looks like while something still has to link to it.
+ */
+type TabType =
+  | 'home'
+  | 'projects'
+  | 'assets'
+  | 'plugins'
+  | 'renders'
+  | 'trash'
+  | 'billing'
+  | 'developer'
+  | 'settings';
+
+const TABS: readonly TabType[] = [
+  'home', 'projects', 'assets', 'plugins', 'renders', 'trash', 'billing', 'developer', 'settings',
+];
+
+/**
+ * Narrow a `?tab=` value.
+ *
+ * Derived from TABS rather than restated. The initial-state reader and the
+ * effect below used to carry two hand-written lists that had already drifted —
+ * `plugins` was in one and not the other, so `?tab=plugins` opened Home and
+ * then jumped to Plugins one render later.
+ */
+function isTab(value: string | null): value is TabType {
+  return value != null && (TABS as readonly string[]).includes(value);
+}
 
 type Orientation = 'landscape' | 'portrait' | 'square';
 
@@ -83,56 +121,6 @@ function formatBytes(bytes: number): string {
   return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1)} ${units[i]}`;
 }
 
-function openUpgradeProModal(): void {
-  openModal({
-    id: 'upgrade-pro',
-    title: (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <Icon name="sparkles" size="md" style={{ color: 'var(--color-warning)' }} />
-        <span>Upgrade to Motion Studio Pro</span>
-      </div>
-    ),
-    size: 'md',
-    render: () => (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '24px', alignItems: 'center' }}>
-          <div>
-            <p style={{ color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)', lineHeight: '1.5', margin: 0 }}>
-              Take your motion design workflow to the cloud. Unlock ultimate performance, AI neural assets, and collaborate with your team.
-            </p>
-          </div>
-          <div style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border-strong)', borderRadius: 'var(--radius-dialog, 4px)', padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <h4 style={{ margin: 0, fontSize: '0.85rem', fontWeight: '600' }}>Pro Features include:</h4>
-            <ul style={{ margin: 0, paddingLeft: '16px', color: 'var(--color-text-secondary)', fontSize: '0.78rem', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <li>8K Cloud Rendering & Exports</li>
-              <li>Neural Engine AI Background Removal</li>
-              <li>Unlimited Storage for Media & Audio</li>
-              <li>Version History for up to 90 days</li>
-              <li>Team Collaboration & Shared Libraries</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    ),
-    footer: (close: () => void) => (
-      <>
-        <Button variant="ghost" onClick={close}>
-          Maybe Later
-        </Button>
-        <Button
-          variant="primary"
-          onClick={() => {
-            close();
-            useUIStore.getState().notify({ level: 'success', message: 'Opening subscription portal...', durationMs: 2600 });
-          }}
-        >
-          Upgrade Now
-        </Button>
-      </>
-    )
-  });
-}
-
 export function DashboardPage(): JSX.Element {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -149,10 +137,29 @@ export function DashboardPage(): JSX.Element {
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabType>(() => {
     const t = searchParams.get('tab');
-    return t === 'settings' || t === 'projects' || t === 'assets' || t === 'renders' || t === 'trash'
-      ? (t as TabType)
-      : 'home';
+    return isTab(t) ? t : 'home';
   });
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    // `?tab=settings&section=billing` is the address billing had before it was
+    // a page. Honour it so an old link, a bookmark or a previously-sent email
+    // still lands on billing rather than dropping the reader into Settings.
+    if (tab === 'settings' && searchParams.get('section') === 'billing') {
+      setActiveTab('billing');
+      return;
+    }
+    if (isTab(tab)) setActiveTab(tab);
+  }, [searchParams]);
+
+  /** Go to a dashboard page, keeping the URL and the view in step. */
+  const openTab = useCallback(
+    (tab: TabType): void => {
+      setActiveTab(tab);
+      navigate(`/dashboard?tab=${tab}`);
+    },
+    [navigate],
+  );
 
   // Search & Filter States for Projects. The orientation filter lives in the
   // store because it is part of the server query, not a view of loaded rows.
@@ -250,6 +257,30 @@ export function DashboardPage(): JSX.Element {
   const [setupDuration, setSetupDuration] = useState(10);
   const [setupBg, setSetupBg] = useState('#101014');
   const [setupTransparent, setSetupTransparent] = useState(false);
+  // "Start from a video" — AE's second way in, made visible at the moment it
+  // matters. The chosen file is probed IN the modal (a metadata-only <video>
+  // element: size and duration; the browser cannot report fps, the editor's
+  // deeper probe refines that after import) so the fields below prefill to
+  // exactly what the comp will be, still editable. The File itself rides
+  // `pendingFootage` to the editor, which imports it and drops it in at full
+  // frame.
+  const [setupFootage, setSetupFootage] = useState<File | null>(null);
+
+  const chooseSetupFootage = (file: File): void => {
+    setSetupFootage(file);
+    setSetupTitle(file.name.replace(/\.[a-z0-9]+$/i, '') || file.name);
+    const url = URL.createObjectURL(file);
+    const v = document.createElement('video');
+    v.preload = 'metadata';
+    v.onloadedmetadata = () => {
+      if (v.videoWidth > 0) setSetupWidth(clampDimension(v.videoWidth));
+      if (v.videoHeight > 0) setSetupHeight(clampDimension(v.videoHeight));
+      if (Number.isFinite(v.duration) && v.duration > 0) setSetupDuration(clampDuration(v.duration));
+      URL.revokeObjectURL(url);
+    };
+    v.onerror = () => URL.revokeObjectURL(url);
+    v.src = url;
+  };
 
   // NOTE: this page deliberately reads no editor preferences any more. It used
   // to subscribe to the WHOLE preference store — `usePreferenceStore` with no
@@ -275,94 +306,12 @@ export function DashboardPage(): JSX.Element {
     setAssetPage((p) => (p.offset === 0 ? p : { ...p, offset: 0 }));
   }, [currentFolderId, assetTypeFilter]);
 
-  const PRESET_TEMPLATES = [
-    {
-      id: 'reel',
-      title: 'Social Reel / Story',
-      desc: '1080 × 1920 · 60 fps · 15s',
-      icon: 'camera' as const,
-      width: 1080,
-      height: 1920,
-      fps: 60,
-      duration: 15,
-      badge: '9:16 Portrait',
-      color: 'var(--color-primary)',
-    },
-    {
-      id: 'youtube',
-      title: 'YouTube 4K Video',
-      desc: '3840 × 2160 · 30 fps · 30s',
-      icon: 'video' as const,
-      width: 3840,
-      height: 2160,
-      fps: 30,
-      duration: 30,
-      badge: '16:9 4K',
-      color: 'var(--color-primary)',
-    },
-    {
-      id: 'lottie',
-      title: 'Vector Lottie',
-      desc: '512 × 512 · 60 fps · 5s',
-      icon: 'sparkles' as const,
-      width: 512,
-      height: 512,
-      fps: 60,
-      duration: 5,
-      badge: '1:1 Square',
-      color: 'var(--color-success)',
-    },
-    {
-      id: 'mograph',
-      title: 'Motion Graphic HD',
-      desc: '1920 × 1080 · 60 fps · 10s',
-      icon: 'layout' as const,
-      width: 1920,
-      height: 1080,
-      fps: 60,
-      duration: 10,
-      badge: '16:9 HD',
-      color: 'var(--color-warning)',
-    },
-  ];
-
-  const onQuickCreatePreset = async (title: string, width: number, height: number, fps: number, durationSeconds: number) => {
-    setCreating(true);
-    try {
-      clearRecovery();
-      const initialComp: CompositionSettings = {
-        id: `comp_${Date.now()}`,
-        name: title,
-        width,
-        height,
-        fps,
-        durationSeconds,
-        background: '#101014',
-        transparent: false,
-        startFrame: 0,
-      };
-      useCompositionStore.setState(initialComp);
-      getTimelineController().setFrameRate(fps);
-      getTimelineController().setDurationSeconds(durationSeconds);
-      const initialDoc: EditorDocument = {
-        version: '1.0.0',
-        scene: sceneProjectIO.createEmpty(title),
-        animation: { tracks: {}, expressions: {} },
-        comp: initialComp,
-      };
-      const p = await create(title, initialDoc);
-      if (!p?.id) throw new Error('Failed to create project.');
-      navigate(`/editor/${p.id}`);
-    } catch (err) {
-      useUIStore.getState().notify({
-        level: 'error',
-        message: `Failed to launch preset: ${(err as Error).message}`,
-        durationMs: 4000,
-      });
-    } finally {
-      setCreating(false);
-    }
-  };
+  // NOTE: the "Quick Start Launchpad" (four one-click preset-project cards)
+  // was removed 2026-08-20 at the user's request. Project creation now has
+  // exactly TWO ways in, both inside the Create Project modal: a blank
+  // composition, or from an uploaded video — one door, clearly labelled,
+  // instead of three surfaces that each created projects slightly differently.
+  // The modal's size presets cover what the launchpad offered.
 
   // The newest project in the LIBRARY, not the newest on this page: sorting the
   // loaded rows meant "pick up where you left off" pointed at whatever was on
@@ -377,6 +326,7 @@ export function DashboardPage(): JSX.Element {
     setSetupDuration(10);
     setSetupBg('#101014');
     setSetupTransparent(false);
+    setSetupFootage(null);
     setSetupModalOpen(true);
   };
 
@@ -392,8 +342,10 @@ export function DashboardPage(): JSX.Element {
       const height = clampDimension(setupHeight);
       const fps = clampFps(setupFps);
       const durationSeconds = clampDuration(setupDuration);
+      // Same ROOT_COMP_ID contract as the quick-create path above: the comp id
+      // and the scene root id must agree, or the project opens on a phantom.
       const initialComp: CompositionSettings = {
-        id: `comp_${Date.now()}`,
+        id: 'comp_root',
         name: compName,
         width,
         height,
@@ -403,11 +355,13 @@ export function DashboardPage(): JSX.Element {
         transparent: setupTransparent,
         startFrame: 0,
       };
+      const scene = sceneProjectIO.createEmpty(compName);
+      if (scene.nodes[0]) scene.nodes[0].name = compName;
       const initialDoc: EditorDocument = {
-        version: '1.0.0',
-        scene: sceneProjectIO.createEmpty(compName),
+        version: '1.1.0',
+        scene,
         animation: { tracks: {}, expressions: {} },
-        comp: initialComp,
+        comps: { comp_root: initialComp },
       };
       const p = await create(compName, initialDoc);
       if (!p?.id) throw new Error('The server did not return a project id.');
@@ -415,6 +369,10 @@ export function DashboardPage(): JSX.Element {
       getTimelineController().setFrameRate(fps);
       getTimelineController().setDurationSeconds(durationSeconds);
       getTimelineController().seekSeconds(0);
+      // Starting from a video: the File rides the handoff; the editor's
+      // ProjectLoader imports it and lands it at full frame the moment the
+      // project opens. The comp fields above were prefilled from its probe.
+      if (setupFootage) setPendingFootage(setupFootage);
       setSetupModalOpen(false);
       navigate(`/editor/${p.id}`);
     } catch (err) {
@@ -688,34 +646,6 @@ export function DashboardPage(): JSX.Element {
                 </div>
               </div>
             )}
-
-            {/* Quick Start Presets Launchpad */}
-            <div className={styles.launchpadSection}>
-              <div className={styles.sectionHeaderRow}>
-                <h2 className={styles.sectionTitle}>
-                  Quick Start Launchpad
-                  <span className={styles.sectionHint}>1-click composition setup</span>
-                </h2>
-              </div>
-              <div className={styles.launchpadGrid}>
-                {PRESET_TEMPLATES.map((tmpl) => (
-                  <div
-                    key={tmpl.id}
-                    className={styles.launchpadCard}
-                    onClick={() => void onQuickCreatePreset(tmpl.title, tmpl.width, tmpl.height, tmpl.fps, tmpl.duration)}
-                  >
-                    <div className={styles.launchpadHeader}>
-                      <div className={styles.launchpadIcon} style={{ background: `color-mix(in srgb, ${tmpl.color} 15%, transparent)`, color: tmpl.color }}>
-                        <Icon name={tmpl.icon} size="md" />
-                      </div>
-                      <span className={styles.launchpadBadge}>{tmpl.badge}</span>
-                    </div>
-                    <div className={styles.launchpadTitle}>{tmpl.title}</div>
-                    <div className={styles.launchpadDesc}>{tmpl.desc}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
 
             {/* Stats Summary Cards Row */}
             <div className={styles.statsGrid}>
@@ -1023,7 +953,7 @@ export function DashboardPage(): JSX.Element {
                         <td>
                           <div className={styles.progressCellWrapper}>
                             <div className={styles.progressBar}>
-                              <div className={styles.progressFill} style={{ width: `${Math.round(job.progress * 100)}%` }} />
+                              <div className={styles.progressFill} style={{ '--fill': Math.min(1, job.progress) } as React.CSSProperties} />
                             </div>
                             <span className={styles.progressText}>{Math.round(job.progress * 100)}%</span>
                           </div>
@@ -1250,6 +1180,20 @@ export function DashboardPage(): JSX.Element {
           </div>
         );
 
+      case 'billing':
+        return (
+          <div className={styles.billingPanel} id="billing-settings">
+            <BillingSection />
+          </div>
+        );
+
+      case 'developer':
+        return (
+          <div className={styles.developerPanel}>
+            <ApiKeysSection onViewPlans={() => openTab('billing')} />
+          </div>
+        );
+
       case 'settings':
         return (
           <div className={styles.settingsPanel}>
@@ -1265,7 +1209,7 @@ export function DashboardPage(): JSX.Element {
                   </div>
                   <div className={styles.profileEmailText}>{user?.email}</div>
                   <div className={styles.profileNodeBadge}>
-                    {account ? `${account.plan === 'pro' ? 'Pro' : 'Free'} plan · member since ${new Date(account.createdAt).toLocaleDateString()}` : '—'}
+                    {account ? `${account.plan.charAt(0).toUpperCase()}${account.plan.slice(1)} plan · member since ${new Date(account.createdAt).toLocaleDateString()}` : '—'}
                   </div>
                 </div>
               </div>
@@ -1487,10 +1431,23 @@ export function DashboardPage(): JSX.Element {
           title: 'Render queue',
           desc: 'Monitor export rendering progress, completed videos, and queued exports.',
         };
+      case 'billing':
+        return {
+          title: 'Billing',
+          desc: 'Your plan, what it includes, and how to change or cancel it.',
+        };
+      case 'developer':
+        return {
+          title: 'Developer / API',
+          desc: 'API keys and usage for the Automation API — render your templates from n8n, a script, or CI.',
+        };
       case 'settings':
         return {
-          title: 'Dashboard settings',
-          desc: 'Configure application preferences, auto-save settings, and project defaults.',
+          // Was "Dashboard settings / Configure application preferences,
+          // auto-save settings, and project defaults" — which described none of
+          // what the page held. It is accurate now because the page is smaller.
+          title: 'Settings',
+          desc: 'Your account, the assistant, and where to change editor preferences.',
         };
     }
   }, [activeTab]);
@@ -1551,10 +1508,36 @@ export function DashboardPage(): JSX.Element {
             <Icon name="trash" size="md" className={styles.navIcon} />
             <span>Trash</span>
           </button>
+
+          {/*
+            Account-level destinations, separated from the workspace ones above.
+            Everything above this line is about the WORK; everything below is
+            about the account that owns it.
+          */}
+          <div className={styles.navDivider} role="separator" />
+
+          {billingEnabled() && (
+            <button
+              type="button"
+              className={`${styles.navLink} ${activeTab === 'billing' ? styles.navLinkActive : ''}`}
+              onClick={() => openTab('billing')}
+            >
+              <Icon name="sparkles" size="md" className={styles.navIcon} />
+              <span>Billing</span>
+            </button>
+          )}
+          <button
+            type="button"
+            className={`${styles.navLink} ${activeTab === 'developer' ? styles.navLinkActive : ''}`}
+            onClick={() => openTab('developer')}
+          >
+            <Icon name="code" size="md" className={styles.navIcon} />
+            <span>Developer / API</span>
+          </button>
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'settings' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('settings')}
+            onClick={() => openTab('settings')}
           >
             <Icon name="settings" size="md" className={styles.navIcon} />
             <span>Settings</span>
@@ -1562,24 +1545,26 @@ export function DashboardPage(): JSX.Element {
         </nav>
 
         <div className={styles.sidebarFooter}>
+          {billingEnabled() && (
           <div className={styles.upgradeCardBox}>
             <div className={styles.upgradeCardHeader}>
               <div className={styles.upgradeCardBadge}>
                 <Icon name="sparkles" size="sm" />
               </div>
-              <span className={styles.upgradeCardTitle}>Upgrade to Pro</span>
+              <span className={styles.upgradeCardTitle}>Plans &amp; billing</span>
             </div>
             <p className={styles.upgradeCardDesc}>
-              Unlock 8K cloud rendering, AI neural tools & unlimited storage.
+              Compare current plans and manage your subscription.
             </p>
             <button
               type="button"
               className={styles.upgradeCardActionBtn}
-              onClick={openUpgradeProModal}
+              onClick={() => openTab('billing')}
             >
-              <span>Upgrade Now</span>
+              <span>{account?.plan && account.plan !== 'free' ? 'Manage plan' : 'View plans'}</span>
             </button>
           </div>
+          )}
 
           <button
             type="button"
@@ -1692,6 +1677,48 @@ export function DashboardPage(): JSX.Element {
         persistent={creating}
       >
         <form className={styles.modalForm} onSubmit={onLaunchWorkspace}>
+          {/* The two ways in, said up front — AE's blank comp vs new-comp-from-
+              footage, as a visible choice instead of a buried context menu. */}
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>Start from</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <button
+                type="button"
+                className={setupFootage ? styles.btnSecondary : styles.btnPrimary}
+                onClick={() => setSetupFootage(null)}
+                title="An empty composition at the settings below"
+              >
+                <Icon name="plus" size="sm" />
+                <span>Blank composition</span>
+              </button>
+              <button
+                type="button"
+                className={setupFootage ? styles.btnPrimary : styles.btnSecondary}
+                title="Pick a video — the composition takes its size and length, and the clip lands at full frame"
+                onClick={() => {
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'video/*,.mp4,.mov,.webm,.m4v,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv';
+                  input.onchange = () => {
+                    const f = input.files?.[0];
+                    if (f) chooseSetupFootage(f);
+                  };
+                  input.click();
+                }}
+              >
+                <Icon name="image" size="sm" />
+                <span>{setupFootage ? 'Change video…' : 'From a video…'}</span>
+              </button>
+            </div>
+            {setupFootage && (
+              <div className={styles.fieldNote} style={{ marginTop: 6 }}>
+                Starting from <strong>{setupFootage.name}</strong> — the settings below were
+                read from the clip and stay editable. It will be imported and placed at
+                full frame.
+              </div>
+            )}
+          </div>
+
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>Project / Composition Name</label>
             <input

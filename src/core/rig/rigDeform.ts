@@ -36,7 +36,8 @@ import type { Bone } from './skeleton';
 import { computeWorldTransforms, computeBindInverses, boneRoot, boneTip } from './skeleton';
 import { type Mat2D, apply, invert, multiply } from './mat2d';
 import { solveTwoBone, solveFabrik, anglesFromJoints, type Vec2 } from './ik';
-import { boneSegments, autoWeightVertex, type BoneSegment } from './autoWeight';
+import { boneSegments, type BoneSegment } from './autoWeight';
+import { geodesicAutoWeights, weightsAtPoint } from './geodesicWeights';
 import { skinVertex, type SkinVertex, type VertexWeight } from './skinning';
 import { applyWeightPaint, weightPaintMatches, type WeightPaintMap } from './weightPaint';
 
@@ -185,6 +186,13 @@ export interface SkeletonBinding {
   bindInverse: Map<string, Mat2D>;
   /** Bind-pose world segments — for weighting arbitrary points (overlays). */
   segments: BoneSegment[];
+  /**
+   * The rest mesh this binding was computed against. Point helpers interpolate
+   * `weights` over its triangles so an overlay dot skins with the SAME
+   * (geodesic) field the mesh renders with — re-deriving point weights from
+   * `segments` alone would silently reintroduce Euclidean cross-gap bleed.
+   */
+  mesh: DeformedMesh;
 }
 
 /** Deterministic signature of a skeleton's REST pose (binding identity). */
@@ -251,17 +259,15 @@ export function getSkeletonBinding(
   const bindInverse = computeBindInverses(bindWorld);
   const segments = boneSegments(restBones, bindWorld);
 
-  const verts = restMesh.vertices;
+  // GEODESIC auto-weights: bone influence travels through the mesh graph, not
+  // across transparent gaps — see geodesicWeights.ts for the rationale.
+  const auto = geodesicAutoWeights(restMesh, segments);
   const weights: VertexWeight[][] = new Array(numVerts);
   for (let i = 0; i < numVerts; i++) {
-    const auto = autoWeightVertex(
-      { x: verts[i * 4 + 0]!, y: verts[i * 4 + 1]! },
-      segments,
-    );
-    weights[i] = livePaint ? applyWeightPaint(auto, i, livePaint) : auto;
+    weights[i] = livePaint ? applyWeightPaint(auto[i]!, i, livePaint) : auto[i]!;
   }
 
-  const binding: SkeletonBinding = { weights, bindWorld, bindInverse, segments };
+  const binding: SkeletonBinding = { weights, bindWorld, bindInverse, segments, mesh: restMesh };
   if (perMesh.size >= BINDING_CACHE_CAP) {
     const oldest = perMesh.keys().next().value;
     if (oldest !== undefined) perMesh.delete(oldest);
@@ -336,7 +342,7 @@ export function skinPointAt(
   binding: SkeletonBinding,
   poseWorld: Map<string, Mat2D>,
 ): Vec2 {
-  const w = autoWeightVertex(restAnchor, binding.segments);
+  const w = weightsAtPoint(binding.mesh, binding.weights, restAnchor, binding.segments);
   const m = blendedMatrix(w, poseWorld, binding.bindInverse);
   if (!m) return { x: source.x, y: source.y };
   return apply(m, source.x, source.y);
@@ -377,7 +383,7 @@ export function unskinPoint(
 ): Vec2 {
   let guess: Vec2 = { x: posed.x, y: posed.y };
   for (let i = 0; i < UNSKIN_ITERATIONS; i++) {
-    const w = autoWeightVertex(guess, binding.segments);
+    const w = weightsAtPoint(binding.mesh, binding.weights, guess, binding.segments);
     const m = blendedMatrix(w, poseWorld, binding.bindInverse);
     if (!m) return guess;
     guess = apply(invert(m), posed.x, posed.y);

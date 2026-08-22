@@ -22,11 +22,9 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { getNodeHasSequence, getNodeSequenceLoop, setSequenceLoop } from '@core/scene/imageSequence';
 import { audioEngine } from '@core/audio/AudioEngine';
-import { readVideoAudioVoices, videoHasAudioTrack, VIDEO_AUDIO_LEVEL_PROP, VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
+import { readVideoAudioVoices, videoHasAudioTrack, speedAltersAudio, VIDEO_AUDIO_LEVEL_PROP, VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
 import { AUDIO_LEVEL_DB_PROP, MIN_LEVEL_DB, MAX_LEVEL_DB, percentToDb } from '@core/audio/audioParams';
 import { KeyframeRow } from './KeyframeRow';
-import { readNodeLayerTime } from '@core/scene/layerTime';
-import { defaultAnimation } from '@motion/animation';
 import { TimeRemapRow } from './PrecompControl';
 import { ProxyRow } from './ProxyRow';
 import { customPrompt } from '@components/Modal';
@@ -93,17 +91,9 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const decodeState = audioAssetId ? audioEngine.decodeState(audioAssetId) : 'pending';
   const silent = probedAudio === false || (probedAudio === null && decodeState === 'silent');
 
-  // Speed changes retime the PICTURE only — the audio path resamples nothing,
-  // so a stretched, reversed or time-remapped clip would drift steadily out of
-  // sync with no indication. Detected here and surfaced; the voice is muted in
-  // `readVideoAudioVoices` so the two can never disagree about whether the
-  // clip is audible.
-  const layerTime = node ? readNodeLayerTime(node) : undefined;
-  const remapped = node ? defaultAnimation.tracksFor(node.id).some((t) => t.prop === 'timeRemap' && t.keyframes.length > 0) : false;
-  const speedAltered =
-    (layerTime?.stretch !== undefined && Math.abs(layerTime.stretch - 100) > 0.01) ||
-    layerTime?.reverse === true ||
-    remapped;
+  // Freeze mutes audio (held frame). Time remap expands into varispeed
+  // segments — see audioRetimeSegments. Stretch/reverse use playbackRate.
+  const speedAltered = node ? speedAltersAudio(node) : false;
 
   if (!node || !tComp) return null;
 
@@ -221,9 +211,9 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
               <h4 className={styles.title} style={{ marginTop: 12 }}>Audio</h4>
               {speedAltered ? (
                 <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-warning, #d08a3a)', lineHeight: 1.5 }}>
-                  Audio is muted because this layer&rsquo;s speed is changed. Time stretch, reverse and
-                  time remap retime the picture only &mdash; nothing resamples the sound, so it would
-                  drift out of sync. Trim the clip bar instead of changing speed to keep its audio.
+                  Audio is muted while freeze frame is on — a held picture has no
+                  continuous soundtrack. Time remap, stretch and reverse keep audio
+                  in sync (varispeed). Clear freeze to hear sound.
                 </p>
               ) : (
                 <>

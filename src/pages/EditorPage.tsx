@@ -12,6 +12,7 @@ import { useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Providers } from '@providers/Providers';
 import { CloudThumbnailWorker } from '../components/CloudThumbnailWorker';
+import { LocalThumbnailWorker } from '../components/LocalThumbnailWorker';
 import { getProjectManager, getFileManager } from '@core/services/coreServices';
 import { CloudAutosave } from '../components/CloudAutosave';
 import { ReadOnlyBanner } from '../components/ReadOnlyBanner';
@@ -21,6 +22,12 @@ import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { useHistoryStore } from '@stores/historyStore';
 import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
+import { takePendingFootage } from '@core/project/pendingFootage';
+import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import { useAssetStore } from '@stores/assetStore';
+import { useCompositionStore } from '@stores/compositionStore';
+import { insertMedia } from '@core/scene/sceneInsert';
+import { getTimelineController } from '@core/timeline/TimelineController';
 
 /**
  * Opens the:projectId project into the already-booted editor, once, through
@@ -53,12 +60,51 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
           getFileManager().setAdapter(new ApiFileAdapter());
         }
         const ref = await getProjectManager().openPath(projectId);
-        if (!cancelled && !ref) throw new Error('Project not found');
-        if (!cancelled) {
-          useHistoryStore.getState().reset();
-          useHistoryStore.getState().record('Open', true);
-          const ws = useWorkspaceStore.getState();
-          if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
+        if (!ref) throw new Error('Project not found');
+        // Everything below is deliberately NOT gated on `cancelled`. The load
+        // is one-shot by construction (`doneFor`), and under React StrictMode
+        // the dev double-mount runs cleanup (cancelled = true) on the FIRST
+        // effect while `doneFor` blocks the second — so a cancelled-gate here
+        // skipped this entire block on every dev open: openPath had already
+        // restored the document (its side effects don't un-happen), but the
+        // history baseline never reset and, worst, the "start from a video"
+        // footage import silently vanished — a project created from an
+        // uploaded clip opened as an EMPTY scene. Once the open has landed,
+        // finishing the transition is strictly more correct than abandoning
+        // it half-done, unmounted or not: these writes go to singleton
+        // stores, not to this component.
+        useHistoryStore.getState().reset();
+        useHistoryStore.getState().record('Open', true);
+        const ws = useWorkspaceStore.getState();
+        if (ws.activeTabId) ws.actions.markDirty(ws.activeTabId, false);
+        // The Footage viewer's memory is per-project-session: without this,
+        // a freshly opened (even empty) project's Footage tab kept naming
+        // whatever clip the PREVIOUS project last previewed.
+        clearLastFootagePreview();
+        // "Start from a video": the setup modal parked the chosen File; now
+        // that THIS project is open and the engine is live, import it and
+        // land it at full frame. One-shot by construction (`take` clears), so
+        // a reload or a different project can never replay it. The modal
+        // already conformed the comp to the clip's probed size/duration; the
+        // editor's deeper probe refines fps afterwards when it can (the
+        // browser cannot report a video's frame rate — see ImportedAsset).
+        const footage = takePendingFootage();
+        if (footage) {
+          try {
+            const asset = await useAssetStore.getState().addAsset(footage);
+            await insertMedia(asset);
+            const probedFps = asset.metadata?.fps;
+            if (probedFps && probedFps > 0) {
+              useCompositionStore.getState().update({ fps: probedFps });
+              getTimelineController().setFrameRate(probedFps);
+            }
+          } catch (err) {
+            useUIStore.getState().notify({
+              level: 'warning',
+              message: `The project opened, but the video could not be imported: ${(err as Error).message}`,
+              durationMs: 5000,
+            });
+          }
         }
       } catch (err) {
         if (cancelled) return;
@@ -133,6 +179,10 @@ export function EditorPage(): JSX.Element {
         {projectId ? <ProjectLoader projectId={projectId} /> : null}
         {projectId ? <CloudAutosave projectId={projectId} /> : null}
         {projectId ? <CloudThumbnailWorker projectId={projectId} /> : null}
+        {/* The local edition's thumbnail capture — same policy, disk sink.
+            Mounted for the whole session; it resolves the current bundle per
+            capture and no-ops without one (or without a desktop bridge). */}
+        {!cloudProjectsEnabled() ? <LocalThumbnailWorker /> : null}
         {/*
           The read-only bar sits ABOVE the shell in a flex column so it pushes the
           editor down rather than floating over the canvas — a locked document is

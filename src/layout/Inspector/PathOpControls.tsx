@@ -22,6 +22,7 @@ import {
   reorderPathOp,
   updatePathOp,
   pathOpPropPath,
+  pathOpParamSpecs,
   type PathOp,
   type PathOpType,
   type PathOpParam,
@@ -39,6 +40,10 @@ const TYPES: { id: PathOpType; label: string }[] = [
   // AE's name for this operator. The stored id stays `roughen` so existing
   // projects keep loading — the label is what was wrong, not the data.
   { id: 'roughen', label: 'Wiggle Paths' },
+  // Chain-level like Trim and the Repeater: one random affine transform per
+  // RUN, so downstream of a Repeater every copy wanders independently. That
+  // order sensitivity is the operator's whole point — see applyWiggleTransform.
+  { id: 'wiggleTransform', label: 'Wiggle Transform' },
   // Trim is an operator like any other since document version 1.4.0. It had its
   // own inspector section and its own fixed slot after the chain, which made its
   // position unchangeable — and the position is exactly what matters: trimming
@@ -60,71 +65,13 @@ const COMPOSITE: { id: RepeaterComposite; label: string }[] = [
   { id: 'below', label: 'Below' },
 ];
 
-interface ParamSpec {
-  param: PathOpParam;
-  label: string;
-  unit?: string;
-  /** Explicit bounds/granularity, when the type alone does not imply them. */
-  min?: number;
-  max?: number;
-  step?: number;
-  /** Signed parameter — suppresses the default non-negative floor. */
-  signed?: boolean;
-}
-
-/** The rows a given operator actually has. One list, read by the card. */
-function paramsFor(type: PathOpType): ReadonlyArray<ParamSpec> {
-  if (type === 'trim') {
-    return [
-      { param: 'start', label: 'Start', unit: '%' },
-      { param: 'end', label: 'End', unit: '%' },
-      { param: 'offset', label: 'Offset', unit: '%' },
-    ];
-  }
-  if (type === 'repeater') {
-    // Same rows, same labels and the same order the Repeater section had, so
-    // the fold is a move rather than a redesign. `offset` is the ladder Offset
-    // — AE's, shifting which rung copy 0 starts on — sharing the param slot
-    // with Trim's, which is safe because an operator is exactly one type.
-    // Bounds and steps carried over verbatim: a ladder that cannot be nudged in
-    // hundredths is a scale field that jumps from 1 to 2, and the positions,
-    // rotation and anchors are all signed — a repeater marching left is as
-    // ordinary as one marching right.
-    return [
-      { param: 'copies', label: 'Copies', min: 1, max: 200, step: 1 },
-      { param: 'offset', label: 'Offset', step: 0.1, signed: true },
-      { param: 'anchorX', label: 'Anchor X', unit: 'px', signed: true },
-      { param: 'anchorY', label: 'Anchor Y', unit: 'px', signed: true },
-      { param: 'offsetX', label: 'Position X', unit: 'px', signed: true },
-      { param: 'offsetY', label: 'Position Y', unit: 'px', signed: true },
-      { param: 'offsetRotation', label: 'Rotation', unit: '°', signed: true },
-      { param: 'offsetScale', label: 'Scale', min: 0, step: 0.02 },
-      { param: 'offsetOpacity', label: 'Opacity', min: 0, max: 1, step: 0.02 },
-    ];
-  }
-  const { amount, detail } = paramLabels(type);
-  const rows: ParamSpec[] = [{ param: 'amount', label: amount }];
-  if (detail) rows.push({ param: 'detail', label: detail });
-  return rows;
-}
-
-/** Per-operator labels for the two numeric params (detail is unused by some). */
-function paramLabels(type: PathOpType): { amount: string; detail: string | null } {
-  switch (type) {
-    case 'roundCorners':
-      return { amount: 'Radius', detail: 'Steps' };
-    case 'pucker':
-      return { amount: 'Amount', detail: null };
-    case 'twist':
-      return { amount: 'Angle', detail: null };
-    case 'offset':
-      return { amount: 'Offset', detail: null };
-    case 'roughen':
-      return { amount: 'Size', detail: 'Detail' };
-    default:
-      return { amount: 'Amount', detail: 'Ridges' };
-  }
-}
+/** AE's "Trim Multiple Shapes". `simultaneously` is AE's default and what a
+ *  staggered reveal of several outlines wants; `individually` is what this
+ *  renderer did before the switch existed. */
+const TRIM_MULTIPLE: { id: 'individually' | 'simultaneously'; label: string }[] = [
+  { id: 'simultaneously', label: 'Simultaneously' },
+  { id: 'individually', label: 'Individually' },
+];
 
 /**
  * The lower bound for an operator's parameter.
@@ -308,7 +255,28 @@ function PathOpCard({
           />
         </div>
       )}
-      {paramsFor(op.type).map((row) => (
+      {op.type === 'trim' && (
+        <div className={styles.selectorRow}>
+          <span className={styles.paramLabel}>Multiple</span>
+          <Dropdown
+            placement="left-start"
+            trigger={
+              <button type="button" className={styles.pick}>
+                <span>{op.trimMultiple === 'individually' ? 'Individually' : 'Simultaneously'}</span>
+                <Icon name="chevron-down" size="sm" />
+              </button>
+            }
+            items={TRIM_MULTIPLE.map((c) => ({
+              type: 'item' as const,
+              id: c.id,
+              label: c.label,
+              icon: (op.trimMultiple ?? 'individually') === c.id ? 'check' : undefined,
+              onSelect: () => updatePathOp(nodeId, op.id, { trimMultiple: c.id }),
+            }))}
+          />
+        </div>
+      )}
+      {pathOpParamSpecs(op.type).map((row) => (
         <ParamRow
           key={row.param}
           nodeId={nodeId}
@@ -322,9 +290,12 @@ function PathOpCard({
           unit={row.unit}
         />
       ))}
-      {/* Roughen is the only temporal operator: the others are a pure function
-          of the outline, so a wiggle rate would be a dead control on them. */}
-      {op.type === 'roughen' && (
+      {/* The two temporal operators share these rows: the others are a pure
+          function of the outline, so a wiggle rate would be a dead control on
+          them. Correlation answers the same question at different granularity —
+          Roughen: how alike neighbouring POINTS move; Wiggle Transform: how
+          alike the RUNS (repeater copies) move. */}
+      {(op.type === 'roughen' || op.type === 'wiggleTransform') && (
         <>
           <ParamRow
             nodeId={nodeId}
@@ -374,7 +345,7 @@ export function PathOpControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   if (!node || readNodeKind(node) !== 'shape') return null;
 
   const ops = readPathOps(node);
-  if (ops.length === 0) return null; // added via the Shape-Effects menu
+  if (ops.length === 0) return null; // added via Effects & Presets
 
   // Rendered top-to-bottom in APPLICATION order, so the panel reads the way the
   // geometry evaluates. Keyed by operator id rather than index, or React reuses

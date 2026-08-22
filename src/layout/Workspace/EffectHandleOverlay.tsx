@@ -44,6 +44,7 @@ import {
   effectToLayer,
   layerToEffect,
   hasEffectHandles,
+  HANDLE_PICK_RADIUS,
   type EffectHandle,
   type HandlePoint,
 } from '@core/effects/effectHandles';
@@ -189,7 +190,11 @@ export function EffectHandleOverlay(): JSX.Element | null {
     <svg
       ref={svgRef}
       aria-label={`${effect.type} handles`}
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'auto' }}
+      // `none` at the svg level: this overlay spans the whole stage, and an
+      // `auto` svg swallowed every viewport gesture (pan, zoom, layer drags)
+      // while handles were shown. Only the per-handle hit circles below are
+      // interactive; everything else lets input fall through to the canvas.
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
     >
       {/* The rest outline, so a dragged handle reads as displaced FROM
           somewhere rather than as an arbitrary dot. */}
@@ -203,6 +208,13 @@ export function EffectHandleOverlay(): JSX.Element | null {
         const on = hovered === h.spec.id;
         return (
           <g key={h.spec.id} aria-label={`${h.spec.label} handle`}>
+            {/* Invisible fat hit target at the pick radius — the one
+                interactive part of the overlay. Events bubble to the svg's
+                own listeners, whose hit test uses the same radius. */}
+            <circle
+              cx={s.x} cy={s.y} r={HANDLE_PICK_RADIUS}
+              fill="transparent" style={{ pointerEvents: 'all', cursor: 'move' }}
+            />
             {/* A dark ring UNDER the fill, so the handle stays legible on
                 white artwork as well as black — a single-colour dot vanishes
                 against half the content people warp. */}

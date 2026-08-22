@@ -13,6 +13,12 @@ export interface PaintSettings {
   opacity: number; // 0..1
   hardness: number; // 0..1 — 1 = hard edge, <1 feathered
   mode: PaintMode;
+  /**
+   * Clone stamp source, COMP px — set by Alt-click, consumed at the next
+   * stroke start (offset = source − first dab, classic clone-stamp aiming).
+   * Null until aimed; a clone stroke without a source has nothing to sample.
+   */
+  cloneSource: { x: number; y: number } | null;
 }
 
 interface PaintStore extends PaintSettings {
@@ -23,5 +29,6 @@ export const usePaintStore = create<PaintStore>((set) => ({
   opacity: 1,
   hardness: 1,
   mode: 'paint',
+  cloneSource: null,
   set: (patch) => set(patch),
 }));

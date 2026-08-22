@@ -142,33 +142,51 @@ export function addBone(nodeId: ID, bone: Bone): void {
   applyAndRecord(nodeId, after, `Add Bone ${bone.id}`);
 }
 
-/** Delete a bone and any associated keyframe tracks. One undo step. */
+/** Delete a complete bone subtree and every rig/animation reference to it. */
 export function deleteBone(nodeId: ID, boneId: string): void {
   const skel = currentSkeleton(nodeId);
   if (!skel) return;
+  const removed = new Set<string>([boneId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const bone of skel.bones ?? []) {
+      if (bone.parentId && removed.has(bone.parentId) && !removed.has(bone.id)) {
+        removed.add(bone.id);
+        changed = true;
+      }
+    }
+  }
+  const nextPaint = skel.weightPaint
+    ? {
+        ...skel.weightPaint,
+        bones: Object.fromEntries(
+          Object.entries(skel.weightPaint.bones).filter(([id]) => !removed.has(id)),
+        ),
+      }
+    : undefined;
   const after: SkeletonRig = {
     ...skel,
-    bones: (skel.bones ?? []).filter((b) => b.id !== boneId && b.parentId !== boneId),
-    ikTargets: (skel.ikTargets ?? []).filter((t) => t.boneId !== boneId),
-    // Controllers pointing at the deleted bone go with it, exactly as its IK
-    // target does. `controllerPosition` already returns null for a dangling
-    // link so nothing would crash — but a control left in the rig driving a
-    // bone that no longer exists is invisible, unselectable and still
-    // serialised, which is worse than one that is gone.
+    bones: (skel.bones ?? []).filter((b) => !removed.has(b.id)),
+    ikTargets: (skel.ikTargets ?? []).filter((t) => !removed.has(t.boneId)),
     ...(skel.controllers
-      ? { controllers: skel.controllers.filter((c) => c.link.boneId !== boneId) }
+      ? { controllers: skel.controllers.filter((c) => !removed.has(c.link.boneId)) }
       : {}),
+    ...(nextPaint ? { weightPaint: nextPaint } : { weightPaint: undefined }),
   };
   const trackEdit = captureAnimEdit(`Delete Bone ${boneId} tracks`, () => {
-    defaultAnimation.removeTrack(nodeId, `bone.${boneId}.rotation`);
-    defaultAnimation.removeTrack(nodeId, `bone.${boneId}.x`);
-    defaultAnimation.removeTrack(nodeId, `bone.${boneId}.y`);
-    defaultAnimation.removeTrack(nodeId, `ikTarget.${boneId}.x`);
-    defaultAnimation.removeTrack(nodeId, `ikTarget.${boneId}.y`);
-    defaultAnimation.removeTrack(nodeId, `bone.${boneId}.scaleX`);
-    defaultAnimation.removeTrack(nodeId, `bone.${boneId}.scaleY`);
-    defaultAnimation.removeTrack(nodeId, `ikPole.${boneId}.x`);
-    defaultAnimation.removeTrack(nodeId, `ikPole.${boneId}.y`);
+    for (const id of removed) {
+      defaultAnimation.removeTrack(nodeId, `bone.${id}.rotation`);
+      defaultAnimation.removeTrack(nodeId, `bone.${id}.x`);
+      defaultAnimation.removeTrack(nodeId, `bone.${id}.y`);
+      defaultAnimation.removeTrack(nodeId, `bone.${id}.scaleX`);
+      defaultAnimation.removeTrack(nodeId, `bone.${id}.scaleY`);
+      defaultAnimation.removeTrack(nodeId, `ikTarget.${id}.x`);
+      defaultAnimation.removeTrack(nodeId, `ikTarget.${id}.y`);
+      defaultAnimation.removeTrack(nodeId, `ikPole.${id}.x`);
+      defaultAnimation.removeTrack(nodeId, `ikPole.${id}.y`);
+      defaultAnimation.removeTrack(nodeId, `ikMode.${id}`);
+    }
   });
   applyAndRecord(nodeId, after, `Delete Bone ${boneId}`, trackEdit);
 }

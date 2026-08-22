@@ -1,0 +1,80 @@
+/* Footage viewer. The stage is a letterboxed well — media keeps its aspect on
+   a checker-free dark ground, the same convention every viewer uses, so the
+   clip's own black is distinguishable from empty stage. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  min-height: 240px;
+  max-height: 60vh;
+  overflow: hidden;
+}
+
+.media {
+  max-width: 100%;
+  max-height: 60vh;
+  object-fit: contain;
+  display: block;
+}
+
+.audio {
+  width: 90%;
+}
+
+.dead {
+  padding: var(--space-6);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.facts {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Frame-by-frame transport. Sits between stage and facts, and only exists
+   while the exact decoder is driving the stage — a transport over the native
+   player would promise precision the player cannot deliver. */
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.transportReadout {
+  flex: 1;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.exactNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* The commit actions. A row, wrapping on narrow modals — never a dropdown:
+   these four ARE the workflow, and hiding them behind a disclosure would
+   re-create the problem the viewer solves. */
+.actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-subtle);
+}

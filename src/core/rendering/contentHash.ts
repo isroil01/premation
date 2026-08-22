@@ -48,6 +48,7 @@ function contentOf(layer: RenderLayer): unknown {
     // geometry + rasterization size
     prim: layer.primitive,
     cr: layer.cornerRadius,
+    crs: layer.cornerRadii,
     // The normalized run list, NOT the raw fields. Two layers whose geometry is
     // the same drawing must hash the same whichever field carried it, and — the
     // reason this matters — one path cut into two runs must NOT hash the same as

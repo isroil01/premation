@@ -7,14 +7,19 @@
  * mask composes cleanly with the layer transform.
  *
  * This module owns the data model, the presets, the geometry (points → cubic
- * segments) and the scene-graph read/write. The rasterizer and the inspector
- * consume it. Not yet supported: on-canvas pen editing of mask points, feather
- * blur, and per-mask opacity compositing.
+ * segments) and the scene-graph read/write. On-canvas authoring lives in the
+ * workspace tools: `mask-rect` / `mask-ellipse` / `mask-pen` create masks;
+ * Direct Select (A) edits vertices and tangents. Feather (incl. variable),
+ * per-mask opacity and the seven AE combine modes are supported.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getEventBus } from '@core/events/EventBus';
 import type { SceneNode } from '@core/types';
+// Function-level cycle with maskFeather.ts (it builds its outline from
+// maskSegments here) — safe because both sides touch the other only inside
+// function bodies, never at module evaluation.
+import { hasVariableFeather, paintVariableFeatherPath } from './maskFeather';
 
 /**
  * How a mask combines with the matte accumulated from the masks above it.
@@ -46,10 +51,23 @@ export interface MaskPoint {
   /** Outgoing handle (absolute). Equal to (x,y) for a corner. */
   outX: number;
   outY: number;
+  /**
+   * Per-vertex feather DIAMETER override, px (AE's variable-width feather).
+   *
+   * Absent means "use the path's own `feather`" — which is every stored
+   * document, so nothing renders differently until a vertex opts in. When ANY
+   * vertex on a path carries one, the whole path renders through the
+   * distance-field painter (`maskFeather.ts`), with the width interpolated
+   * along the outline between vertices — the uniform blur has one radius and
+   * cannot express that.
+   */
+  feather?: number;
 }
 
 export interface MaskPath {
   id: string;
+  /** Optional display name — AE's mask list label. */
+  name?: string;
   mode: MaskMode;
   /** Closed loop (the only kind that can clip). */
   closed: boolean;
@@ -92,6 +110,59 @@ export function rectangleMask(w: number, h: number): MaskPath {
   return {
     id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0, inverted: false,
     points: [corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)],
+  };
+}
+
+/**
+ * Rounded-rectangle mask filling the layer's local bounds.
+ *
+ * Used to honour Appearance → Corners on image/video layers (which draw as
+ * textured quads and otherwise ignore `cornerRadius`). Eight anchors: ends of
+ * each straight side, with cubic handles only on the quarter-circle corners
+ * (same κ as `ellipseMask`).
+ *
+ * `radii` is TL → TR → BR → BL. A single number still works (uniform).
+ */
+export function roundedRectMask(
+  w: number,
+  h: number,
+  radii: number | readonly [number, number, number, number],
+): MaskPath {
+  const hw = w / 2;
+  const hh = h / 2;
+  const raw = typeof radii === 'number' ? [radii, radii, radii, radii] as const : radii;
+  // Clamp against box edges so adjacent arcs cannot overlap.
+  const scale = (a: number, b: number, limit: number): number => {
+    const sum = a + b;
+    if (sum <= limit || sum <= 1e-6) return 1;
+    return limit / sum;
+  };
+  let [tl, tr, br, bl] = raw.map((r) => Math.max(0, r)) as [number, number, number, number];
+  const s = Math.min(
+    scale(tl, tr, w),
+    scale(tr, br, h),
+    scale(br, bl, w),
+    scale(bl, tl, h),
+    1,
+  );
+  tl *= s; tr *= s; br *= s; bl *= s;
+  if (tl < 0.5 && tr < 0.5 && br < 0.5 && bl < 0.5) return rectangleMask(w, h);
+  const k = 0.5522847498307936;
+  const pt = (x: number, y: number, inX: number, inY: number, outX: number, outY: number): MaskPoint =>
+    ({ x, y, inX, inY, outX, outY });
+  // Clockwise: top edge → TR arc → right → BR → bottom → BL → left → TL arc.
+  return {
+    id: pid(), mode: 'add', closed: true, feather: 0, opacity: 1, expansion: 0, inverted: false,
+    points: [
+      pt(-hw + tl, -hh, -hw + tl - tl * k, -hh, -hw + tl, -hh),
+      pt(hw - tr, -hh, hw - tr, -hh, hw - tr + tr * k, -hh),
+      pt(hw, -hh + tr, hw, -hh + tr - tr * k, hw, -hh + tr),
+      pt(hw, hh - br, hw, hh - br, hw, hh - br + br * k),
+      pt(hw - br, hh, hw - br + br * k, hh, hw - br, hh),
+      pt(-hw + bl, hh, -hw + bl, hh, -hw + bl - bl * k, hh),
+      pt(-hw, hh - bl, -hw, hh - bl + bl * k, -hw, hh - bl),
+      pt(-hw, -hh + tl, -hw, -hh + tl, -hw, -hh + tl - tl * k),
+    ],
   };
 }
 
@@ -304,6 +375,15 @@ export function paintMaskMatte(
     g.globalCompositeOperation = maskModeToComposite(path.mode);
     const op = path.opacity ?? 1;
     g.globalAlpha = op < 0 ? 0 : op > 1 ? 1 : op;
+    // Variable-width feather (any vertex with its own value) renders through
+    // the distance-field painter — a blur has one radius and cannot vary the
+    // softness along the outline. Falls back to the uniform path when the
+    // scratch context is unavailable, so headless runtimes lose the variation,
+    // not the mask.
+    if (hasVariableFeather(path) && paintVariableFeatherPath(g, path, w, h)) {
+      g.restore();
+      continue;
+    }
     // Feather is a diameter in AE terms; blur takes a radius.
     if (path.feather > 0) g.filter = `blur(${path.feather / 2}px)`;
     g.fillStyle = '#fff';
@@ -338,6 +418,13 @@ function lerpPoint(p: MaskPoint, q: MaskPoint, f: number): MaskPoint {
     x: lerp(p.x, q.x, f), y: lerp(p.y, q.y, f),
     inX: lerp(p.inX, q.inX, f), inY: lerp(p.inY, q.inY, f),
     outX: lerp(p.outX, q.outX, f), outY: lerp(p.outY, q.outY, f),
+    // Per-vertex feather rides the same interpolation as every other vertex
+    // quantity. One side lacking it means "the path's uniform value" — no
+    // number to lerp toward, so the animated side's value carries (snapping to
+    // undefined mid-tween would flash the whole path back to uniform).
+    ...(typeof p.feather === 'number' || typeof q.feather === 'number'
+      ? { feather: lerp(p.feather ?? q.feather ?? 0, q.feather ?? p.feather ?? 0, f) }
+      : {}),
   };
 }
 
@@ -404,6 +491,42 @@ export function keyframeMask(nodeId: string, t: number): void {
   kfs.push({ t, mask });
   kfs.sort((a, b) => a.t - b.t);
   defaultSceneGraph.setMaskAnim(nodeId, kfs);
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/**
+ * Move one mask keyframe along the time axis.
+ *
+ * The timeline draws mask keyframes as diamonds on the layer's Mask Shape row,
+ * and a diamond you can see but not drag is a control that looks broken. The
+ * shape travels with the keyframe untouched — this is a retime, not an edit.
+ */
+export function moveMaskKeyframe(nodeId: string, fromT: number, toT: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const kfs = readNodeMaskAnim(node);
+  const moving = kfs.find((k) => Math.abs(k.t - fromT) < 1e-4);
+  if (!moving) return;
+  // Landing on an existing keyframe REPLACES it, matching every other track:
+  // two shapes at one time is not a state the interpolator can express.
+  const next = kfs
+    .filter((k) => k !== moving && Math.abs(k.t - toT) > 1e-4)
+    .concat({ ...moving, t: toT })
+    .sort((a, b) => a.t - b.t);
+  defaultSceneGraph.setMaskAnim(nodeId, next);
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/**
+ * Delete one mask keyframe. Removing the LAST one clears the animation
+ * outright, so the mask goes back to reading its static shape rather than being
+ * left with a one-keyframe track that pins it forever.
+ */
+export function removeMaskKeyframe(nodeId: string, t: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const next = readNodeMaskAnim(node).filter((k) => Math.abs(k.t - t) > 1e-4);
+  defaultSceneGraph.setMaskAnim(nodeId, next.length > 0 ? next : undefined);
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 
@@ -496,4 +619,33 @@ export function removeMaskPath(nodeId: string, pathId: string): void {
  */
 export function setMaskPoints(nodeId: string, pathId: string, points: MaskPoint[], t?: number): void {
   updateMaskPath(nodeId, pathId, { points }, t);
+}
+
+/**
+ * Set (or clear, with undefined) one vertex's feather override — the write
+ * behind the variable-width feather rows. Clearing removes the KEY rather than
+ * writing 0: an absent override means "the path's uniform value", and a path
+ * whose every override is cleared drops back to the plain blur renderer.
+ */
+export function setMaskPointFeather(
+  nodeId: string,
+  pathId: string,
+  pointIndex: number,
+  feather: number | undefined,
+  t?: number,
+): void {
+  editMaskAt(nodeId, t, (mask) => ({
+    paths: mask.paths.map((p) => {
+      if (p.id !== pathId) return p;
+      const points = p.points.map((pt, i) => {
+        if (i !== pointIndex) return pt;
+        if (feather === undefined) {
+          const { feather: _drop, ...rest } = pt;
+          return rest as MaskPoint;
+        }
+        return { ...pt, feather: Math.max(0, feather) };
+      });
+      return { ...p, points };
+    }),
+  }));
 }

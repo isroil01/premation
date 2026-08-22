@@ -553,4 +553,32 @@ describe('AppTextureProvider', () => {
       expect(provider.get('asset:v')!.texture.id).not.toBe(real);
     });
   });
+
+  describe('CPU-bake rebakes do not blink', () => {
+    it('keeps the last texture on screen while a new bake spec is decoding', async () => {
+      const loader = jest.fn<Promise<ImageBitmap>, [string, string?, boolean?]>(async () => fakeBitmap());
+      const { provider } = setup(loader);
+      const placeholderId = provider.get('nope')!.texture.id;
+
+      provider.setImage('asset:a', 'blob:photo');
+      await flush();
+      const first = provider.get('asset:a')!;
+      expect(first.ready).toBe(true);
+      expect(first.texture.id).not.toBe(placeholderId);
+
+      // Same file, different bake — this used to replace the entry with
+      // ready:false / texture:null, so get() returned the transparent
+      // placeholder until the bake landed (the image "blink").
+      const bake = { effects: [], width: 320, height: 240 };
+      provider.setImage('asset:a', 'blob:photo', undefined, undefined, bake);
+      const during = provider.get('asset:a')!;
+      expect(during.texture.id).toBe(first.texture.id);
+      expect(during.texture.id).not.toBe(placeholderId);
+      // The file was already decoded; don't hit the network/loader again.
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      await flush();
+      expect(provider.get('asset:a')!.ready).toBe(true);
+    });
+  });
 });

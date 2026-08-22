@@ -1,23 +1,35 @@
-/* Bounce section — lives inside the Graph panel's scrolling column.
+/* Bounce workspace — a generator, not a second graph stacked on Curve.
  *
- * It carries almost no chrome of its own on purpose. The section label, the
- * chip, the field and the focus ring are all the panel's, imported by
- * `composes` from MotionEditorPanel.module.css, so this section cannot drift
- * into looking like a different tool docked in the same column. What is local
- * here is only what is genuinely local: the preview well, the parameter grid
- * and the two action buttons. */
+ * The section label, chip, field and focus ring stay the panel's (`composes`
+ * from MotionEditorPanel.module.css) so this cannot drift into looking like a
+ * different tool. What is local: the thumbnail preview, parameter grids, and
+ * the pinned commit bar. */
 
 .root {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  padding-bottom: var(--space-4);
-  border-bottom: 1px solid var(--color-border-subtle);
+  flex: 1;
+  min-height: 0;
 }
 
-/* The generated curve, drawn from the same tracks the buttons apply.
-   A well at the same radius and recession as the main graph below it, at a
-   third of the height: this is a thumbnail of a curve, not a second editor. */
+.scroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-5);
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Thumbnail of the generated curve — a third of the keyframe editor's height,
+   so it cannot be mistaken for the Curve workspace. */
 .preview {
   width: 100%;
   height: 72px;
@@ -44,9 +56,6 @@
   stroke-linecap: round;
 }
 
-/* Style / direction chips — the panel's chip, in a four-up row.
-   `composes` rather than a copy, so the hover, focus, pressed and disabled
-   states can only ever be defined once. */
 .styles {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -60,8 +69,6 @@
   justify-content: center;
   gap: 3px;
   padding: 4px var(--space-2);
-  /* Names, not numbers: the panel's prop chips are mono because they carry
-     property paths. These carry words. */
   font-family: var(--font-family-sans);
   white-space: nowrap;
 }
@@ -83,7 +90,6 @@
   min-width: 0;
 }
 
-/* A switch reads as a control beside its name, not under it. */
 .fieldInline {
   display: flex;
   align-items: center;
@@ -103,29 +109,24 @@
   gap: var(--space-3);
 }
 
+.row > h3 {
+  flex: 1;
+  min-width: 0;
+}
+
 .rowLabel {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
+/* Always visible at the bottom of the Bounce workspace — these write
+   keyframes; everything above only configures what they will write. */
 .actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: var(--space-2);
-}
-
-/* The two commit buttons. Taller than a chip because they are the only
-   controls in this section that WRITE something; everything above them just
-   configures what they will write. That difference is carried by height and
-   by the primary's fill, not by a second shape language. */
-.action {
-  composes: actionChip from './MotionEditorPanel.module.css';
-  justify-content: center;
-  padding: 6px var(--space-3);
-  background: var(--color-surface-1);
-  border-color: var(--color-border);
-}
-
-.actionPrimary {
-  composes: actionChipOn from './MotionEditorPanel.module.css';
+  flex: none;
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-header);
 }

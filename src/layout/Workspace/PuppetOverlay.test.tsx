@@ -70,6 +70,7 @@ beforeEach(() => {
   defaultSceneGraph.setPuppet('p1', { meshDensity: 6, meshExpansion: 0, pins: [] });
   useSelectionStore.getState().set(['p1']);
   useUIStore.getState().setActiveTool('puppet-pin');
+  useUIStore.getState().setPuppetPinKind('position');
 });
 
 describe('gating', () => {
@@ -87,8 +88,7 @@ describe('gating', () => {
 
   it('draws the mesh wireframe for the selected layer', () => {
     const { container } = render(<PuppetOverlay />);
-    // density 6 ⇒ 6×6 cells ⇒ 72 triangles.
-    expect(container.querySelectorAll('polygon')).toHaveLength(72);
+    expect(container.querySelector('[data-puppet-mesh]')?.getAttribute('d')).toMatch(/^M/);
   });
 });
 
@@ -101,6 +101,18 @@ describe('click-add', () => {
     expect(pins).toHaveLength(1);
     expect(pins[0]!.x).toBeCloseTo(30, 3);
     expect(pins[0]!.y).toBeCloseTo(20, 3);
+    expect(pins[0]!.kind).toBe('position');
+  });
+
+  it('places a starch pin when that tool is armed', () => {
+    useUIStore.getState().setPuppetPinKind('starch');
+    const { container } = render(<PuppetOverlay />);
+    const svg = container.querySelector('svg')!;
+    fireEvent.click(svg, { clientX: 12, clientY: -8 });
+    const pins = pinsOf('p1');
+    expect(pins).toHaveLength(1);
+    expect(pins[0]!.kind).toBe('starch');
+    expect(pins[0]!.stiffness).toBe(8);
   });
 
   it('ignores clicks outside the layer bounds', () => {
@@ -149,6 +161,7 @@ describe('pointer capture is not a precondition', () => {
         throw new DOMException('No active pointer', 'NotFoundError');
       });
     try {
+      useUIStore.getState().setPuppetPinKind('advanced');
       const { container } = render(<PuppetOverlay />);
       const svg = container.querySelector('svg')!;
       fireEvent.click(svg, { clientX: 20, clientY: 0 });
@@ -227,6 +240,7 @@ describe('drag writes animation, not static props', () => {
   });
 
   it('the gizmo scale handle writes the scale track', () => {
+    useUIStore.getState().setPuppetPinKind('advanced');
     const { container } = render(<PuppetOverlay />);
     const svg = container.querySelector('svg')!;
     fireEvent.click(svg, { clientX: 0, clientY: 0 });

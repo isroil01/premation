@@ -139,6 +139,102 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
         {Num('spread', 'Spread', '°', 0, 360)}
         {Num('gravityX', 'Gravity X', 'px/s²')}
         {Num('gravityY', 'Gravity Y', 'px/s²')}
+        {/* Wind is constant acceleration like gravity — a separate pair rather
+            than "just add it to gravity" because wind is the thing you animate
+            and zero out, and gravity is the thing you set once. */}
+        {Num('windX', 'Wind X', 'px/s²')}
+        {Num('windY', 'Wind Y', 'px/s²')}
+        {/* One amplitude, two characters: ballistic mode wanders (closed-form,
+            scrub-free), stateful mode swirls (real curl-noise force). Scale is
+            stateful-only — the wander has no spatial field to scale. */}
+        {Num('turbulence', 'Turbulence', cfg.simMode === 'stateful' ? 'px/s²' : 'px')}
+        {/* Depth axis — simulated always, PROJECTED only when Perspective is
+            on, so flipping perspective changes the look, never the motion. */}
+        {Num('emitterDepth', 'Depth', 'px')}
+        {Num('speedZ', 'Speed Z', 'px/s')}
+        {Num('perspective', 'Perspective', 'px')}
+        {/* Collisions and sub-emit are plain rows like the bounce params —
+            both shape the stateful HISTORY, and their toggles/selects have no
+            meaningful in-between to keyframe anyway. */}
+        {cfg.simMode === 'stateful' && (
+          <div className={styles.popoverRow}>
+            <div style={{ width: 13 }} />
+            <span className={styles.popoverLabel}>Collide</span>
+            <input
+              type="checkbox"
+              checked={cfg.collide ?? false}
+              onChange={(e) => set('collide', e.target.checked)}
+              aria-label="Particle collisions"
+            />
+          </div>
+        )}
+        <div className={styles.popoverRow}>
+          <div style={{ width: 13 }} />
+          <span className={styles.popoverLabel}>Sub-Emit</span>
+          <select
+            className={styles.select}
+            style={{ width: 110 }}
+            value={cfg.subEmit ?? 'off'}
+            onChange={(e) => set('subEmit', e.target.value as 'off' | 'death' | 'bounce')}
+            aria-label="Sub-emitter trigger"
+          >
+            <option value="off">Off</option>
+            <option value="death">On Death</option>
+            {/* A bounce is history — the closed-form emitter has none. */}
+            {cfg.simMode === 'stateful' && <option value="bounce">On Bounce</option>}
+          </select>
+        </div>
+        {(cfg.subEmit ?? 'off') !== 'off' && (
+          <>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Burst</span>
+              <ValueField value={cfg.subCount ?? 8} min={0} max={16} precision={0} onChange={(v) => set('subCount', Number(v))} aria-label="Children per burst" />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Burst Speed</span>
+              <ValueField value={cfg.subSpeed ?? 120} min={0} precision={0} unit="px/s" onChange={(v) => set('subSpeed', Number(v))} aria-label="Child speed" />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Burst Life</span>
+              <ValueField value={cfg.subLifetime ?? 0.6} min={0.05} precision={2} unit="s" onChange={(v) => set('subLifetime', Number(v))} aria-label="Child lifetime" />
+            </div>
+          </>
+        )}
+        {/* Trails are plain rows, not Num rows, on purpose: Num makes a param
+            KEYFRAMEABLE, and in stateful mode the trail ring is part of the
+            state shape — animating its length would rebuild the sim on every
+            frame of the ramp. Same reasoning as the bounce params above. */}
+        <div className={styles.popoverRow}>
+          <div style={{ width: 13 }} />
+          <span className={styles.popoverLabel}>Trail</span>
+          <ValueField
+            value={cfg.trailLength ?? 0}
+            min={0}
+            max={24}
+            precision={0}
+            onChange={(v) => set('trailLength', Number(v))}
+            aria-label="Trail points"
+          />
+        </div>
+        {(cfg.trailLength ?? 0) > 0 && (
+          <div className={styles.popoverRow}>
+            <div style={{ width: 13 }} />
+            <span className={styles.popoverLabel}>Trail Gap</span>
+            <ValueField
+              value={cfg.trailSpacing ?? 1 / 30}
+              min={1 / 240}
+              precision={3}
+              unit="s"
+              onChange={(v) => set('trailSpacing', Number(v))}
+              aria-label="Trail spacing seconds"
+            />
+          </div>
+        )}
+        {cfg.simMode === 'stateful' && Num('turbulenceScale', 'Turb. Scale', 'px')}
+        {Num('turbulenceSpeed', 'Turb. Speed', '×')}
         {Num('spin', 'Spin', '°/s')}
 
         <div className={styles.popoverRow}>
@@ -166,8 +262,60 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
         </div>
         {StaticNum('seed', 'Random Seed', 0)}
 
+        <div className={styles.popoverRow}>
+          <span className={styles.popoverLabel}>Sim</span>
+          <select
+            className={styles.select}
+            style={{ width: 110 }}
+            value={cfg.simMode ?? 'ballistic'}
+            onChange={(e) => set('simMode', e.target.value as ParticleConfig['simMode'])}
+            aria-label="Simulation mode"
+          >
+            <option value="ballistic">Ballistic</option>
+            <option value="stateful">Stateful</option>
+          </select>
+        </div>
+        {(cfg.simMode ?? 'ballistic') === 'stateful' && (
+          <>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Floor Y</span>
+              <ValueField
+                value={cfg.bounceFloor ?? 160}
+                onChange={(v) => set('bounceFloor', Number(v))}
+                aria-label="Floor Y"
+              />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Bounce</span>
+              <ValueField
+                value={cfg.bounceRestitution ?? 0.65}
+                min={0}
+                max={1}
+                onChange={(v) => set('bounceRestitution', Number(v))}
+                aria-label="Bounce restitution"
+              />
+            </div>
+            <div className={styles.popoverRow}>
+              <div style={{ width: 13 }} />
+              <span className={styles.popoverLabel}>Damping</span>
+              <ValueField
+                value={cfg.bounceDamping ?? 0.998}
+                min={0}
+                max={1}
+                onChange={(v) => set('bounceDamping', Number(v))}
+                aria-label="Air damping"
+              />
+            </div>
+          </>
+        )}
+
         <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Deterministic emitter — scrubbing is stable. The layer transform moves the whole system; keyframe it to fly the emitter.
+          {(cfg.simMode ?? 'ballistic') === 'stateful'
+            ? 'Stateful emitter with floor bounce — scrubbing replays from snapshots, identical every time.'
+            : 'Deterministic ballistic emitter — scrubbing is stable. Switch to Stateful for floor bounce.'}
+          {' '}The layer transform moves the whole system.
         </p>
       </div>
     </div>

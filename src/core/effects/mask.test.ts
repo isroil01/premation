@@ -1,6 +1,7 @@
 import {
   rectangleMask,
   ellipseMask,
+  roundedRectMask,
   maskSegments,
   readNodeMask,
   type LayerMask,
@@ -45,6 +46,26 @@ describe('mask presets', () => {
     const k = 0.5522847498307936;
     expect(top.outX).toBeCloseTo(100 * k);
     expect(top.inX).toBeCloseTo(-100 * k);
+  });
+
+  test('roundedRectMask is an 8-point path with cubic corners', () => {
+    const m = roundedRectMask(200, 100, 20);
+    expect(m.closed).toBe(true);
+    expect(m.mode).toBe('add');
+    expect(m.points).toHaveLength(8);
+    expect(maskSegments(m)).toHaveLength(8);
+    // Top edge runs between the two top anchors.
+    expect(m.points[0]!.x).toBeCloseTo(-80);
+    expect(m.points[0]!.y).toBeCloseTo(-50);
+    expect(m.points[1]!.x).toBeCloseTo(80);
+    expect(m.points[1]!.y).toBeCloseTo(-50);
+  });
+
+  test('roundedRectMask accepts per-corner radii', () => {
+    const m = roundedRectMask(200, 100, [40, 10, 40, 10]);
+    expect(m.points).toHaveLength(8);
+    expect(m.points[0]!.x).toBeCloseTo(-60); // -100 + 40
+    expect(m.points[1]!.x).toBeCloseTo(90);  // 100 - 10
   });
 });
 

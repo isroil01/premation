@@ -94,10 +94,20 @@ describe('spotlight', () => {
 
   it('carries ambient separately from intensity', () => {
     // Ambient is what survives OUTSIDE the cone. Folding it into intensity
-    // would make the effect an on/off mask with no way back.
-    const s = emit('spotlight', { intensity: 150, ambient: 15 })!;
-    expect(s.intensity).toBeCloseTo(1.5, 6);
-    expect(s.ambient).toBeCloseTo(0.15, 6);
+    // would make the effect an on/off mask with no way back. Use a mid value
+    // that is NOT a migrated shipping default (15 / 55).
+    const s = emit('spotlight', { intensity: 120, ambient: 40 })!;
+    expect(s.intensity).toBeCloseTo(1.2, 6);
+    expect(s.ambient).toBeCloseTo(0.4, 6);
+  });
+
+  it('defaults to full ambient so applying Spotlight does not blank the plate', () => {
+    expect(emit('spotlight')!.ambient).toBeCloseTo(1, 6);
+  });
+
+  it('migrates catastrophic ambient defaults that read as a deleted scene', () => {
+    expect(emit('spotlight', { ambient: 15 })!.ambient).toBeCloseTo(1, 6);
+    expect(emit('spotlight', { ambient: 55 })!.ambient).toBeCloseTo(1, 6);
   });
 
   it('carries edge softness and the Render mode', () => {

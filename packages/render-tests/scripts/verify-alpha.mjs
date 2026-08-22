@@ -15,16 +15,18 @@
  * Every alpha scene draws a white square whose alpha ramps linearly across x
  * over a flat background. Alpha is the only thing that varies along x, so
  * averaging whole columns beats 8-bit quantisation, and the two hypotheses
- * predict curves that cannot be mistaken for one another:
+ * predict curves that cannot be mistaken for one another.
  *
- *     read correctly      out = 255·a + bg·(1−a)     LINEAR in alpha
- *     multiplied twice    out = 255·a² + bg·(1−a)    QUADRATIC in alpha
+ * Intermediates are linear (`LINEAR_INTERMEDIATE_STORAGE`), so the composite
+ * is a linear-light over, then encoded to sRGB on the scene blit:
  *
- * The quadratic sags below the line everywhere strictly between a = 0 and
- * a = 1 and meets it exactly at both ends. That sag IS the dark fringe. Fitting
- * both models and reporting which one the pixels follow says not merely "wrong"
- * but WHICH WAY wrong — the property that identified the double multiply by
- * mechanism rather than by symptom.
+ *     read correctly      out = encode( 1·a + lin(bg)·(1−a) )
+ *     multiplied twice    out = encode( lin(a)·a + lin(bg)·(1−a) )
+ *
+ * (When storage was display-referred these were `255·a + bg·(1−a)` and
+ * `255·a² + bg·(1−a)`. Same discrimination, different transfer.)
+ * The quadratic-in-alpha sag is still the dark fringe; fitting both models
+ * says not merely "wrong" but WHICH WAY wrong.
  *
  * ## What each scene pins
  *
@@ -79,6 +81,16 @@ const T_HI = 0.85;
 
 const BG = { light: 0xe8, mid: 0x80, dark: 0x10 };
 
+/** IEC 61966-2-1, same curves as the renderer’s working-space helpers. */
+function srgbToLin(u8) {
+  const c = u8 / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+function linToSrgb8(lin) {
+  const s = lin <= 0.0031308 ? lin * 12.92 : 1.055 * Math.max(lin, 0) ** (1 / 2.4) - 0.055;
+  return 255 * s;
+}
+
 /** Mean RGB of column x, over the vertical middle of the subject. */
 function columnMean(png, x, y0, y1) {
   const { width, data } = png;
@@ -111,8 +123,12 @@ function fitRamp(png, bgLevel) {
     // fraction. Using the exact fraction would charge that rounding to the fit.
     const a = Math.round(t * 255) / 255;
     const measured = columnMean(png, x, y0, y1);
-    const linear = 255 * a + bgLevel * (1 - a);
-    const quadratic = 255 * a * a + bgLevel * (1 - a);
+    const bgLin = srgbToLin(bgLevel);
+    // Correct: straight white, coverage a, linear-light over, then encode.
+    const linear = linToSrgb8(a * 1 + (1 - a) * bgLin);
+    // Double-multiply: premul file uploaded as straight, so sRGB bytes are
+    // already a·white; the extra multiply leaves colour lin(a)·a.
+    const quadratic = linToSrgb8(srgbToLin(a * 255) * a + (1 - a) * bgLin);
     linSq += (measured - linear) ** 2;
     quadSq += (measured - quadratic) ** 2;
     n++;
@@ -207,14 +223,15 @@ for (const backend of BACKENDS) {
   //
   //   unpremul clamps at min(rgb/a, 1). The source is constant WHITE, so
   //   rgb/a = 1/a ≥ 1 for every a, and the clamp returns 1 at every column.
-  //   The shader then re-multiplies: out = 255·a + bg·(1−a). Linear.
+  //   The shader then re-multiplies in working space and the blit encodes:
+  //   out = encode(1·a + lin(bg)·(1−a)). Linear coverage, not display lerp.
   //
   // So this scene cannot discriminate the two interpretations — a white source
   // is a fixed point of the un-premultiply. What it DOES pin is the clamp
   // itself: without `min(…, 1.0)` the divide would push RGB far above 1 and the
   // colour matrix downstream would return bright specks instead of white, which
-  // is not linear and not subtle. Asserting linearity here is asserting that
-  // invalid premultiplied data is repaired rather than amplified.
+  // is not linear coverage and not subtle. Asserting this curve here is asserting
+  // that invalid premultiplied data is repaired rather than amplified.
   await assertShape(
     backend, 'alpha-control-straight-src-premul', BG.light, 'linear',
     'un-premultiplying a white source clamps to white instead of amplifying',

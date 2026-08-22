@@ -11,8 +11,12 @@ interface GPUSupportedFeatures {
 
 interface GPUBuffer {
   destroy(): void;
+  mapAsync(mode: number, offset?: number, size?: number): Promise<void>;
+  getMappedRange(offset?: number, size?: number): ArrayBuffer;
+  unmap(): void;
 }
 interface GPUTexture {
+  readonly format: string;
   createView(desc?: Record<string, unknown>): GPUTextureView;
   destroy(): void;
 }
@@ -69,6 +73,11 @@ interface GPURenderPassEncoder {
 
 interface GPUCommandEncoder {
   beginRenderPass(desc: Record<string, unknown>): GPURenderPassEncoder;
+  copyTextureToBuffer(
+    source: Record<string, unknown>,
+    destination: Record<string, unknown>,
+    copySize: Record<string, unknown>,
+  ): void;
   finish(): GPUCommandBuffer;
 }
 interface GPUCommandBuffer {
@@ -123,3 +132,6 @@ interface GPU {
 interface Navigator {
   readonly gpu?: GPU;
 }
+
+/** WebGPU buffer map mode (MAP_READ). */
+declare const GPUMapMode: { READ: number; WRITE: number };

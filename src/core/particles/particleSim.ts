@@ -12,12 +12,15 @@
  */
 
 import { parseHex } from '@core/effects/canvas2dEffects';
+import { wanderOffset } from './particleField';
 import { parseColorChannels, channelsToColor } from '@core/effects/effects';
 import type { SceneNode } from '@core/types';
 
 export type EmitterType = 'point' | 'box' | 'circle';
 export type ParticleShape = 'circle' | 'square' | 'line' | 'star';
 export type ParticleBlend = 'normal' | 'add';
+/** `ballistic` = closed-form (default). `stateful` = SimulationCache + floor bounce. */
+export type ParticleSimMode = 'ballistic' | 'stateful';
 
 export interface ParticleConfig {
   emitterType: EmitterType;
@@ -56,6 +59,70 @@ export interface ParticleConfig {
   blend: ParticleBlend;
   /** Randomisation seed — changing it reshuffles every particle. */
   seed: number;
+  /**
+   * Simulation mode. Default `ballistic` keeps the closed-form emitter.
+   * `stateful` uses frame-stepping with floor bounce (seeded-replay scrub).
+   */
+  simMode?: ParticleSimMode;
+  /** Floor Y in emitter-local px (positive down). Used when simMode=stateful. */
+  bounceFloor?: number;
+  /** Bounce restitution 0..1 when simMode=stateful. */
+  bounceRestitution?: number;
+  /** Air damping per frame 0..1 when simMode=stateful. 1 = none. */
+  bounceDamping?: number;
+  /** Constant wind acceleration px/s² — folds into the ballistic closed form
+   *  exactly as gravity does, so scrubbing stays free. */
+  windX?: number;
+  windY?: number;
+  /** Turbulence amplitude. Ballistic mode: max wander displacement in px.
+   *  Stateful mode: curl-noise force in px/s². Zero = off, byte-identical to
+   *  configs that predate the field. */
+  turbulence?: number;
+  /** Spatial scale of the stateful curl field, px per noise cell. */
+  turbulenceScale?: number;
+  /** How fast the field evolves (both modes). 1 = normal. */
+  turbulenceSpeed?: number;
+  /**
+   * Trail ghost points per particle (0 = off, capped at 24). NOT keyframeable
+   * on purpose, unlike the field params: in stateful mode the trail is part of
+   * the simulation STATE, so animating its length would change the state shape
+   * and reset the sim cache on every frame of the ramp.
+   */
+  trailLength?: number;
+  /** Seconds between trail points. */
+  trailSpacing?: number;
+  /** Emitter z spread in px (particles born in ±depth/2). 0 = flat. */
+  emitterDepth?: number;
+  /** ± initial z velocity px/s, hashed per particle. */
+  speedZ?: number;
+  /**
+   * Perspective focal length in px; 0 = off (z is simulated but not
+   * projected). This is 2.5D ON PURPOSE: particles project through their own
+   * focal length inside the field texture, independent of the comp camera —
+   * making them camera-aware would mean rasterizing the field per camera,
+   * which is a renderer subsystem, not a particle option.
+   */
+  perspective?: number;
+  /** Particle-particle collisions (stateful only — contact is history). */
+  collide?: boolean;
+  /** Velocity kept on particle-particle contact, 0..1. */
+  collideRestitution?: number;
+  /**
+   * Spawn a child burst per particle. `death` works in BOTH modes — a
+   * ballistic particle's death time is known in advance, so its children are
+   * still a closed form. `bounce` needs the stateful sim: a bounce is history.
+   * Children never sub-emit (one generation), or a firework would cascade
+   * unbounded.
+   */
+  subEmit?: 'off' | 'death' | 'bounce';
+  /** Children per event, capped hard — each child is a live particle. */
+  subCount?: number;
+  /** Child launch speed px/s (full 360° spread). */
+  subSpeed?: number;
+  /** Child lifetime seconds. */
+  subLifetime?: number;
+  /** Child size as a fraction of the config's size ramp. */
+  subSizeScale?: number;
 }
 
 export interface Particle {
@@ -71,6 +138,18 @@ export interface Particle {
   /** Normalised age 0..1 (0 = just born). */
   age01: number;
   shape: ParticleShape;
+  /** Depth in px, +z away from the viewer. Projected only when the config's
+   *  `perspective` is on; always simulated so turning perspective on does not
+   *  change trajectories, only their projection. */
+  z: number;
+  /**
+   * Past positions, NEWEST FIRST, for the trail renderer. Absent when trails
+   * are off, so pre-trail outputs compare byte-identical. Ballistic mode
+   * evaluates its own closed form at trailing ages — exact and stateless;
+   * stateful mode records real history, which is what lets a trail show the
+   * path from BEFORE a bounce.
+   */
+  trail?: Array<{ x: number; y: number }>;
 }
 
 export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
@@ -97,6 +176,27 @@ export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
   shape: 'circle',
   blend: 'add',
   seed: 1,
+  simMode: 'ballistic',
+  bounceFloor: 160,
+  bounceRestitution: 0.65,
+  bounceDamping: 0.998,
+  windX: 0,
+  windY: 0,
+  turbulence: 0,
+  turbulenceScale: 100,
+  turbulenceSpeed: 1,
+  trailLength: 0,
+  trailSpacing: 1 / 30,
+  emitterDepth: 0,
+  speedZ: 0,
+  perspective: 0,
+  collide: false,
+  collideRestitution: 0.7,
+  subEmit: 'off',
+  subCount: 8,
+  subSpeed: 120,
+  subLifetime: 0.6,
+  subSizeScale: 0.5,
 };
 
 /** Read a node's particle config off its `fx` component, filling in every
@@ -114,6 +214,11 @@ export const PARTICLE_NUMERIC_KEYS = [
   'emitterWidth', 'emitterHeight', 'birthRate', 'lifetime', 'lifetimeRandom',
   'speed', 'speedRandom', 'direction', 'spread', 'gravityX', 'gravityY',
   'spin', 'sizeStart', 'sizeEnd', 'opacityStart', 'opacityEnd',
+  // The field params. Being in this list is what makes them KEYFRAMEABLE —
+  // `resolveParticleConfig` samples `particle.<key>` generically, so a wind
+  // that rises over the shot needs nothing beyond this entry.
+  'windX', 'windY', 'turbulence', 'turbulenceScale', 'turbulenceSpeed',
+  'emitterDepth', 'speedZ', 'perspective',
 ] as const;
 export type ParticleNumericKey = (typeof PARTICLE_NUMERIC_KEYS)[number];
 
@@ -187,11 +292,89 @@ function lerpColor(a: string, b: string, t: number, alpha: number): string {
  * All particles alive at `time` (seconds), in emitter-local space. Newest last.
  * Capped at `maxParticles` (keeps the youngest — AE drops the oldest overflow).
  */
+/**
+ * One parent's death burst, appended to `out`. Pure closed form: the parent's
+ * death position is its own formula evaluated at `age = life`, and each child
+ * flies ballistically from there under the same gravity+wind. Children carry
+ * no trails and never sub-emit — one generation, or a firework cascades
+ * unbounded.
+ */
+function emitDeathBurst(
+  out: Particle[],
+  cfg: ParticleConfig,
+  parent: number,
+  parentLife: number,
+  childAge: number,
+  seed: number,
+): void {
+  const rate = cfg.birthRate;
+  const dirBase = (cfg.direction * Math.PI) / 180;
+  const spreadRad = (cfg.spread * Math.PI) / 180;
+  const speed = cfg.speed * (1 + cfg.speedRandom * (hash01(parent, 2, seed) * 2 - 1));
+  const dir = dirBase + spreadRad * (hash01(parent, 3, seed) - 0.5);
+  const v0x = Math.cos(dir) * speed;
+  const v0y = Math.sin(dir) * speed;
+  let ox = 0;
+  let oy = 0;
+  if (cfg.emitterType === 'box') {
+    ox = (hash01(parent, 4, seed) - 0.5) * cfg.emitterWidth;
+    oy = (hash01(parent, 5, seed) - 0.5) * cfg.emitterHeight;
+  } else if (cfg.emitterType === 'circle') {
+    const ang = hash01(parent, 4, seed) * Math.PI * 2;
+    const rad = Math.sqrt(hash01(parent, 5, seed)) * (cfg.emitterWidth / 2);
+    ox = Math.cos(ang) * rad;
+    oy = Math.sin(ang) * rad;
+  }
+  const ax = cfg.gravityX + (cfg.windX ?? 0);
+  const ay = cfg.gravityY + (cfg.windY ?? 0);
+  const dw = wanderOffset(parent, parentLife, cfg);
+  const deathX = ox + v0x * parentLife + 0.5 * ax * parentLife * parentLife + dw.x;
+  const deathY = oy + v0y * parentLife + 0.5 * ay * parentLife * parentLife + dw.y;
+  const oz = (hash01(parent, 6, seed) - 0.5) * (cfg.emitterDepth ?? 0);
+  const vz = (hash01(parent, 8, seed) * 2 - 1) * (cfg.speedZ ?? 0);
+  const deathZ = oz + vz * parentLife;
+
+  const subLife = Math.max(0.05, cfg.subLifetime ?? 0.6);
+  const count = Math.min(16, Math.max(0, Math.floor(cfg.subCount ?? 0)));
+  const sizeScale = Math.max(0, cfg.subSizeScale ?? 0.5);
+  const subSpeed = cfg.subSpeed ?? 120;
+  const a01 = childAge / subLife;
+  // `rate` folds the parent's birth index into the child hash without
+  // colliding with a NEIGHBOUR parent's children (977 is coprime to any
+  // realistic count).
+  void rate;
+  for (let k = 0; k < count; k++) {
+    const j = parent * 977 + k;
+    const cdir = hash01(j, 30, seed) * Math.PI * 2;
+    const cspeed = subSpeed * (0.5 + hash01(j, 31, seed));
+    const cx = deathX + Math.cos(cdir) * cspeed * childAge + 0.5 * ax * childAge * childAge;
+    const cy = deathY + Math.sin(cdir) * cspeed * childAge + 0.5 * ay * childAge * childAge;
+    const size = Math.max(0, lerp(cfg.sizeStart, cfg.sizeEnd, a01)) * sizeScale;
+    const opacity = lerp(cfg.opacityStart, cfg.opacityEnd, a01);
+    out.push({
+      x: cx,
+      y: cy,
+      z: deathZ,
+      size,
+      color: lerpColor(cfg.colorStart, cfg.colorEnd, a01, opacity),
+      opacity,
+      rotation: cfg.spin * childAge,
+      age01: a01,
+      shape: cfg.shape,
+    });
+  }
+}
+
 export function simulateParticles(cfg: ParticleConfig, time: number): Particle[] {
   const rate = cfg.birthRate;
   if (rate <= 0 || time <= 0) return [];
 
-  const maxLife = Math.max(0.05, cfg.lifetime * (1 + Math.max(0, cfg.lifetimeRandom)));
+  const subEmitDeath = cfg.subEmit === 'death';
+  const subLife = Math.max(0.05, cfg.subLifetime ?? 0.6);
+  const maxLife = Math.max(0.05, cfg.lifetime * (1 + Math.max(0, cfg.lifetimeRandom)))
+    // A dead parent still matters while its children fly, so the birth window
+    // reaches back one child-lifetime further.
+    + (subEmitDeath ? subLife : 0);
   let iStart = Math.max(0, Math.ceil((time - maxLife) * rate));
   const iEnd = Math.floor(time * rate);
   if (iEnd - iStart > cfg.maxParticles) iStart = iEnd - cfg.maxParticles;
@@ -210,13 +393,27 @@ export function simulateParticles(cfg: ParticleConfig, time: number): Particle[]
       0.05,
       cfg.lifetime * (1 + cfg.lifetimeRandom * (hash01(i, 1, seed) * 2 - 1)),
     );
-    if (age >= life) continue;
+    if (age >= life) {
+      // DEATH SUB-EMIT, still closed-form: the death time is `birth + life`, a
+      // fact known in advance, so a child's whole flight is a formula in
+      // (parent index, child index, time). `bounce` cannot do this — a bounce
+      // is history — which is why that trigger is stateful-only.
+      if (subEmitDeath && cfg.simMode !== 'stateful') {
+        const childAge = age - life;
+        if (childAge < subLife && out.length < cfg.maxParticles * 2) {
+          emitDeathBurst(out, cfg, i, life, childAge, seed);
+        }
+      }
+      continue;
+    }
     const age01 = age / life;
 
     const speed = cfg.speed * (1 + cfg.speedRandom * (hash01(i, 2, seed) * 2 - 1));
     const dir = dirBase + spreadRad * (hash01(i, 3, seed) - 0.5);
     const v0x = Math.cos(dir) * speed;
     const v0y = Math.sin(dir) * speed;
+    const oz = (hash01(i, 6, seed) - 0.5) * (cfg.emitterDepth ?? 0);
+    const vz = (hash01(i, 8, seed) * 2 - 1) * (cfg.speedZ ?? 0);
 
     // Emitter origin sample.
     let ox = 0;
@@ -231,11 +428,36 @@ export function simulateParticles(cfg: ParticleConfig, time: number): Particle[]
       oy = Math.sin(ang) * rad;
     }
 
-    const x = ox + v0x * age + 0.5 * cfg.gravityX * age * age;
-    const y = oy + v0y * age + 0.5 * cfg.gravityY * age * age;
+    // Wind is just more constant acceleration, so it lives inside the same
+    // closed form as gravity — scrubbing stays free. Turbulence is a seeded
+    // wander displacement, zero at birth (see particleField.ts).
+    const ax = cfg.gravityX + (cfg.windX ?? 0);
+    const ay = cfg.gravityY + (cfg.windY ?? 0);
+    const wander = wanderOffset(i, age, cfg);
+    const x = ox + v0x * age + 0.5 * ax * age * age + wander.x;
+    const y = oy + v0y * age + 0.5 * ay * age * age + wander.y;
     const size = Math.max(0, lerp(cfg.sizeStart, cfg.sizeEnd, age01));
     const opacity = lerp(cfg.opacityStart, cfg.opacityEnd, age01);
     const rotation = cfg.spin * age;
+
+    // Trails: the SAME closed form at trailing ages. Points before birth are
+    // skipped rather than clamped — a newborn has a short trail, not a stack
+    // of ghosts on the emitter.
+    let trail: Array<{ x: number; y: number }> | undefined;
+    const trailN = Math.min(24, Math.max(0, Math.floor(cfg.trailLength ?? 0)));
+    if (trailN > 0) {
+      const spacing = Math.max(1 / 240, cfg.trailSpacing ?? 1 / 30);
+      trail = [];
+      for (let k = 1; k <= trailN; k++) {
+        const ta = age - k * spacing;
+        if (ta < 0) break;
+        const tw = wanderOffset(i, ta, cfg);
+        trail.push({
+          x: ox + v0x * ta + 0.5 * ax * ta * ta + tw.x,
+          y: oy + v0y * ta + 0.5 * ay * ta * ta + tw.y,
+        });
+      }
+    }
 
     out.push({
       x,
@@ -246,6 +468,8 @@ export function simulateParticles(cfg: ParticleConfig, time: number): Particle[]
       rotation,
       age01,
       shape: cfg.shape,
+      z: oz + vz * age,
+      ...(trail && trail.length > 0 ? { trail } : {}),
     });
   }
 

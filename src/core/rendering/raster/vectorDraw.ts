@@ -498,7 +498,7 @@ export function shapePath(ctx: CanvasRenderingContext2D, layer: RenderLayer): vo
     ctx.beginPath();
     for (const run of layerSubpaths(layer)) traceRun(ctx, run);
   } else {
-    roundRect(ctx, -w / 2, -h / 2, w, h, layer.cornerRadius ?? 0);
+    roundRect(ctx, -w / 2, -h / 2, w, h, layer.cornerRadii ?? layer.cornerRadius ?? 0);
   }
 }
 
@@ -782,13 +782,46 @@ export function strokeShapeProfiled(
   return drew;
 }
 
-export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
-  const rad = Math.min(r, w / 2, h / 2);
+export function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number | readonly [number, number, number, number],
+): void {
+  const raw = typeof r === 'number' ? [r, r, r, r] as const : r;
+  const scale = (a: number, b: number, limit: number): number => {
+    const sum = a + b;
+    if (sum <= limit || sum <= 1e-6) return 1;
+    return limit / sum;
+  };
+  let [tl, tr, br, bl] = raw.map((v) => Math.max(0, v)) as [number, number, number, number];
+  const s = Math.min(
+    scale(tl, tr, w),
+    scale(tr, br, h),
+    scale(br, bl, w),
+    scale(bl, tl, h),
+    1,
+  );
+  tl *= s; tr *= s; br *= s; bl *= s;
   ctx.beginPath();
-  ctx.moveTo(x + rad, y);
-  ctx.arcTo(x + w, y, x + w, y + h, rad);
-  ctx.arcTo(x + w, y + h, x, y + h, rad);
-  ctx.arcTo(x, y + h, x, y, rad);
-  ctx.arcTo(x, y, x + w, y, rad);
+  if (tl < 0.5 && tr < 0.5 && br < 0.5 && bl < 0.5) {
+    ctx.rect(x, y, w, h);
+    return;
+  }
+  ctx.moveTo(x + tl, y);
+  ctx.lineTo(x + w - tr, y);
+  if (tr > 0.5) ctx.arcTo(x + w, y, x + w, y + tr, tr);
+  else ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w, y + h - br);
+  if (br > 0.5) ctx.arcTo(x + w, y + h, x + w - br, y + h, br);
+  else ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x + bl, y + h);
+  if (bl > 0.5) ctx.arcTo(x, y + h, x, y + h - bl, bl);
+  else ctx.lineTo(x, y + h);
+  ctx.lineTo(x, y + tl);
+  if (tl > 0.5) ctx.arcTo(x, y, x + tl, y, tl);
+  else ctx.lineTo(x, y);
   ctx.closePath();
 }

@@ -11,9 +11,9 @@ import { useMemo, useState, useRef, useEffect, type ReactNode } from 'react';
 import { Panel } from '@components/Panel';
 import { Button } from '@components/Button';
 import { HistoryPanel } from '@layout/History/HistoryPanel';
-import { ProjectPanel } from '@layout/Project/ProjectPanel';
 import { MotionEditorPanel } from '@layout/Motion/MotionEditorPanel';
 import { EffectsPanel } from '@layout/Effects/EffectsPanel';
+import { EffectControlsPanel } from '@layout/Effects/EffectControlsPanel';
 import { RenderQueuePanel } from '@layout/RenderQueue/RenderQueuePanel';
 import { PluginsDockPanel, pluginPanelRenderers } from '@layout/Plugins/PluginPanel';
 import { PluginsMarketplacePanel } from '@layout/Plugins/PluginsMarketplacePanel';
@@ -34,6 +34,7 @@ import { AlignSection } from '@layout/Inspector/AlignSection';
 import { TextSection } from '@layout/Inspector/TextSection';
 import { StylePresetsSection } from '@layout/Inspector/StylePresetsSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
+import { TrackMotionSection } from '@layout/Inspector/TrackMotionSection';
 import { SvgSection, RevertSvgRow } from '@layout/Inspector/SvgSection';
 import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
@@ -48,8 +49,10 @@ import { findLayerKind, findKindFor } from '@core/plugins/layerKindRegistry';
 import { splitKind } from '@core/plugins/layerKindSchema';
 import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
+import { ClonerSection } from '@layout/Inspector/ClonerSection';
+import { PhysicsSection } from '@layout/Inspector/PhysicsSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
-import { ActiveTemplateFields } from '@layout/Templates/TemplateFieldsPanel';
+import { ActiveTemplateFields, TemplateAuthoringSection } from '@layout/Templates/TemplateFieldsPanel';
 import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
 import { useTemplateStore } from '@stores/templateStore';
 import { CompositingControls } from '@layout/Inspector/CompositingControls';
@@ -63,12 +66,23 @@ import { TimeControls } from '@layout/Effects/TimeControls';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusStore } from '@stores/focusStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import {
+  createCompositionFromFootage,
+  deleteComposition,
+  duplicateComposition,
+} from '@core/composition/compositionOps';
+import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
+import { openFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
+import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
+import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { useProjectStore } from '@stores/projectStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renameLayer } from '@core/scene/renameLayer';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import {
   insertMedia,
   toggleSelectedLocked,
@@ -293,6 +307,64 @@ export function ScenePanel(): JSX.Element {
   const rev = useSceneRevision((s) => s.rev);
   const [query, setQuery] = useState('');
 
+  const comps = useProjectStore((s) => s.comps);
+  const projectTabs = useProjectStore((s) => s.tabs);
+  const activeTabId = useProjectStore((s) => s.activeTabId);
+  const openTab = useProjectStore((s) => s.actions.openTab);
+  const setActiveTab = useProjectStore((s) => s.actions.setActiveTab);
+  const listedComps = useMemo(
+    () => Object.values(comps).filter((c) => !c.pristine),
+    [comps],
+  );
+  const activeCompId = activeTabId ? projectTabs[activeTabId]?.compositionId : undefined;
+
+  const openComposition = (compId: string): void => {
+    const existing = Object.values(projectTabs).find((t) => t.compositionId === compId);
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
+    const name = comps[compId]?.name ?? compId;
+    openTab(compId, [compId], name);
+  };
+
+  const confirmDeleteComp = async (compId: string): Promise<void> => {
+    const comp = comps[compId];
+    if (!comp || comp.pristine) return;
+    const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+    const warn = layers > 0
+      ? `Delete “${comp.name}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+      : `Delete “${comp.name}”?`;
+    if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+      deleteComposition(compId);
+    }
+  };
+
+  const openCompMenu = (compId: string, e: React.MouseEvent): void => {
+    e.preventDefault();
+    e.stopPropagation();
+    const name = comps[compId]?.name ?? compId;
+    openContextMenu(e.clientX, e.clientY, [
+      { id: 'open', label: 'Open Composition', onSelect: () => openComposition(compId) },
+      {
+        id: 'settings',
+        label: 'Composition Settings…',
+        onSelect: () => {
+          openComposition(compId);
+          openCompositionSettings();
+        },
+      },
+      { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateComposition(compId) },
+      { id: 'sep', separator: true },
+      {
+        id: 'delete',
+        label: `Delete “${name}”`,
+        danger: true,
+        onSelect: () => { void confirmDeleteComp(compId); },
+      },
+    ]);
+  };
+
   const tree = useMemo(() => sceneGraphToTree(), [rev]);
   const q = query.trim().toLowerCase();
   const filtered = useMemo(() => (q ? filterTree(tree, q) : tree), [tree, q]);
@@ -431,8 +503,64 @@ export function ScenePanel(): JSX.Element {
       title="Scene"
       icon="layers"
       hideHeader
+      noScroll
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'scene' })}
     >
+      <div className={styles.sceneShell}>
+      {/* Compositions live here — not in Assets. Assets = media library. */}
+      <div className={styles.compSection}>
+        <div className={styles.compSectionHead}>
+          <span className={styles.compSectionLabel}>Compositions</span>
+          <button
+            type="button"
+            className={styles.compAddBtn}
+            title="New Composition…"
+            aria-label="New Composition"
+            onClick={() => openNewCompositionDialog()}
+          >
+            <Icon name="plus" size="sm" />
+          </button>
+        </div>
+        {listedComps.length === 0 ? (
+          <div className={styles.compEmpty}>None yet — create one to start</div>
+        ) : (
+          <div className={styles.compList} role="list">
+            {listedComps.map((c) => {
+              const active = c.id === activeCompId;
+              return (
+                <div
+                  key={c.id}
+                  role="listitem"
+                  className={`${styles.compRow}${active ? ` ${styles.compRowActive}` : ''}`}
+                  title={`${c.name} · ${c.width}×${c.height} · ${c.fps} fps`}
+                  onClick={() => openComposition(c.id)}
+                  onContextMenu={(e) => openCompMenu(c.id, e)}
+                >
+                  <Icon name="component" size="sm" className={styles.compGlyph} />
+                  <span className={styles.compName}>{c.name}</span>
+                  <span className={styles.compMeta}>{c.width}×{c.height}</span>
+                  <button
+                    type="button"
+                    className={styles.compDeleteBtn}
+                    title={`Delete “${c.name}”`}
+                    aria-label={`Delete ${c.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void confirmDeleteComp(c.id);
+                    }}
+                  >
+                    <Icon name="trash" size="sm" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className={styles.layerSectionHead}>
+        <span className={styles.compSectionLabel}>Layers</span>
+      </div>
       <div className={styles.searchRow}>
         <Input
           placeholder="Search layers…"
@@ -481,6 +609,7 @@ export function ScenePanel(): JSX.Element {
         <span>{itemCount} items</span>
         <span>·</span>
         <span>{selected.length} selected</span>
+      </div>
       </div>
     </Panel>
   );
@@ -560,6 +689,7 @@ export function AssetsPanel(): JSX.Element {
   const [selectedAssetIds, setSelectedAssetIds] = useState<Set<string>>(() => new Set());
   /** Off by default: the shelf is the user's imports, not the app's output. */
   const [showDerived, setShowDerived] = useState(false);
+  const [dockCompDropActive, setDockCompDropActive] = useState(false);
 
   /** Anchor for Shift-range selection — the last row clicked without Shift. */
   const [selectionAnchor, setSelectionAnchor] = useState<string | null>(null);
@@ -774,6 +904,58 @@ export function AssetsPanel(): JSX.Element {
           }
         },
       },
+      {
+        // The clip starts where the playhead is parked — assembling order, AE's
+        // drag-to-timeline behaviour. Kept as a second verb rather than a mode:
+        // both start points are legitimate, and a toggle that silently changes
+        // what "Add" means is how a clip lands 40s away from where you looked.
+        id: 'add-at-playhead',
+        label: many ? `Add ${count} at Playhead` : 'Add at Playhead',
+        onSelect: () => {
+          if (!many) { void insertMediaAtPlayhead(asset); return; }
+          for (const id of orderedAssetIds) {
+            if (!selectedAssetIds.has(id)) continue;
+            const a = assets.find((x) => x.id === id);
+            if (a) void insertMediaAtPlayhead(a);
+          }
+        },
+      },
+      {
+        // AE's canonical first move: the comp takes the clip's size (PAR-
+        // corrected), duration and probed frame rate, and the clip lands at
+        // full frame. Single-selection only — one comp per gesture; a batch
+        // version would open N tabs and bury the user.
+        id: 'comp-from-footage',
+        label: 'New Comp from Footage',
+        disabled: many,
+        onSelect: () => { void createCompositionFromFootage(asset); },
+      },
+      {
+        id: 'preview',
+        label: 'Preview…',
+        disabled: many,
+        onSelect: () => openFootagePreview(asset),
+      },
+      {
+        id: 'interpret-footage',
+        label: 'Interpret Footage… (Ctrl+Alt+G)',
+        disabled: many,
+        onSelect: () => openInterpretFootage(asset),
+      },
+      // Offered ONLY when exactly one image/video layer is selected — an entry
+      // that is always present and usually fails teaches people not to open
+      // the menu. Keyframes, effects and masks on the layer survive; only the
+      // pixels change. AE's Alt-drag replace, as a click.
+      ...(() => {
+        const target = replaceableSelectedLayer();
+        if (!target || many || asset.type === 'audio') return [];
+        const name = defaultSceneGraph.getNode(target)?.name ?? 'layer';
+        return [{
+          id: 'use-as-source',
+          label: `Use as Source for “${name}”`,
+          onSelect: () => { retargetLayerSource(target, asset); },
+        }];
+      })(),
       { id: 'sep-a', separator: true },
       {
         id: 'delete',
@@ -874,6 +1056,10 @@ export function AssetsPanel(): JSX.Element {
   /** Asset ids in the order they are DRAWN — what Shift-range walks over. */
   const orderedAssetIds = rows.filter((r) => r.kind === 'asset').map((r) => r.key);
 
+  const singleSelectedAsset = selectedAssetIds.size === 1
+    ? assets.find((x) => x.id === [...selectedAssetIds][0]) ?? null
+    : null;
+
   return (
     <Panel
       id="assets"
@@ -894,92 +1080,60 @@ export function AssetsPanel(): JSX.Element {
         />
       </div>
 
-      <div className={styles.assetTools}>
-        <button type="button" className={styles.toolBtnPrimary} onClick={() => fileInputRef.current?.click()} title="Import media files">
-          <Icon name="upload" size="sm" /> Import
-        </button>
-        <button type="button" className={styles.toolBtn} onClick={() => folderInputRef.current?.click()} title="Import a folder (keeps its structure)">
-          <Icon name="folder-open" size="sm" /> Folder
-        </button>
-        <button type="button" className={styles.toolBtn} onClick={handleNewFolder} title="New folder">
-          <Icon name="folder-plus" size="sm" /> New
-        </button>
-        {/*
-          Only rendered when there is something to reveal. A permanent toggle
-          for a category most projects never produce spends toolbar width
-          explaining a concept the user has not met — and once they have met it,
-          the count is the part that makes it make sense.
-        */}
-        {derivedCount > 0 && (
-          <button
-            type="button"
-            className={showDerived ? styles.toolBtnPrimary : styles.toolBtn}
-            onClick={() => setShowDerived((v) => !v)}
-            title={
-              showDerived
-                ? 'Hide generated images (duplicates and rasterized copies)'
-                : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
-            }
-          >
-            <Icon name="sparkles" size="sm" /> {derivedCount}
-          </button>
-        )}
-        <input
-          type="file"
-          ref={fileInputRef}
-          className={styles.fileInput}
-          multiple
-          accept="image/*,video/*,audio/*"
-          onChange={handleFileChange}
-        />
-        {/* webkitdirectory lets the user pick a whole folder to import (non-standard
-            attrs spread as any — widely supported in Chromium/Electron). */}
-        <input
-          type="file"
-          ref={folderInputRef}
-          className={styles.fileInput}
-          multiple
-          onChange={handleFolderChange}
-          {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
-        />
-      </div>
+      {/* AE Top Footage Header Card — shown when a single asset is selected */}
+      {singleSelectedAsset && (() => {
+        const m = singleSelectedAsset.metadata ?? {};
+        const parts: string[] = [];
+        if (m.width && m.height) parts.push(`${Math.round(m.width * (singleSelectedAsset.interpret?.par ?? 1))}×${m.height}`);
+        if (m.duration && m.duration > 0) parts.push(`${m.duration.toFixed(2)}s`);
+        if (m.fps && m.fps > 0) parts.push(`${m.fps % 1 === 0 ? m.fps : m.fps.toFixed(3)} fps`);
+        if (m.hasAudioTrack) parts.push('audio');
+        parts.push(formatBytes(singleSelectedAsset.size));
 
-      {/*
-        The selection bar. Present only while something is selected.
+        return (
+          <div className={`${styles.assetHeaderCard} ${styles.assetMetaFooter}`} data-asset-meta="">
+            <div className={styles.assetHeaderThumb}>
+              {singleSelectedAsset.thumbSrc ? (
+                <img src={singleSelectedAsset.thumbSrc} alt={singleSelectedAsset.name} className={styles.assetHeaderThumbImg} />
+              ) : (
+                <Icon
+                  name={ASSET_TYPE_ICON[singleSelectedAsset.type] ?? 'file'}
+                  size="md"
+                  className={`${styles.assetGlyph} ${ASSET_TYPE_CLASS[singleSelectedAsset.type] ?? styles.assetGlyphFile}`}
+                />
+              )}
+            </div>
+            <div className={styles.assetHeaderDetails}>
+              <span className={styles.assetHeaderName} title={singleSelectedAsset.name}>
+                {singleSelectedAsset.name}
+              </span>
+              <span className={styles.assetHeaderFacts} title={parts.join(' · ')}>
+                {parts.join(' · ')}
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
-        This panel deliberately has no per-row delete — a destructive target
-        that sits permanently under the cursor eventually gets hit by accident,
-        which is why those were removed in favour of right-click. A bar that
-        appears only once a selection exists keeps that property: it is not
-        under any row, it cannot be reached without first selecting, and it
-        makes the count visible, which is the number the confirm is about.
-      */}
-      {selectedAssetIds.size > 0 && (
-        <div className={styles.assetSelectionBar}>
-          <span className={styles.assetSelectionCount}>
-            {selectedAssetIds.size} selected
-          </span>
-          <button
-            type="button"
-            className={styles.toolBtn}
-            onClick={() => { setSelectedAssetIds(new Set()); setSelectionAnchor(null); }}
-          >
-            Clear
-          </button>
-          <button
-            type="button"
-            className={styles.toolBtnDanger}
-            onClick={() => { void deleteSelectedAssets(); }}
-            title={`Delete ${selectedAssetIds.size} selected asset${selectedAssetIds.size === 1 ? '' : 's'} (Del)`}
-          >
-            <Icon name="trash" size="sm" /> Delete
-          </button>
-        </div>
-      )}
+      {/* Hidden file inputs for media and folder imports */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        className={styles.fileInput}
+        multiple
+        accept="image/*,video/*,audio/*,.exr,.dpx,.psd,.dng,.cr2,.cr3,.nef,.arw,.mxf,.mkv,.avi,.mts,.m2ts,.r3d,.braw"
+        onChange={handleFileChange}
+      />
+      <input
+        type="file"
+        ref={folderInputRef}
+        className={styles.fileInput}
+        multiple
+        onChange={handleFolderChange}
+        {...({ webkitdirectory: '', directory: '' } as Record<string, string>)}
+      />
 
-      {/* Column headings, as in Explorer's details view and AE's project panel.
-          Rendered once above the list rather than repeated per row, which is
-          what lets Type and Size line up into columns you can scan down. */}
+      {/* Column headings, as in Explorer's details view and AE's project panel */}
       <div className={styles.assetHead}>
         <span className={styles.assetHeadName}>Name</span>
         <span className={styles.assetHeadType}>Type</span>
@@ -988,26 +1142,12 @@ export function AssetsPanel(): JSX.Element {
 
       {/*
         Del deletes the selection, Ctrl/Cmd+A takes all of it, Escape drops it.
-
-        `tabIndex` is what makes this reachable at all — the keys are bound
-        HERE rather than on the window because the app already binds Delete to
-        removing the selected LAYERS. A global handler would have to guess
-        which selection the user meant, and would guess wrong whenever both
-        have one; scoping it to the focused panel means the question never
-        arises.
-
-        `data-shortcut-claim` is what makes the binding actually FIRE.
-        `ShortcutManager` listens on window in the capture phase and stops
-        propagation on any chord it matches, so without this the handler below
-        is unreachable for Delete and Ctrl+A — correct code that never runs.
-        Only these three chords are claimed; everything else still reaches the
-        global command, so Space keeps playing from here.
       */}
       <div
         className={styles.body}
         style={{ padding: '2px 0' }}
         tabIndex={0}
-        data-shortcut-claim="delete backspace Ctrl+a Meta+a"
+        data-shortcut-claim="delete backspace Ctrl+a Meta+a Ctrl+Alt+g Meta+Alt+g"
         onKeyDown={(e) => {
           if (e.key === 'Delete' || e.key === 'Backspace') {
             if (selectedAssetIds.size === 0) return;
@@ -1015,6 +1155,14 @@ export function AssetsPanel(): JSX.Element {
             e.stopPropagation();
             void deleteSelectedAssets();
             return;
+          }
+          if ((e.ctrlKey || e.metaKey) && e.altKey && (e.key === 'g' || e.key === 'G')) {
+            if (singleSelectedAsset) {
+              e.preventDefault();
+              e.stopPropagation();
+              openInterpretFootage(singleSelectedAsset);
+              return;
+            }
           }
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
             e.preventDefault();
@@ -1052,9 +1200,6 @@ export function AssetsPanel(): JSX.Element {
                     if (renamingId === row.folder.id) return;
                     setCurrentFolderId(row.folder.id);
                     toggleFolder(row.folder.id);
-                    // Selecting a folder is still a selection change: leaving a
-                    // file highlighted while browsing elsewhere is what made the
-                    // old panel look like everything was selected at once.
                     setSelectedAssetIds(new Set());
                     setSelectionAnchor(null);
                   }}
@@ -1073,9 +1218,6 @@ export function AssetsPanel(): JSX.Element {
                     size="sm"
                     className={styles.assetTwisty}
                   />
-                  {/* No wrapper around the glyph. The bordered tile that used to
-                      sit here made every row look like a card in a list of
-                      cards; a file row is a line of text with an icon on it. */}
                   <Icon name={expandedFolders.has(row.folder.id) ? 'folder-open' : 'folder'} size="md" className={styles.assetGlyphFolder} />
                   {renamingId === row.folder.id ? (
                     <input
@@ -1092,9 +1234,6 @@ export function AssetsPanel(): JSX.Element {
                   ) : (
                     <span className={styles.assetRowName}>{row.folder.name}</span>
                   )}
-                  {/* No item count. It was a number that changed as you worked
-                      and that nobody acts on — the contents are one click away
-                      and now visible in place. */}
                   <span className={styles.assetRowType}>Folder</span>
                   <span className={styles.assetRowSize} />
                 </div>
@@ -1107,21 +1246,13 @@ export function AssetsPanel(): JSX.Element {
                   title={row.asset.name}
                   draggable
                   onClick={(e) => selectAsset(row.asset.id, e, orderedAssetIds)}
-                  onDoubleClick={() => insertMedia(row.asset)}
+                  onDoubleClick={() => openFootagePreview(row.asset)}
                   onContextMenu={(e) => openAssetMenu(row.asset, e)}
                   onDragStart={(e) => {
-                    // Folder-move (this panel) reads text/asset-id; a canvas drop
-                    // reads the typed payload.
                     e.dataTransfer.setData('text/asset-id', row.asset.id);
                     setCanvasDrag(e, { kind: 'asset', assetId: row.asset.id });
                   }}
                 >
-                  {/* A TYPE icon, not a thumbnail. Thumbnails made every row a
-                      different height's worth of visual weight, decoded media
-                      just to draw a 16px square, and told you least about the
-                      files that look alike — which is most of a real library.
-                      Explorer and AE both show the kind, and the kind is what
-                      you scan for. */}
                   <Icon
                     name={ASSET_TYPE_ICON[row.asset.type] ?? 'file'}
                     size="md"
@@ -1135,6 +1266,101 @@ export function AssetsPanel(): JSX.Element {
             )}
           </div>
         )}
+      </div>
+
+      {/* AE Project Bottom Action Dock */}
+      <div className={styles.assetBottomDock}>
+        <button
+          type="button"
+          className={`${styles.dockBtn}${dockCompDropActive ? ` ${styles.dockBtnDropActive}` : ''}`}
+          disabled={!singleSelectedAsset || singleSelectedAsset.type === 'audio'}
+          title="Create New Composition from Footage (or drag & drop footage here)"
+          onClick={() => {
+            if (singleSelectedAsset) void createCompositionFromFootage(singleSelectedAsset);
+          }}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDockCompDropActive(true);
+          }}
+          onDragLeave={() => setDockCompDropActive(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDockCompDropActive(false);
+            const assetId = e.dataTransfer.getData('text/asset-id');
+            const dropped = assets.find((a) => a.id === assetId);
+            if (dropped && dropped.type !== 'audio') {
+              void createCompositionFromFootage(dropped);
+            }
+          }}
+        >
+          <Icon name="component" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          title="New Folder"
+          onClick={handleNewFolder}
+        >
+          <Icon name="folder-plus" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          title="Import Folder (keeps folder structure)…"
+          onClick={() => folderInputRef.current?.click()}
+        >
+          <Icon name="folder-open" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          title="Import Media Files…"
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Icon name="upload" size="sm" />
+        </button>
+
+        {derivedCount > 0 && (
+          <button
+            type="button"
+            className={`${styles.dockBtn}${showDerived ? ` ${styles.dockBtnDropActive}` : ''}`}
+            onClick={() => setShowDerived((v) => !v)}
+            title={
+              showDerived
+                ? 'Hide generated images (duplicates and rasterized copies)'
+                : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
+            }
+          >
+            <Icon name="sparkles" size="sm" />
+          </button>
+        )}
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          disabled={!singleSelectedAsset}
+          title="Interpret Footage… (Ctrl+Alt+G)"
+          onClick={() => {
+            if (singleSelectedAsset) openInterpretFootage(singleSelectedAsset);
+          }}
+        >
+          <Icon name="sliders-h" size="sm" />
+        </button>
+
+        <button
+          type="button"
+          className={styles.dockBtn}
+          disabled={selectedAssetIds.size === 0}
+          title={`Delete Selected Asset${selectedAssetIds.size > 1 ? 's' : ''} (Del)`}
+          onClick={() => {
+            void deleteSelectedAssets();
+          }}
+        >
+          <Icon name="trash" size="sm" />
+        </button>
       </div>
     </Panel>
   );
@@ -1159,10 +1385,34 @@ export function AssetsPanel(): JSX.Element {
  * Rigging, Graph, Effects, Presets, Render and Plugins stay separate tabs on
  * purpose — those are editors and modes, not properties of the selection.
  */
+const LAYER_KIND_LABEL: Record<string, string> = {
+  shape: 'Shape',
+  text: 'Text',
+  image: 'Image',
+  video: 'Video',
+  group: 'Group',
+  null: 'Null',
+  camera: 'Camera',
+  light: 'Light',
+  audio: 'Audio',
+  svg: 'SVG',
+  particle: 'Particle',
+};
+
+function layerKindLabel(kind: string): string {
+  const custom = splitKind(kind);
+  if (custom) return custom.kindId;
+  return LAYER_KIND_LABEL[kind] ?? kind;
+}
+
 export function PropertiesPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
   const primary = selected[0] ?? null;
   const [query, setQuery] = useState('');
+  useSceneRevision((s) => s.rev);
+  const node = primary ? defaultSceneGraph.getNode(primary) : null;
+  const kind = node ? readNodeKind(node) : null;
+  const layerName = node?.name?.trim() || primary;
 
   return (
     <Panel
@@ -1170,37 +1420,37 @@ export function PropertiesPanel(): JSX.Element {
       title="Properties"
       icon="settings"
       hideHeader
+      noScroll
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'properties' })}
     >
-      {primary && (
-        <div className={styles.searchRow}>
-          <Input
-            placeholder="Search properties…"
-            size="sm"
-            fullWidth
-            leftIcon="search"
-            value={query}
-            onChange={(e) => setQuery(e.currentTarget.value)}
-          />
+      <div className={styles.inspectorShell}>
+        {primary && node && (
+          <div className={styles.layerHead}>
+            <span className={styles.layerKind}>{layerKindLabel(kind ?? '')}</span>
+            <span className={styles.layerName} title={layerName ?? undefined}>{layerName}</span>
+          </div>
+        )}
+        {primary && (
+          <div className={styles.searchRow}>
+            <Input
+              placeholder="Search properties…"
+              size="sm"
+              fullWidth
+              leftIcon="search"
+              value={query}
+              onChange={(e) => setQuery(e.currentTarget.value)}
+            />
+          </div>
+        )}
+        <div className={styles.inspectorBody}>
+          <InspectorContent nodeId={primary} query={query} />
+          <div className={styles.inspectorExtras}>
+            <MographParamsSection />
+            <TemplateFieldsSection />
+            <TemplateAuthoringSection />
+            <VersionHistorySection />
+          </div>
         </div>
-      )}
-      <InspectorContent nodeId={primary} query={query} />
-      {/* An inserted Motion GFX element's own blanks — its text and colours.
-          Renders nothing unless the selection is inside one, and sits beside
-          the template fields below because it is the same idea scoped to one
-          element rather than the whole composition. */}
-      <div style={{ padding: '0 14px' }}>
-        <MographParamsSection />
-      </div>
-      {/* Applied-template fields — the "fill in the blanks" surface. Shown only
-          when a template is actually applied, so it costs nothing otherwise. */}
-      <TemplateFieldsSection />
-      {/* Project-level, selection-independent — renders only under LOCAL_FIRST.
-          It sits below the accordion rather than inside it because it is not a
-          property of the selected layer, and an accordion row that collapses to
-          nothing would be worse than a quiet block that renders nothing. */}
-      <div style={{ padding: '0 14px' }}>
-        <VersionHistorySection />
       </div>
     </Panel>
   );
@@ -1224,19 +1474,20 @@ const SECTION_KEYWORDS: Record<string, string> = {
   custom: 'settings camera light particle audio volume',
   svg: 'svg vector path import',
   media: 'source trim speed fit crop volume',
+  tracker: 'track motion tracker point feature stabilize follow',
   precomp: 'precompose group children focus',
   info: 'null object controller',
   // Style
   'style-presets': 'style preset look saved',
-  text: 'font typography size weight letter spacing line height align',
+  text: 'font typography size weight letter spacing line height align character color fill',
   animators: 'text animator range selector',
-  appearance: 'fill stroke color gradient background border',
+  appearance: 'fill stroke color gradient border outline',
   geometry: 'path trim repeater round corners wiggle stroke',
-  compositing: 'blend mode matte track alpha luma',
+  compositing: 'blend mode matte track alpha luma preserve',
   layerStyles: 'shadow glow drop outer bevel layer style',
   // Layer behaviour
-  layerSwitches: 'switches quality solo shy motion blur collapse',
-  time: 'time playback remap stretch speed in out',
+  time: 'layer time remap stretch speed reverse freeze frame blend',
+  layerSwitches: 'switches quality draft motion blur adjustment shutter',
 };
 
 /** Filter inspector sections by a search query; matches are forced open. */
@@ -1282,12 +1533,11 @@ function renderInspector(items: AccordionItem[], query: string): JSX.Element {
  * these three groups were three separate tabs, so the sequence only existed in
  * the user's head.
  *
- * defaultOpen is deliberately stingier than it was when these lived in three
- * tabs. Sections that were the only content of their own tab could afford to
- * start open; in a single column, ten open sections is a scroll, not an
- * inspector. Spatial and kind-specific sections start open because they are
- * why you selected the layer; the secondary style and behaviour sections start
- * closed. A search match still force-opens anything it matches.
+ * defaultOpen is stingy on purpose. Transform and the kind-specific section
+ * (Text, Camera, Fill & Stroke, …) start open — that is why you selected the
+ * layer. Parent, Blend, Time, Switches and style add-ons start closed, so the
+ * first screen is an inspector, not a scroll. A search match still force-opens
+ * anything it matches.
  */
 function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
   // Hook before any early return — the group section's "Enter group" needs it.
@@ -1297,8 +1547,8 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     return (
       <EmptyState
         icon="mouse-pointer"
-        title="No selection"
-        message="Select a layer on the canvas or in the Scene panel to edit its properties."
+        title="Properties: No Selection"
+        message="Select a layer to view and adjust its transform, appearance, and effects."
       />
     );
   }
@@ -1329,12 +1579,37 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
+  // Layer time / switches sit next to Transform (AE-adjacent), not buried under styles.
+  if (!isAbstract) {
+    items.push({
+      id: 'time',
+      title: 'Layer Time',
+      icon: 'stopwatch',
+      defaultOpen: false,
+      content: <TimeControls nodeId={nodeId} />,
+    });
+    items.push({
+      id: 'layerSwitches',
+      title: 'Switches & Quality',
+      icon: 'sliders-h',
+      defaultOpen: false,
+      content: <LayerSwitchesControls nodeId={nodeId} />,
+    });
+    items.push({
+      id: 'compositing',
+      title: 'Blend & Matte',
+      icon: 'layers',
+      defaultOpen: false,
+      content: <CompositingControls nodeId={nodeId} />,
+    });
+  }
+
   if (kind !== 'light') {
     items.push({
       id: 'parenting',
       title: 'Parent & Link',
       icon: 'layers',
-      defaultOpen: true,
+      defaultOpen: false,
       content: <ParentControl nodeId={nodeId} />,
     });
   }
@@ -1402,6 +1677,16 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
       id: 'media', title: 'Media Settings', icon: 'image', defaultOpen: true,
       content: <MediaSection nodeId={nodeId} />,
     });
+    if (kind === 'video') {
+      items.push({
+        id: 'tracker', title: 'Track Motion', icon: 'crosshair',
+        // Mounting arms the canvas overlay (activate + seedPoints), so the
+        // section must not exist while collapsed — every video selection
+        // otherwise grew track-point chrome over the viewport.
+        mountOnOpen: true,
+        content: <TrackMotionSection nodeId={nodeId} />,
+      });
+    }
   } else if (kind === 'group') {
     const childrenCount = defaultSceneGraph.getChildren(nodeId).length;
     items.push({
@@ -1441,7 +1726,7 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   // ── How it looks ───────────────────────────────────────────────
   if (kind === 'text') {
     items.push({
-      id: 'text', title: 'Text Styles', icon: 'type', defaultOpen: true,
+      id: 'text', title: 'Text', icon: 'type', defaultOpen: true,
       content: <TextSection nodeId={nodeId} />,
     });
     items.push({
@@ -1450,16 +1735,37 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
+  // Cloner is NOT kind-gated: any layer that draws can be multiplied, and a
+  // group is the obvious thing to clone. Closed by default — it is off until
+  // switched on, and an open panel of inert controls is noise on every layer.
+  items.push({
+    id: 'cloner', title: 'Cloner', icon: 'grid',
+    content: <ClonerSection nodeId={nodeId} />,
+  });
+
+  // Physics, same reasoning as Cloner: any layer can be a body, and a static
+  // wall is as likely to be a group as a shape.
+  items.push({
+    id: 'physics', title: 'Physics', icon: 'zap',
+    content: <PhysicsSection nodeId={nodeId} />,
+  });
+
+  // Shapes / media: full Fill & Stroke. Text layers already own Character Color
+  // in Text — Appearance still mounts for Stroke (and corner radius is N/A),
+  // but with fill chrome suppressed so the two panels do not both edit "fill".
   if (isDrawable) {
     items.push({
-      id: 'appearance', title: 'Fill & Stroke', icon: 'shape', defaultOpen: true,
+      id: 'appearance',
+      title: kind === 'text' ? 'Stroke' : 'Fill & Stroke',
+      icon: 'shape',
+      defaultOpen: kind !== 'text',
       content: <AppearanceSection nodeId={nodeId} />,
     });
   }
 
   if (kind === 'shape') {
     items.push({
-      id: 'geometry', title: 'Geometry & Path Effects', icon: 'line',
+      id: 'geometry', title: 'Audio Waveform', icon: 'audio',
       content: <ShapeEffects nodeId={nodeId} />,
     });
   }
@@ -1471,30 +1777,14 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   // putting every section in one column made it obvious.
   if (isDrawable) {
     items.push({
-      id: 'style-presets', title: 'Saved Styles', icon: 'sparkles',
-      content: <StylePresetsSection nodeId={nodeId} />,
-    });
-    items.push({
       // "Layer Styles" is the After Effects term users will look for; the
       // keyword map also matches shadow/glow/bevel so either search finds it.
       id: 'layerStyles', title: 'Layer Styles', icon: 'sparkles',
       content: <LayerStylesControls nodeId={nodeId} />,
     });
-  }
-
-  // ── How it behaves ─────────────────────────────────────────────
-  if (!isAbstract) {
     items.push({
-      id: 'compositing', title: 'Blend & Matte', icon: 'layers',
-      content: <CompositingControls nodeId={nodeId} />,
-    });
-    items.push({
-      id: 'layerSwitches', title: 'Switches & Quality', icon: 'sliders-h',
-      content: <LayerSwitchesControls nodeId={nodeId} />,
-    });
-    items.push({
-      id: 'time', title: 'Time & Playback', icon: 'stopwatch',
-      content: <TimeControls nodeId={nodeId} />,
+      id: 'style-presets', title: 'Saved Styles', icon: 'sparkles',
+      content: <StylePresetsSection nodeId={nodeId} />,
     });
   }
 
@@ -1544,14 +1834,14 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
       <EmptyState
         icon="bone"
         title="Character Rigging"
-        message="Select a layer to add puppet pins or a skeleton, or pick a tool to start."
+        message="Select a layer, then use the Puppet or Bone tool."
         action={
           <>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('bone')}>
-              <Icon name="bone" size="sm" /> Bone tool
+              <Icon name="bone" size="sm" /> Bone Tool
             </Button>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
-              <Icon name="puppet-pin" size="sm" /> Puppet pin tool
+              <Icon name="puppet-pin" size="sm" /> Puppet Pin Tool
             </Button>
           </>
         }
@@ -1568,7 +1858,7 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
   if (hasSkeleton || activeTool === 'bone' || !hasPuppet) {
     items.push({
       id: 'skeleton',
-      title: 'Skeleton Bone Rigging',
+      title: 'Bones',
       icon: 'bone',
       defaultOpen: true,
       content: <BoneControls nodeId={nodeId} />,
@@ -1578,7 +1868,7 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
   if (hasPuppet || activeTool === 'puppet-pin' || !hasSkeleton) {
     items.push({
       id: 'puppet',
-      title: 'Puppet Mesh Pins',
+      title: 'Puppet',
       icon: 'puppet-pin',
       defaultOpen: true,
       content: <PuppetControls nodeId={nodeId} />,
@@ -2254,11 +2544,7 @@ export function LibraryPanel(): JSX.Element {
 function TemplateFieldsSection(): JSX.Element | null {
   const active = useTemplateStore((s) => s.active);
   if (!active) return null;
-  return (
-    <div style={{ padding: '0 14px' }}>
-      <ActiveTemplateFields />
-    </div>
-  );
+  return <ActiveTemplateFields />;
 }
 
 export function getAllPanelRenderers(): Record<string, () => ReactNode> {
@@ -2280,7 +2566,6 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     // straight from this map — so a pop-out window deep-linked at /popout/ai
     // would have re-mounted the whole panel around the gate.
     ...(aiEnabled() ? { ai: () => <AiChatPanel /> } : {}),
-    project:   () => <ProjectPanel />,
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,
     presets: () => <MotionPresetsPanel />,
@@ -2288,6 +2573,7 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     rig: () => <RigPanel />,
     motion: () => <MotionEditorPanel />,
     effects: () => <EffectsPanel />,
+    effectControls: () => <EffectControlsPanel />,
     history: () => <HistoryPanel />,
     renderQueue: () => <RenderQueuePanel />,
     plugins: () => <PluginsDockPanel />,

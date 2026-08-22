@@ -764,7 +764,19 @@ export class PenTool implements Tool {
     ctx.requestRender();
   }
 
-  onPointerDown(e: ToolPointerEvent, _ctx: ToolContext): void {
+  onPointerDown(e: ToolPointerEvent, ctx: ToolContext): void {
+    // Close by clicking near the first point (AE pen), once we have enough
+    // vertices for a real polygon. Threshold is in world px — small enough
+    // not to steal intentional nearby clicks, large enough to hit easily.
+    if (this.maskMode && this.points.length >= 3) {
+      const first = this.points[0]!;
+      const dx = e.world.x - first.x;
+      const dy = e.world.y - first.y;
+      if (dx * dx + dy * dy <= 10 * 10) {
+        this.finish(ctx);
+        return;
+      }
+    }
     // We commit the new point on pointer-down, and set draggingHandle=true
     // so that onDrag can stretch the out-handle.
     this.points.push(bezierCorner(e.world.x, e.world.y));

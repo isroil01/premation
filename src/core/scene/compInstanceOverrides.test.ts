@@ -27,6 +27,11 @@ import {
   readCompOverrides,
   setCompOverride,
   clearCompOverridesFor,
+  compositionRootOf,
+  readEssentialProps,
+  setEssentialProp,
+  isEssentialProp,
+  COMP_ESSENTIAL_PROPS,
 } from './compInstanceOverrides';
 import defaultSceneGraph from './DefaultSceneGraph';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
@@ -252,6 +257,45 @@ describe('the animated half — the dead-control guard', () => {
     const c = snapshot().layers.find((l) => l.id === 'inst1')!;
     expect(c.precompLayers!.find((l) => l.id === 'inst1::b_shape')!.x).toBe(777);
   });
+
+  // ── Colour: the same guard, one indirection further out ──────────────
+  //
+  // A colour is STORED as `fill` and KEYFRAMED as `fill_r/_g/_b`. Suppressing
+  // only `fill` leaves those three live, `buildSnapshot`'s `a?.has('fill_r')`
+  // branch wins, and the override is repainted over on every frame — the exact
+  // dead-control shape this describe block exists for, on the property most
+  // likely to be templated.
+
+  const layerFill = (instId: string): string | undefined => {
+    const c = snapshot().layers.find((l) => l.id === instId)!;
+    return c.precompLayers!.find((l) => l.id === `${instId}::b_shape`)!.fill;
+  };
+
+  it('overrides a STATIC fill per instance', () => {
+    addShape('b_shape', 'comp_b');
+    addInstance('inst1', 'comp_root', 'comp_b');
+    addInstance('inst2', 'comp_root', 'comp_b');
+    setCompOverride('inst1', 'b_shape', 'fill', '#00ff00');
+    expect(layerFill('inst1')).toBe('#00ff00');
+    expect(layerFill('inst2')).toBe('#f00');
+  });
+
+  it('overrides a KEYFRAMED fill, beating the fill_r/_g/_b channels', () => {
+    addShape('b_shape', 'comp_b');
+    addInstance('inst1', 'comp_root', 'comp_b');
+    addInstance('inst2', 'comp_root', 'comp_b');
+    // Colour tracks are 0..1, not 0..255. Blue.
+    defaultAnimation.setKeyframe('b_shape', 'fill_r', 0, 0);
+    defaultAnimation.setKeyframe('b_shape', 'fill_g', 0, 0);
+    defaultAnimation.setKeyframe('b_shape', 'fill_b', 0, 1);
+
+    setCompOverride('inst1', 'b_shape', 'fill', '#00ff00');
+
+    expect(layerFill('inst1')).toBe('#00ff00');
+    // The un-overridden instance still animates, so the suppression is scoped
+    // to the instance rather than disabling the track outright.
+    expect(layerFill('inst2')?.toLowerCase()).toContain('0000ff');
+  });
 });
 
 describe('pure helpers', () => {
@@ -269,7 +313,18 @@ describe('pure helpers', () => {
 
   it('ignores a key naming a property outside the overridable set', () => {
     const comps = [{ id: 't', type: 'Transform', props: { x: 1 } }] as unknown as SceneNode['components'];
+    expect(applyOverridesToComponents(comps, new Map([[overrideKey('n', 'blendMode'), 5]]), 'n')).toBe(comps);
+  });
+
+  it('ignores a value of the WRONG KIND for an overridable property', () => {
+    // `fill` IS overridable now, but it is a colour string. A number stored
+    // under it — from an older document, or a bad write — must not reach the
+    // renderer, which would hand its colour parser a number and draw nothing.
+    const comps = [{ id: 't', type: 'Transform', props: { x: 1 } }] as unknown as SceneNode['components'];
     expect(applyOverridesToComponents(comps, new Map([[overrideKey('n', 'fill'), 5]]), 'n')).toBe(comps);
+    // …and the converse: a string under a numeric prop, which would reach the
+    // transform as NaN and make the layer vanish.
+    expect(applyOverridesToComponents(comps, new Map([[overrideKey('n', 'x'), '12']]), 'n')).toBe(comps);
   });
 });
 
@@ -293,6 +348,50 @@ describe('the control is reachable', () => {
     expect(ui).toMatch(/setCompOverride\(/);
     expect(ui).toMatch(/clearCompOverridesFor\(/);
     expect(ui).toMatch(/OVERRIDABLE_PROPS/);
+    expect(ui).toMatch(/readEssentialProps/);
+  });
+
+  it('property menu can promote into Essential Properties', () => {
+    const menu = readSource('core/inspector/propertyMenu.ts');
+    expect(menu).toMatch(/Add to Essential Properties/);
+    expect(menu).toMatch(/setEssentialProp/);
+  });
+});
+
+/**
+ * Source-side promotion — without this, every Transform prop on every direct
+ * child appears on every instance. Publishing a curated set is AE's model and
+ * is what unlocks nested layers in the instance UI (the engine already
+ * resolved grandchild overrides; the listing was the limit).
+ */
+describe('Essential Properties promotion', () => {
+  it('compositionRootOf walks to the parentless root', () => {
+    addShape('b_group', 'comp_b');
+    addShape('b_deep', 'b_group');
+    expect(compositionRootOf('b_deep')).toBe('comp_b');
+    expect(compositionRootOf('comp_b')).toBe('comp_b');
+    expect(compositionRootOf('missing')).toBeNull();
+  });
+
+  it('setEssentialProp publishes and clears keys on the source root', () => {
+    addShape('b_shape', 'comp_b');
+    expect(readEssentialProps('comp_b').size).toBe(0);
+    setEssentialProp('comp_b', 'b_shape', 'opacity', true);
+    expect(isEssentialProp('comp_b', 'b_shape', 'opacity')).toBe(true);
+    expect([...readEssentialProps('comp_b')]).toEqual([overrideKey('b_shape', 'opacity')]);
+    const meta = defaultSceneGraph.getNode('comp_b')!.components[0]!;
+    expect((meta.props as Record<string, unknown>)[COMP_ESSENTIAL_PROPS]).toEqual([
+      'b_shape/opacity',
+    ]);
+    setEssentialProp('comp_b', 'b_shape', 'opacity', false);
+    expect(readEssentialProps('comp_b').size).toBe(0);
+  });
+
+  it('refuses to promote the composition root itself or a non-overridable prop', () => {
+    setEssentialProp('comp_b', 'comp_b', 'x', true);
+    addShape('b_shape', 'comp_b');
+    setEssentialProp('comp_b', 'b_shape', 'width' as 'x', true);
+    expect(readEssentialProps('comp_b').size).toBe(0);
   });
 });
 
@@ -300,36 +399,21 @@ describe('the control is reachable', () => {
  * How deep an override can reach — a fact about the ENGINE, written down
  * because a backlog was about to be planned from a guess about it.
  *
- * `CompOverridesSection` lists only the referenced comp's DIRECT children, and
- * says so; "Essential Properties: direct children only" was then carried as a
- * gap. But the limit is in the listing, not underneath it: `cloneSubtree`
- * consults the same override map at every node it clones within one instance,
- * and the key is any node id. A grandchild override already resolves, so adding
- * depth to the UI is a UI change rather than an architectural one — a very
- * different item to schedule.
- *
- * Asserted rather than left as the comment it was. A comment claiming a
- * capability that nothing exercises is exactly how the opposite claim survived
- * long enough to reach a backlog.
+ * Listing used to be direct-children-only; with promotion, nested keys appear
+ * in the instance UI. The engine always resolved any node id.
  */
 describe('override depth', () => {
   it('applies to a GRANDCHILD of the referenced comp, not only a direct child', () => {
-    // comp_b ▸ b_group ▸ b_deep — two levels below the instance.
     addShape('b_group', 'comp_b');
     addShape('b_deep', 'b_group', 11);
     addInstance('inst1', 'comp_root', 'comp_b');
     setCompOverride('inst1', 'b_deep', 'x', 456);
 
     expect(transformProps(cloneNamed('inst1::b_deep')).x).toBe(456);
-    // Its parent carries no override and is untouched — so this is the override
-    // landing on one node, not being smeared over the subtree.
     expect(transformProps(cloneNamed('inst1::b_group')).x).toBe(10);
   });
 
   it('a grandchild override survives the ANIMATED half too', () => {
-    // The half that is easy to omit: without buildSnapshot dropping the prop,
-    // a keyframed grandchild ignores its override on every frame. Nothing in
-    // the engine treats depth differently, which is the point being pinned.
     addShape('b_group', 'comp_b');
     addShape('b_deep', 'b_group', 11);
     addInstance('inst1', 'comp_root', 'comp_b');
@@ -338,8 +422,6 @@ describe('override depth', () => {
     defaultAnimation.setKeyframe('b_deep', 'x', 1, 99);
     setCompOverride('inst1', 'b_deep', 'x', 456);
 
-    // The clones hang off the instance's `precompLayers`, at whatever depth the
-    // source tree had — so this searches rather than indexing a level.
     const find = (layers: ReadonlyArray<{ id: string; x: number; precompLayers?: ReadonlyArray<never> }>, id: string): { x: number } | undefined => {
       for (const l of layers) {
         if (l.id === id) return l;
@@ -356,11 +438,6 @@ describe('override depth', () => {
     const inherited = find(snap, 'inst2::b_deep');
     expect(overridden).toBeTruthy();
     expect(inherited).toBeTruthy();
-    // Compared against the un-overridden twin rather than against a literal:
-    // a snapshot layer's `x` is COMPOSED with its parent's, so the absolute
-    // number carries `b_group`'s offset too. The two instances share that
-    // parent, so the difference is the override alone — 456 against the 11 the
-    // track gives at t = 0.
     expect(overridden!.x - inherited!.x).toBeCloseTo(456 - 11, 9);
   });
 });

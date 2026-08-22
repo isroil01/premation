@@ -174,6 +174,9 @@ export interface MotionEditorApi {
   file?: {
     read?(path: string): Promise<string | null>;
     write?(path: string, contents: string): Promise<void>;
+    /** Binary read for packed `.motion` zips. */
+    readBytes?(path: string): Promise<Uint8Array | null>;
+    writeBytes?(path: string, bytes: Uint8Array): Promise<void>;
   };
   /**
    * `.motion` directory-bundle access (local-first storage). `root` is the
@@ -242,8 +245,17 @@ export interface MotionEditorApi {
         fps: number;
         hasAudio?: boolean;
         quality?: 'high' | 'medium' | 'draft';
+        /** ST.2084 PQ or HLG — HEVC 10-bit with BT.2020 tags when ffmpeg has libx265. */
+        hdr?: 'pq' | 'hlg';
+        /** Measured MaxCLL / MaxFALL + mastering display (HDR10 SEI foothold). */
+        hdrMastering?: {
+          maxCll: number;
+          maxFall: number;
+          displayMaxNits: number;
+          displayMinNits: number;
+        };
       },
-    ): Promise<{ path: string; frames: number }>;
+    ): Promise<{ path: string; frames: number; videoCodec?: string }>;
     /** Kill an in-flight encode (Cancel / queue Pause). */
     cancel?(jobId: string): Promise<void>;
     /** Native save dialog, then move the encoded file there. Null if cancelled. */
@@ -276,6 +288,15 @@ export interface MotionEditorApi {
     addRecovery?(row: unknown): Promise<void>;
     listRecovery?(projectId: string): Promise<unknown[]>;
     clearRecovery?(projectId: string): Promise<void>;
+  };
+  /**
+   * Content-addressed thumbnail cache in <userData>/thumbs — the disk sink
+   * behind `ProjectIndexRow.thumbHash`. Derived data only; absent in the
+   * browser, where cards render facts without an image.
+   */
+  thumbs?: {
+    write?(hash: string, bytes: Uint8Array): Promise<boolean>;
+    read?(hash: string): Promise<Uint8Array | null>;
   };
   window?: {
     minimize?(): Promise<void>;

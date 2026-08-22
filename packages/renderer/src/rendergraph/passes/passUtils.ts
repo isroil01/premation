@@ -9,9 +9,10 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, MASKED_TEXTURED_MATERIAL, LUT_TEXTURED_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL } from '../../shaders/Material';
 import { TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
 import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
+import { HARDWARE_SRGB_UPLOADS, LINEAR_INTERMEDIATE_STORAGE } from '../../shaders/linearWorkingSpace';
 
 // There is no `PremulFlag` any more, and no per-draw choice for it to make.
 //
@@ -23,6 +24,20 @@ import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D,
 // per draw.
 
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
+
+/** RT copies skip the upload decode only while intermediates stay linear. */
+function rtLinear(sampleLinear: boolean): boolean {
+  return sampleLinear && LINEAR_INTERMEDIATE_STORAGE;
+}
+
+/** Hardware-tagged uploads decode sRGB at sample; skip the shader transfer. */
+function uploadHwSrgb(sampleLinear: boolean): boolean {
+  return !sampleLinear && HARDWARE_SRGB_UPLOADS;
+}
+
+function texturedSkipsDecode(sampleLinear: boolean): boolean {
+  return rtLinear(sampleLinear) || uploadHwSrgb(sampleLinear);
+}
 
 /** Matrix for full-screen viewport quads (maps [0,1]² -> clip [-1,1]² with top-left at (-1,+1)). */
 export function screenMvp(): Mat3 {
@@ -100,12 +115,15 @@ export function emitTextured3D(
   /** False for a quad whose transparent margin must not occlude what is behind
    *  it — see TEXTURED3D_NO_DEPTH_WRITE_MATERIAL. */
   depthWrite = true,
+  sampleLinear = false,
 ): void {
   cmds.add({
-    batchKey: `tex3d|${texture.id}|${blend}|${depthWrite ? 'dw' : 'nodw'}`,
-    material: depthWrite ? TEXTURED3D_MATERIAL : TEXTURED3D_NO_DEPTH_WRITE_MATERIAL,
+    batchKey: `tex3d|${texture.id}|${blend}|${depthWrite ? 'dw' : 'nodw'}|${texturedSkipsDecode(sampleLinear) ? 'lin' : 'srgb'}`,
+    material: depthWrite
+      ? (texturedSkipsDecode(sampleLinear) ? TEXTURED3D_LINEAR_MATERIAL : TEXTURED3D_MATERIAL)
+      : (texturedSkipsDecode(sampleLinear) ? TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL : TEXTURED3D_NO_DEPTH_WRITE_MATERIAL),
     blend,
-    uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade),
+    uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade, texturedSkipsDecode(sampleLinear)),
     texture,
     sampler,
   });
@@ -124,12 +142,13 @@ export function emitMaskedTextured3D(
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
   shade?: Shade3D,
+  sampleLinear = false,
 ): void {
   cmds.add({
-    batchKey: `tex3d_mask|${texture.id}|${maskTexture.id}|${blend}`,
-    material: MASKED_TEXTURED3D_MATERIAL,
+    batchKey: `tex3d_mask|${texture.id}|${maskTexture.id}|${blend}|${texturedSkipsDecode(sampleLinear) ? 'lin' : 'srgb'}`,
+    material: texturedSkipsDecode(sampleLinear) ? MASKED_TEXTURED3D_LINEAR_MATERIAL : MASKED_TEXTURED3D_MATERIAL,
     blend,
-    uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade),
+    uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade, texturedSkipsDecode(sampleLinear)),
     texture,
     sampler,
     maskTexture,
@@ -202,7 +221,9 @@ export function emitSolid(
   });
 }
 
-/** Queue a textured quad. Batches per texture + blend. */
+/** Queue a textured quad. Batches per texture + blend.
+ *  `sampleLinear` is true when `texture` is a graph RT already in working space
+ *  (precomp, effect ping-pong, layer target). Uploads stay false. */
 export function emitTextured(
   cmds: CommandBuffer,
   mvp: Mat3,
@@ -213,12 +234,34 @@ export function emitTextured(
   sampler: SamplerHandle,
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
+  sampleLinear = false,
 ): void {
   cmds.add({
-    batchKey: `tex|${texture.id}|${blend}`,
-    material: TEXTURED_MATERIAL,
+    batchKey: `tex|${texture.id}|${blend}|${texturedSkipsDecode(sampleLinear) ? 'lin' : 'srgb'}`,
+    material: texturedSkipsDecode(sampleLinear) ? TEXTURED_LINEAR_MATERIAL : TEXTURED_MATERIAL,
     blend,
-    uniforms: packTextured(mvp, uvRect, tint, opacity, color),
+    uniforms: packTextured(mvp, uvRect, tint, opacity, color, texturedSkipsDecode(sampleLinear)),
+    texture,
+    sampler,
+  });
+}
+
+/** Final scene-color → SURFACE blit (optional linear→sRGB encode). */
+export function emitSceneBlit(
+  cmds: CommandBuffer,
+  mvp: Mat3,
+  tint: Color,
+  opacity: number,
+  blend: BlendMode,
+  texture: TextureHandle,
+  sampler: SamplerHandle,
+  uvRect: Rect = FULL_UV,
+): void {
+  cmds.add({
+    batchKey: `scene-blit|${texture.id}|${blend}`,
+    material: SCENE_BLIT_MATERIAL,
+    blend,
+    uniforms: packTextured(mvp, uvRect, tint, opacity),
     texture,
     sampler,
   });
@@ -271,12 +314,13 @@ export function emitDeformedMesh(
   indexBuffer: BufferHandle,
   indexCount: number,
   color?: ColorTransform,
+  sampleLinear = false,
 ): void {
   cmds.add({
-    batchKey: `mesh|${texture.id}|${blend}`,
-    material: DEFORMED_MESH_MATERIAL,
+    batchKey: `mesh|${texture.id}|${blend}|${texturedSkipsDecode(sampleLinear) ? 'lin' : 'srgb'}`,
+    material: texturedSkipsDecode(sampleLinear) ? DEFORMED_MESH_LINEAR_MATERIAL : DEFORMED_MESH_MATERIAL,
     blend,
-    uniforms: packDeformedMesh(mvp, tint, opacity, color),
+    uniforms: packDeformedMesh(mvp, tint, opacity, color, texturedSkipsDecode(sampleLinear)),
     texture,
     sampler,
     vertexBuffer,
@@ -294,6 +338,7 @@ export function emitLayerTexture(
   cmds: CommandBuffer = ctx.services.commands,
   modelOverride?: Mat3,
   blendOverride?: BlendMode,
+  sampleLinear = false,
 ): void {
   const viewport = ctx.viewport;
   const blend = blendOverride ?? r.blend;
@@ -325,6 +370,7 @@ export function emitLayerTexture(
       indexBuffer,
       indexCount,
       r.colorMatrix,
+      sampleLinear,
     );
   } else {
     emitTextured(
@@ -337,6 +383,7 @@ export function emitLayerTexture(
       tex.sampler,
       r.uvRect ?? tex.uv,
       r.colorMatrix,
+      sampleLinear,
     );
   }
 }
@@ -355,12 +402,13 @@ export function emitLutTextured(
   lutTexture: TextureHandle,
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
+  sampleLinear = false,
 ): void {
   cmds.add({
-    batchKey: `tex_lut|${texture.id}|${lutTexture.id}|${blend}`,
-    material: LUT_TEXTURED_MATERIAL,
+    batchKey: `tex_lut|${texture.id}|${lutTexture.id}|${blend}|${texturedSkipsDecode(sampleLinear) ? 'lin' : 'srgb'}`,
+    material: texturedSkipsDecode(sampleLinear) ? LUT_TEXTURED_LINEAR_MATERIAL : LUT_TEXTURED_MATERIAL,
     blend,
-    uniforms: packTextured(mvp, uvRect, tint, opacity, color),
+    uniforms: packTextured(mvp, uvRect, tint, opacity, color, texturedSkipsDecode(sampleLinear)),
     texture,
     sampler,
     maskTexture: lutTexture,
@@ -428,12 +476,13 @@ export function emitMaskedTextured(
   maskTexture: TextureHandle,
   uvRect: Rect = FULL_UV,
   color?: ColorTransform,
+  sampleLinear = false,
 ): void {
   cmds.add({
-    batchKey: `tex_mask|${texture.id}|${maskTexture.id}|${blend}`,
-    material: MASKED_TEXTURED_MATERIAL,
+    batchKey: `tex_mask|${texture.id}|${maskTexture.id}|${blend}|${texturedSkipsDecode(sampleLinear) ? 'lin' : 'srgb'}`,
+    material: texturedSkipsDecode(sampleLinear) ? MASKED_TEXTURED_LINEAR_MATERIAL : MASKED_TEXTURED_MATERIAL,
     blend,
-    uniforms: packTextured(mvp, uvRect, tint, opacity, color),
+    uniforms: packTextured(mvp, uvRect, tint, opacity, color, texturedSkipsDecode(sampleLinear)),
     texture,
     sampler,
     maskTexture,

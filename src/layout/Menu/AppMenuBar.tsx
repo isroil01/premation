@@ -4,11 +4,8 @@
  * from APP_MENU in menuModel, Plugins is built per render from what is
  * installed; see useAppMenuGroups).
  *
- * There is no Examples group, though this list used to claim one. The two
- * example-scene commands (`scene.loadSaaSAd`, `scene.loadShowcase`) are
- * registered and reachable from the Command Palette; they stay off the menu bar
- * deliberately, because both REPLACE the current scene and a top-level menu is
- * a lot of prominence for two demo documents.
+ * There is no Examples group. Demo scenes used to replace the open document
+ * from the command palette; that path is gone.
  *
  * Purely a renderer over the menu model + CommandRegistry: labels, enabled
  * state and shortcuts come from the registered commands, activation goes

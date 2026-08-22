@@ -22,7 +22,15 @@ export interface ShaderSource {
 // Lives in its own file — it is the one shader long enough that inlining it
 // here would bury everything else.
 import { GLASS_COMPOSITE } from './glass';
+import { FX_ROUND_SIX_SHADERS } from './fxRoundSix';
 export { GLASS_COMPOSITE };
+
+import {
+  LINEAR_INTERMEDIATE_STORAGE,
+  SRGB_TRANSFER_GLSL,
+  SRGB_TRANSFER_WGSL,
+} from './linearWorkingSpace';
+export { LINEAR_WORKING_SPACE, LINEAR_INTERMEDIATE_STORAGE } from './linearWorkingSpace';
 
 // Solid-colored quad with an optional SDF mask so shapes render with real
 // geometry, not just flat rectangles. `shape` = (kind, radiusPx, worldW, worldH):
@@ -138,6 +146,7 @@ struct Object {
   cr0 : vec4<f32>,
   cr1 : vec4<f32>,
   cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
@@ -168,7 +177,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
@@ -178,7 +187,7 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 uniform sampler2D uTex;
 in vec2 vUv;
 out vec4 frag;
@@ -202,6 +211,7 @@ struct Object {
   cr0 : vec4<f32>,
   cr1 : vec4<f32>,
   cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
@@ -235,7 +245,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
@@ -245,7 +255,7 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 uniform sampler2D uTex;
 uniform sampler2D uMaskTex;
 in vec2 vUv;
@@ -276,6 +286,7 @@ struct Object {
   cr0 : vec4<f32>,
   cr1 : vec4<f32>,
   cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
@@ -311,7 +322,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
@@ -321,7 +332,7 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 uniform sampler2D uTex;
 uniform sampler2D uLutTex;
 in vec2 vUv;
@@ -348,7 +359,7 @@ void main() {
 const MATTE_COMBINE: ShaderSource = {
   name: 'matte-combine',
   wgsl: /* wgsl */ `
-struct Object { mvp : mat3x3<f32>, uvRect : vec4<f32>, tint : vec4<f32>, cr0 : vec4<f32>, cr1 : vec4<f32>, cr2 : vec4<f32> };
+struct Object { mvp : mat3x3<f32>, uvRect : vec4<f32>, tint : vec4<f32>, cr0 : vec4<f32>, cr1 : vec4<f32>, cr2 : vec4<f32>, srcSpace : vec4<f32> };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
@@ -389,13 +400,13 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 out vec2 vUv;
 void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 uniform sampler2D uTex;
 uniform sampler2D uMatteTex;
 in vec2 vUv;
@@ -541,7 +552,7 @@ ${MATTE_FACTOR_GLSL}`;
 const BLEND_COMBINE: ShaderSource = {
   name: 'blend-combine',
   wgsl: /* wgsl */ `
-struct Object { mvp : mat3x3<f32>, uvRect : vec4<f32>, tint : vec4<f32>, cr0 : vec4<f32>, cr1 : vec4<f32>, cr2 : vec4<f32> };
+struct Object { mvp : mat3x3<f32>, uvRect : vec4<f32>, tint : vec4<f32>, cr0 : vec4<f32>, cr1 : vec4<f32>, cr2 : vec4<f32>, srcSpace : vec4<f32> };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
@@ -624,13 +635,14 @@ fn bSetSat(c : vec3<f32>, s : f32) -> vec3<f32> {
   return vec3<f32>(0.0);
 }
 ${MATTE_FACTOR_WGSL}
+${SRGB_TRANSFER_WGSL}
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let s = textureSample(tex, smp, uv);
   let d = textureSample(uMaskTex, smp, uv);
   let as1 = s.a; let ad = d.a;
-  var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = s.rgb / as1; }
-  var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = d.rgb / ad; }
+  var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = storageToWorking(min(s.rgb / as1, vec3<f32>(1.0))); }
+  var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = storageToWorking(min(d.rgb / ad, vec3<f32>(1.0))); }
   let mode = i32(obj.cr0.x + 0.5);
   // Dispatch is by FAMILY, not by a >= threshold. The separable range is no
   // longer contiguous (1-11 and 16-26), so a bare mode >= 12 would have swept
@@ -654,6 +666,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // They cannot be a bChan branch, because bChan only ever produces a blended
   // COLOUR that the standard Porter-Duff line above then composites. These two
   // change that line itself.
+  var skipEncode = false;
   if (mode == 29) {
     // Alpha Add. Standard alpha is as + ad - as*ad, which is exactly why two
     // touching anti-aliased 50% edges composite to 75% and leave a visible seam
@@ -663,7 +676,12 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // Luminescent Premul. Treats the source as ALREADY premultiplied and adds it
     // rather than lerping, so colour that exceeds its own alpha is kept instead
     // of clipped — the glow/highlight case AE keeps this mode for.
-    co = s.rgb + (1.0 - as1) * d.rgb;
+    // Work in linear premul, then encode with the common path below.
+    var sLin = s.rgb;
+    var dLin = d.rgb;
+    if (as1 > 0.0) { sLin = storageToWorking(min(s.rgb / as1, vec3<f32>(1.0))) * as1; }
+    if (ad > 0.0) { dLin = storageToWorking(min(d.rgb / ad, vec3<f32>(1.0))) * ad; }
+    co = sLin + (1.0 - as1) * dLin;
   } else if (mode >= 31 && mode <= 34) {
     // ── Matte family (31-34): Stencil / Silhouette ──
     // Not blends. The layer contributes NO colour of its own; it scales the
@@ -673,8 +691,44 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // Everything here is premultiplied, so scaling coverage means scaling all
     // four channels. Scaling alpha alone would leave colour behind where there
     // is no longer any coverage to carry it, which reads as a bright fringe.
+    // Backdrop stays display-referred — no linear round-trip.
     co = d.rgb * k;
     ao = ad * k;
+    skipEncode = true;
+  } else if (mode == 35 || mode == 36) {
+    // ── M5 (35-36): Dissolve / Dancing Dissolve ──
+    // Not a blend: coverage becomes a COIN FLIP. Each comp-grid pixel shows
+    // the source at full opacity with probability equal to its coverage (as1,
+    // which already folds texture alpha × layer opacity), else the backdrop
+    // passes through untouched. The hash is the same integer mix Roughen uses
+    // — deterministic, no clock in the shader — and the grid is the COMP's
+    // (comp size on cr1.xy), so a zoomed preview and the export speckle
+    // identically. cr0.z is 0 for Dissolve (a pattern that holds still) and
+    // the frame index for Dancing (a pattern that boils).
+    let px = u32(clamp(floor(uv.x * obj.cr1.x), 0.0, 16777215.0));
+    let py = u32(clamp(floor(uv.y * obj.cr1.y), 0.0, 16777215.0));
+    let dk = u32(max(obj.cr0.z, 0.0) + 0.5);
+    var h : u32 = (px + 1u) * 374761393u + (py + 1u) * 668265263u + dk * 2246822519u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    let n = f32(h) / 4294967296.0;
+    if (n < as1) {
+      // Shown: the source's own colour, hard and opaque — dissolve trades
+      // translucency for speckle density. Straight colour in STORAGE space,
+      // so no linear round-trip and no encode below.
+      co = min(s.rgb / max(as1, 1e-6), vec3<f32>(1.0));
+      ao = 1.0;
+      // Preserve Underlying Transparency composes here too: the speckle is
+      // clipped to the backdrop's coverage instead of adding opacity.
+      if (obj.cr0.y > 0.5) {
+        co = co * ad;
+        ao = ad;
+      }
+    } else {
+      co = d.rgb;
+      ao = ad;
+    }
+    skipEncode = true;
   }
   // ── Preserve Underlying Transparency (cr0.y) ──
   // Independent of the blend mode, because it composes with every blend: the
@@ -686,10 +740,16 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // exactly where it is meant to be clipped by it.
   // Not applied to the matte family (31-34): those contribute no colour of
   // their own and scale the whole backdrop, so "clip me to the backdrop" is not
-  // a meaningful composition with them.
+  // a meaningful composition with them — nor to dissolve (35-36), which
+  // composed it inside its own branch.
   if (obj.cr0.y > 0.5 && mode < 31) {
     co = ad * (as1 * B + (1.0 - as1) * cb);
     ao = ad;
+  }
+  // Encode linear premul → storage space (identity when RTs already store linear).
+  if (!skipEncode && ao > 0.0001) {
+    let straight = min(co / ao, vec3<f32>(1.0));
+    co = workingToStorage(straight) * ao;
   }
   return vec4<f32>(co, ao);
 }
@@ -697,24 +757,25 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 out vec2 vUv;
 void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 uniform sampler2D uTex;
 uniform sampler2D uMaskTex;
 in vec2 vUv;
 out vec4 frag;
 ${BLEND_COMBINE_GLSL_HELPERS}
+${SRGB_TRANSFER_GLSL}
 void main() {
   vec4 s = texture(uTex, vUv);
   vec4 d = texture(uMaskTex, vUv);
   float as1 = s.a, ad = d.a;
-  vec3 cs = as1 > 0.0 ? s.rgb / as1 : vec3(0.0);
-  vec3 cb = ad > 0.0 ? d.rgb / ad : vec3(0.0);
+  vec3 cs = as1 > 0.0 ? storageToWorking(min(s.rgb / as1, vec3(1.0))) : vec3(0.0);
+  vec3 cb = ad > 0.0 ? storageToWorking(min(d.rgb / ad, vec3(1.0))) : vec3(0.0);
   int mode = int(cr0.x + 0.5);
   // Dispatch is by FAMILY, not by a >= threshold — the separable range is no
   // longer contiguous (1-11 and 16-26). Must match the WGSL branch above.
@@ -725,6 +786,7 @@ void main() {
   // Utility family (29-30): these write ALPHA, not just colour, so they change
   // the composite line itself rather than contributing a blended B.
   // Must match the WGSL branch above.
+  bool skipEncode = false;
   if (mode == 29) {
     // Alpha Add — standard alpha (as + ad - as*ad) makes two touching
     // anti-aliased 50% edges composite to 75% and leave a seam. Adding closes it.
@@ -732,7 +794,11 @@ void main() {
   } else if (mode == 30) {
     // Luminescent Premul — treat the source as already premultiplied and add,
     // keeping colour that exceeds its own alpha instead of clipping it.
-    co = s.rgb + (1.0 - as1) * d.rgb;
+    vec3 sLin = s.rgb;
+    vec3 dLin = d.rgb;
+    if (as1 > 0.0) sLin = storageToWorking(min(s.rgb / as1, vec3(1.0))) * as1;
+    if (ad > 0.0) dLin = storageToWorking(min(d.rgb / ad, vec3(1.0))) * ad;
+    co = sLin + (1.0 - as1) * dLin;
   } else if (mode >= 31 && mode <= 34) {
     // Matte family (31-34): Stencil / Silhouette. The layer contributes no
     // colour; it scales the coverage of the whole backdrop beneath it.
@@ -742,6 +808,34 @@ void main() {
     float k = matteFactor(mode, s);
     co = d.rgb * k;
     ao = ad * k;
+    skipEncode = true;
+  } else if (mode == 35 || mode == 36) {
+    // ── M5 (35-36): Dissolve / Dancing Dissolve ──
+    // Coverage becomes a per-pixel coin flip on the COMP grid (comp size on
+    // cr1.xy); cr0.z is 0 for Dissolve, the frame index for Dancing. Integer
+    // hash, so both dialects and every zoom agree. Must match the WGSL branch
+    // above.
+    uint px = uint(clamp(floor(vUv.x * cr1.x), 0.0, 16777215.0));
+    uint py = uint(clamp(floor(vUv.y * cr1.y), 0.0, 16777215.0));
+    uint dk = uint(max(cr0.z, 0.0) + 0.5);
+    uint h = (px + 1u) * 374761393u + (py + 1u) * 668265263u + dk * 2246822519u;
+    h = (h ^ (h >> 13u)) * 1274126177u;
+    h = h ^ (h >> 16u);
+    float n = float(h) / 4294967296.0;
+    if (n < as1) {
+      // Shown: hard, opaque source colour in storage space — no encode below.
+      co = min(s.rgb / max(as1, 1e-6), vec3(1.0));
+      ao = 1.0;
+      // Preserve Underlying Transparency clips the speckle to the backdrop.
+      if (cr0.y > 0.5) {
+        co = co * ad;
+        ao = ad;
+      }
+    } else {
+      co = d.rgb;
+      ao = ad;
+    }
+    skipEncode = true;
   }
   // ── Preserve Underlying Transparency (cr0.y) ──
   // Independent of the blend mode, because it composes with every blend: the
@@ -753,10 +847,15 @@ void main() {
   // exactly where it is meant to be clipped by it.
   // Not applied to the matte family (31-34): those contribute no colour of
   // their own and scale the whole backdrop, so "clip me to the backdrop" is not
-  // a meaningful composition with them.
+  // a meaningful composition with them — nor to dissolve (35-36), which
+  // composed it inside its own branch.
   if (cr0.y > 0.5 && mode < 31) {
     co = ad * (as1 * B + (1.0 - as1) * cb);
     ao = ad;
+  }
+  if (!skipEncode && ao > 0.0001) {
+    vec3 straight = min(co / ao, vec3(1.0));
+    co = workingToStorage(straight) * ao;
   }
   frag = vec4(co, ao);
 }
@@ -790,6 +889,7 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
   return o;
 }
 
+${SRGB_TRANSFER_WGSL}
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let r = obj.blurParams.z;
@@ -805,16 +905,30 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // the loop cap, taps spread out and linear filtering fills the gaps. The
   // old kernel used σ = r/2 truncated at ±r — visibly tighter than Canvas2D
   // at every radius (profiled: tail died 2–3× sooner).
+  //
+  // Accumulate in linear-premul so glow/blur falloff matches lit light rather
+  // than gamma-space grey. Helpers are identity when LINEAR_WORKING_SPACE is off.
   let sigma = r;
   let steps = 30;
   let spacing = max(1.0, (sigma * 2.5) / f32(steps));
   for(var i = -steps; i <= steps; i = i + 1) {
     let off = f32(i) * spacing;
     let w = exp(-0.5 * (off * off) / (sigma * sigma));
-    c = c + textureSample(tex, smp, uv + dir * off) * w;
+    let t = textureSample(tex, smp, uv + dir * off);
+    var lin = t;
+    if (t.a > 0.0001) {
+      let straight = min(t.rgb / t.a, vec3<f32>(1.0));
+      lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+    }
+    c = c + lin * w;
     total = total + w;
   }
-  return c / total;
+  let avg = c / total;
+  if (avg.a > 0.0001) {
+    let straight = min(avg.rgb / avg.a, vec3<f32>(1.0));
+    return vec4<f32>(workingToStorage(straight) * avg.a, avg.a);
+  }
+  return avg;
 }
 `,
   glsl: {
@@ -834,6 +948,7 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 blurParams; };
 uniform sampler2D uTex;
 in vec2 vUv;
 out vec4 frag;
+${SRGB_TRANSFER_GLSL}
 void main() {
   float r = blurParams.z;
   if (r <= 0.0) {
@@ -846,16 +961,29 @@ void main() {
 
   // CSS blur semantics: radius IS sigma (matches Canvas2D). ±2.5σ extent,
   // spaced taps under the loop cap — see the WGSL twin above.
+  // Linear-premul accumulate; helpers are identity when the kill switch is off.
   float sigma = r;
   const int steps = 30;
   float spacing = max(1.0, (sigma * 2.5) / float(steps));
   for(int i = -steps; i <= steps; i++) {
     float off = float(i) * spacing;
     float w = exp(-0.5 * (off * off) / (sigma * sigma));
-    c += texture(uTex, vUv + dir * off) * w;
+    vec4 t = texture(uTex, vUv + dir * off);
+    vec4 lin = t;
+    if (t.a > 0.0001) {
+      vec3 straight = min(t.rgb / t.a, vec3(1.0));
+      lin = vec4(storageToWorking(straight) * t.a, t.a);
+    }
+    c += lin * w;
     total += w;
   }
-  frag = c / total;
+  vec4 avg = c / total;
+  if (avg.a > 0.0001) {
+    vec3 straight = min(avg.rgb / avg.a, vec3(1.0));
+    frag = vec4(workingToStorage(straight) * avg.a, avg.a);
+  } else {
+    frag = avg;
+  }
 }
 `,
   },
@@ -1851,7 +1979,10 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
 }
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let from      = obj.p0.xy;
+  // 'from' is a RESERVED WORD in WGSL (fine in GLSL) — naming this binding
+  // 'from' failed CreateShaderModule, which invalidated the pipeline and then
+  // the whole frame's command buffer: ONE spotlight blanked the ENTIRE scene.
+  let fromPt    = obj.p0.xy;
   let to        = obj.p0.zw;
   let coneHalf  = max(obj.p1.x, 0.0001);
   let softness  = clamp(obj.p1.y, 0.0, 1.0);
@@ -1865,9 +1996,9 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
   let q = vec2<f32>(l.x * aspect, l.y);
 
-  let axis = to - from;
+  let axis = to - fromPt;
   let reach = length(axis);
-  let p = q - from;
+  let p = q - fromPt;
   let dist = length(p);
 
   var cone = 1.0;
@@ -1889,15 +2020,24 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 
     Welding it to the handles is what made this effect look like it deleted the
     layer: the default handles sit half a layer-height apart, so everything
-    further than that from the lamp fell to ambient — 15% — and a layer at
-    15% brightness on a dark composition is indistinguishable from a layer that
-    is not there.
+    further than that from the lamp fell to ambient — and a layer at low ambient
+    on a dark composition is indistinguishable from a layer that is not there.
+
+    Falloff plateaus through most of the reach, then softens at the edge — a
+    linear decline from the lamp (smoothstep from 0) darkened the subject even
+    inside the cone.
   */
-  let falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
-  let lightAmt = ambient + cone * falloff * intensity;
-  // Multiplies the layer: a spotlight reveals what is there, so outside the
-  // cone the picture goes DARK rather than unchanged. Light Only drops the
-  // layer's colour and keeps the beam, which is AE's second Render mode.
+  let fallInner = reachCtl * 0.65;
+  let falloff = 1.0 - smoothstep(min(fallInner, reachCtl - 0.0001), reachCtl, dist);
+  // var, not let - WGSL lets are immutable and the floor below reassigns.
+  var lightAmt = ambient + cone * falloff * intensity;
+  // Floor at ambient so the beam can only BRIGHTEN relative to the outside
+  // level — never punch a hole darker than the user asked for. With the
+  // default ambient of 1 the layer is unchanged outside the cone (and on an
+  // adjustment layer that means the rest of the scene stays visible).
+  lightAmt = max(lightAmt, ambient);
+  // Multiplies the layer: a spotlight reveals what is there. Light Only drops
+  // the layer's colour and keeps the beam (AE's second Render mode).
   let base = select(c.rgb, vec3<f32>(c.a, c.a, c.a), lightOnly > 0.5);
   return vec4<f32>(base * obj.lightColor.rgb * lightAmt, c.a);
 }
@@ -1942,8 +2082,10 @@ void main() {
     float inner = min(coneHalf * (1.0 - softness), coneHalf - 0.0001);
     cone = 1.0 - smoothstep(inner, coneHalf, ang);
   }
-  float falloff = 1.0 - smoothstep(0.0, reachCtl, dist);
+  float fallInner = reachCtl * 0.65;
+  float falloff = 1.0 - smoothstep(min(fallInner, reachCtl - 0.0001), reachCtl, dist);
   float lightAmt = ambient + cone * falloff * intensity;
+  lightAmt = max(lightAmt, ambient);
   vec3 base = (lightOnly > 0.5) ? vec3(c.a) : c.rgb;
   frag = vec4(base * lightColor.rgb * lightAmt, c.a);
 }
@@ -2230,6 +2372,411 @@ void main() {
   }
 };
 
+/*
+ * ── Round-six per-pixel colour ports ─────────────────────────────────
+ *
+ * Six passes ported off the CPU bake. Shared rules, all inherited from
+ * ARITHMETIC above:
+ *   • unpremultiply → operate on STRAIGHT colour → repremultiply. The CPU
+ *     kernels (the parity references, still shipped in canvas2dEffects) work
+ *     on straight sRGB bytes; skipping the unpremul distorts every soft edge.
+ *   • colours and levels arrive as RAW sRGB fractions, no working-space
+ *     conversion, for the same parity reason.
+ *   • no WGSL reserved words as identifiers, and `var` for anything
+ *     reassigned — one bad shader invalidates the whole frame's submit
+ *     (see the Spotlight incident note on that shader).
+ */
+
+export const VIGNETTE_FX: ShaderSource = {
+  name: 'vignette',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let amount   = obj.p0.x;
+  let inner    = obj.p0.y;
+  let feather  = max(obj.p0.z, 0.001);
+  let round    = obj.p0.w;
+  let center   = obj.p1.xy;
+  let aspect   = max(obj.p1.z, 0.0001);
+
+  let src = textureSample(tex, smp, uv);
+  // Layer-box coordinates, like Bend/Beam: the chain buffer is not the layer.
+  let l = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001));
+  let d = l - center;
+  // Elliptical: per-axis normalised so the box edge midpoints sit at d = 1.
+  let dEllipse = length(d * 2.0);
+  // Circular: physical distance over the half-diagonal.
+  let dCircle = length(vec2<f32>(d.x * aspect, d.y)) * 2.0 / length(vec2<f32>(aspect, 1.0));
+  let dist = mix(dEllipse, dCircle, round);
+  let t = clamp((dist - inner) / feather, 0.0, 1.0);
+  let s = t * t * (3.0 - 2.0 * t);
+  let k = clamp(1.0 - amount * s, 0.0, 4.0);
+  // Display-referred, like the CPU kernel: decode storage, scale, re-encode.
+  let aV = max(src.a, 0.00001);
+  let cV = select(src.rgb / aV, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0);
+  let outD = clamp(linearToSrgbRgb(cV) * k, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(srgbToLinearRgb(outD) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 fxBox; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  float amount = p0.x; float inner = p0.y; float feather = max(p0.z, 0.001); float roundK = p0.w;
+  vec2 center = p1.xy; float aspect = max(p1.z, 0.0001);
+  vec4 src = texture(uTex, vUv);
+  vec2 l = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001));
+  vec2 d = l - center;
+  float dEllipse = length(d * 2.0);
+  float dCircle = length(vec2(d.x * aspect, d.y)) * 2.0 / length(vec2(aspect, 1.0));
+  float dist = mix(dEllipse, dCircle, roundK);
+  float t = clamp((dist - inner) / feather, 0.0, 1.0);
+  float s = t * t * (3.0 - 2.0 * t);
+  float k = clamp(1.0 - amount * s, 0.0, 4.0);
+  float aV = max(src.a, 0.00001);
+  vec3 cV = (src.a <= 0.0) ? vec3(0.0) : src.rgb / aV;
+  vec3 outD = clamp(linearToSrgbRgb(cV) * k, vec3(0.0), vec3(1.0));
+  frag = vec4(srgbToLinearRgb(outD) * src.a, src.a);
+}
+`
+  }
+};
+
+export const BLACK_AND_WHITE_FX: ShaderSource = {
+  name: 'black-and-white',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn hue2rgb(p : f32, q : f32, tIn : f32) -> f32 {
+  var t = tIn;
+  if (t < 0.0) { t = t + 1.0; }
+  if (t > 1.0) { t = t - 1.0; }
+  if (t < 1.0 / 6.0) { return p + (q - p) * 6.0 * t; }
+  if (t < 0.5) { return q; }
+  if (t < 2.0 / 3.0) { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+  return p;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+
+  let mx = max(c.r, max(c.g, c.b));
+  let mn = min(c.r, min(c.g, c.b));
+  let md = c.r + c.g + c.b - mx - mn;
+  // Primary weight = the channel holding the max; secondary = the pair that
+  // excludes the min. Same tie behaviour as the CPU kernel (ties multiply 0).
+  var wPrimary = obj.p1.x;                       // blues
+  if (mx == c.r) { wPrimary = obj.p0.x; }        // reds
+  else if (mx == c.g) { wPrimary = obj.p0.z; }   // greens
+  var wSecondary = obj.p1.y;                     // magentas
+  if (mn == c.b) { wSecondary = obj.p0.y; }      // yellows
+  else if (mn == c.r) { wSecondary = obj.p0.w; } // cyans
+  let grey = clamp(mn + (md - mn) * wSecondary + (mx - md) * wPrimary, 0.0, 1.0);
+
+  var outC = vec3<f32>(grey, grey, grey);
+  if (obj.p1.z > 0.5) {
+    let hIn = obj.p1.w;
+    let sIn = obj.p2.x;
+    let q = select(grey + sIn - grey * sIn, grey * (1.0 + sIn), grey < 0.5);
+    let p = 2.0 * grey - q;
+    outC = vec3<f32>(hue2rgb(p, q, hIn + 1.0 / 3.0), hue2rgb(p, q, hIn), hue2rgb(p, q, hIn - 1.0 / 3.0));
+  }
+  return vec4<f32>(srgbToLinearRgb(outC) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+float hue2rgb(float p, float q, float t) {
+  if (t < 0.0) t += 1.0;
+  if (t > 1.0) t -= 1.0;
+  if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
+  if (t < 0.5) return q;
+  if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+  return p;
+}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  float mx = max(c.r, max(c.g, c.b));
+  float mn = min(c.r, min(c.g, c.b));
+  float md = c.r + c.g + c.b - mx - mn;
+  float wPrimary = (mx == c.r) ? p0.x : (mx == c.g) ? p0.z : p1.x;
+  float wSecondary = (mn == c.b) ? p0.y : (mn == c.r) ? p0.w : p1.y;
+  float grey = clamp(mn + (md - mn) * wSecondary + (mx - md) * wPrimary, 0.0, 1.0);
+  vec3 outC = vec3(grey);
+  if (p1.z > 0.5) {
+    float hIn = p1.w; float sIn = p2.x;
+    float q = (grey < 0.5) ? grey * (1.0 + sIn) : grey + sIn - grey * sIn;
+    float p = 2.0 * grey - q;
+    outC = vec3(hue2rgb(p, q, hIn + 1.0 / 3.0), hue2rgb(p, q, hIn), hue2rgb(p, q, hIn - 1.0 / 3.0));
+  }
+  frag = vec4(srgbToLinearRgb(outC) * src.a, src.a);
+}
+`
+  }
+};
+
+export const TRITONE_FX: ShaderSource = {
+  name: 'tritone',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+  // Rec.601 — aeColor imports colorEffects.luma, and CPU parity is the contract.
+  let t = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+  let shadows = obj.p0.xyz;
+  let mid     = obj.p1.xyz;
+  let high    = obj.p2.xyz;
+  var mapped : vec3<f32>;
+  if (t <= 0.5) { mapped = mix(shadows, mid, t * 2.0); }
+  else { mapped = mix(mid, high, (t - 0.5) * 2.0); }
+  let keep = obj.p0.w;
+  let outC = mix(mapped, c, keep);
+  return vec4<f32>(srgbToLinearRgb(clamp(outC, vec3<f32>(0.0), vec3<f32>(1.0))) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; vec4 p2; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  float t = dot(c, vec3(0.299, 0.587, 0.114));
+  vec3 mapped = (t <= 0.5) ? mix(p0.xyz, p1.xyz, t * 2.0) : mix(p1.xyz, p2.xyz, (t - 0.5) * 2.0);
+  vec3 outC = mix(mapped, c, p0.w);
+  frag = vec4(srgbToLinearRgb(clamp(outC, vec3(0.0), vec3(1.0))) * src.a, src.a);
+}
+`
+  }
+};
+
+export const PHOTO_FILTER_FX: ShaderSource = {
+  name: 'photo-filter',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+  let gel = obj.p0.xyz;
+  let density = obj.p0.w;
+  var outC = mix(c, c * gel, density);
+  if (obj.p1.x > 0.5) {
+    let lumaW = vec3<f32>(0.299, 0.587, 0.114);
+    let before = dot(c, lumaW);
+    let after = dot(outC, lumaW);
+    // Guard the divisor: black is black under any gel.
+    if (after > 0.0001) { outC = outC * (before / after); }
+  }
+  return vec4<f32>(srgbToLinearRgb(clamp(outC, vec3<f32>(0.0), vec3<f32>(1.0))) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; vec4 p1; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  vec3 outC = mix(c, c * p0.xyz, p0.w);
+  if (p1.x > 0.5) {
+    vec3 lumaW = vec3(0.299, 0.587, 0.114);
+    float before = dot(c, lumaW);
+    float after = dot(outC, lumaW);
+    if (after > 0.0001) outC *= before / after;
+  }
+  frag = vec4(srgbToLinearRgb(clamp(outC, vec3(0.0), vec3(1.0))) * src.a, src.a);
+}
+`
+  }
+};
+
+export const THRESHOLD_FX: ShaderSource = {
+  name: 'threshold',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(select(src.rgb / a, vec3<f32>(0.0, 0.0, 0.0), src.a <= 0.0));
+  let lum = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+  let v = select(0.0, 1.0, lum >= obj.p0.x);
+  return vec4<f32>(srgbToLinearRgb(vec3<f32>(v, v, v)) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb((src.a <= 0.0) ? vec3(0.0) : src.rgb / a);
+  float lum = dot(c, vec3(0.299, 0.587, 0.114));
+  float v = (lum >= p0.x) ? 1.0 : 0.0;
+  frag = vec4(srgbToLinearRgb(vec3(v)) * src.a, src.a);
+}
+`
+  }
+};
+
+export const VIBRANCE_FX: ShaderSource = {
+  name: 'vibrance',
+  wgsl: `
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32> };
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  if (src.a <= 0.0) { return src; } // invisible pixels keep their bytes (CPU parity)
+  let a = max(src.a, 0.00001);
+  let c = linearToSrgbRgb(src.rgb / a);
+  // Rec.601 — vibrance's CPU kernel uses colorEffects.luma, not colorSpace's.
+  let l = dot(c, vec3<f32>(0.299, 0.587, 0.114));
+  let mx = max(c.r, max(c.g, c.b));
+  let mn = min(c.r, min(c.g, c.b));
+  let current = select((mx - mn), 0.0, mx <= 0.0);
+  let amount = 1.0 + obj.p0.y + obj.p0.x * (1.0 - current);
+  let outC = clamp(vec3<f32>(l, l, l) + (c - vec3<f32>(l, l, l)) * amount, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(srgbToLinearRgb(outC) * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+out vec2 vUv;
+void main() { vec3 p = mvp * vec3(pos, 1.0); gl_Position = vec4(p.xy, 0.0, p.z); vUv = uvRect.xy + pos * uvRect.zw; }
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 p0; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  if (src.a <= 0.0) { frag = src; return; }
+  float a = max(src.a, 0.00001);
+  vec3 c = linearToSrgbRgb(src.rgb / a);
+  float l = dot(c, vec3(0.299, 0.587, 0.114));
+  float mx = max(c.r, max(c.g, c.b));
+  float mn = min(c.r, min(c.g, c.b));
+  float current = (mx <= 0.0) ? 0.0 : (mx - mn);
+  float amount = 1.0 + p0.y + p0.x * (1.0 - current);
+  vec3 outC = clamp(vec3(l) + (c - vec3(l)) * amount, vec3(0.0), vec3(1.0));
+  frag = vec4(srgbToLinearRgb(outC) * src.a, src.a);
+}
+`
+  }
+};
+
 export const FILL: ShaderSource = {
   name: 'fill',
   wgsl: `
@@ -2488,6 +3035,384 @@ void main() {
   float covSoft = 1.0 - smoothstep(soft - aa, soft + aa, d);
   vec3 add = color.rgb * t * (0.35 * covSoft + cov);
   frag = vec4(src.rgb + add, min(1.0, src.a + t * (0.35 * covSoft + cov)));
+}
+`
+  }
+};
+
+/**
+ * Light Sweep — soft band of light travelling across the layer.
+ *
+ * Matches `drawLightSweep`: a linear gradient across a band of width
+ * `sweepWidth`, centred at `position` along the angle's normal. Softness
+ * moves the colour-stop shoulders toward the middle. Composite modes mirror
+ * the Canvas2D helper (default source-atop clips the shine to the silhouette).
+ */
+export const LIGHT_SWEEP: ShaderSource = {
+  name: 'light-sweep',
+  wgsl: `
+struct Object {
+  mvp: mat3x3<f32>,
+  uvRect: vec4<f32>,
+  ends: vec4<f32>,
+  params: vec4<f32>,
+  color: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let a = obj.ends.xy;
+  let b = obj.ends.zw;
+  let soft = obj.params.x;
+  let inten = obj.params.y;
+  let ab = b - a;
+  let len2 = max(dot(ab, ab), 1e-12);
+  let t = clamp(dot(uv - a, ab) / len2, 0.0, 1.0);
+  // Approximate the soft-shouldered band with a smoothstep falloff from the
+  // centre. Matches drawLightSweep visually; avoids a piecewise profile that
+  // has disagreed across backends.
+  let u = abs(t - 0.5) * 2.0;
+  let p = inten * (1.0 - smoothstep(max(0.001, 1.0 - soft), 1.0, u));
+  let add = obj.color.rgb * p;
+  return vec4<f32>(src.rgb + add * src.a, src.a);
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 src = texture(uTex, vUv);
+  vec2 a0 = ends.xy;
+  vec2 a1 = ends.zw;
+  vec2 ab = a1 - a0;
+  float len2 = max(dot(ab, ab), 1e-12);
+  float t = clamp(dot(vUv - a0, ab) / len2, 0.0, 1.0);
+  float soft = params.x;
+  float inten = params.y;
+  float u = abs(t - 0.5) * 2.0;
+  float p = inten * (1.0 - smoothstep(max(0.001, 1.0 - soft), 1.0, u));
+  vec3 add = color.rgb * p;
+  frag = vec4(src.rgb + add * src.a, src.a);
+}
+`
+  }
+};
+
+/**
+ * Lens Flare — source halo/core, streak, and ghosts along the optical axis
+ * through the frame centre. Ghost positions/sizes match generateText.ts.
+ *
+ * Additive (lighter): light adds. ends = (center, mid); params =
+ * (brightness, coreR, haloR, streakHalfH).
+ */
+export const LENS_FLARE: ShaderSource = {
+  name: 'lens-flare',
+  wgsl: `
+struct Object {
+  mvp: mat3x3<f32>,
+  uvRect: vec4<f32>,
+  ends: vec4<f32>,
+  params: vec4<f32>,
+  color: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn ghostAlpha(d: f32, gr: f32, alpha: f32) -> f32 {
+  return (1.0 - smoothstep(0.0, gr * 0.7, d)) * alpha
+    + (1.0 - smoothstep(gr * 0.7, gr, d)) * alpha * 0.5;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let c = obj.ends.xy;
+  let mid = obj.ends.zw;
+  let b = obj.params.x;
+  let coreR = obj.params.y;
+  let haloR = obj.params.z;
+  let streakH = obj.params.w;
+  let hue = obj.color.rgb;
+  var add = vec3<f32>(0.0);
+
+  let d = length(uv - c);
+  let haloT = clamp(d / max(haloR, 1e-6), 0.0, 1.0);
+  let halo = select(
+    mix(0.18 * b, 0.0, (haloT - 0.25) / 0.75),
+    mix(0.55 * b, 0.18 * b, haloT / 0.25),
+    haloT <= 0.25,
+  );
+  add += hue * halo;
+
+  let coreW = (1.0 - smoothstep(0.0, coreR * 0.5, d)) * 0.95 * b;
+  let coreH = (1.0 - smoothstep(coreR * 0.5, coreR, d)) * 0.5 * b;
+  add += vec3<f32>(1.0) * coreW + hue * coreH;
+
+  let sx = abs(uv.x - c.x) / max(haloR, 1e-6);
+  let sy = abs(uv.y - c.y) / max(streakH, 1e-6);
+  let streak = (1.0 - smoothstep(0.0, 1.0, sx)) * (1.0 - smoothstep(0.0, 1.0, sy)) * 0.35 * b;
+  add += hue * streak;
+
+  let axis = mid - c;
+  let gp = array<f32, 7>(-0.35, 0.25, 0.55, 0.8, 1.15, 1.45, 1.9);
+  let gs = array<f32, 7>(0.09, 0.05, 0.13, 0.07, 0.045, 0.1, 0.06);
+  let span = max(haloR / 0.35, 1e-6);
+  for (var i = 0; i < 7; i++) {
+    let t = gp[i];
+    let gxy = c + axis * (2.0 * t);
+    let gr = max(span * gs[i], 1e-6);
+    let alpha = 0.14 * b * (1.0 - min(1.0, abs(t) / 2.2));
+    add += hue * ghostAlpha(length(uv - gxy), gr, alpha);
+  }
+
+  return vec4<f32>(src.rgb + add, min(1.0, src.a + max(add.r, max(add.g, add.b))));
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 color; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+void main() {
+  vec4 src = texture(uTex, vUv);
+  vec2 c = ends.xy;
+  vec2 mid = ends.zw;
+  float b = params.x;
+  float coreR = params.y;
+  float haloR = params.z;
+  float streakH = params.w;
+  vec3 hue = color.rgb;
+  vec3 add = vec3(0.0);
+
+  float d = length(vUv - c);
+  float haloT = clamp(d / max(haloR, 1e-6), 0.0, 1.0);
+  float halo = haloT <= 0.25
+    ? mix(0.55 * b, 0.18 * b, haloT / 0.25)
+    : mix(0.18 * b, 0.0, (haloT - 0.25) / 0.75);
+  add += hue * halo;
+
+  float coreW = (1.0 - smoothstep(0.0, coreR * 0.5, d)) * 0.95 * b;
+  float coreH = (1.0 - smoothstep(coreR * 0.5, coreR, d)) * 0.5 * b;
+  add += vec3(1.0) * coreW + hue * coreH;
+
+  float sx = abs(vUv.x - c.x) / max(haloR, 1e-6);
+  float sy = abs(vUv.y - c.y) / max(streakH, 1e-6);
+  float streak = (1.0 - smoothstep(0.0, 1.0, sx)) * (1.0 - smoothstep(0.0, 1.0, sy)) * 0.35 * b;
+  add += hue * streak;
+
+  vec2 axis = mid - c;
+  float gp[7] = float[](-0.35, 0.25, 0.55, 0.8, 1.15, 1.45, 1.9);
+  float gs[7] = float[](0.09, 0.05, 0.13, 0.07, 0.045, 0.1, 0.06);
+  float span = max(haloR / 0.35, 1e-6);
+  for (int i = 0; i < 7; i++) {
+    float t = gp[i];
+    vec2 gxy = c + axis * 2.0 * t;
+    float gr = max(span * gs[i], 1e-6);
+    float alpha = 0.14 * b * (1.0 - min(1.0, abs(t) / 2.2));
+    float gd = length(vUv - gxy);
+    float ga = (1.0 - smoothstep(0.0, gr * 0.7, gd)) * alpha
+      + (1.0 - smoothstep(gr * 0.7, gr, gd)) * alpha * 0.5;
+    add += hue * ga;
+  }
+
+  frag = vec4(src.rgb + add, min(1.0, src.a + max(add.r, max(add.g, add.b))));
+}
+`
+  }
+};
+
+/**
+ * Light Rays — wedges from a centre with the same LCG as drawLightRays.
+ *
+ * centre = ends.xy; rayLengthUV = ends.z; rayCount = ends.w;
+ * params = (opacity, falloff, rotationRad, spreadArc);
+ * seedComp = (seed, composite, 0, 0).
+ */
+export const LIGHT_RAYS: ShaderSource = {
+  name: 'light-rays',
+  wgsl: `
+struct Object {
+  mvp: mat3x3<f32>,
+  uvRect: vec4<f32>,
+  ends: vec4<f32>,
+  params: vec4<f32>,
+  seedComp: vec4<f32>,
+  color: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
+}
+fn nextRand(state: ptr<function, u32>) -> f32 {
+  *state = (*state) * 22695477u + 1u;
+  return f32(*state) * (1.0 / 4294967296.0);
+}
+fn angDiff(a: f32, b: f32) -> f32 {
+  var d = a - b;
+  d = d - 6.28318530718 * floor((d + 3.14159265359) / 6.28318530718);
+  return d;
+}
+fn radialFalloff(t: f32, falloff: f32, a: f32) -> f32 {
+  let mid = max(0.001, 1.0 - falloff);
+  let r0 = mix(a, a * 0.35, t / mid);
+  let r1 = mix(a * 0.35, 0.0, (t - mid) / max(1.0 - mid, 1e-5));
+  return select(r1, r0, t <= mid);
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let src = textureSample(tex, smp, uv);
+  let c = obj.ends.xy;
+  let maxLen = max(obj.ends.z, 1e-6);
+  let n = i32(clamp(obj.ends.w, 1.0, 128.0));
+  let opac = obj.params.x;
+  let falloff = obj.params.y;
+  let rot = obj.params.z;
+  var arc = obj.params.w;
+  if (arc <= 1e-5) { arc = 6.28318530718; }
+  let hue = obj.color.rgb;
+  var state: u32 = u32(obj.seedComp.x) * 22695477u + 1u;
+  let delta = uv - c;
+  let dist = length(delta);
+  let pang = atan2(delta.y, delta.x);
+  var add = 0.0;
+  let nf = f32(n);
+  for (var i = 0; i < 128; i++) {
+    if (i >= n) { break; }
+    let fi = f32(i);
+    let jitter = (nextRand(&state) - 0.5) * (arc / nf) * 0.6;
+    let ang = rot + (fi / nf) * arc - arc * 0.5 + jitter;
+    let len = maxLen * (0.55 + nextRand(&state) * 0.45);
+    let halfW = (arc / nf) * 0.35;
+    let da = abs(angDiff(pang, ang));
+    if (da < halfW && dist < len) {
+      let lat = 1.0 - da / max(halfW, 1e-5);
+      let t = clamp(dist / len, 0.0, 1.0);
+      add += lat * radialFalloff(t, falloff, opac);
+    }
+  }
+  let rgb = hue * add;
+  let mode = obj.seedComp.y;
+  if (mode < 0.5) {
+    let outA = add + src.a * (1.0 - add);
+    return vec4<f32>(rgb * add + src.rgb * src.a * (1.0 - add), outA);
+  }
+  // Default lighter (1) and other modes — additive shine.
+  return vec4<f32>(src.rgb + rgb, min(1.0, src.a + add));
+}
+`,
+  glsl: {
+    vertex: `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object {
+  mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 seedComp; vec4 color;
+};
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: `#version 300 es
+precision highp float;
+layout(std140) uniform Object {
+  mat3 mvp; vec4 uvRect; vec4 ends; vec4 params; vec4 seedComp; vec4 color;
+};
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+uint nextRand(inout uint state) {
+  state = state * 22695477u + 1u;
+  return state;
+}
+float rand01(inout uint state) {
+  return float(nextRand(state)) / 4294967296.0;
+}
+float angDiff(float a, float b) {
+  float d = a - b;
+  d = d - 6.28318530718 * floor((d + 3.14159265359) / 6.28318530718);
+  return d;
+}
+float radialFalloff(float t, float falloff, float a) {
+  float mid = max(0.001, 1.0 - falloff);
+  if (t <= mid) return mix(a, a * 0.35, t / mid);
+  return mix(a * 0.35, 0.0, (t - mid) / max(1.0 - mid, 1e-5));
+}
+void main() {
+  vec4 src = texture(uTex, vUv);
+  vec2 c = ends.xy;
+  float maxLen = max(ends.z, 1e-6);
+  int n = int(clamp(ends.w, 1.0, 128.0));
+  float opac = params.x;
+  float falloff = params.y;
+  float rot = params.z;
+  float arc = params.w;
+  if (arc <= 1e-5) arc = 6.28318530718;
+  vec3 hue = color.rgb;
+  uint state = uint(seedComp.x) * 22695477u + 1u;
+  vec2 delta = vUv - c;
+  float dist = length(delta);
+  float pang = atan(delta.y, delta.x);
+  float add = 0.0;
+  float nf = float(n);
+  for (int i = 0; i < 128; i++) {
+    if (i >= n) break;
+    float fi = float(i);
+    float jitter = (rand01(state) - 0.5) * (arc / nf) * 0.6;
+    float ang = rot + (fi / nf) * arc - arc * 0.5 + jitter;
+    float len = maxLen * (0.55 + rand01(state) * 0.45);
+    float halfW = (arc / nf) * 0.35;
+    float da = abs(angDiff(pang, ang));
+    if (da < halfW && dist < len) {
+      float lat = 1.0 - da / max(halfW, 1e-5);
+      float t = clamp(dist / len, 0.0, 1.0);
+      add += lat * radialFalloff(t, falloff, opac);
+    }
+  }
+  vec3 rgb = hue * add;
+  float mode = seedComp.y;
+  if (mode < 0.5) {
+    float outA = add + src.a * (1.0 - add);
+    frag = vec4(rgb * add + src.rgb * src.a * (1.0 - add), outA);
+  } else {
+    frag = vec4(src.rgb + rgb, min(1.0, src.a + add));
+  }
 }
 `
   }
@@ -2895,6 +3820,7 @@ struct Object {
   cr0 : vec4<f32>,
   cr1 : vec4<f32>,
   cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
   model : mat4x4<f32>,
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
@@ -3000,7 +3926,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
 `;
 
 // GLSL twins of the above (UBO tail + light model), same layout contract.
-const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };`;
+const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };`;
 
 const GLSL_SHADE3D_FN = /* glsl */ `
 vec3 shade3d(vec3 world, vec3 baseRgb) {
@@ -3221,6 +4147,7 @@ struct Object {
   cr0 : vec4<f32>,
   cr1 : vec4<f32>,
   cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
@@ -3252,7 +4179,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
 layout(location = 1) in vec2 uv;
-layout(std140) uniform Object { mat3 mvp; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 out vec2 vUv;
 void main() {
   vec3 p = mvp * vec3(pos, 1.0);
@@ -3262,7 +4189,7 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat3 mvp; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; };
+layout(std140) uniform Object { mat3 mvp; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
 uniform sampler2D uTex;
 in vec2 vUv;
 out vec4 frag;
@@ -3443,11 +4370,18 @@ const UNPREMUL_GLSL = `vec4 unpremul(vec4 t) {
 `;
 
 /**
- * Rewrite a textured shader to un-premultiply at the sample.
+ * Rewrite a textured shader to un-premultiply at the sample, grade in linear
+ * light (when LINEAR_WORKING_SPACE is on), and write working-space premul.
  *
- * Keeps the base NAME — the result IS the shader, not an alternative to it. That
- * is the whole change: there is no `-premul` suffix any more, because there is
- * nothing to distinguish it from.
+ * With LINEAR_INTERMEDIATE_STORAGE the encode-before-write is skipped so RTs
+ * stay linear. Uploads still linearize at the sample (`src === 'srgb'`). RT
+ * copies use the compile-time `'linear'` variant so they cannot be decoded
+ * twice — a uniform tag at the tail of this block was not a reliable enough
+ * switch (plugin-identity extra-decoded an already-linear ping-pong). LUT
+ * tables stay display-referred: encode into the table, then decode the lookup
+ * back to working space when storage is linear.
+ *
+ * Keeps the base NAME for the upload variant. The RT variant is `${name}-linear`.
  *
  * Throws at module load if a substitution site is missing. A silent no-op would
  * leave a shader that double-multiplies every premultiplied texture, which is
@@ -3455,26 +4389,88 @@ const UNPREMUL_GLSL = `vec4 unpremul(vec4 t) {
  * Failing at import turns it into a boot failure, which `editorBoot.smoke.test`
  * already guards.
  */
-function unpremultiplyingSample(base: ShaderSource): ShaderSource {
+function unpremultiplyingSample(base: ShaderSource, src: 'srgb' | 'linear' = 'srgb'): ShaderSource {
   const sub = (code: string, from: string, to: string, where: string): string => {
     if (!code.includes(from)) {
       throw new Error(`unpremultiplyingSample(${base.name}): no ${where} site matching ${JSON.stringify(from)}`);
     }
     return code.split(from).join(to);
   };
-  const wgsl = sub(
-    sub(base.wgsl, '@fragment', `${UNPREMUL_WGSL}@fragment`, 'wgsl fragment entry'),
+  let wgsl = sub(
+    sub(base.wgsl, '@fragment', `${UNPREMUL_WGSL}${SRGB_TRANSFER_WGSL}@fragment`, 'wgsl fragment entry'),
     'textureSample(tex, smp, uv) * obj.tint',
     'unpremul(textureSample(tex, smp, uv)) * obj.tint',
     'wgsl sample',
   );
-  const fragment = sub(
-    sub(base.glsl.fragment, 'void main()', `${UNPREMUL_GLSL}void main()`, 'glsl main'),
+  if (src !== 'linear') {
+    wgsl = sub(
+      wgsl,
+      'let v = vec4<f32>(c.rgb, 1.0);',
+      `let lin = workingFromSample(c.rgb, 0.0);
+  let ws = select(lin, linearSrgbToAcesCg(lin), obj.srcSpace.y > 0.5);
+  let v = vec4<f32>(ws, 1.0);`,
+      'wgsl linearize',
+    );
+  }
+
+  let fragment = sub(
+    sub(base.glsl.fragment, 'void main()', `${UNPREMUL_GLSL}${SRGB_TRANSFER_GLSL}void main()`, 'glsl main'),
     'texture(uTex, vUv) * tint',
     'unpremul(texture(uTex, vUv)) * tint',
     'glsl sample',
   );
-  return { name: base.name, wgsl, glsl: { ...base.glsl, fragment } };
+  if (src !== 'linear') {
+    fragment = sub(
+      fragment,
+      'vec4 v = vec4(c.rgb, 1.0);',
+      `vec3 lin = workingFromSample(c.rgb, 0.0);
+  vec3 ws = srcSpace.y > 0.5 ? linearSrgbToAcesCg(lin) : lin;
+  vec4 v = vec4(ws, 1.0);`,
+      'glsl linearize',
+    );
+  }
+
+  // LUT tables are authored in display-referred sRGB — encode after the matrix
+  // and before the table. With linear storage, decode the table output back.
+  if (base.name === 'lut-textured') {
+    wgsl = sub(
+      wgsl,
+      'var graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));',
+      'var graded = linearToSrgbRgb(clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0)));',
+      'wgsl lut encode',
+    );
+    fragment = sub(
+      fragment,
+      'vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);',
+      'vec3 graded = linearToSrgbRgb(clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0));',
+      'glsl lut encode',
+    );
+    if (LINEAR_INTERMEDIATE_STORAGE) {
+      wgsl = sub(wgsl, 'graded = vec3<f32>(lr, lg, lb);', 'graded = srgbToLinearRgb(vec3<f32>(lr, lg, lb));', 'wgsl lut decode');
+      fragment = sub(fragment, 'graded = vec3(lr, lg, lb);', 'graded = srgbToLinearRgb(vec3(lr, lg, lb));', 'glsl lut decode');
+    }
+  } else if (!LINEAR_INTERMEDIATE_STORAGE) {
+    if (base.name === 'textured3d') {
+      wgsl = sub(wgsl, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'wgsl encode lit');
+      fragment = sub(fragment, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'glsl encode lit');
+    } else if (base.name === 'masked-textured3d') {
+      wgsl = sub(wgsl, 'lit * a', 'linearToSrgbRgb(lit) * a', 'wgsl encode lit');
+      fragment = sub(fragment, 'lit * a', 'linearToSrgbRgb(lit) * a', 'glsl encode lit');
+    } else if (base.name === 'masked-textured') {
+      wgsl = sub(wgsl, 'graded * a', 'linearToSrgbRgb(graded) * a', 'wgsl encode');
+      fragment = sub(fragment, 'graded * a', 'linearToSrgbRgb(graded) * a', 'glsl encode');
+    } else {
+      // textured, deformed-mesh
+      wgsl = sub(wgsl, 'graded * c.a', 'linearToSrgbRgb(graded) * c.a', 'wgsl encode');
+      fragment = sub(fragment, 'graded * c.a', 'linearToSrgbRgb(graded) * c.a', 'glsl encode');
+    }
+  }
+
+  return {
+    name: src === 'linear' ? `${base.name}-linear` : base.name,
+    wgsl,
+    glsl: { ...base.glsl, fragment },
+  };
 }
 
 // The silhouette fill is derived from the STRAIGHT-sampling source on purpose:
@@ -3483,18 +4479,98 @@ function unpremultiplyingSample(base: ShaderSource): ShaderSource {
 // operating on a channel it never uses.
 const TEXTURED_SILHOUETTE = silhouetteOf(TEXTURED);
 
+/**
+ * Final scene-color → SURFACE blit. When LINEAR_INTERMEDIATE_STORAGE is on,
+ * scene-color holds linear premul and this encodes to sRGB for the canvas.
+ */
+const SCENE_BLIT: ShaderSource = {
+  name: 'scene-blit',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${UNPREMUL_WGSL}${SRGB_TRANSFER_WGSL}
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = unpremul(textureSample(tex, smp, uv)) * obj.tint;
+  ${LINEAR_INTERMEDIATE_STORAGE
+    ? 'let rgb = workingToDisplay(c.rgb, obj.srcSpace);'
+    : 'let rgb = c.rgb;'}
+  return vec4<f32>(rgb * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${UNPREMUL_GLSL}${SRGB_TRANSFER_GLSL}
+void main() {
+  vec4 c = unpremul(texture(uTex, vUv)) * tint;
+  ${LINEAR_INTERMEDIATE_STORAGE
+    ? 'vec3 rgb = workingToDisplay(c.rgb, srcSpace);'
+    : 'vec3 rgb = c.rgb;'}
+  frag = vec4(rgb * c.a, c.a);
+}
+`,
+  },
+};
+
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
-  FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, BEND,
+  FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, LIGHT_SWEEP, LENS_FLARE, LIGHT_RAYS, BEND,
   BEVEL_ALPHA, BEVEL_EDGES, SPOTLIGHT, SPHERE, CYLINDER, ARITHMETIC,
+  // Round-six per-pixel colour ports.
+  VIGNETTE_FX, BLACK_AND_WHITE_FX, TRITONE_FX, PHOTO_FILTER_FX, THRESHOLD_FX, VIBRANCE_FX,
+  // Round-six waves 2–3: warps + neighbourhood passes (fxRoundSix.ts).
+  ...FX_ROUND_SIX_SHADERS,
   SOLID3D,
   // The six families that sample a layer texture. Every one un-premultiplies.
+  // Upload (`srgb`) and RT (`linear`) variants: linear storage keeps graph RTs
+  // in working space, so a copy must not run the upload decode.
   unpremultiplyingSample(TEXTURED),
+  unpremultiplyingSample(TEXTURED, 'linear'),
   unpremultiplyingSample(MASKED_TEXTURED),
+  unpremultiplyingSample(MASKED_TEXTURED, 'linear'),
   unpremultiplyingSample(LUT_TEXTURED),
+  unpremultiplyingSample(LUT_TEXTURED, 'linear'),
   unpremultiplyingSample(DEFORMED_MESH),
+  unpremultiplyingSample(DEFORMED_MESH, 'linear'),
   unpremultiplyingSample(TEXTURED3D),
+  unpremultiplyingSample(TEXTURED3D, 'linear'),
   unpremultiplyingSample(MASKED_TEXTURED3D),
+  unpremultiplyingSample(MASKED_TEXTURED3D, 'linear'),
   TEXTURED_SILHOUETTE,
+  SCENE_BLIT,
   GLASS_COMPOSITE,
 ];

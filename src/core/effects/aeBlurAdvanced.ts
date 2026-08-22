@@ -29,6 +29,121 @@ import { clamp255, clamp01, luma } from './colorSpace';
 /** Largest radius any kernel here will honour. See the file header. */
 const MAX_RADIUS = 24;
 
+/**
+ * Inner-loop budget for the exact O(r²) kernels. A 21×21 fixture at r=5 is
+ * ~50k and stays on the exact path (the tests pin edge preservation there).
+ * A 1920×1080 photo at r=6 is ~350M and would freeze the UI for seconds —
+ * those go through {@link fitKernelSize} first.
+ */
+const EXACT_BUDGET = 8_000_000;
+
+/** Longest edge of the buffer an O(r²) kernel is allowed to run on. */
+const PROC_MAX_EDGE = 512;
+
+function kernelCost(w: number, h: number, r: number): number {
+  const k = 2 * r + 1;
+  return w * h * k * k;
+}
+
+/** Downsample so an O(r²) kernel finishes this frame, scaling the radius with
+ *  the buffer so a 24px blur on a 4K plate is still a 24px blur after upsample. */
+function fitKernelSize(w: number, h: number, r: number): { nw: number; nh: number; nr: number } {
+  if (kernelCost(w, h, r) <= EXACT_BUDGET && Math.max(w, h) <= PROC_MAX_EDGE) {
+    return { nw: w, nh: h, nr: r };
+  }
+  const edgeScale = PROC_MAX_EDGE / Math.max(w, h, 1);
+  const costScale = Math.sqrt(EXACT_BUDGET / Math.max(1, kernelCost(w, h, r)));
+  const scale = Math.min(1, edgeScale, costScale);
+  const nw = Math.max(1, Math.round(w * scale));
+  const nh = Math.max(1, Math.round(h * scale));
+  const nr = Math.max(1, Math.round(r * scale));
+  return { nw, nh, nr };
+}
+
+function downsampleBox(
+  src: Uint8ClampedArray,
+  w: number,
+  h: number,
+  nw: number,
+  nh: number,
+): Uint8ClampedArray {
+  if (nw === w && nh === h) return src;
+  const out = new Uint8ClampedArray(nw * nh * 4);
+  for (let y = 0; y < nh; y++) {
+    const y0 = Math.floor((y * h) / nh);
+    const y1 = Math.max(y0 + 1, Math.floor(((y + 1) * h) / nh));
+    for (let x = 0; x < nw; x++) {
+      const x0 = Math.floor((x * w) / nw);
+      const x1 = Math.max(x0 + 1, Math.floor(((x + 1) * w) / nw));
+      let ar = 0, ag = 0, ab = 0, aa = 0, n = 0;
+      for (let sy = y0; sy < y1; sy++) {
+        for (let sx = x0; sx < x1; sx++) {
+          const o = (sy * w + sx) * 4;
+          const sa = src[o + 3]!;
+          ar += src[o]! * sa; ag += src[o + 1]! * sa; ab += src[o + 2]! * sa;
+          aa += sa; n++;
+        }
+      }
+      const d = (y * nw + x) * 4;
+      if (aa > 0) { out[d] = ar / aa; out[d + 1] = ag / aa; out[d + 2] = ab / aa; }
+      out[d + 3] = n > 0 ? aa / n : 0;
+    }
+  }
+  return out;
+}
+
+function upsampleBilinear(
+  src: Uint8ClampedArray,
+  sw: number,
+  sh: number,
+  dw: number,
+  dh: number,
+): Uint8ClampedArray {
+  if (sw === dw && sh === dh) return src;
+  const out = new Uint8ClampedArray(dw * dh * 4);
+  const sxScale = sw / dw;
+  const syScale = sh / dh;
+  for (let y = 0; y < dh; y++) {
+    const fy = (y + 0.5) * syScale - 0.5;
+    const y0 = Math.max(0, Math.min(sh - 1, Math.floor(fy)));
+    const y1 = Math.min(sh - 1, y0 + 1);
+    const ty = fy - y0;
+    for (let x = 0; x < dw; x++) {
+      const fx = (x + 0.5) * sxScale - 0.5;
+      const x0 = Math.max(0, Math.min(sw - 1, Math.floor(fx)));
+      const x1 = Math.min(sw - 1, x0 + 1);
+      const tx = fx - x0;
+      const sample = (sx: number, sy: number): [number, number, number, number] => {
+        const o = (sy * sw + sx) * 4;
+        return [src[o]!, src[o + 1]!, src[o + 2]!, src[o + 3]!];
+      };
+      const a = sample(x0, y0), b = sample(x1, y0), c = sample(x0, y1), d = sample(x1, y1);
+      const mix = (p: number, q: number, t: number): number => p + (q - p) * t;
+      const o = (y * dw + x) * 4;
+      for (let k = 0; k < 4; k++) {
+        const top = mix(a[k]!, b[k]!, tx);
+        const bot = mix(c[k]!, d[k]!, tx);
+        out[o + k] = mix(top, bot, ty);
+      }
+    }
+  }
+  return out;
+}
+
+function runKernelAtBudget(
+  src: Uint8ClampedArray,
+  w: number,
+  h: number,
+  radius: number,
+  kernel: (data: Uint8ClampedArray, w: number, h: number, r: number) => Uint8ClampedArray,
+): Uint8ClampedArray {
+  const { nw, nh, nr } = fitKernelSize(w, h, radius);
+  if (nw === w && nh === h) return kernel(src, w, h, radius);
+  const small = downsampleBox(src, w, h, nw, nh);
+  const blurred = kernel(small, nw, nh, nr);
+  return upsampleBilinear(blurred, nw, nh, w, h);
+}
+
 // ── Bilateral Blur ──────────────────────────────────────────────────
 
 /**
@@ -50,9 +165,22 @@ export function bilateralBlurData(
   colorSigma: number,
   preserveAlpha: boolean,
 ): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(src.length);
   const r = Math.max(0, Math.min(MAX_RADIUS, Math.round(radius)));
   if (r === 0 || w <= 0 || h <= 0) return new Uint8ClampedArray(src);
+  return runKernelAtBudget(src, w, h, r, (data, pw, ph, pr) =>
+    bilateralExact(data, pw, ph, pr, colorSigma, preserveAlpha),
+  );
+}
+
+function bilateralExact(
+  src: Uint8ClampedArray,
+  w: number,
+  h: number,
+  r: number,
+  colorSigma: number,
+  preserveAlpha: boolean,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(src.length);
 
   const ss = Math.max(0.5, r / 2);
   const sr = Math.max(1, colorSigma);
@@ -119,11 +247,24 @@ export function smartBlurData(
   threshold: number,
   mode: number,
 ): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(src.length);
   const r = Math.max(0, Math.min(MAX_RADIUS, Math.round(radius)));
   if (r === 0 || w <= 0 || h <= 0) return new Uint8ClampedArray(src);
   const thr = Math.max(0, threshold);
   const m = Math.round(mode);
+  return runKernelAtBudget(src, w, h, r, (data, pw, ph, pr) =>
+    smartBlurExact(data, pw, ph, pr, thr, m),
+  );
+}
+
+function smartBlurExact(
+  src: Uint8ClampedArray,
+  w: number,
+  h: number,
+  r: number,
+  thr: number,
+  m: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(src.length);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -197,9 +338,24 @@ export function cameraLensBlurData(
   gain: number,
   threshold: number,
 ): Uint8ClampedArray {
-  const out = new Uint8ClampedArray(src.length);
   const r = Math.max(0, Math.min(MAX_RADIUS, Math.round(radius)));
   if (r === 0 || w <= 0 || h <= 0) return new Uint8ClampedArray(src);
+  return runKernelAtBudget(src, w, h, r, (data, pw, ph, pr) =>
+    cameraLensExact(data, pw, ph, pr, blades, rotation, gain, threshold),
+  );
+}
+
+function cameraLensExact(
+  src: Uint8ClampedArray,
+  w: number,
+  h: number,
+  r: number,
+  blades: number,
+  rotation: number,
+  gain: number,
+  threshold: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(src.length);
 
   // Build the iris mask once.
   const size = r * 2 + 1;
@@ -267,3 +423,4 @@ export function cameraLensBlurData(
   }
   return out;
 }
+

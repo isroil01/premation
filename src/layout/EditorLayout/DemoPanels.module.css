@@ -26,6 +26,62 @@
   width: 100%;
 }
 
+/* Properties: header + search stay put; the accordion is the only scroller.
+   One gutter (`--space-5`) from search through section names through extras. */
+.inspectorShell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.layerHead {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-height: var(--control-height-lg);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-panel-header);
+}
+
+.layerKind {
+  flex: none;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.layerName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspectorBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.inspectorExtras {
+  padding: 0 var(--space-5) var(--space-5);
+}
+
+.inspectorExtras:empty {
+  display: none;
+  padding: 0;
+}
+
 /* Horizontal padding matches the accordion trigger's gutter below it, so the
    search field and every section name share one left edge. */
 .searchRow {
@@ -35,12 +91,161 @@
   flex: none;
 }
 
+/* Scene panel — compositions above layers (Assets stays media-only). */
+.sceneShell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.compSection {
+  flex: none;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-panel);
+}
+
+.compSectionHead,
+.layerSectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 6px var(--space-4) 4px;
+}
+
+.layerSectionHead {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.compSectionLabel {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.compAddBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.compAddBtn:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.compEmpty {
+  padding: 4px var(--space-4) 10px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.35;
+}
+
+.compList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 var(--space-2) 8px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.compRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 6px 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+
+.compRow:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.compRowActive {
+  background: color-mix(in srgb, var(--color-primary, #4c8dff) 16%, transparent);
+  color: var(--color-text-primary);
+}
+
+.compRowActive:hover {
+  background: color-mix(in srgb, var(--color-primary, #4c8dff) 22%, transparent);
+}
+
+.compGlyph {
+  flex: none;
+  color: #5b9fd4;
+}
+
+.compName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.compMeta {
+  flex: none;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.compDeleteBtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.compRow:hover .compDeleteBtn,
+.compRow:focus-within .compDeleteBtn {
+  opacity: 1;
+}
+
+.compDeleteBtn:hover {
+  background: color-mix(in srgb, var(--color-danger, #e5484d) 18%, transparent);
+  color: var(--color-danger, #e5484d);
+}
+
 .body {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   padding: var(--space-2) var(--space-2);
-  overflow: auto;
+  /* TreeView owns the scroll — overflow here would stretch the tree to full
+     content height and defeat row virtualization at 10k layers. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .empty {
@@ -1004,6 +1209,8 @@
 .assetGlyphImage { color: #4aa96c; }
 .assetGlyphVideo { color: #7c6cf0; }
 .assetGlyphAudio { color: #d9578b; }
+/* Composition — AE Project panel purple-ish accent for comps vs footage. */
+.assetGlyphComp { color: #5b9fd4; }
 /* Anything we have no kind for. The only grey glyph, so "unknown" reads as
    unknown rather than as another type. */
 .assetGlyphFile { color: var(--color-text-tertiary); }
@@ -1155,3 +1362,134 @@
   color: var(--color-text-muted);
   font-size: var(--font-size-sm);
 }
+
+/* ── Assets: footage readout ─────────────────────────────────────────
+   Pinned under the list or as a header card: name on the left, facts on the right.
+   Same tokens as the rows above it so it reads as part of the panel. */
+.assetMetaFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1);
+  min-width: 0;
+}
+
+.assetMetaName {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.assetMetaFacts {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── Assets: AE Top Footage Header Card ────────────────────────────── */
+.assetHeaderCard {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--color-surface-1);
+  border-bottom: 1px solid var(--color-border);
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.assetHeaderThumb {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.assetHeaderThumbImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.assetHeaderDetails {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.assetHeaderName {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.assetHeaderFacts {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Assets: AE Bottom Action Dock ────────────────────────────────── */
+.assetBottomDock {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  flex: 0 0 auto;
+}
+
+.dockBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s, border-color 0.1s;
+}
+
+.dockBtn:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.dockBtn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.dockBtnDropActive {
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+

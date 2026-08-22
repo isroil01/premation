@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
+import { Switch } from '@components/Switch';
 import { cn } from '@utils/cn';
 import { openModal } from '@stores/modalStore';
 import { useWorkspaceStore } from '@stores/projectStore';
@@ -20,7 +21,7 @@ import { useUIStore } from '@stores/uiStore';
 import { useRenderQueueStore, outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { runExport, isAbortError, availableExportPresets, type ExportFormat } from '@core/export/exportManager';
+import { runExport, isAbortError, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
 import type { ExportQuality } from '@core/export/videoSink';
 import { ExportPreview } from './ExportPreview';
 import styles from './ExportDialog.module.css';
@@ -38,14 +39,31 @@ const QUALITY: ReadonlyArray<{ value: ExportQuality; label: string; hint: string
   { value: 'draft', label: 'Draft', hint: 'Fast and visibly compressed. For checking timing.' },
 ];
 
-/** Formats that produce a moving picture, so the extra controls apply. */
 const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif']);
-
-/** Formats the render queue can run. */
 const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence']);
+const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence']);
+const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov']);
+const ALPHA_FORMATS: ReadonlySet<ExportFormat> = new Set(['webm', 'mov', 'png', 'png-sequence', 'gif']);
+
+const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportFormat[] }> = [
+  { id: 'video', label: 'Video', formats: ['mp4', 'webm', 'mov', 'gif'] },
+  { id: 'frames', label: 'Frames', formats: ['png-sequence', 'jpg-sequence', 'png'] },
+  { id: 'data', label: 'Data', formats: ['lottie', 'json'] },
+];
+
+function fileStem(name: string): string {
+  const trimmed = name.trim() || 'composition';
+  return trimmed.replace(/[<>:"/\\|?*]+/g, '-');
+}
 
 function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX.Element {
   const presets = useMemo(() => availableExportPresets(), []);
+  const presetByFormat = useMemo(() => {
+    const map = new Map<ExportFormat, ExportPreset>();
+    for (const p of presets) map.set(p.format, p);
+    return map;
+  }, [presets]);
+
   const [format, setFormat] = useState<ExportFormat>(presets[0]?.format ?? 'webm');
   const [scaleIdx, setScaleIdx] = useState(0);
   const [quality, setQuality] = useState<ExportQuality>('high');
@@ -56,24 +74,25 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   const baseComp = useCompositionStore((s) => s.comp());
   const compName = useCompositionStore((s) => s.name);
 
+  const workArea = getTimelineController().getWorkArea();
+  const [rangeMode, setRangeMode] = useState<'full' | 'work'>(() => (workArea ? 'work' : 'full'));
+  const useWorkArea = rangeMode === 'work' && !!workArea;
+
   const scale = RES[scaleIdx]!.scale;
   const width = Math.round(baseComp.width * scale);
   const height = Math.round(baseComp.height * scale);
   const busy = progress !== null;
 
-  // Alpha only survives in formats that have an alpha channel. Offering the
-  // toggle for MP4 or JPEG would promise transparency the file cannot carry.
-  const supportsAlpha = format === 'webm' || format === 'mov' || format === 'png' || format === 'png-sequence' || format === 'gif';
+  const supportsAlpha = ALPHA_FORMATS.has(format);
   const alpha = transparent && supportsAlpha;
+  const showRaster = format !== 'json' && format !== 'lottie';
+  const showRange = RANGED.has(format);
+  const showQuality = MOVING.has(format);
+  const showQueue = QUEUEABLE.has(format);
 
-  // The export range: the work area when one is set, otherwise the whole comp.
-  // This mirrors what the exporter itself resolves, so the preview scrubber spans
-  // exactly the frames that will be written.
-  const workArea = getTimelineController().getWorkArea();
-  const rangeStart = workArea ? workArea.start : 0;
-  const rangeDuration = workArea ? Math.max(0, workArea.end - workArea.start) : duration;
+  const rangeStart = useWorkArea && workArea ? workArea.start : 0;
+  const rangeDuration = useWorkArea && workArea ? Math.max(0, workArea.end - workArea.start) : duration;
 
-  // A stable comp object, or the preview re-renders on every parent render.
   const comp = useMemo(
     () => ({ ...baseComp, rootId: baseComp.id, transparent: alpha, compSizeOf }),
     [baseComp, alpha],
@@ -87,7 +106,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
     abortRef.current = controller;
     setProgress(0);
     try {
-      await runExport({
+      const done = await runExport({
         format,
         width,
         height,
@@ -95,20 +114,22 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         duration,
         time,
         quality,
-        // rootId scopes the export to this comp — without it every composition in
-        // the project renders into the same frame.
+        useWorkArea,
         comp,
         onProgress: setProgress,
         signal: controller.signal,
       });
-      notify({ level: 'success', message: 'Export complete', durationMs: 2600 });
+      const hdrNote =
+        done.videoCodec === 'libx265'
+          ? ' (HEVC / libx265)'
+          : done.videoCodec === 'libx264'
+            ? ' (H.264 10-bit — host ffmpeg has no libx265)'
+            : '';
+      notify({ level: 'success', message: `Export complete${hdrNote}`, durationMs: 3200 });
     } catch (err) {
       if (isAbortError(err)) {
         notify({ level: 'info', message: 'Export cancelled', durationMs: 2600 });
       } else {
-        // Say what went wrong. "Export failed" with no reason left users with
-        // nothing to act on, and the reasons here are all actionable (ffmpeg
-        // missing, format unsupported in this build, nothing rendered).
         notify({
           level: 'error',
           message: err instanceof Error ? err.message : 'Export failed',
@@ -119,23 +140,19 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
       abortRef.current = null;
       setProgress(null);
     }
-  }, [format, width, height, fps, duration, time, quality, comp, notify]);
+  }, [format, width, height, fps, duration, time, quality, useWorkArea, comp, notify]);
 
   const queueJob = (): void => {
     const ext = outputExtFor(format as OutputFormat);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     useRenderQueueStore.getState().addJob({
       compositionName: compName ?? 'Comp 1',
-      // Bind the job to the comp it was queued FROM, so the queue renders what
-      // was asked for rather than whatever is active when it runs.
       compositionId: baseComp.id,
       background: baseComp.background,
-      outputPath: `${compName ?? 'output'}_${ts}.${ext}`,
+      outputPath: `${fileStem(compName ?? 'output')}_${ts}.${ext}`,
       format: format as OutputFormat,
       width,
       height,
-      // The comp's own size, kept separate from the output size so a half- or
-      // quarter-resolution job still frames the whole composition.
       compWidth: baseComp.width,
       compHeight: baseComp.height,
       fps,
@@ -147,112 +164,213 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
     notify({ level: 'success', message: 'Added to Render Queue (F6)', durationMs: 2600 });
   };
 
-  const activePreset = presets.find((p) => p.format === format);
-  const frameCount = Math.max(1, Math.round(rangeDuration * fps));
+  const activePreset = presetByFormat.get(format);
+  const frameCount = format === 'png' ? 1 : Math.max(1, Math.round(rangeDuration * fps));
+  const outputName = `${fileStem(compName ?? 'composition')}.${activePreset?.ext ?? format}`;
+  const qualityHint = QUALITY.find((q) => q.value === quality)?.hint;
 
   return (
-    <div className={styles.root}>
-      <ExportPreview
-        width={width}
-        height={height}
-        fps={fps}
-        durationSec={rangeDuration}
-        startSec={rangeStart}
-        comp={comp}
-        disabled={busy}
-      />
+    <div className={styles.shell}>
+      <div className={styles.layout}>
+        <section className={styles.previewCol} aria-label="Export preview">
+          {showRaster ? (
+            <ExportPreview
+              width={width}
+              height={height}
+              fps={fps}
+              durationSec={format === 'png' ? 1 / Math.max(1, fps) : rangeDuration}
+              startSec={format === 'png' ? time : rangeStart}
+              singleFrame={format === 'png'}
+              comp={comp}
+              disabled={busy}
+            />
+          ) : (
+            <div className={styles.dataPreview}>
+              <Icon name={format === 'lottie' ? 'sparkles' : 'file'} size="lg" />
+              <p className={styles.dataPreviewTitle}>
+                {format === 'lottie' ? 'Lottie JSON' : 'Project document'}
+              </p>
+              <p className={styles.dataPreviewHint}>
+                {activePreset?.hint ?? 'No raster preview for this format.'}
+              </p>
+            </div>
+          )}
 
-      <div className={styles.summary}>
-        <span>{width} × {height}</span>
-        <span>{fps} fps</span>
-        <span>{frameCount} frames · {rangeDuration.toFixed(2)}s</span>
-        {workArea ? <span className={styles.summaryNote}>work area only</span> : null}
+          <dl className={styles.stats}>
+            <div>
+              <dt>Size</dt>
+              <dd>{showRaster ? `${width} × ${height}` : '—'}</dd>
+            </div>
+            <div>
+              <dt>Rate</dt>
+              <dd>{showRaster ? `${fps} fps` : '—'}</dd>
+            </div>
+            <div>
+              <dt>Length</dt>
+              <dd>
+                {format === 'png'
+                  ? '1 frame'
+                  : showRaster
+                    ? `${frameCount} · ${rangeDuration.toFixed(2)}s`
+                    : '—'}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className={styles.settingsCol} aria-label="Export settings">
+          {FORMAT_GROUPS.map((group) => {
+            const items = group.formats.filter((f) => presetByFormat.has(f));
+            if (items.length === 0) return null;
+            return (
+              <div key={group.id} className={styles.section}>
+                <div className={styles.label}>{group.label}</div>
+                <div className={styles.formatGrid} role="radiogroup" aria-label={group.label}>
+                  {items.map((id) => {
+                    const p = presetByFormat.get(id)!;
+                    const on = format === id;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        disabled={busy}
+                        title={p.hint}
+                        className={cn(styles.formatCard, on && styles.formatCardOn)}
+                        onClick={() => setFormat(id)}
+                      >
+                        <span className={styles.formatName}>{p.label}</span>
+                        <span className={styles.formatExt}>.{p.ext}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+          {activePreset ? <p className={styles.formatHint}>{activePreset.hint}</p> : null}
+
+          {showRange ? (
+            <div className={styles.section}>
+              <div className={styles.label}>Range</div>
+              <div className={styles.seg} role="radiogroup" aria-label="Export range">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={!useWorkArea}
+                  disabled={busy}
+                  className={cn(styles.segChip, !useWorkArea && styles.segChipOn)}
+                  onClick={() => setRangeMode('full')}
+                >
+                  Entire composition
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={useWorkArea}
+                  disabled={busy || !workArea}
+                  title={workArea ? 'Export the timeline work area' : 'No work area is set — B / N on the timeline'}
+                  className={cn(styles.segChip, useWorkArea && styles.segChipOn)}
+                  onClick={() => workArea && setRangeMode('work')}
+                >
+                  Work area
+                </button>
+              </div>
+              {useWorkArea && workArea ? (
+                <p className={styles.fieldNote}>
+                  {workArea.start.toFixed(2)}s – {workArea.end.toFixed(2)}s
+                </p>
+              ) : null}
+            </div>
+          ) : format === 'png' ? (
+            <p className={styles.fieldNote}>Exports the frame under the playhead as a single PNG.</p>
+          ) : null}
+
+          {showRaster ? (
+            <div className={styles.section}>
+              <div className={styles.label}>Resolution</div>
+              <div className={styles.seg} role="radiogroup" aria-label="Output resolution">
+                {RES.map((r, i) => (
+                  <button
+                    key={r.label}
+                    type="button"
+                    role="radio"
+                    aria-checked={i === scaleIdx}
+                    disabled={busy}
+                    className={cn(styles.segChip, i === scaleIdx && styles.segChipOn)}
+                    onClick={() => setScaleIdx(i)}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {showQuality ? (
+            <div className={styles.section}>
+              <div className={styles.label}>Quality</div>
+              <div className={styles.seg} role="radiogroup" aria-label="Encode quality">
+                {QUALITY.map((q) => (
+                  <button
+                    key={q.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={quality === q.value}
+                    disabled={busy}
+                    title={q.hint}
+                    className={cn(styles.segChip, quality === q.value && styles.segChipOn)}
+                    onClick={() => setQuality(q.value)}
+                  >
+                    {q.label}
+                  </button>
+                ))}
+              </div>
+              {qualityHint ? <p className={styles.fieldNote}>{qualityHint}</p> : null}
+            </div>
+          ) : null}
+
+          {showRaster ? (
+            <div className={styles.switchRow}>
+              <div className={styles.switchCopy}>
+                <span className={styles.switchTitle}>Transparent background</span>
+                <span className={styles.switchHint}>
+                  {!supportsAlpha
+                    ? `${activePreset?.label ?? 'This format'} has no alpha channel.`
+                    : format === 'gif'
+                      ? 'GIF alpha is 1-bit, so edges will look hard.'
+                      : 'Keeps empty pixels clear instead of filling the comp colour.'}
+                </span>
+              </div>
+              <Switch
+                checked={alpha}
+                disabled={busy || !supportsAlpha}
+                onChange={(e) => setTransparent(e.currentTarget.checked)}
+                aria-label="Transparent background"
+              />
+            </div>
+          ) : null}
+
+          {showRaster && (
+            <p className={styles.audioNote}>
+              {HAS_AUDIO.has(format)
+                ? 'Audio in the composition is mixed into the file.'
+                : 'This format is picture-only — no audio track.'}
+            </p>
+          )}
+        </section>
       </div>
-
-      <div className={styles.section}>
-        <div className={styles.label}>Format</div>
-        <select
-          value={format}
-          disabled={busy}
-          className={styles.selectInput}
-          onChange={(e) => setFormat(e.target.value as ExportFormat)}
-          aria-label="Export format"
-        >
-          {presets.map((p) => (
-            <option key={p.format} value={p.format}>
-              {p.label} — {p.hint}
-            </option>
-          ))}
-        </select>
-        {activePreset ? <div className={styles.formatHint}>{activePreset.hint}</div> : null}
-      </div>
-
-      {format !== 'json' && format !== 'lottie' ? (
-        <div className={styles.section}>
-          <div className={styles.label}>Resolution</div>
-          <div className={styles.resRow}>
-            {RES.map((r, i) => (
-              <button
-                key={r.label}
-                type="button"
-                disabled={busy}
-                className={cn(styles.resChip, i === scaleIdx && styles.resChipOn)}
-                onClick={() => setScaleIdx(i)}
-              >
-                {r.label}
-              </button>
-            ))}
-            <span className={styles.dims}>{width} × {height}</span>
-          </div>
-        </div>
-      ) : null}
-
-      {MOVING.has(format) ? (
-        <div className={styles.section}>
-          <div className={styles.label}>Quality</div>
-          <div className={styles.resRow}>
-            {QUALITY.map((q) => (
-              <button
-                key={q.value}
-                type="button"
-                disabled={busy}
-                title={q.hint}
-                className={cn(styles.resChip, quality === q.value && styles.resChipOn)}
-                onClick={() => setQuality(q.value)}
-              >
-                {q.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {supportsAlpha ? (
-        <label className={styles.checkRow}>
-          <input
-            type="checkbox"
-            checked={transparent}
-            disabled={busy}
-            onChange={(e) => setTransparent(e.target.checked)}
-          />
-          <span>
-            Transparent background
-            <span className={styles.checkHint}>
-              {format === 'gif' ? ' — GIF alpha is 1-bit, so edges will look hard.' : ''}
-            </span>
-          </span>
-        </label>
-      ) : null}
 
       {busy ? (
         <div className={styles.progressRow}>
-          <div className={styles.progressWrap}>
+          <div className={styles.progressWrap} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((progress ?? 0) * 100)}>
             <div className={styles.progressBar} style={{ width: `${Math.round((progress ?? 0) * 100)}%` }} />
             <span className={styles.progressText}>Rendering… {Math.round((progress ?? 0) * 100)}%</span>
           </div>
           <Button
             variant="secondary"
-            size="md"
+            size="sm"
             onClick={() => abortRef.current?.abort()}
             title="Stop the export — nothing is written"
           >
@@ -262,28 +380,34 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
       ) : null}
 
       <div className={styles.footer}>
-        {QUEUEABLE.has(format) && (
+        <div className={styles.fileMeta} title={outputName}>
+          <Icon name="export" size="sm" />
+          <span className={styles.fileName}>{outputName}</span>
+        </div>
+        <div className={styles.footerActions}>
+          {showQueue && (
+            <Button
+              variant="secondary"
+              size="md"
+              leftIcon={<Icon name="queue" size="md" />}
+              onClick={queueJob}
+              disabled={busy}
+              title="Queue this render in the Render Queue (F6) instead of exporting now"
+            >
+              Add to Queue
+            </Button>
+          )}
           <Button
-            variant="secondary"
+            variant="primary"
             size="md"
-            leftIcon={<Icon name="queue" size="md" />}
-            onClick={queueJob}
+            leftIcon={<Icon name="export" size="md" />}
+            onClick={doExport}
             disabled={busy}
-            title="Queue this render in the Render Queue (F6) instead of exporting now"
+            title={activePreset?.hint}
           >
-            Add to Queue
+            {busy ? 'Exporting…' : 'Export'}
           </Button>
-        )}
-        <Button
-          variant="primary"
-          size="md"
-          leftIcon={<Icon name="export" size="md" />}
-          onClick={doExport}
-          disabled={busy}
-          title={activePreset?.hint}
-        >
-          {busy ? 'Exporting…' : 'Export now'}
-        </Button>
+        </div>
       </div>
     </div>
   );
@@ -291,10 +415,12 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
 
 /** Open the export dialog as a modal. */
 export function openExportDialog(duration: number, fps: number): void {
+  const name = useCompositionStore.getState().name?.trim() || 'Composition';
   openModal({
     id: 'export-dialog',
     title: 'Export composition',
-    size: 'md',
+    description: name,
+    size: 'lg',
     render: () => <ExportDialog duration={duration} fps={fps} />,
   });
 }

@@ -12,6 +12,9 @@
  */
 
 import { simulateParticles, type ParticleBlend, type ParticleConfig, type ParticleShape } from './particleSim';
+import { particlesFromSoA } from './statefulParticleSim';
+import { statefulParticleCache } from './statefulParticleCache';
+import type { Particle } from './particleSim';
 
 /** One particle placed in TEXTURE space (origin top-left, emitter at centre). */
 export interface ParticleSprite {
@@ -28,29 +31,88 @@ export interface ParticleSprite {
   shape: ParticleShape;
 }
 
+function toSprites(
+  particles: Particle[],
+  fieldW: number,
+  fieldH: number,
+  perspective = 0,
+): ParticleSprite[] {
+  const cx = fieldW / 2;
+  const cy = fieldH / 2;
+  const out: ParticleSprite[] = [];
+  // With perspective on, FAR particles paint first so near ones cover them —
+  // the painter's algorithm, and the whole reason z is worth sorting by.
+  // Without it, authored order stands (sorting a flat field would reshuffle
+  // additive overlap for no visual change).
+  const ordered = perspective > 0
+    ? [...particles].sort((a, b) => b.z - a.z)
+    : particles;
+  /** Projected scale at a particle's depth; 1 when perspective is off. Depth
+   *  is clamped just in front of the focal point rather than culled — a
+   *  particle blowing up to fill the frame reads as "came at the camera",
+   *  which is what it did. */
+  const scaleAt = (z: number): number =>
+    perspective > 0 ? perspective / Math.max(perspective * 0.1, perspective + z) : 1;
+  for (const p of ordered) {
+    // Trail ghosts BEFORE the head, oldest first, so under normal blending the
+    // particle paints over its own trail rather than under it. Opacity and
+    // size taper toward the tail; colour is the particle's own, so an additive
+    // field reads as a glowing streak rather than a grey smear.
+    if (p.trail) {
+      const n = p.trail.length;
+      for (let k = n - 1; k >= 0; k--) {
+        const fade = (n - k) / (n + 1); // oldest ≈ 1/(n+1), newest ≈ n/(n+1)
+        const ts = scaleAt(p.z);
+        out.push({
+          x: cx + p.trail[k]!.x * ts,
+          y: cy + p.trail[k]!.y * ts,
+          size: p.size * (0.35 + 0.65 * fade) * ts,
+          rotation: p.rotation,
+          color: p.color,
+          opacity: p.opacity * fade * 0.7,
+          shape: p.shape,
+        });
+      }
+    }
+    const sc = scaleAt(p.z);
+    out.push({
+      x: cx + p.x * sc,
+      y: cy + p.y * sc,
+      size: p.size * sc,
+      rotation: p.rotation,
+      color: p.color,
+      opacity: p.opacity,
+      shape: p.shape,
+    });
+  }
+  return out;
+}
+
 /**
  * All live particles at `time`, mapped from emitter-local space into a
  * `fieldW × fieldH` texture with the emitter at the field centre — the layer's
  * transform then places/rotates/scales the whole field in the comp, so flying
  * the emitter is just keyframing the layer. Pure and deterministic.
+ *
+ * When `cfg.simMode === 'stateful'`, steps through SimulationCache (floor bounce)
+ * using integer frames from `time * fps`. `cacheKey` must be stable per layer.
  */
 export function particleSprites(
   cfg: ParticleConfig,
   time: number,
   fieldW: number,
   fieldH: number,
+  opts?: { fps?: number; cacheKey?: string },
 ): ParticleSprite[] {
-  const cx = fieldW / 2;
-  const cy = fieldH / 2;
-  return simulateParticles(cfg, time).map((p) => ({
-    x: cx + p.x,
-    y: cy + p.y,
-    size: p.size,
-    rotation: p.rotation,
-    color: p.color,
-    opacity: p.opacity,
-    shape: p.shape,
-  }));
+  if (cfg.simMode === 'stateful') {
+    const fps = Math.max(1, opts?.fps ?? 30);
+    const key = opts?.cacheKey ?? `anon:${particleFieldSignature(cfg, time, fieldW, fieldH, 1)}`;
+    const cache = statefulParticleCache(key, cfg, fps);
+    const frame = Math.max(0, Math.floor(time * fps + 1e-9));
+    const state = cache.stateAt(frame);
+    return toSprites(particlesFromSoA(state, cfg, { frame, fps }), fieldW, fieldH, cfg.perspective ?? 0);
+  }
+  return toSprites(simulateParticles(cfg, time), fieldW, fieldH, cfg.perspective ?? 0);
 }
 
 /** Canvas composite op for the intra-field transfer mode ('add' = glow). */
@@ -105,6 +167,7 @@ export function drawParticleField(
   fieldW: number,
   fieldH: number,
   scale = 1,
+  opts?: { fps?: number; cacheKey?: string },
 ): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
   ctx.save();
@@ -112,7 +175,7 @@ export function drawParticleField(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.globalCompositeOperation = particleCompositeOp(cfg.blend);
-  for (const s of particleSprites(cfg, time, fieldW, fieldH)) {
+  for (const s of particleSprites(cfg, time, fieldW, fieldH, opts)) {
     if (s.size <= 0 || s.opacity <= 0) continue;
     const r = s.size / 2;
     if (s.shape === 'circle') {

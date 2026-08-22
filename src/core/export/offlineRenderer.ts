@@ -110,6 +110,7 @@ export type FrameSink = (
   canvas: HTMLCanvasElement,
   frame: number,
   total: number,
+  backend?: import('@core/rendering/RenderBackend').RenderBackend,
 ) => void | Promise<void>;
 
 /**
@@ -209,7 +210,7 @@ export async function renderOffline(
         );
       }
 
-      await onFrame(canvas, i - start, total);
+      await onFrame(canvas, i - start, total, backend);
       // Yield so progress paints, the editor stays usable, and cancellation can
       // interrupt between frames.
       await yieldToUi();

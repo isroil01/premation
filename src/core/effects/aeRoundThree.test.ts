@@ -71,17 +71,17 @@ const px = (d: Uint8ClampedArray, w: number, x: number, y: number): [number, num
 };
 
 /** Every type added in this round, with its expected render path. */
-const ROUND_THREE: ReadonlyArray<readonly [EffectType, 'lut' | 'pixel']> = [
+const ROUND_THREE: ReadonlyArray<readonly [EffectType, 'lut' | 'pixel' | 'ported']> = [
   ['color-balance', 'lut'],
   ['gamma-pedestal-gain', 'lut'],
-  ['photo-filter', 'pixel'],
-  ['black-and-white', 'pixel'],
-  ['tritone', 'pixel'],
-  ['threshold', 'pixel'],
+  ['photo-filter', 'ported'],
+  ['black-and-white', 'ported'],
+  ['tritone', 'ported'],
+  ['threshold', 'ported'],
   ['polar-coordinates', 'pixel'],
-  ['mirror', 'pixel'],
-  ['offset', 'pixel'],
-  ['emboss', 'pixel'],
+  ['mirror', 'ported'],
+  ['offset', 'ported'],
+  ['emboss', 'ported'],
   ['scatter', 'pixel'],
   ['radial-wipe', 'pixel'],
   ['block-dissolve', 'pixel'],
@@ -114,6 +114,9 @@ describe('round three is registered on the right path', () => {
    *
    * Neither shows up as a failure anywhere else, so it is asserted directly.
    */
+  // 'ported' (round six, 2026-08-14): a GPU shader draws these on live layers
+  // so they no longer force a bake — the Canvas2D pass remains, the exact
+  // both-paths position portedEffectContract.test.ts pins in full.
   it.each(ROUND_THREE)('%s is on exactly one render path', (type, path) => {
     expect({ type, lut: isLutEffect(type), pixel: isCanvas2dOnlyEffect(type) })
       .toEqual({ type, lut: path === 'lut', pixel: path === 'pixel' });

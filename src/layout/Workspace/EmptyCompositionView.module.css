@@ -1,0 +1,135 @@
+.container {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6, 24px);
+  /* A REPLACEMENT surface, not an overlay: After Effects shows the two cards
+     as the entire panel body — no comp frame, no stage grid, nothing implying
+     a composition already exists. Opaque over the (still-mounted) canvases,
+     and interactive, because with no composition there is nothing behind it
+     to interact with. Picking a drawing tool dismisses it (Workspace gates
+     the mount), which is what preserves "draw the first shape directly". */
+  background: var(--color-workspace, #141417);
+  pointer-events: auto;
+  z-index: 10;
+  padding: 24px;
+}
+
+.cardsWrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  max-width: 680px;
+  width: 100%;
+}
+
+.card {
+  pointer-events: auto;
+  cursor: pointer;
+  flex: 1;
+  max-width: 280px;
+  min-height: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 32px 24px 28px;
+  /* The sidebar panels' own surface, per request — the cards read as part of
+     the app's chrome, not floating chips. Flat AE look: no border, no shadow,
+     no motion on hover; the state changes are background and text only. */
+  background: var(--color-panel);
+  border: none;
+  border-radius: 8px;
+  color: #c4c4cc;
+  text-align: center;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+  outline: none;
+  user-select: none;
+}
+
+.card:hover {
+  background: var(--color-surface-2);
+  color: #ffffff;
+}
+
+.card:focus-visible {
+  /* Keyboard focus still has to be visible without the border coming back. */
+  outline: 2px solid var(--color-primary, #4c8dff);
+  outline-offset: 2px;
+}
+
+.cardDragOver {
+  background: var(--color-surface-2) !important;
+  color: #ffffff;
+}
+
+.iconContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 90px;
+  height: 90px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #8e8e99;
+  transition: color 0.2s ease, transform 0.2s ease;
+}
+
+.card:hover .iconContainer {
+  color: #ffffff;
+  transform: scale(1.04);
+}
+
+.vectorIcon {
+  display: block;
+}
+
+.cardContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: var(--font-size-md, 14px);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: #e2e2e8;
+  transition: color 0.2s ease;
+}
+
+.card:hover .cardTitle {
+  color: #ffffff;
+}
+
+.cardDesc {
+  font-size: var(--font-size-xs, 12px);
+  line-height: 1.45;
+  color: #7b7b85;
+  transition: color 0.2s ease;
+}
+
+.card:hover .cardDesc {
+  color: #a4a4b0;
+}
+
+@media (max-width: 600px) {
+  .cardsWrapper {
+    flex-direction: column;
+    gap: 16px;
+  }
+  .card {
+    max-width: 100%;
+    min-height: 180px;
+    padding: 20px;
+  }
+}

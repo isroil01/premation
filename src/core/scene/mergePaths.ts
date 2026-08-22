@@ -115,6 +115,33 @@ export function nodeWorldPolygon(
   sample?: NodeSample,
   pathSample?: NodePathSample,
 ): Polygon | null {
+  // Booleans operate on REGIONS, so an open path is rejected here — it has no
+  // inside. `nodeWorldOutline` below is the shared resolution; this wraps it
+  // in the polygon contract.
+  const outline = nodeWorldOutline(node, sample, pathSample);
+  if (!outline || !outline.closed || outline.points.length < 3) return null;
+  const ring: Pair[] = outline.points.map((pt) => [pt.x, pt.y] as Pair);
+  ring.push([ring[0]![0], ring[0]![1]]);
+  return [ring];
+}
+
+/**
+ * A shape node's outline as WORLD-space points — flattened, transformed, and
+ * labelled open or closed.
+ *
+ * Extracted from {@link nodeWorldPolygon} so the CLONER's path mode and the
+ * boolean ops resolve a layer's outline through ONE implementation. The two
+ * want different contracts — a boolean needs a closed region, a path cloner is
+ * happiest on an open pen stroke — but the resolution underneath (primitive
+ * outline vs Geometry points vs animated `path.points`, then the node's own
+ * transform) must not exist twice, or clones would sit on a subtly different
+ * curve than the one on screen.
+ */
+export function nodeWorldOutline(
+  node: SceneNode,
+  sample?: NodeSample,
+  pathSample?: NodePathSample,
+): { points: Array<{ x: number; y: number }>; closed: boolean } | null {
   if (readNodeKind(node) !== 'shape') return null;
   const t = node.components.find((c) => c.type === 'Transform');
   if (!t) return null;
@@ -130,28 +157,33 @@ export function nodeWorldPolygon(
 
   const geom = node.components.find((c) => c.type === 'Geometry');
   let local: Array<{ x: number; y: number }>;
+  let closed = true;
   const livePts = pathSample?.();
   if (livePts && livePts.length >= 3) {
     local = flattenOutline(livePts);
-  } else if (geom && Array.isArray(geom.props.points) && (geom.props.points as BezierPt[]).length >= 3) {
-    if (geom.props.open === true) return null;
-    local = flattenOutline(geom.props.points as BezierPt[]);
+  } else if (geom && Array.isArray(geom.props.points) && (geom.props.points as BezierPt[]).length >= 2) {
+    // Open paths flatten open (the last anchor ends the walk instead of
+    // wrapping) — that is the case the boolean rejected outright, and the one
+    // a path cloner most wants: clones along a drawn pen line.
+    closed = geom.props.open !== true;
+    local = flattenOutline(geom.props.points as BezierPt[], 8, !closed);
   } else {
     const shapeType = typeof p.shapeType === 'string' ? p.shapeType : 'rect';
     const outline = shapeOutline(shapeType === 'ellipse' ? 'ellipse' : 'rect', w, h, 32);
     local = outline ?? [];
   }
-  if (local.length < 3) return null;
+  if (local.length < 2) return null;
 
   const cos = Math.cos(rot);
   const sin = Math.sin(rot);
-  const ring: Pair[] = local.map((pt) => {
-    const lx = pt.x * sx;
-    const ly = pt.y * sy;
-    return [x + lx * cos - ly * sin, y + lx * sin + ly * cos] as Pair;
-  });
-  if (ring.length > 0) ring.push([ring[0]![0], ring[0]![1]]);
-  return [ring];
+  return {
+    closed,
+    points: local.map((pt) => {
+      const lx = pt.x * sx;
+      const ly = pt.y * sy;
+      return { x: x + lx * cos - ly * sin, y: y + lx * sin + ly * cos };
+    }),
+  };
 }
 
 /** Run the boolean over world-space polygons: first vs the rest. */

@@ -2,6 +2,7 @@ import { packSolid, packTextured, packSolid3D, packShade3D, MAT3_STD140_FLOATS, 
 import { Mat3 } from '../core/math/Mat3';
 import { Mat4 } from '../core/math/Mat4';
 import { Color } from '../core/math/Color';
+import { toWorkingColor } from '../shaders/linearWorkingSpace';
 
 const I = Mat3.identity();
 
@@ -37,25 +38,32 @@ describe('packSolid', () => {
 describe('packTextured', () => {
   const uv = { x: 0, y: 0, width: 1, height: 1 };
 
-  it('is mat3 + uvRect + tint + 3 colour rows = 32 floats', () => {
+  it('is mat3 + uvRect + tint + 3 colour rows + srcSpace = 36 floats', () => {
     const out = packTextured(I, uv, Color.white(), 1);
-    expect(out.length).toBe(MAT3_STD140_FLOATS + 4 + 4 + 12);
+    expect(out.length).toBe(MAT3_STD140_FLOATS + 4 + 4 + 12 + 4);
   });
 
   it('defaults to identity colour rows (no grade): [1,0,0,0][0,1,0,0][0,0,1,0]', () => {
     const out = packTextured(I, uv, Color.white(), 1);
-    const rows = Array.from(out.slice(MAT3_STD140_FLOATS + 4 + 4));
+    const rows = Array.from(out.slice(MAT3_STD140_FLOATS + 4 + 4, MAT3_STD140_FLOATS + 4 + 4 + 12));
     expect(rows).toEqual([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0]);
   });
 
   it('packs a colour transform as rows (matrix row + offset in .w)', () => {
     const ct = { m: [2, 0, 0, 0, 2, 0, 0, 0, 2], offset: [0.1, 0.2, 0.3] };
     const out = packTextured(I, uv, Color.white(), 1, ct);
-    const rows = Array.from(out.slice(MAT3_STD140_FLOATS + 4 + 4));
+    const rows = Array.from(out.slice(MAT3_STD140_FLOATS + 4 + 4, MAT3_STD140_FLOATS + 4 + 4 + 12));
     const expected = [2, 0, 0, 0.1, 0, 2, 0, 0.2, 0, 0, 2, 0.3];
     rows.forEach((v, i) => {
       expect(v).toBeCloseTo(expected[i]!);
     });
+  });
+
+  it('packs sampleLinear into srcSpace.x (layout; RT copies use the *-linear shader)', () => {
+    const off = packTextured(I, uv, Color.white(), 1, undefined, false);
+    expect(off[MAT3_STD140_FLOATS + 4 + 4 + 12]).toBe(0);
+    const on = packTextured(I, uv, Color.white(), 1, undefined, true);
+    expect(on[MAT3_STD140_FLOATS + 4 + 4 + 12]).toBe(1);
   });
 });
 
@@ -86,7 +94,8 @@ describe('packShade3D (per-fragment 3D lighting tail)', () => {
     // light: pos+type(point=1), color+gain, radius/halfCone/aim
     expect(Array.from(out.slice(24, 28))).toEqual([10, 20, -30, 1]);
     const colGain = Array.from(out.slice(28, 32));
-    [1, 0.5, 0.25, 0.8].forEach((v, i) => expect(colGain[i]!).toBeCloseTo(v, 6));
+    const expected = toWorkingColor({ r: 1, g: 0.5, b: 0.25, a: 1 });
+    [expected.r, expected.g, expected.b, 0.8].forEach((v, i) => expect(colGain[i]!).toBeCloseTo(v, 6));
     expect(Array.from(out.slice(32, 36))).toEqual([500, 0.5, 1, 0]);
   });
 

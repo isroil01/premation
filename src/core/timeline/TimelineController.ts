@@ -562,6 +562,24 @@ export class TimelineController {
     this.timeline.trimLayer(layerId, edge, Math.round(secondsToFrames(seconds, this.timeline.getFrameRate())));
   }
 
+  /**
+   * Slip: shift source under a fixed bar. `deltaSeconds` is how far the source
+   * window moves (positive = later into the file). Undoable.
+   */
+  slipClip(layerId: string, deltaSeconds: number): void {
+    const fr = this.timeline.getFrameRate();
+    this.timeline.slipLayer(layerId, Math.round(secondsToFrames(deltaSeconds, fr)));
+  }
+
+  /**
+   * Slide: move the bar by `deltaSeconds` and trim abutting neighbors on the
+   * same track so the cut stays closed. Undoable.
+   */
+  slideClip(layerId: string, deltaSeconds: number): void {
+    const fr = this.timeline.getFrameRate();
+    this.timeline.slideLayer(layerId, Math.round(secondsToFrames(deltaSeconds, fr)));
+  }
+
   // ── Time Mapping (Absolute ↔ Layer-BAR-Relative) ────────────────
 
   /**
@@ -682,6 +700,35 @@ export class TimelineController {
   /** Remove a clip (engine layer). */
   deleteLayer(layerId: string): void {
     this.timeline.removeLayer(layerId);
+  }
+
+  /** Ripple-delete: remove and close the gap on the same track. */
+  rippleDeleteLayer(layerId: string): void {
+    this.timeline.rippleRemoveLayer(layerId);
+  }
+
+  /** Ripple-trim the clip's out-point (seconds) and pull later clips left. */
+  rippleTrimClipEnd(layerId: string, endSeconds: number): void {
+    const fr = this.timeline.getFrameRate();
+    this.timeline.rippleTrimEnd(layerId, Math.round(secondsToFrames(endSeconds, fr)));
+  }
+
+  /** Ripple-trim the clip's in-point (seconds); bar start stays, later clips shift. */
+  rippleTrimClipStart(layerId: string, startSeconds: number): void {
+    const fr = this.timeline.getFrameRate();
+    this.timeline.rippleTrimStart(layerId, Math.round(secondsToFrames(startSeconds, fr)));
+  }
+
+  /** Open a gap on the clip's track at `atSeconds`, pushing later clips right. */
+  rippleInsertGapAt(layerId: string, atSeconds: number, durationSeconds: number): void {
+    const layer = this.timeline.getLayer(layerId);
+    if (!layer) return;
+    const fr = this.timeline.getFrameRate();
+    this.timeline.rippleInsertGap(
+      layer.trackId,
+      Math.round(secondsToFrames(atSeconds, fr)),
+      Math.max(1, Math.round(secondsToFrames(durationSeconds, fr))),
+    );
   }
 
   // ── Markers (exposed to the seconds-based UI) ────────────────────

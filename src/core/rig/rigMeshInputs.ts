@@ -31,9 +31,9 @@ import { getImageCoverageMask } from '@core/rendering/imageAlphaCoverage';
 import { resolveMediaSrc, type ProxyRecord } from '@core/assets/proxy';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
-import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints } from './puppet';
+import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints, resolvePuppetSilhouette } from './puppet';
 import { readNodeSkeleton } from './skeletonCommands';
-import type { PuppetCoverageMask, PuppetSilhouette } from './puppet';
+import type { PuppetCoverageMask, PuppetRig, PuppetSilhouette } from './puppet';
 
 /** The media reference scanned off a node's components (mirrors readBase). */
 export interface RigMediaRef {
@@ -167,15 +167,31 @@ export function nodeRestMesh(
   node: SceneNode,
   geom: { width: number; height: number; ellipse: boolean },
   lookupAsset: (id: string) => RigAssetRef | undefined,
+  /**
+   * The puppet overlay shows a mesh before any pin exists. Hug the artwork
+   * (silhouette, expansion 0) so the first pin does not retopologize a bbox
+   * grid into a body mesh. Bone overlay and the renderer leave this off.
+   */
+  authoringPreview = false,
 ): ReturnType<typeof getCachedRestMesh> {
   const skel = readNodeSkeleton(node);
   const puppetRig = readNodePuppet(node);
-  const meshRig = (puppetRig?.pins?.length ?? 0) > 0
+  const hasPins = (puppetRig?.pins?.length ?? 0) > 0;
+  const meshRig = hasPins
     ? puppetRig!
-    : { pins: [], meshDensity: skel?.meshDensity, meshExpansion: skel?.meshExpansion };
+    : authoringPreview || puppetRig
+      ? {
+          pins: [] as PuppetRig['pins'],
+          meshDensity: puppetRig?.meshDensity ?? skel?.meshDensity,
+          meshExpansion: puppetRig?.meshExpansion ?? 0,
+          meshMode: puppetRig?.meshMode ?? 'grid',
+          solver: puppetRig?.solver,
+          maxRotationDeg: puppetRig?.maxRotationDeg,
+        }
+      : { pins: [], meshDensity: skel?.meshDensity, meshExpansion: skel?.meshExpansion };
 
   const geometryComponent = node.components.find((c) => c.type === 'Geometry');
-  const silhouette = silhouetteFromPathPoints(
+  const pathSilhouette = silhouetteFromPathPoints(
     geometryComponent?.props.points as Array<{ x: number; y: number }> | undefined,
     geometryComponent?.props.open === true,
   );
@@ -185,7 +201,14 @@ export function nodeRestMesh(
     rigLayerKind(kind),
     resolveRigImageSrc(node, kind, media, 0, lookupAsset),
     media.assetId,
-    silhouette,
+    pathSilhouette,
+  );
+  const silhouette = resolvePuppetSilhouette(
+    pathSilhouette,
+    coverage,
+    geom.width,
+    geom.height,
+    meshRig.meshMode,
   );
   // `rasterPadding` reads the paint/stroke shape the rasterizer pads for, so the
   // mesh covers the drawn pixels rather than the geometric box.

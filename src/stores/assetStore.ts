@@ -8,7 +8,10 @@ import { importLocalAsset } from '@core/assets/local/importLocalAsset';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import { isPersistableProxy, type ProxyRecord } from '@core/assets/proxy';
 import { probeMedia } from '@core/assets/mediaProbe';
+import { maybeIngestForImport } from '@core/assets/ingest';
+import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
+import { rebindAssetSrcs } from '@core/scene/assetRebind';
 
 export interface ImportedAsset {
   id: string;
@@ -320,8 +323,25 @@ function saveAssignments(assets: ImportedAsset[]): void {
 function releaseAsset(asset: ImportedAsset): void {
   if (asset.src.startsWith('blob:')) URL.revokeObjectURL(asset.src);
   if (asset.thumbSrc?.startsWith('blob:')) URL.revokeObjectURL(asset.thumbSrc);
-  void AssetDatabase.deleteAsset(asset.id).catch(() => undefined);
-  if (isAuthenticated()) void api.deleteAsset(asset.id).catch(() => undefined);
+  // Persistence failures must be LOUD: the row leaves the list either way, so
+  // a swallowed failure here is precisely the "I deleted it and it came back
+  // after reload" report — the store said gone, the disk/cloud still had it.
+  void AssetDatabase.deleteAsset(asset.id).catch(() => {
+    useUIStore.getState().notify({
+      level: 'warning',
+      message: `“${asset.name}” was removed from the project but could not be deleted from local storage — it may reappear after a reload.`,
+      durationMs: 5000,
+    });
+  });
+  if (isAuthenticated()) {
+    void api.deleteAsset(asset.id).catch(() => {
+      useUIStore.getState().notify({
+        level: 'warning',
+        message: `“${asset.name}” was removed locally but the cloud copy could not be deleted — it may reappear after a reload.`,
+        durationMs: 5000,
+      });
+    });
+  }
 }
 
 function loadSources(): Record<string, AssetSource> {
@@ -491,6 +511,37 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
 
     addAsset: async (file: File, folderId: string | null = null, opts: AddAssetOptions = {}) => {
       const source: AssetSource = opts.source ?? 'user';
+
+      // Layered PSD → one PNG asset per layer (AE "Import as Composition" lite).
+      if (/\.psd$/i.test(file.name)) {
+        try {
+          const { decodePsd, psdLayerToPngFile } = await import('@core/media/psd');
+          const doc = decodePsd(await file.arrayBuffer());
+          let first: ImportedAsset | null = null;
+          for (const layer of doc.layers) {
+            const png = await psdLayerToPngFile(layer, file.name);
+            const a = await get().addAsset(png, folderId, opts);
+            if (a && !first) first = a;
+          }
+          if (first) return first;
+          throw new Error('PSD had no raster layers');
+        } catch (e) {
+          useUIStore.getState().notify({
+            level: 'error',
+            message: `PSD import failed: ${e instanceof Error ? e.message : String(e)}`,
+            durationMs: 6000,
+          });
+          throw e;
+        }
+      }
+
+      // Ingest: footage the browser cannot decode (ProRes/DNxHD .mov, MXF,
+      // AVI…) is transcoded to a playable file BEFORE any branch below, so the
+      // bundle, IndexedDB and the object URL all store something every decode
+      // path can actually read. No-op off the desktop. See assets/ingest.ts.
+      const originalExr = /\.exr$/i.test(file.name) ? file : null;
+      file = (await maybeIngestForImport(file, (msg) =>
+        useUIStore.getState().notify({ level: 'info', message: msg, durationMs: 4000 }))) ?? file;
       // Local-first: content-address the bytes into the open
       // project bundle and render from disk — never upload. Falls through to the
       // in-memory object-URL path (still upload-free) if no bundle is open.
@@ -516,6 +567,12 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           saveAssignments(get().assets);
           saveSources(get().assets);
           triggerAutoProxy(asset);
+          if (originalExr) {
+            try {
+              const { importExrWithFloat } = await import('@core/media/floatExr');
+              await importExrWithFloat(originalExr, asset.id);
+            } catch { /* preview already imported */ }
+          }
           return asset;
         }
       }
@@ -632,6 +689,15 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       saveSources(get().assets);
       triggerAutoProxy(asset);
 
+      // Keep linear float planes for EXR (preview PNG is in `src`).
+      // Await so the first paint can sample float textures, not only the 8-bit preview.
+      if (originalExr) {
+        try {
+          const { importExrWithFloat } = await import('@core/media/floatExr');
+          await importExrWithFloat(originalExr, id);
+        } catch { /* preview already imported */ }
+      }
+
       return asset;
     },
 
@@ -647,6 +713,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         const chunk = items.slice(i, i + CHUNK);
         const chunkResults = await Promise.all(
           chunk.map(async ({ file, folderId }) => {
+            // Same ingest gate as addAsset — this path historically skipped
+            // shared steps (see the element-pass note below) and paid for it.
+            file = (await maybeIngestForImport(file, (msg) =>
+              useUIStore.getState().notify({ level: 'info', message: msg, durationMs: 4000 }))) ?? file;
             const id = `asset_${shortId()}`;
             const src = URL.createObjectURL(file);
             let type: 'image' | 'video' | 'audio' = 'image';
@@ -674,7 +744,40 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
               // Downscaled preview so the panel doesn't decode full-res originals.
               thumb = await makeImageThumb(file);
               if (thumb) asset.thumbSrc = URL.createObjectURL(thumb);
+            } else if (type === 'video') {
+              // Same element pass as addAsset. This path skipped it for years,
+              // so every PANEL-imported video (vs drag-to-canvas) had no
+              // width/height/duration — footageSourceOf reported 0×0, insert
+              // sizing fell back, and everything downstream that asks "how big
+              // is this source" quietly degraded. Parallel within the chunk,
+              // so the batch stays fast.
+              await new Promise<void>((resolve) => {
+                const video = document.createElement('video');
+                video.onloadedmetadata = () => {
+                  asset.metadata = {
+                    width: video.videoWidth,
+                    height: video.videoHeight,
+                    duration: video.duration,
+                  };
+                  resolve();
+                };
+                video.onerror = () => resolve();
+                video.src = src;
+              });
+            } else if (type === 'audio') {
+              await new Promise<void>((resolve) => {
+                const audio = new Audio();
+                audio.onloadedmetadata = () => {
+                  asset.metadata = { duration: audio.duration };
+                  resolve();
+                };
+                audio.onerror = () => resolve();
+                audio.src = src;
+              });
             }
+            // Real stream facts where a demuxer exists (desktop + ffprobe) —
+            // corrects duration, adds fps/PAR/audio facts. No-op on web.
+            await applyProbe(file, asset);
             return { asset, thumb };
           })
         );
@@ -902,6 +1005,11 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           );
           for (const ha of fresh) s.assets.push(ha);
         });
+        // The urls minted above are NEW — any already-restored document still
+        // points its layers at the dead ones it was saved with. Reconnect by
+        // assetId (see assetRebind.ts); restoreDocument runs the same call for
+        // the opposite arrival order.
+        rebindAssetSrcs(get().assets);
       } catch (err) {
         console.error('[AssetStore] failed to initialize from IndexedDB:', err);
       }

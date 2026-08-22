@@ -21,6 +21,22 @@ import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { SCENE_TAB_ID, useEditorTabStore, type EditorTab } from '@stores/editorTabStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { useProjectStore } from '@stores/projectStore';
+import { useSelectionStore } from '@stores/selectionStore';
+import { useAssetStore } from '@stores/assetStore';
+import { useSceneRevision } from '@stores/sceneStore';
+import { useFocusStore } from '@stores/focusStore';
+import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
+import { openContextMenu } from '@stores/contextMenuStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { assetIdOf } from '@core/source/sourceInfo';
+import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { openFootagePreview, useLastFootagePreview, clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
+import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
+import { deleteComposition } from '@core/composition/compositionOps';
+import { flattenComposition } from '@core/scene/sceneDerive';
+import { customConfirm } from '@components/Modal';
 import styles from './EditorTabs.module.css';
 
 export interface EditorTabsProps {
@@ -43,7 +59,60 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
 
   const activeTab = tabs.find((t) => t.id === activeId);
   const sceneActive = activeId === SCENE_TAB_ID;
-  const compName = useCompositionStore((s) => s.name);
+  // A pristine, never-adopted, still-empty comp reads as "(none)" — the AE
+  // fresh-project state — even though the engine keeps a root under the hood.
+  // Drawing into it makes it real by use, flag or no flag.
+  const rawCompName = useCompositionStore((s) => s.name);
+  const activePristine = useProjectStore((s) => {
+    const id = s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined;
+    if (!id || s.comps[id]?.pristine !== true) return false;
+    const node = defaultSceneGraph.getNode(id);
+    return !node || node.children.length === 0;
+  });
+  const compName = activePristine ? '' : rawCompName;
+
+  // Footage tab = source viewer (AE Footage panel).
+  //
+  // Sticky last-preview used to WIN over the current selection, so previewing
+  // an image once left the tab permanently labelled with that image — even
+  // after you selected a video layer or moved on. That felt "stuck".
+  //
+  // Priority now: live selected layer source → sticky last preview (if still
+  // in the library) → none. Images ARE footage items in AE (stills), so they
+  // can appear here; they just must not block the live selection.
+  const lastPreviewed = useLastFootagePreview((s) => s.asset);
+  const selectionIds = useSelectionStore((s) => s.ids);
+  const assets = useAssetStore((s) => s.assets);
+  useSceneRevision((s) => s.rev);
+  const singleSelectedLayer = selectionIds.length === 1 ? selectionIds[0]! : null;
+  const selectedAsset = (() => {
+    if (!singleSelectedLayer) return null;
+    const node = defaultSceneGraph.getNode(singleSelectedLayer);
+    const assetId = node ? assetIdOf(node) : null;
+    return assetId ? assets.find((a) => a.id === assetId) ?? null : null;
+  })();
+  const selectedMedia =
+    selectedAsset
+    && (selectedAsset.type === 'video' || selectedAsset.type === 'image' || selectedAsset.type === 'audio')
+      ? selectedAsset
+      : null;
+  const stickyValid =
+    lastPreviewed && assets.some((a) => a.id === lastPreviewed.id) ? lastPreviewed : null;
+  const footageAsset = selectedMedia ?? stickyValid;
+
+  // Drop a sticky label whose asset was deleted from the library.
+  useEffect(() => {
+    if (lastPreviewed && !assets.some((a) => a.id === lastPreviewed.id)) {
+      clearLastFootagePreview();
+    }
+  }, [assets, lastPreviewed]);
+  const isolatedId = useFocusStore((s) => s.isolatedId);
+  const layerTabName = isolatedId
+    ? defaultSceneGraph.getNode(isolatedId)?.name ?? null
+    : singleSelectedLayer
+      ? defaultSceneGraph.getNode(singleSelectedLayer)?.name ?? null
+      : null;
+  const viewMode = useWorkspaceViewStore((s) => s.mode);
 
   /**
    * Ctrl/Cmd+W closes the active tab — and never Scene.
@@ -81,27 +150,85 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
     <div className={styles.root}>
       <div className={styles.strip} role="tablist" aria-label="Editor tabs" ref={stripRef}>
         {/*
-          Scene's tab, labelled with the COMPOSITION's name rather than the word
-          "Scene". The composition name used to live in a bar of its own above
-          the canvas; naming the tab after what it contains says the same thing
-          in a row that already exists, and "Scene" said nothing a user could not
-          see. It is purely a tab — clicking it comes back to the canvas and
-          nothing else. Composition Settings opens from its own button in the
-          status bar, so this does not have to be two controls wearing one hat.
-
-          No close button, ever — it is the background, not a document, and a
-          strip with nothing in it is not a valid state.
+          Composition's tab, labelled with the COMPOSITION's name like After Effects:
+          "Composition: <compName>" or "Composition (none)"
         */}
         <button
           type="button"
           role="tab"
           aria-selected={sceneActive}
           className={cn(styles.tab, sceneActive && styles.tabActive)}
-          title={compName}
+          title={`Composition: ${compName || 'none'}`}
           onClick={() => activate(SCENE_TAB_ID)}
         >
-          <Icon name="frame" size="sm" />
-          <span className={styles.tabLabel}>{compName}</span>
+          <Icon name="shape" size="sm" />
+          <span className={styles.tabLabel}>Composition {compName ? `(${compName})` : '(none)'}</span>
+        </button>
+
+        {/*
+          AE's Footage and Layer viewer tabs.
+
+          FOOTAGE is the source viewer: the selected layer's media when one is
+          selected, otherwise the last asset opened in the preview dialog.
+          Images and video are both "footage" in AE; the tab is not stuck on
+          the last preview when a different layer is selected.
+
+          LAYER is Focus Mode isolate.
+        */}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={false}
+          className={styles.tab}
+          disabled={!footageAsset}
+          title={
+            footageAsset
+              ? `Footage: ${footageAsset.name}${footageAsset.type === 'image' ? ' (still)' : footageAsset.type === 'audio' ? ' (audio)' : ''}`
+              : 'Footage (none) — double-click a clip in Assets, or select a media layer'
+          }
+          onClick={() => { if (footageAsset) openFootagePreview(footageAsset); }}
+          onContextMenu={(e) => {
+            if (!footageAsset) return;
+            e.preventDefault();
+            openContextMenu(e.clientX, e.clientY, [
+              {
+                id: 'clear-footage',
+                label: 'Clear Footage Viewer',
+                onSelect: () => {
+                  clearLastFootagePreview();
+                  // If the tab is driven by the current layer selection, clear
+                  // that too — otherwise Clear would appear to do nothing.
+                  if (selectedMedia) useSelectionStore.getState().clear();
+                },
+              },
+            ]);
+          }}
+        >
+          <span className={styles.tabLabel}>Footage {footageAsset ? `(${footageAsset.name})` : '(none)'}</span>
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!!isolatedId}
+          className={cn(styles.tab, isolatedId && styles.tabActive)}
+          disabled={!isolatedId && !singleSelectedLayer}
+          title={
+            isolatedId
+              ? `Layer: ${layerTabName ?? ''} — click to exit isolation`
+              : singleSelectedLayer
+                ? `Isolate “${layerTabName ?? ''}” (everything else ghosts)`
+                : 'Layer (none) — select one layer to isolate it'
+          }
+          onClick={() => {
+            if (isolatedId) { useFocusStore.getState().exitOne(); return; }
+            if (singleSelectedLayer) {
+              activate(SCENE_TAB_ID);
+              useFocusStore.getState().isolate(singleSelectedLayer);
+            }
+          }}
+        >
+          <span className={styles.tabLabel}>Layer {layerTabName ? `(${layerTabName})` : '(none)'}</span>
         </button>
 
         {tabs.map((tab) => (
@@ -123,8 +250,6 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
             <Icon name="plugin" size="sm" />
             <span className={styles.tabLabel}>{tab.title}</span>
             <span
-              // A span, not a nested <button>: a button inside a button is
-              // invalid markup and browsers resolve it inconsistently.
               role="button"
               tabIndex={-1}
               aria-label={`Close ${tab.title}`}
@@ -136,18 +261,86 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
           </button>
         ))}
 
-        {tabs.length > 0 && (
+        <div className={styles.panelActions}>
+          {/* View lock — the workspace's fixed/free camera mode. Fixed frames
+              and centres the comp and disables panning; free is the infinite
+              canvas. The button reflects the live mode. */}
           <button
             type="button"
-            className={styles.overflow}
-            aria-haspopup="menu"
-            aria-expanded={overflowOpen}
-            onClick={() => setOverflowOpen((v) => !v)}
-            title="All open tabs"
+            className={styles.panelActionBtn}
+            title={viewMode === 'fixed' ? 'View locked (comp framed & centred) — click to unlock' : 'Lock view — frame the comp and disable panning'}
+            aria-label="Lock view"
+            aria-pressed={viewMode === 'fixed'}
+            style={viewMode === 'fixed' ? { color: 'var(--color-primary, #4c8dff)' } : undefined}
+            onClick={() => useWorkspaceViewStore.getState().toggleMode()}
           >
-            <Icon name="chevron-down" size="sm" />
+            <Icon name="lock" size="sm" />
           </button>
-        )}
+          <button
+            type="button"
+            className={styles.panelActionBtn}
+            title="Composition panel menu"
+            aria-label="Composition panel menu"
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              openContextMenu(r.left, r.bottom + 4, [
+                { id: 'new-comp', label: 'New Composition…', onSelect: () => openNewCompositionDialog() },
+                { id: 'settings', label: 'Composition Settings…', onSelect: () => openCompositionSettings() },
+                { id: 'sep', separator: true },
+                {
+                  id: 'fit',
+                  label: 'Fit Composition in View',
+                  onSelect: () => {
+                    try { getWorkspaceController().fitComposition(); getWorkspaceController().requestRender(); } catch { /* engine not ready */ }
+                  },
+                },
+                {
+                  id: 'view-lock',
+                  label: viewMode === 'fixed' ? 'Unlock View' : 'Lock View',
+                  onSelect: () => useWorkspaceViewStore.getState().toggleMode(),
+                },
+                { id: 'sep2', separator: true },
+                {
+                  id: 'delete-comp',
+                  label: 'Delete Composition',
+                  icon: 'trash',
+                  danger: true,
+                  // "(none)" — the pristine empty state — has nothing to
+                  // delete; every real comp, including an empty one and the
+                  // last one, deletes (the last lands back on this state).
+                  disabled: activePristine || !useProjectStore.getState().activeTabId,
+                  onSelect: async () => {
+                    const st = useProjectStore.getState();
+                    const compId = st.activeTabId ? st.tabs[st.activeTabId]?.compositionId : undefined;
+                    if (!compId) return;
+                    const comp = st.comps[compId];
+                    const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+                    const warn = layers > 0
+                      ? `Delete “${comp?.name ?? 'this composition'}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+                      : `Delete “${comp?.name ?? 'this composition'}”?`;
+                    if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+                      deleteComposition(compId);
+                    }
+                  },
+                },
+              ]);
+            }}
+          >
+            <Icon name="menu" size="sm" />
+          </button>
+          {tabs.length > 0 && (
+            <button
+              type="button"
+              className={styles.overflow}
+              aria-haspopup="menu"
+              aria-expanded={overflowOpen}
+              onClick={() => setOverflowOpen((v) => !v)}
+              title="All open tabs"
+            >
+              <Icon name="chevron-down" size="sm" />
+            </button>
+          )}
+        </div>
       </div>
 
       {overflowOpen && (

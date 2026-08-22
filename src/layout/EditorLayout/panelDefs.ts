@@ -52,7 +52,19 @@ export interface PanelDef {
  */
 export const PANEL_DEFS: readonly PanelDef[] = [
   // ── Left sidebar ─────────────────────────────────────────────────
+  // NOTE: there is deliberately no 'project' panel any more (removed
+  // 2026-08-20). It listed the same assets the Assets panel owns plus a comp
+  // list nobody needed a second surface for — a duplicate bin whose Import
+  // button, unlike the Assets panel's, did not place the footage in the open
+  // composition, which read as "my video didn't import". Comps are managed
+  // from the Composition panel menu and the timeline's comp tabs.
   { id: 'scene',       title: 'Scene',     icon: 'layers',      region: 'leftSidebar', weight: 10,  closable: false },
+  // AE's Effect Controls: the applied-effect stack for the selected layer.
+  // Lives on the LEFT because the right inspector's Effects tab is the library
+  // you add FROM — putting both in one tab buried the browser under every
+  // effect you applied. `stopwatch` is the glyph AE uses on every animatable
+  // parameter in this panel, and no other tab already speaks it.
+  { id: 'effectControls', title: 'Effect Controls', icon: 'stopwatch', region: 'leftSidebar', weight: 9, closable: false },
   { id: 'assets',      title: 'Assets',    icon: 'image',       region: 'leftSidebar', weight: 8,   closable: false },
   { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
   // Server edition only — see PANEL_AVAILABILITY. The local (OSS) edition does
@@ -60,7 +72,6 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // rendered empty: a tab that opens onto "not available in this edition" is a
   // worse answer than no tab. `getAllPanelRenderers` drops the renderer too.
   { id: 'ai',          title: 'AI',        icon: 'ai',          region: 'leftSidebar', weight: 4,   closable: false },
-  { id: 'project',     title: 'Project',   icon: 'folder-open', region: 'leftSidebar', weight: 3,   closable: true, onDemand: true },
   // The marketplace. Distinct from the `plugins` panel in the right inspector,
   // which HOSTS the interfaces plugins provide — this one is where you find,
   // install and manage them. Two different jobs that were easy to conflate

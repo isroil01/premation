@@ -8,7 +8,9 @@ import { ColorPicker } from '@components/ColorPicker';
 import { openModal } from '@stores/modalStore';
 import { type CompositionSettings } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { createComposition, deleteComposition } from '@core/composition/compositionOps';
+import { createOrAdoptComposition, deleteComposition, pristineCompToAdopt } from '@core/composition/compositionOps';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { bumpScene } from '@stores/sceneStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import { shortId } from '@utils/lang';
@@ -30,6 +32,11 @@ const RESOLUTION_PRESETS = SIZE_PRESETS;
  */
 class CreateCompositionCommand implements IUndoableCommand {
   readonly label = 'New Composition';
+  /** The comp the create actually produced — the requested fresh id, or the
+   *  pristine comp it adopted (see createOrAdoptComposition). */
+  private createdId: string | null = null;
+  /** The adopted comp's settings before adoption, for undo to put back. */
+  private adoptedPrevious: CompositionSettings | null = null;
 
   constructor(
     private readonly init: Partial<CompositionSettings> & { id: string },
@@ -37,11 +44,25 @@ class CreateCompositionCommand implements IUndoableCommand {
   ) {}
 
   execute(_ctx: CommandContext): void {
-    createComposition(this.init);
+    const adoptId = pristineCompToAdopt();
+    this.adoptedPrevious = adoptId
+      ? structuredClone(useProjectStore.getState().comps[adoptId] ?? null)
+      : null;
+    this.createdId = createOrAdoptComposition(this.init);
   }
 
   undo(_ctx: CommandContext): void {
-    deleteComposition(this.init.id);
+    if (this.createdId && this.adoptedPrevious && this.createdId === this.adoptedPrevious.id) {
+      // Adoption is undone by RESTORING the pristine comp, not deleting it —
+      // deleting the project's only comp is refused, and the pre-create state
+      // was "a pristine comp exists", not "no comp exists".
+      useProjectStore.getState().actions.updateComp(this.createdId, this.adoptedPrevious);
+      const root = defaultSceneGraph.getNode(this.createdId);
+      if (root) root.name = this.adoptedPrevious.name;
+      bumpScene();
+    } else if (this.createdId) {
+      deleteComposition(this.createdId);
+    }
     if (this.previousTabId) useProjectStore.getState().actions.setActiveTab(this.previousTabId);
   }
 }

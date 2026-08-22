@@ -19,7 +19,6 @@ import SceneGraph from '@core/scene/SceneGraph';
 import { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
-import { readNodeKind } from '@core/scene/sceneDerive';
 import {
   clearImageCoverageCache,
   primeImageCoverageCache,
@@ -31,10 +30,9 @@ import {
   type PuppetRig,
 } from './puppet';
 import {
-  readNodeMediaRef,
-  resolveRigImageSrc,
   rigCoverageMask,
   rigLayerKind,
+  nodeRestMesh,
 } from './rigMeshInputs';
 
 const comp = { width: 800, height: 600, background: '#101014' };
@@ -95,21 +93,11 @@ function riggedScene(): { graph: SceneGraph; anim: AnimationEngine; node: SceneN
 }
 
 /**
- * Exactly what PuppetOverlay does to build its wireframe mesh: resolve the
- * layer kind + media source, ask rigMeshInputs for the coverage mask, then hit
- * the shared rest-mesh cache. `pad` is 0 for an unstroked image on both sides.
+ * Exactly what PuppetOverlay does to build its wireframe mesh: `nodeRestMesh`.
+ * `pad` is 0 for an unstroked image on both sides.
  */
-function overlayMesh(node: SceneNode, pad = 0): ReturnType<typeof getCachedRestMesh> {
-  const kind = readNodeKind(node);
-  const media = readNodeMediaRef(node);
-  const silhouette = silhouetteFromPathPoints(undefined, false);
-  const coverage = rigCoverageMask(
-    rigLayerKind(kind),
-    resolveRigImageSrc(node, kind, media, 0, () => undefined),
-    media.assetId,
-    silhouette,
-  );
-  return getCachedRestMesh(node.id, W, H, pad, RIG, silhouette, coverage);
+function overlayMesh(node: SceneNode): ReturnType<typeof nodeRestMesh> {
+  return nodeRestMesh(node, { width: W, height: H, ellipse: false }, () => undefined);
 }
 
 /** The PRE-FIX overlay derivation: identical, minus the coverage argument. */

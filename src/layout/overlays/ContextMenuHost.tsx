@@ -2,16 +2,19 @@
  * ContextMenuHost — renders the active context menu from contextMenuStore at
  * the requested point, using the Menu component. Closes on outside pointerdown,
  * Escape, or item activation. Clamps to the viewport.
+ *
+ * Scene / canvas right-click lists are long. The shared Menu defaults to a
+ * 280px scroller; context menus opt out of that so every item is visible, and
+ * we measure the real box after paint so a tall menu still stays on screen.
  */
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Menu, MenuItem, MenuSeparator } from '@components/Menu';
 import { useContextMenuStore, type ContextMenuItem } from '@stores/contextMenuStore';
 import styles from './overlays.module.css';
 
-const MENU_MIN_WIDTH = 200;
-const MENU_EST_ROW = 30;
+const VIEW_PAD = 8;
 
 /** Render items (recursively for submenus — Menu handles nesting/portals). */
 function renderItems(items: ReadonlyArray<ContextMenuItem>): ReactNode {
@@ -35,6 +38,28 @@ function renderItems(items: ReadonlyArray<ContextMenuItem>): ReactNode {
   );
 }
 
+function clampToViewport(el: HTMLElement, x: number, y: number): void {
+  const menu = (el.querySelector('[role="menu"]') as HTMLElement | null) ?? el;
+  menu.style.maxHeight = '';
+  menu.style.overflowY = '';
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const maxH = vh - VIEW_PAD * 2;
+  if (menu.scrollHeight > maxH) {
+    menu.style.maxHeight = `${maxH}px`;
+    menu.style.overflowY = 'auto';
+  }
+  const { width, height } = el.getBoundingClientRect();
+  let left = x;
+  let top = y;
+  if (left + width > vw - VIEW_PAD) left = Math.max(VIEW_PAD, vw - width - VIEW_PAD);
+  if (top + height > vh - VIEW_PAD) top = Math.max(VIEW_PAD, vh - height - VIEW_PAD);
+  if (left < VIEW_PAD) left = VIEW_PAD;
+  if (top < VIEW_PAD) top = VIEW_PAD;
+  el.style.left = `${left}px`;
+  el.style.top = `${top}px`;
+}
+
 export function ContextMenuHost(): JSX.Element | null {
   const open = useContextMenuStore((s) => s.open);
   const x = useContextMenuStore((s) => s.x);
@@ -42,6 +67,11 @@ export function ContextMenuHost(): JSX.Element | null {
   const items = useContextMenuStore((s) => s.items);
   const close = useContextMenuStore((s) => s.close);
   const ref = useRef<HTMLDivElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return;
+    clampToViewport(ref.current, x, y);
+  }, [open, x, y, items]);
 
   useEffect(() => {
     if (!open) return;
@@ -66,13 +96,9 @@ export function ContextMenuHost(): JSX.Element | null {
 
   if (!open) return null;
 
-  const left = Math.min(x, window.innerWidth - MENU_MIN_WIDTH - 8);
-  const estHeight = items.length * MENU_EST_ROW + 12;
-  const top = Math.min(y, Math.max(8, window.innerHeight - estHeight - 8));
-
   return createPortal(
-    <div ref={ref} className={styles.contextMenu} style={{ left, top }}>
-      <Menu onItemActivate={close}>{renderItems(items)}</Menu>
+    <div ref={ref} className={styles.contextMenu} style={{ left: x, top: y }}>
+      <Menu noScroll spacious onItemActivate={close}>{renderItems(items)}</Menu>
     </div>,
     document.body,
   );

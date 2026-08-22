@@ -3,7 +3,8 @@ import {
   VectorRasterizer,
   RasterRequest,
   RasterResult,
-  rasterCacheKey
+  rasterCacheKey,
+  displayReferredUploadFormat,
 } from '@motion/renderer';
 import { layoutText } from '@core/text/textLayout';
 import { applyTextPath } from '@core/text/textPath';
@@ -20,7 +21,7 @@ import {
   subpathBatches,
   traceBatch,
 } from './vectorDraw';
-import { textCssFont } from '../AppTextureProvider';
+import { textCssFont, textFontVariationSettings } from '../AppTextureProvider';
 
 /** Cache statistics reported by the rasterizer (defined locally — not in @motion/renderer). */
 export interface RasterStats {
@@ -158,7 +159,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
 
     const tex = this.resources.texture(
       poolKeyFor(key),
-      { label: `raster:${drawable.contentHash}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `raster:${drawable.contentHash}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -256,6 +257,10 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     // Everything below lays out in the UNPADDED box, so shift into it once.
     ctx.translate(pad, pad);
     ctx.font = textCssFont(spec);
+    {
+      const vars = textFontVariationSettings(spec);
+      if (vars) (ctx as CanvasRenderingContext2D & { fontVariationSettings?: string }).fontVariationSettings = vars;
+    }
     ctx.textBaseline = 'middle';
     ctx.letterSpacing = spec.letterSpacing ? `${spec.letterSpacing}px` : '0px';
     ctx.fillStyle = spec.color;
@@ -532,9 +537,28 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
   private drawPaint(ctx: CanvasRenderingContext2D, layer: any): void {
     const strokes = layer.paint?.strokes;
     if (!strokes || strokes.length === 0) return;
+    // Clone strokes sample the layer's content BENEATH the paint — one
+    // snapshot before any stroke lands, shared by every clone stroke, so a
+    // clone cannot recursively pick up earlier paint (matching AE's Clone
+    // Stamp sampling the source frame, and keeping the pass order-stable).
+    const cloneSource = strokes.some((s: { mode: string }) => s.mode === 'clone')
+      ? (() => {
+          const snap = document.createElement('canvas');
+          snap.width = ctx.canvas.width;
+          snap.height = ctx.canvas.height;
+          const sc = snap.getContext('2d');
+          if (!sc) return null;
+          sc.drawImage(ctx.canvas, 0, 0);
+          return snap;
+        })()
+      : null;
     ctx.save();
     for (const s of strokes) {
       if (s.points.length === 0 || s.size <= 0 || s.opacity <= 0) continue;
+      if (s.mode === 'clone') {
+        this.drawCloneStroke(ctx, s, cloneSource);
+        continue;
+      }
       ctx.globalCompositeOperation = s.mode === 'erase' ? 'destination-out' : 'source-over';
       ctx.globalAlpha = Math.max(0, Math.min(1, s.opacity));
       ctx.strokeStyle = s.mode === 'erase' ? '#000' : s.color;
@@ -559,6 +583,81 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     ctx.restore();
   }
 
+  /**
+   * One clone stroke: the snapshot shifted by the clone offset, clipped to the
+   * stroke's own shape, composited at the stroke's opacity.
+   *
+   * All the canvas work happens in DEVICE space so the snapshot lines up with
+   * the target pixel-for-pixel; the LOCAL offset is carried across by mapping
+   * it through the context's current transform (linear part only — an offset
+   * is a vector, not a point).
+   */
+  private drawCloneStroke(
+    ctx: CanvasRenderingContext2D,
+    s: {
+      points: ReadonlyArray<{ x: number; y: number }>;
+      size: number; opacity: number; hardness: number;
+      cloneOffsetX?: number; cloneOffsetY?: number;
+    },
+    source: HTMLCanvasElement | null,
+  ): void {
+    if (!source) return;
+    try {
+      const m = ctx.getTransform();
+      const ox = s.cloneOffsetX ?? 0;
+      const oy = s.cloneOffsetY ?? 0;
+      const devX = m.a * ox + m.c * oy;
+      const devY = m.b * ox + m.d * oy;
+      const w = ctx.canvas.width;
+      const h = ctx.canvas.height;
+
+      // Stroke-shaped alpha mask, drawn under the SAME transform.
+      const mask = document.createElement('canvas');
+      mask.width = w;
+      mask.height = h;
+      const mc = mask.getContext('2d');
+      if (!mc) return;
+      mc.setTransform(m);
+      mc.strokeStyle = '#fff';
+      mc.fillStyle = '#fff';
+      mc.lineWidth = s.size;
+      mc.lineCap = 'round';
+      mc.lineJoin = 'round';
+      mc.filter = s.hardness < 1 ? `blur(${((1 - s.hardness) * s.size) / 3}px)` : 'none';
+      if (s.points.length === 1) {
+        mc.beginPath();
+        mc.arc(s.points[0]!.x, s.points[0]!.y, s.size / 2, 0, Math.PI * 2);
+        mc.fill();
+      } else {
+        mc.beginPath();
+        mc.moveTo(s.points[0]!.x, s.points[0]!.y);
+        for (let i = 1; i < s.points.length; i++) mc.lineTo(s.points[i]!.x, s.points[i]!.y);
+        mc.stroke();
+      }
+
+      // Shifted content, clipped to the mask. Sampling FROM p+offset and
+      // painting AT p means drawing the snapshot moved by −offset.
+      const fill = document.createElement('canvas');
+      fill.width = w;
+      fill.height = h;
+      const fc = fill.getContext('2d');
+      if (!fc) return;
+      fc.drawImage(source, -devX, -devY);
+      fc.globalCompositeOperation = 'destination-in';
+      fc.drawImage(mask, 0, 0);
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = Math.max(0, Math.min(1, s.opacity));
+      ctx.filter = 'none';
+      ctx.drawImage(fill, 0, 0);
+      ctx.restore();
+    } catch {
+      // A lost context or unreadable snapshot: skip the stroke rather than
+      // aborting the whole paint pass.
+    }
+  }
 
   private drawMask(layer: any, _tier: number): HTMLCanvasElement {
     const ss = 2; // TEXT_SUPERSAMPLE = 2

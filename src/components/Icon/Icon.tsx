@@ -25,7 +25,7 @@
  * tune and nothing to go blurry: at 13px a filled contour is still a contour.
  */
 
-import { memo, type CSSProperties } from 'react';
+import { memo, useEffect, useState, type CSSProperties } from 'react';
 
 import { usePreferenceStore } from '@stores/preferenceStore';
 
@@ -93,7 +93,29 @@ export const ICON_SIZE = {
   lg: 25,
 } as const;
 
+/** Compact ladder mirrored by `spacing.css` @media (max-width: 1366px). */
+const ICON_SIZE_COMPACT = {
+  sm: 13,
+  md: 16,
+  lg: 22,
+} as const;
+
 export type IconSizeName = keyof typeof ICON_SIZE;
+
+function useCompactChrome(): boolean {
+  // Default false so SSR / jsdom (and first paint) stay on the desktop ladder;
+  // the media query only tightens after mount on real narrow viewports.
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mq = window.matchMedia('(max-width: 1366px)');
+    const onChange = () => setCompact(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return compact;
+}
 
 export interface IconProps {
   name: IconName;
@@ -118,8 +140,10 @@ function IconInner({
   'aria-label': ariaLabel,
 }: IconProps): JSX.Element {
   const iconScale = usePreferenceStore((s) => s.iconSize);
+  const compact = useCompactChrome();
   const scaleMult = iconScale === 'sm' ? 0.82 : iconScale === 'lg' ? 1.25 : 1.0;
-  const basePx = typeof size === 'number' ? size : ICON_SIZE[size];
+  const ladder = compact ? ICON_SIZE_COMPACT : ICON_SIZE;
+  const basePx = typeof size === 'number' ? size : ladder[size];
   const computedSize = Math.max(10, Math.round(basePx * scaleMult));
 
   const mergedStyle: CSSProperties = {

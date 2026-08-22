@@ -64,6 +64,10 @@ export function canWriteCloud(access: CloudAccess | null): boolean {
   return access ? access.write : true;
 }
 
+export function messageAfterEntitlementRefresh(current: string, access: CloudAccess): string {
+  return access.write ? '' : current;
+}
+
 export const useEntitlementStore = create<EntitlementState & EntitlementActions>((set, get) => ({
   access: null,
   message: '',
@@ -77,7 +81,14 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
     set({ loading: true });
     try {
       const me = await api.me({ force: opts?.force });
-      set({ access: me.access, message: '' });
+      set((state) => ({
+        access: me.access,
+        // A refresh of /auth/me can update the decision but cannot replace the
+        // server-authored denial sentence (that endpoint does not return it).
+        // Keep the sentence while access remains denied; clear it only after a
+        // successful verification/payment refresh restores write access.
+        message: messageAfterEntitlementRefresh(state.message, me.access),
+      }));
     } catch {
       // Offline, or the server is down. Keep the last known decision rather than
       // dropping it — telling a user their access is gone because their wifi

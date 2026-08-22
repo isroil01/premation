@@ -42,12 +42,22 @@ import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
 // WebGPU bit-flag constants (not in the ambient surface).
-const BUF = { COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128 };
-const TEX = { COPY_DST: 2, TEXTURE_BINDING: 4, RENDER_ATTACHMENT: 16 };
+const BUF = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128 };
+const TEX = { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, RENDER_ATTACHMENT: 16 };
 const STAGE = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
 
 function h<K extends string>(kind: K, native: unknown): ResourceHandle<K> {
   return { kind, id: nextId(), native };
+}
+
+/** IEEE-754 binary16 → number (for rgba16float readback). */
+function halfToFloat(h: number): number {
+  const s = (h & 0x8000) >> 15;
+  const e = (h & 0x7c00) >> 10;
+  const f = h & 0x03ff;
+  if (e === 0) return (s ? -1 : 1) * (2 ** -14) * (f / 1024);
+  if (e === 0x1f) return f ? NaN : s ? -Infinity : Infinity;
+  return (s ? -1 : 1) * (2 ** (e - 15)) * (1 + f / 1024);
 }
 
 function bufferUsageBits(usage: BufferUsage[]): number {
@@ -105,6 +115,7 @@ export class WebGPUBackend implements RenderBackend {
     instancing: true,
     storageBuffers: true,
     float16Textures: true,
+    float32Textures: true,
     timestampQueries: false,
   };
 
@@ -202,10 +213,24 @@ export class WebGPUBackend implements RenderBackend {
   writeTexture(texture: TextureHandle, source: TextureSource): void {
     const tex = texture.native as GPUTexture;
     if (source.type === 'buffer') {
+      const fmt = source.format ?? (tex.format as string);
+      const bpp = fmt === 'rgba32float' ? 16 : fmt === 'rgba16float' ? 8 : 4;
+      const rowBytes = source.width * bpp;
+      // Spec: bytesPerRow must be a multiple of 256 when copy height > 1.
+      const bytesPerRow = source.height > 1 ? Math.ceil(rowBytes / 256) * 256 : rowBytes;
+      let data: ArrayBufferView = source.data;
+      if (bytesPerRow !== rowBytes) {
+        const src = new Uint8Array(source.data.buffer, source.data.byteOffset, source.data.byteLength);
+        const packed = new Uint8Array(bytesPerRow * source.height);
+        for (let y = 0; y < source.height; y++) {
+          packed.set(src.subarray(y * rowBytes, y * rowBytes + rowBytes), y * bytesPerRow);
+        }
+        data = packed;
+      }
       this.device.queue.writeTexture(
         { texture: tex },
-        source.data,
-        { bytesPerRow: source.width * 4, rowsPerImage: source.height },
+        data,
+        { bytesPerRow, rowsPerImage: source.height },
         { width: source.width, height: source.height },
       );
     } else {
@@ -357,7 +382,8 @@ export class WebGPUBackend implements RenderBackend {
       label: desc.label,
       size: { width: desc.width, height: desc.height },
       format: desc.format,
-      usage: TEX.RENDER_ATTACHMENT | TEX.TEXTURE_BINDING,
+      // COPY_SRC so EXR export can read linear float RTs back to CPU.
+      usage: TEX.RENDER_ATTACHMENT | TEX.TEXTURE_BINDING | TEX.COPY_SRC,
     });
     let msaaTexture: GPUTexture | undefined;
     let msaaView: GPUTextureView | undefined;
@@ -500,6 +526,88 @@ export class WebGPUBackend implements RenderBackend {
   present(): void {
     // WebGPU presents implicitly on submit.
   }
+
+  /**
+   * Sync float readback is not available on WebGPU (mapAsync is required).
+   * Use {@link readRenderTargetFloatAsync} from export paths.
+   */
+  readRenderTargetFloat(
+    _target: RenderTargetHandle,
+    _width: number,
+    _height: number,
+  ): Float32Array | null {
+    return null;
+  }
+
+  /**
+   * Copy a render target to a mapped staging buffer and return linear RGBA float.
+   * Supports rgba8unorm (0..1), rgba16float, and rgba32float colour targets.
+   */
+  async readRenderTargetFloatAsync(
+    target: RenderTargetHandle,
+    width: number,
+    height: number,
+  ): Promise<Float32Array | null> {
+    const native = target.native as { texture: GPUTexture; format?: string };
+    const tex = native.texture;
+    const format = (native.format ?? 'rgba8unorm') as string;
+    const bpp = format === 'rgba32float' ? 16 : format === 'rgba16float' ? 8 : 4;
+    const unalignedRow = width * bpp;
+    const bytesPerRow = Math.ceil(unalignedRow / 256) * 256;
+    const size = bytesPerRow * height;
+    const buffer = this.device.createBuffer({
+      size,
+      usage: BUF.COPY_DST | BUF.MAP_READ,
+    });
+    try {
+      const enc = this.device.createCommandEncoder();
+      enc.copyTextureToBuffer(
+        { texture: tex },
+        { buffer, bytesPerRow },
+        { width, height },
+      );
+      this.device.queue.submit([enc.finish()]);
+      await buffer.mapAsync(typeof GPUMapMode !== 'undefined' ? GPUMapMode.READ : 0x0001);
+      const mapped = buffer.getMappedRange();
+      const out = new Float32Array(width * height * 4);
+      if (format === 'rgba32float') {
+        for (let y = 0; y < height; y++) {
+          const row = new Float32Array(mapped, y * bytesPerRow, width * 4);
+          out.set(row, y * width * 4);
+        }
+      } else if (format === 'rgba16float') {
+        const u16 = new Uint16Array(mapped);
+        for (let y = 0; y < height; y++) {
+          const rowOff = (y * bytesPerRow) / 2;
+          const dst = y * width * 4;
+          for (let x = 0; x < width * 4; x++) {
+            out[dst + x] = halfToFloat(u16[rowOff + x]!);
+          }
+        }
+      } else {
+        const src = new Uint8Array(mapped);
+        for (let y = 0; y < height; y++) {
+          const rowOff = y * bytesPerRow;
+          const dst = y * width * 4;
+          for (let x = 0; x < width; x++) {
+            const s = rowOff + x * 4;
+            const d = dst + x * 4;
+            out[d] = src[s]! / 255;
+            out[d + 1] = src[s + 1]! / 255;
+            out[d + 2] = src[s + 2]! / 255;
+            out[d + 3] = src[s + 3]! / 255;
+          }
+        }
+      }
+      buffer.unmap();
+      return out;
+    } catch {
+      return null;
+    } finally {
+      try { buffer.destroy(); } catch { /* */ }
+    }
+  }
+
   resize(width: number, height: number, devicePixelRatio = 1): void {
     // Physical pixels: the canvas backing store is CSS×dpr, and the frame clip
     // (setFrameClip) arrives in device px — surfaceW/H clamp against it, so

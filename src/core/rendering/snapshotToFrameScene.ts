@@ -29,6 +29,8 @@ import { effectNumber, effectParam, paramsOf, withAlpha, isGpuOnlyEffect } from 
 import { effectById, beginEffectDraw, endEffectDraw } from '@core/plugins/pluginEffects';
 import { layerParamNames, packParameters, effectSpreadFor } from '@core/plugins/effectSchema';
 import { layerIsBaked } from '@core/effects/effectBake';
+import { parseHex } from '@core/effects/canvas2dEffects';
+import { rgbToHsl } from '@core/effects/colorSpace';
 import { rasterPadding } from './raster/vectorDraw';
 import type { RenderSnapshot, RenderLayer, RenderView } from './RenderBackend';
 
@@ -98,6 +100,12 @@ function advancedBlendId(mode: LayerBlendMode | undefined): number {
     case 'stencil-luma': return 32;
     case 'silhouette-alpha': return 33;
     case 'silhouette-luma': return 34;
+    // ── M5 (stochastic): coverage becomes a per-pixel coin flip. The shader
+    // hashes the COMP-GRID pixel (comp size rides cr1.xy) so preview at any
+    // zoom and export produce the same speckle. Dancing's re-roll comes from
+    // `FrameScene.dissolveFrame` riding cr0.z — no clock in the shader. ──
+    case 'dissolve': return 35;
+    case 'dancing-dissolve': return 36;
     default: return 0; // normal / add → simple fixed-function blend
   }
 }
@@ -152,6 +160,13 @@ function quadOrigin(layer: RenderLayer, pad: number): { x: number; y: number } {
   };
 }
 
+/** Affine scale: `0` is a real value (the layer must vanish), not “missing”.
+ *  `|| 1` treated scale 0 as 1, so a text layer scaled to 0 still drew at
+ *  its authored size. `??` is the right fallback — only undefined/null default. */
+function affineScale(v: number | undefined): number {
+  return v ?? 1;
+}
+
 /** Center-pivot model matrix: unit-quad centre → (x,y), rotated/scaled in place.
  *  The quad grows by the layer's raster padding so a stroked shape's padded
  *  texture (which includes the outer stroke band) places 1:1 without stretching;
@@ -160,8 +175,8 @@ function quadOrigin(layer: RenderLayer, pad: number): { x: number; y: number } {
 function centerModel(layer: RenderLayer): Mat3 {
   const rad = (layer.rotation * Math.PI) / 180;
   const pad = rasterPadding(layer);
-  const w = (layer.width + 2 * pad) * (layer.scaleX || 1);
-  const h = (layer.height + 2 * pad) * (layer.scaleY || 1);
+  const w = (layer.width + 2 * pad) * affineScale(layer.scaleX);
+  const h = (layer.height + 2 * pad) * affineScale(layer.scaleY);
   const skew = layer.skew ?? 0;
   const base = skew === 0
     // The un-skewed path stays on `Mat3.compose` so nothing about existing
@@ -392,6 +407,16 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   if (layer.primitive === 'ellipse') {
     return { shape: 'ellipse', radiusPx: 0, width: layer.width, height: layer.height };
   }
+  // Independent corners cannot use the isotropic GPU SDF — those shapes rasterize
+  // via needsShapeRaster. When all four match, keep the fast SDF path.
+  const radii = layer.cornerRadii;
+  if (radii) {
+    const [tl, tr, br, bl] = radii;
+    if (tl === tr && tr === br && br === bl) {
+      return { shape: 'rounded', radiusPx: tl, width: layer.width, height: layer.height };
+    }
+    return { shape: 'rounded', radiusPx: 0, width: layer.width, height: layer.height };
+  }
   return { shape: 'rounded', radiusPx: layer.cornerRadius ?? 0, width: layer.width, height: layer.height };
 }
 
@@ -467,6 +492,249 @@ export function extractSpatialEffects(
         softness: clamp01n(n('softness') / 100),
         color: c('color'),
       });
+    }
+    if (e.type === 'light-sweep') {
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'light-sweep',
+        // Keep −1..2 range — off-frame start/end is intentional.
+        position: n('position') / 100,
+        sweepWidth: Math.max(0, n('sweepWidth')),
+        angle: n('angle'),
+        softness: clamp01n(n('softness') / 100),
+        intensity: clamp01n(n('intensity') / 100),
+        composite: Math.round(n('composite')),
+        color: c('color'),
+      });
+    }
+    if (e.type === 'lens-flare') {
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'lens-flare',
+        centerX: n('centerX'),
+        centerY: n('centerY'),
+        brightness: clamp01n(n('brightness') / 100),
+        scale: Math.max(0.05, n('scale')),
+        color: c('color'),
+      });
+    }
+    if (e.type === 'light-rays') {
+      const clamp01n = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+      spatial.push({
+        type: 'light-rays',
+        centerX: n('centerX'),
+        centerY: n('centerY'),
+        rayCount: Math.max(1, Math.min(256, Math.round(n('rayCount')))),
+        rayLength: Math.max(0, n('rayLength')),
+        spread: clamp01n(n('spread') / 100),
+        rotation: (n('rotation') * Math.PI) / 180,
+        opacity: clamp01n(n('opacity') / 100),
+        falloff: clamp01n(n('falloff') / 100),
+        seed: Math.round(n('seed')),
+        composite: Math.round(n('composite')),
+        color: c('color'),
+      });
+    }
+    // Colour helpers for the round-six ports: raw sRGB bytes (the CPU
+    // kernels' own space) and a precomputed tint hue/sat.
+    const hexTriple = (hex: string): [number, number, number] => parseHex(hex);
+    const rgbToHslHs = (r: number, g: number, b: number): [number, number] => {
+      const [hh, ss] = rgbToHsl(r, g, b);
+      return [hh, ss];
+    };
+    // ── Round-six GPU ports: per-pixel colour passes ──
+    // Parity contract: the maths (and its scalings) mirror the Canvas2D
+    // wrappers byte-for-byte intent — percentages become fractions HERE, and
+    // colours stay raw sRGB fractions because the CPU kernels work on sRGB.
+    if (e.type === 'vignette') {
+      const w = Math.max(1, layer.width || 1);
+      const h = Math.max(1, layer.height || 1);
+      spatial.push({
+        type: 'vignette',
+        amount: Math.max(-1, Math.min(1, n('amount') / 100)),
+        inner: Math.max(0, Math.min(1, n('size') / 100)),
+        feather: Math.max(1e-3, Math.min(1, n('feather') / 100)),
+        roundness: Math.max(0, Math.min(1, n('roundness') / 100)),
+        cx: 0.5 + n('centerX') / w,
+        cy: 0.5 + n('centerY') / h,
+        aspect: w / h,
+      });
+    }
+    if (e.type === 'black-and-white') {
+      const tintOn = effectParam(e, 'tint') === true;
+      const [tr, tg, tb] = hexTriple(String(effectParam(e, 'tintColor') ?? '#d8b48a'));
+      const [th, ts] = rgbToHslHs(tr, tg, tb);
+      spatial.push({
+        type: 'black-and-white',
+        reds: n('reds') / 100, yellows: n('yellows') / 100, greens: n('greens') / 100,
+        cyans: n('cyans') / 100, blues: n('blues') / 100, magentas: n('magentas') / 100,
+        tintOn: tintOn ? 1 : 0, tintH: th, tintS: ts,
+      });
+    }
+    if (e.type === 'tritone') {
+      const [sr, sg, sb] = hexTriple(String(effectParam(e, 'shadows') ?? '#000000'));
+      const [mr, mg, mb] = hexTriple(String(effectParam(e, 'midtones') ?? '#808080'));
+      const [hr, hg, hb] = hexTriple(String(effectParam(e, 'highlights') ?? '#ffffff'));
+      spatial.push({
+        type: 'tritone',
+        sr: sr / 255, sg: sg / 255, sb: sb / 255,
+        mr: mr / 255, mg: mg / 255, mb: mb / 255,
+        hr: hr / 255, hg: hg / 255, hb: hb / 255,
+        blend: Math.max(0, Math.min(1, n('blend') / 100)),
+      });
+    }
+    if (e.type === 'photo-filter') {
+      const [pr, pg, pb] = hexTriple(String(effectParam(e, 'color') ?? '#ec8a00'));
+      spatial.push({
+        type: 'photo-filter',
+        r: pr / 255, g: pg / 255, b: pb / 255,
+        density: Math.max(0, Math.min(1, n('density') / 100)),
+        preserveLuminosity: effectParam(e, 'preserveLuminosity') !== false,
+      });
+    }
+    if (e.type === 'threshold') {
+      spatial.push({ type: 'threshold', level: Math.max(0, Math.min(1, n('level') / 255)) });
+    }
+    if (e.type === 'vibrance') {
+      spatial.push({ type: 'vibrance', vibrance: n('vibrance') / 100, saturation: n('saturation') / 100 });
+    }
+    // ── Round-six waves 2–3: warps + neighbourhood passes ──
+    // Geometry stays in LAYER PIXELS with lw/lh riding along, mirroring each
+    // Canvas2D wrapper's exact scalings (the CPU kernels are the reference).
+    {
+      const lw = Math.max(1, layer.width || 1);
+      const lh = Math.max(1, layer.height || 1);
+      if (e.type === 'mirror') {
+        const mrad = (n('angle') * Math.PI) / 180;
+        spatial.push({
+          type: 'mirror',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          nx: Math.cos(mrad), ny: Math.sin(mrad), lw, lh,
+        });
+      }
+      if (e.type === 'offset') {
+        // "Shift centre TO" semantics — the kernel translates by how far the
+        // requested centre is from the current one, not by the raw param.
+        spatial.push({
+          type: 'offset',
+          tx: n('shiftX') - lw / 2, ty: n('shiftY') - lh / 2,
+          keep: Math.max(0, Math.min(1, n('blend') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'bulge') {
+        spatial.push({
+          type: 'bulge',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius'), amount: n('height') / 100, lw, lh,
+        });
+      }
+      if (e.type === 'twirl') {
+        spatial.push({
+          type: 'twirl',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius'), maxAngle: (n('angle') * Math.PI) / 180, lw, lh,
+        });
+      }
+      if (e.type === 'spherize') {
+        spatial.push({
+          type: 'spherize',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius'), amount: n('amount') / 100, lw, lh,
+        });
+      }
+      if (e.type === 'kaleidoscope') {
+        const segN = Math.max(1, Math.min(64, Math.round(n('segments'))));
+        spatial.push({
+          type: 'kaleidoscope',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          rot: (n('rotation') * Math.PI) / 180, srcA: (n('sourceAngle') * Math.PI) / 180,
+          seg: segN <= 1 ? 0 : (Math.PI * 2) / segN,
+          scale: Math.max(0.01, n('zoom') / 100), lw, lh,
+        });
+      }
+      if (e.type === 'ripple') {
+        spatial.push({
+          type: 'ripple',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: n('radius') > 0 ? n('radius') : Math.hypot(lw, lh),
+          amplitude: n('amplitude'), frequency: n('frequency'),
+          phase: (n('phase') * Math.PI) / 180, decay: Math.max(0, n('decay')), lw, lh,
+        });
+      }
+      if (e.type === 'chromatic-aberration') {
+        const caRad = (n('angle') * Math.PI) / 180;
+        const cax = lw / 2 + n('centerX');
+        const cay = lh / 2 + n('centerY');
+        spatial.push({
+          type: 'chromatic-aberration',
+          amount: n('amount'),
+          linear: Math.round(n('aberrationMode')) === 1,
+          lvx: Math.cos(caRad) * n('amount'), lvy: Math.sin(caRad) * n('amount'),
+          falloffExp: 1 + (n('falloff') / 100) * 3,
+          cx: cax, cy: cay,
+          maxR: Math.max(1, Math.hypot(Math.max(cax, lw - cax), Math.max(cay, lh - cay))),
+          lw, lh,
+        });
+      }
+      if (e.type === 'magnify') {
+        const mradius = n('radius');
+        spatial.push({
+          type: 'magnify',
+          cx: lw / 2 + n('centerX'), cy: lh / 2 + n('centerY'),
+          radius: mradius, scale: Math.max(0.01, n('magnification') / 100),
+          square: Math.round(n('shape')) === 1,
+          feather: Math.max(0, Math.min(n('feather'), mradius)), lw, lh,
+        });
+      }
+      if (e.type === 'mosaic') {
+        spatial.push({
+          type: 'mosaic',
+          cols: Math.max(1, Math.min(lw, Math.round(n('horizontalBlocks')))),
+          rows: Math.max(1, Math.min(lh, Math.round(n('verticalBlocks')))),
+          sharp: effectParam(e, 'sharpColors') === true, lw, lh,
+        });
+      }
+      if (e.type === 'find-edges') {
+        spatial.push({
+          type: 'find-edges',
+          invert: effectParam(e, 'invert') !== false,
+          blend: Math.max(0, Math.min(1, n('blendWithOriginal') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'emboss') {
+        const erad = (n('angle') * Math.PI) / 180;
+        spatial.push({
+          type: 'emboss',
+          dx: Math.cos(erad) * n('relief'), dy: Math.sin(erad) * n('relief'),
+          k: n('contrast') / 100,
+          keep: Math.max(0, Math.min(1, n('blend') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'color-emboss') {
+        const cerad = (n('direction') * Math.PI) / 180;
+        spatial.push({
+          type: 'color-emboss',
+          ox: Math.round(Math.cos(cerad) * Math.max(1, n('relief'))),
+          oy: Math.round(Math.sin(cerad) * Math.max(1, n('relief'))),
+          k: Math.max(0, n('contrast')) / 100,
+          blend: Math.max(0, Math.min(1, 1 - n('blendWithOriginal') / 100)), lw, lh,
+        });
+      }
+      if (e.type === 'halftone') {
+        const hrad = (n('screenAngle') * Math.PI) / 180;
+        const [ir, ig, ib] = hexTriple(String(effectParam(e, 'inkColor') ?? '#000000'));
+        const [pr, pg, pb] = hexTriple(String(effectParam(e, 'paperColor') ?? '#ffffff'));
+        spatial.push({
+          type: 'halftone',
+          cell: Math.max(2, Math.round(n('cellSize'))),
+          ca: Math.cos(hrad), sa: Math.sin(hrad),
+          k: Math.max(0.01, n('contrast') / 100),
+          inkR: ir / 255, inkG: ig / 255, inkB: ib / 255,
+          colorize: effectParam(e, 'colorize') === true,
+          paperR: pr / 255, paperG: pg / 255, paperB: pb / 255,
+          blend: Math.max(0, Math.min(1, 1 - n('blendWithOriginal') / 100)), lw, lh,
+        });
+      }
     }
     if (e.type === 'fractal-noise') spatial.push({ type: 'fractal-noise', scale: n('scale') });
     if (e.type === 'displacement-map') {
@@ -605,6 +873,14 @@ export function extractSpatialEffects(
         ({ x: (pxX / w) * aspect, y: pxY / h });
       const from = toQ(w / 2 + n('fromX'), 0 + n('fromY'));
       const to = toQ(w / 2 + n('toX'), h / 2 + n('toY'));
+      // Migrate known-bad shipping defaults that crushed fullscreen layers into
+      // the dark comp background (looked like the whole scene went blank).
+      let ambientPct = n('ambient');
+      if (ambientPct === 15 || ambientPct === 55) ambientPct = 100;
+      let intensityPct = n('intensity');
+      if (intensityPct === 150 && (n('ambient') === 15 || n('ambient') === 55)) {
+        intensityPct = 100;
+      }
       spatial.push({
         type: 'spotlight',
         fromX: from.x, fromY: from.y,
@@ -614,12 +890,12 @@ export function extractSpatialEffects(
         // to remember which one it holds.
         coneHalfRad: (n('coneAngle') * Math.PI) / 360,
         softness: n('edgeSoftness') / 100,
-        intensity: n('intensity') / 100,
-        ambient: n('ambient') / 100,
+        intensity: intensityPct / 100,
+        ambient: ambientPct / 100,
         aspect,
         lightOnly: Math.round(n('render')) === 1,
         // Percent of the layer's height — the unit the shader works in.
-        reach: n('reach') / 100,
+        reach: Math.max(0.01, n('reach') / 100),
         color: c('lightColor', 1),
       });
     }
@@ -855,6 +1131,16 @@ export function needsShapeRaster(layer: RenderLayer): boolean {
   if (layer.strokes && layer.strokes.some((s) => s.width > 0)) return true;
   if (layer.mask && layer.mask.paths.length > 0) return true;
   if (layer.paint && layer.paint.strokes.length > 0) return true;
+  // Non-uniform per-corner radii need Canvas2D roundRect([tl,tr,br,bl]) — the
+  // GPU solid SDF is isotropic and cannot express independent corners.
+  if (
+    layer.cornerRadii
+    && !(
+      layer.cornerRadii[0] === layer.cornerRadii[1]
+      && layer.cornerRadii[1] === layer.cornerRadii[2]
+      && layer.cornerRadii[2] === layer.cornerRadii[3]
+    )
+  ) return true;
   // A shape carrying a Canvas2D-only effect is CPU-baked (content + mask +
   // full effect chain) into its `path:` texture — those effects have no GPU
   // shader form and otherwise silently no-op.
@@ -927,8 +1213,8 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         );
       } else {
         const rad = (s.rotation * Math.PI) / 180;
-        const w = (layer.width + 2 * pad) * (s.scaleX || 1);
-        const h = (layer.height + 2 * pad) * (s.scaleY || 1);
+        const w = (layer.width + 2 * pad) * affineScale(s.scaleX);
+        const h = (layer.height + 2 * pad) * affineScale(s.scaleY);
         m = Mat3.multiply(Mat3.compose(s.x, s.y, rad, w, h), Mat3.translation(so.x, so.y));
         if (parentMatrix) m = Mat3.multiply(parentMatrix, m);
       }
@@ -1083,7 +1369,7 @@ export function precompChildParent(layer: RenderLayer, parentMatrix: Mat3): Mat3
     -layer.width / 2 - (layer.anchorX ?? 0),
     -layer.height / 2 - (layer.anchorY ?? 0),
   );
-  const mPrecomp = Mat3.compose(layer.x, layer.y, rad, layer.scaleX || 1, layer.scaleY || 1);
+  const mPrecomp = Mat3.compose(layer.x, layer.y, rad, affineScale(layer.scaleX), affineScale(layer.scaleY));
   return Mat3.multiply(parentMatrix, Mat3.multiply(mPrecomp, tOrigin));
 }
 
@@ -1315,6 +1601,15 @@ function flattenLayers(
         parentOpacity * layer.opacity,
         result,
       );
+    } else if (layer.kind === 'video' && layer.frameBlend && layer.frameBlend.mode === 'pixelMotion') {
+      // Pixel Motion: ONE renderable sampling the motion-compensated
+      // in-between the texture feed computes (optical-flow warp of the two
+      // bracket frames — see rendering/pixelMotion.ts). The feed falls back to
+      // the ordinary `vfm:` video ladder when either bracket frame has not
+      // decoded yet, so the degradation is nearest-frame, never a hole.
+      const r = layerToRenderable(layer, parentMatrix, parentOpacity);
+      r.textureKey = `vfm:${layer.id}`;
+      result.push(r);
     } else if (layer.kind === 'video' && layer.frameBlend) {
       // Frame blending (Frame Mix): the two decoded frames bracketing the
       // playhead cross-dissolve — frame A full, frame B at the sub-frame
@@ -1476,6 +1771,13 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
     },
     renderables,
     hasEffects,
+    // Dancing Dissolve's re-roll: the comp FRAME INDEX, computed here where the
+    // playhead is known, so the shader needs no clock and export (which renders
+    // the same snapshot times) speckles identically to preview. Rounded, not
+    // floored — buildSnapshot's own frame derivations round, and a float time a
+    // hair under the boundary flooring to the previous frame would make one
+    // frame's speckle appear twice.
+    dissolveFrame: Math.round((snapshot.time ?? 0) * (snapshot.fps ?? 30)),
     ...(has3d ? { camera3d: snapshot.camera3d } : {}),
     ...(has3d && snapshot.lights3d && snapshot.lights3d.length > 0 ? { lights3d: snapshot.lights3d } : {}),
   };

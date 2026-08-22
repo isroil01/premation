@@ -32,6 +32,13 @@ export interface ProjectIndexRow {
   openedAt?: number;
   /** True when `bundlePath` no longer exists (moved/deleted on disk). */
   missing?: boolean;
+  /**
+   * Content hash of the project's card thumbnail in the app cache dir.
+   * The SQLite adapter has persisted this column since day one — this field
+   * is what finally lets a caller set it. Derived data, so absent is fine:
+   * the card renders its facts and no image.
+   */
+  thumbHash?: string;
 }
 
 /** A crash-recovery snapshot on disk, indexed for the boot-time "Recover?" prompt. */

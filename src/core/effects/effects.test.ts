@@ -223,6 +223,15 @@ describe('EFFECT_DEFS', () => {
     // and its Canvas2D pass retained as the reference the GPU one is diffed
     // against.
     'beam',
+    // Ported 2026-08-14 by the GPU light-family pass — they left CANVAS2D_ONLY
+    // then but never joined this classification, which is what broke the two
+    // EFFECT_DEFS assertions below.
+    'light-sweep', 'lens-flare', 'light-rays',
+    // Round six (2026-08-14): the per-pixel colour ports.
+    'vignette', 'black-and-white', 'tritone', 'photo-filter', 'threshold', 'vibrance',
+    // Waves 2-3 (2026-08-15): warps + neighbourhood passes.
+    'mirror', 'offset', 'bulge', 'twirl', 'spherize', 'kaleidoscope', 'ripple',
+    'chromatic-aberration', 'magnify', 'mosaic', 'find-edges', 'emboss', 'color-emboss', 'halftone',
   ]);
   // Temporal effects (Echo, Posterize Time) are resolved in buildSnapshot's
   // time plumbing, not as a per-layer pass. Read the REAL predicate — this was

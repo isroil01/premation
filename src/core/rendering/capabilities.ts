@@ -68,7 +68,7 @@ export function analyzeDocument(
     const isAdjustment = readNodeAdjustment(node);
     if (isAdjustment) needs.adjustmentLayers = true;
     if (readNodeMatte(node)) needs.trackMattes = true;
-    if (readNodeLayerTime(node)?.frameBlend === 'mix') needs.frameBlending = true;
+    if ((readNodeLayerTime(node)?.frameBlend ?? 'none') !== 'none') needs.frameBlending = true;
     if ((opts.motionBlurEnabled ?? true) && readNodeMotionBlur(node)) needs.motionBlur = true;
 
     const kind = readNodeKind(node);

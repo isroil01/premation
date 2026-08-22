@@ -145,9 +145,50 @@ export function imageNeedsCpuBake(
 }
 
 /**
+ * Effects whose Canvas2D pass DRAWS with canvas ops (or replaces the frame
+ * wholesale) instead of transforming a pixel buffer. The batched-ImageData
+ * fast path below must WRITE THE BATCH BACK before dispatching one of these,
+ * or they would composite over a stale canvas.
+ *
+ * Derived from `scripts/effectPortTriage.cjs --list` ("canvas ops" +
+ * "createImageData" classes) and pinned against it by
+ * `effectBakeBatch.test.ts`, so a future round cannot silently add a drawing
+ * effect that corrupts the batch. Fill and Stroke draw too; they are outside
+ * the triage population (they have GPU materials) and are listed by hand.
+ */
+const DRAWN_CANVAS_EFFECTS = new Set<string>([
+  'four-color-gradient', 'beam', 'inner-shadow', 'inner-glow', 'satin',
+  'directional-blur', 'linear-wipe', 'transform', 'checkerboard', 'grid',
+  'lens-flare', 'numbers', 'timecode', 'audio-spectrum', 'circle', 'ellipse',
+  'radio-waves', 'lightning', 'light-rays', 'light-sweep', 'audio-waveform',
+  'fill', 'stroke',
+]);
+
+/** Test seam: the drawn-effect classification, for the triage-parity guard. */
+export function drawnCanvasEffects(): ReadonlySet<string> {
+  return DRAWN_CANVAS_EFFECTS;
+}
+
+/**
  * Apply the effect chain to `oc` (a w×h content canvas, transform reset to
  * identity by the caller). `scratch` supplies a same-size working canvas for
  * the CSS-filter flush step (the caller owns pooling). Mutates `oc` in place.
+ *
+ * ── The batched-ImageData fast path ──────────────────────────────────
+ * Every CPU pixel pass used to do its own full-frame `getImageData` +
+ * `putImageData` — a GPU↔CPU sync each way, ~6–15 ms a pair at real canvas
+ * sizes. A 100-effect stack spent over a second in TRANSFERS alone (measured:
+ * 1.3 s at 512², of which the kernels were a small fraction).
+ *
+ * For the duration of the chain, `getImageData`/`putImageData` on `oc` are
+ * INTERCEPTED: the first full-frame read materialises one shared ImageData,
+ * every subsequent full-frame read returns it, and full-frame writes of that
+ * same object just mark it dirty. Consecutive pixel passes therefore run
+ * back-to-back on one buffer with zero canvas traffic. The batch is written
+ * back only when something must see the real canvas: a CSS-filter flush, a
+ * scoped-mask composite, a procedural generator, or one of the
+ * DRAWN_CANVAS_EFFECTS above. Partial-frame reads/writes flush first and pass
+ * through untouched.
  */
 export function applyEffectChain(
   oc: CanvasRenderingContext2D,
@@ -163,9 +204,44 @@ export function applyEffectChain(
   fillOpacity = 1,
   /** The layer's mask stack, for effects that carry a `maskId` scope (M6). */
   masks?: LayerMask,
+  /** Test seam: false forces the pre-batch per-effect transfer behaviour. */
+  batchPixelPasses = true,
 ): void {
   const off = oc.canvas;
   let pending: string[] = [];
+
+  // ── Batched-ImageData plumbing (see the function doc) ──
+  const origGetImageData = oc.getImageData.bind(oc);
+  const origPutImageData = oc.putImageData.bind(oc);
+  let batchImg: ImageData | null = null;
+  let batchDirty = false;
+  const flushBatch = (): void => {
+    if (batchImg && batchDirty) origPutImageData(batchImg, 0, 0);
+    batchImg = null;
+    batchDirty = false;
+  };
+  if (batchPixelPasses) {
+    (oc as { getImageData: typeof oc.getImageData }).getImageData = ((
+      sx: number, sy: number, sw: number, sh: number, settings?: ImageDataSettings,
+    ): ImageData => {
+      if (sx === 0 && sy === 0 && sw === w && sh === h && !settings) {
+        if (!batchImg) batchImg = origGetImageData(0, 0, w, h);
+        return batchImg;
+      }
+      flushBatch();
+      return settings ? origGetImageData(sx, sy, sw, sh, settings) : origGetImageData(sx, sy, sw, sh);
+    }) as typeof oc.getImageData;
+    (oc as { putImageData: typeof oc.putImageData }).putImageData = ((
+      data: ImageData, dx: number, dy: number, ...rest: number[]
+    ): void => {
+      if (data === batchImg && dx === 0 && dy === 0 && rest.length === 0) {
+        batchDirty = true;
+        return;
+      }
+      flushBatch();
+      (origPutImageData as (d: ImageData, x: number, y: number, ...r: number[]) => void)(data, dx, dy, ...rest);
+    }) as typeof oc.putImageData;
+  }
 
   // FILL OPACITY — "fade the fill, keep the styles" (Photoshop's model).
   //
@@ -221,6 +297,9 @@ export function applyEffectChain(
   }
 
   const flushCss = (): void => {
+    // The CSS pass reads the REAL canvas — land the batch first. Also the
+    // flush point every other canvas-reading step routes through.
+    flushBatch();
     if (pending.length === 0) return;
     const tmp = scratch(w, h);
     const tc = tmp.getContext('2d');
@@ -252,6 +331,7 @@ export function applyEffectChain(
    * it decides where the effect applies, never where the layer exists.
    */
   const compositeScoped = (before: HTMLCanvasElement, path: MaskPath): void => {
+    flushBatch(); // reads oc.canvas through other contexts
     const cov = scratch(w, h);
     const cc = cov.getContext('2d');
     if (!cc) return;
@@ -287,6 +367,7 @@ export function applyEffectChain(
   };
 
   const snapshot = (): HTMLCanvasElement => {
+    flushBatch(); // copies oc.canvas — the batch must be visible on it
     const c = scratch(w, h);
     const cx = c.getContext('2d');
     if (cx) {
@@ -340,6 +421,7 @@ export function applyEffectChain(
         oc.putImageData(img, 0, 0);
       } else if (isCanvas2dProcedural(e.type)) {
         flushCss();
+        flushBatch(); // generators draw/replace on the real canvas
         applyProceduralEffect(oc, w, h, e);
       } else if (hasCanvas2dImplementation(e.type)) {
         // NOT `isCanvas2dOnlyEffect`: Fill / Stroke / Sharpen / Noise have GPU
@@ -349,6 +431,9 @@ export function applyEffectChain(
         // instead of "can be drawn" made all four no-op on every layer that
         // also carried an interior style.
         flushCss();
+        // Drawing effects composite on the real canvas; pixel passes ride the
+        // intercepted getImageData/putImageData and stay in the batch.
+        if (DRAWN_CANVAS_EFFECTS.has(e.type)) flushBatch();
         applyCanvas2dEffect(oc, w, h, e);
       }
       // else: a gpuOnly non-colour effect (displacement-map, motion-tile) has
@@ -360,6 +445,16 @@ export function applyEffectChain(
   // interleave generators with pixel passes, and every generator in it must shape
   // itself from the same full-alpha silhouette. Pixel passes ignore it by
   // construction — see `withStyleSilhouette`.
-  if (silhouette) withStyleSilhouette(silhouette, runChain);
-  else runChain();
+  try {
+    if (silhouette) withStyleSilhouette(silhouette, runChain);
+    else runChain();
+  } finally {
+    // Land whatever is still batched and give the context its real methods
+    // back — the caller (and the raster cache) must see finished pixels.
+    flushBatch();
+    if (batchPixelPasses) {
+      (oc as { getImageData: typeof oc.getImageData }).getImageData = origGetImageData;
+      (oc as { putImageData: typeof oc.putImageData }).putImageData = origPutImageData;
+    }
+  }
 }

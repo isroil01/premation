@@ -2,7 +2,9 @@
  * Paint strokes — AE's Paint effect, modelled as EDITABLE VECTOR strokes stored
  * on a layer's `fx` component (like masks), not a flattened raster. Each stroke
  * is a polyline the Canvas2D backend draws over the layer's content: paint mode
- * composites colour (`source-over`), erase mode cuts holes (`destination-out`).
+ * composites colour (`source-over`), erase mode cuts holes (`destination-out`),
+ * and clone mode paints the layer's OWN content sampled at a fixed offset —
+ * the clone stamp, for raster retouch on footage and stills.
  * Points are in layer-local space (centred at 0,0), matching masks.
  *
  * This module is the pure model + a testable bounds helper; the drawing lives in
@@ -15,7 +17,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { bumpScene } from '@stores/sceneStore';
 import { clamp01 } from '@utils/lang';
 
-export type PaintMode = 'paint' | 'erase';
+export type PaintMode = 'paint' | 'erase' | 'clone';
 
 export interface PaintStroke {
   id: string;
@@ -30,6 +32,14 @@ export interface PaintStroke {
   /** 0..1 — 1 = hard edge, <1 = softer (feathered) edge. */
   hardness: number;
   mode: PaintMode;
+  /**
+   * Clone stamp only — where the stroke SAMPLES from, as a layer-local offset
+   * added to each painted point (classic clone: offset = source − first dab,
+   * fixed for the stroke's life). Colour is ignored for clone; the paint IS
+   * the layer's own content, shifted.
+   */
+  cloneOffsetX?: number;
+  cloneOffsetY?: number;
 }
 
 export interface PaintConfig {
@@ -56,7 +66,13 @@ export function normalizeStroke(raw: Partial<PaintStroke> & { points: ReadonlyAr
     size: typeof raw.size === 'number' && raw.size > 0 ? raw.size : 12,
     opacity: clamp01(typeof raw.opacity === 'number' ? raw.opacity : 1),
     hardness: clamp01(typeof raw.hardness === 'number' ? raw.hardness : 1),
-    mode: raw.mode === 'erase' ? 'erase' : 'paint',
+    mode: raw.mode === 'erase' || raw.mode === 'clone' ? raw.mode : 'paint',
+    ...(raw.mode === 'clone'
+      ? {
+          cloneOffsetX: typeof raw.cloneOffsetX === 'number' ? raw.cloneOffsetX : 0,
+          cloneOffsetY: typeof raw.cloneOffsetY === 'number' ? raw.cloneOffsetY : 0,
+        }
+      : {}),
   };
 }
 

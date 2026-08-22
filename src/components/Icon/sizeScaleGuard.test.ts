@@ -118,8 +118,15 @@ describe('the CSS icon tokens mirror the TS scale', () => {
    */
   it('--icon-size-sm/md/lg equal ICON_SIZE', () => {
     const css = readFileSync(join(SRC, 'tokens', 'spacing.css'), 'utf8');
+    // Only the BASE `:root` block mirrors the TS scale. The compact tier under
+    // `@media (max-width: 1366px)` deliberately re-declares these smaller for
+    // 13" laptops, so scanning the whole file would compare the TS scale
+    // against the override and fail on an intentional difference — and, worse,
+    // a naive last-wins scan would pass if the BASE block drifted while the
+    // compact one happened to match.
+    const base = css.slice(0, css.indexOf('@media') === -1 ? undefined : css.indexOf('@media'));
     const tokens: Record<string, number> = {};
-    for (const m of css.matchAll(/--icon-size-(sm|md|lg):\s*(\d+)px/g)) {
+    for (const m of base.matchAll(/--icon-size-(sm|md|lg):\s*(\d+)px/g)) {
       tokens[m[1]!] = Number(m[2]);
     }
     expect(tokens).toEqual({ sm: ICON_SIZE.sm, md: ICON_SIZE.md, lg: ICON_SIZE.lg });

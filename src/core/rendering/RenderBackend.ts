@@ -150,6 +150,11 @@ export interface RenderLayer {
   /** Paint strokes (AE Paint effect) drawn over the layer content in local
    *  space — paint composites colour, erase cuts holes. */
   paint?: import('@core/paint/paintStrokes').PaintConfig;
+  /**
+   * Content-Aware Fill stamp — full-frame PNG data-URL for this time, replacing
+   * the video/image pixels when present (PatchMatch bake).
+   */
+  contentAwareFillSrc?: string;
   /** Source playhead time in seconds (for video/audio/precomps with timeRemap or stretch). Defaults to current composition time if undefined. */
   sourceTime?: number;
   /** Frame blending (AE's Frame Mix) for retimed footage: cross-dissolve the
@@ -167,6 +172,10 @@ export interface RenderLayer {
     b: number;
     /** How far between them, 0..1 — the later frame's alpha. */
     weight: number;
+    /** 'mix' cross-dissolves the brackets; 'pixelMotion' warps them along
+     *  estimated optical flow first (smooth slow motion). Absent means 'mix'
+     *  — the field predates the mode, and mix is what it always did. */
+    mode?: 'mix' | 'pixelMotion';
   };
   /** Sub-frame transform samples for motion blur (accumulated by the backend).
    *  Present only when motion blur is on and the layer actually moves. */
@@ -254,7 +263,10 @@ export interface RenderLayer {
   visible: boolean;
   /** For shapes. */
   primitive?: 'rect' | 'ellipse' | 'path';
+  /** Uniform corner radius (legacy / linked mode). Prefer `cornerRadii` when set. */
   cornerRadius?: number;
+  /** Per-corner radii in TL → TR → BR → BL order (Appearance → Corners). */
+  cornerRadii?: readonly [number, number, number, number];
   /**
    * Draw as a bare quad with no SDF edge coverage.
    *
@@ -296,6 +308,10 @@ export interface RenderLayer {
   fontFamily?: string;
   /** CSS font-weight ('300'..'700'). Falls back to 600. */
   fontWeight?: string;
+  /** Variable-font wdth axis (typically 50–200). */
+  fontWidth?: number;
+  /** Variable-font slnt axis (typically −15..0). */
+  fontSlant?: number;
   /** 'normal' | 'italic'. */
   fontStyle?: string;
   /** Extra spacing between characters (px). */
@@ -351,6 +367,11 @@ export interface RenderLayer {
   effects?: ReadonlyArray<Effect>;
   /** Imported source URL (blob: or web URL) for image/video/audio layers. */
   src?: string;
+  /**
+   * Intact animated SVG: re-rasterize at `sourceTime` each frame instead of
+   * caching a single static decode.
+   */
+  liveSvgPlayback?: boolean;
   /** Referenced project asset ID. */
   assetId?: string;
   /**
@@ -376,6 +397,24 @@ export interface RenderLayer {
    * premultiplied by the time it is sampled, so there is nothing left to select.
    */
   premultipliedSource?: boolean;
+  /**
+   * Interpret Footage ▸ Fields: the field order of interlaced source video,
+   * absent for progressive (every modern file, and the previous behaviour).
+   * Consumed by the texture feed like `premultipliedSource`: the provider
+   * deinterlaces the decoded frame (single-field bob, see
+   * `rendering/deinterlace.ts`) before upload, so both GPU backends and every
+   * decode path (exact, legacy cache, element) see clean frames.
+   */
+  fieldsSource?: 'upper' | 'lower';
+  /**
+   * Interpret Footage ▸ Remove Pulldown: the 3:2 cadence phase (0–4). When
+   * present the exact decode path serves inverse-telecined progressive film
+   * frames (see `video/pulldownDetect.ts` ▸ `pulldownFrameFor`), and
+   * `fieldsSource` is absent by construction (`footageSourceOf` suppresses
+   * it). Legacy fallback paths cannot weave, so they bob instead — comb never
+   * reaches the screen either way.
+   */
+  pulldownSource?: number;
   /** Digest of the fields that determine this layer's OWN rasterized pixels
    *  (geometry + fills/strokes/text/masks + pre-DOF effects + width/height),
    *  excluding transform + compositing. Computed once in buildSnapshot (see
@@ -454,6 +493,8 @@ export interface RenderSnapshot {
   channel?: 'rgb' | 'alpha' | 'red' | 'green' | 'blue';
   /** Current playhead time in seconds. */
   time?: number;
+  /** Comp frame rate — stateful particles and other frame-stepped sims. */
+  fps?: number;
   layers: ReadonlyArray<RenderLayer>;
   /** Guide overlays drawn over the composition. */
   overlays?: RenderOverlays;
@@ -517,6 +558,10 @@ export interface RenderBackend {
    * warning next to a delivered file is not a warning anyone acts on.
    */
   lastFrameDiagnostics?(): ReadonlyArray<{ code: string; detail: string; layerId?: string }>;
+  /** Linear float RGBA of the last composed scene (EXR export). */
+  readLinearRgba?(): Float32Array | null;
+  /** Async linear readback (WebGPU). */
+  readLinearRgbaAsync?(): Promise<Float32Array | null>;
   /** Enable preview-only chrome (float shadow + transparency checkerboard).
    *  Left off for export so transparent comps yield real alpha. */
   setPreviewChrome?(on: boolean): void;
@@ -539,6 +584,8 @@ export interface RenderBackend {
    * captured frame shows whatever stale frame the element still held.
    */
   setExactMediaTiming?(on: boolean): void;
+  /** Timeline playback — plain video uses hardware decode instead of WebCodecs. */
+  setPlaybackMode?(on: boolean): void;
   /** Drain the media waits started by renders since the last call. Empty when
    *  every media layer drew its exact frame — the settle signal. */
   takeMediaWaits?(): Promise<void>[];

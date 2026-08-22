@@ -4,7 +4,25 @@
   outline: none;
   font-size: var(--font-size-sm);
   color: var(--color-text-primary);
-  padding: var(--space-1) 0;
+  padding: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  contain: strict;
+}
+
+.virtualSpacer {
+  position: relative;
+  width: 100%;
+  flex: none;
+}
+
+.virtualRow {
+  position: absolute;
+  left: 0;
+  right: 0;
+  box-sizing: border-box;
 }
 
 /**

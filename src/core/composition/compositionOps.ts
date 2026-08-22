@@ -14,6 +14,9 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { insertMedia } from '@core/scene/sceneInsert';
+import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
+import type { ImportedAsset } from '@stores/assetStore';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
@@ -58,6 +61,50 @@ export function createComposition(init: Partial<CompositionSettings> = {}): stri
   useSelectionStore.getState().clear();
   bumpScene();
   return id;
+}
+
+/**
+ * The auto-minted comp a first creation should ADOPT, or null.
+ *
+ * Adoptable means pristine (see `CompositionSettings.pristine`) AND layerless
+ * — a pristine comp the user has already drawn into is theirs by use, and
+ * configuring it out from under their content would be theft, not adoption.
+ */
+export function pristineCompToAdopt(): string | null {
+  const comps = useProjectStore.getState().comps;
+  for (const c of Object.values(comps)) {
+    if (!c.pristine) continue;
+    const node = defaultSceneGraph.getNode(c.id);
+    if (!node || flattenComposition(defaultSceneGraph, c.id).length <= 1) return c.id;
+  }
+  return null;
+}
+
+/**
+ * Create a composition — or, when the project holds only the auto-minted
+ * pristine comp, CONFIGURE THAT ONE instead of stacking a second beside it.
+ *
+ * This is what makes the start cards behave like After Effects: a fresh
+ * project has "no compositions" as far as the user can see, and the first New
+ * Composition / New Comp From Footage produces exactly one comp — theirs —
+ * not theirs plus a phantom "Main Comp" nobody asked for.
+ */
+export function createOrAdoptComposition(init: Partial<CompositionSettings> = {}): string {
+  const adoptId = pristineCompToAdopt();
+  if (!adoptId) return createComposition(init);
+
+  const actions = useProjectStore.getState().actions;
+  const name = init.name ?? 'Composition 1';
+  // `pristine: undefined` — the whole point of the call is that this comp is
+  // now the user's.
+  actions.updateComp(adoptId, { ...init, id: adoptId, name, pristine: undefined });
+  const root = defaultSceneGraph.getNode(adoptId);
+  if (root) root.name = name;
+  actions.openTab(adoptId, [adoptId], name);
+  getTimelineController().syncFromScene(adoptId);
+  useSelectionStore.getState().clear();
+  bumpScene();
+  return adoptId;
 }
 
 /** Rename a composition. The scene root carries the name the panels show. */
@@ -128,21 +175,95 @@ export function duplicateComposition(id: string): string | null {
 /**
  * Remove a composition, its layers and its tab.
  *
- * Refuses to delete the last composition — a project with no comp has nowhere
- * to put a layer, and the Scene panel would render an empty shell.
+ * Deleting the LAST composition is allowed and lands on After Effects' empty
+ * project: the engine still needs a root to exist (see
+ * `CompositionSettings.pristine`), so a fresh PRISTINE comp is minted in its
+ * place — which the whole UI reads as "no compositions yet" ("(none)" comp
+ * tab, the two start cards, nothing listed). It used to refuse instead, which
+ * made an unwanted empty comp the one thing in the project that could not be
+ * deleted.
  */
 export function deleteComposition(id: string): boolean {
   const state = useProjectStore.getState();
-  if (Object.keys(state.comps).length <= 1) return false;
   if (!state.comps[id]) return false;
+  const wasLast = Object.keys(state.comps).length <= 1;
 
   for (const tab of Object.values(state.tabs)) {
     if (tab.compositionId === id) state.actions.closeTab(tab.id);
   }
+  // Animation goes with the comp — gathered BEFORE removeNode takes the
+  // subtree, and including the root itself (comp-level tracks like timeRemap
+  // live there). Undo restores it: History snapshots scene + animation
+  // together. Without this every deleted comp left its whole cast's tracks
+  // orphaned in the document forever.
+  for (const node of flattenComposition(defaultSceneGraph, id)) {
+    defaultAnimation.clearNode(node.id);
+  }
   defaultSceneGraph.removeNode(id);
   state.actions.removeComp(id);
+
+  if (wasLast) {
+    // Same scaffolding a fresh document carries. Deliberately NO tab opened:
+    // an open tab would name the comp in the strip, and the state being
+    // presented is "no compositions", not "a new one you didn't ask for".
+    const newId = useProjectStore.getState().actions.createComp({ name: 'Composition 1', pristine: true });
+    defaultSceneGraph.addNode(compRootNode(newId, 'Composition 1'));
+  }
 
   useSelectionStore.getState().clear();
   bumpScene();
   return true;
+}
+
+/**
+ * Create a composition FROM a footage asset — sized, timed and paced to the
+ * clip — then place the clip in it at full frame.
+ *
+ * This is AE's canonical first move (drag footage onto the comp icon), and the
+ * reason it is an operation rather than "make a comp, then add the clip" is
+ * that the by-hand version silently drifts: the comp keeps the default 1080p
+ * while the phone clip is 2160×3840, the duration stays 10s under a 7s clip,
+ * and every export ships three seconds of trailing background. The comp should
+ * BE the clip.
+ *
+ * What each setting takes and what it honestly cannot:
+ *
+ *  • SIZE is the stored pixels × pixel aspect ratio — an anamorphic source is
+ *    1024 wide on screen even though it stores 720, and the comp must be the
+ *    on-screen size (the same PAR rule `insertMedia` applies to the layer).
+ *    Audio and unprobed files keep the current default size.
+ *  • DURATION is the clip's, when known.
+ *  • FPS uses the PROBED rate and otherwise keeps the default. It must never
+ *    guess from the browser: nothing in a web context reports a <video>'s real
+ *    rate (see `ImportedAsset.metadata.fps`), and a comp invented at 30 for a
+ *    23.976 clip would judder every 5th frame while looking configured.
+ *
+ * The footage lands via `insertMedia` — the same routing every import takes
+ * (PAR, SVG paths, sequences, audio) — into the just-created comp, which is
+ * active because `createComposition` opened its tab. Contain-fit into a comp
+ * that IS the footage size is exact, so the layer sits at full frame.
+ */
+export async function createCompositionFromFootage(asset: ImportedAsset): Promise<string> {
+  const meta = asset.metadata ?? {};
+  const par = asset.interpret?.par ?? 1;
+  // Fallbacks are the APP defaults, not the active comp's settings. Inheriting
+  // the active comp would make the result depend on which tab happened to be
+  // focused — an unprobed clip imported while a 23.976 comp is open would mint
+  // a 23.976 comp, and the same clip an hour later a 30fps one.
+  const defaults = DEFAULT_COMPOSITION;
+
+  const width = meta.width && meta.width > 0 ? Math.round(meta.width * par) : defaults.width;
+  const height = meta.height && meta.height > 0 ? meta.height : defaults.height;
+  const durationSeconds = meta.duration && meta.duration > 0 ? meta.duration : defaults.durationSeconds;
+  const fps = meta.fps && meta.fps > 0 ? meta.fps : defaults.fps;
+
+  // The clip's name, sans extension — "shot_04.mp4" names a file; the comp is
+  // "shot_04". AE does the same.
+  const name = asset.name.replace(/\.[a-z0-9]+$/i, '') || asset.name;
+
+  // Adopt the fresh project's pristine comp rather than leaving a phantom
+  // "Composition 1" beside the one the footage just defined.
+  const id = createOrAdoptComposition({ name, width, height, durationSeconds, fps });
+  await insertMedia(asset);
+  return id;
 }

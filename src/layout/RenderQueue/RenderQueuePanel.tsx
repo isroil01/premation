@@ -30,6 +30,8 @@ const FORMAT_LABEL: Record<OutputFormat, string> = {
   webm: 'WebM VP9',
   mov: 'ProRes 4444',
   gif: 'Animated GIF',
+  hdr10: 'HDR10 MP4',
+  hlg: 'HLG MP4',
   'png-sequence': 'PNG Sequence',
   'jpg-sequence': 'JPEG Sequence',
 };

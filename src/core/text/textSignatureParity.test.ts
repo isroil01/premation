@@ -99,7 +99,7 @@ describe('TextSpec → raster cache signature parity', () => {
     // meaningful while measuring nothing.
     expect(fields).toContain('text');
     expect(fields).toContain('glyphs');
-    expect(fields.length).toBe(22);
+    expect(fields.length).toBe(24);
   });
 
   it.each(

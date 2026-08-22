@@ -28,6 +28,7 @@ import type {
   TextureHandle,
   SamplerHandle,
 } from '@motion/renderer';
+import { displayReferredUploadFormat } from '@motion/renderer';
 import type { RenderLayer } from './RenderBackend';
 import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
 
@@ -40,6 +41,7 @@ import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake, applyEffectChain } from '@core/effects/effectBake';
 import { scaleEffectLengths, type Effect } from '@core/effects/effects';
+import { deinterlaceData, deinterlaceInto, type FieldOrder } from './deinterlace';
 import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
@@ -285,15 +287,35 @@ export interface ImageBakeSpec {
 interface ImageEntry {
   kind: 'image';
   src: string;
+  /**
+   * The DECODE identity — `src` without the bake suffix, so it carries the fill
+   * colour, the alpha mode and the media time but not the effect chain.
+   *
+   * Kept separately because `unbaked` may only be reused across a change that
+   * cannot alter the decoded pixels, and `src` cannot answer that: it has the
+   * bake appended, so an exact compare rejects every legitimate re-bake, while
+   * a prefix compare accepts `blob:x` against `blob:x#premul`. Recorded at
+   * `setImage` time, so it is also immune to `premultipliedFile` being
+   * rewritten once a bake lands.
+   */
+  fileId: string;
   /** Effect chain to bake into the bitmap (see imageNeedsCpuBake). */
   bake?: ImageBakeSpec;
   /** The FILE's alpha mode, carried to the upload. See the alpha invariant. */
   premultipliedFile?: boolean;
   texture: TextureHandle | null;
   bitmap: ImageBitmap | null;
+  /**
+   * Decoded FILE pixels, before any CPU bake. Kept so a bake-spec change
+   * (tweaking Inner Glow, a layer style, …) can re-bake without re-decoding
+   * and without throwing away the texture already on screen.
+   */
+  unbaked: ImageBitmap | null;
   width: number;
   height: number;
   ready: boolean;
+  /** Linear float EXR (or similar) — sample without sRGB decode. */
+  sampleLinear?: boolean;
 }
 
 /** What a text layer needs rasterized: string + full font + colour + box size.
@@ -315,6 +337,10 @@ export interface TextSpec {
   continuousRaster?: boolean;
   fontFamily?: string;
   fontWeight?: string;
+  /** Variable-font width axis (wdth), typically 50–200. */
+  fontWidth?: number;
+  /** Variable-font slant axis (slnt), typically −15..0. */
+  fontSlant?: number;
   fontStyle?: string;
   /** 'left' | 'center' | 'right' | 'justify' — horizontal anchor in the box. */
   align?: string;
@@ -363,6 +389,22 @@ export function textCssFont(spec: Pick<TextSpec, 'fontSize' | 'fontFamily' | 'fo
   const weight = spec.fontWeight ?? '600';
   const family = spec.fontFamily ?? 'Inter';
   return `${style}${weight} ${spec.fontSize}px "${family}", Inter, system-ui, sans-serif`;
+}
+
+/** CSS font-variation-settings for variable axes (wght/wdth/slnt). */
+export function textFontVariationSettings(
+  spec: Pick<TextSpec, 'fontWeight' | 'fontWidth' | 'fontSlant'>,
+): string | undefined {
+  const parts: string[] = [];
+  const w = spec.fontWeight !== undefined ? Number(spec.fontWeight) : NaN;
+  if (Number.isFinite(w)) parts.push(`'wght' ${w}`);
+  if (spec.fontWidth !== undefined && Number.isFinite(spec.fontWidth)) {
+    parts.push(`'wdth' ${spec.fontWidth}`);
+  }
+  if (spec.fontSlant !== undefined && Number.isFinite(spec.fontSlant)) {
+    parts.push(`'slnt' ${spec.fontSlant}`);
+  }
+  return parts.length ? parts.join(', ') : undefined;
 }
 
 interface TextEntry {
@@ -437,6 +479,8 @@ interface VideoEntry {
   /** Last time we ASKED the element to seek to (not where it landed). Breaks the
    *  seek → render → seek feedback loop; see setVideo. */
   requestedTime: number | null;
+  /** Previous source time during hardware playback — detects loop wraps. */
+  lastPlaybackTime?: number;
 }
 
 interface ParticleEntry {
@@ -470,15 +514,31 @@ const SEEK_EPSILON = 0.05;
 const FIRST_DECODE_NUDGE = 0.0005;
 
 export class AppTextureProvider implements TextureProvider {
+  /** Shared scratch surface for field separation — sequential per-call use,
+   *  resized by `deinterlaceInto`, so one canvas serves every video key. */
+  private readonly fieldsWork: HTMLCanvasElement = document.createElement('canvas');
   /** Fired when an async decode finishes and a texture becomes ready. */
   onChange: (() => void) | null = null;
 
   private exactMediaTiming = false;
+  /** Timeline is playing — setVideoPlayback keeps `<video>` running instead of per-frame seeks. */
+  private playbackMode = false;
   private mediaWaits: Promise<void>[] = [];
 
   setExactMediaTiming(on: boolean): void {
     this.exactMediaTiming = on;
     if (!on) this.mediaWaits = [];
+  }
+
+  setPlaybackMode(on: boolean): void {
+    if (this.playbackMode === on) return;
+    this.playbackMode = on;
+    if (!on) {
+      for (const entry of this.videoEntries.values()) {
+        entry.video.pause();
+        entry.lastPlaybackTime = undefined;
+      }
+    }
   }
 
   takeMediaWaits(): Promise<void>[] {
@@ -512,6 +572,13 @@ export class AppTextureProvider implements TextureProvider {
   private readonly particleEntries = new Map<string, ParticleEntry>();
   private readonly loader: ImageLoader;
   private readonly videoFactory: VideoFactory;
+  /** Reused scratch canvases for CPU effect bakes — allocating one per CSS
+   *  flush inside a five-effect stack was a major source of main-thread freezes.
+   *  Two slots so silhouette + flushCss never alias the same surface. */
+  private bakeWork: HTMLCanvasElement | null = null;
+  private bakeScratchA: HTMLCanvasElement | null = null;
+  private bakeScratchB: HTMLCanvasElement | null = null;
+  private bakeScratchToggle = 0;
   /** One-shot init for the transparent placeholder — see `placeholder()`. */
   private hasInitTransparent = false;
   /**
@@ -620,17 +687,50 @@ export class AppTextureProvider implements TextureProvider {
    *   Interpret Footage would keep serving the bitmap uploaded under the old
    *   setting and the inspector would appear to do nothing.
    */
-  setImage(key: string, src: string, fillColor?: string, premultipliedFile?: boolean, bake?: ImageBakeSpec): void {
+  setImage(key: string, src: string, fillColor?: string, premultipliedFile?: boolean, bake?: ImageBakeSpec, mediaTime?: number): void {
     // The bake belongs in the key: it changes the TEXTURE, so two layers on the
     // same file with different styles must not share one upload, and editing a
     // style has to invalidate what is already there.
-    const bakeSig = bake ? `#bake=${JSON.stringify(bake)}` : '';
-    const fullKey = (fillColor ? `${src}#fill=${fillColor}` : src) + (premultipliedFile ? '#premul' : '') + bakeSig;
+    // The chosen bake RESOLUTION tier belongs in the key: zooming in must
+    // re-bake sharper, and without this the first (possibly low-res) bake
+    // would be served forever. Quantized so panning/zooming does not thrash.
+    const bakeSig = bake ? `#bake=${JSON.stringify(bake)}#rq=${this.bakeResolutionTier()}` : '';
+    // Live SVG scrubbing: quantize to centiseconds so adjacent frames share a
+    // decode when the playhead barely moves, while still invalidating on scrub.
+    const timeSig = mediaTime !== undefined && Number.isFinite(mediaTime)
+      ? `#t=${Math.round(mediaTime * 100) / 100}`
+      : '';
+    const fileId = (fillColor ? `${src}#fill=${fillColor}` : src) + (premultipliedFile ? '#premul' : '') + timeSig;
+    const fullKey = fileId + bakeSig;
     const existing = this.entries.get(key);
     if (existing && existing.src === fullKey) return; // already loading or loaded
-    const entry: ImageEntry = { kind: 'image', src: fullKey, bake, texture: null, bitmap: null, width: 1, height: 1, ready: false, premultipliedFile };
+    // Keep the last good texture on screen while the new bake/decode runs.
+    // Dropping it for a 1×1 transparent placeholder is the "eye blink": every
+    // Inner Glow / Stroke / Fill tweak replaced the entry with ready:false,
+    // so get() drew nothing until the async bake landed.
+    // Compared on the DECODE identity, not on `src`: the alpha mode is baked
+    // into the decode (`decodeOptions` multiplies a straight file and passes a
+    // premultiplied one through), so carrying `unbaked` across a flip would
+    // serve pixels decoded under the old setting forever — Interpret Footage ▸
+    // Alpha would appear to do nothing. A `startsWith(src)` test cannot see
+    // that, and misses the premul→straight direction outright.
+    const sameFile = !!existing && existing.fileId === fileId;
+    const entry: ImageEntry = {
+      kind: 'image',
+      src: fullKey,
+      fileId,
+      bake,
+      texture: existing?.texture ?? null,
+      bitmap: existing?.bitmap ?? null,
+      unbaked: sameFile && !timeSig ? existing?.unbaked ?? null : null,
+      width: existing?.width ?? 1,
+      height: existing?.height ?? 1,
+      ready: !!(existing?.texture),
+      premultipliedFile,
+      sampleLinear: false,
+    };
     this.entries.set(key, entry);
-    const decoding = this.decode(key, src, fillColor, entry);
+    const decoding = this.decode(key, src, fillColor, entry, mediaTime);
     // Under exact media timing (offline render / the golden-frame harness) the
     // caller renders, awaits the waits, then re-renders. Video registered here
     // but image decode did NOT, so a freshly-created backend — which is what
@@ -639,6 +739,71 @@ export class AppTextureProvider implements TextureProvider {
     // in a one-shot render there is no later.
     if (this.exactMediaTiming) this.mediaWaits.push(decoding);
     void decoding;
+  }
+
+  /**
+   * Upload a linear float RGBA image (EXR working media) as rgba32float.
+   * Falls back to the 8-bit `setImage` path when the GPU lacks float textures.
+   * RGB is premultiplied by A to honour the renderer alpha invariant.
+   */
+  setFloatImage(
+    key: string,
+    img: { width: number; height: number; rgba: Float32Array },
+    opts?: { fallbackSrc?: string; fillColor?: string; premultipliedFile?: boolean },
+  ): void {
+    if (!this.resources.float32Textures) {
+      if (opts?.fallbackSrc) {
+        this.setImage(key, opts.fallbackSrc, opts.fillColor, opts.premultipliedFile);
+      }
+      return;
+    }
+    const sig = `float:${img.width}x${img.height}:${img.rgba.length}`;
+    const existing = this.entries.get(key);
+    if (existing && existing.src === sig && existing.ready && existing.sampleLinear) return;
+
+    const n = img.width * img.height;
+    const premul = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      const a = img.rgba[i * 4 + 3] ?? 1;
+      premul[i * 4] = (img.rgba[i * 4] ?? 0) * a;
+      premul[i * 4 + 1] = (img.rgba[i * 4 + 1] ?? 0) * a;
+      premul[i * 4 + 2] = (img.rgba[i * 4 + 2] ?? 0) * a;
+      premul[i * 4 + 3] = a;
+    }
+
+    const texId = `img:${sig}`;
+    const tex = this.resources.texture(
+      texId,
+      {
+        label: `float:${key}`,
+        width: img.width,
+        height: img.height,
+        format: 'rgba32float',
+        displayReferred: false,
+      },
+      /* pinned */ true,
+    );
+    this.resources.writeTexture(tex, {
+      type: 'buffer',
+      data: premul,
+      width: img.width,
+      height: img.height,
+      format: 'rgba32float',
+    });
+
+    this.entries.set(key, {
+      kind: 'image',
+      src: sig,
+      fileId: sig,
+      texture: tex,
+      bitmap: null,
+      unbaked: null,
+      width: img.width,
+      height: img.height,
+      ready: true,
+      sampleLinear: true,
+    });
+    this.onChange?.();
   }
 
   /**
@@ -656,6 +821,7 @@ export class AppTextureProvider implements TextureProvider {
     const signature =
       `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}` +
       `|${spec.fontFamily ?? ''}|${spec.fontWeight ?? ''}|${spec.fontStyle ?? ''}` +
+      `|wd${spec.fontWidth ?? ''}|sl${spec.fontSlant ?? ''}` +
       `|${spec.align ?? ''}|${spec.letterSpacing ?? 0}|${spec.lineHeight ?? ''}` +
       `|${spec.paragraphSpacing ?? 0}|${spec.strokeOverFill ? 'sof' : ''}` +
       `|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}${fillSig}` +
@@ -684,7 +850,8 @@ export class AppTextureProvider implements TextureProvider {
       label: `raster:${signature}`,
       width: result.texture.width,
       height: result.texture.height,
-      format: 'rgba8unorm',
+      format: displayReferredUploadFormat(),
+      displayReferred: true,
     });
     this.textEntries.set(key, { kind: 'text', signature, texture });
   }
@@ -716,7 +883,7 @@ export class AppTextureProvider implements TextureProvider {
     const canvas = rasterizeLight(light);
     const tex = this.resources.texture(
       `light:${key}:${signature}`,
-      { label: `light:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `light:${key}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -740,7 +907,7 @@ export class AppTextureProvider implements TextureProvider {
     const canvas = rasterizeGradient(paint, w, h);
     const tex = this.resources.texture(
       `gradient:${key}:${signature}`,
-      { label: `gradient:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `gradient:${key}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
@@ -879,7 +1046,7 @@ export class AppTextureProvider implements TextureProvider {
       ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
       : '';
     const tier = this.tierFor(effectiveScale, layer.continuousRaster, layer.width ?? 1, layer.height ?? 1);
-    const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
+      const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|cr:${layer.cornerRadii ? layer.cornerRadii.join(',') : ''}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
 
     const pad = rasterPadding(layer);
     const result = this.rasterizer.rasterize({
@@ -897,7 +1064,8 @@ export class AppTextureProvider implements TextureProvider {
       label: `raster:${signature}`,
       width: result.texture.width,
       height: result.texture.height,
-      format: 'rgba8unorm',
+      format: displayReferredUploadFormat(),
+      displayReferred: true,
     });
     this.pathEntries.set(key, { kind: 'path', signature, texture });
   }
@@ -909,7 +1077,7 @@ export class AppTextureProvider implements TextureProvider {
    * every frame, so there is no signature cache). Returns the placeholder via
    * get until the element has decoded a frame.
    */
-  setVideo(key: string, src: string, timeSec: number): void {
+  setVideo(key: string, src: string, timeSec: number, fields?: FieldOrder): void {
     let entry = this.videoEntries.get(key);
     if (!entry || entry.src !== src) {
       // Swapping the source must release the outgoing element and its texture —
@@ -964,18 +1132,86 @@ export class AppTextureProvider implements TextureProvider {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'seeked'));
       }
     }
+    this.uploadVideoTexture(entry, key, fields);
+  }
+
+  /**
+   * Hardware playback path: keep the `<video>` element decoding forward and
+   * sample its current frame. Seeks only on start, loop wrap, or large drift —
+   * NOT every compositor frame (which cannot keep up on 1080p/4K footage).
+   */
+  setVideoPlayback(key: string, src: string, timeSec: number, fields?: FieldOrder, bucket = 1): void {
+    let entry = this.videoEntries.get(key);
+    if (!entry || entry.src !== src) {
+      if (entry) this.releaseVideoEntry(entry);
+      const video = this.videoFactory(src);
+      const onSeeked = (): void => this.onChange?.();
+      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null, hasSeeked: false };
+      this.videoEntries.set(key, entry);
+      video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
+      video.addEventListener('seeked', onSeeked);
+    }
+    const v = entry.video;
+    if (v.readyState < HAVE_CURRENT_DATA) {
+      if (!entry.hasSeeked) {
+        entry.hasSeeked = true;
+        entry.requestedTime = timeSec;
+        v.currentTime = timeSec;
+      }
+      return;
+    }
+    const prev = entry.lastPlaybackTime;
+    entry.lastPlaybackTime = timeSec;
+    const loopWrap = prev !== undefined && timeSec + 0.05 < prev;
+    const largeJump = prev !== undefined && Math.abs(timeSec - prev) > 0.35;
+    const drift = Math.abs(v.currentTime - timeSec);
+    if (!entry.hasSeeked || loopWrap || largeJump || drift > 0.1) {
+      entry.hasSeeked = true;
+      entry.requestedTime = timeSec;
+      v.currentTime = timeSec;
+      void v.play().catch(() => undefined);
+    } else if (v.paused) {
+      void v.play().catch(() => undefined);
+    }
+    this.uploadVideoTexture(entry, key, fields, bucket);
+  }
+
+  /** Create/resize the GPU texture and upload the element's current frame. */
+  private uploadVideoTexture(entry: VideoEntry, key: string, fields?: FieldOrder, bucket = 1): void {
+    const v = entry.video;
     const w = v.videoWidth || 1;
     const h = v.videoHeight || 1;
-    if (entry.texture === null || entry.w !== w || entry.h !== h) {
-      if (entry.texture) this.resources.freeTexture(`vid:${key}:${entry.w}x${entry.h}`);
+    const bw = bucket >= 1 || fields ? w : Math.max(1, Math.round(w * bucket));
+    const bh = bucket >= 1 || fields ? h : Math.max(1, Math.round(h * bucket));
+    const poolKey = `vid:${key}:${bw}x${bh}`;
+    if (entry.texture === null || entry.w !== bw || entry.h !== bh) {
+      if (entry.texture && entry.poolKey) this.resources.freeTexture(entry.poolKey);
       entry.texture = this.resources.texture(
-        `vid:${key}:${w}x${h}`,
-        { label: `video:${key}`, width: w, height: h, format: 'rgba8unorm', externalCopy: true },
+        poolKey,
+        { label: `video:${key}`, width: bw, height: bh, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
         /* pinned */ true,
       );
-      entry.w = w;
-      entry.h = h;
-      entry.poolKey = `vid:${key}:${w}x${h}`;
+      entry.w = bw;
+      entry.h = bh;
+      entry.poolKey = poolKey;
+    }
+    if (fields) {
+      const clean = deinterlaceInto(this.fieldsWork, v, w, h, fields);
+      if (clean) {
+        this.resources.writeTexture(entry.texture, { type: 'canvas', canvas: clean });
+        return;
+      }
+    }
+    if (bw !== w || bh !== h) {
+      const canvas = this.ensureCanvas('work', bw, bh);
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(v, 0, 0, bw, bh);
+        this.resources.writeTexture(entry.texture, { type: 'canvas', canvas });
+        return;
+      }
     }
     this.resources.writeTexture(entry.texture, { type: 'video', video: v });
   }
@@ -987,8 +1223,10 @@ export class AppTextureProvider implements TextureProvider {
    * `setFrame`. Signature includes source time so paused scrubbing caches;
    * playback pays per unique frame only when styles need the bake.
    */
-  setVideoBaked(key: string, src: string, timeSec: number, bake: ImageBakeSpec): void {
+  setVideoBaked(key: string, src: string, timeSec: number, bake: ImageBakeSpec, fields?: FieldOrder): void {
     // Ensure the element is seeked via the normal path (creates entry, seeks).
+    // Fields is NOT forwarded: the raw element upload is only the placeholder
+    // this bake replaces, and the deinterlace happens below, before effects.
     this.setVideo(key, src, timeSec);
     const entry = this.videoEntries.get(key);
     if (!entry || entry.video.readyState < HAVE_CURRENT_DATA || !entry.hasSeeked) return;
@@ -997,22 +1235,31 @@ export class AppTextureProvider implements TextureProvider {
     const h = v.videoHeight || 0;
     if (!(w > 0) || !(h > 0)) return;
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
+      const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.filter = 'none';
       ctx.clearRect(0, 0, w, h);
       ctx.drawImage(v, 0, 0);
+      if (fields) {
+        // Before the effect chain: effects sampling a combed frame would smear
+        // the comb teeth into their output.
+        const image = ctx.getImageData(0, 0, w, h);
+        deinterlaceData(image.data, w, h, fields);
+        ctx.putImageData(image, 0, 0);
+      }
       const k = bake.width > 0 ? w / bake.width : 1;
       if (bake.mask && bake.mask.paths.length > 0) {
-        const matte = document.createElement('canvas');
-        matte.width = w;
-        matte.height = h;
+        const matte = this.nextBakeScratch(w, h);
         const mc = matte.getContext('2d');
         if (mc) {
           const ky = bake.height > 0 ? h / bake.height : 1;
+          mc.setTransform(1, 0, 0, 1, 0, 0);
+          mc.globalCompositeOperation = 'source-over';
+          mc.clearRect(0, 0, w, h);
           mc.setTransform(k, 0, 0, ky, w / 2, h / 2);
           paintMaskMatte(mc, bake.mask, bake.width, bake.height);
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1026,20 +1273,22 @@ export class AppTextureProvider implements TextureProvider {
         w,
         h,
         scaleEffectLengths(bake.effects, k),
-        (sw, sh) => {
-          const c = document.createElement('canvas');
-          c.width = sw;
-          c.height = sh;
-          return c;
-        },
+        (sw, sh) => this.nextBakeScratch(sw, sh),
         bake.fillOpacity ?? 1,
+        bake.mask,
       );
       const fxSig = bake.effects.map((e) => `${e.type}:${e.enabled !== false ? 1 : 0}:${JSON.stringify(e.params ?? {})}`).join('|');
       const maskSig = bake.mask ? `:m${bake.mask.paths.length}` : '';
       // Frame entries win over video entries in get(), so the baked canvas is
       // what the compositor samples while the video element stays alive for the
-      // next seek.
-      this.setFrame(key, canvas, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}`);
+      // next seek. Copy out of the pooled work surface before upload.
+      const out = document.createElement('canvas');
+      out.width = w;
+      out.height = h;
+      const oc = out.getContext('2d');
+      if (!oc) return;
+      oc.drawImage(canvas, 0, 0);
+      this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}:f${fields ?? ''}`);
     } catch {
       /* leave the raw video upload from setVideo in place */
     }
@@ -1050,10 +1299,18 @@ export class AppTextureProvider implements TextureProvider {
    * for Frame Mix). The signature dedupes uploads — pass the source time so a
    * new frame re-uploads and a repeat render doesn't.
    */
-  setFrame(key: string, canvas: HTMLCanvasElement, signature: string): void {
+  setFrame(key: string, canvas: HTMLCanvasElement, signature: string, fields?: FieldOrder): void {
     if (canvas.width < 1 || canvas.height < 1) return;
     const existing = this.frameEntries.get(key);
     if (existing && existing.signature === signature) return;
+    if (fields) {
+      // Interpret Footage ▸ Fields: rebuild the discarded field before the
+      // frame reaches the GPU. On failure (no 2d context) the raw frame
+      // uploads — combing, not a missing layer. The caller's signature already
+      // carries the field order, so toggling it re-uploads.
+      const clean = deinterlaceInto(this.fieldsWork, canvas, canvas.width, canvas.height, fields);
+      if (clean) canvas = clean;
+    }
     // ONE texture per key, rewritten in place — the setVideo/setParticles pattern.
     //
     // This used to include `signature` (the source TIME) in the pool key, so every
@@ -1068,12 +1325,26 @@ export class AppTextureProvider implements TextureProvider {
       if (existing?.poolKey) this.resources.freeTexture(existing.poolKey);
       tex = this.resources.texture(
         poolKey,
-        { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: 'rgba8unorm', externalCopy: true },
+        { label: `frame:${key}`, width: canvas.width, height: canvas.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
         /* pinned */ true,
       );
     }
     this.resources.writeTexture(tex, { type: 'canvas', canvas });
     this.frameEntries.set(key, { signature, texture: tex, poolKey });
+  }
+
+  /**
+   * Free the frame entry under `key`, if any. Frame entries SHADOW video
+   * entries in `getTexture` (they must — an exact decoded frame beats a
+   * seeked element), so a caller that switches a key from `setFrame` back to
+   * `setVideo` has to release the frame first or the stale exact frame keeps
+   * winning the lookup forever.
+   */
+  releaseFrame(key: string): void {
+    const existing = this.frameEntries.get(key);
+    if (!existing) return;
+    this.resources.freeTexture(existing.poolKey);
+    this.frameEntries.delete(key);
   }
 
   /**
@@ -1092,6 +1363,7 @@ export class AppTextureProvider implements TextureProvider {
     fieldW: number,
     fieldH: number,
     transformScale = 1,
+    fps = 30,
   ): void {
     const w = Math.max(1, Math.round(fieldW));
     const h = Math.max(1, Math.round(fieldH));
@@ -1099,7 +1371,7 @@ export class AppTextureProvider implements TextureProvider {
     const requestedScale = dpr * Math.max(1, transformScale) * (this.rasterScale || 1);
     const scale = Math.max(0.5, Math.min(requestedScale, PARTICLE_TEX_MAX / Math.max(w, h)));
     const time = Math.max(0, timeSec);
-    const signature = particleFieldSignature(cfg, time, w, h, scale);
+    const signature = `${particleFieldSignature(cfg, time, w, h, scale)}|fps:${fps}`;
     let entry = this.particleEntries.get(key);
     if (!entry) {
       entry = { kind: 'particles', signature: '', canvas: document.createElement('canvas'), texture: null, w: 0, h: 0 };
@@ -1115,12 +1387,12 @@ export class AppTextureProvider implements TextureProvider {
     }
     const ctx = entry.canvas.getContext('2d');
     if (!ctx) return;
-    drawParticleField(ctx, cfg, time, w, h, scale);
+    drawParticleField(ctx, cfg, time, w, h, scale, { fps, cacheKey: key });
 
     if (entry.texture === null || entry.w !== pxW || entry.h !== pxH) {
       entry.texture = this.resources.texture(
         `particles:${key}:${pxW}x${pxH}`,
-        { label: `particles:${key}`, width: pxW, height: pxH, format: 'rgba8unorm', externalCopy: true },
+        { label: `particles:${key}`, width: pxW, height: pxH, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
         /* pinned */ true,
       );
       entry.w = pxW;
@@ -1262,23 +1534,75 @@ export class AppTextureProvider implements TextureProvider {
    * Returns null if anything is unavailable, leaving the untouched bitmap in
    * place rather than dropping the layer.
    */
+  private ensureCanvas(slot: 'work' | 'a' | 'b', w: number, h: number): HTMLCanvasElement {
+    const cur = slot === 'work' ? this.bakeWork : slot === 'a' ? this.bakeScratchA : this.bakeScratchB;
+    if (cur && cur.width === w && cur.height === h) return cur;
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    if (slot === 'work') this.bakeWork = c;
+    else if (slot === 'a') this.bakeScratchA = c;
+    else this.bakeScratchB = c;
+    return c;
+  }
+
+  /** Alternating scratch so consecutive acquire calls never share a canvas. */
+  private nextBakeScratch(w: number, h: number): HTMLCanvasElement {
+    const slot = (this.bakeScratchToggle++ & 1) === 0 ? 'a' : 'b';
+    return this.ensureCanvas(slot, w, h);
+  }
+
+  /**
+   * Device-px-per-comp-unit quantized to a small ladder. This decides how many
+   * pixels an image BAKE is worth: the baked texture is only ever sampled at
+   * the layer's on-screen size, so baking a 4K source shown at 400 px through
+   * a 30-effect chain at native resolution was 8 M pixels × 30 passes of work
+   * whose extra detail no one could see. Quantized so zoom/pan does not
+   * re-bake every frame; keyed into the cache signature so crossing a tier
+   * re-bakes at the new resolution.
+   */
+  private bakeResolutionTier(): number {
+    const s = this.rasterScale || 1;
+    if (s <= 0.28) return 0.25;
+    if (s <= 0.55) return 0.5;
+    if (s <= 1.05) return 1;
+    if (s <= 1.55) return 1.5;
+    if (s <= 2.1) return 2;
+    if (s <= 3.1) return 3;
+    return 4;
+  }
+
   private async bakeImageBitmap(
     bitmap: ImageBitmap,
     bake: ImageBakeSpec,
     premultipliedFile: boolean | undefined,
   ): Promise<ImageBitmap | null> {
-    const w = bitmap.width;
-    const h = bitmap.height;
-    if (!(w > 0) || !(h > 0)) return null;
+    const srcW = bitmap.width;
+    const srcH = bitmap.height;
+    if (!(srcW > 0) || !(srcH > 0)) return null;
+    // Bake at the resolution the layer is DISPLAYED at (plus headroom for
+    // resampling quality), never above the source. Effect pixel-lengths are
+    // already normalised through `scaleEffectLengths(effects, k)`, so the
+    // chain is resolution-independent by construction — only sharpness beyond
+    // what the screen can show is given up, and zooming in re-bakes sharper
+    // via the tier in the cache key.
+    const BAKE_HEADROOM = 1.5;
+    const needW = bake.width > 0 ? bake.width * this.bakeResolutionTier() * BAKE_HEADROOM : srcW;
+    const factor = Math.min(1, Math.max(0.05, needW / srcW));
+    const w = Math.max(1, Math.round(srcW * factor));
+    const h = Math.max(1, Math.round(srcH * factor));
     try {
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
+      const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      ctx.filter = 'none';
       ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(bitmap, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bitmap, 0, 0, w, h);
       const k = bake.width > 0 ? w / bake.width : 1;
       // MASK FIRST, matching the vector path. An interior style is generated
       // from the layer's silhouette, and for a masked layer that silhouette is
@@ -1287,12 +1611,13 @@ export class AppTextureProvider implements TextureProvider {
       // the layer's centred space scaled to the bitmap's resolution, since the
       // two are rarely the same size.
       if (bake.mask && bake.mask.paths.length > 0) {
-        const matte = document.createElement('canvas');
-        matte.width = w;
-        matte.height = h;
+        const matte = this.nextBakeScratch(w, h);
         const mc = matte.getContext('2d');
         if (mc) {
           const ky = bake.height > 0 ? h / bake.height : 1;
+          mc.setTransform(1, 0, 0, 1, 0, 0);
+          mc.globalCompositeOperation = 'source-over';
+          mc.clearRect(0, 0, w, h);
           mc.setTransform(k, 0, 0, ky, w / 2, h / 2);
           paintMaskMatte(mc, bake.mask, bake.width, bake.height);
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1306,28 +1631,57 @@ export class AppTextureProvider implements TextureProvider {
         w,
         h,
         scaleEffectLengths(bake.effects, k),
-        (sw, sh) => {
-          const c = document.createElement('canvas');
-          c.width = sw;
-          c.height = sh;
-          return c;
-        },
+        (sw, sh) => this.nextBakeScratch(sw, sh),
         bake.fillOpacity ?? 1,
+        bake.mask,
       );
       void premultipliedFile;
       // A canvas is straight alpha; 'premultiply' brings it into the invariant.
-      return await createImageBitmap(canvas, decodeOptions(false));
+      // Copy into a dedicated canvas so the pooled work surface can be reused
+      // without racing createImageBitmap's read of these pixels.
+      const out = document.createElement('canvas');
+      out.width = w;
+      out.height = h;
+      const oc = out.getContext('2d');
+      if (!oc) return null;
+      oc.drawImage(canvas, 0, 0);
+      return await createImageBitmap(out, decodeOptions(false));
     } catch {
       return null;
     }
   }
 
-  private async decode(key: string, src: string, fillColor: string | undefined, entry: ImageEntry): Promise<void> {
+  private async decode(
+    key: string,
+    src: string,
+    fillColor: string | undefined,
+    entry: ImageEntry,
+    mediaTime?: number,
+  ): Promise<void> {
     let bitmap: ImageBitmap;
-    try {
-      bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
-    } catch {
-      return; // broken source — leave the placeholder in place
+    if (entry.unbaked) {
+      bitmap = entry.unbaked;
+    } else {
+      try {
+        if (
+          mediaTime !== undefined
+          && Number.isFinite(mediaTime)
+          && (/^data:image\/svg\+xml/i.test(src) || /\.svg(\?|#|$)/i.test(src))
+        ) {
+          const { rasterizeSvgAtTime } = await import('../svg/liveSvgRaster');
+          // Interactive playback rasters at 1024 px and caches frames; exact
+          // media timing (export / harness) pays for the full 2048 px raster.
+          bitmap = await rasterizeSvgAtTime(src, mediaTime, { exportQuality: this.exactMediaTiming });
+        } else {
+          bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
+        }
+      } catch {
+        return; // broken source — leave the placeholder in place
+      }
+      // A newer setImage for this key (different src) supersedes this decode.
+      if (this.entries.get(key) !== entry) return;
+      // Live SVG frames must NOT park as unbaked — each time needs a fresh draw.
+      if (mediaTime === undefined) entry.unbaked = bitmap;
     }
     // A newer setImage for this key (different src) supersedes this decode.
     if (this.entries.get(key) !== entry) return;
@@ -1358,7 +1712,7 @@ export class AppTextureProvider implements TextureProvider {
     const texId = `img:${entry.src}`;
     const tex = this.resources.texture(
       texId,
-      { label: `image:${src}`, width: entry.width, height: entry.height, format: 'rgba8unorm', externalCopy: true },
+      { label: `image:${src}`, width: entry.width, height: entry.height, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
       /* pinned */ true,
     );
     // `decodeOptions` has already brought the bytes into the invariant, so the
@@ -1477,8 +1831,11 @@ export class AppTextureProvider implements TextureProvider {
       return { texture: video.texture, sampler: this.sampler(), ready: true };
     }
     const entry = this.entries.get(key);
-    if (entry && entry.ready && entry.texture) {
-      return { texture: entry.texture, sampler: this.sampler(), ready: true };
+    // A stale texture (rebake in flight) still draws — `ready` says whether
+    // THIS bake has landed, but flashing transparent while it hasn't is worse
+    // than showing last frame's pixels for a tick.
+    if (entry && entry.texture) {
+      return { texture: entry.texture, sampler: this.sampler(), ready: entry.ready, sampleLinear: entry.sampleLinear };
     }
     // Not-yet-decoded image/video: show the placeholder box so the layer still
     // composites (parity with Canvas2D's loading placeholder).
@@ -1492,7 +1849,9 @@ export class AppTextureProvider implements TextureProvider {
     // one omitted mode/feather/opacity/expansion, so editing any of them
     // couldn't even trigger a re-rasterize (on top of the paint ignoring them).
     const ptsSig = layer.mask.paths.map((path) =>
-      path.points.map((p) => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|') +
+      // `p.feather` is the per-vertex width override — variable feather redraws
+      // the whole matte, so it must invalidate like any coordinate.
+      path.points.map((p) => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY},${p.feather ?? ''}`).join('|') +
       `|inv:${path.inverted}|m:${path.mode}|f:${path.feather}|o:${path.opacity ?? 1}|e:${path.expansion ?? 0}|c:${path.closed}`,
     ).join('||');
     const signature = `${layer.width}x${layer.height}|mask:${ptsSig}`;
@@ -1515,7 +1874,8 @@ export class AppTextureProvider implements TextureProvider {
       label: `raster:${signature}`,
       width: result.texture.width,
       height: result.texture.height,
-      format: 'rgba8unorm',
+      format: displayReferredUploadFormat(),
+      displayReferred: true,
     });
     this.maskEntries.set(key, { kind: 'mask', signature, texture });
   }

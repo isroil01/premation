@@ -39,19 +39,22 @@ export function audibleWindow(
   rangeStart: number,
   rangeEnd: number,
 ): { when: number; offset: number; duration: number } | null {
-  const clipLen = Math.max(0, l.outSec - l.inSec);
-  if (clipLen <= 0) return null;
+  const rate = Math.max(0.01, l.playbackRate ?? 1);
+  // Bar length on the timeline (wall seconds). Source consumed = barLen × rate.
+  const barLen = Math.max(0, l.outSec - l.inSec);
+  if (barLen <= 0) return null;
   const clipStart = l.startSec;
-  const clipEnd = l.startSec + clipLen;
+  const clipEnd = l.startSec + barLen;
 
   const overlapStart = Math.max(clipStart, rangeStart);
   const overlapEnd = Math.min(clipEnd, rangeEnd);
   if (overlapEnd <= overlapStart) return null;
 
+  const wallDur = overlapEnd - overlapStart;
   return {
     when: overlapStart - rangeStart, // position on the export timeline
-    offset: l.inSec + (overlapStart - clipStart), // read position in the buffer
-    duration: overlapEnd - overlapStart,
+    offset: l.inSec + (overlapStart - clipStart) * rate, // read position in the buffer
+    duration: wallDur * rate, // BUFFER seconds to play at `rate`
   };
 }
 
@@ -164,16 +167,15 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
     const buffer = audioEngine.decodedBuffer(l.assetId);
     if (!buffer) continue; // decode failed; skip rather than fail the whole mix
     const source = ctx.createBufferSource();
-    // Backwards is a buffer transform, applied before the graph exists — the
-    // same decision `startVoice` makes, through the same two helpers.
-    const reversed = hasBackwards(l.effects);
+    // Layer-time reverse OR the Backwards effect — same decision as startVoice.
+    const reversed = l.retimeReverse === true || hasBackwards(l.effects);
     source.buffer = reversed ? reverseBuffer(ctx, buffer) : buffer;
+    const rate = Math.max(0.01, l.playbackRate ?? 1);
+    if (source.playbackRate) source.playbackRate.value = rate;
     const gain = ctx.createGain();
-    // `win.offset` is a position in the SOURCE buffer, so the comp time this
-    // window begins at is startSec + (offset - inSec) — the same conversion
-    // startVoice does when resuming mid-fade. Needed here before the chain,
-    // because keyframed effect parameters are scheduled from it.
-    const compStart = l.startSec + (win.offset - l.inSec);
+    // `win.offset` is a position in the SOURCE buffer; wall start = invert rate.
+    const compStart = l.startSec + (win.offset - l.inSec) / rate;
+    const wallDur = win.duration / rate;
     // The SAME builder the live engine uses, on the offline context. Both take
     // a `BaseAudioContext` precisely so this call cannot diverge from that one,
     // and both hand it the voice window so an animated parameter is a curve
@@ -181,7 +183,7 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
     const chain = connectAudioEffects(ctx, source, l.effects, {
       nodeId: l.nodeId,
       startCompSec: compStart,
-      durationSec: win.duration,
+      durationSec: wallDur,
       whenCtx: win.when,
     });
     chain.node.connect(gain).connect(ctx.destination);
@@ -194,7 +196,7 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
     //
     // (`compStart` is computed above, because the effect chain schedules its
     // own curves from the same window.)
-    const ramp = buildParamRamp(l.nodeId, l.levelDb, compStart, win.duration, {
+    const ramp = buildParamRamp(l.nodeId, l.levelDb, compStart, wallDur, {
       animated: l.levelAnimated === true,
     });
     applyRamp(gain.gain, ramp, win.when);
@@ -216,7 +218,7 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
       */
       for (const s of chain.sources) {
         s.start(win.when);
-        s.stop(win.when + win.duration);
+        s.stop(win.when + wallDur);
       }
       voices++;
     } catch {

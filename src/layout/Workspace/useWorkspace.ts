@@ -55,8 +55,17 @@ import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { bumpScene } from '@stores/sceneStore';
+import { useOnionSkinStore } from '@stores/onionSkinStore';
+import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
+import { memoizedSceneContentHash } from '@core/rendering/sceneContentHash';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { addPaintStroke, type PaintMode } from '@core/paint/paintStrokes';
+import { getNodeLayerTime, updateNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
+import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
+import { assetIdOf } from '@core/source/sourceInfo';
+import { sourceDisplaySize } from '@core/tracking/trackerSource';
+import { useTrackerStore } from '@stores/trackerStore';
+import { useAssetStore } from '@stores/assetStore';
 import { compToLayerLocal, isPaintableKind, localBrushSize } from '@core/paint/paintCoords';
 import { usePaintStore } from '@stores/paintStore';
 import { useInfoStore } from '@stores/infoStore';
@@ -141,6 +150,8 @@ export interface UseWorkspaceArgs {
   overlayCanvasRef: React.RefObject<HTMLCanvasElement | null>;
   /** RAM-preview blit layer (optional — the aux viewport has none). */
   cacheCanvasRef?: React.RefObject<HTMLCanvasElement | null>;
+  /** Onion-skin ghost layer (optional, same reason). */
+  onionCanvasRef?: React.RefObject<HTMLCanvasElement | null>;
   stageRef: React.RefObject<HTMLElement | null>;
   sceneRev: number;
   time: number;
@@ -149,7 +160,7 @@ export interface UseWorkspaceArgs {
 }
 
 export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderError: string | null } {
-  const { contentCanvasRef, overlayCanvasRef, cacheCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
+  const { contentCanvasRef, overlayCanvasRef, cacheCanvasRef, onionCanvasRef, stageRef, sceneRev, time, focus, focusKey } = args;
 
   const backendRef = useRef<RenderBackend | null>(null);
   const dprRef = useRef(1);
@@ -296,9 +307,37 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     backendRef.current = backend;
 
     // AnimationChanged revision — part of the cache key so a keyframe edit
-    // during a playing loop invalidates every cached frame.
+    // during a playing loop invalidates every cached frame. Media decode
+    // completions (video frames landing, texture uploads) also emit
+    // AnimationChanged but must NOT bump this — doing so cleared the RAM
+    // preview cache on every decoded frame and playback could never warm up.
     let animRev = 0;
+    /** Bumped when the playhead loops backward so stale inexact video pixels
+     *  cached on the first pass are not blitted on the second. */
+    let playbackLoopRev = 0;
+    let lastPlaybackFrame = -1;
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
+
+    const isMediaDecodeRepaint = (nodeId?: string): boolean => {
+      if (!nodeId) return false;
+      if (nodeId === '__texture__') return true;
+      return nodeId.startsWith('blob:') || nodeId.startsWith('motion-blob:');
+    };
+
+    const onionPainter = createOnionSkinPainter({
+      content: () => contentCanvasRef?.current ?? null,
+      target: () => onionCanvasRef?.current ?? null,
+      settings: () => useOnionSkinStore.getState(),
+      // The comp's own frame range. Ghosts outside it are dropped rather than
+      // clamped, so the first frame does not wear a stack of identical ghosts.
+      bounds: () => {
+        const c = compRef.current;
+        const f = c.fps || 60;
+        const start = c.startFrame ?? 0;
+        return { min: start, max: start + Math.round((c.durationSeconds || 0) * f) };
+      },
+      visibleClass: workspaceStyles.onionCanvasVisible ?? 'onionCanvasVisible',
+    });
 
     const paintChrome = (): void => {
       paintOverlay(overlay, controller.ws.overlay(), dprRef.current, guideDragRef.current, controller, paintDragRef.current?.screen ?? null, timeRef.current, creationDragRef.current, paintDragRef.current?.mode ?? 'paint');
@@ -322,30 +361,52 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const ws = useWorkspaceStore.getState();
       const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : null;
       const playing = tab?.playing === true;
+      b.setPlaybackMode?.(playing);
       const fps = compRef.current.fps || 60;
       const frame = Math.round(timeRef.current * fps);
       if (playing) {
-        // Everything that changes pixels goes in the key; a change clears all.
-        // Built from scalars rather than JSON.stringify — this runs every frame
-        // while playing, including on the cache-hit path below.
-        const view = controller.getView();
-        const ov = overlaysRef.current;
-        const mb = motionBlurRef.current;
-        const roiK = useGuidesStore.getState().roi;
-        viewportFrameCache.setKey(
-          [
-            sceneRevRef.current, animRev, focusKeyRef.current,
-            compRef.current.id, compRef.current.width, compRef.current.height, fps,
-            camera3dModeRef.current, draft3dRef.current ? 1 : 0,
-            useRenderQualityStore.getState().resolution,
-            view.scale, view.offsetX, view.offsetY,
-            ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridSpacing, ov.gridSubdivisions, ov.gridStyle, ov.gridColor, ov.proportionalGrid ? 1 : 0, ov.proportionalColumns, ov.proportionalRows, ov.safeArea ? 1 : 0,
-            mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
-            roiK ? `${roiK.x},${roiK.y},${roiK.width},${roiK.height}` : '-',
-          ].join(':'),
-          content.width,
-          content.height,
-        );
+        if (lastPlaybackFrame >= 0 && frame < lastPlaybackFrame) playbackLoopRev += 1;
+        lastPlaybackFrame = frame;
+      }
+      // Everything that changes pixels goes in the key; a change clears the RAM
+      // cache wholesale. Built from scalars rather than JSON.stringify — this
+      // runs every frame while playing, including on the cache-hit path below.
+      //
+      // Computed unconditionally rather than inside `if (playing)` because the
+      // ONION SKINS memoize on it too, and they only ever run while PAUSED —
+      // leaving it in the playing branch would have left them with no way to
+      // tell an edit from a mouse move.
+      const view = controller.getView();
+      const ov = overlaysRef.current;
+      const mb = motionBlurRef.current;
+      const roiK = useGuidesStore.getState().roi;
+      // The scene's CONTENT, not its revision counter.
+      //
+      // A counter answers "did anything change?" and nothing else, and that
+      // cost in two places: an UNDO bumped the rev and threw away a cache whose
+      // pixels were now identical to the ones it had just evicted, and a
+      // counter that resets to 0 every launch cannot identify a scene across a
+      // restart — which is why the disk tier still purges on open.
+      //
+      // Memoized ON those counters, so it costs one scene walk per EDIT rather
+      // than one per frame; the counters keep doing the O(1) job they are
+      // actually good at.
+      const contentKey = memoizedSceneContentHash(
+        defaultSceneGraph, defaultAnimation, sceneRevRef.current, animRev,
+      );
+      const invalidationKey = [
+        contentKey, focusKeyRef.current,
+        compRef.current.id, compRef.current.width, compRef.current.height, fps,
+        playbackLoopRev,
+        camera3dModeRef.current, draft3dRef.current ? 1 : 0,
+        useRenderQualityStore.getState().resolution,
+        view.scale, view.offsetX, view.offsetY,
+        ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridSpacing, ov.gridSubdivisions, ov.gridStyle, ov.gridColor, ov.proportionalGrid ? 1 : 0, ov.proportionalColumns, ov.proportionalRows, ov.safeArea ? 1 : 0,
+        mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
+        roiK ? `${roiK.x},${roiK.y},${roiK.width},${roiK.height}` : '-',
+      ].join(':');
+      if (playing) {
+        viewportFrameCache.setKey(invalidationKey, content.width, content.height);
         const hit = viewportFrameCache.get(frame);
         const cacheCanvas = cacheCanvasRef?.current;
         if (hit && cacheCanvas) {
@@ -371,37 +432,57 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Anything that renders for real must reveal the live canvas again.
       cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
 
-      b.renderFrame({
-        ...buildSnapshot(
-          defaultSceneGraph,
-          defaultAnimation,
-          timeRef.current,
-          focusRef.current,
-          overlaysRef.current,
-          controller.getView(),
-          motionBlurRef.current,
-          // rootId scopes the render to the ACTIVE composition's subtree. Without
-          // it, buildSnapshot flattens every root and draws all comps stacked on
-          // top of each other — and the preview (which DOES pass rootId) then
-          // showed a different picture than the editor. Both scope the same now.
-          {
-            ...compRef.current,
-            rootId: compRef.current.id,
-            compSizeOf,
-            // Custom views resolve to a pre-built override camera; ortho /
-            // active pass straight through (resolveViewCameraInput reads the
-            // live store, so the closure never freezes a stale view).
-            ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
-            draft3d: draft3dRef.current,
-            useProxies: useProxiesRef.current,
-          },
-        ),
-        // The only producer of `snapshot.roi`. Read live from the store so the
-        // region takes effect on the very next frame after the menu toggles it.
-        roi: useGuidesStore.getState().roi ?? undefined,
-        // Ortho / custom views must not be cropped to the comp rect.
-        viewIsActiveCamera: camera3dModeRef.current === 'active',
-      });
+      // `ghost` renders the same scene with a TRANSPARENT background, the same
+      // way a precomp does, so onion skins layer over each other and over the
+      // live frame instead of each one painting an opaque plate over the last.
+      const renderAt = (t: number, ghost = false): void => {
+        b.renderFrame({
+          ...buildSnapshot(
+            defaultSceneGraph,
+            defaultAnimation,
+            t,
+            focusRef.current,
+            overlaysRef.current,
+            controller.getView(),
+            motionBlurRef.current,
+            // rootId scopes the render to the ACTIVE composition's subtree. Without
+            // it, buildSnapshot flattens every root and draws all comps stacked on
+            // top of each other — and the preview (which DOES pass rootId) then
+            // showed a different picture than the editor. Both scope the same now.
+            {
+              ...compRef.current,
+              rootId: compRef.current.id,
+              compSizeOf,
+              // Custom views resolve to a pre-built override camera; ortho /
+              // active pass straight through (resolveViewCameraInput reads the
+              // live store, so the closure never freezes a stale view).
+              ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
+              draft3d: draft3dRef.current,
+              useProxies: useProxiesRef.current,
+              ...(ghost ? { transparent: true, backgroundPaint: undefined } : {}),
+            },
+          ),
+          // The only producer of `snapshot.roi`. Read live from the store so the
+          // region takes effect on the very next frame after the menu toggles it.
+          roi: useGuidesStore.getState().roi ?? undefined,
+          // Ortho / custom views must not be cropped to the comp rect.
+          viewIsActiveCamera: camera3dModeRef.current === 'active',
+        });
+      };
+
+      // ── Onion skins ────────────────────────────────────────────────
+      //
+      // Each ghost costs a FULL comp render, so this is gated three ways: off
+      // by default, never while playing, and memoized on a signature that moves
+      // only when the ghosts would actually differ (playhead, settings, edit,
+      // view). A hover or a selection change must not re-render the set.
+      //
+      // Ghosts are rendered BEFORE the live frame because every render
+      // overwrites the same content canvas — the live frame has to be the last
+      // thing in it when this function returns.
+      onionPainter.paint(renderAt, frame, fps, playing, invalidationKey);
+
+      renderAt(timeRef.current);
 
       // Offer the freshly rendered frame to the RAM preview. Copying FROM a
       // WebGL canvas into a 2D one is allowed (the reverse is not), and it must
@@ -503,9 +584,36 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       }
     });
 
+    // Onion-skin settings are read off the store INSIDE render(), so changing
+    // one has to ask for a repaint or nothing happens until something else
+    // does — the toggle would flip, the ghosts would not appear, and the
+    // feature would read as broken. (It did, before this subscription.)
+    let lastOnion = useOnionSkinStore.getState();
+    const onionSub = useOnionSkinStore.subscribe((s) => {
+      if (
+        s.enabled !== lastOnion.enabled || s.before !== lastOnion.before
+        || s.after !== lastOnion.after || s.step !== lastOnion.step
+        || s.opacity !== lastOnion.opacity || s.colorize !== lastOnion.colorize
+      ) {
+        lastOnion = s;
+        controller.requestRender();
+      }
+    });
+
     // Content also depends on the animation engine (keyframe edits, playback).
-    const animSub = getEventBus().on('AnimationChanged', () => {
-      animRev++; // invalidates the frame cache key
+    const animSub = getEventBus().on('AnimationChanged', (payload) => {
+      if (!isMediaDecodeRepaint(payload?.nodeId)) animRev++;
+      // During playback the playhead pump already re-renders every frame;
+      // decode-landing repaints on top of that were a render storm.
+      const tabPlaying = useWorkspaceStore.getState().activeTabId
+        ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.playing
+        : false;
+      if (!isMediaDecodeRepaint(payload?.nodeId) || !tabPlaying) {
+        controller.requestRender();
+      }
+    });
+
+    const nodeSub = getEventBus().on('NodeUpdated', () => {
       controller.requestRender();
     });
 
@@ -518,6 +626,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (playing === wasPlaying) return;
       wasPlaying = playing;
       if (!playing) {
+        lastPlaybackFrame = -1;
         cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
         controller.requestRender();
       }
@@ -535,7 +644,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       window.removeEventListener('resize', sizeAll);
       ro.disconnect();
       qualitySub();
+      onionSub();
       animSub.dispose();
+      nodeSub.dispose();
       playSub();
       // Don't leave a mount's worth of frames pinned in RAM.
       viewportFrameCache.clear();
@@ -956,11 +1067,31 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // with a checkbox someone remembered to tick" — its whole identity is
         // that it erases, so it must not be able to lay down colour because a
         // shared setting happened to be on `paint` when it started.
+        const dragMode = erasing ? 'erase' : usePaintStore.getState().mode;
+        if (dragMode === 'clone') {
+          // Clone stamp aiming: Alt-click SETS the source and lays no paint —
+          // the classic gesture. A stroke without an aimed source has nothing
+          // to sample, so it refuses with the reason instead of painting
+          // nothing silently.
+          if (e.altKey) {
+            usePaintStore.getState().set({ cloneSource: { x: cp.x, y: cp.y } });
+            useUIStore.getState().notify({ level: 'info', message: 'Clone source set.', durationMs: 1400 });
+            return;
+          }
+          if (!usePaintStore.getState().cloneSource) {
+            useUIStore.getState().notify({
+              level: 'info',
+              message: 'Alt-click to set the clone source first.',
+              durationMs: 2600,
+            });
+            return;
+          }
+        }
         paintDragRef.current = {
           nodeId: node.id,
           comp: [cp],
           screen: [local(e)],
-          mode: erasing ? 'erase' : usePaintStore.getState().mode,
+          mode: dragMode,
         };
         try {
           overlay.setPointerCapture(e.pointerId);
@@ -1165,8 +1296,17 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         if (node) {
           const s = usePaintStore.getState();
           const points = pd.comp.map((cp) => compToLayerLocal(node, cp));
+          // Clone offset: source − first dab, converted to layer-local like the
+          // points themselves so a transformed layer samples the right texels.
+          const cloneOffset = (() => {
+            if (pd.mode !== 'clone' || !s.cloneSource || pd.comp.length === 0) return null;
+            const src = compToLayerLocal(node, { x: s.cloneSource.x, y: s.cloneSource.y });
+            const first = points[0]!;
+            return { x: src.x - first.x, y: src.y - first.y };
+          })();
           addPaintStroke(pd.nodeId, {
             points,
+            ...(cloneOffset ? { cloneOffsetX: cloneOffset.x, cloneOffsetY: cloneOffset.y } : {}),
             // Size + colour are shared with the freehand brush (Tool Options bar).
             // Size is a comp-pixel diameter → convert to the layer's local units
             // so a scaled-up layer doesn't turn one stroke into a giant blob.
@@ -1394,12 +1534,110 @@ function labelColorCanvasMenuItems(targetId: string): ContextMenuItem[] {
   ];
 }
 
+/**
+ * The Video submenu — the footage verbs, gathered where the footage IS.
+ *
+ * Every one of these already existed, spread across the Effects panel's Time
+ * controls, the Inspector's Track Motion section and the Assets panel's
+ * right-click. Users reported reaching for them on the LAYER and finding
+ * nothing; a right-click on the clip is where an editor's muscle memory goes.
+ * The submenu routes to the same single implementations — nothing here is a
+ * second copy of a behaviour.
+ */
+function videoContextMenuItems(id: string): ContextMenuItem {
+  const time = getNodeLayerTime(id);
+  const playhead = (() => {
+    const ws = useWorkspaceStore.getState();
+    return (ws.activeTabId ? ws.tabs[ws.activeTabId]?.time : 0) ?? 0;
+  })();
+  const speed = (label: string, stretch: number): ContextMenuItem => ({
+    id: `spd-${stretch}`,
+    label,
+    icon: time.stretch === stretch ? 'check' : undefined,
+    onSelect: () => updateNodeLayerTime(id, { stretch }),
+  });
+  const blend = (label: string, mode: FrameBlend): ContextMenuItem => ({
+    id: `fb-${mode}`,
+    label,
+    icon: time.frameBlend === mode ? 'check' : undefined,
+    onSelect: () => updateNodeLayerTime(id, { frameBlend: mode }),
+  });
+  return {
+    id: 'video',
+    label: 'Video',
+    children: [
+      // Speed is the USER's word; stretch is the model's (200% stretch = half
+      // speed). The labels speak speed so nobody does the reciprocal in their
+      // head mid-edit.
+      { id: 'speed', label: 'Speed', children: [
+        speed('25% (4× slower)', 400),
+        speed('50% (2× slower)', 200),
+        speed('100% (normal)', 100),
+        speed('200% (2× faster)', 50),
+        speed('400% (4× faster)', 25),
+      ] },
+      { id: 'reverse', label: time.reverse ? 'Un-reverse' : 'Reverse', onSelect: () => updateNodeLayerTime(id, { reverse: !time.reverse }) },
+      {
+        id: 'freeze',
+        label: time.freeze ? 'Un-freeze Frame' : 'Freeze Frame at Playhead',
+        onSelect: () => updateNodeLayerTime(id, time.freeze
+          ? { freeze: false }
+          : { freeze: true, freezeTime: playhead }),
+      },
+      { id: 'fb', label: 'Frame Blending', children: [
+        blend('Off', 'none'),
+        blend('Frame Mix', 'mix'),
+        blend('Pixel Motion (smooth slow-mo)', 'pixelMotion'),
+      ] },
+      { id: 'sep-v1', separator: true },
+      {
+        id: 'stab',
+        label: 'Stabilize (smooth)…',
+        onSelect: () => {
+          const src = sourceDisplaySize(id);
+          useTrackerStore.getState().setMode('smooth', src?.width ?? 0, src?.height ?? 0);
+          useUIStore.getState().notify({
+            level: 'info',
+            message: 'Smooth Stabilize armed — open Inspector ▸ Track Motion and press Track.',
+            durationMs: 4000,
+          });
+        },
+      },
+      {
+        id: 'track',
+        label: 'Track Motion…',
+        onSelect: () => {
+          const src = sourceDisplaySize(id);
+          useTrackerStore.getState().setMode('follow', src?.width ?? 0, src?.height ?? 0);
+          useUIStore.getState().notify({
+            level: 'info',
+            message: 'Tracker armed — drag the point in the viewport, then Track in Inspector ▸ Track Motion.',
+            durationMs: 4000,
+          });
+        },
+      },
+      { id: 'sep-v2', separator: true },
+      {
+        id: 'interpret',
+        label: 'Interpret Footage…',
+        onSelect: () => {
+          const assetId = assetIdOf(defaultSceneGraph.getNode(id)!);
+          const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
+          if (asset) openInterpretFootage(asset);
+          else useUIStore.getState().notify({ level: 'info', message: 'This layer has no importable source to interpret.', durationMs: 2600 });
+        },
+      },
+    ],
+  };
+}
+
 function nodeContextMenuItems(id: string): ContextMenuItem[] {
   const node = defaultSceneGraph.getNode(id);
   const hidden = node?.visible === false;
   const locked = (node as { locked?: boolean } | undefined)?.locked === true;
   const solo = (node as { solo?: boolean } | undefined)?.solo === true;
   const isGroup = node ? readNodeKind(node) === 'group' : false;
+  const isVideo = node ? readNodeKind(node) === 'video' : false;
   const toggleVisible = (): void => {
     const n = defaultSceneGraph.getNode(id);
     if (!n) return;
@@ -1439,6 +1677,8 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
       { id: 'kf-op', label: 'Opacity', onSelect: () => addKeyframesAtPlayhead(id, 'Opacity', ['opacity']) },
       { id: 'kf-all', label: 'All Transform', onSelect: () => addKeyframesAtPlayhead(id, 'Transform', ['x', 'y', 'scaleX', 'scaleY', 'rotation', 'opacity']) },
     ] },
+    // Footage verbs on the footage itself — see videoContextMenuItems.
+    ...(isVideo ? [videoContextMenuItems(id), { id: 'sep-vid', separator: true } as ContextMenuItem] : []),
     { id: 'sep1', separator: true },
     { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleVisible },
     { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked() },

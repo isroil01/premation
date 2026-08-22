@@ -29,12 +29,17 @@ import {
   saveCurrentAsPreset,
   exportPresets,
   importPresets,
+  importPresetObjects,
   countUserPresets,
   USER_PRESET_FOLDER,
+  PRESET_BUNDLE_FORMAT,
   type AnimationPreset,
+  type PresetImportResult,
 } from '@core/animation/animationPresets';
 import { downloadBlob } from '@core/export/exportManager';
 import { hasTextComponent } from '@core/text/textAnimators';
+import { api, isAuthenticated } from '@core/api/client';
+import { cloudProjectsEnabled } from '@core/config/edition';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
@@ -185,8 +190,24 @@ export function MotionPresetsPanel(): JSX.Element {
     if (ok) {
       setSaveName('');
       setSaving(false);
+      void syncPresetToCloud(name);
     }
     bumpScene();
+  };
+
+  const syncPresetToCloud = async (name: string): Promise<void> => {
+    if (!cloudProjectsEnabled() || !isAuthenticated()) return;
+    const preset = listPresets().find((p) => p.name === name && !p.builtin);
+    if (!preset) return;
+    try {
+      await api.publishAnimationTemplate({ name, animationData: preset });
+    } catch {
+      notify({
+        level: 'warning',
+        message: `Saved locally, but could not sync “${name}” to the cloud`,
+        durationMs: 2800,
+      });
+    }
   };
 
   const beginSave = (): void => {
@@ -212,15 +233,15 @@ export function MotionPresetsPanel(): JSX.Element {
     });
   };
 
-  const doImport = async (file: File): Promise<void> => {
-    const r = importPresets(await file.text());
+  /** Shared outcome report for both import paths (file and cloud). Both halves
+   *  are reported: an import that replaced six presets and said only "imported
+   *  6" reads as additive, and the user finds out it was not when a preset they
+   *  had is gone. */
+  const reportImport = (r: PresetImportResult): void => {
     if (r.error) {
       notify({ level: 'error', message: r.error, durationMs: 4000 });
       return;
     }
-    // Both halves are reported. An import that replaced six presets and said
-    // only "imported 6" reads as additive, and the user finds out it was not
-    // when a preset they had is gone.
     const parts: string[] = [];
     if (r.added.length) parts.push(`added ${r.added.length}`);
     if (r.replaced.length) parts.push(`replaced ${r.replaced.length}`);
@@ -231,6 +252,40 @@ export function MotionPresetsPanel(): JSX.Element {
       durationMs: r.rejected ? 4000 : 2500,
     });
     bumpScene();
+  };
+
+  const doImport = async (file: File): Promise<void> => {
+    reportImport(importPresets(await file.text()));
+  };
+
+  /**
+   * Pull the user's cloud animation library (`/v1/animations`) into the local
+   * preset store. The other half of `syncPresetToCloud`: saves push, this
+   * pulls — including presets an n8n workflow published with an API key.
+   *
+   * A record's `animationData` is either a single preset (what the editor
+   * publishes) or a whole `premation-preset-bundle` (what an external tool may
+   * upload); both shapes funnel into the same validated merge as file import.
+   */
+  const doCloudPull = async (): Promise<void> => {
+    try {
+      const page = await api.listAnimationTemplates({ limit: 100 });
+      if (!page.items.length) {
+        notify({ level: 'info', message: 'No presets in your cloud library yet', durationMs: 2500 });
+        return;
+      }
+      const records = await Promise.all(page.items.map((s) => api.getAnimationTemplate(s.id)));
+      const entries = records.flatMap((rec) => {
+        const data = rec.animationData as { format?: string; presets?: unknown[] } | null;
+        if (data && typeof data === 'object' && data.format === PRESET_BUNDLE_FORMAT) {
+          return Array.isArray(data.presets) ? data.presets : [];
+        }
+        return [rec.animationData];
+      });
+      reportImport(importPresetObjects(entries));
+    } catch {
+      notify({ level: 'error', message: 'Could not reach your cloud preset library', durationMs: 3500 });
+    }
   };
 
   const sortItems: DropdownItem[] = [
@@ -267,6 +322,17 @@ export function MotionPresetsPanel(): JSX.Element {
       icon: 'upload',
       onSelect: () => fileRef.current?.click(),
     },
+    // The pull half of cloud sync, shown only where the push half runs (same
+    // gate as syncPresetToCloud) — otherwise it is a button that can only fail.
+    ...(cloudProjectsEnabled() && isAuthenticated()
+      ? [{
+          type: 'item' as const,
+          id: 'cloud-pull',
+          label: 'Sync from Cloud',
+          icon: 'refresh' as IconName,
+          onSelect: () => void doCloudPull(),
+        }]
+      : []),
   ];
 
   const searching = !!search.trim();

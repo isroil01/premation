@@ -50,6 +50,23 @@ export const TEXTURED_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** RT copy of `TEXTURED_MATERIAL` — skips the sRGB upload decode. */
+export const TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED_MATERIAL,
+  shader: 'textured-linear',
+};
+
+/** Final scene-color → surface blit (optional linear→sRGB encode). */
+export const SCENE_BLIT_MATERIAL: MaterialDescriptor = {
+  shader: 'scene-blit',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 /** Built-in material: masked textured quad. Uniform + texture + sampler + mask texture. */
 export const MASKED_TEXTURED_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured',
@@ -60,6 +77,11 @@ export const MASKED_TEXTURED_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: 3, type: 'texture', stages: ['fragment'] },
   ],
+};
+
+export const MASKED_TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...MASKED_TEXTURED_MATERIAL,
+  shader: 'masked-textured-linear',
 };
 
 /** Built-in material: textured quad with a colour LUT (Levels/Curves/Posterize).
@@ -73,6 +95,11 @@ export const LUT_TEXTURED_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: 3, type: 'texture', stages: ['fragment'] },
   ],
+};
+
+export const LUT_TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...LUT_TEXTURED_MATERIAL,
+  shader: 'lut-textured-linear',
 };
 
 /** Built-in material: track-matte combine (matted layer + matte source texture). */
@@ -219,6 +246,28 @@ export const SPHERE_MATERIAL = perspectiveMaterial('sphere');
 /** Same one-texture binding shape; only the uniform block differs. */
 export const ARITHMETIC_MATERIAL = perspectiveMaterial('arithmetic');
 export const CYLINDER_MATERIAL = perspectiveMaterial('cylinder');
+// Round-six per-pixel colour ports — same binding shape again.
+export const VIGNETTE_MATERIAL = perspectiveMaterial('vignette');
+export const BLACK_AND_WHITE_MATERIAL = perspectiveMaterial('black-and-white');
+export const TRITONE_MATERIAL = perspectiveMaterial('tritone');
+export const PHOTO_FILTER_MATERIAL = perspectiveMaterial('photo-filter');
+export const THRESHOLD_MATERIAL = perspectiveMaterial('threshold');
+export const VIBRANCE_MATERIAL = perspectiveMaterial('vibrance');
+// Round-six waves 2–3 (fxRoundSix.ts) — one-texture binding shape throughout.
+export const MIRROR_MATERIAL = perspectiveMaterial('mirror');
+export const OFFSET_MATERIAL = perspectiveMaterial('offset');
+export const BULGE_MATERIAL = perspectiveMaterial('bulge');
+export const TWIRL_MATERIAL = perspectiveMaterial('twirl');
+export const SPHERIZE_MATERIAL = perspectiveMaterial('spherize');
+export const KALEIDOSCOPE_MATERIAL = perspectiveMaterial('kaleidoscope');
+export const RIPPLE_MATERIAL = perspectiveMaterial('ripple');
+export const CHROMATIC_ABERRATION_MATERIAL = perspectiveMaterial('chromatic-aberration');
+export const MAGNIFY_MATERIAL = perspectiveMaterial('magnify');
+export const MOSAIC_MATERIAL = perspectiveMaterial('mosaic');
+export const FIND_EDGES_MATERIAL = perspectiveMaterial('find-edges');
+export const EMBOSS_MATERIAL = perspectiveMaterial('emboss');
+export const COLOR_EMBOSS_MATERIAL = perspectiveMaterial('color-emboss');
+export const HALFTONE_MATERIAL = perspectiveMaterial('halftone');
 
 /** Same binding shape as motion-tile: one source texture, warped in place. */
 export const BEND_MATERIAL: MaterialDescriptor = {
@@ -283,6 +332,39 @@ export const BEAM_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Built-in material: Light Sweep. Same three bindings as Beam. */
+export const LIGHT_SWEEP_MATERIAL: MaterialDescriptor = {
+  shader: 'light-sweep',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: Lens Flare. Same three bindings as Beam. */
+export const LENS_FLARE_MATERIAL: MaterialDescriptor = {
+  shader: 'lens-flare',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+/** Built-in material: Light Rays. Same three bindings as Beam. */
+export const LIGHT_RAYS_MATERIAL: MaterialDescriptor = {
+  shader: 'light-rays',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
 export const NOISE_MATERIAL: MaterialDescriptor = {
   shader: 'noise',
   topology: 'triangle-list',
@@ -318,6 +400,11 @@ export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
   depth: { test: true, write: true },
 };
 
+export const TEXTURED3D_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED3D_MATERIAL,
+  shader: 'textured3d-linear',
+};
+
 /**
  * 3D textured quad that depth-TESTS but does not depth-WRITE.
  *
@@ -344,6 +431,11 @@ export const TEXTURED3D_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
   depth: { test: true, write: false },
 };
 
+export const TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
+  ...TEXTURED3D_NO_DEPTH_WRITE_MATERIAL,
+  shader: 'textured3d-linear',
+};
+
 /** 3D masked textured quad with depth test+write. */
 export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured3d',
@@ -355,6 +447,11 @@ export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: 3, type: 'texture', stages: ['fragment'] },
   ],
   depth: { test: true, write: true },
+};
+
+export const MASKED_TEXTURED3D_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...MASKED_TEXTURED3D_MATERIAL,
+  shader: 'masked-textured3d-linear',
 };
 
 export const DEFORMED_MESH_LAYOUT: VertexBufferLayout = {
@@ -375,6 +472,11 @@ export const DEFORMED_MESH_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
   ],
   buffers: [DEFORMED_MESH_LAYOUT],
+};
+
+export const DEFORMED_MESH_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...DEFORMED_MESH_MATERIAL,
+  shader: 'deformed-mesh-linear',
 };
 
 // The premultiplied-source TWINS are gone, along with the flag that selected

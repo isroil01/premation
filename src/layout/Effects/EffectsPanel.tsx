@@ -1,8 +1,11 @@
 /**
- * EffectsPanel — per-layer visual effects (blur, glow, color grades). Add from
- * the palette of effect types; each applied effect gets a scrubbable amount and
- * a remove control. Effects render live on the canvas and are captured by
- * History / autosave / export.
+ * EffectsPanel — the right-inspector library of effect types (AE's Effects &
+ * Presets). Click a row to add it to the selected layer; the applied stack
+ * itself lives in the left-sidebar Effect Controls panel, because keeping both
+ * in this tab buried the browser under every effect you applied.
+ *
+ * Masks stay here: they are added from this palette (rectangle / ellipse /
+ * pen), the same way AE adds them from a tool rather than from Effect Controls.
  */
 
 import { useState, useMemo, useSyncExternalStore } from 'react';
@@ -17,10 +20,12 @@ import { BrowserTree, BrowserFolder, BrowserRow, BrowserTag, BrowserEmpty } from
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { EFFECT_DEFS, addEffect, getNodeEffects, type EffectType } from '@core/effects/effects';
+import { EFFECT_DEFS, getNodeEffects, type EffectType } from '@core/effects/effects';
 import { pluginEffectDefs, pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
 import { subscribeToEffects, pluginEffectRevision } from '@core/plugins/pluginEffects';
+import { addEffectAndReveal, revealEffectControls } from './revealEffectControls';
 import {
   copyAllEffects,
   pasteEffects,
@@ -31,11 +36,20 @@ import {
   deleteEffectPreset,
   listEffectPresets,
 } from '@core/effects/effectClipboard';
-import { EffectStack } from './EffectStack';
+import { BUILTIN_EFFECT_PRESETS } from '@core/effects/builtinEffectPresets';
+import { customPrompt } from '@components/Modal/Dialogs';
+import {
+  PATH_OP_CATALOG,
+  addPathOp,
+  defaultPathOpOf,
+  readTrimOp,
+  readRepeaterOp,
+} from '@core/scene/pathOps';
 import {
   getNodeMask,
   addMaskPath,
   updateMaskPath,
+  setMaskPointFeather,
   removeMaskPath,
   rectangleMask,
   ellipseMask,
@@ -47,7 +61,6 @@ import {
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { customPrompt } from '@components/Modal/Dialogs';
 import styles from './EffectsPanel.module.css';
 
 // AE menu order — `None` leads, because it is the "this path does not cut"
@@ -264,12 +277,36 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   'grid-wipe': 'Transition',
   'dust-scratches': 'Stylize',
   'noise-alpha': 'Stylize',
+  // ── Round five ── AE/Cycore's own folders, with the standing exceptions:
+  // no Simulation folder exists, so the weather generators (which DRAW, like
+  // Lens Flare) sit in Generate where a user hunting "snow" will look.
+  'star-burst': 'Generate',
+  snowfall: 'Generate',
+  rainfall: 'Generate',
+  'write-on': 'Generate',
+  'light-burst': 'Generate',
+  glass: 'Stylize',
+  texturize: 'Stylize',
+  threads: 'Stylize',
+  'chromatic-aberration': 'Stylize',
+  'hex-tile': 'Stylize',
+  'vector-blur': 'Blur & Sharpen',
+  'flo-motion': 'Distort',
+  lens: 'Distort',
+  griddler: 'Distort',
+  'ball-action': 'Distort',
+  drizzle: 'Distort',
+  jaws: 'Transition',
+  'pixel-polly': 'Transition',
+  twister: 'Transition',
+  'card-dance': 'Transition',
 };
 
 /** Folder order in the browser — most-reached-for first. */
 const EFFECT_CATEGORY_ORDER: readonly string[] = [
   'Blur & Sharpen', 'Color Correction', 'Stylize', 'Generate',
-  'Distort', 'Keying', 'Time', 'Transition',
+  'Shape',
+  'Distort', 'Perspective', 'Channel', 'Keying', 'Time', 'Transition',
   /*
     Last, and its OWN folder rather than sorted into the others by guesswork.
 
@@ -298,7 +335,10 @@ const EFFECT_CATEGORY_ICON: Record<string, IconName> = {
   Stylize: 'brush',
   [PLUGIN_EFFECT_CATEGORY]: 'plugin',
   Generate: 'gradient',
+  Shape: 'shape',
   Distort: 'waves',
+  Perspective: 'cube',
+  Channel: 'layers',
   Keying: 'eraser',
   Time: 'clock',
   Transition: 'wipe',
@@ -313,7 +353,10 @@ export function EffectsPanel(): JSX.Element {
   // localStorage), so a counter is what tells this panel they changed.
   const [clipboardRev, bumpClipboard] = useState(0);
   const presets = useMemo(() => listEffectPresets(), [clipboardRev]);
-
+  const builtinPresetNames = useMemo(
+    () => new Set(BUILTIN_EFFECT_PRESETS.map((p) => p.name)),
+    [],
+  );
 
   // NOTE: the empty-state early return must come AFTER every hook — the
   // browser-accordion useMemos below run on every render, and returning before
@@ -339,6 +382,9 @@ export function EffectsPanel(): JSX.Element {
 
   const q = effectQuery.trim().toLowerCase();
   const browserDefs = q ? allDefs.filter((d) => d.label.toLowerCase().includes(q)) : allDefs;
+  const browserPresets = q
+    ? presets.filter((p) => p.name.toLowerCase().includes(q))
+    : presets;
   // Every effect in EFFECT_DEFS renders on the unified GPU engine, so nothing
   // is locked. The availability check that used to gate this returned a constant
   // `{ ok: true }`, which left the lock icon, the `disabled` attribute and the
@@ -351,6 +397,9 @@ export function EffectsPanel(): JSX.Element {
   const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
   const { w: maskW, h: maskH } = SIZE[layerKind];
   const masks = hasSelection ? getNodeMask(primary!).paths : [];
+  const shapeOps = kind === 'shape'
+    ? PATH_OP_CATALOG.filter((op) => !q || op.label.toLowerCase().includes(q))
+    : [];
 
   const effectGroups = useMemo(() => {
     const groups: Record<string, typeof browserDefs> = {};
@@ -384,8 +433,8 @@ export function EffectsPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
-      {/* Active Applied Effects — front and center at the top for easy access */}
-      <div className={styles.sectionTitle}>Active Layer Effects</div>
+      {/* Effects & Presets browser — the AE library tree of effect types. */}
+      <div className={styles.sectionTitle}>Effects &amp; Presets</div>
       <div className={styles.addRow}>
         <button
           type="button"
@@ -401,7 +450,11 @@ export function EffectsPanel(): JSX.Element {
           className={styles.addChip}
           disabled={!hasEffectClipboard()}
           title={hasEffectClipboard() ? `Paste ${effectClipboardSize()} effect(s) onto this layer` : 'Nothing copied yet'}
-          onClick={() => { pasteEffects([primary]); bumpClipboard((n) => n + 1); }}
+          onClick={() => {
+            pasteEffects([primary]);
+            bumpClipboard((n) => n + 1);
+            revealEffectControls();
+          }}
         >
           <Icon name="plus" size="sm" /> Paste
         </button>
@@ -425,29 +478,6 @@ export function EffectsPanel(): JSX.Element {
           <Icon name="star" size="sm" /> Save Preset
         </button>
       </div>
-      {presets.length > 0 && (
-        <div className={styles.addRow}>
-          {presets.map((p) => (
-            <button
-              key={p.name}
-              type="button"
-              className={styles.addChip}
-              title={`Apply "${p.name}" (${p.items.length} effect(s)) — Alt-click to delete`}
-              onClick={(e) => {
-                if (e.altKey) deleteEffectPreset(p.name);
-                else applyEffectPreset(p.name, [primary]);
-                bumpClipboard((n) => n + 1);
-              }}
-            >
-              <Icon name="sparkles" size="sm" /> {p.name}
-            </button>
-          ))}
-        </div>
-      )}
-      <EffectStack nodeId={primary} />
-
-      {/* Effects & Presets browser — the AE library tree of effect types. */}
-      <div className={styles.sectionTitle}>Effects &amp; Presets</div>
       <div className={styles.browser}>
         <Input
           value={effectQuery}
@@ -459,8 +489,44 @@ export function EffectsPanel(): JSX.Element {
           onClear={() => setEffectQuery('')}
           onChange={(e) => setEffectQuery(e.currentTarget.value)}
         />
-        {browserFolders.length > 0 ? (
+        {browserFolders.length > 0 || shapeOps.length > 0 || browserPresets.length > 0 ? (
           <BrowserTree>
+            {browserPresets.length > 0 && (
+              <BrowserFolder
+                key="presets"
+                label="Effect Presets"
+                icon="sparkles"
+                count={browserPresets.length}
+                defaultOpen={false}
+                forceOpen={!!q}
+              >
+                {browserPresets.map((p) => {
+                  const userSaved = !builtinPresetNames.has(p.name);
+                  return (
+                    <BrowserRow
+                      key={p.name}
+                      label={p.name}
+                      icon="sparkles"
+                      title={
+                        userSaved
+                          ? `Apply "${p.name}" (${p.items.length} effect(s)) — Alt-click deletes`
+                          : `Apply "${p.name}" (${p.items.length} effect(s))`
+                      }
+                      onClick={(e) => {
+                        if (userSaved && e.altKey) {
+                          deleteEffectPreset(p.name);
+                          bumpClipboard((n) => n + 1);
+                          return;
+                        }
+                        applyEffectPreset(p.name, [primary]);
+                        bumpClipboard((n) => n + 1);
+                        revealEffectControls();
+                      }}
+                    />
+                  );
+                })}
+              </BrowserFolder>
+            )}
             {browserFolders.map(([cat, items], index) => (
               <BrowserFolder
                 key={cat}
@@ -501,11 +567,39 @@ export function EffectsPanel(): JSX.Element {
                     }
                     draggable
                     onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
-                    onClick={() => { if (primary) addEffect(primary, d.type); }}
+                    onClick={() => { if (primary) addEffectAndReveal(primary, d.type); }}
                   />
                 ))}
               </BrowserFolder>
             ))}
+            {shapeOps.length > 0 && node && (
+              <BrowserFolder
+                key="Shape"
+                label="Shape"
+                icon={EFFECT_CATEGORY_ICON.Shape}
+                count={shapeOps.length}
+                defaultOpen={browserFolders.length === 0}
+                forceOpen={!!q}
+              >
+                {shapeOps.map((op) => {
+                  const taken = (op.type === 'trim' && !!readTrimOp(node))
+                    || (op.type === 'repeater' && !!readRepeaterOp(node));
+                  return (
+                    <BrowserRow
+                      key={op.type}
+                      label={op.label}
+                      fx
+                      title={taken ? `${op.label} is already on this layer` : `Add ${op.label}`}
+                      onClick={() => {
+                        if (!primary || taken) return;
+                        addPathOp(primary, defaultPathOpOf(op.type));
+                        revealEffectControls();
+                      }}
+                    />
+                  );
+                })}
+              </BrowserFolder>
+            )}
           </BrowserTree>
         ) : (
           <BrowserEmpty>No effects match “{effectQuery}”.</BrowserEmpty>
@@ -513,12 +607,38 @@ export function EffectsPanel(): JSX.Element {
       </div>
 
       <div className={styles.sectionTitle}>Masks</div>
+      {!hasSelection && (
+        <p className={styles.hint} style={{ margin: '0 0 8px', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
+          Select a layer, then draw with Mask Rectangle / Ellipse / Pen in the toolbar.
+        </p>
+      )}
       <div className={styles.addRow}>
-        <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, rectangleMask(maskW, maskH))}>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={!hasSelection}
+          title={hasSelection ? 'Add a rectangle mask' : 'Select a layer first'}
+          onClick={() => primary && addMaskPath(primary, rectangleMask(maskW, maskH))}
+        >
           <Icon name="plus" size="sm" /> Rectangle
         </button>
-        <button type="button" className={styles.addChip} onClick={() => addMaskPath(primary, ellipseMask(maskW, maskH))}>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={!hasSelection}
+          title={hasSelection ? 'Add an ellipse mask' : 'Select a layer first'}
+          onClick={() => primary && addMaskPath(primary, ellipseMask(maskW, maskH))}
+        >
           <Icon name="plus" size="sm" /> Ellipse
+        </button>
+        <button
+          type="button"
+          className={styles.addChip}
+          disabled={!hasSelection}
+          title="Switch to the Mask Pen tool"
+          onClick={() => useUIStore.getState().setActiveTool('mask-pen')}
+        >
+          <Icon name="pen" size="sm" /> Draw
         </button>
         {masks.length > 0 && (
           <button
@@ -544,7 +664,7 @@ export function EffectsPanel(): JSX.Element {
                 <span className={styles.maskMark} aria-hidden>
                   <Icon name="mask-square" size="sm" />
                 </span>
-                <span className={styles.itemLabel}>Mask {i + 1}</span>
+                <span className={styles.itemLabel}>{m.name?.trim() || `Mask ${i + 1}`}</span>
                 <Dropdown
                   placement="left-start"
                   trigger={
@@ -574,6 +694,25 @@ export function EffectsPanel(): JSX.Element {
                 </div>
               </div>
               <div className={styles.effectParamsBody}>
+                <PropertyRow label="Name" compact>
+                  <input
+                    value={m.name ?? ''}
+                    placeholder={`Mask ${i + 1}`}
+                    aria-label={`Mask ${i + 1} name`}
+                    onChange={(e) =>
+                      updateMaskPath(primary, m.id, { name: e.target.value || undefined }, maskTime)
+                    }
+                    style={{
+                      width: '100%',
+                      fontSize: 'var(--font-size-xs)',
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border, #333)',
+                      background: 'var(--color-surface, #1e1e1e)',
+                      color: 'inherit',
+                    }}
+                  />
+                </PropertyRow>
                 {/* One PropertyRow per value, so a mask's Feather sits in the
                     same column as an effect's Softness rather than in a
                     three-up strip of its own. */}
@@ -581,6 +720,38 @@ export function EffectsPanel(): JSX.Element {
                   <ValueField value={m.feather} min={0} max={200} precision={0} unit="px"
                     onChange={(v) => updateMaskPath(primary, m.id, { feather: v }, maskTime)} aria-label="Mask feather" />
                 </PropertyRow>
+                {/* Variable-width feather: one row per vertex. A vertex with
+                    its own value overrides the uniform Feather above and the
+                    softness interpolates along the outline between vertices
+                    (the distance-field renderer in maskFeather.ts). Right-side
+                    clear button drops the override — every override cleared
+                    returns the path to the plain blur renderer. */}
+                <PropertyRow label="Per-Vertex" compact>
+                  <Checkbox
+                    checked={m.points.some((pt) => typeof pt.feather === 'number')}
+                    onChange={() => {
+                      const on = m.points.some((pt) => typeof pt.feather === 'number');
+                      // Toggle ON seeds every vertex at the uniform value (so
+                      // nothing visibly changes until a vertex is edited);
+                      // toggle OFF clears every override.
+                      m.points.forEach((_, i) =>
+                        setMaskPointFeather(primary, m.id, i, on ? undefined : m.feather, maskTime));
+                    }}
+                    aria-label={`Variable feather for Mask ${i + 1}`}
+                    style={{ width: 14, height: 14 }}
+                  />
+                </PropertyRow>
+                {m.points.some((pt) => typeof pt.feather === 'number') &&
+                  m.points.map((pt, vi) => (
+                    <PropertyRow key={vi} label={`  V${vi + 1}`} compact>
+                      <ValueField
+                        value={Math.round(pt.feather ?? m.feather)}
+                        min={0} max={200} precision={0} unit="px"
+                        onChange={(v) => setMaskPointFeather(primary, m.id, vi, v, maskTime)}
+                        aria-label={`Mask ${i + 1} vertex ${vi + 1} feather`}
+                      />
+                    </PropertyRow>
+                  ))}
                 <PropertyRow label="Opacity" compact>
                   <ValueField value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
                     onChange={(v) => updateMaskPath(primary, m.id, { opacity: v / 100 }, maskTime)} aria-label="Mask opacity" />

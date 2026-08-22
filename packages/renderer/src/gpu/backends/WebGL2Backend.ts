@@ -44,6 +44,12 @@ interface NativeBuffer {
   buffer: WebGLBuffer;
   target: number;
 }
+interface NativeTexture {
+  texture: WebGLTexture;
+  format: TextureFormat;
+}
+/** A linked GLSL program, as carried on a `ShaderModuleHandle`'s `native`.
+ *  Distinct from {@link NativePipeline}, which pairs one with its draw state. */
 interface NativeProgram {
   program: WebGLProgram;
 }
@@ -81,6 +87,13 @@ interface NativeRenderTarget {
 
 function h<K extends string>(kind: K, native: unknown): ResourceHandle<K> {
   return { kind, id: nextId(), native };
+}
+
+function glTexture(native: unknown): WebGLTexture {
+  if (native && typeof native === 'object' && 'texture' in native) {
+    return (native as NativeTexture).texture;
+  }
+  return native as WebGLTexture;
 }
 
 function topo(gl: GL, t: PrimitiveTopology): number {
@@ -123,6 +136,7 @@ export class WebGL2Backend implements RenderBackend {
     instancing: true,
     storageBuffers: false,
     float16Textures: false,
+    float32Textures: false,
     timestampQueries: false,
   };
 
@@ -200,6 +214,7 @@ export class WebGL2Backend implements RenderBackend {
     // is absent, resolveTargets falls the intermediates back to 8-bit rather than
     // creating an incomplete framebuffer.
     this.capabilities.float16Textures = !!gl.getExtension('EXT_color_buffer_float');
+    this.capabilities.float32Textures = this.capabilities.float16Textures;
   }
 
   /** True while the GL context is lost — draws are no-ops until restore. */
@@ -272,20 +287,34 @@ export class WebGL2Backend implements RenderBackend {
       texture is not renderable, and silently producing an incomplete
       framebuffer is worse than the 8-bit fallback.
     */
-    const float = desc.format === 'rgba16float' && this.capabilities.float16Textures;
-    const internalFormat = float ? gl.RGBA16F : gl.RGBA8;
-    const texType = float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+    const float16 = desc.format === 'rgba16float' && this.capabilities.float16Textures;
+    const float32 = desc.format === 'rgba32float' && this.capabilities.float32Textures;
+    const srgb = desc.format === 'rgba8unorm-srgb';
+    const internalFormat = float32 ? gl.RGBA32F : float16 ? gl.RGBA16F : srgb ? gl.SRGB8_ALPHA8 : gl.RGBA8;
+    const texType = float32 ? gl.FLOAT : float16 ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
     gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, desc.width, desc.height, 0, gl.RGBA, texType, null);
     this.liveTextures.add(texture);
-    return h('texture', texture);
+    return h('texture', { texture, format: desc.format } satisfies NativeTexture);
   }
   writeTexture(texture: TextureHandle, source: TextureSource): void {
     const gl = this.gl;
-    gl.bindTexture(gl.TEXTURE_2D, texture.native as WebGLTexture);
+    const native = texture.native as NativeTexture;
+    gl.bindTexture(gl.TEXTURE_2D, native.texture);
     if (source.type === 'buffer') {
       // Raw bytes are handed to us already in the invariant's space — there is
       // no decode step to reinterpret, so the unpack flags do not apply.
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, source.width, source.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, source.data as unknown as ArrayBufferView);
+      const fmt = source.format ?? native.format;
+      const float32 = fmt === 'rgba32float' && this.capabilities.float32Textures;
+      const float16 = fmt === 'rgba16float' && this.capabilities.float16Textures;
+      const internalFormat = float32 ? gl.RGBA32F : float16 ? gl.RGBA16F : gl.RGBA8;
+      const texType = float32 ? gl.FLOAT : float16 ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, float32 || float16 ? 1 : 4);
+      gl.texImage2D(
+        gl.TEXTURE_2D, 0, internalFormat,
+        source.width, source.height, 0,
+        gl.RGBA, texType,
+        source.data as unknown as ArrayBufferView,
+      );
     } else {
       // THE ALPHA INVARIANT (see TextureSource in ../types.ts): premultiplied
       // alpha, every source kind, both backends.
@@ -309,7 +338,7 @@ export class WebGL2Backend implements RenderBackend {
     }
   }
   destroyTexture(texture: TextureHandle): void {
-    const t = texture.native as WebGLTexture;
+    const t = (texture.native as NativeTexture).texture;
     this.liveTextures.delete(t);
     this.gl.deleteTexture(t);
   }
@@ -393,9 +422,10 @@ export class WebGL2Backend implements RenderBackend {
     // Honour the requested colour format. rgba16float only reaches here when the
     // backend advertised float support (EXT_color_buffer_float); every other
     // format is the 8-bit path exactly as before.
-    const float = desc.format === 'rgba16float';
-    const internalFormat = float ? gl.RGBA16F : gl.RGBA8;
-    const texType = float ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+    const float32 = desc.format === 'rgba32float' && this.capabilities.float32Textures;
+    const float16 = desc.format === 'rgba16float' && this.capabilities.float16Textures;
+    const internalFormat = float32 ? gl.RGBA32F : float16 ? gl.RGBA16F : gl.RGBA8;
+    const texType = float32 ? gl.FLOAT : float16 ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
     const texture = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, desc.width, desc.height, 0, gl.RGBA, texType, null);
@@ -554,6 +584,40 @@ export class WebGL2Backend implements RenderBackend {
     this.gl.bindVertexArray(null);
   }
   present(): void {}
+  readRenderTargetFloat(target: RenderTargetHandle, width: number, height: number): Float32Array | null {
+    const gl = this.gl;
+    const rt = target.native as NativeRenderTarget;
+    const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fbo);
+    const float = rt.format === 'rgba16float' || rt.format === 'rgba32float';
+    if (float && this.capabilities.float16Textures) {
+      const data = new Float32Array(width * height * 4);
+      try {
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, data);
+        const out = new Float32Array(data.length);
+        const row = width * 4;
+        for (let y = 0; y < height; y++) {
+          out.set(data.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+        return out;
+      } catch {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+        return null;
+      }
+    }
+    const u8 = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, u8);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+    const out = new Float32Array(u8.length);
+    const row = width * 4;
+    for (let y = 0; y < height; y++) {
+      const src = (height - 1 - y) * row;
+      const dst = y * row;
+      for (let i = 0; i < row; i++) out[dst + i] = u8[src + i]! / 255;
+    }
+    return out;
+  }
   resize(width: number, height: number, devicePixelRatio = 1): void {
     // width/height arrive in CSS px (Renderer.resize contract); the canvas
     // backing store is CSS×dpr. The GL viewport is in PHYSICAL pixels — using
@@ -653,7 +717,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
         else gl.bindBufferBase(gl.UNIFORM_BUFFER, 0, nb.buffer);
       } else if ('texture' in e) {
         gl.activeTexture(gl.TEXTURE0 + texIndex);
-        gl.bindTexture(gl.TEXTURE_2D, e.texture.native as WebGLTexture);
+        gl.bindTexture(gl.TEXTURE_2D, glTexture(e.texture.native));
         const uni = texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform;
         if (uni) gl.uniform1i(uni, texIndex);
         texIndex += 1;

@@ -157,7 +157,7 @@ export function drawSnapshot(canvas: HTMLCanvasElement, snapshot: RenderSnapshot
     ctx.globalAlpha = clamp01(layer.opacity);
     ctx.translate(layer.x * s, layer.y * s);
     if (layer.rotation) ctx.rotate((layer.rotation * Math.PI) / 180);
-    if (layer.scaleX !== 1 || layer.scaleY !== 1) ctx.scale(layer.scaleX || 1, layer.scaleY || 1);
+    if (layer.scaleX !== 1 || layer.scaleY !== 1) ctx.scale(layer.scaleX ?? 1, layer.scaleY ?? 1);
     if (layer.anchorX || layer.anchorY) ctx.translate(-(layer.anchorX ?? 0) * s, -(layer.anchorY ?? 0) * s);
 
     if (layer.kind === 'text') {

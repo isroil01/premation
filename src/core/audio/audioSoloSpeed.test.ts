@@ -6,10 +6,9 @@
  * actively broken once video clips became voices, because soloing a title still
  * left the footage under it audible.
  *
- * Speed is the known gap. Stretch, reverse and time remap retime the picture by
- * choosing a different source frame; audio would have to be RESAMPLED, which
- * needs a pitch decision and a DSP pass that does not exist. The clip's audio is
- * therefore muted with a visible reason rather than left to drift.
+ * Stretch and reverse keep audio via Web Audio playbackRate / buffer reverse
+ * (varispeed). Time remap expands into piecewise rate segments. Freeze still
+ * mutes — a held frame has no continuous soundtrack.
  */
 
 import type { SceneNode } from '@core/types';
@@ -18,8 +17,8 @@ const getLayersForNode = jest.fn();
 const fpsForNode = jest.fn(() => 30);
 const assets: Array<{ id: string; src: string; metadata?: { duration?: number } }> = [];
 const nodes: SceneNode[] = [];
-const layerTimes: Record<string, { stretch?: number; reverse?: boolean }> = {};
-const remapTracks: Record<string, boolean> = {};
+const layerTimes: Record<string, { stretch?: number; reverse?: boolean; freeze?: boolean }> = {};
+const remapTracks: Record<string, Array<{ t: number; value: number }>> = {};
 
 jest.mock('@core/timeline/TimelineController', () => ({
   getTimelineController: () => ({ getLayersForNode, fpsForNode }),
@@ -34,16 +33,43 @@ jest.mock('@core/scene/sceneDerive', () => ({
 }));
 jest.mock('@core/scene/layerTime', () => ({
   readNodeLayerTime: (n: SceneNode) => layerTimes[n.id],
+  DEFAULT_LAYER_TIME: { stretch: 100, reverse: false, freeze: false, freezeTime: 0, frameBlend: 'none' },
+  remapTime: (t: number, cfg: { freeze?: boolean; freezeTime?: number; stretch?: number; reverse?: boolean }, span: { start: number; end: number }) => {
+    if (cfg.freeze) return cfg.freezeTime ?? 0;
+    const stretch = cfg.stretch && cfg.stretch > 0 ? cfg.stretch : 100;
+    let s = span.start + (t - span.start) * (100 / stretch);
+    if (cfg.reverse) s = span.start + span.end - s;
+    return s;
+  },
 }));
 jest.mock('@motion/animation', () => ({
   defaultAnimation: {
+    isAnimated: (id: string, prop: string) =>
+      prop === 'timeRemap' && !!remapTracks[id]?.length,
     tracksFor: (id: string) =>
-      remapTracks[id] ? [{ prop: 'timeRemap', keyframes: [{ t: 0, value: 0 }] }] : [],
-    sample: () => undefined,
+      remapTracks[id]?.length
+        ? [{ prop: 'timeRemap', keyframes: remapTracks[id] }]
+        : [],
+    sample: (id: string, prop: string, t: number) => {
+      const kfs = remapTracks[id];
+      if (!kfs?.length || (prop !== 'timeRemap' && prop !== 'precompTime')) return undefined;
+      // Linear between keys (enough for the tests).
+      if (t <= kfs[0]!.t) return kfs[0]!.value;
+      for (let i = 0; i < kfs.length - 1; i++) {
+        const a = kfs[i]!;
+        const b = kfs[i + 1]!;
+        if (t <= b.t) {
+          const u = (t - a.t) / (b.t - a.t || 1);
+          return a.value + (b.value - a.value) * u;
+        }
+      }
+      return kfs[kfs.length - 1]!.value;
+    },
+    timeSpan: () => ({ start: 0, end: 10 }),
   },
 }));
 
-import { readAudioLayers, readVideoAudioVoices, speedAltersAudio } from './audioScene';
+import { readAudioLayers, readVideoAudioVoices, speedAltersAudio, videoAudioPlaybackRate } from './audioScene';
 
 function videoNode(id: string, over: Partial<SceneNode> = {}): SceneNode {
   return {
@@ -104,20 +130,47 @@ describe('solo covers video-clip voices', () => {
   });
 });
 
-describe('speed changes mute the clip audio', () => {
-  it('detects time stretch', () => {
+describe('stretch and reverse keep audio; remap segments; freeze mutes', () => {
+  it('plays stretch via playbackRate (not muted)', () => {
     layerTimes.clip = { stretch: 50 };
-    expect(speedAltersAudio(videoNode('clip'))).toBe(true);
-    expect(readVideoAudioVoices(videoNode('clip'))[0]!.muted).toBe(true);
+    expect(speedAltersAudio(videoNode('clip'))).toBe(false);
+    const v = readVideoAudioVoices(videoNode('clip'))[0]!;
+    expect(v.muted).toBe(false);
+    expect(v.playbackRate).toBeCloseTo(2);
+    expect(videoAudioPlaybackRate(videoNode('clip'))).toBeCloseTo(2);
   });
 
-  it('detects reverse', () => {
+  it('half-speed stretch is rate 0.5', () => {
+    layerTimes.clip = { stretch: 200 };
+    expect(readVideoAudioVoices(videoNode('clip'))[0]!.playbackRate).toBeCloseTo(0.5);
+  });
+
+  it('plays reverse (retimeReverse, not muted)', () => {
     layerTimes.clip = { reverse: true };
-    expect(readVideoAudioVoices(videoNode('clip'))[0]!.muted).toBe(true);
+    const v = readVideoAudioVoices(videoNode('clip'))[0]!;
+    expect(v.muted).toBe(false);
+    expect(v.retimeReverse).toBe(true);
   });
 
-  it('detects time-remap keyframes', () => {
-    remapTracks.clip = true;
+  it('expands time-remap into audible varispeed segments', () => {
+    // Linear remap 0→0, 2→4 over a 2s bar → rate 2.
+    remapTracks.clip = [
+      { t: 0, value: 0 },
+      { t: 2, value: 4 },
+    ];
+    getLayersForNode.mockReturnValue([clip('c1', 0, 60, 0)]);
+    const voices = readVideoAudioVoices(videoNode('clip'));
+    expect(voices.length).toBeGreaterThanOrEqual(1);
+    expect(voices.every((v) => !v.muted)).toBe(true);
+    const avgRate =
+      voices.reduce((s, v) => s + (v.playbackRate ?? 1) * (v.outSec - v.inSec), 0)
+      / voices.reduce((s, v) => s + (v.outSec - v.inSec), 0);
+    expect(avgRate).toBeCloseTo(2, 0);
+  });
+
+  it('mutes freeze frame', () => {
+    layerTimes.clip = { freeze: true };
+    expect(speedAltersAudio(videoNode('clip'))).toBe(true);
     expect(readVideoAudioVoices(videoNode('clip'))[0]!.muted).toBe(true);
   });
 

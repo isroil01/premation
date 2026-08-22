@@ -1216,6 +1216,24 @@
   z-index: 2;
 }
 
+/* Disk-cached coverage, a second lane UNDER the green one (AE's convention, and
+   the right one: the two are not the same promise). Green means the frame is
+   already in memory and blits this tick; blue means it survived RAM eviction
+   and gets read back ahead of the playhead — fast, but not free. Lower z-index
+   as well as lower position, so a frame held in both reads as green.
+
+   `--color-primary`, not `--color-info`: info is a neutral grey in the dark
+   theme and azure in the light one, so the bar would change meaning between
+   themes. Primary is blue in both. */
+.diskCacheBar {
+  position: absolute;
+  height: 2px;
+  background: var(--color-primary);
+  opacity: 0.6;
+  pointer-events: none;
+  z-index: 1;
+}
+
 /* Static placeholder rows (property tree before any keyframes): slightly
    dimmed, with a leading stopwatch that enables animation. */
 .propHeaderStatic {

@@ -26,6 +26,7 @@ import { flattenOutline, booleanPolygons } from '@core/scene/mergePaths';
 import { measureTextSize, measureTextBoxes, DEFAULT_LINE_HEIGHT, type MeasuredTextStyle } from '@core/text/measureText';
 import { scanSvgAnimations, type SvgShapeAnimation } from '../../utils/svgAnimation';
 import { defaultAnimation } from '@motion/animation';
+import { copyNodeAnimation } from '@core/animation/cloneNodeAnimation';
 import { bezierCorner as corner } from '@motion/workspace';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -176,7 +177,7 @@ import { clamp01 } from '@utils/lang';
  */
 export function placeInComp(
   node: SceneNode,
-  opts?: { customW?: number; customH?: number; customFontSize?: number }
+  opts?: { customW?: number; customH?: number; customFontSize?: number; exactSize?: boolean }
 ): void {
   const activeTabId = useProjectStore.getState().activeTabId;
   const activeTab = useProjectStore.getState().tabs[activeTabId ?? ''];
@@ -190,8 +191,12 @@ export function placeInComp(
   let width = opts?.customW && opts.customW > 0 ? opts.customW : targetSize;
   let height = opts?.customH && opts.customH > 0 ? opts.customH : targetSize;
 
-  // Scale up small custom dimensions (e.g. 24px - 180px) so elements match scene scale
-  if (width < 220 && height < 220) {
+  // Scale up small custom dimensions (e.g. 24px - 180px) so elements match
+  // scene scale. NEVER for `exactSize` callers: media fitted to the comp
+  // (insertMedia's contain-fit) is exactly the size it must be — "helpfully"
+  // enlarging a 64×48 clip fitted full-frame into a 64×48 comp to 240×180
+  // is how new-comp-from-small-footage stopped being full frame.
+  if (!opts?.exactSize && width < 220 && height < 220) {
     const aspect = (width / height) || 1;
     if (aspect >= 1) {
       width = targetSize;
@@ -266,7 +271,13 @@ export function setNodeWorldPosition(nodeId: string, x: number, y: number): void
 export function insertSvgLayer(
   svgText: string,
   name: string,
-  opts?: { x?: number; y?: number; capabilities?: SvgCapabilities; extraWarning?: string },
+  opts?: {
+    x?: number;
+    y?: number;
+    capabilities?: SvgCapabilities;
+    extraWarning?: string;
+    livePlayback?: boolean;
+  },
 ): string | null {
   const rootId = activeCompRootId();
   const node = makeNode('svg', name);
@@ -291,6 +302,7 @@ export function insertSvgLayer(
       size: { width: clean.width, height: clean.height, viewBox: clean.viewBox },
       capabilities,
       fileName: name,
+      livePlayback: opts?.livePlayback === true,
     }),
   );
 
@@ -994,10 +1006,28 @@ export function insertText(name: string, fontSize = 32, fontWeight = 400, extraP
 }
 
 /** Insert a full-frame solid colour layer (background / matte / adjustment base).
- *  It is a shape flagged `solid`, so buildSnapshot sizes it to the composition. */
+ *  Seeded at comp size and centre so selection handles match the fill; the
+ *  layer remains a normal transformable shape flagged `solid`. */
 export function insertSolid(color = '#2b7eff'): void {
   const rootId = activeCompRootId();
   const node = makeNode('shape', 'Solid');
+  const comp = useCompositionStore.getState();
+  const w = comp.width || 1920;
+  const h = comp.height || 1080;
+  const t = node.components.find((c) => c.type === 'Transform');
+  if (t) {
+    t.props.x = w / 2;
+    t.props.y = h / 2;
+    t.props.width = w;
+    t.props.height = h;
+    t.props.anchorX = w / 2;
+    t.props.anchorY = h / 2;
+    t.props.rotation = 0;
+    t.props.scaleX = 1;
+    t.props.scaleY = 1;
+  }
+  node.transform.position.x = w / 2;
+  node.transform.position.y = h / 2;
   defaultSceneGraph.addChild(rootId, node);
   defaultSceneGraph.setSolid(node.id, true);
   defaultSceneGraph.setFill(node.id, { type: 'solid', color });
@@ -1453,9 +1483,10 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
         if (id) return;
         // Unreadable markup — fall through to the plain image path.
       } else {
-        // Animated: translate to keyframes, exactly as before.
-        // Unrolled only as far as the composition can play — keyframes past the
-        // end of the comp are cost with no possible benefit.
+        // Animated: prefer editable keyframes only when the conversion is
+        // lossless (`isSimpleSvg`). Otherwise keep the intact document and
+        // play it via Live SVG time-rasterization — matching the Assets
+        // preview instead of flattening gradients/masks/filters.
         const unsupported = new Set<string>();
         const shapes = parseSvgToShapes(svgText, {
           maxDurationSeconds: useCompositionStore.getState().durationSeconds,
@@ -1464,42 +1495,25 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
           intersectPaths: intersectSvgPaths,
         });
         const convertible = shapes.some((s) => s.animation);
-        // ANIMATION OUTRANKS STATIC FIDELITY. A gradient flattened to its first
-        // stop is a colour the user can fix in the inspector; a lost animation
-        // is not recoverable at all. So when the animation converts, the vector
-        // path wins and we say what it cost.
         const simple = isSimpleSvg(svgText);
-        const degraded = convertible && !simple;
-        if ((simple || convertible) && !isOversizedSvg(shapes.length, asset.name)) {
+        if (simple && convertible && !isOversizedSvg(shapes.length, asset.name)) {
           const size = Math.max(asset.metadata?.width ?? 0, asset.metadata?.height ?? 0) || 400;
           const id = insertSvgShapeGroup(svgText, asset.name, { targetSize: size, shapes });
           if (id) {
-            if (degraded) {
-              const also = unsupported.size > 0 ? ` Not converted: ${[...unsupported].slice(0, 3).join(', ')}.` : '';
-              // Names only what is STILL lost. Clip paths are cut into the
-              // geometry now and `<image>` becomes a real image layer, so
-              // listing either here would describe a behaviour that is gone.
-              useUIStore.getState().notify({
-                level: 'warning',
-                message: `“${asset.name}” imported with its animation as keyframes. Gradients, masks and filters are flattened to solid fills — adjust them in the inspector.${also}`,
-                durationMs: 7000,
-              });
-            } else {
-              reportSvgAnimation(asset.name, convertible, unsupported);
-            }
-            return; // editable vector shapes — fills/strokes/paths/keyframes live
+            reportSvgAnimation(asset.name, convertible, unsupported);
+            return;
           }
         }
-        // The animation could not be translated. Storing the file intact is
-        // still the better outcome than a flat bitmap — it keeps full static
-        // fidelity and leaves Convert to Editable Shapes available — but the
-        // animation genuinely will not play, so say so.
+        // Live SVG: full visual fidelity + time-scrubbed playback.
         const blockers = unsupported.size > 0 ? [...unsupported] : svgAnimationBlockers(svgText);
         const id = insertSvgLayer(svgText, asset.name, {
           capabilities: caps,
-          extraWarning:
-            `its animation could not be converted (${blockers.slice(0, 3).join(', ') || 'unsupported features'}), so it imports static. ` +
-            'A Lottie/JSON export keeps the animation.',
+          livePlayback: true,
+          extraWarning: convertible && !simple
+            ? 'playing as a Live SVG so gradients, masks and filters stay intact (not editable shapes). Convert to Editable Shapes when you need per-path control.'
+            : !convertible
+              ? `playing as a Live SVG (${blockers.slice(0, 3).join(', ') || 'complex animation'}). Convert to Editable Shapes only if you need keyframes.`
+              : 'playing as a Live SVG for full animated fidelity.',
         });
         if (id) return;
       }
@@ -1526,7 +1540,7 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
     transform.props.src = asset.src;
     transform.props.assetId = asset.id;
   }
-  placeInComp(node, { customW: width, customH: height });
+  placeInComp(node, { customW: width, customH: height, exactSize: true });
   
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);
@@ -1628,6 +1642,24 @@ export function deleteSelectedLayers(): void {
   if (toDelete.length === 0) return;
 
   for (const id of toDelete) {
+    // Animation goes with the layers — SUBTREE first, because removeNode takes
+    // the descendants with it and their ids are unreachable afterwards. Undo
+    // is safe: History snapshots scene and animation together, so restoring
+    // the layers restores their tracks. Without this, every deleted layer left
+    // orphan tracks that rode every autosave forever — and a future layer that
+    // happened to mint the same id would resurrect a stranger's animation.
+    const node = defaultSceneGraph.getNode(id);
+    if (node) {
+      const stack: SceneNode[] = [node];
+      while (stack.length > 0) {
+        const n = stack.pop()!;
+        defaultAnimation.clearNode(n.id);
+        for (const childId of n.children) {
+          const c = defaultSceneGraph.getNode(childId);
+          if (c) stack.push(c);
+        }
+      }
+    }
     defaultSceneGraph.removeNode(id);
   }
   useSelectionStore.getState().clear();
@@ -1653,7 +1685,10 @@ export function duplicateSelectedLayers(): void {
     const dupComponents = original.components.map((c) => ({
       ...c,
       id: `${dupId}_${c.type}`,
-      props: { ...c.props },
+      // Deep-clone props. A shallow `{ ...c.props }` shared the `pathOps`
+      // array (and the operator objects inside it) with the original, so
+      // editing Trim on the copy moved the original too.
+      props: structuredClone(c.props),
     }));
 
     const dupNode = {
@@ -1675,6 +1710,12 @@ export function duplicateSelectedLayers(): void {
     };
 
     defaultSceneGraph.addChild(original.parent!, dupNode as Parameters<typeof defaultSceneGraph.addChild>[1]);
+    // The copy must carry its own keyframes, data tracks, and expressions.
+    // Without this, duplicating a trimmed bar and sliding it to 1s / 2s left
+    // the copies static, and the originals all played the same animation in
+    // composition time. Property tracks alone also dropped Source Text and
+    // puppet-pin animation, so the duplicate looked like a bare object.
+    copyNodeAnimation(id, dupId);
     // Apply the x/y offset on the Transform component too.
     const tComp = dupComponents.find((c) => c.type === 'Transform');
     if (tComp && typeof tComp.props.x === 'number') {

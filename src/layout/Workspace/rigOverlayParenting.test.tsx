@@ -83,15 +83,14 @@ function node(id: string, o: Opts = {}): SceneNode {
 /**
  * The pin dot's centre, read off the rendered SVG.
  *
- * Matches BOTH styles the overlay uses — `#00bfff` when the pin is unselected
- * and the white-on-amber pair when it is. Matching only the selected style
- * silently found nothing and read as "the overlay drew no pin", which is the
- * wrong diagnosis for a positioning test.
+ * The core handle is the r=5 filled circle. Bend pins are hollow (`fill="none"`)
+ * and are not used in these fixtures.
  */
 function pinDot(container: HTMLElement): { x: number; y: number } | null {
   const c = [...container.querySelectorAll('circle')].find((el) => {
+    const r = el.getAttribute('r');
     const fill = el.getAttribute('fill');
-    return fill === '#00bfff' || (fill === '#ffffff' && el.getAttribute('stroke') === '#ffc107');
+    return r === '5' && fill !== 'none';
   });
   if (!c) return null;
   return { x: Number(c.getAttribute('cx')), y: Number(c.getAttribute('cy')) };

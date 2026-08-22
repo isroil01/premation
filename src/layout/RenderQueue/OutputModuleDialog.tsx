@@ -7,6 +7,14 @@ import { useMemo, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { OutputFormat } from '@stores/renderQueueStore';
 import { canEncodeLocally, type ExportQuality } from '@core/export/videoSink';
+import {
+  listOutputTemplates,
+  saveOutputTemplate,
+  deleteOutputTemplate,
+  isBuiltinOutputTemplate,
+  applyOutputTemplate,
+} from '@core/export/outputTemplates';
+import { customPrompt } from '@components/Modal/Dialogs';
 import styles from './OutputModuleDialog.module.css';
 
 export interface OutputSettings {
@@ -65,6 +73,60 @@ export function OutputModuleDialog({
   const [quality, setQuality] = useState<ExportQuality>('high');
   const supportsAlpha = ALPHA_FORMATS.has(format);
 
+  // Templates. The list lives in localStorage, not React state, so `setTemplatesRev`
+  // after a save/delete is what re-renders the dropdown — and the list is simply
+  // re-read each render rather than memoized on the rev, because a dialog
+  // re-renders a handful of times and a localStorage read is nothing.
+  const [, setTemplatesRev] = useState(0);
+  const [selectedTemplate, setSelectedTemplate] = useState('');
+  const templates = listOutputTemplates();
+
+  const applyTemplate = (name: string): void => {
+    setSelectedTemplate(name);
+    const t = templates.find((x) => x.name === name);
+    if (!t) return;
+    // Resolved against the COMP's size and rate (the initial values), not the
+    // dialog's current fields — a template means "half of the comp", not "half
+    // of whatever was last typed here".
+    const out = applyOutputTemplate(t, { width: initialWidth, height: initialHeight, fps: initialFps });
+    // Skip formats this build cannot encode (mp4 in the browser) rather than
+    // silently queueing a render that fails at encode time.
+    if (formats.some((f) => f.value === out.format)) setFormat(out.format);
+    setWidth(out.width);
+    setHeight(out.height);
+    setFps(out.fps);
+    setQuality(out.quality);
+    setTransparent(out.transparent && ALPHA_FORMATS.has(out.format));
+  };
+
+  const saveAsTemplate = async (): Promise<void> => {
+    // customPrompt, not window.prompt — the latter does not exist in Electron,
+    // so Save would silently do nothing in the packaged app.
+    const name = await customPrompt('Save Template', 'Template name', selectedTemplate || 'My Template');
+    if (!name) return;
+    saveOutputTemplate({
+      name,
+      format,
+      quality,
+      transparent: transparent && supportsAlpha,
+      // Stored RELATIVE to the comp, so "Half Res" saved from an HD comp still
+      // means half when applied to a 4K one.
+      scale: initialWidth > 0 ? width / initialWidth : 1,
+      fps: fps === initialFps ? 'comp' : fps,
+    });
+    setSelectedTemplate(name);
+    setTemplatesRev((r) => r + 1);
+  };
+
+  const removeTemplate = (): void => {
+    if (!selectedTemplate) return;
+    deleteOutputTemplate(selectedTemplate);
+    // Deleting a built-in's override restores the built-in, so only clear the
+    // selection when the name is gone entirely.
+    if (!isBuiltinOutputTemplate(selectedTemplate)) setSelectedTemplate('');
+    setTemplatesRev((r) => r + 1);
+  };
+
   return (
     <div className={styles.overlay}>
       <div className={styles.dialog}>
@@ -76,6 +138,34 @@ export function OutputModuleDialog({
         </div>
 
         <div className={styles.body}>
+          <div className={styles.fieldRow}>
+            <label>Template</label>
+            <div className={styles.multiInput}>
+              <select
+                value={selectedTemplate}
+                onChange={(e) => applyTemplate(e.target.value)}
+                aria-label="Output template"
+              >
+                <option value="">— choose —</option>
+                {templates.map((t) => (
+                  <option key={t.name} value={t.name}>{t.name}</option>
+                ))}
+              </select>
+              <button type="button" className={styles.cancelBtn} onClick={saveAsTemplate} title="Save the current settings as a named template">
+                Save…
+              </button>
+              <button
+                type="button"
+                className={styles.cancelBtn}
+                onClick={removeTemplate}
+                disabled={!selectedTemplate}
+                title={isBuiltinOutputTemplate(selectedTemplate) ? 'Reset this built-in to its shipped settings' : 'Delete this template'}
+              >
+                {isBuiltinOutputTemplate(selectedTemplate) ? 'Reset' : 'Delete'}
+              </button>
+            </div>
+          </div>
+
           <div className={styles.fieldRow}>
             <label>Format</label>
             <select value={format} onChange={(e) => setFormat(e.target.value as OutputFormat)}>

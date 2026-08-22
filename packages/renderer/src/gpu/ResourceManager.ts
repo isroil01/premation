@@ -164,6 +164,11 @@ export class ResourceManager {
     this.textures.free(key);
   }
 
+  /** Whether the live backend can allocate / filter rgba32float textures. */
+  get float32Textures(): boolean {
+    return this.backend.capabilities.float32Textures;
+  }
+
   has(kind: keyof ResourceManagerStats, key: string): boolean {
     return this.poolFor(kind).has(key);
   }

@@ -27,6 +27,7 @@
 
 import type { TrackId, KeyId, NodeId } from '@app-types/common';
 import type { EasingKind } from '@motion/animation';
+import type { TimelineGroupKey } from '@core/timeline/propertyTree';
 import type { ReactNode } from 'react';
 
 export interface TimelineKeyframeRef {
@@ -80,6 +81,18 @@ export interface TimelinePropertyTrack {
   valueProps?: ReadonlyArray<string>;
   /** Unit suffix for this row's value fields ('px', '%', '°'). */
   valueUnit?: string;
+  /**
+   * Which section of the layer's tree this row belongs under — AE's Text /
+   * Contents / Masks / Effects / Transform / Layer Styles / Material Options /
+   * Audio headings.
+   *
+   * Stated by the model rather than guessed by the view. The timeline used to
+   * derive the heading by matching substrings of the label ("blur" → Effects),
+   * which put a Gaussian Blur's radius and a text animator's Blur under the
+   * same heading and had no way to tell a layer style from the effect it
+   * compiles to. Absent → the view falls back to that guess.
+   */
+  group?: TimelineGroupKey;
 }
 
 
@@ -151,6 +164,17 @@ export interface TimelineTrack {
   markers?: ReadonlyArray<TimelineMarker>;
   /** Animatable properties, revealed as sub-rows when the track is expanded. */
   properties?: ReadonlyArray<TimelinePropertyTrack>;
+  /**
+   * This track HAS a property tree, even though `properties` is empty right now.
+   *
+   * `properties` is only built for expanded tracks (a 10k-layer comp cannot
+   * afford the full tree per row), so it cannot be used to decide whether the
+   * disclosure chevron is live: a layer with no keyframes yet would report "no
+   * properties", the chevron would hide, and the always-there Transform group
+   * behind it — the only way to start an animation FROM the timeline — would be
+   * unreachable. The model states the capability separately from the payload.
+   */
+  canExpand?: boolean;
   /** Optional custom header content (icons, etc.). */
   headerContent?: ReactNode;
   /** Blend mode of the layer node. */
@@ -205,6 +229,10 @@ export interface TimelineModel {
   /** Frame-cache coverage (seconds) — the REAL RAM-preview state, drawn as a
    *  thin green bar under the ruler. */
   cachedRanges?: ReadonlyArray<{ start: number; end: number }>;
+  /** Disk-tier coverage (seconds) — frames that survived RAM eviction and get
+   *  read back ahead of the playhead. Drawn as a fainter blue bar beneath the
+   *  green one, and kept separate because the two are different promises. */
+  diskCachedRanges?: ReadonlyArray<{ start: number; end: number }>;
   /** Snap to grid (UI hint; engine may ignore). */
   snapToGrid?: boolean;
   /** Total height of the track header column. */

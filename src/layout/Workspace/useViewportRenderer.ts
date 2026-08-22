@@ -172,6 +172,7 @@ export function useViewportRenderer(
       return;
     }
     try {
+      b.setPlaybackMode?.(playingRef.current);
       b.renderFrame({
         ...buildSnapshot(
           defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,
@@ -340,8 +341,9 @@ export function useViewportRenderer(
       doResize();
     });
 
-    // Re-render when animation changes (e.g. keyframe edits).
-    const sub = getEventBus().on('AnimationChanged', () => render());
+    // Re-render when animation changes (e.g. keyframe edits) or node props change.
+    const subAnim = getEventBus().on('AnimationChanged', () => render());
+    const subNode = getEventBus().on('NodeUpdated', () => render());
 
     teardownRef.current = () => {
       cancelled = true;
@@ -350,7 +352,8 @@ export function useViewportRenderer(
         rafIdRef.current = null;
       }
       ro.disconnect();
-      sub.dispose();
+      subAnim.dispose();
+      subNode.dispose();
       backend.dispose();
       backendRef.current = null;
       attachedRef.current = null;

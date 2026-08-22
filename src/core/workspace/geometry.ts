@@ -255,6 +255,24 @@ export function readGeometry(node: SceneNode, overrideProps?: Record<string, unk
   // other kind is centred on its own position.
   let offsetY = (kind === 'text' && measured) ? measured.dy : 0;
 
+  // Full-frame solids: selection / handles must match the fill. Legacy inserts
+  // left makeNode's 100×100 at (160,120) while the renderer drew full-comp —
+  // the "tiny blueprint in the corner" bug.
+  const isSolid = kind === 'shape'
+    && node.components.some((c) => c.type === 'fx' && (c.props as { solid?: boolean }).solid === true);
+  let finalX = x ?? node.transform.position.x;
+  let finalY = y ?? node.transform.position.y;
+  if (isSolid) {
+    const comp = compositionSize();
+    const unseeded = !hasAuthoredDim || (width === 100 && height === 100);
+    if (unseeded) {
+      finalW = comp.width;
+      finalH = comp.height;
+      finalX = comp.width / 2;
+      finalY = comp.height / 2;
+    }
+  }
+
   // A group wraps its content — measure it rather than guessing a square.
   // Authored width/height on a group is a stale artifact of `makeNode` (which
   // stamps 280×280 on every group it creates), so it must NOT win here.
@@ -271,8 +289,8 @@ export function readGeometry(node: SceneNode, overrideProps?: Record<string, unk
   }
 
   return {
-    x: x ?? node.transform.position.x,
-    y: y ?? node.transform.position.y,
+    x: finalX,
+    y: finalY,
     rotationDeg: rotation ?? node.transform.rotation,
     width: finalW,
     height: finalH,

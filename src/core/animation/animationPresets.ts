@@ -580,6 +580,22 @@ export function importPresets(json: string): PresetImportResult {
     return { ...empty, error: `Preset bundle version ${String(b.version)} is newer than this build understands.` };
   }
   const incoming = Array.isArray(b.presets) ? b.presets : [];
+  return importPresetObjects(incoming);
+}
+
+/**
+ * Merge already-parsed preset objects into the user's library.
+ *
+ * The object-level half of {@link importPresets}, exported on its own because
+ * presets no longer arrive only as files: the cloud sync (`/v1/animations`)
+ * hands back parsed JSON, and re-serialising it just to run it through the
+ * file importer would launder a type error into a runtime one.
+ *
+ * Same rules as the file path: collisions overwrite by name, `builtin` is
+ * stripped, entries that are not shaped like presets are counted as rejected.
+ */
+export function importPresetObjects(incoming: unknown[]): PresetImportResult {
+  const empty: PresetImportResult = { added: [], replaced: [], rejected: 0 };
   const usable = incoming.filter(isPresetLike);
   if (usable.length === 0) {
     return { ...empty, rejected: incoming.length, error: 'No usable presets in that file.' };

@@ -17,7 +17,8 @@ import type { SceneNode } from '@core/types';
 // The overlay only needs a placement to position itself; the scene graph is real.
 jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
-    getNodeScreenPlacement: () => ({ x: 400, y: 300, zoom: 1, rotationDeg: 0 }),
+    getNodeScreenPlacement: () => ({ x: 400, y: 300, zoom: 1, rotationDeg: 0, scaleX: 1, scaleY: 1 }),
+    requestRender: () => {},
   }),
 }));
 
@@ -71,14 +72,14 @@ describe('TextEditOverlay', () => {
     expect(box.style.fontSize).toBe('48px');
   });
 
-  it('commits on Enter and closes', () => {
+  it('commits on Ctrl+Enter and closes', () => {
     const { getByRole, queryByRole } = render(<TextEditOverlay />);
     act(() => useTextEditStore.getState().begin('t1'));
 
     const box = getByRole('textbox');
     box.innerText = 'Goodbye';
     act(() => {
-      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true, cancelable: true }));
     });
 
     expect(contentOf('t1')).toBe('Goodbye');
@@ -96,7 +97,7 @@ describe('TextEditOverlay', () => {
     act(() => useTextEditStore.getState().begin('t1'));
     const box = getByRole('textbox');
     box.innerText = 'Recorded';
-    act(() => box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    act(() => box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true })));
 
     sub.dispose();
     expect(contentOf('t1')).toBe('Recorded');
@@ -114,6 +115,16 @@ describe('TextEditOverlay', () => {
 
     expect(contentOf('t1')).toBe('Hello');
     expect(useTextEditStore.getState().nodeId).toBeNull();
+  });
+
+  it('Enter does not commit — it is a newline, like After Effects', () => {
+    const { getByRole } = render(<TextEditOverlay />);
+    act(() => useTextEditStore.getState().begin('t1'));
+    const box = getByRole('textbox');
+    act(() => box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+
+    expect(useTextEditStore.getState().nodeId).toBe('t1');
+    expect(contentOf('t1')).toBe('Hello');
   });
 
   it('Shift+Enter does not commit (newline in multi-line text)', () => {

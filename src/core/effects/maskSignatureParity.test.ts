@@ -44,6 +44,7 @@ const PROVIDER = 'core/rendering/AppTextureProvider.ts';
  */
 const NOT_PIXELS: ReadonlyMap<string, string> = new Map([
   ['id', 'Identity for selection and keyframe tracks. Two paths differing only by id rasterize identically, so hashing it would defeat the cache without protecting anything.'],
+  ['name', 'The AE mask-list label, shown only in the UI. Renaming a mask cannot move an outline, so hashing it would re-rasterize every matte on a keystroke in the layer panel.'],
 ]);
 
 /** Field names declared on an exported interface. */
@@ -86,12 +87,14 @@ describe('MaskPath → cache signature parity', () => {
     // empty list and every `it.each` below then runs zero times, which reports
     // as a pass. An earlier parity attempt in this repo shipped that mistake.
     expect(fields.sort()).toEqual(
-      ['closed', 'expansion', 'feather', 'id', 'inverted', 'mode', 'opacity', 'points'].sort(),
+      ['closed', 'expansion', 'feather', 'id', 'inverted', 'mode', 'name', 'opacity', 'points'].sort(),
     );
-    expect(pointFields.length).toBe(6);
+    // 7 since per-vertex `feather` (variable-width feather) joined the anchor
+    // and its two handles.
+    expect(pointFields.length).toBe(7);
   });
 
-  it.each(['closed', 'expansion', 'feather', 'id', 'inverted', 'mode', 'opacity', 'points'])(
+  it.each(['closed', 'expansion', 'feather', 'id', 'inverted', 'mode', 'name', 'opacity', 'points'])(
     '`%s` is hashed into the mask signature, or exempt with a reason',
     (field) => {
       if (NOT_PIXELS.has(field)) {

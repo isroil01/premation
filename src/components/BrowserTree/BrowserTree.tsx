@@ -111,7 +111,7 @@ export interface BrowserRowProps {
   selected?: boolean;
   disabled?: boolean;
   title?: string;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onDoubleClick?: () => void;
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;

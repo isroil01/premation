@@ -43,9 +43,12 @@ function shapeNode(id: string): SceneNode {
 const rigOf = () => readNodeSkeleton(defaultSceneGraph.getNode(ID)!);
 const controllersOf = () => rigOf()?.controllers ?? [];
 
+import { useUIStore } from '@stores/uiStore';
+
 beforeEach(() => {
   setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
   if (defaultSceneGraph.getNode(ID)) defaultSceneGraph.removeNode(ID);
+  useUIStore.setState({ boneRigMode: 'pose' });
   defaultSceneGraph.addNode(shapeNode(ID));
   defaultSceneGraph.setSkeleton(ID, {
     bones: [

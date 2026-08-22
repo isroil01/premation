@@ -1,6 +1,6 @@
 import { Color } from '../../core/math/Color';
 import { RenderPass, SURFACE, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, emitTextured, writeAttachment, screenMvp, targetSampleUv } from './passUtils';
+import { beginViewportPass, emitSceneBlit, writeAttachment, screenMvp, targetSampleUv } from './passUtils';
 
 export const SCENE_COLOR_TARGET = 'scene-color';
 
@@ -78,7 +78,10 @@ export class EffectPass extends RenderPass {
     const { services } = ctx;
 
     services.commands.clear();
-    emitTextured(
+    // Dedicated scene blit: encodes linear→sRGB when LINEAR_INTERMEDIATE_STORAGE
+    // is on. Uploads tagged `rgba8unorm-srgb` decode at sample; RT copies use
+    // the `*-linear` shader variant (see linearWorkingSpace.ts).
+    emitSceneBlit(
       services.commands,
       screenMvp(),
       Color.white(),

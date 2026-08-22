@@ -2,6 +2,9 @@ import {
   buildRestMesh,
   deform,
   coverageMaskFromImageData,
+  silhouetteFromCoverage,
+  silhouetteFromPathPoints,
+  resolvePuppetSilhouette,
   PuppetRig,
   PuppetSilhouette,
 } from './puppet';
@@ -388,5 +391,125 @@ describe('Image-alpha coverage meshing', () => {
     for (let i = 0; i < m1.vertices.length; i++) {
       expect(Object.is(m1.vertices[i], m2.vertices[i])).toBe(true);
     }
+  });
+
+  it('traces a closed silhouette from a coverage disc (no bbox corners)', () => {
+    const cov = coverageMaskFromImageData(disc);
+    const sil = silhouetteFromCoverage(cov, 100, 100);
+    expect(sil).toBeDefined();
+    expect(sil!.points.length).toBeGreaterThanOrEqual(3);
+    // Every outline vertex sits on the disc, not out at the transparent corners.
+    for (const p of sil!.points) {
+      expect(Math.hypot(p.x, p.y)).toBeLessThan(50);
+    }
+    const meshed = buildRestMesh(100, 100, 0, { ...rig, meshMode: 'silhouette' }, sil);
+    const n = meshed.vertices.length / 4;
+    let hasCorner = false;
+    for (let i = 0; i < n; i++) {
+      if (meshed.vertices[i * 4 + 0]! === -50 && meshed.vertices[i * 4 + 1]! === -50) hasCorner = true;
+    }
+    expect(hasCorner).toBe(false);
+  });
+
+  it('expansion 0 does not dilate a ring of empty cells around the artwork', () => {
+    const cov = coverageMaskFromImageData(disc);
+    const tight = buildRestMesh(100, 100, 0, { ...rig, meshExpansion: 0 }, undefined, cov);
+    const padded = buildRestMesh(100, 100, 0, { ...rig, meshExpansion: 1 }, undefined, cov);
+    expect(padded.vertices.length).toBeGreaterThan(tight.vertices.length);
+  });
+
+  it('keeps grid cells whose artwork misses every corner/center probe (thin limbs)', () => {
+    // A solid blob (so the cull cannot fall back to the full bbox grid) plus a
+    // ONE-PIXEL-ROW strip at image y=53, x∈[40,90). At density 20 on a 100px
+    // layer the strip occupies only coverage-mask row 34, which lies strictly
+    // between the grid cells' corner rows (32/35) and center row (33) — the old
+    // five-point probe missed it entirely and dropped every strip cell, which is
+    // exactly how PNG characters shredded into disconnected chunks.
+    const bmp = makeBitmap(100, 100, (x, y) => {
+      if (x >= 5 && x < 25 && y >= 5 && y < 25) return 255; // blob
+      if (y === 53 && x >= 40 && x < 90) return 255; // thin limb
+      return 0;
+    });
+    const cov = coverageMaskFromImageData(bmp);
+    const meshed = buildRestMesh(100, 100, 0, rig, undefined, cov);
+    const full = buildRestMesh(100, 100, 0, rig);
+    // The cull really ran (not the never-empty bbox fallback).
+    expect(meshed.vertices.length).toBeLessThan(full.vertices.length);
+    // The strip region (local x ≥ -15, local y ∈ [0, 5]) still has mesh on it.
+    const n = meshed.vertices.length / 4;
+    let stripVerts = 0;
+    for (let i = 0; i < n; i++) {
+      const x = meshed.vertices[i * 4 + 0]!;
+      const y = meshed.vertices[i * 4 + 1]!;
+      if (x >= -15 && y >= 0 && y <= 5) stripVerts++;
+    }
+    expect(stripVerts).toBeGreaterThan(0);
+  });
+
+  it('a disconnected pinless island stays at rest instead of following the pins', () => {
+    // Two opaque blobs with a wide transparent gap; both pins sit on the LEFT
+    // blob. Dragging them must not move the right blob — the old equal-share
+    // weight fallback made unreachable islands travel by the average of all pin
+    // displacements ("drag one hand and the whole PNG smears").
+    const bmp = makeBitmap(100, 100, (x, y) => {
+      if (Math.hypot(x - 25, y - 50) <= 15) return 255; // left blob
+      if (Math.hypot(x - 78, y - 50) <= 10) return 255; // right blob
+      return 0;
+    });
+    const cov = coverageMaskFromImageData(bmp);
+    const islandRig: PuppetRig = {
+      meshExpansion: 0,
+      meshDensity: 20,
+      pins: [
+        { id: 'p1', name: 'P1', x: -35, y: 0 },
+        { id: 'p2', name: 'P2', x: -15, y: 0 },
+      ],
+    };
+    const mesh = buildRestMesh(100, 100, 0, islandRig, undefined, cov);
+    const n = mesh.vertices.length / 4;
+    // The island must actually exist in the culled mesh.
+    let islandCount = 0;
+    for (let i = 0; i < n; i++) {
+      if (mesh.vertices[i * 4 + 0]! >= 15) islandCount++;
+    }
+    expect(islandCount).toBeGreaterThan(0);
+
+    for (const solver of ['lbs', 'arap'] as const) {
+      const moved = deform(
+        [
+          { id: 'p1', x: -35, y: 20 },
+          { id: 'p2', x: -15, y: 20 },
+        ],
+        mesh,
+        solver,
+      );
+      let leftMoved = 0;
+      for (let i = 0; i < n; i++) {
+        const rx = mesh.vertices[i * 4 + 0]!;
+        const ry = mesh.vertices[i * 4 + 1]!;
+        const dx = moved[i * 4 + 0]! - rx;
+        const dy = moved[i * 4 + 1]! - ry;
+        if (rx >= 15) {
+          // Right island: unreachable from every pin — must not move.
+          expect(Math.abs(dx)).toBeLessThan(1e-4);
+          expect(Math.abs(dy)).toBeLessThan(1e-4);
+        } else if (Math.hypot(dx, dy) > 1) {
+          leftMoved++;
+        }
+      }
+      // The pinned blob really deformed.
+      expect(leftMoved).toBeGreaterThan(0);
+    }
+  });
+
+  it('does not ear-clip an alpha mask — PNG characters stay a culled grid', () => {
+    const cov = coverageMaskFromImageData(disc);
+    expect(resolvePuppetSilhouette(undefined, cov, 100, 100, 'silhouette')).toBeUndefined();
+    expect(resolvePuppetSilhouette(undefined, cov, 100, 100, 'grid')).toBeUndefined();
+    const path = silhouetteFromPathPoints(
+      [{ x: -10, y: -10 }, { x: 10, y: -10 }, { x: 10, y: 10 }, { x: -10, y: 10 }],
+      false,
+    );
+    expect(resolvePuppetSilhouette(path, cov, 100, 100, 'silhouette')).toBe(path);
   });
 });

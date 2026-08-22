@@ -21,9 +21,13 @@
  * exists.
  *
  * ── Coverage ─────────────────────────────────────────────────────────
- * 36 of AE's 38. Missing: Dissolve and Dancing Dissolve (stochastic, and the
- * cost is not the blend but a determinism contract between preview and
- * export — M5).
+ * All 38 of AE's 38. Dissolve and Dancing Dissolve (M5) landed last: the cost
+ * was never the blend but a determinism contract between preview and export,
+ * met the same way Roughen met it — an integer hash of (comp-grid pixel, seed),
+ * no Math.random, so a scrub back to the same frame redraws the same speckle
+ * and export matches preview at any zoom. Dancing Dissolve's seed is the frame
+ * index, threaded scene-wide (`FrameScene.dissolveFrame`); plain Dissolve's is
+ * 0, which is what makes its pattern hold still.
  *
  * The four Stencil/Silhouette modes (M8c) are now in. They were estimated as
  * needing "a compositing-group boundary" first; that boundary already existed.
@@ -40,6 +44,14 @@ import type { SceneNode } from '@core/types';
 
 export type LayerBlendMode =
   | 'normal'
+  // ── M5: stochastic. Coverage becomes a per-pixel coin flip — a pixel shows
+  // the source at FULL opacity with probability equal to its coverage, or the
+  // backdrop untouched. Dissolve holds its pattern still and Dancing re-rolls
+  // each frame. (Keep this comment free of semicolons — `featureCounts.cjs`
+  // captures the union body up to the first one it sees, comments included,
+  // and truncates the count.) ──
+  | 'dissolve'
+  | 'dancing-dissolve'
   | 'add'
   | 'multiply'
   | 'screen'
@@ -103,6 +115,8 @@ export type LayerBlendMode =
  */
 export const BLEND_MODES: ReadonlyArray<{ mode: LayerBlendMode; label: string; group: string }> = [
   { mode: 'normal', label: 'Normal', group: 'Normal' },
+  { mode: 'dissolve', label: 'Dissolve', group: 'Normal' },
+  { mode: 'dancing-dissolve', label: 'Dancing Dissolve', group: 'Normal' },
 
   { mode: 'darken', label: 'Darken', group: 'Subtractive' },
   { mode: 'multiply', label: 'Multiply', group: 'Subtractive' },

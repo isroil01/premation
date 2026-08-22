@@ -124,6 +124,7 @@ const MAP = {
   'text-3d': 'font_download', 'pop-out': 'picture_in_picture_alt', gpu: 'memory',
   blur: 'blur_on', palette: 'palette', gradient: 'gradient', waves: 'waves', eraser: 'ink_eraser',
   clock: 'schedule', wipe: 'transition_slide', 'magic-wand': 'wand_stars',
+  code: 'code',
 };
 
 /**

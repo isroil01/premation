@@ -16,6 +16,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useGuidesStore } from '@stores/guidesStore';
+import { useColorManagementStore, DEFAULT_COLOR_MANAGEMENT_SETTINGS } from '@stores/colorManagementStore';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
@@ -170,6 +171,23 @@ describe('captureDocument → restoreDocument', () => {
       proportionalColumns: 3,
       proportionalRows: 3,
       safeArea: true,
+    });
+  });
+
+  it('preserves colour management (working space, display, bit depth)', () => {
+    useColorManagementStore.getState().setWorkingSpace('aces-cg');
+    useColorManagementStore.getState().setDisplayTransform('aces');
+    useColorManagementStore.getState().setBitDepth(32);
+
+    const doc = structuredClone(captureDocument());
+    useColorManagementStore.getState().restore(DEFAULT_COLOR_MANAGEMENT_SETTINGS);
+
+    restoreDocument(doc);
+
+    expect(useColorManagementStore.getState().settings()).toEqual({
+      workingSpace: 'aces-cg',
+      displayTransform: 'aces',
+      bitDepth: 32,
     });
   });
 

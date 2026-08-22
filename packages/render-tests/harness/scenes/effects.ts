@@ -121,6 +121,14 @@ const EFFECTS: EffectSpec[] = [
   { type: 'four-color-gradient', params: { colorTL: '#ff0055', colorTR: '#ffcc00', colorBL: '#00d0ff', colorBR: '#7b61ff', blend: 100 } },
   { type: 'stroke', params: { width: 4, color: '#ffffff', opacity: 100 } },
   { type: 'beam', params: { length: 100, startX: 10, startY: 50, endX: 90, endY: 50, thickness: 8, softness: 30, color: '#8fd0ff' } },
+  { type: 'light-sweep', params: { position: 50, sweepWidth: 120, angle: 35, color: '#ffffff', intensity: 70, softness: 60, composite: 4 } },
+  // Offset centre so ghosts along the optical axis are visible (at 0,0 they
+  // collapse onto the source).
+  { type: 'lens-flare', params: { centerX: 48, centerY: -28, brightness: 70, scale: 1, color: '#ffd9a0' } },
+  { type: 'light-rays', params: {
+    centerX: 0, centerY: 0, rayCount: 48, rayLength: 180, spread: 100, rotation: 15,
+    color: '#fff3c4', opacity: 70, falloff: 40, seed: 1, composite: 1,
+  } },
   /*
     Re-blessed when the 2D route stopped carrying its own copy of the effect
     switch — see "One effects chain, not two" in CompositionPass.

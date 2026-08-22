@@ -18,6 +18,13 @@ export interface AccordionItem {
   content: ReactNode;
   defaultOpen?: boolean;
   disabled?: boolean;
+  /**
+   * Render `content` only while the section is open (default: always mounted,
+   * merely `hidden`). For sections whose MOUNT has side effects — e.g. Track
+   * Motion arms the canvas overlay — staying mounted while collapsed runs
+   * those effects for every selection.
+   */
+  mountOnOpen?: boolean;
 }
 
 export interface AccordionProps {
@@ -83,7 +90,7 @@ export function Accordion({ items, exclusive = false, className }: AccordionProp
               hidden={!isOpen}
               className={styles.panel}
             >
-              {item.content}
+              {item.mountOnOpen && !isOpen ? null : item.content}
             </div>
           </div>
         );

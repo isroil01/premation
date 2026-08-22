@@ -48,10 +48,20 @@ import { staticPropertyPaths, resolvePropertyMeta } from '@core/inspector/proper
 
 const REPO_ROOT = resolve(__dirname, '../../../..');
 
-/** Where a layer becomes pixels. Kept narrow for the reason G1 states. */
+/**
+ * Where a layer becomes OUTPUT. Kept narrow for the reason G1 states.
+ *
+ * `src/core/audio` joined the pixel path when Audio Levels became keyframeable.
+ * The contract this guard enforces is "a stopwatch writes keyframes something
+ * reads", and for a gain ramp the thing that reads them is the audio graph, not
+ * the rasterizer. Leaving audio out would have forced the honest, sampled
+ * `audioLevelDb` onto the unsampled list beside real bugs — which is exactly
+ * the kind of noise that teaches people to ignore a guard.
+ */
 const PIXEL_PATH = [
   'src/core/rendering',
   'packages/renderer/src',
+  'src/core/audio',
 ];
 
 function readAll(dir: string, acc: string[] = []): string[] {
@@ -108,7 +118,20 @@ const isGroupRow = (path: string): boolean => {
   try { return resolvePropertyMeta(path).type === 'group'; } catch { return false; }
 };
 
-const PATHS = staticPropertyPaths().filter((p) => !isGroupRow(p));
+/**
+ * Excluded on the same terms: the entry declares `keyframeable: false`, so the
+ * registry is describing a property for its label and range while stating that
+ * nothing samples it per frame — Material Options, read once by
+ * `readNodeMaterial`. The surfaces honour that by offering no stopwatch, which
+ * is what puts these outside this guard's subject rather than inside it as
+ * findings. Making one animate means deleting its flag, and this sweep then
+ * demands the reader before it will go green again.
+ */
+const isStaticOnly = (path: string): boolean => {
+  try { return resolvePropertyMeta(path).keyframeable === false; } catch { return false; }
+};
+
+const PATHS = staticPropertyPaths().filter((p) => !isGroupRow(p) && !isStaticOnly(p));
 
 /** Quoted read, not an object-literal write. */
 const isSampled = (path: string): boolean =>
@@ -148,12 +171,23 @@ describe('the instrument itself', () => {
 });
 
 describe('every keyframeable property is sampled where it draws', () => {
-  it('POSITIVE CONTROL: the group-row filter removed something, and not everything', () => {
-    // Otherwise the exclusion is either dead or is quietly swallowing the whole
-    // inventory, and the sweep below would be vacuous.
+  it('POSITIVE CONTROL: both exclusions are live, and neither swallows the inventory', () => {
+    // Otherwise an exclusion is either dead or is quietly eating the whole
+    // subject set, and the sweep below would be vacuous. Stated per exclusion
+    // rather than as one count: the old "fewer than five removed" bound was
+    // really a proxy for "the group-row filter is the only one", and it went
+    // red the moment a SECOND, equally legitimate exclusion existed. What
+    // matters is that each one bites and that the kept set is still the bulk.
     const all = staticPropertyPaths();
-    expect({ removedSome: PATHS.length < all.length, keptMost: PATHS.length > all.length - 5 })
-      .toEqual({ removedSome: true, keptMost: true });
+    expect({
+      groupRowsExcluded: all.filter(isGroupRow).length,
+      staticOnlyExcluded: all.filter(isStaticOnly).length,
+      keptTheBulk: PATHS.length > all.length * 0.8,
+    }).toEqual({
+      groupRowsExcluded: 1,
+      staticOnlyExcluded: all.filter((p) => resolvePropertyMeta(p).group === 'material').length,
+      keptTheBulk: true,
+    });
   });
 
   it('nothing NEW is registered with a stopwatch the renderer never reads', () => {

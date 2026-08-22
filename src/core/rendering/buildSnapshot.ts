@@ -18,14 +18,20 @@ import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodePreserveTransparency } from '@core/effects/preserveTransparency';
-import { readNodeMaskAt } from '@core/effects/mask';
+import { readNodeMaskAt, roundedRectMask, type LayerMask } from '@core/effects/mask';
+import {
+  clampCornerRadii,
+  hasIndependentCornerRadii,
+  resolveCornerRadii,
+  type CornerRadiiTuple,
+} from '@core/scene/cornerRadii';
 import { readNodeMatte, readMatte } from '@core/effects/matte';
 import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readNodeMotionBlur, motionBlurSampleTimes, adaptiveMotionBlurSamples, type MotionBlurConfig } from '@core/effects/motionBlur';
 import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core/paint/fill';
 import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
-import { localMatrix, worldTransformOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
+import { localMatrix, worldTransformOf, worldMatrixOf, localUnderParent, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
 import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
@@ -50,6 +56,7 @@ import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/sc
 import { faceEffectsFor } from '@core/scene/faceEffects';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
+import { contentAwareFillAt } from '@core/effects/contentAwareFillVideo';
 import { resolvePathOps, applyPathOpChain, shapeOutline, type PolyRun } from '@core/scene/pathOps';
 import { corner } from '../../../packages/workspace/src/math/BezierPoint';
 import { resolveAnimators, evaluateTextAnimators } from '@core/text/textAnimators';
@@ -61,14 +68,18 @@ import { bracketFrames } from './videoFrameCache';
 import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
 import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
+import { planDofStrips, layerCornerDepths } from './dofStrips';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
-import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides } from '@core/scene/compInstanceOverrides';
-import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand } from '@core/scene/mergePaths';
+import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides, type OverrideValue } from '@core/scene/compInstanceOverrides';
+import { expandCloners, cloneOffsetOf } from '@core/scene/clonerExpand';
+import { readNodePhysics, physicsPosesAt } from '@core/simulation/physicsBodies';
+import type { BodySeed } from '@core/simulation/rigidBody';
+import { usePhysicsStore } from '@stores/physicsStore';
+import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand, nodeWorldOutline } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
 import type { PropPath } from '@motion/animation';
-import { Project3D, Matrix4Math, type Matrix2D, type Matrix4 } from '@motion/scene';
-import type { LayerMask } from '@core/effects/mask';
+import { Project3D, Matrix4Math, Matrix, type Matrix2D, type Matrix4 } from '@motion/scene';
 import { Color } from '@motion/renderer';
 
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -79,14 +90,16 @@ import type { AnimationEngine } from '@motion/animation';
 import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint } from './RenderBackend';
 import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
-import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
+import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, resolvePuppetSilhouette, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { resolveLivePins } from '../rig/livePins';
 import { resolveActiveIkTargets } from '../rig/liveIkTargets';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
 import { readNodeSkeleton } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
+import { resolveLiveBones } from '../rig/liveBones';
 import { applyIk, getSkeletonBinding, skinRigVertices, type IkTargetResolved } from '../rig/rigDeform';
 import { rigCoverageMask, resolveRigImageSrc } from '../rig/rigMeshInputs';
+import { readSvgLayer } from '../svg/svgLayer';
 
 const COMP_WIDTH = 1920;
 const COMP_HEIGHT = 1080;
@@ -190,7 +203,7 @@ export interface SnapshotComp {
    * referenced comp's OWN node ids, because this pass walks the real nodes
    * rather than clones. Set by the renderer itself; callers never pass it.
    */
-  compOverrides?: ReadonlyMap<string, number>;
+  compOverrides?: ReadonlyMap<string, OverrideValue>;
 }
 
 /** Nesting cap for recursive composition rendering. */
@@ -226,9 +239,17 @@ function readBase(node: SceneNode): {
   scaleX: number; scaleY: number;
   width?: number; height?: number;
   cornerRadius?: number;
+  cornerRadiusTL?: number;
+  cornerRadiusTR?: number;
+  cornerRadiusBR?: number;
+  cornerRadiusBL?: number;
   backdropBlur?: number;
   fill?: string; text?: string; fontSize: number;
   fontFamily?: string; fontWeight?: string; fontStyle?: string;
+  /** Variable-font wdth axis. */
+  fontWidth?: number;
+  /** Variable-font slnt axis. */
+  fontSlant?: number;
   letterSpacing?: number; lineHeight?: number; align?: string;
   paragraphSpacing?: number;
   strokeOverFill?: boolean;
@@ -246,6 +267,8 @@ function readBase(node: SceneNode): {
   let fontSize = 48;
   let fontFamily: string | undefined;
   let fontWeight: string | undefined;
+  let fontWidth: number | undefined;
+  let fontSlant: number | undefined;
   let fontStyle: string | undefined;
   let letterSpacing: number | undefined;
   let lineHeight: number | undefined;
@@ -258,6 +281,10 @@ function readBase(node: SceneNode): {
   let width: number | undefined;
   let height: number | undefined;
   let cornerRadius: number | undefined;
+  let cornerRadiusTL: number | undefined;
+  let cornerRadiusTR: number | undefined;
+  let cornerRadiusBR: number | undefined;
+  let cornerRadiusBL: number | undefined;
   let backdropBlur: number | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
@@ -274,6 +301,8 @@ function readBase(node: SceneNode): {
     if (typeof p.fontFamily === 'string') fontFamily = p.fontFamily;
     if (typeof p.fontWeight === 'string') fontWeight = p.fontWeight;
     else if (typeof p.fontWeight === 'number') fontWeight = String(p.fontWeight);
+    if (typeof p.fontWidth === 'number') fontWidth = p.fontWidth;
+    if (typeof p.fontSlant === 'number') fontSlant = p.fontSlant;
     if (typeof p.fontStyle === 'string') fontStyle = p.fontStyle;
     letterSpacing = num(p.letterSpacing) ?? letterSpacing;
     lineHeight = num(p.lineHeight) ?? lineHeight;
@@ -286,6 +315,10 @@ function readBase(node: SceneNode): {
     width = num(p.width) ?? width;
     height = num(p.height) ?? height;
     if (num(p.cornerRadius) !== undefined) cornerRadius = num(p.cornerRadius);
+    if (num(p.cornerRadiusTL) !== undefined) cornerRadiusTL = num(p.cornerRadiusTL);
+    if (num(p.cornerRadiusTR) !== undefined) cornerRadiusTR = num(p.cornerRadiusTR);
+    if (num(p.cornerRadiusBR) !== undefined) cornerRadiusBR = num(p.cornerRadiusBR);
+    if (num(p.cornerRadiusBL) !== undefined) cornerRadiusBL = num(p.cornerRadiusBL);
     if (num(p.backdropBlur) !== undefined) backdropBlur = num(p.backdropBlur);
   }
   return {
@@ -298,12 +331,18 @@ function readBase(node: SceneNode): {
     width,
     height,
     cornerRadius,
+    cornerRadiusTL,
+    cornerRadiusTR,
+    cornerRadiusBR,
+    cornerRadiusBL,
     backdropBlur,
     fill,
     text,
     fontSize,
     fontFamily,
     fontWeight,
+    fontWidth,
+    fontSlant,
     fontStyle,
     letterSpacing,
     lineHeight,
@@ -490,17 +529,149 @@ export function buildSnapshot(
       __overriddenProps: ovProps,
     } as unknown as SceneNode;
   };
-  const nodes = expandCompInstances(
+  /**
+   * Where a cloner's driving layer sits, expressed in the CLONER's own frame.
+   *
+   * Computed over the RAW graph rather than the expanded list, because
+   * expansion is what this feeds — the `localOf`/`parentOf` further down do not
+   * exist yet, and depending on them would be circular. That is sound: a field
+   * driver is an ordinary layer, never a clone, so the raw graph already has
+   * everything needed.
+   *
+   * `localUnderParent`, not a plain position subtraction: subtracting world
+   * positions is right only while the cloner sits unrotated at scale 1, which
+   * is precisely the kind of thing that looks correct until someone animates a
+   * rotation and the field starts sliding the wrong way.
+   */
+  const rawLocalOf: LocalOf = (id) => {
+    const n = graph.getNode(id);
+    if (!n) return null;
+    const b = readBase(n as SceneNode);
+    const av = rawAnim.evaluateNode(id, t);
+    const sc = av.get('scale');
+    return {
+      x: av.get('x') ?? b.x,
+      y: av.get('y') ?? b.y,
+      rotation: av.get('rotation') ?? b.rotation,
+      scaleX: av.get('scaleX') ?? sc ?? b.scaleX,
+      scaleY: av.get('scaleY') ?? sc ?? b.scaleY,
+    };
+  };
+  const rawParentOf: ParentOf = (id) => graph.getNode(id)?.parent ?? null;
+  const rawWorldCache = new Map<string, Matrix2D>();
+  const fieldOf = (clonerId: string, layerId: string): { x: number; y: number } | null => {
+    if (!graph.getNode(layerId) || !graph.getNode(clonerId)) return null;
+    const fieldW = worldMatrixOf(layerId, rawLocalOf, rawParentOf, rawWorldCache);
+    const clonerW = worldMatrixOf(clonerId, rawLocalOf, rawParentOf, rawWorldCache);
+    if (!fieldW || !clonerW) return null;
+    const rel = localUnderParent(fieldW, clonerW);
+    return { x: rel.x, y: rel.y };
+  };
+
+  /**
+   * A path layer's outline, expressed in the CLONER's frame — the driver for
+   * `mode: 'path'`. Shares everything with `fieldOf` above: raw graph, raw
+   * world matrices, and the same reasoning about why (expansion is what this
+   * feeds; a driver is an ordinary layer, never a clone).
+   *
+   * The outline itself comes from `nodeWorldOutline` — the SAME resolution the
+   * boolean ops use (primitive outline vs Geometry points vs animated
+   * `path.points`) — so the clones sit on the curve that is actually drawn,
+   * not on a second implementation of it that drifts.
+   */
+  const pathOf = (clonerId: string, layerId: string): { points: Array<{ x: number; y: number }>; closed: boolean } | null => {
+    const n = graph.getNode(layerId);
+    if (!n || !graph.getNode(clonerId)) return null;
+    const av = rawAnim.evaluateNode(layerId, t);
+    // WORLD pose through the parent chain, like the live-boolean caller: a
+    // path layer inside a moving null must carry the null's motion.
+    const w = worldTransformOf(layerId, rawLocalOf, rawParentOf, rawWorldCache);
+    const outline = nodeWorldOutline(
+      n as SceneNode,
+      (prop) => {
+        if (prop === 'x') return w.x;
+        if (prop === 'y') return w.y;
+        if (prop === 'rotation') return w.rotation;
+        if (prop === 'scaleX') return w.scaleX;
+        if (prop === 'scaleY') return w.scaleY;
+        return av.get(prop);
+      },
+      () => {
+        const pts = rawAnim.sampleData(layerId, 'path.points', t);
+        if (!Array.isArray(pts) || pts.length < 3) return undefined;
+        if (typeof pts[0] !== 'object' || pts[0] === null || !('x' in (pts[0] as object))) return undefined;
+        return (pts as Array<{ x: number; y: number; inX?: number; inY?: number; outX?: number; outY?: number }>).map(
+          (q) => ({ x: q.x, y: q.y, inX: q.inX ?? q.x, inY: q.inY ?? q.y, outX: q.outX ?? q.x, outY: q.outY ?? q.y }),
+        );
+      },
+    );
+    if (!outline) return null;
+    // World → the cloner's local frame, so the plan's output lands in the same
+    // space every other clone offset is expressed in. Inverting the matrix
+    // (rather than subtracting positions) is what keeps a ROTATED or scaled
+    // cloner honest — same lesson the field resolver already carries.
+    const clonerW = worldMatrixOf(clonerId, rawLocalOf, rawParentOf, rawWorldCache);
+    if (!clonerW) return null;
+    const inv = Matrix.invert(clonerW);
+    return {
+      closed: outline.closed,
+      points: outline.points.map((pt) => Matrix.transformPoint(inv, pt)),
+    };
+  };
+
+  const nodes = expandCloners(expandCompInstances(
     graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
   // AFTER `materializeForFrame`, never before: a graph node view exposes
   // `transform` and friends through prototype getters, and the spread in
   // `applyOwnOverrides` drops them — `readBase` then died on an undefined
   // transform. A materialized node is a plain object, so the spread is safe.
-  ).map(materializeForFrame).map(applyOwnOverrides);
+  ).map(materializeForFrame).map(applyOwnOverrides), fieldOf, pathOf);
   const anySolo = nodes.some((n) => n.solo === true);
 
   const rawController = getTimelineController();
   const fps = rawController.timeline.getFrameRate().fps;
+  // Read once per snapshot, not per layer: the world is the same for every body
+  // and a per-layer read would be a store subscription inside the hot loop.
+  const physicsWorldSettings = usePhysicsStore.getState();
+
+  /**
+   * Rigid-body poses for this composition.
+   *
+   * A PRE-PASS, because bodies collide with each other: every body has to be
+   * known before any one of them can be placed, so the per-layer loop below
+   * cannot build this incrementally. Seeds come from `readBase` — the layer's
+   * AUTHORED pose, which is where the simulated history begins.
+   */
+  const physicsSeeds: BodySeed[] = [];
+  for (const n of nodes) {
+    const cfg = readNodePhysics(n);
+    if (!cfg) continue;
+    const pb = readBase(n);
+    physicsSeeds.push({
+      id: n.id, x: pb.x, y: pb.y,
+      // The authored rotation seeds the body's starting ANGLE, so a layer
+      // placed at 25° begins its tumble from 25° rather than snapping flat.
+      rotation: pb.rotation,
+      width: pb.width ?? 100, height: pb.height ?? 100,
+      cfg,
+    });
+  }
+  const physicsPoses = physicsSeeds.length
+    ? physicsPosesAt(
+        comp.rootId ?? 'comp',
+        physicsSeeds,
+        {
+          gravityX: physicsWorldSettings.gravityX,
+          gravityY: physicsWorldSettings.gravityY,
+          bounds: physicsWorldSettings.useCompBounds
+            ? { left: 0, top: 0, right: comp.width, bottom: comp.height }
+            : null,
+          iterations: physicsWorldSettings.iterations,
+        },
+        fps,
+        Math.round(t * (fps || 30)),
+      )
+    : null;
 
   // Parenting: each layer's on-screen transform is its local transform composed
   // with its parent chain's world transform (E3). Groups/nulls don't draw but
@@ -550,9 +721,30 @@ export function buildSnapshot(
   const remapOf = (id: string): (tt: number) => number => {
     const hit = remapCache.get(id);
     if (hit) return hit;
-    const fn = buildRemap(id);
+    let fn = buildRemap(id);
+    // Cloner cascade: a clone with a time offset plays its animation that many
+    // seconds behind the source. Applied at COMP time — outside every clip map,
+    // loop and precomp remap — because "this copy runs 0.3s behind" is a
+    // statement about the composition's clock, not the layer's internal one.
+    // The offset lives on the clone ROOT; a cloned group's children find it by
+    // walking up, so the whole subtree delays together.
+    const cascade = cloneTimeOffsetOf(id);
+    if (cascade !== 0) {
+      const inner = fn;
+      fn = (tt: number) => inner(tt - cascade);
+    }
     remapCache.set(id, fn);
     return fn;
+  };
+  /** Nearest ancestor clone root's time offset, or 0. Bounded walk. */
+  const cloneTimeOffsetOf = (id: string): number => {
+    let cur = nodeById.get(id);
+    for (let i = 0; cur && i < 64; i++) {
+      const off = cloneOffsetOf(cur);
+      if (off) return off.timeOffset ?? 0;
+      cur = cur.parent != null ? nodeById.get(cur.parent) : undefined;
+    }
+    return 0;
   };
   /**
    * Memoized exactly like `valuesOf` below — `remapOf` is called ~12× per node
@@ -1283,6 +1475,59 @@ export function buildSnapshot(
     return prefixLayerIds(nested.layers, `${node.id}::`);
   };
 
+  // Which layers must be fully materialized this frame. Invisible / un-soloed
+  // layers still occupy stack slots (mattes, paint order) but a 1×1 stub is
+  // enough — building geometry, effects and text for 10k hidden layers is the
+  // main per-frame cost once the scene tree is virtualized. Matte sources of
+  // layers that WILL draw stay in the full-build set so the matte still has
+  // real pixels.
+  const layerWillDraw = (n: SceneNode): boolean =>
+    n.visible !== false
+    && (!anySolo || n.solo === true)
+    && !(comp.forExport === true && readIsGuideLayer(n));
+
+  const needsFullBuild = new Set<string>();
+  {
+    const emitOrder: SceneNode[] = [];
+    for (const n of nodes) {
+      const k = readNodeKind(n);
+      if (k === 'group' || k === 'null' || k === 'camera' || k === 'audio') continue;
+      if (k === 'comp' && readCompCollapse(n)) continue;
+      if (isBooleanOperand(n)) continue;
+      if (!isLiveAt(n.id)) continue;
+      if (k === 'light' && comp.draft3d) continue;
+      emitOrder.push(n);
+    }
+    for (let i = 0; i < emitOrder.length; i++) {
+      const n = emitOrder[i]!;
+      if (!layerWillDraw(n)) continue;
+      needsFullBuild.add(n.id);
+      const m = readMatte(readNodeMatte(n));
+      if (!m) continue;
+      if (m.sourceId) needsFullBuild.add(m.sourceId);
+      else if (i + 1 < emitOrder.length) needsFullBuild.add(emitOrder[i + 1]!.id);
+    }
+  }
+
+  const emitInvisibleStub = (node: SceneNode): void => {
+    emitLayer({
+      id: node.id,
+      kind: 'shape',
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      depth: 0,
+      opacity: 0,
+      width: 1,
+      height: 1,
+      fill: '#000',
+      visible: false,
+      matte: readNodeMatte(node),
+    }, node);
+  };
+
   for (const node of nodes) {
     const kind = readNodeKind(node);
     if (kind === 'comp') {
@@ -1291,9 +1536,14 @@ export function buildSnapshot(
       // also mint a container — that would render its content twice, once
       // spliced and once as a card.
       const ref = readCompRef(node);
-      const innerLayers =
-        ref !== null && !readCompCollapse(node) ? nestedCompLayers(node, ref) : null;
-      if (innerLayers) emitLayer(buildPrecompContainer(node, innerLayers), node);
+      const sealed = ref !== null && !readCompCollapse(node);
+      if (sealed) {
+        if (!needsFullBuild.has(node.id)) {
+          emitInvisibleStub(node);
+        } else {
+          emitLayer(buildPrecompContainer(node, nestedCompLayers(node, ref) ?? undefined), node);
+        }
+      }
       continue;
     }
     // Groups / nulls / cameras / audio are structural — they never draw.
@@ -1316,6 +1566,12 @@ export function buildSnapshot(
 
     // Draft 3D: light layers draw nothing (their glow wash IS lighting).
     if (kind === 'light' && comp.draft3d) continue;
+
+    // Hidden / un-soloed: keep a stack stub, skip the expensive materialize.
+    if (!needsFullBuild.has(node.id)) {
+      emitInvisibleStub(node);
+      continue;
+    }
 
     // Light: a radial glow at its world position, composited (screen) to
     // brighten what's beneath. Intensity / radius are keyframeable.
@@ -1415,7 +1671,15 @@ export function buildSnapshot(
     const size = SIZE[layerKind];
     const name = (node.name ?? '').toLowerCase();
     const ghost = focus?.isGhost(node.id) ?? false;
-    const baseOpacity = a?.has('opacity') ? (a.get('opacity') as number) / 100 : base.opacity;
+    // Cloner: MULTIPLIES the resolved opacity rather than replacing it, so a
+    // clone of a 50%-opacity layer at the faded end of a step ramp is fainter
+    // than the source rather than equal to the ramp value. Same reasoning as
+    // scale below — a cloner describes a variation ON the layer, not a
+    // substitute for it. Additive/multiplicative is also why this cannot use
+    // the Essential Properties suppression path, which REPLACES.
+    const cloneOff = cloneOffsetOf(node);
+    const baseOpacity = (a?.has('opacity') ? (a.get('opacity') as number) / 100 : base.opacity)
+      * (cloneOff ? cloneOff.opacity / 100 : 1);
     // Resolve effect amounts once (keyframed → sampled) — the CSS `filter` for
     // Canvas2D, and the structured list attached to the layer for the GPU path.
     // readNodeRenderEffects (not readNodeEffects) so the layer's `fx` switch
@@ -1437,8 +1701,10 @@ export function buildSnapshot(
     // if a future consumer starts reading it.
     const filter = effectsToFilter(ownEffects) || undefined;
 
-    // A solid layer fills the whole composition (background / matte / adjustment
-    // base) — pinned to comp centre at comp size, regardless of its transform.
+    // A solid layer fills the whole composition by default, but remains a
+    // normal transformable shape once seeded — pinning x/y/scale made the
+    // selection blueprint sit at makeNode's 100×100 while the fill covered the
+    // frame, and scale/drag writes never showed.
     const isSolid = node.components.find((c) => c.type === 'fx')?.props.solid === true;
     const geomComponent = node.components.find((c) => c.type === 'Geometry');
     const staticPathPoints = geomComponent?.props.points as import('../../../packages/workspace/src/math/BezierPoint').BezierPoint[] | undefined;
@@ -1486,8 +1752,27 @@ export function buildSnapshot(
     const measuredText = layerKind === 'text'
       ? measureTextNodeSize(node, evalMap)
       : null;
-    let layerW = isSolid ? comp.width : (measuredText?.w ?? (a?.has('width') ? (a.get('width') as number) : base.width) ?? size.w);
-    let layerH = isSolid ? comp.height : (measuredText?.h ?? (a?.has('height') ? (a.get('height') as number) : base.height) ?? size.h);
+    // A solid layer is a full-frame colour plate by default. Prefer authored
+    // width/height when seeded (insertSolid / 3D enable); fall back to the
+    // composition when dims are missing or still makeNode's 100×100.
+    const rawW = a?.has('width') ? (a.get('width') as number) : base.width;
+    const rawH = a?.has('height') ? (a.get('height') as number) : base.height;
+    const solidUnseeded = isSolid && (
+      typeof rawW !== 'number'
+      || typeof rawH !== 'number'
+      || (rawW === 100 && rawH === 100)
+    );
+    // The `typeof` re-tests are redundant with `solidUnseeded` — which is
+    // already true whenever either dimension is not a number — but the compiler
+    // cannot narrow `rawW`/`rawH` through a separate boolean const, and without
+    // them `layerW`/`layerH` widen to `number | undefined` and poison every
+    // geometry call downstream.
+    let layerW = isSolid
+      ? (solidUnseeded || typeof rawW !== 'number' ? comp.width : rawW)
+      : (measuredText?.w ?? (typeof rawW === 'number' ? rawW : size.w));
+    let layerH = isSolid
+      ? (solidUnseeded || typeof rawH !== 'number' ? comp.height : rawH)
+      : (measuredText?.h ?? (typeof rawH === 'number' ? rawH : size.h));
 
     // Audio Waveform generator (envelope, not spectrum): a referenced audio
     // layer's precomputed peaks become this shape's live outline. Overrides any
@@ -1585,6 +1870,40 @@ export function buildSnapshot(
     let sx = scaleX;
     let sy = scaleY;
     let rot = world.rotation;
+    /**
+     * Physics REPLACES the position, where the cloner offsets it.
+     *
+     * A dynamic body's position IS the solver's output — there is nothing to
+     * add it to. Keyframed x/y on a simulated layer is therefore overridden,
+     * not blended: blending would produce a body that is neither where physics
+     * put it nor where you keyframed it, and no way to tell which half was
+     * responsible for any given frame. Static bodies are never in this map, so
+     * a keyframed wall still animates and still collides.
+     */
+    const simPose = physicsPoses?.get(node.id);
+    if (simPose) {
+      px = simPose.x;
+      py = simPose.y;
+      // Present only for bodies that opted into spin — see physicsPosesAt.
+      // A rotation-locked body keeps its own (possibly keyframed) rotation.
+      if (simPose.rotation !== undefined) rot = simPose.rotation;
+    }
+    // Cloner offset, applied to the RESOLVED transform.
+    //
+    // It has to land here rather than be patched into the components, because a
+    // cloner OFFSETS what the layer already resolves to — including its
+    // animation. Patching `x` on the clone's Transform would be outvoted by a
+    // keyframed x every frame (the dead-control shape compInstanceOverrides
+    // documents), and suppressing the track instead would throw the animation
+    // away, which is the opposite of what a cloner is for: the clones are meant
+    // to move WITH the layer, spread apart from each other.
+    if (cloneOff) {
+      px += cloneOff.x;
+      py += cloneOff.y;
+      rot += cloneOff.rotation;
+      sx *= cloneOff.scaleX;
+      sy *= cloneOff.scaleY;
+    }
     // Auto-orient (E4): a flagged, moving layer faces its direction of travel.
     if (!is3D && readNodeAutoOrient(node)) {
       const ang = autoOrientAngleDeg(node, remapOf(node.id)(t), anim);
@@ -1830,6 +2149,110 @@ export function buildSnapshot(
         ? [...(finalStroke ? [finalStroke] : []), ...strokeStack.slice(1)]
         : undefined;
 
+    // Appearance / paint stroke is drawn into the shape raster for vectors, but
+    // image / video / text upload a texture and never stroke that geometry — so
+    // enabling Stroke in Fill & Stroke was a silent no-op on photos. Compile it
+    // to the same GPU `stroke` effect Layer Styles use (silhouette outline),
+    // unless a Layer Styles stroke is already present.
+    if (
+      (layerKind === 'image' || layerKind === 'video' || layerKind === 'text')
+      && finalStroke?.enabled
+      && finalStroke.width > 0
+      && finalStroke.opacity > 0
+      && !resolvedEffects.some((e) => e.type === 'stroke' && e.enabled !== false)
+    ) {
+      resolvedEffects.push({
+        id: 'paintstroke:primary',
+        type: 'stroke',
+        enabled: true,
+        params: {
+          width: Math.max(0, finalStroke.width),
+          color: finalStroke.color,
+          opacity: Math.round(Math.max(0, Math.min(1, finalStroke.opacity)) * 100),
+        },
+      });
+    }
+
+    // Same trap for Fill: textured layers ignore Appearance fillPaint (they
+    // sample the asset). Map a solid/gradient paint onto the GPU fill /
+    // gradient-ramp effects so the Appearance panel actually recolours photos.
+    if (
+      (layerKind === 'image' || layerKind === 'video')
+      && fillPaint
+      && !resolvedEffects.some((e) =>
+        (e.type === 'fill' || e.type === 'gradient-ramp') && e.enabled !== false)
+    ) {
+      if (fillPaint.type === 'solid' && typeof fillPaint.color === 'string') {
+        resolvedEffects.push({
+          id: 'paintfill:primary',
+          type: 'fill',
+          enabled: true,
+          params: { color: fillPaint.color, opacity: 100 },
+        });
+      } else if (
+        (fillPaint.type === 'linear' || fillPaint.type === 'radial')
+        && Array.isArray(fillPaint.stops)
+        && fillPaint.stops.length >= 2
+      ) {
+        const aStop = fillPaint.stops[0]!;
+        const bStop = fillPaint.stops[fillPaint.stops.length - 1]!;
+        resolvedEffects.push({
+          id: 'paintfill:primary',
+          type: 'gradient-ramp',
+          enabled: true,
+          params: {
+            colorA: aStop.color,
+            colorB: bStop.color,
+            angle: fillPaint.type === 'linear' ? (fillPaint.angle ?? 90) : 90,
+            blend: 100,
+          },
+        });
+      }
+    }
+
+    // Corner radius on image/video: textured quads have no SDF, so Appearance →
+    // Corners was a silent no-op. Synthesize a rounded-rect mask (intersected
+    // with any authored mask) so the GPU mask path clips the photo.
+    // Per-corner radii (TL/TR/BR/BL) win over the uniform `cornerRadius`.
+    const sampleCorner = (key: string, fallback: number | undefined): number | undefined => {
+      const live = a?.get(key);
+      if (typeof live === 'number' && Number.isFinite(live)) return Math.max(0, live);
+      return typeof fallback === 'number' && Number.isFinite(fallback) ? Math.max(0, fallback) : undefined;
+    };
+    const resolvedCornerRadii: CornerRadiiTuple = clampCornerRadii(
+      layerW,
+      layerH,
+      resolveCornerRadii({
+        cornerRadius: sampleCorner('cornerRadius', base.cornerRadius),
+        cornerRadiusTL: sampleCorner('cornerRadiusTL', base.cornerRadiusTL),
+        cornerRadiusTR: sampleCorner('cornerRadiusTR', base.cornerRadiusTR),
+        cornerRadiusBR: sampleCorner('cornerRadiusBR', base.cornerRadiusBR),
+        cornerRadiusBL: sampleCorner('cornerRadiusBL', base.cornerRadiusBL),
+      }),
+    );
+    const resolvedCornerRadius = Math.max(
+      resolvedCornerRadii[0],
+      resolvedCornerRadii[1],
+      resolvedCornerRadii[2],
+      resolvedCornerRadii[3],
+    );
+    let resolvedMask: LayerMask | undefined = readNodeMaskAt(node, remapOf(node.id)(t));
+    if (
+      (layerKind === 'image' || layerKind === 'video')
+      && resolvedCornerRadius > 0.5
+      && layerW > 0
+      && layerH > 0
+    ) {
+      const round = roundedRectMask(layerW, layerH, resolvedCornerRadii);
+      if (!resolvedMask || resolvedMask.paths.length === 0) {
+        resolvedMask = { paths: [round] };
+      } else {
+        resolvedMask = {
+          paths: [...resolvedMask.paths, { ...round, mode: 'intersect' as const }],
+        };
+      }
+    }
+
     let finalColor = base.color;
     if (a?.has('color_r')) {
       const r = a.get('color_r') ?? 0;
@@ -1848,11 +2271,12 @@ export function buildSnapshot(
       kind: layerKind,
       blend: readNodeBlend(node),
       ...(readNodePreserveTransparency(node) ? { preserveTransparency: true } : {}),
-      mask: readNodeMaskAt(node, remapOf(node.id)(t)),
+      mask: resolvedMask,
       matte: readNodeMatte(node),
       isAdjustment: readNodeAdjustment(node) || undefined,
       quality: readNodeQuality(node) === 'draft' ? 'draft' : undefined,
       paint: readNodePaint(node) ?? undefined,
+      contentAwareFillSrc: contentAwareFillAt(node, remapOf(node.id)(t)) ?? undefined,
       sourceTime: (() => {
         const remapped = anim.sample(node.id, 'timeRemap', t) ?? anim.sample(node.id, 'precompTime', t);
         if (remapped !== undefined) return remapOf(node.id)(remapped);
@@ -1865,7 +2289,8 @@ export function buildSnapshot(
       // for footage — blending a shape would mean nothing, its "frames" are
       // continuous keyframes.
       frameBlend: (() => {
-        if (readNodeLayerTime(node)?.frameBlend !== 'mix') return undefined;
+        const fbMode = readNodeLayerTime(node)?.frameBlend;
+        if (fbMode !== 'mix' && fbMode !== 'pixelMotion') return undefined;
         if (layerKind !== 'video') return undefined;
         const st = (() => {
           const remapped = anim.sample(node.id, 'timeRemap', t) ?? anim.sample(node.id, 'precompTime', t);
@@ -1883,7 +2308,7 @@ export function buildSnapshot(
         const sourceFps = footageSourceOf(node)?.fps ?? fps;
         const bracket = bracketFrames(st, sourceFps);
         // Exactly on a frame boundary there is nothing to blend toward.
-        return bracket.weight > 1e-3 ? bracket : undefined;
+        return bracket.weight > 1e-3 ? { ...bracket, mode: fbMode } : undefined;
       })(),
       // Fill opacity — stored 0..100 like `opacity`, emitted 0..1. Absent
       // stays undefined rather than defaulting to 1, so a layer that never
@@ -1909,13 +2334,15 @@ export function buildSnapshot(
       // and preview share this path, so a pinned layer is perspective-correct in
       // both. Absent = affine, snapshot unchanged from before the feature.
       ...(readNodeCornerPin(node) ? { cornerPin: readNodeCornerPin(node) } : {}),
-      x: isSolid && !is3D ? comp.width / 2 : px,
-      y: isSolid && !is3D ? comp.height / 2 : py,
-      rotation: isSolid && !is3D ? 0 : rot,
-      scaleX: isSolid && !is3D ? 1 : sx,
-      scaleY: isSolid && !is3D ? 1 : sy,
-      matrix: isSolid && !is3D ? undefined : matrix,
-      world3d: isSolid && !is3D ? undefined : world3d,
+      // Legacy unseeded solids still lack a real transform — keep them
+      // full-frame until the user resizes. Seeded solids transform normally.
+      x: isSolid && !is3D && solidUnseeded ? comp.width / 2 : px,
+      y: isSolid && !is3D && solidUnseeded ? comp.height / 2 : py,
+      rotation: isSolid && !is3D && solidUnseeded ? 0 : rot,
+      scaleX: isSolid && !is3D && solidUnseeded ? 1 : sx,
+      scaleY: isSolid && !is3D && solidUnseeded ? 1 : sy,
+      matrix: isSolid && !is3D && solidUnseeded ? undefined : matrix,
+      world3d: isSolid && !is3D && solidUnseeded ? undefined : world3d,
       depth,
       opacity: ghost ? baseOpacity * GHOST_OPACITY : baseOpacity,
       width: layerW,
@@ -1952,10 +2379,12 @@ export function buildSnapshot(
       // Clamped at 0 for the reason `strokeWidth` is: an overshooting ease
       // undershoots between keys, and a negative radius is a Canvas2D exception
       // rather than a sharper corner. The property's own `min: 0` agrees.
-      cornerRadius: (() => {
-        const r = a?.get('cornerRadius');
-        return typeof r === 'number' && Number.isFinite(r) ? Math.max(0, r) : base.cornerRadius;
-      })(),
+      // Per-corner radii ride alongside for Appearance → individual corners;
+      // uniform SDF still reads `cornerRadius` when all four match.
+      cornerRadius: resolvedCornerRadius,
+      ...(resolvedCornerRadius > 0 || hasIndependentCornerRadii(resolvedCornerRadii)
+        ? { cornerRadii: resolvedCornerRadii }
+        : {}),
       // Keyframeable like any numeric prop: an animated track wins over the base,
       // so a panel can frost in over time.
       // Glass owns the backdrop blur when it is on — one control, not two that
@@ -1981,7 +2410,23 @@ export function buildSnapshot(
       // when a track exists, else fall back to the static base prop.
       fontSize: a?.get('fontSize') ?? base.fontSize,
       fontFamily: base.fontFamily,
-      fontWeight: base.fontWeight,
+      // Animated weight beats the static string — continuous (not rounded), so
+      // a variable font's wght axis actually glides instead of stepping through
+      // the nine named stops. Clamped to CSS's 1–1000.
+      fontWeight: (() => {
+        const w = a?.get('fontWeight');
+        return w !== undefined ? String(Math.max(1, Math.min(1000, w))) : base.fontWeight;
+      })(),
+      // Variable-font width / slant — Canvas uses font-variation-settings, not
+      // the font shorthand (see textFontVariationSettings).
+      fontWidth: (() => {
+        const w = a?.get('fontWidth');
+        return w !== undefined ? w : base.fontWidth;
+      })(),
+      fontSlant: (() => {
+        const s = a?.get('fontSlant');
+        return s !== undefined ? s : base.fontSlant;
+      })(),
       fontStyle: base.fontStyle,
       letterSpacing: a?.get('letterSpacing') ?? base.letterSpacing,
       lineHeight: a?.get('lineHeight') ?? base.lineHeight,
@@ -2002,6 +2447,7 @@ export function buildSnapshot(
       // the SAME source this layer draws (its coverage mask is keyed off it).
       src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id), comp.useProxies === true),
       assetId: base.assetId,
+      ...(kind === 'svg' && readSvgLayer(node)?.livePlayback ? { liveSvgPlayback: true } : {}),
       // Media-slot COVER crop. The quad is already the slot rect (fillSlot
       // keeps the box there on purpose), so filling it without distortion means
       // sampling a sub-rect of the source. Computed per frame rather than baked
@@ -2017,10 +2463,19 @@ export function buildSnapshot(
         const uv = size ? coverUvRect(size, slot) : null;
         return uv ? { uvRect: uv } : {};
       })(),
-      // Interpret Footage ▸ Alpha. Read from the ASSET's interpretation, so one
-      // correction fixes every layer using that file — including layers in
-      // other compositions — rather than being re-set per layer.
+      // Interpret Footage ▸ Alpha and ▸ Fields. Read from the ASSET's
+      // interpretation, so one correction fixes every layer using that file —
+      // including layers in other compositions — rather than being re-set per
+      // layer.
       ...(footageSourceOf(node)?.alpha === 'premultiplied' ? { premultipliedSource: true } : {}),
+      ...((): { fieldsSource?: 'upper' | 'lower'; pulldownSource?: number } => {
+        const source = footageSourceOf(node);
+        // Mutually exclusive by construction: footageSourceOf suppresses
+        // `fields` while Remove Pulldown is set (the served frames are
+        // progressive — see sourceInfo.ts).
+        if (source?.pulldownPhase !== undefined) return { pulldownSource: source.pulldownPhase };
+        return source?.fields ? { fieldsSource: source.fields } : {};
+      })(),
     };
 
     // Per-quad Lambert lighting (Material Options → Accepts Lights, default
@@ -2071,18 +2526,21 @@ export function buildSnapshot(
       // path outline when path geometry exists (closed shapes). Image layers get
       // an alpha-derived coverage mask instead (once the bitmap has decoded);
       // open strokes and undecoded images keep the bbox grid.
-      const silhouette = silhouetteFromPathPoints(pathPoints, pathOpen);
-      const coverage = rigCoverageMask(layerKind, layer.src, base.assetId, silhouette);
+      const pathSilhouette = silhouetteFromPathPoints(pathPoints, pathOpen);
+      const coverage = rigCoverageMask(layerKind, layer.src, base.assetId, pathSilhouette);
       // ONE shared rest mesh. Puppet mesh settings win when a puppet rig exists
       // (its pin weights are baked into the mesh); a skeleton-only layer reads
       // density/expansion off its own config.
       const meshRig = hasPuppet
         ? puppetRig!
         : { pins: [], meshDensity: skelRig!.meshDensity, meshExpansion: skelRig!.meshExpansion };
+      const w = layer.width ?? 100;
+      const h = layer.height ?? 100;
+      const silhouette = resolvePuppetSilhouette(pathSilhouette, coverage, w, h, meshRig.meshMode);
       const restMesh = getCachedRestMesh(
         node.id,
-        layer.width ?? 100,
-        layer.height ?? 100,
+        w,
+        h,
         pad,
         meshRig,
         silhouette,
@@ -2112,24 +2570,7 @@ export function buildSnapshot(
       if (hasSkel) {
         // FK: sample the bone tracks (rotation stored in radians — the unit
         // fromTRS consumes; the UI converts at the display boundary).
-        const animatedBones: Bone[] = skelRig!.bones.map((b) => {
-          const liveRot = anim.sample(node.id, `bone.${b.id}.rotation`, rigT);
-          const liveX = anim.sample(node.id, `bone.${b.id}.x`, rigT);
-          const liveY = anim.sample(node.id, `bone.${b.id}.y`, rigT);
-          // Bone scale is keyframeable too — `scaleX/scaleY` already fed
-          // `fromTRS`, but nothing ever sampled a track for them, so squash /
-          // stretch on a limb was unreachable.
-          const liveSx = anim.sample(node.id, `bone.${b.id}.scaleX`, rigT);
-          const liveSy = anim.sample(node.id, `bone.${b.id}.scaleY`, rigT);
-          return {
-            ...b,
-            rotation: typeof liveRot === 'number' ? liveRot : b.rotation,
-            x: typeof liveX === 'number' ? liveX : b.x,
-            y: typeof liveY === 'number' ? liveY : b.y,
-            scaleX: typeof liveSx === 'number' ? liveSx : b.scaleX,
-            scaleY: typeof liveSy === 'number' ? liveSy : b.scaleY,
-          };
-        });
+        const animatedBones: Bone[] = resolveLiveBones(skelRig!.bones, node.id, rigT, anim);
         // IK: each enabled target overrides its chain's rotations so the end
         // bone's tip reaches the (keyframeable) target position.
         // Live positions, live poles, and the per-chain IK/FK mode — resolved
@@ -2930,6 +3371,42 @@ export function buildSnapshot(
       }
     } else if (frontInset > 0) {
       emitLayer({ ...layer, width: layerW - 2 * frontInset, height: layerH - 2 * frontInset }, node);
+    } else if (
+      is3D &&
+      dof &&
+      layer.matrix &&
+      world3d &&
+      extrusionDepth <= 0 &&
+      !layer.deformedMesh
+    ) {
+      // Depth-spanning flat quads (tilted cards, ground planes): split into UV
+      // strips with per-strip CoC. Extrusions already get per-face DOF above.
+      const corners = layerCornerDepths(world3d, layer.width, layer.height, project);
+      const strips = corners ? planDofStrips(layer.matrix, corners, dof) : null;
+      if (strips) {
+        for (let si = 0; si < strips.length; si++) {
+          const s = strips[si]!;
+          const effects = (layer.effects ?? [])
+            .filter((e) => e.id !== 'dof')
+            .concat(
+              s.blurPx >= 0.3
+                ? [{ id: 'dof', type: 'blur' as const, params: { amount: s.blurPx } }]
+                : [],
+            );
+          emitLayer({
+            ...layer,
+            id: `${layer.id}::dof-${si}`,
+            matrix: s.matrix,
+            depth: s.depth,
+            uvRect: s.uvRect,
+            effects: effects.length ? effects : undefined,
+            // Strip quads share the parent content hash — UV crop is transform-
+            // side, so the rasterizer cache stays warm across strips.
+          }, node);
+        }
+      } else {
+        emitLayer(layer, node);
+      }
     } else {
       emitLayer(layer, node);
     }
@@ -3113,6 +3590,7 @@ export function buildSnapshot(
     backgroundPaint: comp.backgroundPaint,
     transparent: comp.transparent,
     time: t,
+    fps,
     layers,
     overlays,
     view,

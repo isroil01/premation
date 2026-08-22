@@ -8,7 +8,11 @@
  * even apply.
  */
 
-import { canWriteCloud, useEntitlementStore } from './entitlementStore';
+import {
+  canWriteCloud,
+  messageAfterEntitlementRefresh,
+  useEntitlementStore,
+} from './entitlementStore';
 import type { CloudAccess } from '@core/api/client';
 
 const access = (over: Partial<CloudAccess> = {}): CloudAccess => ({
@@ -70,5 +74,11 @@ describe('noteWriteDenied', () => {
     useEntitlementStore.getState().reset();
     expect(useEntitlementStore.getState().access).toBeNull();
     expect(useEntitlementStore.getState().message).toBe('');
+  });
+
+  it('preserves a denial message until refreshed access is restored', () => {
+    const denial = 'Your subscription needs attention.';
+    expect(messageAfterEntitlementRefresh(denial, access({ write: false }))).toBe(denial);
+    expect(messageAfterEntitlementRefresh(denial, access({ write: true }))).toBe('');
   });
 });

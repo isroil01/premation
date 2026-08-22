@@ -18,6 +18,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
 import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurStore';
 import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
+import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import { migrateDocument } from '@core/project/migrations';
@@ -26,6 +27,8 @@ import { usePluginStore } from '@stores/pluginStore';
 import { collectPluginReferences, type DocumentPluginReference } from '@core/plugins/customLayers';
 import { migratePluginBindings } from '@core/plugins/bindingMigration';
 import { captureProjectStorage, restoreProjectStorage } from '@core/plugins/pluginStorage';
+import { rebindAssetSrcs } from '@core/scene/assetRebind';
+import { useAssetStore } from '@stores/assetStore';
 import type { SceneNode } from '@core/types';
 
 export interface EditorDocument {
@@ -39,6 +42,8 @@ export interface EditorDocument {
   /** Render-affecting; must round-trip or exports change after a reload. */
   motionBlur?: MotionBlurSettings;
   guides?: GuidesSettings;
+  /** Project working space, display transform, intermediate bit depth. */
+  colorManagement?: ColorManagementSettings;
   /**
    * The plugins this document's custom layers depend on.
    *
@@ -87,6 +92,7 @@ export function captureDocument(): EditorDocument {
     timelines: getTimelineController().capture(),
     motionBlur: useMotionBlurStore.getState().settings(),
     guides: useGuidesStore.getState().settings(),
+    colorManagement: useColorManagementStore.getState().settings(),
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
     // Absent when empty, so a document with no plugin state reads back
     // byte-identical — the same rule `plugins` follows above.
@@ -201,4 +207,12 @@ export function restoreDocument(doc: EditorDocument): void {
   if (doc.timelines) getTimelineController().restore(doc.timelines);
   if (doc.motionBlur) useMotionBlurStore.getState().restore(doc.motionBlur);
   if (doc.guides) useGuidesStore.getState().restore(doc.guides);
+  if (doc.colorManagement) useColorManagementStore.getState().restore(doc.colorManagement);
+
+  // The document's media srcs are object URLs from whichever session WROTE it
+  // — dead on arrival by definition. Repoint them at the live library by
+  // assetId (see assetRebind.ts). Assets may still be hydrating at boot; the
+  // asset store runs the same rebind when hydration lands, so whichever
+  // finishes second completes the repair.
+  rebindAssetSrcs(useAssetStore.getState().assets);
 }

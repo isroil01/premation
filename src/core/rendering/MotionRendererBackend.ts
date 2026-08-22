@@ -20,20 +20,26 @@ import {
   NullBackend,
   WebGL2Backend,
   WebGPUBackend,
+  setActiveColorPipeline,
   type RenderBackend as GpuBackend,
 } from '@motion/renderer';
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
+import { renderPixelMotion } from './pixelMotion';
+import { exactVideoFrames } from './exactVideoFrames';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
 import { layerIsBaked } from '@core/effects/effectBake';
+import { useTextEditStore } from '@stores/textEditStore';
 import { AppTextureProvider } from './AppTextureProvider';
+import { getFloatExrForAsset } from '@core/media/floatExr';
 import { getEventBus } from '@core/events/EventBus';
 import { noteDeviceLoss } from '@core/plugins/pluginEffects';
 import { setWebgpuAvailable } from '@core/plugins/capabilities';
 import { markGpuOwned } from './canvasOwnership';
 import { attachPluginEffects } from './pluginEffectBridge';
+import { useColorManagementStore } from '@stores/colorManagementStore';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
@@ -121,6 +127,8 @@ export class MotionRendererBackend implements RenderBackend {
   private cssH = 1;
   private dpr = 1;
   private exactMediaTiming = false;
+  /** Timeline is playing — plain video layers use hardware decode, not WebCodecs. */
+  private playbackMode = false;
 
   /** Layer ids whose texture feed already failed — warn once, not every frame. */
   private readonly warnedTextureLayers = new Set<string>();
@@ -549,6 +557,9 @@ export class MotionRendererBackend implements RenderBackend {
       // scale × dpr. Drives the resolution tier so a 4K export re-rasters vectors
       // at native instead of upscaling a viewport-resolution texture.
       this.textures.setRasterScale((snapshot.view?.scale ?? 1) * this.dpr);
+      // Texel density video frames actually need this frame (see
+      // feedScaledFrame): comp→canvas scale × dpr, capped at source density.
+      this.mediaFeedScale = Math.min(1, (snapshot.view?.scale ?? 1) * this.dpr);
       // The GPU's real limit, not a guess: WebGL2 can report as little as 4096,
       // and a Continuous Rasterization raster over the limit fails to allocate
       // rather than degrading. See @core/scene/continuousRaster.
@@ -581,30 +592,52 @@ export class MotionRendererBackend implements RenderBackend {
                 layer.width,
                 layer.height,
                 maxLayerScale,
+                snapshot.fps ?? 30,
               );
             } else if (layer.kind === 'image' && layer.src) {
               const key = `asset:${layer.id}`;
               activeKeys.add(key);
-              // The FILE's alpha mode goes to the UPLOAD, not the draw: it
-              // decides whether the browser multiplies, which is the only place
-              // the question can be settled once per file. See the alpha
-              // invariant on TextureSource.
-              // Canvas2D-only effects have no GPU form, so they must be baked
-              // into the bitmap or they render nothing at all on a photo. Gated
-              // by the SAME predicate the snapshot adapter uses to withhold
-              // them from the GPU, so they cannot both apply.
-              const bakeImg = layerIsBaked(layer)
-                ? {
-                    effects: layer.effects!,
-                    width: layer.width,
-                    height: layer.height,
-                    fillOpacity: layer.fillOpacity,
-                    // Baked into the bitmap, so the GPU must not mask it again
-                    // — the adapter drops maskTextureKey for a baked image.
-                    ...(layer.mask && layer.mask.paths.length > 0 ? { mask: layer.mask } : {}),
-                  }
-                : undefined;
-              this.textures!.setImage(key, layer.src, layer.fill, layer.premultipliedSource, bakeImg);
+              // Prefer linear float EXR when the import cached working-space planes.
+              const floatImg = layer.assetId ? getFloatExrForAsset(layer.assetId) : undefined;
+              if (floatImg && !layerIsBaked(layer)) {
+                this.textures!.setFloatImage(key, floatImg, {
+                  fallbackSrc: layer.src,
+                  fillColor: layer.fill,
+                  premultipliedFile: layer.premultipliedSource,
+                });
+              } else {
+                // The FILE's alpha mode goes to the UPLOAD, not the draw: it
+                // decides whether the browser multiplies, which is the only place
+                // the question can be settled once per file. See the alpha
+                // invariant on TextureSource.
+                // Canvas2D-only effects have no GPU form, so they must be baked
+                // into the bitmap or they render nothing at all on a photo. Gated
+                // by the SAME predicate the snapshot adapter uses to withhold
+                // them from the GPU, so they cannot both apply.
+                const bakeImg = layerIsBaked(layer)
+                  ? {
+                      effects: layer.effects!,
+                      width: layer.width,
+                      height: layer.height,
+                      fillOpacity: layer.fillOpacity,
+                      // Baked into the bitmap, so the GPU must not mask it again
+                      // — the adapter drops maskTextureKey for a baked image.
+                      ...(layer.mask && layer.mask.paths.length > 0 ? { mask: layer.mask } : {}),
+                    }
+                  : undefined;
+                this.textures!.setImage(
+                  key,
+                  layer.src,
+                  layer.fill,
+                  layer.premultipliedSource,
+                  bakeImg,
+                  layer.liveSvgPlayback ? (layer.sourceTime ?? snapshot.time ?? 0) : undefined,
+                );
+              }
+            } else if (layer.kind === 'video' && layer.contentAwareFillSrc) {
+              const key = `asset:${layer.id}`;
+              activeKeys.add(key);
+              this.textures!.setImage(key, layer.contentAwareFillSrc, layer.fill, layer.premultipliedSource);
             } else if (layer.kind === 'video' && layer.src) {
               const bakeVid = layerIsBaked(layer)
                 ? {
@@ -623,33 +656,37 @@ export class MotionRendererBackend implements RenderBackend {
                 const key = `asset:${layer.id}`;
                 activeKeys.add(key);
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
-                this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid);
+                // The bake path decodes through the legacy element and cannot
+                // weave — bob a pulldown source so the baked frame is at
+                // least comb-free (same trade as feedVideoFrame's fallback).
+                const bakeFields = layer.fieldsSource ?? (layer.pulldownSource !== undefined ? 'lower' : undefined);
+                this.textures!.setVideoBaked(key, layer.src, targetTime, bakeVid, bakeFields);
+              } else if (layer.frameBlend?.mode === 'pixelMotion') {
+                const key = `vfm:${layer.id}`;
+                activeKeys.add(key);
+                this.feedPixelMotion(key, layer.src, layer.frameBlend, layer.fieldsSource, layer.pulldownSource);
               } else if (layer.frameBlend) {
-                // Frame Mix: feed both bracket frames. Cache hits upload the
-                // exact decoded canvases; misses queue a decode (onChange →
-                // re-render) and fall back to element-seeked frames near each
-                // bracket time — nearest-frame until the cache lands.
+                // Frame Mix: feed both bracket frames. The exact decoder is
+                // asked first; then the legacy seek cache; misses queue a
+                // decode (AnimationChanged → re-render) and fall back to
+                // element-seeked frames near each bracket time.
                 const ka = `vfa:${layer.id}`;
                 const kb = `vfb:${layer.id}`;
                 activeKeys.add(ka);
                 activeKeys.add(kb);
-                const fa = viewportVideoFrames.get(layer.src, layer.frameBlend.a);
-                const fb = viewportVideoFrames.get(layer.src, layer.frameBlend.b);
-                if (fa) this.textures!.setFrame(ka, fa, `t:${layer.frameBlend.a}`);
-                else this.textures!.setVideo(ka, layer.src, layer.frameBlend.a);
-                if (fb) this.textures!.setFrame(kb, fb, `t:${layer.frameBlend.b}`);
-                else this.textures!.setVideo(kb, layer.src, layer.frameBlend.b);
+                this.feedVideoFrame(ka, layer.src, layer.frameBlend.a, false, layer.fieldsSource, layer.pulldownSource);
+                this.feedVideoFrame(kb, layer.src, layer.frameBlend.b, false, layer.fieldsSource, layer.pulldownSource);
               } else {
                 const key = `asset:${layer.id}`;
                 activeKeys.add(key);
                 const targetTime = layer.sourceTime !== undefined ? layer.sourceTime : (snapshot.time ?? 0);
-                this.textures!.setVideo(key, layer.src, targetTime);
+                this.feedVideoFrame(key, layer.src, targetTime, /* plain */ true, layer.fieldsSource, layer.pulldownSource);
               }
             } else if (layer.kind === 'text') {
               const key = `text:${layer.id}`;
               activeKeys.add(key);
               this.textures!.setText(key, {
-                text: layer.text ?? 'Text',
+                text: useTextEditStore.getState().nodeId === layer.id ? '' : (layer.text ?? 'Text'),
                 fontSize: layer.fontSize ?? 48,
                 color: layer.fill ?? '#ffffff',
                 width: layer.width,
@@ -659,6 +696,8 @@ export class MotionRendererBackend implements RenderBackend {
                 continuousRaster: layer.continuousRaster,
                 fontFamily: layer.fontFamily,
                 fontWeight: layer.fontWeight,
+                fontWidth: layer.fontWidth,
+                fontSlant: layer.fontSlant,
                 fontStyle: layer.fontStyle,
                 align: layer.align,
                 letterSpacing: layer.letterSpacing,
@@ -839,6 +878,8 @@ export class MotionRendererBackend implements RenderBackend {
     vp.overlays.safeArea = ov?.safeArea ?? false;
     vp.overlays.rulers = ov?.rulers ?? false;
 
+    setActiveColorPipeline(useColorManagementStore.getState().settings());
+
     const result = this.renderer.render(vp, snapshotToFrameScene(snapshot));
 
     // Preview half of the M8a split: keep the frame, but say what it is not.
@@ -860,16 +901,191 @@ export class MotionRendererBackend implements RenderBackend {
     return this.frameDiagnostics;
   }
 
+  /** Linear working-space RGBA from the last scene-color RT (EXR export). */
+  readLinearRgba(): Float32Array | null {
+    return this.renderer?.readLinearRgba() ?? null;
+  }
+
+  async readLinearRgbaAsync(): Promise<Float32Array | null> {
+    if (!this.renderer) return null;
+    return this.renderer.readLinearRgbaAsync();
+  }
+
   setExactMediaTiming(on: boolean): void {
     this.exactMediaTiming = on;
     this.textures?.setExactMediaTiming?.(on);
   }
 
+  /** Timeline playback — plain video uses hardware `<video>` decode. */
+  setPlaybackMode(on: boolean): void {
+    this.playbackMode = on;
+    this.textures?.setPlaybackMode?.(on);
+  }
+
   takeMediaWaits(): Promise<void>[] {
-    if (this.textures?.takeMediaWaits) {
-      return this.textures.takeMediaWaits();
+    // The exact decoder's inflight work joins the legacy seek waits so the
+    // export convergence loop also settles onto exact frames — an exported
+    // frame must never be the `exact: false` nearest-neighbour a live
+    // repaint would have corrected a tick later.
+    const legacy = this.textures?.takeMediaWaits ? this.textures.takeMediaWaits() : [];
+    const exact = exactVideoFrames.waits();
+    return exact.length > 0 ? [...legacy, ...exact] : legacy;
+  }
+
+  /**
+   * Feed one video texture key for `timeSec`: exact decoded frame when the
+   * WebCodecs path has one, legacy paths otherwise.
+   *
+   * Fallback order is exact → (frame-blend only) legacy seek cache → live
+   * element seek. When the legacy element path is used, any stale frame
+   * entry under the key must be released — frame entries shadow video
+   * entries in the texture lookup, so a leftover exact frame would keep
+   * winning after the source went `unavailable`.
+   */
+  /** View scale × dpr, capped at 1 — set per frame in renderFrame. */
+  private mediaFeedScale = 1;
+
+  /** Downscaled feed canvases, one per texture key (see feedScaledFrame). */
+  private scaledFeed = new Map<string, { canvas: HTMLCanvasElement; sig: string }>();
+
+  /**
+   * The resolution BUCKET a video frame is uploaded at. 1 (source) while the
+   * on-screen minification stays within bilinear's comfort zone (≤2×); half /
+   * quarter as the layer shrinks further. Bucketed rather than continuous so
+   * a slow zoom doesn't re-scale every frame, and always ≥ the displayed
+   * density so no bucket ever costs visible sharpness.
+   */
+  private feedBucket(): number {
+    const s = this.mediaFeedScale;
+    if (s >= 0.5) return 1;
+    if (s >= 0.25) return 0.5;
+    return 0.25;
+  }
+
+  /**
+   * Feed a frame canvas at the bucketed resolution.
+   *
+   * Two problems, one fix. QUALITY: the GPU samplers are plain bilinear with
+   * no mip chain, so 1080p+ footage minified past 2× in the viewport aliases
+   * and shimmers — nothing like what a media player shows for the same file.
+   * A high-quality 2D-canvas downscale (multi-tap in Chromium) to the bucket
+   * IS the missing mip level. BANDWIDTH: uploading a 4K RGBA canvas per
+   * frame is ~33MB a tick; at fit zoom the quarter bucket uploads ~2MB for
+   * pixels the screen could never show anyway. Interlaced sources
+   * (`fields`) skip the scale — field weaving needs original row parity.
+   * Export renders at view scale 1 → bucket 1 → always source resolution.
+   */
+  private feedScaledFrame(key: string, canvas: HTMLCanvasElement, baseSig: string, fields?: 'upper' | 'lower'): void {
+    const bucket = this.feedBucket();
+    if (bucket >= 1 || fields !== undefined || canvas.width < 64 || canvas.height < 64) {
+      this.textures!.setFrame(key, canvas, baseSig, fields);
+      return;
     }
-    return [];
+    const sig = `${baseSig}:b${bucket}`;
+    let entry = this.scaledFeed.get(key);
+    if (!entry) {
+      entry = { canvas: document.createElement('canvas'), sig: '' };
+      this.scaledFeed.set(key, entry);
+    }
+    if (entry.sig !== sig) {
+      const w = Math.max(1, Math.round(canvas.width * bucket));
+      const h = Math.max(1, Math.round(canvas.height * bucket));
+      entry.canvas.width = w;
+      entry.canvas.height = h;
+      const ctx = entry.canvas.getContext('2d');
+      if (!ctx) {
+        this.textures!.setFrame(key, canvas, baseSig, fields);
+        return;
+      }
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(canvas, 0, 0, w, h);
+      entry.sig = sig;
+    }
+    this.textures!.setFrame(key, entry.canvas, sig, fields);
+  }
+
+  private feedVideoFrame(key: string, src: string, timeSec: number, plain = false, fields?: 'upper' | 'lower', pulldown?: number): void {
+    const legacyFields = fields ?? (pulldown !== undefined ? 'lower' : undefined);
+    // During playback the browser's media pipeline decodes forward in hardware;
+    // per-frame WebCodecs + canvas upload cannot keep real-time at 1080p/4K.
+    // Scrub, export and frame-blending still use the exact path below.
+    if (this.playbackMode && plain && pulldown === undefined) {
+      this.textures!.releaseFrame?.(key);
+      this.textures!.setVideoPlayback(key, src, timeSec, legacyFields, this.feedBucket());
+      return;
+    }
+    const exact = exactVideoFrames.get(src, timeSec, pulldown);
+    if (exact.state === 'frame') {
+      // Signature is the presentation index: a repeated render of the same
+      // frame skips the re-upload, a landed decode (new index) re-uploads.
+      // Fields joins the signature so toggling Interpret Footage re-uploads
+      // the SAME frame with the other treatment instead of being skipped.
+      // (Pulldown removal needs no marker of its own — it changes the
+      // presentation index, which is already the signature.)
+      this.feedScaledFrame(key, exact.canvas, `xv:${exact.presIndex}:f${fields ?? ''}`, fields);
+      return;
+    }
+    // The legacy paths cannot weave a film frame back together, so while the
+    // exact decoder warms (or when the source can never decode exactly) a
+    // pulldown source is BOBBED instead — telecine carriers are lower-field-
+    // first in overwhelming practice, and one field beats visible comb.
+    if (!plain) {
+      const legacy = viewportVideoFrames.get(src, timeSec);
+      if (legacy) {
+        this.feedScaledFrame(key, legacy, `t:${timeSec}:f${legacyFields ?? ''}`, legacyFields);
+        return;
+      }
+    }
+    this.textures!.releaseFrame?.(key);
+    this.textures!.setVideo(key, src, timeSec, legacyFields);
+  }
+
+  /** Reused output surface for Pixel Motion, per texture key. */
+  private pixelMotionOut = new Map<string, { canvas: HTMLCanvasElement; sig: string }>();
+
+  /**
+   * Feed the motion-compensated in-between for a Pixel Motion layer.
+   *
+   * Needs BOTH bracket frames from the exact decoder. While either is still
+   * decoding (`exactVideoFrames.get` queues the decode and its wait joins
+   * `takeMediaWaits`, so export settles onto the real thing), the ordinary
+   * video ladder feeds the NEAREST bracket under the same key — nearest-frame,
+   * never a hole, and never a half-warped guess.
+   */
+  private feedPixelMotion(
+    key: string,
+    src: string,
+    fb: { a: number; b: number; weight: number },
+    fields?: 'upper' | 'lower',
+    pulldown?: number,
+  ): void {
+    const ea = exactVideoFrames.get(src, fb.a, pulldown);
+    const eb = exactVideoFrames.get(src, fb.b, pulldown);
+    if (ea.state === 'frame' && eb.state === 'frame') {
+      // Warp signature: the frame PAIR plus the weight. The same rendered comp
+      // frame re-requests this dozens of times (media-settle passes, repaints
+      // with a parked playhead); recomputing a full-res warp for an identical
+      // signature would be the whole cost of the feature paid for nothing.
+      const sig = `pm:${ea.presIndex}:${eb.presIndex}:${fb.weight.toFixed(4)}:f${fields ?? ''}`;
+      let entry = this.pixelMotionOut.get(key);
+      if (!entry) {
+        entry = { canvas: document.createElement('canvas'), sig: '' };
+        this.pixelMotionOut.set(key, entry);
+      }
+      if (entry.sig !== sig) {
+        const out = renderPixelMotion(`${src}|${ea.presIndex}|${eb.presIndex}`, ea.canvas, eb.canvas, fb.weight, entry.canvas);
+        if (!out) {
+          // Canvas step failed — degrade to nearest-frame via the ladder.
+          this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields, pulldown);
+          return;
+        }
+        entry.sig = sig;
+      }
+      this.textures!.setFrame(key, entry.canvas, sig, fields);
+      return;
+    }
+    this.feedVideoFrame(key, src, fb.weight < 0.5 ? fb.a : fb.b, false, fields, pulldown);
   }
 
   dispose(): void {
@@ -884,7 +1100,9 @@ export class MotionRendererBackend implements RenderBackend {
     // called retain/clear on that cache, so every source ever scrubbed kept its
     // hidden <video> and frame canvases alive for the whole page lifetime.
     this.textures?.dispose();
+    this.scaledFeed.clear();
     viewportVideoFrames.clear();
+    exactVideoFrames.clear();
     // Before the renderer goes. The subscription outlives this object
     // otherwise — the effect registry is module state, so a stale listener
     // would keep compiling shaders into a registry attached to a disposed

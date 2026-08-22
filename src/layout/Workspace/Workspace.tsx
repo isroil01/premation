@@ -24,9 +24,9 @@
  * `@motion/workspace` engine via {@link useWorkspace}.
  */
 
-import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
 import { cn } from '@utils/cn';
-import { useActiveWorkspace, useWorkspaceStore } from '@stores/projectStore';
+import { useActiveWorkspace, useWorkspaceStore, useProjectStore } from '@stores/projectStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
@@ -39,6 +39,10 @@ import {
   insertMedia,
   setNodeWorldPosition,
 } from '@core/scene/sceneInsert';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind, flattenComposition } from '@core/scene/sceneDerive';
+import { createCompositionFromFootage } from '@core/composition/compositionOps';
+import { EmptyCompositionView } from './EmptyCompositionView';
 import { insertCursorItem } from '@core/library/cursorLibrary';
 import { insertUiComponent } from '@core/library/uiKitLibrary';
 import { insertMographItem } from '@core/library/mographLibrary';
@@ -49,7 +53,7 @@ import { useAssetStore } from '@stores/assetStore';
 import { useComponentStore } from '@stores/componentStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { addEffect } from '@core/effects/effects';
+import { addEffectAndReveal } from '@layout/Effects/revealEffectControls';
 import { applyPresetByName } from '@core/animation/animationPresets';
 import { insertAnimPreset } from '@core/template/animPresets';
 import { UI_COMPONENT_PRESETS } from '@core/scene/uiComponents';
@@ -61,6 +65,7 @@ import { TextEditOverlay } from './TextEditOverlay';
 import { PuppetOverlay } from './PuppetOverlay';
 import { EffectHandleOverlay } from './EffectHandleOverlay';
 import { BoneOverlay } from './BoneOverlay';
+import { TrackPointOverlay } from './TrackPointOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
 import { AxisWidgetOverlay } from './AxisWidgetOverlay';
 import { useGizmo3d } from './useGizmo3d';
@@ -132,6 +137,40 @@ export function WorkspaceViewport({
 }: WorkspaceViewportProps): JSX.Element {
   const time     = useActiveWorkspace()?.time ?? 0;
   const sceneRev = useSceneRevision((s) => s.rev);
+  // The blank-comp moment — AE's two ways in, said out loud.
+  //
+  // Scoped to the ACTIVE composition, not the whole scene graph: this used to
+  // traverse every comp, so content in ANY composition hid the cards for an
+  // empty one, and an empty comp kept them hidden while a sibling had layers
+  // — exactly backwards once a project holds more than one comp. No active
+  // comp at all (its tab deleted, none opened) is ALSO the empty state, which
+  // is AE's behaviour when every viewer is closed. Fresh unsaved projects park
+  // layers under the virtual comp_root with no active tab, so that case falls
+  // back to the whole-graph scan rather than showing cards over live content.
+  const activeCompId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
+  // The cards are the "no compositions yet" state, so a comp the USER made —
+  // via the dialog, from footage, or the dashboard — dismisses them even while
+  // it is still empty: an empty comp shows its frame, exactly as AE's does.
+  // Only the auto-minted pristine comp keeps them up. Without this gate,
+  // clicking "New Composition" and creating one left the cards covering the
+  // brand-new comp — the create looked like it did nothing.
+  const allCompsPristine = useProjectStore((s) => Object.values(s.comps).every((c) => c.pristine === true));
+  const sceneIsEmpty = useMemo(() => {
+    if (activeCompId && defaultSceneGraph.getNode(activeCompId)) {
+      return !flattenComposition(defaultSceneGraph, activeCompId)
+        .some((n) => readNodeKind(n) !== 'group');
+    }
+    let hasContent = false;
+    defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
+    return !hasContent;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
+  }, [sceneRev, activeCompId]);
+  // Tools that CREATE content dismiss the empty-comp surface: reaching for
+  // the pen or a shape is the third way to start, and the surface must not
+  // stand between the tool and the canvas. Navigation/selection tools keep it
+  // up — there is nothing to select or pan over yet.
+  const activeTool = useUIStore((s) => s.activeTool);
+  const creationToolActive = !['select', 'direct-select', 'rotate', 'pan-behind', 'hand', 'zoom', 'move'].includes(activeTool);
   const transparent = useCompositionStore((s) => s.transparent);
   const workspaceMode = useWorkspaceViewStore((s) => s.mode);
   // Multi-view (AE-style): '2' shrinks the interactive stage to the left half
@@ -154,6 +193,9 @@ export function WorkspaceViewport({
   // RAM-preview blit layer — see `.cacheCanvas`. Sits between the content and
   // the interaction overlay so cached pixels replace the render, not the chrome.
   const cacheRef   = useRef<HTMLCanvasElement | null>(null);
+  // Onion-skin ghosts — see `.onionCanvas`. Above content and cache, below the
+  // interaction overlay.
+  const onionRef   = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const { focus, focusKey } = useFocusContext();
 
@@ -161,6 +203,7 @@ export function WorkspaceViewport({
   const { ready, renderError } = useWorkspace({
     contentCanvasRef: canvasRef,
     cacheCanvasRef: cacheRef,
+    onionCanvasRef: onionRef,
     overlayCanvasRef: overlayRef,
     stageRef,
     sceneRev,
@@ -220,7 +263,11 @@ export function WorkspaceViewport({
   const [dragOver, setDragOver] = useState(false);
 
   const onDragOverCanvas = useCallback((e: DragEvent<HTMLDivElement>): void => {
-    if (!hasCanvasDrag(e)) return; // let unrelated drags (tab reorder, files) pass
+    // OS file drags are OURS now: dropping footage on the canvas is the first
+    // gesture everyone tries ("here is my video, edit it"), and it used to
+    // dead-end silently. Internal app drags keep their existing routing.
+    const isFileDrag = !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+    if (!hasCanvasDrag(e) && !isFileDrag) return; // let unrelated drags (tab reorder) pass
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setDragOver(true);
@@ -233,8 +280,37 @@ export function WorkspaceViewport({
   }, []);
 
   const onDropCanvas = useCallback(async (e: DragEvent<HTMLDivElement>): Promise<void> => {
-    const payload = readCanvasDrag(e);
     setDragOver(false);
+    // ── OS files: the "upload a video and edit it" gesture ──────────────
+    // AE's two ways in, as one drop: onto an EMPTY comp, a video conforms the
+    // comp to itself (size, duration, probed fps — `createCompositionFromFootage`,
+    // AE's new-comp-from-footage); onto a comp with content, it lands as a
+    // layer like any Assets-panel add. Either way the file is imported first,
+    // so it shows in Assets and survives re-use.
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      e.preventDefault();
+      const media = Array.from(files).filter((f) =>
+        /^(video|image|audio)\//.test(f.type) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|exr|mp3|wav|m4a|aac|ogg|mxf|avi|wmv|flv|mts|m2ts|mpg|mpeg|vob|ts|mkv)$/i.test(f.name));
+      if (media.length === 0) {
+        useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
+        return;
+      }
+      const imported = await useAssetStore.getState().addAssetsBatch(media.map((file) => ({ file })));
+      // "Empty" = no content layers anywhere in the scene. Counting the comp
+      // root's children breaks on fresh unsaved projects (layers hang off the
+      // virtual comp_root), so ask the nodes themselves.
+      let hasContent = false;
+      defaultSceneGraph.traverse((n) => { if (readNodeKind(n) !== 'group') hasContent = true; });
+      const first = imported[0];
+      if (!hasContent && imported.length === 1 && first && first.type === 'video') {
+        await createCompositionFromFootage(first);
+        return;
+      }
+      for (const asset of imported) await insertMedia(asset);
+      return;
+    }
+    const payload = readCanvasDrag(e);
     if (!payload) return; // not one of ours
     e.preventDefault();
     const stage = stageRef.current;
@@ -283,7 +359,7 @@ export function WorkspaceViewport({
       case 'effect': {
         // Effects apply to a layer — target the one under the cursor (AE-style).
         const node = controller.ws.hitTestScreen(local);
-        if (node) addEffect(node.id, payload.effectType);
+        if (node) addEffectAndReveal(node.id, payload.effectType);
         else useUIStore.getState().notify({ level: 'warning', message: 'Drop an effect onto a layer.', durationMs: 2400 });
         break;
       }
@@ -367,7 +443,19 @@ export function WorkspaceViewport({
           {transparent && <TransparencyGrid />}
           <canvas ref={canvasRef} className={styles.canvas} />
           <canvas ref={cacheRef} className={styles.cacheCanvas} data-workspace-cache="" />
+          <canvas ref={onionRef} className={styles.onionCanvas} data-workspace-onion="" />
           <canvas ref={overlayRef} className={styles.overlay} data-workspace-overlay="" />
+          {/* Blank-comp start surface — After Effects' empty Composition
+              panel, as a REPLACEMENT: opaque over the stage, so no comp frame
+              or grid implies a composition that doesn't meaningfully exist.
+              The canvases stay mounted beneath it (GPU init is not free).
+              It stays up during a file drag — its footage card and the root's
+              drop handler are the drop targets — and steps aside the moment
+              the user picks a creation tool, preserving the draw-the-first-
+              shape-directly workflow the local edition promises. */}
+          {sceneIsEmpty && allCompsPristine && ready && !renderError && !creationToolActive && (
+            <EmptyCompositionView />
+          )}
           {/* Scene loading indicator — until the backend paints its first frame. */}
           {!ready && !renderError && (
             <div className={styles.loading} data-workspace-loading="">
@@ -389,6 +477,7 @@ export function WorkspaceViewport({
           <PuppetOverlay />
           <EffectHandleOverlay />
           <BoneOverlay />
+          <TrackPointOverlay />
           {/* Mounts for the whole 3D SCENE, not for the selection: the ground
               plane and comp frame are how you orient yourself in a side view,
               so gating them on "a 3D layer is selected" hid them in exactly

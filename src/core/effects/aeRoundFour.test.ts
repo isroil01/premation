@@ -266,6 +266,22 @@ describe('the edge-aware blurs actually preserve edges', () => {
     expect(Array.from(bilateralBlurData(src, W, H, 0, 30, true))).toEqual(Array.from(src));
     expect(Array.from(smartBlurData(src, W, H, 0, 30, 0))).toEqual(Array.from(src));
   });
+
+  test('a large plate finishes without hanging and keeps its size', () => {
+    // The exact O(r²) kernel on 640×360 at r=24 is ~1.1e9 inner loops and
+    // freezes the UI. The budgeted path must return the same dimensions in
+    // well under a couple of seconds.
+    const lw = 640, lh = 360;
+    const src = new Uint8ClampedArray(lw * lh * 4);
+    for (let i = 0; i < src.length; i += 4) { src[i] = 40; src[i + 1] = 80; src[i + 2] = 120; src[i + 3] = 255; }
+    const t0 = Date.now();
+    const out = bilateralBlurData(src, lw, lh, 24, 40, true);
+    expect(out.length).toBe(src.length);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    // A uniform plate stays uniform — downsample/upsample must not invent colour.
+    expect(px(out, lw, 100, 50)[0]).toBeCloseTo(40, 0);
+    expect(px(out, lw, 100, 50)[3]).toBe(255);
+  });
 });
 
 // ══ Colour ══════════════════════════════════════════════════════════

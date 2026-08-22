@@ -42,9 +42,15 @@ describe('snapshotToFrameScene', () => {
       expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 0, width: 220, height: 140 });
     });
 
-    test('a rect layer with cornerRadius gets a rounded-rect SDF with that radius', () => {
-      const r = layerToRenderable(layer({ primitive: 'rect', width: 220, height: 140, cornerRadius: 15 }));
-      expect(r.sdf).toEqual({ shape: 'rounded', radiusPx: 15, width: 220, height: 140 });
+    test('a rect with independent corner radii forces shape raster (no isotropic SDF)', () => {
+      const r = layerToRenderable(layer({
+        primitive: 'rect', width: 220, height: 140,
+        cornerRadius: 40,
+        cornerRadii: [40, 4, 40, 4],
+      }));
+      // Non-uniform corners → path:/image raster, not SDF solid.
+      expect(r.textureKey).toBe('path:n1');
+      expect(r.sdf?.radiusPx ?? 0).toBe(0);
     });
 
     test('an ellipse layer gets an ellipse SDF', () => {
@@ -210,6 +216,24 @@ describe('snapshotToFrameScene', () => {
     expect(id('stencil-luma')).toBe(32);
     expect(id('silhouette-alpha')).toBe(33);
     expect(id('silhouette-luma')).toBe(34);
+    // M5, same wire format: renumbering these repaints every dissolve as an
+    // unrelated blend.
+    expect(id('dissolve')).toBe(35);
+    expect(id('dancing-dissolve')).toBe(36);
+  });
+
+  test('threads the comp frame index for Dancing Dissolve, and 0 when unstated', () => {
+    // The shader has no clock: Dancing Dissolve's per-frame re-roll IS this
+    // number. Rounded from the playhead so a float time a hair under a frame
+    // boundary cannot repeat the previous frame's speckle.
+    const scene = snapshotToFrameScene({
+      ...snapshot([layer({ blend: 'dancing-dissolve' })]),
+      time: 2.5, fps: 24,
+    });
+    expect(scene.dissolveFrame).toBe(60);
+    // A snapshot with no playhead (thumbnails, tests) pins the pattern at
+    // frame 0 rather than leaving it undefined for the pass to guess at.
+    expect(snapshotToFrameScene(snapshot([layer({})])).dissolveFrame).toBe(0);
   });
 
   test('every blend mode maps to a distinct combine id', () => {
@@ -256,6 +280,17 @@ describe('snapshotToFrameScene', () => {
       expect(tl.y).toBeCloseTo(-50); // (100*1)/2
       expect(br.x).toBeCloseTo(200);
       expect(br.y).toBeCloseTo(50);
+    });
+
+    test('scale 0 collapses the quad to the layer origin (the layer vanishes)', () => {
+      // `0 || 1` used to treat scale 0 as 1, so text/shapes scaled to 0 still
+      // drew at authored size. Every corner of a 0-scale quad must land on (x,y).
+      const r = layerToRenderable(layer({ x: 40, y: 80, width: 200, height: 100, scaleX: 0, scaleY: 0 }));
+      for (const [u, v] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]] as const) {
+        const p = apply(r.modelMatrix, u, v);
+        expect(p.x).toBeCloseTo(40);
+        expect(p.y).toBeCloseTo(80);
+      }
     });
 
     test('90° rotation about the centre swaps axes', () => {
@@ -357,9 +392,16 @@ describe('headless parity: mapped scene renders through the GPU pipeline', () =>
     ]));
 
     renderer.render(vp, scene);
-    // BackgroundPass (1) + ShapePass (2 visible shapes); the hidden layer was
-    // dropped by the mapper so it never reaches the GPU.
-    expect(backend.stats().draws).toBe(3);
+    // BackgroundPass (1) + ShapePass (2 visible shapes) + the scene blit (1);
+    // the hidden layer was dropped by the mapper so it never reaches the GPU.
+    //
+    // The blit is the fourth draw because LINEAR_INTERMEDIATE_STORAGE keeps the
+    // render targets in linear light, so every frame — even one with no effects
+    // — ends in an EffectPass running `scene-blit` to encode sRGB for the
+    // canvas. Asserting the pass names too, so that a future regression that
+    // adds a draw somewhere else cannot be absorbed by bumping this number.
+    expect(backend.passLog).toEqual(['clear', 'background', 'composition', 'effect']);
+    expect(backend.stats().draws).toBe(4);
     renderer.dispose();
   });
 });
@@ -385,6 +427,26 @@ describe('frame blending (Frame Mix) on the GPU path', () => {
     const scene = snapshotToFrameScene(snapshot([layer({ id: 'v', kind: 'video' })]));
     expect(scene.renderables.filter((r) => r.id.startsWith('v')).length).toBe(1);
     expect(scene.renderables.find((r) => r.id === 'v')!.textureKey).toBe('asset:v');
+  });
+
+  test('Pixel Motion emits ONE renderable sampling the warped in-between', () => {
+    // One quad, full opacity — the motion compensation happened in the texture
+    // feed (rendering/pixelMotion.ts); a second cross-fade here would re-ghost
+    // the frame the warp exists to de-ghost.
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'v', kind: 'video', opacity: 0.8, frameBlend: { a: 0.1, b: 0.1333, weight: 0.25, mode: 'pixelMotion' } }),
+    ]));
+    const rs = scene.renderables.filter((r) => r.id.startsWith('v'));
+    expect(rs).toHaveLength(1);
+    expect(rs[0]!.textureKey).toBe('vfm:v');
+    expect(rs[0]!.opacity).toBeCloseTo(0.8);
+  });
+
+  test("an explicit mode 'mix' keeps the two-renderable cross-dissolve", () => {
+    const scene = snapshotToFrameScene(snapshot([
+      layer({ id: 'v', kind: 'video', frameBlend: { a: 0.1, b: 0.1333, weight: 0.25, mode: 'mix' } }),
+    ]));
+    expect(scene.renderables.filter((r) => r.id.startsWith('v'))).toHaveLength(2);
   });
 });
 

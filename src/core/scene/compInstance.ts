@@ -17,10 +17,10 @@
 import type { SceneNode } from '@core/types';
 import type SceneGraphT from './DefaultSceneGraph';
 import { renderComponentsOf } from './SceneGraph';
-import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides } from './compInstanceOverrides';
+import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides, type OverrideValue } from './compInstanceOverrides';
 
 /** Shared empty map — an expansion with no Essential Properties allocates none. */
-const EMPTY_OVERRIDES: ReadonlyMap<string, number> = new Map();
+const EMPTY_OVERRIDES: ReadonlyMap<string, OverrideValue> = new Map();
 
 type SceneGraph = typeof SceneGraphT;
 
@@ -132,7 +132,7 @@ export function expandCompInstances(
      * starts a fresh set (its own), so an override always belongs to exactly
      * one placement and two instances of one comp cannot read each other's.
      */
-    overrides: ReadonlyMap<string, number> = EMPTY_OVERRIDES,
+    overrides: ReadonlyMap<string, OverrideValue> = EMPTY_OVERRIDES,
   ): void => {
     if (depth > MAX_INSTANCE_DEPTH) return;
     for (const orig of origs) {

@@ -61,6 +61,70 @@
   overflow: hidden;
 }
 
+/* Card grid — the index made cards possible (facts + thumbnails), and cards
+   need width, so the grid replaces the flat list once there is anything to
+   show. Single column collapses gracefully on a narrow window. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-surface-1, #1e1e24);
+}
+
+.card:hover { background: var(--color-surface-2, #26262e); }
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  min-width: 0;
+}
+
+.cardBody:disabled { cursor: default; }
+
+.cardBody:focus-visible {
+  outline: 2px solid var(--color-primary, #5b8cff);
+  outline-offset: -2px;
+}
+
+.thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  background: var(--color-surface-0, #141418);
+}
+
+.facts {
+  font-size: var(--font-size-micro, 11px);
+  color: var(--color-text-secondary, #b6b6bf);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card .remove {
+  align-self: flex-end;
+  margin: 0 8px 8px 0;
+}
+
 .row {
   display: flex;
   align-items: center;

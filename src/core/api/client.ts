@@ -144,7 +144,7 @@ export interface AccountRecord {
    * console it used to reveal now lives in motion-landing.
    */
   role: UserRole;
-  plan: 'free' | 'pro';
+  plan: string;
   /**
    * What this account may do with the cloud, decided server-side by the same
    * function the write guards use. The renderer renders it; it never recomputes
@@ -216,6 +216,130 @@ export interface RenderJobDto {
   updatedAt: string;
 }
 
+/** API key row for the dashboard. The secret is never returned after creation. */
+export interface ApiKeySummary {
+  id: string;
+  name: string;
+  /** Visible prefix, e.g. `pm_live_ab12`. */
+  prefix: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  requestCount: number;
+  revokedAt: string | null;
+  /** Present on newer API-key contracts. Older servers omit both fields. */
+  scopes?: string[];
+  expiresAt?: string | null;
+}
+
+/** One-time response when a key is minted. Store `secret` now; it is not shown again. */
+export interface CreatedApiKey extends ApiKeySummary {
+  secret: string;
+}
+
+export interface AutomationTemplateInput {
+  id: string;
+  label: string;
+  kind: 'text' | 'color' | 'number' | 'image' | 'media';
+  required?: boolean;
+}
+
+export interface AutomationTemplateSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  width: number;
+  height: number;
+  fps: number;
+  durationSeconds: number;
+  inputs: AutomationTemplateInput[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AutomationTemplateRecord extends AutomationTemplateSummary {
+  projectId: string | null;
+}
+
+export interface PublishTemplateRequest {
+  name: string;
+  description?: string;
+  document: unknown;
+  inputs: AutomationTemplateInput[];
+  width: number;
+  height: number;
+  fps: number;
+  durationSeconds: number;
+  projectId?: string;
+}
+
+export interface AnimationTemplateSummary {
+  id: string;
+  name: string;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnimationTemplateRecord extends AnimationTemplateSummary {
+  animationData: unknown;
+}
+
+export type AutomationRenderStatus =
+  | 'queued'
+  | 'processing'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface AutomationRenderRequest {
+  templateId: string;
+  inputs: Record<string, string | number>;
+  /** Optional webhook — motion-back POSTs once when the render completes or fails. */
+  callbackUrl?: string;
+  output?: {
+    format?: 'mp4';
+    width?: number;
+    height?: number;
+    fps?: number;
+  };
+}
+
+/** Payload motion-back POSTs to `callbackUrl` when a render job finishes. */
+export interface AutomationRenderWebhookPayload {
+  jobId: string;
+  status: 'completed' | 'failed';
+  videoUrl?: string;
+  error?: string;
+}
+
+export interface AutomationRenderJob {
+  jobId: string;
+  status: AutomationRenderStatus;
+  progress?: number;
+  videoUrl?: string | null;
+  error?: string | null;
+  createdAt?: string;
+}
+
+export interface ApiUsageSummary {
+  period: string;
+  renderJobs: number;
+  renderDurationMs: number;
+  renderedMinutes: number;
+  reservedRenderMinutes?: number;
+  apiRequests: number;
+  assetProcessingBytes: number;
+  /** Optional until the backend exposes key allowances alongside usage. */
+  activeApiKeys?: number;
+  limits: {
+    apiEnabled: boolean;
+    monthlyRenderMinutes: number | null;
+    monthlyApiRequests: number | null;
+    maxActiveApiKeys?: number | null;
+    maxUploadBytes?: number | null;
+  };
+}
+
 /**
  * What `GET /render?status=` accepts. `'active'` is queued-or-running — the
  * question a queue view actually asks, answered by the server's `total` rather
@@ -241,12 +365,21 @@ export interface ProjectVersionRecord extends ProjectVersionSummary {
 
 /** A plan, exactly as the server describes it. The client renders, not decides. */
 export interface PlanDto {
-  id: 'free' | 'pro';
+  id: string;
   name: string;
   priceCents: number;
   priceLabel: string;
   currency: 'usd';
   features: string[];
+  interval?: string;
+  description?: string;
+  highlighted?: boolean;
+  apiEnabled?: boolean;
+  monthlyRenderMinutes?: number;
+  monthlyApiRequests?: number;
+  maxUploadBytes?: number;
+  maxActiveApiKeys?: number;
+  cloudWrite?: boolean;
 }
 
 /** Why the server says this account may or may not write. See backend entitlement.ts. */
@@ -294,9 +427,18 @@ export interface BillingSummary {
   currentPeriodEnd: string | null;
   /** Whether there is a subscription to manage — gates the portal button. */
   hasSubscription: boolean;
+  /** True when Lemon has accepted a cancel-at-period-end. Access may still be live. */
+  subscriptionCancelled?: boolean;
   memberSince: string;
-  /** False until a payment provider is configured — gates the upgrade CTA. */
+  /** False until an operator turns payments on. Checkout then talks to Lemon. */
   paymentsEnabled: boolean;
+}
+
+export interface BillingChangeResult {
+  action: 'checkout' | 'upgraded' | 'downgraded' | 'cancelled' | 'resumed' | 'unchanged';
+  url?: string;
+  planId?: string;
+  already?: boolean;
 }
 
 export interface AiConversationSummary {
@@ -653,12 +795,16 @@ export const api = {
   // verification link, or an operator.
   /** The catalog changes only on a deploy — an hour of staleness is nothing. */
   listPlans: () => cachedGet<PlanDto[]>('/billing/plans', { tags: ['billing'], ttlMs: 3_600_000 }),
-  getBilling: () => cachedGet<BillingSummary>('/billing/me', { tags: ['billing', 'account'] }),
-  startCheckout: (plan: 'pro') =>
-    request<{ url: string }>('/billing/checkout', {
+  getBilling: (opts?: { force?: boolean }) =>
+    cachedGet<BillingSummary>('/billing/me', {
+      tags: ['billing', 'account'],
+      force: opts?.force,
+    }),
+  startCheckout: (plan: string) =>
+    request<BillingChangeResult>('/billing/checkout', {
       method: 'POST',
       body: JSON.stringify({ plan }),
-    }),
+    }).then(tap(['billing', 'account'])),
   /**
    * A fresh link to Lemon Squeezy's customer portal.
    *
@@ -666,6 +812,14 @@ export const api = {
    * cached one is a support ticket waiting to happen.
    */
   openBillingPortal: () => request<{ url: string }>('/billing/portal', { method: 'POST' }),
+  cancelSubscription: () =>
+    request<BillingChangeResult>('/billing/cancel', { method: 'POST' }).then(
+      tap(['billing', 'account']),
+    ),
+  resumeSubscription: () =>
+    request<BillingChangeResult>('/billing/resume', { method: 'POST' }).then(
+      tap(['billing', 'account']),
+    ),
   /**
    * Re-read this account's subscription from the payment provider.
    *
@@ -795,7 +949,81 @@ export const api = {
     }),
   cancelRender: (id: string) =>
     request<RenderJobDto>(`/render/${id}/cancel`, { method: 'POST' }).then(tap(['renders'])),
+
+  // ── Automation API (JWT from the editor; n8n uses API keys on the same paths) ─
+  listApiKeys: (opts?: { force?: boolean; limit?: number; offset?: number }) =>
+    cachedGet<Paginated<ApiKeySummary>>(
+      `/v1/keys${query({ limit: opts?.limit ?? 50, offset: opts?.offset ?? 0 })}`,
+      {
+        tags: ['api-keys'],
+        force: opts?.force,
+      },
+    ).then(asKeyPage),
+  createApiKey: (name: string, opts?: { scopes?: string[]; expiresAt?: string | null }) =>
+    request<CreatedApiKey>('/v1/keys', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        // Omitted (not null) when unset: the server applies its default grant.
+        ...(opts?.scopes?.length ? { scopes: opts.scopes } : {}),
+        ...(opts?.expiresAt ? { expiresAt: opts.expiresAt } : {}),
+      }),
+    }).then(tap(['api-keys'])),
+  revokeApiKey: (id: string) =>
+    request<{ revoked: boolean }>(`/v1/keys/${id}`, { method: 'DELETE' }).then(tap(['api-keys'])),
+
+  listAutomationTemplates: (params: PageQuery = {}) =>
+    cachedGet<Paginated<AutomationTemplateSummary>>(`/v1/templates${query({ ...params })}`, {
+      tags: ['automation-templates'],
+    }),
+  getAutomationTemplate: (id: string) =>
+    request<AutomationTemplateRecord>(`/v1/templates/${id}`),
+  publishAutomationTemplate: (body: PublishTemplateRequest) =>
+    request<AutomationTemplateRecord>('/v1/templates', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then(tap(['automation-templates'])),
+  deleteAutomationTemplate: (id: string) =>
+    request<{ deleted: boolean }>(`/v1/templates/${id}`, { method: 'DELETE' }).then(
+      tap(['automation-templates']),
+    ),
+
+  listAnimationTemplates: (params: PageQuery = {}) =>
+    cachedGet<Paginated<AnimationTemplateSummary>>(`/v1/animations${query({ ...params })}`, {
+      tags: ['animation-templates'],
+    }),
+  getAnimationTemplate: (id: string) => request<AnimationTemplateRecord>(`/v1/animations/${id}`),
+  publishAnimationTemplate: (body: { name: string; animationData: unknown }) =>
+    request<AnimationTemplateRecord>('/v1/animations', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then(tap(['animation-templates'])),
+  deleteAnimationTemplate: (id: string) =>
+    request<{ deleted: boolean }>(`/v1/animations/${id}`, { method: 'DELETE' }).then(
+      tap(['animation-templates']),
+    ),
+
+  createAutomationRender: (body: AutomationRenderRequest) =>
+    request<AutomationRenderJob>('/v1/renders', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }).then(tap(['renders', 'api-usage'])),
+  getAutomationRender: (id: string) => request<AutomationRenderJob>(`/v1/renders/${id}`),
+
+  getApiUsage: () => cachedGet<ApiUsageSummary>('/v1/usage', { tags: ['api-usage'] }),
 };
+
+function asKeyPage(raw: Paginated<ApiKeySummary> | ApiKeySummary[]): Paginated<ApiKeySummary> {
+  if (Array.isArray(raw)) {
+    return { items: raw, total: raw.length, limit: raw.length, offset: 0 };
+  }
+  return {
+    items: Array.isArray(raw.items) ? raw.items : [],
+    total: raw.total ?? 0,
+    limit: raw.limit ?? 50,
+    offset: raw.offset ?? 0,
+  };
+}
 
 /**
  * Invalidate after a successful write, then pass the result straight through.

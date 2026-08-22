@@ -61,17 +61,17 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 154 | `src/core/effects/effects.ts` → `EffectType` |
-| Blend modes | 36 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
+| Effects | 174 | `src/core/effects/effects.ts` → `EffectType` |
+| Blend modes | 38 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
-| Path operators | 8 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
+| Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
 | Light types | 4 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
-| Export formats | 9 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 40 | `src/stores/*.ts` |
-| Packages | 12 | `packages/*` |
+| Export formats | 17 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
+| Stores | 45 | `src/stores/*.ts` |
+| Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
 
@@ -91,9 +91,9 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        40 Zustand stores
+                          ├── src/stores/*        45 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
-                          └── packages/*          12 workspace packages
+                          └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
                                 ├── animation   tracks, easing, expressions
                                 ├── renderer    WebGPU → WebGL2 → Null
@@ -157,11 +157,19 @@ ports as-is. There is no architectural limit on sampling a track away from the
 current frame — `sampleRaw` reads keyframes only, deliberately bypassing the
 expression so `valueAtTime` cannot recurse through itself.
 
-There is still **no named easing-preset registry**: easing is bezier handles plus
-the assistants in `keyframeAssistants.ts`. `BOUNCE_EASE` in
-`animationPresets.ts` is a single cubic-bezier (`0.175, 0.885, 0.32, 1.275`)
-commented "Elastic bounce" — a bezier has one overshoot and cannot express a
-decaying bounce, so the name overstates it.
+**Named easing presets ship** (2026-08-17, `easePresets.ts`): 8 families × 3
+directions, applied through the same `applyEasingToKeyframes` entry point as F9
+and the timeline pills, with a curve grid in the Graph panel. `EasingPreset`
+widened to admit their ids, so every easing surface resolves them identically
+and they inherit the data-track and merged-Position handling for free.
+
+Elastic and Bounce are deliberately NOT in that table. Both oscillate around
+their target with decaying amplitude, which no single cubic segment can trace —
+`BOUNCE_EASE` in `animationPresets.ts` is one cubic-bezier (`0.175, 0.885,
+0.32, 1.275`) commented "Elastic bounce", and a bezier has exactly one
+overshoot, so the name overstates it. They are GENERATORS and live in
+`bounce.ts`. A test guards their absence, so the next reader does not "fix" it
+by adding a lookalike bezier.
 
 **Bounce is a keyframe assistant** (`bounceTracks` / `bounceKeyframes`, menu:
 Bounce Keyframes), not an ease — it generates decaying keys with amplitude *and*
@@ -179,8 +187,8 @@ included), effect-scoped masking, and protected time regions. Track mattes
 Shutter angle, shutter **phase**, and **adaptive sampling** — all three.
 
 ### Shapes
-Eight **chainable** path operators: `zigzag`, `roundCorners`, `pucker`, `twist`,
-`offset`, `roughen`, `trim`, `repeater`. The chain reorders, and the schema-1.3.0
+Nine **chainable** path operators: `zigzag`, `roundCorners`, `pucker`, `twist`,
+`offset`, `roughen`, `trim`, `repeater`, `wiggleTransform`. The chain reorders, and the schema-1.3.0
 migration re-keys keyframe tracks onto the new operator ids. AE permits one trim
 and one repeater per shape; so does this (`pathOps.ts` resolves each with
 `find`), which is parity rather than a limit.
@@ -205,10 +213,11 @@ plus an **ARAP puppet** with pins and sketch. Both compose on the same layer and
 are GPU-deformed. AE has no skeleton at all — its users buy DUIK.
 
 ### Particles
-`particleSim.ts` — a deterministic closed-form emitter. Particle *i* is born at
-`i / birthRate`, its randoms hash from `i`, position is the closed-form ballistic
-`p0 + v0·age + ½g·age²`. No frame stepping and no accumulated state, so scrubbing
-to any time gives the identical frame. See §4 for the cost of that choice.
+Default `simMode: 'ballistic'` — closed-form emitter (`particleSim.ts`): particle
+`i` born at `i / birthRate`, hash RNG, ballistic `p0 + v0·age + ½g·age²`. Opt-in
+`simMode: 'stateful'` (`statefulParticleSim.ts` + `SimulationCache`) adds
+frame-stepping with floor bounce and seeded-replay scrub. Still no turbulence,
+particle–particle collisions, trails, sub-emitters, 3D, or layer-as-particle.
 
 ### Composition background and export alpha
 
@@ -277,30 +286,27 @@ The gaps are not in the engine. They are in the layer above it.
 
 ### Tier 1 — categorical exclusions
 
-**No motion tracking, no camera tracking, no rotoscoping.** Zero hits for
-`tracker` or `rotoscop` across `src/` and `packages/`. Any work that composites
-onto filmed footage — screen replacements, set extensions, object removal — is
-impossible, not merely awkward. This is the single largest excluded category and
-it is out of scope by direction.
+**Motion tracking & footage repair (shipped column).** Point / planar / mask
+tracking, Smooth Stabilize, subspace / rolling-shutter mesh footholds, and a
+planar 3D camera solve live under `src/core/tracking/`. Still open vs AE:
+full multi-plane SfM, Roto Brush–class AI mattes, Content-Aware Fill.
 
-Re-verified 2026-08-11 and widened: `stabiliz`, `warpStabil`, `mocha`,
-`featurePoint`, `solveCamera`, `rotoBrush`, `contentAware`, `refineEdge` and
-`opticalFlow` are **all zero hits** too. So it is not only the 3D camera tracker
-that is absent — the whole AE footage-repair column is: point/planar tracking,
-Warp Stabilizer, Roto Brush, Refine Edge, Content-Aware Fill. What *does* ship
-for footage work is keying (`keylight`, with despill/choke/softness, plus
-`linear-color-key`, `simple-choker`, `set-matte`, `shift-channels`) and
-`corner-pin` / `bezier-warp` — i.e. you can key and you can pin a corner **by
-hand**, but nothing solves the motion for you.
+Re-verified 2026-08-21: the old “zero tracker” claim is obsolete. Remaining
+gaps are depth (SfM, AI roto, subspace quality), not absence. Keying
+(`keylight`, `linear-color-key`, `simple-choker`, `set-matte`, `shift-channels`)
+and tracked `corner-pin` / mesh warp also ship.
 
-**The footage decode path is an `HTMLVideoElement`, not a decoder.**
-`videoFrameCache.ts` says so in its own header, deliberately: a real
-`VideoDecoder` would give true random access and exact frame boundaries, but it
-needs a container demuxer (mp4box or equivalent) — "a subsystem, not a change".
-So seeking is `seek → onseeked → repaint`, and frame boundaries are approximate
-and browser-dependent. That is the remaining ceiling on treating this as a video
-editor rather than a motion tool, and it is upstream of tracking: a tracker
-cannot be more frame-accurate than the decoder feeding it.
+**The RENDERER'S footage decode path is an `HTMLVideoElement`; the real
+decoder now exists beside it (corrected 2026-08-19).** The subsystem this
+paragraph used to say was missing shipped: `src/core/video/` demuxes MP4s with
+mp4box (pure JS — demux and GOP/B-frame index are jest-pinned against real
+ffmpeg fixtures), and `ExactVideoSource` drives a WebCodecs `VideoDecoder` for
+true random access on exact frame boundaries. Its first consumer is the footage
+preview's Frame-by-frame mode. The RENDER path still seeks an element
+(`seek → onseeked → repaint`, approximate boundaries) on purpose, until the
+exact path survives a real-machine visual pass — so the ceiling on
+tracking/rotoscoping is now the renderer INTEGRATION, no longer the missing
+subsystem.
 
 **Read the next two paragraphs before repeating the older version of this
 claim.** Proxies and footage interpretation both **exist**, and the frame-rate
@@ -320,31 +326,30 @@ pixels only — every timing and geometry fact keeps reading the original asset'
 `metadata` and `interpret` through `sourceOf`, so a proxy cannot drift out of
 alignment with its source by construction.
 
-What genuinely remains missing from this column: **pulldown removal**, and a
-placeholder/offline-media workflow.
+3:2 pulldown is handled end to end: `pulldownDetect.ts` finds the phase-locked
+field-repeat cadence (Interpret Footage ▸ Detect), and Remove Pulldown
+(`interpret.pulldownPhase`) makes the exact decode path serve inverse-telecined
+progressive film frames — `pulldownFrameFor` remaps frame indices, re-weaving
+the one film frame per cycle that exists only as fields split across two video
+frames (`ExactVideoFrameCache.weaveCanvas`). Legacy fallback paths bob instead.
 
-**Depth of field is per-layer, not per-pixel.** `dofEffectOf` (`buildSnapshot
-.ts`) computes one blur value from a layer's depth and pushes it as an ordinary
-`blur` effect. A layer that spans depth — a ground plane, a steeply tilted card
-— gets a single uniform blur across its whole surface. There is no DOF code in
-`packages/renderer` at all. This is the difference between "3D-ish" and
-cinematic.
+What genuinely remains missing from this column: a placeholder/offline-media
+workflow.
 
-Corrected 2026-08-12: this used to name "a long extruded title" as the second
-example, and for an **extruded** layer it is no longer true. Every synthesized
-face carries its own `depth`, so each takes its own DOF radius now that faces
-carry effects at all — an extruded solid defocuses across its depth, within the
-face budget in `faceEffects.ts`. What stays per-layer is a *single* quad that
-spans depth, which face synthesis cannot help. See the ledger entry below.
+**Depth of field is still not per-pixel.** `dofEffectOf` pushes a Gaussian
+`blur` from one depth sample; there is still no DOF pass in `packages/renderer`
+(no sampleable depth buffer on WebGL2/WebGPU). Extrusions get per-face CoC.
+Depth-spanning flat quads (tilted cards, ground planes) now subdivide into UV
+strips via `dofStrips.ts` / `planDofStrips` in `buildSnapshot`, each with its
+own blur — better than one uniform CoC, still not cinematic.
 
-Added 2026-08-11: it is also a **Gaussian** blur, so there is no bokeh. AE's
-camera carries Iris Shape, Blades, Roundness, Aspect, Rotation, Diffraction
-Fringe and Highlight Gain/Threshold/Saturation — the parameters that turn
-defocused speculars into readable discs. None of them exist here (`bokeh`,
-`blades`, `iris` hit only transitions and AI prompt text), and the highlight
-bloom in particular is what makes a defocused background read as *filmed*
-rather than as blurred. A per-pixel DOF pass should be specified with the
-iris and highlight parameters, not just a depth-varying blur radius.
+Corrected 2026-08-12: extruded faces already carried per-face depth/CoC.
+Corrected 2026-08-14: flat depth-spanning quads use strip subdivision (max 8).
+
+Still missing vs AE: iris blades, bokeh shape, diffraction fringe, highlight
+gain — `bokeh` / `blades` / `iris` hit only transitions and AI prompt text.
+A true per-pixel pass should ship with those iris/highlight params, not just
+a depth-varying radius.
 
 **Lighting is per-fragment on the depth path, per-quad only as a fallback.**
 This entry previously claimed the opposite. The depth-tested 3D path runs real
@@ -372,42 +377,40 @@ shaded per **face**, each face flat. Likewise `shadowCatcher`, `environmentLight
 and `imageBased` are all zero hits, so there is no image-based lighting and no
 way to land a 3D element on a real plate.
 
-**Particles are structurally limited by the determinism choice.** 253 lines:
-3 emitter types, 4 shapes (circle/square/line/star), gravity, spin, and
-size/colour/opacity ramps. There is **no turbulence or wind field, no collisions,
-no sub-emitters, no trails, no layer-as-particle, and no 3D particles.** Exact
-scrubbing is a genuinely valuable property, but closed-form position is precisely
-what forbids the interacting, stateful behaviour that Trapcode Particular, Form
-and Plexus are bought for. Lifting this ceiling means giving up the closed form.
+**Particles — stateful floor bounce shipped (2026-08-14); density still limited.**
+Ballistic mode remains the default. Stateful mode (`simMode: 'stateful'`) uses
+`SimulationCache` for seeded-replay scrub with a floor bounce — the cheapest
+history-dependent proof. Still **no turbulence or wind field, no collisions
+between particles, no sub-emitters, no trails, no layer-as-particle, and no 3D
+particles.** Particular / Form / Plexus class density remains a later ceiling.
 
 **No imported 3D models, PBR or HDRI.** "3D" here means 2D layers with extrusion
 placed in a 3D space — not a rendered 3D scene. Out of scope by direction.
 
-**No colour management, and no linear working space.** Added 2026-08-11. The
-float *precision* work shipped — `rgba16float` compositing intermediates
-(`rendergraph/passes/index.ts`), WebGL2 gated on `EXT_color_buffer_float` — but
-step 5 of that plan, linear light, did not. There is no sRGB decode on input, no
-encode on output, no project working space, no 32-bpc depth, no LUT/ACES/ODT and
-no HDR output. (`colorSpace`, `colorManagement`, `acescg`, `bitDepth`: zero hits.
-The `linearColor` hits are the Linear Color Key effect, unrelated.)
-
-AE has had 8/16/32 bpc plus a project working space for over a decade. The
-consequence here is not abstract: every add/screen/overlay blend, every glow and
-every blur composites in **gamma space**, which is a large part of why a
-gamma-space glow reads as dirty in the falloff where AE's reads as lit. It
-belongs in Tier 1 rather than Tier 2 because it is not a missing feature the user
-can route around — it is the colour behaviour of every pixel the app produces.
-
-The blocker is the **alpha invariant**: textures are premultiplied at upload *in
-sRGB* (`gpu/types.ts`), and you cannot cheaply re-premultiply in linear after
-sampling premultiplied-sRGB texels. Doing this properly changes the appearance of
-every blend mode and every alpha edge in existing projects, so it needs a
-deliberate render-test golden rebaseline, not a flag.
+**Linear working space — storage slice shipped (2026-08-14).** Float *precision*
+(`rgba16float` intermediates) already existed; grade / blend / blur maths run
+in linear light via `LINEAR_WORKING_SPACE` (default **on**) in
+`packages/renderer/src/shaders/linearWorkingSpace.ts`. `LINEAR_INTERMEDIATE_STORAGE`
+is also on: RTs stay linear and EffectPass `scene-blit` encodes to sRGB for
+the canvas. Uploads carry a `displayReferred` tag (`TextureDescriptor`) and
+use `rgba8unorm-srgb` when `HARDWARE_SRGB_UPLOADS` is on (default **off** —
+premultiplied bytes need shader linearize-after-unpremul; see
+`linearWorkingSpace.ts`). TEXTURED draws skip redundant decode only when that
+flag is on. RT copies use the `*-linear` variant. Every frame routes through scene-color + `scene-blit` so linearized
+solids are encoded, not written into the 8-bit canvas. Kill
+switches sit next to `HDR_INTERMEDIATES` in `RenderGraph.ts`. **Project colour
+settings shipped (2026-08-14):** Composition Settings → **Color** tab persists
+`workingSpace` (`srgb-linear` | `aces-cg`), `displayTransform` (`srgb` |
+`aces` ODT), and `bitDepth` (`16` | `32` float) via `colorManagementStore` →
+document round-trip. `MotionRendererBackend` calls `setActiveColorPipeline`
+each frame; `scene-blit` uses `workingToDisplay`; float RTs pick
+`rgba16float` / `rgba32float` via `intermediateFloatFormat`. Still absent: HDR
+output.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 154 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 154 effects present are properly
+**Effect breadth: 174 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 174 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -419,35 +422,55 @@ sentence was written, left behind by registry growth, and the value every brief
 written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
-registry def, a Canvas2D implementation and a Generate entry in the effects
-browser. They are CPU passes rather than shaders, which is a performance fact
-(see the GPU-porting work) and not an absence. The count is now phrased as "154
-effects" rather than as a bare figure specifically so that
-`docPropagatedCounts.test.ts` can check it.
+registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
+GPU shader. The count is now phrased as "174 effects" rather than as a bare
+figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
-**Uniform mask feather only.** `MaskPoint` carries x/y plus handles and one
-scalar feather per path. AE's variable-width feather — the tool for organic
-matte blending — has nowhere to store its per-point width.
+**Variable-width mask feather LANDED** (2026-08-20). `MaskPoint` gained an
+optional per-vertex feather diameter; any vertex carrying one routes the whole
+path through the distance-field renderer (`maskFeather.ts`: hard coverage →
+3-4 chamfer signed distance → nearest-outline-sample width, grid-bucketed →
+smoothstep ramp straddling the edge), with the width interpolating along the
+outline between vertices. Absent overrides mean the uniform blur renderer,
+byte-identical to before. The width rides mask animation like every other
+vertex quantity, and the matte cache signature digests it (the parity guard
+caught that within minutes of the field existing — see
+`maskSignatureParity.test.ts`, doing exactly the job it was built for).
 
-**No Wiggle Transform shape operator.** The `wiggle()` *expression* is complete;
-the shape operator is a different feature and is absent. **Wiggle Paths, listed
-here earlier the same day, DOES exist** — stored as `roughen`, which is why a
+**Wiggle Transform LANDED** (2026-08-20, `wiggleTransform` in `pathOps.ts`):
+chain-level like Trim and the Repeater, one temporal-noise affine transform per
+run — so Repeater → Wiggle Transform makes every copy wander independently,
+and `correlation` dials the swarm back into one body. Landing it also fixed a
+real bug: `resolveOne` never carried `correlation` through `resolvePathOps`,
+so Wiggle Paths' Correlation control worked in unit tests (which call
+`roughen()` directly) and did nothing in the render path. **Wiggle Paths, listed
+here earlier as missing, DOES exist** — stored as `roughen`, which is why a
 grep for `wigglePath` found nothing. See §5's correction; it gained the
 Correlation parameter it had been missing.
 
-**Frame blending is Frame Mix only.** Added 2026-08-11. `buildSnapshot.ts:1796`
-returns `undefined` unless `frameBlend === 'mix'`; `pixel motion` and
-`opticalFlow` are zero hits. AE offers Frame Mix *and* Pixel Motion, and Pixel
-Motion is the one people actually reach for on retimed footage. Every slow-motion
-shot here therefore gets AE's worse mode — which is a shame, because the rest of
-the retiming stack (spatial tangents, roving keys, `timeRemap` sampling on
-precomps, and now a real source frame rate) is well built. Note the dependency:
-real optical flow wants exact source frames, so it sits behind the decoder
+**Pixel Motion LANDED** (2026-08-20). `frameBlend` now carries a mode: `mix`
+keeps the two-quad cross-dissolve, `pixelMotion` renders ONE quad sampling a
+motion-compensated in-between (`rendering/pixelMotionFlow.ts` — deterministic
+block-matched flow at a downscaled raster, symmetric warp-blend at full res;
+`rendering/pixelMotion.ts` caches flow per frame PAIR, the expensive half).
+The dependency this entry predicted held: it is built directly on the exact
+decoder's frames (`feedPixelMotion` in MotionRendererBackend), degrading to
+nearest-frame while either bracket is still decoding — never a hole, never a
+half-warped guess — and to Frame Mix wherever flow reports no texture.
+Synthetic-frame suite proves recovery of known motion to sub-pixel, endpoint
+identity and determinism; a real-footage on-machine pass is still owed.
+The old text stood here since 2026-08-11 saying Pixel Motion was the mode
+people actually reach for on retimed footage, and that the decoder
 problem in Tier 1.
 
-**Two blend modes short:** Dissolve and Dancing Dissolve. Both are per-pixel
-stochastic, and the real cost is a preview↔export determinism contract, not the
-blend maths. Classic Color Burn/Dodge/Difference currently render identically to
+**Dissolve and Dancing Dissolve LANDED** (2026-08-20, combine ids 35/36): the
+determinism contract this entry flagged as the real cost is met the way Roughen
+met it — an integer hash of (comp-grid pixel, seed) in both shader dialects, no
+clock in the shader. Plain Dissolve hashes with seed 0 so its speckle holds
+still; Dancing's seed is the comp frame index, computed by the adapter
+(`FrameScene.dissolveFrame`) from the same playhead export renders, so preview
+at any zoom and the export boil identically. That makes the mode table all 38
+of AE's 38. Classic Color Burn/Dodge/Difference still render identically to
 their modern counterparts — kept for round-tripping and picker parity, and
 documented as such rather than silently wrong.
 
@@ -469,23 +492,30 @@ to describe is gone: `gizmo3dSnapping` was deleted with nine sibling symbols and
   `index:available` is permanently false and `getLocalIndex()` always returns
   `MemoryLocalIndex`, and nothing in `src/` ever calls `upsertProject` or
   `addRecovery`, so the index would be empty even with the driver present.
-- **Essential Properties — BUILT 2026-08-11**, same day this line first
-  recorded it as missing. Two instances of one comp can now differ:
-  `compInstanceOverrides.ts` stores per-instance overrides of the numeric
-  Transform set, keyed `<sourceNodeId>/<prop>`, edited in
-  `CompOverridesSection.tsx` on the placed-composition inspector branch. There
-  is still **no promotion step** — AE has you publish a property in the source
-  comp first, whereas every source layer here offers the whole overridable set,
-  and only the referenced comp's DIRECT children are listed. Extending the
-  overridable set beyond numbers needs a second look, because `evaluateNode`
-  returns `Map<PropPath, number>` and a colour or text override does not travel
-  that path at all.
-- **The frame cache is memory-only.** `renderCache.ts` and `videoFrameCache.ts`
-  are both in-process and budgeted; `diskCache` is zero hits and nothing survives
-  a restart. AE's disk cache is what makes iterating on a heavy comp bearable on
-  day three.
-- **No render-settings or output-module templates** (`renderSettings`: zero;
-  `outputModule`: 2). Every queue entry is configured from scratch.
+- **Essential Properties — promotion shipped 2026-08-14.** Instance overrides
+  (`compInstanceOverrides.ts` / `CompOverridesSection`) already existed for the
+  numeric Transform set. Source comps can now **publish** properties via
+  right-click → "Add to Essential Properties" (`__essentialProps` on the root).
+  When anything is published, the instance panel lists only that curated set
+  (including nested layers). Empty still falls back to every overridable prop
+  on direct children. **Non-numeric overrides shipped 2026-08-17**: `text`,
+  `fill` and `color` join the numeric set via `OVERRIDE_PROP_KINDS`. Colour was
+  the awkward one — it is stored as a hex string but ANIMATED as three channels
+  (`fill_r/_g/_b`), so an override has to suppress those too or a keyframed
+  colour repaints over it every frame.
+- **The frame cache has a disk tier as of 2026-08-17** (`frameDiskCache.ts`) —
+  PNG blobs in a byte-budgeted LRU, read back ahead of the playhead, so a looped
+  work area longer than the ~60 frames RAM holds stops re-rendering every pass.
+  It is **session-scoped on purpose**: the invalidation key is built from
+  revision COUNTERS that reset to 0 each launch, so a persisted frame cannot be
+  told apart from a different project's. Surviving a restart — which is what
+  makes day three bearable in AE — needs a CONTENT-DERIVED key first, and that
+  is a correctness change to the key rather than a storage feature.
+- **Output-module templates ship** (2026-08-18, `outputTemplates.ts`): named
+  render-settings bundles with built-ins, applied from the queue dialog.
+  Resolution is stored as a SCALE — "Half Res" saved from an HD comp still
+  means half on a 4K one — and duration is never stored, because how long a
+  comp runs is a fact about the comp.
 - **Pre-1.0**, with breaking `.motion` format changes still expected.
 - **No collaboration** — removed by choice, but still a loss against Rive/Jitter.
 - **No ecosystem**: no plugin market with content in it, no template marketplace,
@@ -500,25 +530,32 @@ Lottie export, and price.
 
 ### Highest-leverage work, if the goal is complex output
 
-1. **Linear-light colour** — reordered to first on 2026-08-11. The precision
-   foundation is already merged, so this is step 5 of a plan that is mostly done,
-   and it improves every glow, blur and additive blend at once rather than adding
-   one more thing to reach for. Cost is the alpha-invariant decision and a
-   deliberate golden rebaseline, not new architecture.
-2. **Particle system** — the largest single *feature* unlock, and it requires
-   accepting a stateful simulation with a seeded-replay contract in place of the
-   closed form.
-3. **Per-pixel depth of field with an iris model** — a real renderer pass, not a
-   per-layer blur. Fixes the "3D looks flat" complaint at its root.
-4. **Essential Properties on precomps** — cheapest large win, because the
-   template machinery it needs already exists.
-5. **A focused effect pass on the light/glow/flare family** — the cheapest route
-   to frames that read as expensive, and it compounds with (1).
+1. **Linear-light colour — shipped 2026-08-14.** Grade / blend / blur run in
+   linear under `LINEAR_WORKING_SPACE`; RTs stay linear until `scene-blit`
+   (`LINEAR_INTERMEDIATE_STORAGE`); uploads tagged display-referred
+   (`displayReferred` + optional `HARDWARE_SRGB_UPLOADS`). Project settings
+   (working space, ACES ODT, 16/32-bit intermediates) live in Composition
+   Settings → Color. Remaining: HDR output.
+2. **Particle system — stateful floor bounce shipped 2026-08-14.** Opt-in
+   `simMode: 'stateful'` with `SimulationCache`. Remaining density: turbulence,
+   collisions, trails, sub-emitters, 3D / layer-as-particle.
+3. **Per-pixel depth of field — strip CoC shipped 2026-08-14.** Depth-spanning
+   flat quads subdivide into UV strips with per-strip blur (`dofStrips.ts`).
+   Extrusions already had per-face CoC. Still missing: sampleable depth buffer,
+   true per-pixel CoC, iris blades / bokeh / highlight bloom.
+4. **Essential Properties — promotion shipped 2026-08-14.** Source comps publish
+   props via the property menu; instances show the curated set (nested OK).
+   Remaining: colour / text overrides beyond the numeric Transform set.
+5. **Light/glow/flare — Beam / Sweep / Flare / Rays GPU-ported 2026-08-14.**
+   The procedural light family now runs as shaders with retained Canvas2D
+   references. Remaining: broader glow polish (and any further generators).
 
 Motion tracking is a much larger project serving a different audience and should
-not be sequenced against these. Note also that it is **gated behind the decoder**
-(Tier 1): a tracker cannot be more frame-accurate than the `HTMLVideoElement`
-feeding it, so "add tracking" is really "add a demuxer, then add tracking".
+not be sequenced against these. Note also that it is **gated behind the
+decoder's renderer integration** (Tier 1): the demuxer + WebCodecs subsystem
+exists as of 2026-08-19 (`src/core/video/`), but a tracker cannot be more
+frame-accurate than the frames the RENDER path feeds it, and that path is
+still the `HTMLVideoElement` until the exact path passes a visual check.
 
 ---
 
@@ -534,7 +571,7 @@ Recorded so the same claims are not reconstructed from git history and believed.
 | "62 AI tools" | **61** |
 | "47 Zustand stores" | **39** |
 | "Cameras / lights / shadows — parity" | Shading is per-fragment on the depth path (see the 2026-08-10 row below); shadows really are 2.5D projections |
-| Depth of field implied working | Per-layer uniform blur; no DOF in the renderer |
+| Depth of field implied working | Per-face / strip Gaussian CoC; no per-pixel DOF in the renderer |
 
 The pattern across all seven: a number or a status written once by hand, then
 never re-derived. §0 exists to stop the next one.
@@ -553,7 +590,7 @@ only the §1 counts are under test.
 | §3 Templates include "data binding" | **Does not exist** — zero hits repo-wide for `dataBinding` / `dataSource` / `csvBind`. The other five capabilities are real and tested |
 | §4 "No 3D gizmo snapping… a switch wired to nothing" | **Already deleted**, with `deadLayoutState.test.ts` keeping it deleted |
 | §4 "the SQLite local index and version store both exist and are tested" | **Half true, and the wrong half was load-bearing.** The version store is real; `LocalIndex` is a declared interface with no implementation — `better-sqlite3` is not a dependency, so `index:available` is permanently false, and no caller ever writes a row |
-| §4 "no DOF code in `packages/renderer`" | **Still true.** `dofEffectOf` (`buildSnapshot.ts`) remains a per-layer blur. Retained, not corrected |
+| §4 "no DOF code in `packages/renderer`" | **Still true** for a renderer pass. Flat quads now strip-subdivide in `buildSnapshot` (`dofStrips.ts`, 2026-08-14); per-pixel iris still blocked |
 
 Two defects were fixed rather than merely recorded, and both were the same
 shape — a value honoured at one end of a boundary and silently dropped at the
@@ -609,7 +646,7 @@ test; it did not occur to me that a code *comment* is prose too.
 | §4 claimed (2026-08-11, morning) | Reality |
 |---|---|
 | "No proxies. All 74 `proxy` hits are *network* proxy" | **False.** `src/core/assets/proxy.ts` + `proxyManager.ts` + three test files are a measured proxy system with an export-polarity invariant. The "all network" claim came from listing the first ten alphabetical matches, which happened to be `aiTransport.ts` / `csp.ts` — a sampling artifact stated as a census |
-| "No footage interpretation — no alpha interpretation, conform-frame-rate or loop count" | **False.** `sourceInfo.ts` holds `FootageInterpretation` with exactly those fields, stored per-asset. **Pulldown removal** is the only named item genuinely absent |
+| "No footage interpretation — no alpha interpretation, conform-frame-rate or loop count" | **False.** `sourceInfo.ts` holds `FootageInterpretation` with exactly those fields, stored per-asset. **Pulldown removal** was the one named item genuinely absent at the time (shipped 2026-08-20: detection + inverse telecine in the exact decode path) |
 | "The source frame rate is unknown" (Tier 1) | **False, and fixed 12 days before it was written.** `mediaProbe.ts` (2026-07-30) defines three tiers — `probed` (desktop + ffprobe: rate, duration, PAR, codec, audio inventory), `elementOnly`, `none`. It is *wired*: `buildSnapshot.ts:1811` reads `footageSourceOf(node)?.fps ?? fps`. Verifying the read path, not just the existence of the module, is what settled this |
 | Quoted `videoFrameCache.ts`'s "KNOWN LIMIT" header as current | The header was written 2026-07-21 and **superseded 2026-07-30**. The file's own `bracketFrames` already takes `fps` as a parameter; the caller supplies the probed rate. A comment describing a limit is not evidence the limit still holds |
 
@@ -957,14 +994,14 @@ answers what can be answered exactly and refuses the rest.
 
 | | |
 |---|---|
-| CPU-baked effects (`CANVAS2D_ONLY`) | **112** of 154 |
-| already a pure `(data, w, h, …)` kernel | **92** (82%) |
+| CPU-baked effects (`CANVAS2D_ONLY`) | **132** of 174 |
+| already a pure `(data, w, h, …)` kernel | **112** (85%) |
 | need a whole-image reduction | **4** — `equalize`, `auto-levels`, `auto-contrast`, `auto-color` |
-| drawn with canvas ops, no pure kernel | **20** |
+| drawn with canvas ops, no pure kernel | **16** |
 
-The **112** confirms the figure every brief has been quoting; unlike the effect
+The **132** (112 before round five) confirms the figure every brief has been quoting; unlike the effect
 count, this one was right. Derived from the predicate rather than a copy of the
-list, and `unaccounted: 0` — every one of the 154 lands in exactly one bucket,
+list, and `unaccounted: 0` — every one of the 174 lands in exactly one bucket,
 so there is no silent third category rendering as a no-op.
 
 **The 82% is the finding that decides the answer.** The pixel work is already
@@ -1541,7 +1578,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "154 effects".
+it. Prose stating a count should say "174 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and
@@ -1551,9 +1588,8 @@ in §5 — including every "Fixed …" narrative — is still checked.
 Corrected in the same pass, because the paragraph was being rewritten anyway:
 §4 listed "no volumetric light rays (Shine)" and "no optical-flare system worth
 the name" among the missing *classes*. `light-rays`, `lens-flare`, `light-sweep`
-and `beam` all ship, each with a registry def, a Canvas2D implementation and a
-Generate entry in the effects browser. They are CPU passes rather than shaders —
-a performance fact, not an absence.
+and `beam` all ship, each with a registry def, a Canvas2D reference, a Generate
+entry, and (as of 2026-08-14) a GPU shader.
 
 ---
 
@@ -1818,3 +1854,224 @@ of the actively-developed plugin system and are current. `3d-layer-model.md`,
 `BONE_AND_PUPPET_RIGGING.md` are subsystem deep-dives. `COMPOSITING_PLAN.md` is
 a **historical delivery ledger**, retained only because four source files cite
 its F-numbers — it is not a statement of current state.
+
+---
+
+### Corrected 2026-08-17 — seven features shipped, and three walls behind them
+
+A session opened by asking whether an AE-parity assessment was accurate. It was
+not, and the reason is this document's oldest failure mode: the assessment had
+been written from `README.md` and `ROADMAP.md`, whose effect count was still the
+superseded 154, and whose preset figure — 39 — is a number no registry derives
+at all. Seven of the "missing" features it listed already shipped. §0's rule
+earned its keep again: a number in §1 is under test, a sentence anywhere is a
+claim.
+
+(Phrased around those numbers rather than before them, because the propagation
+guard flagged the first draft of this paragraph — exactly as it flagged the
+entry that introduced it. Intended behaviour, and worth leaving visible twice.)
+
+So the entries below exist to keep this file from doing the same thing to the
+next reader.
+
+| §4 said | Now |
+|---|---|
+| "no named easing-preset registry" | **Ships** — `easePresets.ts`, 8 families × 3 directions, through the existing `applyEasingToKeyframes` entry point |
+| "the frame cache is memory-only… `diskCache` is zero hits" | **A disk tier ships** (`frameDiskCache.ts`), session-scoped by necessity — see below |
+| Essential Properties "still missing: non-numeric overrides" | **`text` / `fill` / `color` ship**, with colour's three animated channels suppressed |
+| Onion skinning absent | **Ships** (`onionSkin.ts` + painter), paused-only |
+| Cloners absent | **Ship** (`cloner.ts`), three modes, Step + Random effectors, order- and layer-driven falloff |
+| Rigid-body physics absent | **Ships** (`rigidBody.ts`) on `SimulationCache`, hand-written — see below |
+
+**Three things are blocked on a subsystem, not on effort.** Each was scoped this
+session and each turned out to be a rewrite of a path rather than a feature
+behind it. Recording them so the next plan does not budget them as small:
+
+1. **Cross-session frame caching** needs a CONTENT-DERIVED invalidation key. The
+   current one is built from `sceneRevision` and the animation revision —
+   monotonic counters that reset to 0 every launch, so a persisted frame is
+   indistinguishable from a different project's. Worth doing anyway: it would
+   also stop an undo from clearing a cache whose pixels are identical to what it
+   already held.
+2. **Variable font axes** remain unreachable, exactly as the 2026-08-12 entry
+   found — and re-confirmed here rather than re-litigated. `ctx.font` is a CSS
+   shorthand with no `font-variation-settings`, so this is a different text
+   rasterization path (glyph shaping carrying variation coordinates), the same
+   prerequisite outline-based extrusion wants.
+3. **Cloning along a path** hits the ordering: `pathPoints` is resolved deep
+   inside `buildSnapshot`'s per-layer loop, long after `expandCloners` runs. A
+   second copy of that resolution at expansion time is precisely the drift this
+   document exists to prevent, so path mode wants the resolution moved, not
+   duplicated.
+
+**Physics is hand-written, and that was a decision rather than an oversight.**
+Rapier arrives as WASM, which here means loosening the CSP to allow
+`wasm-unsafe-eval` — a security-policy change, made for a falling-box effect,
+that then applies to every page the renderer loads. It also adds a second
+determinism story beside `SimulationCache`'s strict one. The honest limit of the
+result is stated in its own header and in the panel: **bodies translate but do
+not spin**, so colliders are axis-aligned. Joints, ragdolls or continuous
+collision are the point at which to revisit the dependency — with a concrete
+need, not in advance.
+
+**What none of this had: visual verification.** Every feature above is covered
+by tests and by wiring guards, and none of it was seen running. The automation
+browser pane loads the app with `document.hidden === true`, so
+`requestAnimationFrame` never fires (measured: 0 callbacks in 2s) and the
+viewport render loop — which `WorkspaceController.requestRender()` schedules
+through rAF — never ticks. Anything downstream of a rendered frame therefore
+stays empty there: the RAM cache, the disk tier, the onion skins, the cloner.
+That is an environment limit rather than a finding about the code, but it is the
+reason these seven land with a caveat instead of a screenshot.
+
+
+---
+
+### Corrected 2026-08-18 — two of yesterday's three walls fell on inspection
+
+Yesterday's entry named three subsystem walls. Re-examined rather than
+re-cited, two of them were not walls:
+
+| Yesterday said | Today |
+|---|---|
+| Cross-session frame caching needs a content-derived key first | The key landed same-day; **retention landed today** (`frameDiskCache.ts`): generations are PARKED, not deleted — an undo gets its frames back with zero re-renders, and a manifest lets a restart inherit the previous session warm |
+| Cloning along a path "wants the resolution moved, not duplicated" | It wanted neither — the resolution already existed as `nodeWorldPolygon` for boolean ops. `nodeWorldOutline` was EXTRACTED from it (open-path support added), and the cloner's path mode resolves through the same function the booleans use. The wall was a failure to find prior art, recorded as such |
+| Variable font axes are a text-rasterization subsystem | Still true. Re-confirmed, not re-attempted |
+
+Also superseding yesterday's physics caveat: **rotation ships** (`rigidBody.ts`),
+opt-in per body. The compat mechanism is structural — a locked body carries
+`invInertia = 0`, every angular term vanishes, and the algebra reduces exactly
+to the translation-only solver, so pre-rotation scenes replay bit-identically.
+With Spin on: real OBBs (SAT + clipped two-point manifold), impulses at the
+contact point, circles that roll from friction alone. Three solver bugs were
+caught by tests before shipping — sequential per-point impulses spinning
+symmetric hits, manifold depth measured from the reference centre instead of
+its face, and a wall-contact tie window that swallowed sub-pixel contacts.
+
+And closing a dead export the working agreements flag: `FrameDiskCache.purge()`
+now has its one caller — a Preview-disk-cache row in Customize ▸ Appearance
+with a size readout (parked generations included) and a Purge button. Output
+templates (above) closed the render-settings gap the same day.
+
+### Corrected 2026-08-19 — the decoder wall fell; the fixture corrected the test
+
+The last standing Tier-1 blocker — "a real `VideoDecoder` needs a container
+demuxer; a subsystem, not a change" — is no longer a wall. `src/core/video/`:
+
+- **`mp4Demuxer.ts`** — mp4box (new dependency, pure JS, no WASM — the CSP
+  objection that ruled out Rapier does not apply, and pure-JS is why the demux
+  runs in jest against real ffmpeg fixtures rather than being taken on faith).
+  Out: WebCodecs codec string, avcC/hvcC description (box header stripped),
+  sample table in decode order.
+- **`frameIndex.ts`** — the pure arithmetic of random access: presentation
+  order from cts (B-delay normalized away), GOP keyframe per frame, and the
+  feed-through index (running max of decode index — a B-frame needs the FUTURE
+  reference that sits earlier in decode order).
+- **`exactVideoSource.ts`** — the session: feed [key .. feed-through], flush
+  (which both forces emission and legally resets to needing a key — random
+  access and flush-per-request are the same design), cache every frame the
+  flush emits so stepping forward is cache hits. `DecoderIO` seam because
+  jsdom has no WebCodecs — the fake pins the full feeding discipline.
+
+Two fixture-taught facts worth keeping: ffmpeg parks the B-frame delay in the
+container (cts starts at 1024, not 0 — normalization is load-bearing), and it
+pads the LAST sample's duration by that same delay (the duration test asserted
+800000µs from arithmetic; the file said 833334 and the file was right).
+
+First consumer: footage preview's Frame-by-frame mode (`videoRef` hands the
+pause point to the exact path, so stepping starts where you were looking).
+
+### Corrected again 2026-08-19 — the renderer swap landed
+
+"NOT yet consumed by: the renderer, export, tracking" outlived its truth the
+same day it was written. `src/core/rendering/exactVideoFrames.ts` is the
+renderer's exact tier: same synchronous `get()` + AnimationChanged-repaint
+contract as `videoFrameCache`, backed by `demuxMp4` → `ExactVideoSource`,
+serving canvases keyed by PRESENTATION INDEX (the upload signature, so a
+repeated render never re-uploads). `MotionRendererBackend.feedVideoFrame`
+asks exact → legacy seek cache (frame blend only) → live element seek, and
+releases any stale frame entry before an element fallback because frame
+entries shadow video entries in `getTexture`. Export exactness: the cache's
+inflight loads/decodes are merged into `takeMediaWaits`, so the existing
+convergence loop settles onto exact frames — an `exact: false`
+nearest-neighbour can paint the viewport for a tick but can never ship in an
+export. Fallback is sticky per source (`unavailable`): WebM/odd-MOV,
+files over the in-memory demux cap, unsupported codecs and WebCodecs-less
+runtimes stay on the element path for the whole session, because flapping
+between exact and approximate frames on one source looks like a bug.
+
+One boundary fact worth keeping (it cost a test failure to learn): frame
+starts in the index are FRACTIONAL microseconds (cts/timescale × 1e6), while
+a rounded integer-µs query at an exact frame boundary (t = N/fps) lands just
+below them and resolves the previous frame. The cache biases its query +1µs —
+three orders of magnitude under any frame duration, exactly enough to make
+the timeline's own playhead times resolve the frame they name.
+
+Tracking landed the next day (2026-08-20): `src/core/tracking/` — Track
+Motion on video layers. Three-layer split: `patchMatch.ts` (pure matcher:
+zero-mean NCC over an integer search window, then Lucas-Kanade gradient
+refinement because a parabolic peak fit alone pixel-locks and a CHAINED
+tracker integrates that bias into a walk-off), `tracker.ts` (policy: chained
+reference for appearance evolution + frame-0 anchor template for drift
+correction — the standard template-update-problem answer — plus velocity
+prediction and occlusion coasting), `trackVideoLayer.ts` (the seam: comp
+frame → `compToKeyframeTime` → media seconds → exact decoder presentation
+index, so the frame matched is the frame rendered). Apply writes x/y
+keyframes through the video layer's live transform per sample time
+(`applyTrack.ts`), spliced like Motion Sketch, one `runAnimEdit` undo step.
+UI: `TrackMotionSection` (video-layer inspector) + `TrackPointOverlay`
+(EffectHandleOverlay-pattern SVG, draggable point in SOURCE pixels — see
+`trackerSource.ts` for the one grid rule). Verified end-to-end in a real
+Chromium tab against a synthetic ffmpeg clip with known motion: 300 comp
+frames tracked at confidence 1.00, end position within a pixel of ground
+truth, applied keyframes matching the hand-computed space chain exactly.
+
+Found while wiring it: `addAssetsBatch` — the Assets panel's import path —
+never read video/audio element metadata (only single-file `addAsset` did),
+so every panel-imported video had no width/height/duration and
+`footageSourceOf` reported 0×0. Fixed in place; the tracker section was the
+first consumer strict enough to notice.
+
+The rest of the column landed the same day: `tracker.ts` grew `trackPoints`
+(N points through ONE decode walk — each frame decoded once, every live
+point matches against it; a lost point's track ends, the others walk on),
+`trackVideoLayerPoints` drives it, and three more apply paths joined
+`applyTrackToLayer`:
+
+- **Stabilize** (`applyStabilizeToLayer`): inverse motion on the video layer
+  itself, planned entirely against the ORIGINAL transform before writing
+  (the planExpressionBake discipline), correction converted to parent space
+  by differencing two `fromComp` points so a rotated parent bends the delta
+  correctly. Verified live: after applying, the tracked feature projected to
+  the SAME comp point at every sampled time — spread 0.0 in both axes.
+- **Corner pin** (`applyCornerPinTrack`): keyframes the target's Corner Pin
+  EFFECT (top-left-origin OFFSET space against `defaultCorners`) — the
+  effect is added with an EXPLICIT id before any `effect.<id>.<param>` track
+  is written (the addEffect-returns-void trap is documented at its
+  declaration), tracks created via `setKeyframes` directly because
+  `writeEffectParams` only keyframes params whose stopwatch is already on.
+  Verified live: 4 corners × 300 frames at confidence 1.00, 8 params
+  keyframed, quad stayed a rigid 24×24 square riding the target.
+- **Track mask** (`maskTrack.ts`): every vertex of the layer's mask becomes
+  a track point (one walk), and the result is written as `maskAnim`
+  keyframes through the EXISTING snapshot system (`readNodeMaskAt` is the
+  renderer's only entry), spliced so keyframes outside the tracked range
+  survive. Bezier handles travel rigidly with their vertex; a lost vertex
+  freezes (index-paired interpolation needs every keyframe to carry every
+  point). Like every other mask write, NOT in the undo history — mask state
+  lives on fx props, outside the animation diff. Verified live: 4 vertices ×
+  300 keyframes, displacement within a source pixel of ground truth.
+
+UI: `TrackMotionSection` gained a mode select (Follow / Stabilize / Corner
+pin / Track mask); `TrackPointOverlay` draws however many points the mode
+carries (corner mode: labelled TL/TR/BR/BL plus the quad outline).
+
+Still open on this column: a roto brush / edge-aware masks, 2-point
+rotation+scale solves, and `setVideoBaked` (Canvas2D-bake path) still seeks
+the element. Verification:
+decode discipline and cache policy are test-pinned, AND the real-machine
+pass ran 2026-08-19 in a real Chromium tab — frame-by-frame mode stepped
+`tiny-ipp.mp4` with actual pixel readback from the dialog canvas (non-blank,
+content drifting across frames, timestamps exact), and after Add-at-Playhead
+the render cache reported `ready` with all 24 frames decoded
+(294,912 bytes — exactly 24 × 64×48×4) and zero console errors.

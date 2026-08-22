@@ -61,6 +61,44 @@ describe('sanitizeSvg', () => {
   });
 });
 
+describe('sanitizeSvg — SMIL animation nodes ("Dark Mode Button" regression)', () => {
+  /*
+    DOMPurify's svg profile admits animateTransform but silently drops plain
+    <animate> and <set> — the two tags every Keyshape/SVGator export uses for
+    FILL, OPACITY and VISIBILITY animation. A dark-mode toggle sanitized into a
+    permanently-light picture whose transforms still moved: 25 <animate> and
+    114 <set> nodes gone, no error anywhere. The tags are re-admitted and only
+    the genuinely dangerous instances (attributeName aimed at reference or
+    identity attributes) are removed.
+  */
+  it('keeps <animate> on presentation attributes — the fill/opacity animations', () => {
+    const out = sanitizeSvg(wrap(
+      '<rect width="10" height="10" fill="#93e5f7">'
+      + '<animate attributeName="fill" values="#93e5f7;#13121d" dur="2s"/>'
+      + '<animate attributeName="opacity" values="1;0" dur="2s"/>'
+      + '</rect>',
+    ), 'n1');
+    expect((out!.markup.match(/<animate\s/g) ?? []).length).toBe(2);
+  });
+
+  it('keeps <set> — visibility switching (sun/moon swaps) depends on it', () => {
+    const out = sanitizeSvg(wrap(
+      '<circle r="5"><set attributeName="visibility" to="hidden" begin="1s"/></circle>',
+    ), 'n1');
+    expect(out!.markup).toMatch(/<set\s/);
+  });
+
+  it('still removes SMIL aimed at reference/identity attributes', () => {
+    const out = sanitizeSvg(wrap(
+      '<a href="#safe"><text>x</text>'
+      + '<animate attributeName="href" values="javascript:alert(1)" dur="1s"/></a>'
+      + '<rect width="5" height="5"><set attributeName="id" to="hijack"/></rect>',
+    ), 'n1');
+    expect(out!.markup).not.toMatch(/<animate\s/);
+    expect(out!.markup).not.toMatch(/<set\s/);
+  });
+});
+
 describe('sanitizeSvg — what the golden-frame fidelity oracle caught', () => {
   // Both of these rendered as visibly WRONG pixels and passed every unit test:
   // the markup was well-formed, ids were scoped, nothing threw. Only diffing

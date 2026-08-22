@@ -90,7 +90,12 @@ export const CAMERA_PROPS = [
 ] as const;
 
 const isPrefixed = (prop: string): boolean =>
-  prop.startsWith('effect.') || prop.startsWith('ta.') || prop.startsWith('pathOp.');
+  // 'pathop.' LOWERCASE: that is what `pathOpPropPath` writes and what the
+  // renderer samples. This gate said `pathOp.` (camelCase) — a prefix no real
+  // track has ever carried — so every AI attempt to keyframe a path operator
+  // was rejected as "not animatable" while add_path_operator's own reply text
+  // was telling the model to do exactly that.
+  prop.startsWith('effect.') || prop.startsWith('ta.') || prop.startsWith('pathop.');
 
 /**
  * Puppet pin scalar tracks: `puppet.<pinId>.rotation` / `puppet.<pinId>.stiffness`.

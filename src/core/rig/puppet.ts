@@ -3,23 +3,55 @@ import { earClip, subdivide, polygonArea } from './mesh';
 import { splitBendPins, driverRestMesh, applyBendPins, solveDeform } from './bendPins';
 
 /**
- * What a pin controls.
+ * What a pin controls. After Effects ships five Puppet tools; we keep the same
+ * names so a user fluent in AE does not have to relearn them.
  *
- * `advanced` (the default, and what every pin was before bend pins existed)
- * owns its position: it is placed, dragged and keyframed, and its rotation and
- * scale act about ITS OWN centre in the rest frame.
+ * `position` — drag to move this point on the mesh.
+ * `starch` — keeps a region rigid so nearby pins cannot fold it.
+ * `bend` — owns no position; rotation/scale act about a centre the other pins
+ *          carry. See `bendPins.ts`.
+ * `advanced` — position plus rotation and scale (the historical default).
+ * `overlap` — sets which part draws in front when the mesh folds over itself.
  *
- * `bend` owns no position. Its centre is DERIVED — it is carried wherever the
- * surrounding advanced pins carry that point — and its rotation and scale act
- * about that derived centre, on top of the deformation those pins already
- * produced. That is the whole distinction: an advanced pin rotates about a
- * point it defines, a bend pin rotates about a point the other pins define.
- * Without it a bend pin is just a second advanced pin.
- *
- * Absent means `advanced`, so every rig authored before this reads back
- * unchanged and deforms bit-identically. See `bendPins.ts` for the solve.
+ * Absent means `advanced`, so every rig authored before the other tools
+ * existed reads back unchanged.
  */
-export type PinKind = 'advanced' | 'bend';
+export type PinKind = 'position' | 'starch' | 'bend' | 'advanced' | 'overlap';
+
+/** After Effects' five Puppet tools, in the order the flyout lists them. */
+export const PIN_KIND_CATALOG: ReadonlyArray<{
+  kind: PinKind;
+  label: string;
+  short: string;
+  color: string;
+  hint: string;
+}> = [
+  { kind: 'position', label: 'Puppet Position Pin Tool', short: 'Position', color: '#ffc107', hint: 'Drag to move this point on the mesh.' },
+  { kind: 'starch', label: 'Puppet Starch Pin Tool', short: 'Starch', color: '#ff5252', hint: 'Keeps a region rigid so it resists bending.' },
+  { kind: 'bend', label: 'Puppet Bend Pin Tool', short: 'Bend', color: '#7ee787', hint: 'Rotates around a point carried by other pins.' },
+  { kind: 'advanced', label: 'Puppet Advanced Pin Tool', short: 'Advanced', color: '#ffd54f', hint: 'Position, plus rotation and scale.' },
+  { kind: 'overlap', label: 'Puppet Overlap Pin Tool', short: 'Overlap', color: '#4fc3f7', hint: 'Sets which part draws in front when the mesh folds.' },
+];
+
+/** Absent `kind` is Advanced — every pin authored before the other tools existed. */
+export function pinKindOf(pin: { kind?: PinKind }): PinKind {
+  return pin.kind ?? 'advanced';
+}
+
+export function pinColor(kind: PinKind): string {
+  return PIN_KIND_CATALOG.find((k) => k.kind === kind)?.color ?? '#ffc107';
+}
+
+export function pinHasTransformGizmo(kind: PinKind): boolean {
+  return kind === 'advanced' || kind === 'bend';
+}
+
+export function draftPin(kind: PinKind, id: string, name: string, x: number, y: number): PuppetPin {
+  const pin: PuppetPin = { id, name, x, y, kind };
+  if (kind === 'starch') pin.stiffness = 8;
+  if (kind === 'overlap') pin.overlap = 50;
+  return pin;
+}
 
 export interface PuppetPin {
   id: string;
@@ -122,10 +154,10 @@ export interface PuppetRig {
    */
   maxRotationDeg?: number;
   /**
-   * Meshing strategy. 'grid' (default) is the uniform grid culled against the
-   * layer's silhouette / alpha; 'silhouette' ear-clips the outline itself, which
-   * distributes triangles far better on thin diagonal artwork where a grid
-   * wastes vertices and produces slivers.
+   * Meshing strategy. 'grid' (absent on old files) is the uniform grid culled
+   * against the layer's silhouette / alpha; 'silhouette' ear-clips the outline
+   * itself (or a PNG's alpha), which hugs a character instead of the
+   * transparent bounding box. New rigs default to silhouette.
    */
   meshMode?: 'grid' | 'silhouette';
 }
@@ -243,11 +275,12 @@ export function coverageMaskFromImageData(
  * Recomputes deterministically on document load / pin changes.
  *
  * Grid cells fully outside the artwork are discarded — keeping every cell with
- * any coverage plus one ring of margin — so weights diffuse along the artwork
- * instead of across empty bbox corners. Coverage comes from either a
- * `silhouette` polygon (shape/text layers with path geometry) or an alpha
- * `coverage` mask (image layers with a decoded bitmap). When neither is provided
- * (or both are degenerate) the plain bbox grid is used.
+ * any coverage. When Mesh Expansion is > 0, one ring of margin is dilated so
+ * edge pins have mesh to sit on; expansion 0 hugs the artwork with no wrapper
+ * of empty pixels. Coverage comes from either a `silhouette` polygon
+ * (shape/text layers with path geometry) or an alpha `coverage` mask (image
+ * layers with a decoded bitmap). When neither is provided (or both are
+ * degenerate) the plain bbox grid is used.
  */
 export function buildRestMesh(
   width: number,
@@ -264,8 +297,8 @@ export function buildRestMesh(
     const built = buildSilhouetteMesh(width, height, pad, rig, silhouette);
     if (built) return built;
   }
-  const expansion = rig.meshExpansion ?? 8;
-  const density = rig.meshDensity ?? 15; // default 15x15 subdivisions
+  const expansion = rig.meshExpansion ?? 0;
+  const density = rig.meshDensity ?? 22; // default 22x22 subdivisions for clean joint detail
 
   const cols = Math.max(2, Math.min(50, density));
   const rows = Math.max(2, Math.min(50, density));
@@ -315,10 +348,25 @@ export function buildRestMesh(
         ? (x, y) => coverageCovered(coverage, x, y, width, height)
         : null;
   if (covered) {
-    // Inside flags per grid vertex, plus a per-cell center test for thin parts.
+    // Inside flags per grid vertex, plus interior probes for thin parts.
     const inside = new Uint8Array(gridVerts);
     for (let i = 0; i < gridVerts; i++) {
       inside[i] = covered(gridPos[i * 4 + 0]!, gridPos[i * 4 + 1]!) ? 1 : 0;
+    }
+    // Interior probe lattice per cell. For an alpha coverage mask the probe
+    // spacing must be no coarser than a mask cell, or a thin limb (one mask
+    // cell wide) slips between the corner/center probes and its grid cell is
+    // dropped — the mesh fragments and the character "shreds" when pins move.
+    // Polygon silhouettes keep the single center probe (previous behavior).
+    let subX = 1;
+    let subY = 1;
+    if (!poly && coverage) {
+      const cellW = (Xmax - Xmin) / cols;
+      const cellH = (Ymax - Ymin) / rows;
+      const maskW = width / coverage.cols;
+      const maskH = height / coverage.rows;
+      subX = Math.max(1, Math.min(8, Math.ceil(cellW / Math.max(1e-6, maskW))));
+      subY = Math.max(1, Math.min(8, Math.ceil(cellH / Math.max(1e-6, maskH))));
     }
     const kept = new Uint8Array(cellCount);
     let anyKept = false;
@@ -328,11 +376,19 @@ export function buildRestMesh(
         const i1 = i0 + 1;
         const i2 = i0 + (cols + 1);
         const i3 = i2 + 1;
-        let keep = inside[i0]! || inside[i1]! || inside[i2]! || inside[i3]!;
+        let keep: boolean | 1 | 0 = !!(inside[i0]! || inside[i1]! || inside[i2]! || inside[i3]!);
         if (!keep) {
-          const cx = (gridPos[i0 * 4 + 0]! + gridPos[i3 * 4 + 0]!) / 2;
-          const cy = (gridPos[i0 * 4 + 1]! + gridPos[i3 * 4 + 1]!) / 2;
-          keep = covered(cx, cy) ? 1 : 0;
+          const x0 = gridPos[i0 * 4 + 0]!;
+          const y0 = gridPos[i0 * 4 + 1]!;
+          const cw = gridPos[i3 * 4 + 0]! - x0;
+          const ch = gridPos[i3 * 4 + 1]! - y0;
+          probe: for (let sj = 0; sj < subY; sj++) {
+            const py = y0 + ((sj + 0.5) / subY) * ch;
+            for (let si = 0; si < subX; si++) {
+              const px = x0 + ((si + 0.5) / subX) * cw;
+              if (covered(px, py)) { keep = true; break probe; }
+            }
+          }
         }
         if (keep) {
           kept[r * cols + c] = 1;
@@ -341,21 +397,28 @@ export function buildRestMesh(
       }
     }
     if (anyKept) {
-      // One ring of margin: dilate the kept-cell set by 1 (8-neighborhood).
-      const dilated = new Uint8Array(cellCount);
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          if (!kept[r * cols + c]) continue;
-          for (let dr = -1; dr <= 1; dr++) {
-            for (let dc = -1; dc <= 1; dc++) {
-              const rr = r + dr;
-              const cc = c + dc;
-              if (rr >= 0 && rr < rows && cc >= 0 && cc < cols) dilated[rr * cols + cc] = 1;
+      // A one-cell dilation used to pad the silhouette so edge pins had mesh
+      // to sit on. It also wrapped a ring of empty pixels around a PNG
+      // character — the "grid covering the wrapper, not the body". Mesh
+      // Expansion already grows the domain; when it is 0, hug the artwork.
+      if (expansion > 0) {
+        const dilated = new Uint8Array(cellCount);
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (!kept[r * cols + c]) continue;
+            for (let dr = -1; dr <= 1; dr++) {
+              for (let dc = -1; dc <= 1; dc++) {
+                const rr = r + dr;
+                const cc = c + dc;
+                if (rr >= 0 && rr < rows && cc >= 0 && cc < cols) dilated[rr * cols + cc] = 1;
+              }
             }
           }
         }
+        keepCell = dilated;
+      } else {
+        keepCell = kept;
       }
-      keepCell = dilated;
     }
   }
 
@@ -534,20 +597,24 @@ function finishRestMesh(
 
 /**
  * Make the given pins' weight columns a partition of unity: every vertex's
- * columns sum to 1, or fall back to an equal share where the harmonic solve
- * left nothing (an isolated vertex reachable from no pin).
+ * columns sum to 1.
  *
- * Extracted rather than duplicated because there are now TWO callers and one
- * rule. `finishRestMesh` normalises over every pin; `bendPins` re-normalises
- * over the DRIVERS alone, because a bend pin must not consume influence in a
- * solve it does not take part in. If those two ever disagreed about the
- * fallback, a rig whose pins all landed on one isolated vertex would deform
- * differently depending on whether a bend pin happened to be present.
+ * Where the harmonic solve left NOTHING (sum 0) the vertex is unreachable from
+ * every listed pin. The default is to leave it at zero so it STAYS AT REST — a
+ * disconnected alpha island with no pin of its own must not move at all. The
+ * old equal-share fallback made every such island travel by the AVERAGE of all
+ * pin displacements, which is exactly the "drag one hand and the whole PNG
+ * smears" failure. `uniformWhere` re-opens the equal-share branch per vertex
+ * for the one caller that needs it: `bendPins.driverRestMesh` re-normalises
+ * over the DRIVERS alone, and a bend pin's own anchor vertex (Dirichlet-locked
+ * to 0 in every driver column, but very much part of the connected artwork)
+ * must travel with the drivers rather than act as a starch pin.
  */
 export function normalizeWeightColumns(
   weights: Record<string, Float32Array>,
   pinIds: readonly string[],
   numVertices: number,
+  uniformWhere?: Uint8Array,
 ): void {
   if (pinIds.length === 0) return;
   for (let i = 0; i < numVertices; i++) {
@@ -561,13 +628,14 @@ export function normalizeWeightColumns(
         const w = weights[id];
         if (w) w[i] = (w[i] ?? 0) / sum;
       }
-    } else {
+    } else if (uniformWhere?.[i]) {
       const uniform = 1.0 / pinIds.length;
       for (const id of pinIds) {
         const w = weights[id];
         if (w) w[i] = uniform;
       }
     }
+    // else: reachable from no pin — leave zero, the vertex stays at rest.
   }
 }
 
@@ -928,7 +996,7 @@ export function getCachedRestMesh(
 ): DeformedMesh {
   const pinsKey = rig.pins.map((p) => `${p.id}:${p.x}:${p.y}`).join(',');
   const covKey = coverage?.key ?? 'nocov';
-  const key = `${nodeId}:${width}:${height}:${pad}:${rig.meshExpansion ?? 8}:${rig.meshDensity ?? 15}:${silhouetteKey(silhouette)}:${covKey}:${pinsKey}`;
+  const key = `${nodeId}:${width}:${height}:${pad}:${rig.meshExpansion ?? 0}:${rig.meshDensity ?? 22}:${silhouetteKey(silhouette)}:${covKey}:${pinsKey}`;
 
   const cached = restMeshCache.get(key);
   if (cached) {
@@ -969,4 +1037,93 @@ export function silhouetteFromPathPoints(
 ): PuppetSilhouette | undefined {
   if (open || !points || points.length < 3) return undefined;
   return { points: points.map((p) => ({ x: p.x, y: p.y })) };
+}
+
+/**
+ * Closed outline of an alpha coverage mask, in the same centred local space
+ * as pins and `buildRestMesh`.
+ *
+ * Image layers have no path geometry, so silhouette mode used to fall through
+ * to a bbox grid and a pin on a hand pulled empty transparent corners — the
+ * PNG "crashed" instead of bending like AE Puppet Pin. Tracing the occupied
+ * cells gives ear-clip a body-shaped polygon.
+ *
+ * Returns undefined when the mask is empty or the outline cannot be closed.
+ */
+export function silhouetteFromCoverage(
+  mask: PuppetCoverageMask,
+  width: number,
+  height: number,
+): PuppetSilhouette | undefined {
+  const { cols, rows, cells } = mask;
+  if (cols < 1 || rows < 1 || width <= 0 || height <= 0) return undefined;
+  const occupied = (c: number, r: number): boolean =>
+    c >= 0 && r >= 0 && c < cols && r < rows && cells[r * cols + c] !== 0;
+
+  const toX = (c: number): number => (c / cols - 0.5) * width;
+  const toY = (r: number): number => (r / rows - 0.5) * height;
+
+  type Edge = { x1: number; y1: number; x2: number; y2: number };
+  const edges: Edge[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (!occupied(c, r)) continue;
+      if (!occupied(c, r - 1)) edges.push({ x1: toX(c), y1: toY(r), x2: toX(c + 1), y2: toY(r) });
+      if (!occupied(c + 1, r)) edges.push({ x1: toX(c + 1), y1: toY(r), x2: toX(c + 1), y2: toY(r + 1) });
+      if (!occupied(c, r + 1)) edges.push({ x1: toX(c + 1), y1: toY(r + 1), x2: toX(c), y2: toY(r + 1) });
+      if (!occupied(c - 1, r)) edges.push({ x1: toX(c), y1: toY(r + 1), x2: toX(c), y2: toY(r) });
+    }
+  }
+  if (edges.length < 3) return undefined;
+
+  const keyOf = (x: number, y: number): string => `${x.toFixed(5)},${y.toFixed(5)}`;
+  const byStart = new Map<string, Edge[]>();
+  for (const e of edges) {
+    const k = keyOf(e.x1, e.y1);
+    const list = byStart.get(k);
+    if (list) list.push(e);
+    else byStart.set(k, [e]);
+  }
+
+  const used = new Set<Edge>();
+  let best: Array<{ x: number; y: number }> = [];
+  for (const start of edges) {
+    if (used.has(start)) continue;
+    const loop: Array<{ x: number; y: number }> = [{ x: start.x1, y: start.y1 }];
+    used.add(start);
+    let cur = start;
+    for (let n = 0; n < edges.length + 2; n++) {
+      const nextList = byStart.get(keyOf(cur.x2, cur.y2));
+      const next = nextList?.find((e) => !used.has(e));
+      if (!next) break;
+      used.add(next);
+      loop.push({ x: next.x1, y: next.y1 });
+      cur = next;
+      if (keyOf(cur.x2, cur.y2) === keyOf(start.x1, start.y1)) break;
+    }
+    if (loop.length > best.length) best = loop;
+  }
+  if (best.length < 3) return undefined;
+  if (Math.abs(polygonArea(best)) < Math.max(1, width * height * 1e-4)) return undefined;
+  // earClip wants CCW.
+  if (polygonArea(best) < 0) best.reverse();
+  return { points: best };
+}
+
+/**
+ * The outline `buildRestMesh` should triangulate.
+ *
+ * A closed path always wins. Image layers keep their alpha as a coverage MASK
+ * for grid culling rather than an ear-clipped outline — tracing occupancy
+ * produced sliver triangles that read as a broken blueprint, not AE's lattice.
+ */
+export function resolvePuppetSilhouette(
+  pathSil: PuppetSilhouette | undefined,
+  _coverage: PuppetCoverageMask | undefined,
+  _width: number,
+  _height: number,
+  _meshMode: PuppetRig['meshMode'],
+): PuppetSilhouette | undefined {
+  if (pathSil && pathSil.points.length >= 3) return pathSil;
+  return undefined;
 }
