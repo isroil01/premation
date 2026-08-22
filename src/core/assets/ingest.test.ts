@@ -6,7 +6,7 @@
  * this module exists to end.
  */
 
-import { ingestCandidate, ingestEncodeArgs, needsIngest } from './ingest';
+import { ingestCandidate, ingestEncodeArgs, needsIngest, isCameraRawStill, rawStillEncodeArgs } from './ingest';
 
 describe('ingestCandidate — the cheap pre-filter', () => {
   it('passes ordinary browser formats untouched (no probe cost)', () => {
@@ -16,9 +16,20 @@ describe('ingestCandidate — the cheap pre-filter', () => {
   });
 
   it('flags unplayable containers and probe-worthy ones', () => {
-    for (const name of ['tape.mxf', 'old.avi', 'cam.MTS', 'shot.mov', 'x.mkv', 'y.m2ts']) {
+    for (const name of ['tape.mxf', 'old.avi', 'cam.MTS', 'shot.mov', 'x.mkv', 'y.m2ts', 'still.dng', 'cam.CR2', 'reel.r3d']) {
       expect(ingestCandidate(name)).toBe(true);
     }
+  });
+});
+
+describe('camera raw stills', () => {
+  it('recognises DNG/CR2 and builds a one-frame PNG encode', () => {
+    expect(isCameraRawStill('shot.dng')).toBe(true);
+    expect(isCameraRawStill('clip.mp4')).toBe(false);
+    const { args, outExt } = rawStillEncodeArgs();
+    expect(outExt).toBe('png');
+    expect(args).toContain('-frames:v');
+    expect(args).toContain('1');
   });
 });
 

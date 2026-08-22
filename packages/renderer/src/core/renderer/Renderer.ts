@@ -8,7 +8,7 @@
 
 import type { RenderBackend, RenderSurface } from '../../gpu/RenderBackend';
 import { ResourceManager, type ResourceManagerOptions, type ResourceManagerStats } from '../../gpu/ResourceManager';
-import type { TextureFormat } from '../../gpu/types';
+import type { RenderTargetHandle } from '../../gpu/types';
 import { ShaderRegistry } from '../../shaders/ShaderRegistry';
 import { ShaderCache } from '../../shaders/ShaderCache';
 import { MaterialSystem } from '../../shaders/Material';
@@ -75,6 +75,9 @@ export class Renderer {
   private lastTime = 0;
   private inFrame = false;
   private devicePixelRatio = 1;
+  /** Last frame's scene-color RT (linear when LINEAR_INTERMEDIATE_STORAGE). */
+  private lastSceneColor: RenderTargetHandle | null = null;
+  private lastSceneSize = { width: 0, height: 0 };
 
   constructor(options: RendererOptions) {
     this.backend = options.backend;
@@ -167,7 +170,32 @@ export class Renderer {
       EffectPass.activeColorTarget = needsEffect ? SCENE_COLOR_TARGET : SURFACE;
     }
 
-    this.graph.execute({ services: this.services, frame, viewport, scene });
+    const targets = this.graph.execute({ services: this.services, frame, viewport, scene });
+    this.lastSceneColor = targets.get(SCENE_COLOR_TARGET) ?? null;
+    const { width, height } = viewport.pixelSize;
+    this.lastSceneSize = { width, height };
+  }
+
+  /**
+   * Linear RGBA float readback of the last composed scene-color target.
+   * Null when EffectPass was off (drew straight to surface) or the backend
+   * cannot read float RTs.
+   */
+  readLinearRgba(): Float32Array | null {
+    if (!this.lastSceneColor) return null;
+    const fn = this.backend.readRenderTargetFloat?.bind(this.backend);
+    if (!fn) return null;
+    return fn(this.lastSceneColor, this.lastSceneSize.width, this.lastSceneSize.height);
+  }
+
+  /** Async linear readback — required for WebGPU EXR export. */
+  async readLinearRgbaAsync(): Promise<Float32Array | null> {
+    if (!this.lastSceneColor) return null;
+    const asyncFn = this.backend.readRenderTargetFloatAsync?.bind(this.backend);
+    if (asyncFn) {
+      return asyncFn(this.lastSceneColor, this.lastSceneSize.width, this.lastSceneSize.height);
+    }
+    return this.readLinearRgba();
   }
 
   endFrame(): number {

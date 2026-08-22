@@ -220,7 +220,52 @@
 .authoredList {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+.authoredCard {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius-surface);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+}
+.authoredHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.authoredLabel {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+}
+.authoredMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.authoredMetaLabel {
+  font-size: var(--font-size-micro);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+.authoredMetaRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.authoredMetaKey {
+  flex: 0 0 36px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.authoredMetaRow :global(input) {
+  flex: 1;
+  min-width: 0;
 }
 .authoredRow {
   display: flex;

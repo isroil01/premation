@@ -177,7 +177,7 @@ import { clamp01 } from '@utils/lang';
  */
 export function placeInComp(
   node: SceneNode,
-  opts?: { customW?: number; customH?: number; customFontSize?: number }
+  opts?: { customW?: number; customH?: number; customFontSize?: number; exactSize?: boolean }
 ): void {
   const activeTabId = useProjectStore.getState().activeTabId;
   const activeTab = useProjectStore.getState().tabs[activeTabId ?? ''];
@@ -191,8 +191,12 @@ export function placeInComp(
   let width = opts?.customW && opts.customW > 0 ? opts.customW : targetSize;
   let height = opts?.customH && opts.customH > 0 ? opts.customH : targetSize;
 
-  // Scale up small custom dimensions (e.g. 24px - 180px) so elements match scene scale
-  if (width < 220 && height < 220) {
+  // Scale up small custom dimensions (e.g. 24px - 180px) so elements match
+  // scene scale. NEVER for `exactSize` callers: media fitted to the comp
+  // (insertMedia's contain-fit) is exactly the size it must be — "helpfully"
+  // enlarging a 64×48 clip fitted full-frame into a 64×48 comp to 240×180
+  // is how new-comp-from-small-footage stopped being full frame.
+  if (!opts?.exactSize && width < 220 && height < 220) {
     const aspect = (width / height) || 1;
     if (aspect >= 1) {
       width = targetSize;
@@ -1536,7 +1540,7 @@ export async function insertMedia(asset: ImportedAsset): Promise<void> {
     transform.props.src = asset.src;
     transform.props.assetId = asset.id;
   }
-  placeInComp(node, { customW: width, customH: height });
+  placeInComp(node, { customW: width, customH: height, exactSize: true });
   
   defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([node.id]);

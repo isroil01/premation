@@ -294,12 +294,22 @@ export type AutomationRenderStatus =
 export interface AutomationRenderRequest {
   templateId: string;
   inputs: Record<string, string | number>;
+  /** Optional webhook — motion-back POSTs once when the render completes or fails. */
+  callbackUrl?: string;
   output?: {
     format?: 'mp4';
     width?: number;
     height?: number;
     fps?: number;
   };
+}
+
+/** Payload motion-back POSTs to `callbackUrl` when a render job finishes. */
+export interface AutomationRenderWebhookPayload {
+  jobId: string;
+  status: 'completed' | 'failed';
+  videoUrl?: string;
+  error?: string;
 }
 
 export interface AutomationRenderJob {

@@ -9,12 +9,13 @@
  * through the real sample table), not "wherever a hidden <video> element
  * happened to land after a seek".
  *
- * FALLBACK IS PART OF THE DESIGN, not an apology. The exact path only speaks
- * WebCodecs + in-memory MP4 demux, so a source goes to a sticky `unavailable`
- * state when any of these hold, and the renderer keeps feeding that source
- * through the legacy element-seek path (`AppTextureProvider.setVideo`):
+ * FALLBACK IS PART OF THE DESIGN, not an apology. The exact path speaks
+ * WebCodecs + in-memory demux (MP4 via mp4box, WebM via webmDemuxer), so a
+ * source goes to a sticky `unavailable` state when any of these hold, and the
+ * renderer keeps feeding that source through the legacy element-seek path
+ * (`AppTextureProvider.setVideo`):
  *   - `VideoDecoder`/`EncodedVideoChunk` don't exist (old runtime, jsdom),
- *   - the bytes don't demux (WebM, MOV-with-non-ISO tracks, truncated file),
+ *   - the bytes don't demux (unsupported codec, truncated file),
  *   - the file is too large for the demuxer's whole-file-in-memory contract,
  *   - the decoder errors repeatedly on real samples (codec unsupported).
  * `unavailable` is per-source and permanent for the session — flapping between
@@ -34,9 +35,11 @@
  */
 
 import { getEventBus } from '@core/events/EventBus';
-import { demuxMp4 } from '@core/video/mp4Demuxer';
+import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
+import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
 import {
   ExactVideoSource,
+  SequentialFrameReader,
   webCodecsAvailable,
   type DecodedFrameLike,
 } from '@core/video/exactVideoSource';
@@ -48,11 +51,25 @@ const DEFAULT_BUDGET_BYTES = 512 * 1024 * 1024;
 /** The demuxer holds the whole file in memory (see mp4Demuxer header). A
  *  fetch bigger than this goes straight to the legacy path instead of
  *  doubling a multi-GB file into the JS heap. */
-const MAX_DEMUX_BYTES = 512 * 1024 * 1024;
+const MAX_DEMUX_BYTES = 1536 * 1024 * 1024; // 1.5 GB — still in-RAM; beyond this use a proxy
 
 /** Decoder errors on real samples are a codec/config problem, not a transient
  *  one — after this many failed decode ops the source stops pretending. */
 const MAX_DECODE_FAILURES = 3;
+
+/** Consecutive ascending MISSES before a source flips into streaming mode.
+ *  Scrub gestures are not ascending runs; playback and export are. */
+const STREAM_AFTER_SEQ = 1;
+
+/** How far past the newest request the stream decodes. ~1/3s at 30fps: deep
+ *  enough that playback stays on cache hits, shallow enough that a pause
+ *  wastes almost nothing. */
+const STREAM_AHEAD = 25;
+
+/** Forward index gap that still counts as playback (not a scrub seek). Kept
+ *  independent of STREAM_AHEAD so a deeper decode buffer does not swallow
+ *  real seeks. */
+const STREAM_PLAY_WINDOW = 45;
 
 /** The slice of ExactVideoSource the cache uses — structural, so tests can
  *  stub a source without a decoder. */
@@ -68,6 +85,31 @@ export interface LoadedExactSource {
    *  display size. */
   width: number;
   height: number;
+  /** The demux this source decodes — present ⇒ this source can PLAY through
+   *  a sequential streaming reader (see the streaming notes on `get`).
+   *  Absent (test stubs), the source is random-access only. */
+  demuxed?: DemuxedVideo;
+  /** Last presentation index — bounds streaming; prefer over sample count. */
+  lastPresIndex?: number;
+}
+
+/** The slice of SequentialFrameReader the streaming pump uses — structural,
+ *  injectable so jsdom tests can stream without WebCodecs. */
+export interface SequentialReaderLike {
+  frameAt(presIdx: number): Promise<DecodedFrameLike>;
+  close(): void;
+}
+
+/** An active playback stream on one source. */
+interface StreamState {
+  reader: SequentialReaderLike;
+  /** Next presentation index the reader will deliver (monotonic). */
+  next: number;
+  /** Newest index the renderer asked for — the pump stays ahead of it. */
+  target: number;
+  /** Last index this stream can serve (clip end). */
+  end: number;
+  pumping: boolean;
 }
 
 export type ExactSourceLoader = (src: string) => Promise<LoadedExactSource>;
@@ -100,6 +142,14 @@ interface ReadyEntry {
   /** Presentation indices with a decode in flight. */
   pending: Set<number>;
   failures: number;
+  /** Streaming-playback support (undefined on sources without a demux). */
+  demuxed?: DemuxedVideo;
+  /** Last requested plain index + length of the current ascending miss run. */
+  lastReq: number;
+  seqRun: number;
+  /** Last presentation index in the indexed frame table. */
+  lastPresIndex?: number;
+  stream?: StreamState;
 }
 
 type Entry =
@@ -112,13 +162,18 @@ async function defaultLoader(src: string): Promise<LoadedExactSource> {
   if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
   const buf = await res.arrayBuffer();
   if (buf.byteLength > MAX_DEMUX_BYTES) {
-    throw new Error(`file too large for in-memory demux (${buf.byteLength} bytes)`);
+    throw new Error(`file too large for in-memory demux (${buf.byteLength} bytes) — generate a proxy`);
   }
-  const demuxed = await demuxMp4(buf);
+  // WebM / Matroska → dedicated demuxer (VP8/VP9). ISO-BMFF → mp4box.
+  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  const source = new ExactVideoSource(demuxed);
   return {
-    source: new ExactVideoSource(demuxed),
+    source,
     width: demuxed.codedWidth,
     height: demuxed.codedHeight,
+    demuxed,
+    lastPresIndex: source.frameCount - 1,
   };
 }
 
@@ -133,6 +188,9 @@ export class ExactVideoFrameCache {
     private readonly maxBytesPerSource = DEFAULT_BUDGET_BYTES,
     private readonly loader: ExactSourceLoader = defaultLoader,
     private readonly capable: () => boolean = webCodecsAvailable,
+    /** Injectable so jsdom tests can exercise streaming without WebCodecs. */
+    private readonly makeReader: (demuxed: DemuxedVideo, from: number, to: number) => SequentialReaderLike =
+      (demuxed, from, to) => new SequentialFrameReader(demuxed, from, to),
   ) {}
 
   onChange(fn: () => void): () => void {
@@ -178,6 +236,7 @@ export class ExactVideoFrameCache {
     // of magnitude under any real frame duration, so mid-frame times are
     // unaffected.
     const presIdx = entry.source.frameIndexAt(Math.max(0, Math.round(timeSec * 1e6) + 1));
+    const prevReq = entry.lastReq;
     const target =
       pulldownPhase !== undefined
         ? pulldownFrameFor(presIdx, pulldownPhase)
@@ -187,6 +246,7 @@ export class ExactVideoFrameCache {
       const woven = entry.frames.get(target.index);
       if (woven) {
         this.touch(entry, target.index);
+        entry.lastReq = presIdx;
         return { state: 'frame', canvas: woven.canvas, presIndex: target.index, exact: true };
       }
       // Both source frames must be decoded before the weave exists. Request
@@ -206,11 +266,167 @@ export class ExactVideoFrameCache {
     const hit = entry.frames.get(target.index);
     if (hit) {
       this.touch(entry, target.index);
+      entry.lastReq = target.index;
+      const end = this.lastPresIndex(entry);
+      if (this.isLoopWrap(target.index, prevReq, end)) {
+        this.startStream(src, entry, target.index);
+      } else {
+        // Keep an active stream ahead of a playhead that is riding cache hits —
+        // hits are the steady state of playback, and a stream that only advanced
+        // on misses would stall the moment it caught up.
+        this.advanceStream(src, entry, target.index);
+      }
       return { state: 'frame', canvas: hit.canvas, presIndex: target.index, exact: true };
     }
 
-    this.requestDecode(src, entry, target.index);
+    if (!this.noteMiss(src, entry, target.index, prevReq)) {
+      this.requestDecode(src, entry, target.index);
+    }
     return this.nearest(entry, target.index);
+  }
+
+  // ── Streaming playback ───────────────────────────────────────────
+  //
+  // Random access (`requestDecode` → `frameAt`) decodes a GOP prefix and
+  // flushes PER REQUEST — right for scrubbing, hopeless for playback: at
+  // 30fps the decode debt grows every frame, the picture freezes while the
+  // playhead runs, and catches up when you pause. (That was the reported
+  // bug, verbatim.) So when misses arrive as an ascending run — playback and
+  // export, never scrub gestures — the source switches to a
+  // SequentialFrameReader that decodes each frame ONCE, slightly ahead of
+  // the newest request, into the same canvas cache. Steady-state playback
+  // is then synchronous cache hits. A backwards or far-forward request is a
+  // seek: the stream dies and random access resumes.
+
+  /** Last presentation index for this source. */
+  private lastPresIndex(entry: ReadyEntry): number {
+    if (entry.lastPresIndex !== undefined) return entry.lastPresIndex;
+    if (entry.demuxed) return entry.demuxed.samples.length - 1;
+    return 0;
+  }
+
+  /** Backward jump from near the end to near the start — comp/footage loop. */
+  private isLoopWrap(presIdx: number, lastReq: number, end: number): boolean {
+    if (lastReq < 0 || presIdx >= lastReq) return false;
+    const window = Math.max(STREAM_AHEAD * 3, 15);
+    return presIdx <= window && lastReq >= end - window;
+  }
+
+  /** Start (or restart) a decode-ahead stream at `presIdx`. */
+  private startStream(src: string, entry: ReadyEntry, presIdx: number): boolean {
+    if (!entry.demuxed) return false;
+    const end = this.lastPresIndex(entry);
+    if (presIdx > end) return false;
+    this.killStream(entry);
+    entry.stream = {
+      reader: this.makeReader(entry.demuxed, presIdx, end),
+      next: presIdx,
+      target: presIdx,
+      end,
+      pumping: false,
+    };
+    entry.lastReq = presIdx;
+    entry.seqRun = STREAM_AFTER_SEQ;
+    this.pump(src, entry);
+    return true;
+  }
+
+  /** An active stream absorbs the request when it can. True = absorbed
+   *  (do not queue a random-access decode for it). */
+  private noteMiss(src: string, entry: ReadyEntry, presIdx: number, prevReq: number): boolean {
+    const end = this.lastPresIndex(entry);
+    entry.lastReq = presIdx;
+    const s = entry.stream;
+    if (s) {
+      if (presIdx >= s.next && presIdx <= Math.min(s.end, s.next + STREAM_PLAY_WINDOW)) {
+        s.target = Math.max(s.target, presIdx);
+        this.pump(src, entry);
+        return true;
+      }
+      if (presIdx === s.next - 1) {
+        // The frame the stream JUST delivered, evicted under memory pressure.
+        // Random access refills it; the stream itself is still on course.
+        return false;
+      }
+      // Loop wrap — restart streaming at the new index instead of falling
+      // back to per-frame GOP random access (which cannot keep up at 30fps).
+      if (this.isLoopWrap(presIdx, prevReq, end)) {
+        return this.startStream(src, entry, presIdx);
+      }
+      // A seek — forwards past the window or backwards scrub. Kill the stream.
+      this.killStream(entry);
+      entry.seqRun = 0;
+      return false;
+    }
+
+    // No active stream — a loop boundary jumps straight into streaming.
+    if (this.isLoopWrap(presIdx, prevReq, end)) {
+      return this.startStream(src, entry, presIdx);
+    }
+
+    if (presIdx === prevReq + 1) entry.seqRun += 1;
+    else if (presIdx !== prevReq) entry.seqRun = 0;
+
+    if (entry.seqRun >= STREAM_AFTER_SEQ && entry.demuxed && presIdx < end) {
+      return this.startStream(src, entry, presIdx);
+    }
+    return false;
+  }
+
+  /** A cache HIT during streaming still moves the target forward. */
+  private advanceStream(src: string, entry: ReadyEntry, presIdx: number): void {
+    const s = entry.stream;
+    if (!s) return;
+    if (presIdx > s.target && presIdx <= Math.min(s.end, s.next + STREAM_PLAY_WINDOW)) {
+      s.target = presIdx;
+      this.pump(src, entry);
+    }
+  }
+
+  /** Decode forward until the stream is STREAM_AHEAD past the newest request.
+   *  One pump loop per stream; re-entered from get() as the target advances. */
+  private pump(src: string, entry: ReadyEntry): void {
+    const s = entry.stream;
+    if (!s || s.pumping) return;
+    s.pumping = true;
+    const run = (async () => {
+      try {
+        for (;;) {
+          if (entry.stream !== s || this.sources.get(src) !== entry) return;
+          if (s.next > Math.min(s.target + STREAM_AHEAD, s.end)) return;
+          const idx = s.next;
+          let frame: DecodedFrameLike;
+          try {
+            frame = await s.reader.frameAt(idx);
+          } catch {
+            // Reader died (decode error, closed source). Random access takes
+            // over on the next get(), with its own failure accounting.
+            if (entry.stream === s) this.killStream(entry);
+            return;
+          }
+          if (entry.stream !== s || this.sources.get(src) !== entry) return;
+          this.capture(entry, idx, frame);
+          s.next = idx + 1;
+          // Repaint when the frame the renderer is showing stale pixels for
+          // has landed; pure lookahead frames stay silent (no repaint storms).
+          if (idx <= s.target) this.notify(src);
+        }
+      } finally {
+        s.pumping = false;
+      }
+    })();
+    this.track(run);
+  }
+
+  private killStream(entry: ReadyEntry): void {
+    const s = entry.stream;
+    if (!s) return;
+    delete entry.stream;
+    try {
+      s.reader.close();
+    } catch {
+      // already closed
+    }
   }
 
   /** Nearest decoded neighbour while the target is in flight — bounded scan,
@@ -324,6 +540,10 @@ export class ExactVideoFrameCache {
             bytes: 0,
             pending: new Set(),
             failures: 0,
+            ...(loaded.demuxed ? { demuxed: loaded.demuxed } : {}),
+            ...(loaded.lastPresIndex !== undefined ? { lastPresIndex: loaded.lastPresIndex } : {}),
+            lastReq: -1,
+            seqRun: 0,
           });
           this.notify(src);
         },
@@ -412,6 +632,7 @@ export class ExactVideoFrameCache {
   }
 
   private markUnavailable(src: string, entry: ReadyEntry, reason: string): void {
+    this.killStream(entry);
     entry.source.close();
     this.sources.set(src, { state: 'unavailable', reason });
   }
@@ -419,7 +640,10 @@ export class ExactVideoFrameCache {
   /** Drop everything and close every decoder. Backend dispose. */
   clear(): void {
     for (const entry of this.sources.values()) {
-      if (entry.state === 'ready') entry.source.close();
+      if (entry.state === 'ready') {
+        this.killStream(entry);
+        entry.source.close();
+      }
     }
     this.sources.clear();
   }

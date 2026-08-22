@@ -7,9 +7,10 @@
  * mask composes cleanly with the layer transform.
  *
  * This module owns the data model, the presets, the geometry (points → cubic
- * segments) and the scene-graph read/write. The rasterizer and the inspector
- * consume it. Not yet supported: on-canvas pen editing of mask points, feather
- * blur, and per-mask opacity compositing.
+ * segments) and the scene-graph read/write. On-canvas authoring lives in the
+ * workspace tools: `mask-rect` / `mask-ellipse` / `mask-pen` create masks;
+ * Direct Select (A) edits vertices and tangents. Feather (incl. variable),
+ * per-mask opacity and the seven AE combine modes are supported.
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -490,6 +491,42 @@ export function keyframeMask(nodeId: string, t: number): void {
   kfs.push({ t, mask });
   kfs.sort((a, b) => a.t - b.t);
   defaultSceneGraph.setMaskAnim(nodeId, kfs);
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/**
+ * Move one mask keyframe along the time axis.
+ *
+ * The timeline draws mask keyframes as diamonds on the layer's Mask Shape row,
+ * and a diamond you can see but not drag is a control that looks broken. The
+ * shape travels with the keyframe untouched — this is a retime, not an edit.
+ */
+export function moveMaskKeyframe(nodeId: string, fromT: number, toT: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const kfs = readNodeMaskAnim(node);
+  const moving = kfs.find((k) => Math.abs(k.t - fromT) < 1e-4);
+  if (!moving) return;
+  // Landing on an existing keyframe REPLACES it, matching every other track:
+  // two shapes at one time is not a state the interpolator can express.
+  const next = kfs
+    .filter((k) => k !== moving && Math.abs(k.t - toT) > 1e-4)
+    .concat({ ...moving, t: toT })
+    .sort((a, b) => a.t - b.t);
+  defaultSceneGraph.setMaskAnim(nodeId, next);
+  getEventBus().emit('AnimationChanged', { nodeId });
+}
+
+/**
+ * Delete one mask keyframe. Removing the LAST one clears the animation
+ * outright, so the mask goes back to reading its static shape rather than being
+ * left with a one-keyframe track that pins it forever.
+ */
+export function removeMaskKeyframe(nodeId: string, t: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const next = readNodeMaskAnim(node).filter((k) => Math.abs(k.t - t) > 1e-4);
+  defaultSceneGraph.setMaskAnim(nodeId, next.length > 0 ? next : undefined);
   getEventBus().emit('AnimationChanged', { nodeId });
 }
 

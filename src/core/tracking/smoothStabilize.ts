@@ -13,14 +13,16 @@
  */
 
 import { demuxMp4 } from '@core/video/mp4Demuxer';
-import { ExactVideoSource, webCodecsAvailable } from '@core/video/exactVideoSource';
+import { ExactVideoSource, SequentialFrameReader, webCodecsAvailable } from '@core/video/exactVideoSource';
+import { lumaFromDecodedFrame } from './lumaExtract';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useAssetStore } from '@stores/assetStore';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { computeFlow } from '@core/rendering/pixelMotionFlow';
-import { fitSimilarity, flowSamplePoints, stabilizingCorrections, type Sim } from './globalMotion';
-import { applySmoothStabilize } from './applyTrack';
+import { fitSimilarity, flowSamplePoints, stabilizingCorrections, IDENTITY_SIM, type Sim } from './globalMotion';
+import { applySmoothStabilize, applySubspaceMeshSequence } from './applyTrack';
+import { estimateRollingShutterShear, fitSubspaceWarp, applyRollingShutterRepair } from './subspaceWarp';
 import { sourceDisplaySize } from './trackerSource';
 
 export interface SmoothStabilizeRequest {
@@ -33,6 +35,12 @@ export interface SmoothStabilizeRequest {
    *  strong enough to read as locked-off on handheld, short enough that a
    *  deliberate one-second pan survives. */
   smoothnessSec?: number;
+  /**
+   * `similarity` (default) — global Warp Stabilizer path.
+   * `subspace` — grid of local sims → Mesh Warp on the layer.
+   * `rolling-shutter` — estimate shear and bake into Mesh Warp rows.
+   */
+  variant?: 'similarity' | 'subspace' | 'rolling-shutter';
   onProgress?: (f: number) => void;
 }
 
@@ -88,6 +96,8 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   const demuxed = await demuxMp4(await res.arrayBuffer());
   const source = new ExactVideoSource(demuxed);
+  // Hoisted so the finally below can close the streaming pass (see makePass).
+  let pass: { frameFor: (i: number) => Promise<unknown>; close: () => void } | null = null;
 
   try {
     const startFrame = Math.round(req.startCompTime * req.fps);
@@ -114,15 +124,72 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
     canvas.height = demuxed.codedHeight;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new Error('No 2D context for frame readback.');
-    const lumaAt = async (srcIdx: number): Promise<{ data: Float32Array; w: number; h: number }> => {
-      const frame = await source.frameAt(srcIdx);
-      ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0);
+
+    // Each analysis pass walks the source FORWARD once, so it streams through
+    // a SequentialFrameReader (one decode per frame, frames closed as soon as
+    // their luma is copied) instead of random-access frameAt — which was
+    // quadratic in GOP length and pinned enough decoder-pool frames to hang
+    // (the same freeze Track Motion had). Non-monotonic requests (a remapped
+    // clip wiggling backwards) fall through to random access for that frame.
+    const srcFromIdx = srcIndexAt(startFrame);
+    const srcToIdx = srcIndexAt(endFrame);
+    // Same prefer-software rationale as trackVideoLayer: dense flow reads
+    // every pixel back, and software frames copy in ~2ms where hardware
+    // frames pay a long GPU sync. Probed so unsupported degrades quietly.
+    let softwareOk = false;
+    try {
+      const vd = (globalThis as unknown as {
+        VideoDecoder?: { isConfigSupported?: (c: object) => Promise<{ supported?: boolean }> };
+      }).VideoDecoder;
+      const sup = await vd?.isConfigSupported?.({
+        codec: demuxed.codec,
+        codedWidth: demuxed.codedWidth,
+        codedHeight: demuxed.codedHeight,
+        ...(demuxed.description ? { description: demuxed.description } : {}),
+        hardwareAcceleration: 'prefer-software',
+      });
+      softwareOk = sup?.supported === true;
+    } catch {
+      // probe unavailable — stay on the default
+    }
+    const makePass = (): { frameFor: (i: number) => Promise<unknown>; close: () => void } => {
+      if (srcToIdx < srcFromIdx) {
+        return { frameFor: (i) => source.frameAt(i), close: () => {} };
+      }
+      const reader = new SequentialFrameReader(
+        demuxed, srcFromIdx, srcToIdx, undefined,
+        softwareOk ? { hardwareAcceleration: 'prefer-software' } : {},
+      );
+      let last = -Infinity;
+      return {
+        frameFor: (i) => {
+          if (i < last) return source.frameAt(i);
+          last = i;
+          return reader.frameAt(i);
+        },
+        close: () => reader.close(),
+      };
+    };
+    pass = makePass();
+    const canvasReader = (frame: CanvasImageSource): { data: Float32Array; width: number; height: number } => {
+      ctx.drawImage(frame, 0, 0);
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const full = new Float32Array(canvas.width * canvas.height);
       for (let i = 0, p = 0; i < full.length; i++, p += 4) {
         full[i] = img.data[p]! * 0.299 + img.data[p + 1]! * 0.587 + img.data[p + 2]! * 0.114;
       }
-      return downsampleLuma(full, canvas.width, canvas.height, factor);
+      return { data: full, width: canvas.width, height: canvas.height };
+    };
+    const lumaAt = async (srcIdx: number): Promise<{ data: Float32Array; w: number; h: number }> => {
+      const frame = await pass!.frameFor(srcIdx);
+      // Y-plane fast path (see lumaExtract): full-res RGBA readback per frame
+      // was most of the analysis cost. Scale mismatch vs the canvas route
+      // (0–1 vs 0–255, video range) is irrelevant — the flow is gradient-
+      // based and every frame of a pass takes the same path.
+      const plane = await lumaFromDecodedFrame(frame, canvas.width, canvas.height, canvasReader, 1);
+      // scale=1 (not 'raw8') ⇒ always a Float32 plane: the flow math is
+      // gradient-magnitude-based, NOT gain-invariant, so it keeps one range.
+      return downsampleLuma(plane.data as Float32Array, plane.width, plane.height, factor);
     };
 
     // Comp-frame walk. Comp frames that resolve to the SAME source frame
@@ -153,6 +220,65 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
 
     const sigmaFrames = Math.max(1, (req.smoothnessSec ?? 0.5) * req.fps);
     const corrections = stabilizingCorrections(pairs, sigmaFrames);
+    const variant = req.variant ?? 'similarity';
+
+    if (variant === 'subspace' || variant === 'rolling-shutter') {
+      // Full Warp Stabilizer–class path: per-frame subspace (or RS shear) mesh.
+      // This is a SECOND forward walk from the start — fresh streaming pass.
+      pass?.close();
+      pass = makePass();
+      const meshFrames: Array<{ cells: ReturnType<typeof fitSubspaceWarp>; compTime: number }> = [];
+      let prevL = await lumaAt(srcIndexAt(compFrames[0]!));
+      let prevI = srcIndexAt(compFrames[0]!);
+      const fieldW0 = prevL.w * scaleX;
+      const fieldH0 = prevL.h * scaleY;
+      // Identity at first frame.
+      meshFrames.push({
+        cells: fitSubspaceWarp(
+          computeFlow(prevL.data, prevL.data, prevL.w, prevL.h),
+          4, 4, scaleX, scaleY,
+        ).map((c) => ({ ...c, sim: IDENTITY_SIM })),
+        compTime: compFrames[0]! / req.fps,
+      });
+      for (let i = 1; i < compFrames.length; i++) {
+        const idx = srcIndexAt(compFrames[i]!);
+        const cur = idx === prevI ? prevL : await lumaAt(idx);
+        const flow = computeFlow(prevL.data, cur.data, prevL.w, prevL.h);
+        let cells = fitSubspaceWarp(flow, 4, 4, scaleX, scaleY);
+        if (variant === 'rolling-shutter') {
+          const k = estimateRollingShutterShear(flow, scaleX, scaleY);
+          const cy = fieldH0 / 2;
+          cells = cells.map((c) => {
+            const [tx] = applyRollingShutterRepair(c.cx, c.cy, cy, -k);
+            return { ...c, sim: { ...c.sim, tx: c.sim.tx + (tx - c.cx) * 0.5 } };
+          });
+        }
+        // Invert local motion ≈ stabilization correction (same idea as similarity path).
+        cells = cells.map((c) => ({
+          ...c,
+          sim: {
+            a: c.sim.a, b: -c.sim.b,
+            tx: -c.sim.tx, ty: -c.sim.ty,
+          },
+        }));
+        meshFrames.push({ cells, compTime: compFrames[i]! / req.fps });
+        prevL = cur;
+        prevI = idx;
+        req.onProgress?.(i / (compFrames.length - 1));
+      }
+      const g = sourceDisplaySize(req.nodeId);
+      const keyframes = applySubspaceMeshSequence({
+        targetNodeId: req.nodeId,
+        frames: meshFrames,
+        rows: 4,
+        cols: 4,
+        fieldW: fieldW0,
+        fieldH: fieldH0,
+        layerW: g?.width ?? display.width,
+        layerH: g?.height ?? display.height,
+      });
+      return { keyframes, fittedPairs: fitted, totalPairs: pairs.length };
+    }
 
     const keyframes = applySmoothStabilize({
       videoNodeId: req.nodeId,
@@ -165,6 +291,7 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
     });
     return { keyframes, fittedPairs: fitted, totalPairs: pairs.length };
   } finally {
+    pass?.close();
     source.close();
   }
 }

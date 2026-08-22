@@ -22,9 +22,16 @@
  * frame — a tracker that walks away from its feature on a static shot.
  */
 
-/** A single-channel float image. Values in [0, 1]. */
+/**
+ * A single-channel image. Float planes carry [0, 1]; Uint8 planes carry raw
+ * Y bytes (0–255, straight off `VideoFrame.copyTo` with zero conversion —
+ * see lumaExtract). Every consumer in this module is GAIN-INVARIANT by
+ * design (zero-mean NCC, normalized LK), so the two ranges interoperate —
+ * which is exactly what lets the tracker skip an 8M-element u8→f32 loop per
+ * 4K frame.
+ */
 export interface LumaPlane {
-  data: Float32Array;
+  data: Float32Array | Uint8Array;
   width: number;
   height: number;
 }
@@ -241,21 +248,145 @@ export function matchPatch(
   predictY: number,
   searchHalf: number,
 ): MatchResult | null {
+  // ── The fast path's three observations ─────────────────────────────
+  //
+  // The naive search is (2·sh+1)² candidates × (extract 441 bilinear samples
+  // + a full NCC) ≈ 12M ops per point per frame at the defaults — the whole
+  // reason Track progress crawled. But:
+  //
+  //  1. Every candidate centre shares the SAME fractional phase (offsets are
+  //     integers), so the bilinear resampling can happen ONCE: one region of
+  //     (2·(sh+fh)+1)² samples, and every candidate patch is an integer-
+  //     aligned window into it — byte-identical values to extractPatch.
+  //  2. NCC's window statistics (Σw, Σw²) come from two integral images over
+  //     that region in O(1) per candidate; only the template cross term
+  //     needs a real loop.
+  //  3. The NCC surface of a 21×21 patch is smooth at stride 2, so a coarse
+  //     pass + a ±2 refine visits ~¼ of the candidates. (Small windows stay
+  //     exhaustive — there is nothing to skip.)
+  //
+  // Together: ~30× less arithmetic, same answer. The sub-pixel stage below
+  // (LK / parabola) is untouched and still reads the ORIGINAL plane.
+  const featureSize = 2 * featureHalf + 1;
+  const n = featureSize * featureSize;
+  const reach = searchHalf + featureHalf;
+  const regionSize = 2 * reach + 1;
+
+  // One bilinear pass over the search region, at the prediction's phase.
+  const region = new Float32Array(regionSize * regionSize);
+  {
+    let i = 0;
+    for (let dy = -reach; dy <= reach; dy++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        region[i++] = sampleBilinear(target, predictX + dx, predictY + dy);
+      }
+    }
+  }
+
+  // Integral images (one extra row/col of zeros) for O(1) window sums.
+  const iw = regionSize + 1;
+  const integ = new Float64Array(iw * iw);
+  const integSq = new Float64Array(iw * iw);
+  for (let y = 0; y < regionSize; y++) {
+    let rowSum = 0;
+    let rowSumSq = 0;
+    for (let x = 0; x < regionSize; x++) {
+      const v = region[y * regionSize + x]!;
+      rowSum += v;
+      rowSumSq += v * v;
+      integ[(y + 1) * iw + (x + 1)] = integ[y * iw + (x + 1)]! + rowSum;
+      integSq[(y + 1) * iw + (x + 1)] = integSq[y * iw + (x + 1)]! + rowSumSq;
+    }
+  }
+
+  // Template statistics, once.
+  let sumT = 0;
+  let sumT2 = 0;
+  for (let i = 0; i < n; i++) {
+    const v = refPatch[i]!;
+    sumT += v;
+    sumT2 += v * v;
+  }
+  const varT = sumT2 - (sumT * sumT) / n;
+
   const size = 2 * searchHalf + 1;
-  const scores = new Float32Array(size * size).fill(-2);
+  const scores = new Float32Array(size * size).fill(-3); // -3 = not evaluated
+  const score = (dx: number, dy: number): number => {
+    if (Math.abs(dx) > searchHalf || Math.abs(dy) > searchHalf) return -2;
+    const slot = (dy + searchHalf) * size + (dx + searchHalf);
+    const memo = scores[slot]!;
+    if (memo > -3) return memo;
+    // Same off-plane rule as extractPatch: the CENTRE must be inside.
+    const cx = predictX + dx;
+    const cy = predictY + dy;
+    if (cx < 0 || cy < 0 || cx > target.width - 1 || cy > target.height - 1) {
+      scores[slot] = -2;
+      return -2;
+    }
+    // Window top-left inside the region grid.
+    const wx = dx + searchHalf;
+    const wy = dy + searchHalf;
+    const x0 = wx;
+    const y0 = wy;
+    const x1 = wx + featureSize;
+    const y1 = wy + featureSize;
+    const sumW = integ[y1 * iw + x1]! - integ[y0 * iw + x1]! - integ[y1 * iw + x0]! + integ[y0 * iw + x0]!;
+    const sumW2 = integSq[y1 * iw + x1]! - integSq[y0 * iw + x1]! - integSq[y1 * iw + x0]! + integSq[y0 * iw + x0]!;
+    const varW = sumW2 - (sumW * sumW) / n;
+    if (varT <= 1e-12 || varW <= 1e-12) {
+      scores[slot] = 0; // flat patch correlates with nothing (see ncc)
+      return 0;
+    }
+    let cross = 0;
+    let k = 0;
+    for (let r = 0; r < featureSize; r++) {
+      let ri = (wy + r) * regionSize + wx;
+      for (let c = 0; c < featureSize; c++, k++, ri++) {
+        cross += refPatch[k]! * region[ri]!;
+      }
+    }
+    const s = (cross - (sumT * sumW) / n) / Math.sqrt(varT * varW);
+    scores[slot] = s;
+    return s;
+  };
+
   let bestScore = -2;
   let bestDx = 0;
   let bestDy = 0;
-  for (let dy = -searchHalf; dy <= searchHalf; dy++) {
-    for (let dx = -searchHalf; dx <= searchHalf; dx++) {
-      const cand = extractPatch(target, predictX + dx, predictY + dy, featureHalf);
-      if (!cand) continue;
-      const s = ncc(refPatch, cand);
-      scores[(dy + searchHalf) * size + (dx + searchHalf)] = s;
-      if (s > bestScore) {
-        bestScore = s;
-        bestDx = dx;
-        bestDy = dy;
+  const consider = (dx: number, dy: number): void => {
+    const s = score(dx, dy);
+    if (s > bestScore) {
+      bestScore = s;
+      bestDx = dx;
+      bestDy = dy;
+    }
+  };
+
+  if (searchHalf <= 6) {
+    // Small windows: exhaustive, nothing worth skipping.
+    for (let dy = -searchHalf; dy <= searchHalf; dy++) {
+      for (let dx = -searchHalf; dx <= searchHalf; dx++) consider(dx, dy);
+    }
+  } else {
+    // Coarse stride-2 sweep (window edges included), then a full ±2 refine
+    // around the coarse peak so the true integer peak cannot be missed.
+    for (let dy = -searchHalf; dy <= searchHalf; dy += 2) {
+      for (let dx = -searchHalf; dx <= searchHalf; dx += 2) consider(dx, dy);
+    }
+    if (searchHalf % 2 === 1) {
+      // Odd half: the stride grid misses the far edges — sweep them.
+      for (let d = -searchHalf; d <= searchHalf; d += 2) {
+        consider(d, searchHalf);
+        consider(d, -searchHalf);
+        consider(searchHalf, d);
+        consider(-searchHalf, d);
+      }
+    }
+    const cDx = bestDx;
+    const cDy = bestDy;
+    for (let dy = Math.max(-searchHalf, cDy - 2); dy <= Math.min(searchHalf, cDy + 2); dy++) {
+      for (let dx = Math.max(-searchHalf, cDx - 2); dx <= Math.min(searchHalf, cDx + 2); dx++) {
+        consider(dx, dy);
       }
     }
   }
@@ -266,7 +397,7 @@ export function matchPatch(
   // for this motion and half a pixel of refinement is the least of it.
   const at = (dx: number, dy: number): number | null => {
     if (Math.abs(dx) > searchHalf || Math.abs(dy) > searchHalf) return null;
-    const s = scores[(dy + searchHalf) * size + (dx + searchHalf)]!;
+    const s = score(dx, dy);
     return s <= -2 ? null : s;
   };
   // Sub-pixel: LK refinement from the integer peak (see lkRefine on why the

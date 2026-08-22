@@ -16,6 +16,11 @@ export interface ResolvedTexture {
   uv?: Rect;
   /** Whether the texture is ready (video frames may be pending). */
   ready: boolean;
+  /**
+   * Texture already holds linear (working-space / scene-referred) values —
+   * float EXR, graph RTs. Skips the sRGB→linear decode on sample.
+   */
+  sampleLinear?: boolean;
 }
 
 export interface TextureProvider {

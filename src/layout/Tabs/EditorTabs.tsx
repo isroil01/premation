@@ -31,7 +31,7 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { openFootagePreview, useLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import { openFootagePreview, useLastFootagePreview, clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { deleteComposition } from '@core/composition/compositionOps';
@@ -71,8 +71,15 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
   });
   const compName = activePristine ? '' : rawCompName;
 
-  // Footage tab: last-viewed asset first, else the selected video layer's own
-  // source. Layer tab: Focus Mode isolation over the single selected layer.
+  // Footage tab = source viewer (AE Footage panel).
+  //
+  // Sticky last-preview used to WIN over the current selection, so previewing
+  // an image once left the tab permanently labelled with that image — even
+  // after you selected a video layer or moved on. That felt "stuck".
+  //
+  // Priority now: live selected layer source → sticky last preview (if still
+  // in the library) → none. Images ARE footage items in AE (stills), so they
+  // can appear here; they just must not block the live selection.
   const lastPreviewed = useLastFootagePreview((s) => s.asset);
   const selectionIds = useSelectionStore((s) => s.ids);
   const assets = useAssetStore((s) => s.assets);
@@ -84,7 +91,21 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
     const assetId = node ? assetIdOf(node) : null;
     return assetId ? assets.find((a) => a.id === assetId) ?? null : null;
   })();
-  const footageAsset = lastPreviewed ?? (selectedAsset?.type === 'video' ? selectedAsset : null);
+  const selectedMedia =
+    selectedAsset
+    && (selectedAsset.type === 'video' || selectedAsset.type === 'image' || selectedAsset.type === 'audio')
+      ? selectedAsset
+      : null;
+  const stickyValid =
+    lastPreviewed && assets.some((a) => a.id === lastPreviewed.id) ? lastPreviewed : null;
+  const footageAsset = selectedMedia ?? stickyValid;
+
+  // Drop a sticky label whose asset was deleted from the library.
+  useEffect(() => {
+    if (lastPreviewed && !assets.some((a) => a.id === lastPreviewed.id)) {
+      clearLastFootagePreview();
+    }
+  }, [assets, lastPreviewed]);
   const isolatedId = useFocusStore((s) => s.isolatedId);
   const layerTabName = isolatedId
     ? defaultSceneGraph.getNode(isolatedId)?.name ?? null
@@ -145,18 +166,14 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
         </button>
 
         {/*
-          AE's Footage and Layer viewer tabs, wired to what this editor
-          actually has rather than shipped as dead chrome:
+          AE's Footage and Layer viewer tabs.
 
-          FOOTAGE holds the last asset opened in the footage viewer (the way
-          AE's viewer holds what was last opened) and reopens it; before
-          anything has been viewed it offers the selected video layer's own
-          source. Truly nothing to show → disabled "(none)".
+          FOOTAGE is the source viewer: the selected layer's media when one is
+          selected, otherwise the last asset opened in the preview dialog.
+          Images and video are both "footage" in AE; the tab is not stuck on
+          the last preview when a different layer is selected.
 
-          LAYER is Focus Mode's isolate: with one layer selected, it isolates
-          that layer (everything else ghosts — this editor's layer viewer);
-          while isolation is active it reads as the active tab and clicking
-          exits. No single selection and no isolation → disabled "(none)".
+          LAYER is Focus Mode isolate.
         */}
         <button
           type="button"
@@ -164,8 +181,28 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
           aria-selected={false}
           className={styles.tab}
           disabled={!footageAsset}
-          title={footageAsset ? `Footage: ${footageAsset.name}` : 'Footage (none) — double-click a clip in Assets, or select a video layer'}
+          title={
+            footageAsset
+              ? `Footage: ${footageAsset.name}${footageAsset.type === 'image' ? ' (still)' : footageAsset.type === 'audio' ? ' (audio)' : ''}`
+              : 'Footage (none) — double-click a clip in Assets, or select a media layer'
+          }
           onClick={() => { if (footageAsset) openFootagePreview(footageAsset); }}
+          onContextMenu={(e) => {
+            if (!footageAsset) return;
+            e.preventDefault();
+            openContextMenu(e.clientX, e.clientY, [
+              {
+                id: 'clear-footage',
+                label: 'Clear Footage Viewer',
+                onSelect: () => {
+                  clearLastFootagePreview();
+                  // If the tab is driven by the current layer selection, clear
+                  // that too — otherwise Clear would appear to do nothing.
+                  if (selectedMedia) useSelectionStore.getState().clear();
+                },
+              },
+            ]);
+          }}
         >
           <span className={styles.tabLabel}>Footage {footageAsset ? `(${footageAsset.name})` : '(none)'}</span>
         </button>

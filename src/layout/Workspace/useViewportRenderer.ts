@@ -172,6 +172,7 @@ export function useViewportRenderer(
       return;
     }
     try {
+      b.setPlaybackMode?.(playingRef.current);
       b.renderFrame({
         ...buildSnapshot(
           defaultSceneGraph, defaultAnimation, timeRef.current, focusRef.current,

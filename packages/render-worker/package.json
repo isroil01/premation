@@ -9,6 +9,8 @@
     "start": "electron electron/main.cjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "smoke": "node smoke.mjs",
+    "smoke:tiktok": "node tiktok-smoke.mjs",
+    "benchmark": "node benchmark.mjs",
     "dev": "npm run build && npm run start"
   }
 }

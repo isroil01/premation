@@ -100,6 +100,24 @@ const CORNER_PIN_HANDLES: readonly HandleSpec[] = [
   { id: 'bottomLeft', label: 'Bottom Left', xKey: 'bottomLeftX', yKey: 'bottomLeftY', kind: 'vertex', rest: (_w, h) => ({ x: 0, y: h }) },
 ];
 
+/** Mesh Warp's fixed 4×4 lattice — row-major, matching `v0`…`v15` params. */
+const MESH_WARP_N = 4;
+const MESH_WARP_HANDLES: readonly HandleSpec[] = Array.from({ length: MESH_WARP_N * MESH_WARP_N }, (_, i) => {
+  const col = i % MESH_WARP_N;
+  const row = Math.floor(i / MESH_WARP_N);
+  return {
+    id: `v${i}`,
+    label: `Mesh ${row + 1},${col + 1}`,
+    xKey: `v${i}X`,
+    yKey: `v${i}Y`,
+    kind: 'vertex' as const,
+    rest: (w: number, h: number) => ({
+      x: (col / (MESH_WARP_N - 1)) * w,
+      y: (row / (MESH_WARP_N - 1)) * h,
+    }),
+  };
+});
+
 /**
  * The three distort centres — Bulge, Twirl and Spherize.
  *
@@ -144,6 +162,7 @@ const CENTRE_HANDLE = (
 export const EFFECT_HANDLES: Partial<Record<EffectType, readonly HandleSpec[]>> = {
   'bezier-warp': BEZIER_WARP_HANDLES,
   'corner-pin': CORNER_PIN_HANDLES,
+  'mesh-warp': MESH_WARP_HANDLES,
   /*
     Bend's two points, which ARE the bend line — its position, its direction,
     and the span the bend completes over. AE draws them as Top and Base and you

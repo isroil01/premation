@@ -31,15 +31,45 @@ import { canProbe, probeMedia } from './mediaProbe';
 /** Containers the browser's <video> cannot open regardless of codec. */
 const INGEST_CONTAINERS = new Set([
   'mxf', 'avi', 'wmv', 'flv', 'mts', 'm2ts', 'mpg', 'mpeg', 'vob', 'mpe', 'ts',
+  // Camera / cinema wrappers — decode only via ffmpeg when the host has the
+  // demuxer (R3D/BRAW often need vendor SDKs; we still try and surface failure).
+  'r3d', 'braw', 'ari',
+]);
+
+/** Still camera-raw formats — ffmpeg often decodes via libraw/dcraw builds. */
+const CAMERA_RAW_STILLS = new Set([
+  'dng', 'cr2', 'cr3', 'nef', 'arw', 'orf', 'rw2', 'raf', 'pef', 'srw', 'raw',
 ]);
 
 /** Codecs no browser decodes, in containers it otherwise could open (.mov). */
 const INGEST_CODECS = new Set([
   'prores', 'dnxhd', 'dnxhr', 'mpeg2video', 'cineform', 'ffv1', 'v210',
   'rawvideo', 'mjpeg', 'jpeg2000', 'huffyuv', 'qtrle',
+  'xdcam', 'imx', 'dvvideo', 'apch', 'apcn', 'apcs', 'apco', 'ap4h',
 ]);
 
 const extOf = (name: string): string => (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? '').toLowerCase();
+
+export function isCameraRawStill(fileName: string): boolean {
+  return CAMERA_RAW_STILLS.has(extOf(fileName));
+}
+
+/**
+ * ffmpeg args for a still camera-raw → PNG (one frame). Placeholders match
+ * proxy/ingest IPC contract.
+ */
+export function rawStillEncodeArgs(): { args: string[]; outExt: string; mime: string } {
+  return {
+    args: [
+      '-i', '__IN__',
+      '-frames:v', '1',
+      '-pix_fmt', 'rgb24',
+      '__OUT__',
+    ],
+    outExt: 'png',
+    mime: 'image/png',
+  };
+}
 
 /**
  * The ffmpeg argument list for one ingest, with the `__IN__`/`__OUT__`
@@ -94,7 +124,13 @@ export function needsIngest(fileName: string, videoCodec: string | undefined): b
  *  `applyProbe` anyway; this module must not double that cost). */
 export function ingestCandidate(fileName: string): boolean {
   const ext = extOf(fileName);
-  return INGEST_CONTAINERS.has(ext) || ext === 'mov' || ext === 'mkv' || ext === 'm4v';
+  return (
+    INGEST_CONTAINERS.has(ext)
+    || CAMERA_RAW_STILLS.has(ext)
+    || ext === 'mov'
+    || ext === 'mkv'
+    || ext === 'm4v'
+  );
 }
 
 /**
@@ -106,6 +142,64 @@ export async function maybeIngestForImport(
   file: File,
   onStatus?: (msg: string) => void,
 ): Promise<File | null> {
+  // EXR: decoded and tone-mapped in-process (no ffmpeg involved), so it works
+  // in every edition. Failure falls through to importing the original bytes,
+  // which surfaces as a broken image rather than a crashed import.
+  if (/\.exr$/i.test(file.name)) {
+    onStatus?.(`Decoding “${file.name}” (EXR → float + sRGB preview)…`);
+    try {
+      // Asset id is not known yet at ingest — float cache is filled after add.
+      // Keep PNG preview path; float planes attach in assetStore post-import.
+      const { convertExrToPngFile } = await import('@core/media/exrImport');
+      return await convertExrToPngFile(file);
+    } catch (e) {
+      onStatus?.(`EXR import failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+  }
+  if (/\.psd$/i.test(file.name)) {
+    onStatus?.(`Decoding “${file.name}” (PSD layers)…`);
+    // PSD expands to multiple PNGs — handled specially in assetStore.addFiles.
+    return null;
+  }
+  if (/\.dpx$/i.test(file.name)) {
+    onStatus?.(`Decoding “${file.name}” (DPX → sRGB)…`);
+    const { convertDpxToPngFile } = await import('@core/media/dpxImport');
+    try {
+      return await convertDpxToPngFile(file);
+    } catch (e) {
+      onStatus?.(`DPX import failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    }
+  }
+
+  // Camera raw stills (DNG/CR2/…) — ffmpeg/libraw when the host build supports it.
+  if (isCameraRawStill(file.name)) {
+    const bridge = typeof window !== 'undefined' ? window.motionEditor?.media : undefined;
+    if (!bridge?.generateProxy) {
+      onStatus?.(`Camera raw “${file.name}” needs the desktop app (ffmpeg).`);
+      return null;
+    }
+    onStatus?.(`Decoding camera raw “${file.name}”…`);
+    const { args, outExt, mime } = rawStillEncodeArgs();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const out = await bridge.generateProxy(
+      `raw:${file.name}:${file.size}`,
+      bytes,
+      extOf(file.name) || 'dng',
+      args,
+      outExt,
+    ).catch(() => null);
+    if (!out) {
+      onStatus?.(
+        `Camera raw decode failed for “${file.name}”. Host ffmpeg may lack libraw — convert to DNG/EXR externally.`,
+      );
+      return null;
+    }
+    const base = file.name.replace(/\.[a-z0-9]+$/i, '');
+    return new File([out as BlobPart], `${base}.${outExt}`, { type: mime });
+  }
+
   if (!ingestCandidate(file.name)) return null;
   const bridge = typeof window !== 'undefined' ? window.motionEditor?.media : undefined;
   if (!bridge?.generateProxy || !canProbe()) return null;

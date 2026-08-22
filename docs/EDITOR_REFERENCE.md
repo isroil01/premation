@@ -69,7 +69,7 @@ rediscovered in git history and believed a second time.
 | Light types | 4 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
-| Export formats | 9 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
+| Export formats | 11 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
 | Stores | 45 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
@@ -286,21 +286,15 @@ The gaps are not in the engine. They are in the layer above it.
 
 ### Tier 1 — categorical exclusions
 
-**No motion tracking, no camera tracking, no rotoscoping.** Zero hits for
-`tracker` or `rotoscop` across `src/` and `packages/`. Any work that composites
-onto filmed footage — screen replacements, set extensions, object removal — is
-impossible, not merely awkward. This is the single largest excluded category and
-it is out of scope by direction.
+**Motion tracking & footage repair (shipped column).** Point / planar / mask
+tracking, Smooth Stabilize, subspace / rolling-shutter mesh footholds, and a
+planar 3D camera solve live under `src/core/tracking/`. Still open vs AE:
+full multi-plane SfM, Roto Brush–class AI mattes, Content-Aware Fill.
 
-Re-verified 2026-08-11 and widened: `stabiliz`, `warpStabil`, `mocha`,
-`featurePoint`, `solveCamera`, `rotoBrush`, `contentAware`, `refineEdge` and
-`opticalFlow` are **all zero hits** too. So it is not only the 3D camera tracker
-that is absent — the whole AE footage-repair column is: point/planar tracking,
-Warp Stabilizer, Roto Brush, Refine Edge, Content-Aware Fill. What *does* ship
-for footage work is keying (`keylight`, with despill/choke/softness, plus
-`linear-color-key`, `simple-choker`, `set-matte`, `shift-channels`) and
-`corner-pin` / `bezier-warp` — i.e. you can key and you can pin a corner **by
-hand**, but nothing solves the motion for you.
+Re-verified 2026-08-21: the old “zero tracker” claim is obsolete. Remaining
+gaps are depth (SfM, AI roto, subspace quality), not absence. Keying
+(`keylight`, `linear-color-key`, `simple-choker`, `set-matte`, `shift-channels`)
+and tracked `corner-pin` / mesh warp also ship.
 
 **The RENDERER'S footage decode path is an `HTMLVideoElement`; the real
 decoder now exists beside it (corrected 2026-08-19).** The subsystem this

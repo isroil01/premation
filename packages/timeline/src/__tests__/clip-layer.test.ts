@@ -38,6 +38,30 @@ describe('Clip', () => {
     expect(clip.sourceFrameAt(15)).toBe(5); // unchanged comp→source mapping
   });
 
+  it('slips source under a fixed bar', () => {
+    const clip = new Clip({ start: 10, duration: 20, sourceIn: 5, sourceDuration: 100 });
+    clip.slip(10);
+    expect(clip.start).toBe(10);
+    expect(clip.duration).toBe(20);
+    expect(clip.sourceIn).toBe(15);
+  });
+
+  it('clamps slip so the window stays inside the source', () => {
+    const clip = new Clip({ start: 0, duration: 20, sourceIn: 5, sourceDuration: 30 });
+    clip.slip(100); // would want 105, max is 10
+    expect(clip.sourceIn).toBe(10);
+    clip.slip(-100);
+    expect(clip.sourceIn).toBe(0);
+  });
+
+  it('shifts the bar without changing source mapping', () => {
+    const clip = new Clip({ start: 10, duration: 20, sourceIn: 5 });
+    clip.shift(7);
+    expect(clip.start).toBe(17);
+    expect(clip.duration).toBe(20);
+    expect(clip.sourceIn).toBe(5);
+  });
+
   it('trims the tail, clamped to source length when bounded', () => {
     const clip = new Clip({ start: 0, duration: 20, sourceIn: 0, sourceDuration: 25 });
     clip.trimEnd(40); // wants 40 but source only allows 25

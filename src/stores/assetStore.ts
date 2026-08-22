@@ -511,10 +511,35 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
 
     addAsset: async (file: File, folderId: string | null = null, opts: AddAssetOptions = {}) => {
       const source: AssetSource = opts.source ?? 'user';
+
+      // Layered PSD → one PNG asset per layer (AE "Import as Composition" lite).
+      if (/\.psd$/i.test(file.name)) {
+        try {
+          const { decodePsd, psdLayerToPngFile } = await import('@core/media/psd');
+          const doc = decodePsd(await file.arrayBuffer());
+          let first: ImportedAsset | null = null;
+          for (const layer of doc.layers) {
+            const png = await psdLayerToPngFile(layer, file.name);
+            const a = await get().addAsset(png, folderId, opts);
+            if (a && !first) first = a;
+          }
+          if (first) return first;
+          throw new Error('PSD had no raster layers');
+        } catch (e) {
+          useUIStore.getState().notify({
+            level: 'error',
+            message: `PSD import failed: ${e instanceof Error ? e.message : String(e)}`,
+            durationMs: 6000,
+          });
+          throw e;
+        }
+      }
+
       // Ingest: footage the browser cannot decode (ProRes/DNxHD .mov, MXF,
       // AVI…) is transcoded to a playable file BEFORE any branch below, so the
       // bundle, IndexedDB and the object URL all store something every decode
       // path can actually read. No-op off the desktop. See assets/ingest.ts.
+      const originalExr = /\.exr$/i.test(file.name) ? file : null;
       file = (await maybeIngestForImport(file, (msg) =>
         useUIStore.getState().notify({ level: 'info', message: msg, durationMs: 4000 }))) ?? file;
       // Local-first: content-address the bytes into the open
@@ -542,6 +567,12 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
           saveAssignments(get().assets);
           saveSources(get().assets);
           triggerAutoProxy(asset);
+          if (originalExr) {
+            try {
+              const { importExrWithFloat } = await import('@core/media/floatExr');
+              await importExrWithFloat(originalExr, asset.id);
+            } catch { /* preview already imported */ }
+          }
           return asset;
         }
       }
@@ -657,6 +688,15 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       saveAssignments(get().assets);
       saveSources(get().assets);
       triggerAutoProxy(asset);
+
+      // Keep linear float planes for EXR (preview PNG is in `src`).
+      // Await so the first paint can sample float textures, not only the 8-bit preview.
+      if (originalExr) {
+        try {
+          const { importExrWithFloat } = await import('@core/media/floatExr');
+          await importExrWithFloat(originalExr, id);
+        } catch { /* preview already imported */ }
+      }
 
       return asset;
     },

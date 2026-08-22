@@ -36,6 +36,7 @@ export function TrackPointOverlay(): JSX.Element | null {
   useSceneRevision((s) => s.rev);
   const ids = useSelectionStore((s) => s.ids);
   const nodeId = useTrackerStore((s) => s.nodeId);
+  const armed = useTrackerStore((s) => s.armed);
   const mode = useTrackerStore((s) => s.mode);
   const points = useTrackerStore((s) => s.points);
   const featureHalf = useTrackerStore((s) => s.featureHalf);
@@ -48,7 +49,9 @@ export function TrackPointOverlay(): JSX.Element | null {
   const dragRef = useRef<number | null>(null);
   const [, setDragTick] = useState(0);
 
-  const active = nodeId && ids.includes(nodeId) ? nodeId : null;
+  // Armed = the Track Motion section is open. Selection alone must not put
+  // this overlay (and its hit targets) over the viewport.
+  const active = armed && nodeId && ids.includes(nodeId) ? nodeId : null;
   const node = active ? defaultSceneGraph.getNode(active) : null;
   const geom = node ? readGeometry(node) : null;
   const src = active ? sourceDisplaySize(active) : null;
@@ -167,7 +170,11 @@ export function TrackPointOverlay(): JSX.Element | null {
     <svg
       ref={svgRef}
       aria-label="Track points"
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'auto' }}
+      // `none` at the svg level: the overlay spans the whole stage, and an
+      // `auto` svg swallowed every viewport gesture (pan, zoom, layer drags)
+      // whenever the tracker was armed. Only the per-point hit circles are
+      // interactive; everything else lets input fall through to the canvas.
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
     >
       {paths.map((path, i) =>
         path.length > 1 ? (
@@ -229,6 +236,9 @@ export function TrackPointOverlay(): JSX.Element | null {
       )}
       {screenPts.map((s, i) => (
         <g key={`pt-${i}`} aria-label={`Track point ${i + 1}`}>
+          {/* Invisible fat hit target at the pick radius — the one interactive
+              part of the overlay. Events bubble to the svg's own listeners. */}
+          <circle cx={s.x} cy={s.y} r={PICK_R} fill="transparent" style={{ pointerEvents: 'all', cursor: 'move' }} />
           <circle cx={s.x} cy={s.y} r={POINT_R + 1.5} fill="rgba(0,0,0,0.55)" />
           <circle cx={s.x} cy={s.y} r={POINT_R} fill="#ffd166" stroke="#101014" strokeWidth={1} />
           <line x1={s.x - POINT_R} y1={s.y} x2={s.x + POINT_R} y2={s.y} stroke="#101014" strokeWidth={1} />

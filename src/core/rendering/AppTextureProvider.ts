@@ -314,6 +314,8 @@ interface ImageEntry {
   width: number;
   height: number;
   ready: boolean;
+  /** Linear float EXR (or similar) — sample without sRGB decode. */
+  sampleLinear?: boolean;
 }
 
 /** What a text layer needs rasterized: string + full font + colour + box size.
@@ -335,6 +337,10 @@ export interface TextSpec {
   continuousRaster?: boolean;
   fontFamily?: string;
   fontWeight?: string;
+  /** Variable-font width axis (wdth), typically 50–200. */
+  fontWidth?: number;
+  /** Variable-font slant axis (slnt), typically −15..0. */
+  fontSlant?: number;
   fontStyle?: string;
   /** 'left' | 'center' | 'right' | 'justify' — horizontal anchor in the box. */
   align?: string;
@@ -383,6 +389,22 @@ export function textCssFont(spec: Pick<TextSpec, 'fontSize' | 'fontFamily' | 'fo
   const weight = spec.fontWeight ?? '600';
   const family = spec.fontFamily ?? 'Inter';
   return `${style}${weight} ${spec.fontSize}px "${family}", Inter, system-ui, sans-serif`;
+}
+
+/** CSS font-variation-settings for variable axes (wght/wdth/slnt). */
+export function textFontVariationSettings(
+  spec: Pick<TextSpec, 'fontWeight' | 'fontWidth' | 'fontSlant'>,
+): string | undefined {
+  const parts: string[] = [];
+  const w = spec.fontWeight !== undefined ? Number(spec.fontWeight) : NaN;
+  if (Number.isFinite(w)) parts.push(`'wght' ${w}`);
+  if (spec.fontWidth !== undefined && Number.isFinite(spec.fontWidth)) {
+    parts.push(`'wdth' ${spec.fontWidth}`);
+  }
+  if (spec.fontSlant !== undefined && Number.isFinite(spec.fontSlant)) {
+    parts.push(`'slnt' ${spec.fontSlant}`);
+  }
+  return parts.length ? parts.join(', ') : undefined;
 }
 
 interface TextEntry {
@@ -457,6 +479,8 @@ interface VideoEntry {
   /** Last time we ASKED the element to seek to (not where it landed). Breaks the
    *  seek → render → seek feedback loop; see setVideo. */
   requestedTime: number | null;
+  /** Previous source time during hardware playback — detects loop wraps. */
+  lastPlaybackTime?: number;
 }
 
 interface ParticleEntry {
@@ -497,11 +521,24 @@ export class AppTextureProvider implements TextureProvider {
   onChange: (() => void) | null = null;
 
   private exactMediaTiming = false;
+  /** Timeline is playing — setVideoPlayback keeps `<video>` running instead of per-frame seeks. */
+  private playbackMode = false;
   private mediaWaits: Promise<void>[] = [];
 
   setExactMediaTiming(on: boolean): void {
     this.exactMediaTiming = on;
     if (!on) this.mediaWaits = [];
+  }
+
+  setPlaybackMode(on: boolean): void {
+    if (this.playbackMode === on) return;
+    this.playbackMode = on;
+    if (!on) {
+      for (const entry of this.videoEntries.values()) {
+        entry.video.pause();
+        entry.lastPlaybackTime = undefined;
+      }
+    }
   }
 
   takeMediaWaits(): Promise<void>[] {
@@ -690,6 +727,7 @@ export class AppTextureProvider implements TextureProvider {
       height: existing?.height ?? 1,
       ready: !!(existing?.texture),
       premultipliedFile,
+      sampleLinear: false,
     };
     this.entries.set(key, entry);
     const decoding = this.decode(key, src, fillColor, entry, mediaTime);
@@ -701,6 +739,71 @@ export class AppTextureProvider implements TextureProvider {
     // in a one-shot render there is no later.
     if (this.exactMediaTiming) this.mediaWaits.push(decoding);
     void decoding;
+  }
+
+  /**
+   * Upload a linear float RGBA image (EXR working media) as rgba32float.
+   * Falls back to the 8-bit `setImage` path when the GPU lacks float textures.
+   * RGB is premultiplied by A to honour the renderer alpha invariant.
+   */
+  setFloatImage(
+    key: string,
+    img: { width: number; height: number; rgba: Float32Array },
+    opts?: { fallbackSrc?: string; fillColor?: string; premultipliedFile?: boolean },
+  ): void {
+    if (!this.resources.float32Textures) {
+      if (opts?.fallbackSrc) {
+        this.setImage(key, opts.fallbackSrc, opts.fillColor, opts.premultipliedFile);
+      }
+      return;
+    }
+    const sig = `float:${img.width}x${img.height}:${img.rgba.length}`;
+    const existing = this.entries.get(key);
+    if (existing && existing.src === sig && existing.ready && existing.sampleLinear) return;
+
+    const n = img.width * img.height;
+    const premul = new Float32Array(n * 4);
+    for (let i = 0; i < n; i++) {
+      const a = img.rgba[i * 4 + 3] ?? 1;
+      premul[i * 4] = (img.rgba[i * 4] ?? 0) * a;
+      premul[i * 4 + 1] = (img.rgba[i * 4 + 1] ?? 0) * a;
+      premul[i * 4 + 2] = (img.rgba[i * 4 + 2] ?? 0) * a;
+      premul[i * 4 + 3] = a;
+    }
+
+    const texId = `img:${sig}`;
+    const tex = this.resources.texture(
+      texId,
+      {
+        label: `float:${key}`,
+        width: img.width,
+        height: img.height,
+        format: 'rgba32float',
+        displayReferred: false,
+      },
+      /* pinned */ true,
+    );
+    this.resources.writeTexture(tex, {
+      type: 'buffer',
+      data: premul,
+      width: img.width,
+      height: img.height,
+      format: 'rgba32float',
+    });
+
+    this.entries.set(key, {
+      kind: 'image',
+      src: sig,
+      fileId: sig,
+      texture: tex,
+      bitmap: null,
+      unbaked: null,
+      width: img.width,
+      height: img.height,
+      ready: true,
+      sampleLinear: true,
+    });
+    this.onChange?.();
   }
 
   /**
@@ -718,6 +821,7 @@ export class AppTextureProvider implements TextureProvider {
     const signature =
       `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}` +
       `|${spec.fontFamily ?? ''}|${spec.fontWeight ?? ''}|${spec.fontStyle ?? ''}` +
+      `|wd${spec.fontWidth ?? ''}|sl${spec.fontSlant ?? ''}` +
       `|${spec.align ?? ''}|${spec.letterSpacing ?? 0}|${spec.lineHeight ?? ''}` +
       `|${spec.paragraphSpacing ?? 0}|${spec.strokeOverFill ? 'sof' : ''}` +
       `|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}${fillSig}` +
@@ -1028,25 +1132,84 @@ export class AppTextureProvider implements TextureProvider {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'seeked'));
       }
     }
+    this.uploadVideoTexture(entry, key, fields);
+  }
+
+  /**
+   * Hardware playback path: keep the `<video>` element decoding forward and
+   * sample its current frame. Seeks only on start, loop wrap, or large drift —
+   * NOT every compositor frame (which cannot keep up on 1080p/4K footage).
+   */
+  setVideoPlayback(key: string, src: string, timeSec: number, fields?: FieldOrder, bucket = 1): void {
+    let entry = this.videoEntries.get(key);
+    if (!entry || entry.src !== src) {
+      if (entry) this.releaseVideoEntry(entry);
+      const video = this.videoFactory(src);
+      const onSeeked = (): void => this.onChange?.();
+      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null, hasSeeked: false };
+      this.videoEntries.set(key, entry);
+      video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
+      video.addEventListener('seeked', onSeeked);
+    }
+    const v = entry.video;
+    if (v.readyState < HAVE_CURRENT_DATA) {
+      if (!entry.hasSeeked) {
+        entry.hasSeeked = true;
+        entry.requestedTime = timeSec;
+        v.currentTime = timeSec;
+      }
+      return;
+    }
+    const prev = entry.lastPlaybackTime;
+    entry.lastPlaybackTime = timeSec;
+    const loopWrap = prev !== undefined && timeSec + 0.05 < prev;
+    const largeJump = prev !== undefined && Math.abs(timeSec - prev) > 0.35;
+    const drift = Math.abs(v.currentTime - timeSec);
+    if (!entry.hasSeeked || loopWrap || largeJump || drift > 0.1) {
+      entry.hasSeeked = true;
+      entry.requestedTime = timeSec;
+      v.currentTime = timeSec;
+      void v.play().catch(() => undefined);
+    } else if (v.paused) {
+      void v.play().catch(() => undefined);
+    }
+    this.uploadVideoTexture(entry, key, fields, bucket);
+  }
+
+  /** Create/resize the GPU texture and upload the element's current frame. */
+  private uploadVideoTexture(entry: VideoEntry, key: string, fields?: FieldOrder, bucket = 1): void {
+    const v = entry.video;
     const w = v.videoWidth || 1;
     const h = v.videoHeight || 1;
-    if (entry.texture === null || entry.w !== w || entry.h !== h) {
-      if (entry.texture) this.resources.freeTexture(`vid:${key}:${entry.w}x${entry.h}`);
+    const bw = bucket >= 1 || fields ? w : Math.max(1, Math.round(w * bucket));
+    const bh = bucket >= 1 || fields ? h : Math.max(1, Math.round(h * bucket));
+    const poolKey = `vid:${key}:${bw}x${bh}`;
+    if (entry.texture === null || entry.w !== bw || entry.h !== bh) {
+      if (entry.texture && entry.poolKey) this.resources.freeTexture(entry.poolKey);
       entry.texture = this.resources.texture(
-        `vid:${key}:${w}x${h}`,
-        { label: `video:${key}`, width: w, height: h, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
+        poolKey,
+        { label: `video:${key}`, width: bw, height: bh, format: displayReferredUploadFormat(), displayReferred: true, externalCopy: true },
         /* pinned */ true,
       );
-      entry.w = w;
-      entry.h = h;
-      entry.poolKey = `vid:${key}:${w}x${h}`;
+      entry.w = bw;
+      entry.h = bh;
+      entry.poolKey = poolKey;
     }
     if (fields) {
-      // Deinterlace via the shared work canvas; the copy this costs only
-      // happens for footage the user has MARKED interlaced.
       const clean = deinterlaceInto(this.fieldsWork, v, w, h, fields);
       if (clean) {
         this.resources.writeTexture(entry.texture, { type: 'canvas', canvas: clean });
+        return;
+      }
+    }
+    if (bw !== w || bh !== h) {
+      const canvas = this.ensureCanvas(`vplay:${key}`, bw, bh);
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(v, 0, 0, bw, bh);
+        this.resources.writeTexture(entry.texture, { type: 'canvas', canvas });
         return;
       }
     }
@@ -1672,7 +1835,7 @@ export class AppTextureProvider implements TextureProvider {
     // THIS bake has landed, but flashing transparent while it hasn't is worse
     // than showing last frame's pixels for a tick.
     if (entry && entry.texture) {
-      return { texture: entry.texture, sampler: this.sampler(), ready: entry.ready };
+      return { texture: entry.texture, sampler: this.sampler(), ready: entry.ready, sampleLinear: entry.sampleLinear };
     }
     // Not-yet-decoded image/video: show the placeholder box so the layer still
     // composites (parity with Canvas2D's loading placeholder).

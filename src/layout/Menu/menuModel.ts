@@ -137,7 +137,9 @@ export const APP_MENU: MenuGroupModel[] = [
       // start cards and the Composition panel menu, so the menu was simply
       // missing an entry for a working feature.
       { commandId: 'comp.new', label: 'New Composition…' },
+      { commandId: 'comp.multicam', label: 'New Multicam from Selected Assets…' },
       { commandId: 'comp.settings', label: 'Composition Settings…' },
+      { commandId: 'comp.delete', label: 'Delete Composition' },
       { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
       { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },

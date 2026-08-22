@@ -62,6 +62,7 @@ import { waveformPath, peaksInRange } from '@core/audio/waveform';
 import styles from './Timeline.module.css';
 import { ColorPicker } from '@components/ColorPicker';
 import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
+import { TIMELINE_GROUP_ORDER, type TimelineGroupKey } from '@core/timeline/propertyTree';
 
 const RULER_HEIGHT_DEFAULT = 36;
 const TRACK_HEIGHT_DEFAULT = 30;
@@ -73,43 +74,56 @@ type Row =
   | { type: 'category'; track: TimelineTrack; categoryKey: string; label: string; icon: IconName; expanded: boolean; count: number }
   | { type: 'prop'; track: TimelineTrack; prop: TimelinePropertyTrack; categoryKey: string };
 
+/**
+ * The heading each section gets, in AE's own twirl order.
+ *
+ * The ORDER lives in the model (`TIMELINE_GROUP_ORDER`) because it is a fact
+ * about the layer's structure, not about this view; only the words and the
+ * glyph are decided here.
+ */
+const GROUP_HEADING: Readonly<Record<TimelineGroupKey, { label: string; icon: IconName }>> = {
+  text: { label: 'Text', icon: 'type' },
+  contents: { label: 'Contents', icon: 'shape' },
+  masks: { label: 'Masks', icon: 'mask-square' },
+  effects: { label: 'Effects', icon: 'sparkles' },
+  transform: { label: 'Transform', icon: 'sliders-h' },
+  styles: { label: 'Layer Styles', icon: 'palette' },
+  material: { label: 'Material Options', icon: 'cube' },
+  audio: { label: 'Audio', icon: 'audio' },
+  time: { label: 'Time', icon: 'clock' },
+};
+
+/**
+ * Which heading a property row sits under.
+ *
+ * The model states it (`prop.group`). The substring guess below survives only
+ * for rows built before it did — it reads the label for words like "blur", so
+ * it filed a text animator's Blur under Effects and could not tell a layer
+ * style from the effect it compiles to.
+ */
 function getPropertyCategory(prop: TimelinePropertyTrack): { key: string; label: string; icon: IconName; order: number } {
+  if (prop.group) {
+    const heading = GROUP_HEADING[prop.group];
+    return { key: prop.group, ...heading, order: TIMELINE_GROUP_ORDER[prop.group] };
+  }
+
   const p = prop.prop.toLowerCase();
   const label = (prop.label || '').toLowerCase();
-
   if (
-    p.includes('anchor') ||
-    p.includes('position') ||
-    p === 'x' ||
-    p === 'y' ||
-    p === 'z' ||
-    p.includes('scale') ||
-    p.includes('rotation') ||
-    p.includes('orientation') ||
-    p.includes('opacity') ||
-    label.includes('anchor') ||
-    label.includes('position') ||
-    label.includes('scale') ||
-    label.includes('rotation') ||
-    label.includes('opacity')
+    p.includes('anchor') || p.includes('position') || p === 'x' || p === 'y' || p === 'z' ||
+    p.includes('scale') || p.includes('rotation') || p.includes('orientation') || p.includes('opacity') ||
+    label.includes('anchor') || label.includes('position') || label.includes('scale') ||
+    label.includes('rotation') || label.includes('opacity')
   ) {
-    return { key: 'transform', label: 'Transform', icon: 'sliders-h', order: 1 };
+    return { key: 'transform', ...GROUP_HEADING.transform, order: TIMELINE_GROUP_ORDER.transform };
   }
-
   if (
-    p.includes('effect') ||
-    p.includes('blur') ||
-    p.includes('shadow') ||
-    p.includes('glow') ||
-    p.includes('filter') ||
-    label.includes('effect') ||
-    label.includes('blur') ||
-    label.includes('shadow')
+    p.includes('effect') || p.includes('blur') || p.includes('shadow') || p.includes('glow') ||
+    p.includes('filter') || label.includes('effect') || label.includes('blur') || label.includes('shadow')
   ) {
-    return { key: 'effects', label: 'Effects', icon: 'sparkles', order: 2 };
+    return { key: 'effects', ...GROUP_HEADING.effects, order: TIMELINE_GROUP_ORDER.effects };
   }
-
-  return { key: 'styles', label: 'Contents & Styles', icon: 'shape', order: 3 };
+  return { key: 'contents', ...GROUP_HEADING.contents, order: TIMELINE_GROUP_ORDER.contents };
 }
 
 export interface TimelineProps {
@@ -121,8 +135,12 @@ export interface TimelineProps {
   onWorkAreaChange?: (start: number, end: number) => void;
   /** Clip moved to a new absolute start (seconds). */
   onClipMove?: (clipId: string, start: number) => void;
-  /** Clip edge trimmed to an absolute time (seconds). */
-  onClipTrim?: (clipId: string, edge: 'start' | 'end', time: number) => void;
+  /** Clip edge trimmed to an absolute time (seconds). `ripple` closes the gap on in/out trim. */
+  onClipTrim?: (clipId: string, edge: 'start' | 'end', time: number, opts?: { ripple?: boolean }) => void;
+  /** Alt-drag clip body: slip source under a fixed bar (sourceInSec). */
+  onClipSlip?: (clipId: string, sourceInSec: number) => void;
+  /** Shift+Alt-drag clip body: slide bar + trim abutting neighbors (new start sec). */
+  onClipSlide?: (clipId: string, startSec: number) => void;
   /** Right-click a clip (for split / delete). */
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
   onTrackSelect?: (trackId: string, additive: boolean) => void;
@@ -192,6 +210,8 @@ function Timeline({
   onWorkAreaChange,
   onClipMove,
   onClipTrim,
+  onClipSlip,
+  onClipSlide,
   onClipContextMenu,
   onTrackSelect,
   onScroll,
@@ -319,7 +339,11 @@ function Timeline({
         continue;
       }
       const trackName = (track.name ?? '').toLowerCase();
-      const hasProps = (track.properties?.length ?? 0) > 0 || track.isGroup === true;
+      // `canExpand` first: a collapsed track ships no `properties` at all, so
+      // reading only the payload hid the chevron on every un-keyed layer and
+      // sealed off the static Transform tree behind it.
+      const hasProps =
+        track.canExpand === true || (track.properties?.length ?? 0) > 0 || track.isGroup === true;
 
       const layerMatches = !query || trackName.includes(query);
       const matchingProps = query && track.properties
@@ -577,36 +601,61 @@ function Timeline({
     window.addEventListener('pointerup', onPointerUp);
   };
 
-  // ── Clip drag (body = move; edge handles = trim) ──────────────────
+  // ── Clip drag (body = move; Alt+body = slip; Shift+Alt = slide; edges = trim) ──
   // Live geometry lives on the ref (survives without a render); a preview state
   // drives the visual; the engine is only told the final value on release.
   const clipDrag = useRef<
-    null | { id: string; mode: 'move' | 'start' | 'end'; startX: number; start: number; duration: number; live: { start: number; duration: number } }
+    null | {
+      id: string;
+      mode: 'move' | 'start' | 'end' | 'slip' | 'slide';
+      ripple: boolean;
+      startX: number;
+      start: number;
+      duration: number;
+      sourceInSec: number;
+      live: { start: number; duration: number; sourceInSec: number };
+    }
   >(null);
-  const [clipPreview, setClipPreview] = useState<null | { id: string; start: number; duration: number }>(null);
+  const [clipPreview, setClipPreview] = useState<null | {
+    id: string;
+    start: number;
+    duration: number;
+    sourceInSec?: number;
+  }>(null);
 
   const onClipDown = useCallback(
     (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>) => {
-      if ((!onClipMove && !onClipTrim) || !lanesRef.current) return;
+      if ((!onClipMove && !onClipTrim && !onClipSlip && !onClipSlide) || !lanesRef.current) return;
       e.stopPropagation();
+      // Shift+Alt on body → slide (move bar, trim abutting neighbors).
+      // Alt alone → slip (shift source under a fixed bar).
+      let actualMode: 'move' | 'start' | 'end' | 'slip' | 'slide' = mode;
+      if (mode === 'move' && e.altKey && e.shiftKey && onClipSlide) actualMode = 'slide';
+      else if (mode === 'move' && e.altKey && onClipSlip) actualMode = 'slip';
       const lanesRect = lanesRef.current.getBoundingClientRect();
+      const sourceInSec = clip.sourceInSec ?? 0;
       clipDrag.current = {
         id: clip.id,
-        mode,
+        mode: actualMode,
+        // Ctrl/Cmd on an edge → ripple trim (in or out).
+        ripple: (actualMode === 'start' || actualMode === 'end') && (e.ctrlKey || e.metaKey),
         startX: e.clientX - lanesRect.left + lanesRef.current.scrollLeft,
         start: clip.start,
         duration: clip.duration,
-        live: { start: clip.start, duration: clip.duration },
+        sourceInSec,
+        live: { start: clip.start, duration: clip.duration, sourceInSec },
       };
-      setClipPreview({ id: clip.id, start: clip.start, duration: clip.duration });
+      setClipPreview({ id: clip.id, start: clip.start, duration: clip.duration, sourceInSec });
       try {
         lanesRef.current.setPointerCapture(e.pointerId);
       } catch {
         /* best-effort capture */
       }
       document.body.style.userSelect = 'none';
+      document.body.style.cursor =
+        actualMode === 'slip' || actualMode === 'slide' ? 'ew-resize' : '';
     },
-    [onClipMove, onClipTrim],
+    [onClipMove, onClipTrim, onClipSlip, onClipSlide],
   );
 
   useEffect(() => {
@@ -620,18 +669,22 @@ function Timeline({
       const minGap = frameDur;
       // Snap to the frame grid DURING the drag — the engine stores whole
       // frames, so an unsnapped preview visibly jumped on release. Alt frees
-      // the drag (same convention as keyframe drags); the engine still rounds
-      // to a whole frame on commit.
+      // snap for move/trim; slip/slide always snap (modifier already chose mode).
       const snapToFrame = (v: number): number => Math.round(v / frameDur) * frameDur;
       const passThrough = (v: number): number => v;
-      const snap = e.altKey ? passThrough : snapToFrame;
+      const snap =
+        d.mode === 'slip' || d.mode === 'slide' || !e.altKey ? snapToFrame : passThrough;
       let start = d.start;
       let duration = d.duration;
+      let sourceInSec = d.sourceInSec;
       // AE semantics: clip bars may OVERHANG the composition end freely (the
       // render simply stops at the comp bound) — only the left edge pins at 0.
       // Clamping to totalSeconds made full-comp clips immovable and turned
       // every "expand" gesture into a shrink.
-      if (d.mode === 'move') {
+      if (d.mode === 'slip') {
+        // Drag right → later into the source (positive sourceIn), matching AE.
+        sourceInSec = snap(Math.max(0, d.sourceInSec + deltaSec));
+      } else if (d.mode === 'move' || d.mode === 'slide') {
         start = snap(Math.max(0, d.start + deltaSec));
       } else if (d.mode === 'start') {
         const end = d.start + d.duration;
@@ -642,19 +695,22 @@ function Timeline({
         const end = snap(Math.max(d.start + minGap, d.start + d.duration + deltaSec));
         duration = Math.max(minGap, end - d.start);
       }
-      d.live = { start, duration };
-      setClipPreview({ id: d.id, start, duration });
+      d.live = { start, duration, sourceInSec };
+      setClipPreview({ id: d.id, start, duration, sourceInSec });
     };
     const onUp = (): void => {
       const d = clipDrag.current;
       if (!d) return;
-      const { start, duration } = d.live;
-      if (d.mode === 'move') onClipMove?.(d.id, start);
-      else if (d.mode === 'start') onClipTrim?.(d.id, 'start', start);
-      else onClipTrim?.(d.id, 'end', start + duration);
+      const { start, duration, sourceInSec } = d.live;
+      if (d.mode === 'slip') onClipSlip?.(d.id, sourceInSec);
+      else if (d.mode === 'slide') onClipSlide?.(d.id, start);
+      else if (d.mode === 'move') onClipMove?.(d.id, start);
+      else if (d.mode === 'start') onClipTrim?.(d.id, 'start', start, { ripple: d.ripple });
+      else onClipTrim?.(d.id, 'end', start + duration, { ripple: d.ripple });
       clipDrag.current = null;
       setClipPreview(null);
       document.body.style.userSelect = '';
+      document.body.style.cursor = '';
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -662,7 +718,7 @@ function Timeline({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [pps, totalSeconds, onClipMove, onClipTrim, model.frameRate]);
+  }, [pps, totalSeconds, onClipMove, onClipTrim, onClipSlip, onClipSlide, model.frameRate]);
 
   // ── Playhead keyboard nudge (role="slider" must be operable) ──
   // Arrow keys step one frame; Shift steps one second; Home/End jump to bounds.
@@ -2076,7 +2132,7 @@ const TrackContent = memo(function TrackContent({
   pps: number;
   trackHeight: number;
   top: number;
-  clipPreview: { id: string; start: number; duration: number } | null;
+  clipPreview: { id: string; start: number; duration: number; sourceInSec?: number } | null;
   onClipDown?: (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>) => void;
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
   onActivate?: (nodeId: string) => void;
@@ -2087,7 +2143,7 @@ const TrackContent = memo(function TrackContent({
 }): JSX.Element {
   return (
     <LaneRow top={top} trackHeight={trackHeight} ghosted={ghosted}>
-      {/* Clips — draggable body (move) + edge handles (trim). */}
+      {/* Clips — body: move / Alt-slip / Shift+Alt-slide; edges: trim. */}
       {track.clips?.map((clip) => {
         const view = clipPreview && clipPreview.id === clip.id ? clipPreview : clip;
         const wave = clip.assetId ? audioEngine.getWaveform(clip.assetId) : undefined;
@@ -2097,9 +2153,15 @@ const TrackContent = memo(function TrackContent({
         // whole — which this did — squeezed the entire file into the bar, so
         // the peaks under the playhead were not the audio you would hear there
         // and trimming or slipping changed nothing on screen.
+        const sourceInSec =
+          (view as { sourceInSec?: number }).sourceInSec ?? clip.sourceInSec;
+        const sourceOutSec =
+          sourceInSec !== undefined
+            ? sourceInSec + view.duration
+            : clip.sourceOutSec;
         const slice =
-          wave && clip.sourceInSec !== undefined && clip.sourceOutSec !== undefined
-            ? peaksInRange(wave, clip.sourceInSec, clip.sourceOutSec)
+          wave && sourceInSec !== undefined && sourceOutSec !== undefined
+            ? peaksInRange(wave, sourceInSec, sourceOutSec)
             : wave?.peaks;
         const pathD = slice ? waveformPath(slice, width, height) : '';
         const audible = clip.assetId !== undefined && wave !== undefined;

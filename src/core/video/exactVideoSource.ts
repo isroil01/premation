@@ -65,6 +65,15 @@ export interface DecoderConfig {
   codedWidth: number;
   codedHeight: number;
   description?: Uint8Array;
+  /**
+   * WebCodecs acceleration preference. Playback/scrub keep the default
+   * (hardware when available — lowest decode latency). The TRACKER asks for
+   * 'prefer-software': its per-frame `copyTo` readback of a hardware 4K
+   * frame costs ~60ms of GPU sync, while a software frame is already in CPU
+   * memory and copies in ~2ms — the decode itself is slower but the total
+   * is ~3× faster, with spec-identical pixels.
+   */
+  hardwareAcceleration?: 'no-preference' | 'prefer-hardware' | 'prefer-software';
 }
 
 /** The injectable seam between the session and WebCodecs. */
@@ -74,6 +83,18 @@ export interface DecoderIO {
     handlers: { output: (frame: DecodedFrameLike) => void; error: (e: Error) => void },
   ): VideoDecoderLike;
   createChunk(init: EncodedChunkInit): unknown;
+  /**
+   * Convert a decoder-owned frame into a CACHEABLE one, closing the original.
+   *
+   * Hardware decoders own a fixed pool of output buffers, and every unclosed
+   * `VideoFrame` pins one. Hold ~10 and the decoder's `flush()` stalls FOREVER
+   * — which surfaced as Track Motion "freezing at 2–4%" and would hang exact
+   * scrubbing the same way. So the session never caches raw VideoFrames: in
+   * production this draws the frame into a plain canvas (pool-free, still a
+   * CanvasImageSource) and closes it; the jsdom tests omit it (identity), as
+   * fake frames have no pool to exhaust.
+   */
+  retain?: (frame: DecodedFrameLike) => DecodedFrameLike;
 }
 
 /** True when the platform can run the exact path at all. */
@@ -96,6 +117,7 @@ export const webCodecsIO: DecoderIO = {
       codedWidth: config.codedWidth,
       codedHeight: config.codedHeight,
       ...(config.description ? { description: config.description } : {}),
+      ...(config.hardwareAcceleration ? { hardwareAcceleration: config.hardwareAcceleration } : {}),
     });
     return decoder;
   },
@@ -108,6 +130,31 @@ export const webCodecsIO: DecoderIO = {
       duration: init.durationUs,
       data: init.data,
     });
+  },
+  retain(frame) {
+    const f = frame as unknown as { displayWidth?: number; displayHeight?: number; codedWidth?: number; codedHeight?: number };
+    const w = f.displayWidth || f.codedWidth || 2;
+    const h = f.displayHeight || f.codedHeight || 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      // No 2D context (headless edge case): better a pool-pinned frame than
+      // no frame at all — the old behaviour, with its old risk.
+      return frame;
+    }
+    ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
+    const timestamp = frame.timestamp;
+    frame.close();
+    // The canvas IS the frame: drawable via drawImage like the VideoFrame it
+    // replaces, with the session's routing fields grafted on.
+    return Object.assign(canvas, {
+      timestamp,
+      displayWidth: w,
+      displayHeight: h,
+      close(): void { /* plain memory — GC handles it */ },
+    }) as unknown as DecodedFrameLike;
   },
 };
 
@@ -127,10 +174,16 @@ export class ExactVideoSource {
   private chain: Promise<unknown> = Promise.resolve();
   private closed = false;
 
+  private currentTarget = -1;
+
   constructor(
     private readonly demuxed: DemuxedVideo,
     private readonly io: DecoderIO = webCodecsIO,
-    private readonly maxCached = 48,
+    // Cached frames are canvas COPIES in production (see DecoderIO.retain), so
+    // the budget is plain memory, not decoder pool slots — but at 1080p each
+    // copy is ~8MB, so the budget stays small. The byte-budgeted tier above
+    // (exactVideoFrames) is the real cache; this one only smooths stepping.
+    private readonly maxCached = 12,
   ) {
     this.index = buildFrameIndex(demuxed.samples, demuxed.timescale);
     this.timeUsOfDecodeIndex = new Array<number>(demuxed.samples.length).fill(0);
@@ -198,6 +251,8 @@ export class ExactVideoSource {
 
     const entry = this.index.frames[target]!;
     this.failure = null;
+    // onOutput's retain window is anchored on the frame being sought.
+    this.currentTarget = target;
     if (!this.decoder) {
       this.decoder = this.io.createDecoder(
         {
@@ -261,9 +316,20 @@ export class ExactVideoSource {
       frame.close();
       return;
     }
+    // Close frames outside the retain window IMMEDIATELY — before flush
+    // resolves. A long GOP prefix otherwise accumulates dozens of open
+    // decoder-owned frames mid-flush, exhausts the hardware output pool, and
+    // the flush never returns (the Track Motion freeze). Eviction after the
+    // fact cannot fix that; the frames must never pile up in the first place.
+    const budget = Math.max(MIN_CACHE, this.maxCached);
+    if (this.currentTarget >= 0 && presIdx <= this.currentTarget - budget) {
+      frame.close();
+      return;
+    }
+    const kept = this.io.retain ? this.io.retain(frame) : frame;
     const prior = this.cache.get(presIdx);
     if (prior) prior.close();
-    this.cache.set(presIdx, frame);
+    this.cache.set(presIdx, kept);
     this.touch(presIdx);
   }
 
@@ -286,5 +352,189 @@ export class ExactVideoSource {
         this.cache.delete(victim);
       }
     }
+  }
+}
+
+// ── Sequential streaming reader ──────────────────────────────────────
+//
+// `frameAt` is RANDOM access: every request decodes its GOP prefix and
+// flushes. A tracking walk calling it per frame therefore re-decodes an
+// ever-longer prefix each step — quadratic in GOP length, which turned Track
+// Motion on real footage (GOPs of 100–300 frames) into a crawl even before
+// the pool hang. A sequential consumer needs the opposite shape: feed the
+// stream ONCE, receive frames in presentation order, copy, close, next.
+
+/** Fed-but-not-yet-output cap. Must comfortably exceed the codec's reorder
+ *  depth (B-pyramids can run past 8) or feeding would stall waiting for
+ *  output that needs more input. These are COMPRESSED chunks in flight, not
+ *  open frames, so generous is cheap. */
+const WALK_FEED_AHEAD = 24;
+/** Decoded-and-queued frames waiting for the consumer. Each is an open
+ *  decoder-pool frame, so this stays well under the ~10-slot hardware pools. */
+const WALK_QUEUE_MAX = 4;
+
+/**
+ * Decode presentation frames `from..to` (inclusive, forward only) exactly
+ * once each, in order.
+ *
+ * Contract: requests via {@link SequentialFrameReader.frameAt} must be
+ * NON-DECREASING; the returned frame is valid only until the next call
+ * (the reader closes it then). Copy what you need, immediately.
+ */
+export class SequentialFrameReader {
+  private readonly index: VideoFrameIndex;
+  private readonly presIndexByTimeUs = new Map<number, number>();
+  private readonly timeUsOfDecodeIndex: number[];
+  private readonly from: number;
+  private readonly to: number;
+  private readonly feedEnd: number;
+  private decoder: VideoDecoderLike | null = null;
+  private d: number; // next decode index to feed
+  private fed = 0;
+  private outputs = 0;
+  private flushCalled = false;
+  private flushDone = false;
+  private failure: Error | null = null;
+  private queue: Array<{ presIndex: number; frame: DecodedFrameLike }> = [];
+  private current: { presIndex: number; frame: DecodedFrameLike } | null = null;
+  private notify: (() => void) | null = null;
+  private closed = false;
+
+  constructor(
+    private readonly demuxed: DemuxedVideo,
+    from: number,
+    to: number,
+    private readonly io: DecoderIO = webCodecsIO,
+    private readonly opts: { hardwareAcceleration?: DecoderConfig['hardwareAcceleration'] } = {},
+  ) {
+    this.index = buildFrameIndex(demuxed.samples, demuxed.timescale);
+    const last = this.index.frames.length - 1;
+    this.from = Math.max(0, Math.min(last, Math.floor(from)));
+    this.to = Math.max(this.from, Math.min(last, Math.floor(to)));
+    this.timeUsOfDecodeIndex = new Array<number>(demuxed.samples.length).fill(0);
+    this.index.frames.forEach((f, presIdx) => {
+      this.timeUsOfDecodeIndex[f.decodeIndex] = f.timeUs;
+      this.presIndexByTimeUs.set(f.timeUs, presIdx);
+    });
+    this.d = this.index.frames[this.from]!.keyDecodeIndex;
+    this.feedEnd = this.index.frames[this.to]!.feedThroughDecodeIndex;
+  }
+
+  /**
+   * The frame for `presIdx` (clamped to [from..to]). Repeating the previous
+   * index returns the same frame (freeze frames / slow stretches re-read
+   * source frames); indices between the previous request and this one are
+   * decoded and discarded (comp walks may skip source frames).
+   */
+  async frameAt(presIdx: number): Promise<DecodedFrameLike> {
+    if (this.closed) throw new Error('SequentialFrameReader is closed');
+    const target = Math.max(this.from, Math.min(this.to, Math.floor(presIdx)));
+    if (this.current && this.current.presIndex === target) return this.current.frame;
+    if (this.current && target < this.current.presIndex) {
+      throw new Error('SequentialFrameReader requests must be non-decreasing');
+    }
+    for (;;) {
+      this.pump();
+      const item = this.queue.shift();
+      if (item) {
+        if (item.presIndex < target) {
+          item.frame.close(); // skipped by the comp walk — decoded, unwanted
+          continue;
+        }
+        this.current?.frame.close();
+        this.current = item;
+        return item.frame;
+      }
+      if (this.failure) throw this.failure;
+      if (this.flushDone) throw new Error(`decode stream ended before frame #${target}`);
+      await new Promise<void>((res) => { this.notify = res; });
+    }
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.current?.frame.close();
+    this.current = null;
+    for (const q of this.queue) q.frame.close();
+    this.queue = [];
+    try {
+      this.decoder?.close();
+    } catch {
+      // errored decoders are already closed
+    }
+    this.decoder = null;
+  }
+
+  private wake(): void {
+    const n = this.notify;
+    this.notify = null;
+    n?.();
+  }
+
+  private pump(): void {
+    if (this.failure || this.closed) return;
+    if (!this.decoder) {
+      this.decoder = this.io.createDecoder(
+        {
+          codec: this.demuxed.codec,
+          codedWidth: this.demuxed.codedWidth,
+          codedHeight: this.demuxed.codedHeight,
+          ...(this.demuxed.description ? { description: this.demuxed.description } : {}),
+          ...(this.opts.hardwareAcceleration
+            ? { hardwareAcceleration: this.opts.hardwareAcceleration }
+            : {}),
+        },
+        {
+          output: (frame) => this.onOutput(frame),
+          error: (e) => {
+            this.failure = e;
+            this.wake();
+          },
+        },
+      );
+    }
+    while (
+      this.d <= this.feedEnd
+      && this.fed - this.outputs < WALK_FEED_AHEAD
+      && this.queue.length < WALK_QUEUE_MAX
+    ) {
+      const s = this.demuxed.samples[this.d]!;
+      this.decoder.decode(
+        this.io.createChunk({
+          type: s.isKey ? 'key' : 'delta',
+          timestamp: this.timeUsOfDecodeIndex[this.d]!,
+          durationUs: Math.round((s.duration * 1e6) / this.demuxed.timescale),
+          data: s.data,
+        }),
+      );
+      this.d += 1;
+      this.fed += 1;
+    }
+    if (this.d > this.feedEnd && !this.flushCalled) {
+      this.flushCalled = true;
+      this.decoder.flush().then(
+        () => {
+          this.flushDone = true;
+          this.wake();
+        },
+        (e: unknown) => {
+          this.failure = this.failure ?? (e instanceof Error ? e : new Error(String(e)));
+          this.flushDone = true;
+          this.wake();
+        },
+      );
+    }
+  }
+
+  private onOutput(frame: DecodedFrameLike): void {
+    this.outputs += 1;
+    const presIdx = frame.timestamp === null ? undefined : this.presIndexByTimeUs.get(frame.timestamp);
+    if (this.closed || presIdx === undefined || presIdx < this.from || presIdx > this.to) {
+      frame.close(); // GOP lead-in before `from`, or routing miss
+    } else {
+      this.queue.push({ presIndex: presIdx, frame });
+    }
+    this.wake();
   }
 }

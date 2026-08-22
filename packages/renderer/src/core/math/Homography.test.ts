@@ -5,9 +5,11 @@ import {
   invertProjective,
   isConvexQuad,
   isIdentityQuad,
+  fitHomography,
   UNIT_QUAD,
   type Quad,
 } from './Homography';
+import type { Vec2 } from './Vec2';
 
 const quad = (a: [number, number], b: [number, number], c: [number, number], d: [number, number]): Quad => [
   { x: a[0], y: a[1] }, { x: b[0], y: b[1] }, { x: c[0], y: c[1] }, { x: d[0], y: d[1] },
@@ -35,12 +37,10 @@ describe('squareToQuad — maps the unit square corners exactly', () => {
   });
 
   it('an affine (parallelogram) quad has a trivial projective row', () => {
-    // Sheared parallelogram: dx3=dy3=0, so g=h=0 and project == affine.
     const q = quad([0, 0], [2, 0], [3, 1], [1, 1]);
     const m = squareToQuad(q)!;
-    expect(m[2]).toBeCloseTo(0, 9); // g
-    expect(m[5]).toBeCloseTo(0, 9); // h
-    // Centre of the square maps to the centroid of a parallelogram.
+    expect(m[2]).toBeCloseTo(0, 9);
+    expect(m[5]).toBeCloseTo(0, 9);
     const mid = project(m, { x: 0.5, y: 0.5 })!;
     expect(mid.x).toBeCloseTo(1.5, 6);
     expect(mid.y).toBeCloseTo(0.5, 6);
@@ -49,16 +49,12 @@ describe('squareToQuad — maps the unit square corners exactly', () => {
 
 describe('project — perspective foreshortening, not linear', () => {
   it('the centre of a keystoned quad is pulled toward the near (narrow) edge', () => {
-    // A trapezoid narrow at the top (TL,TR close), wide at the bottom. Under a
-    // true homography the square's centre does NOT land at the quad's centroid
-    // (y=50) — perspective pulls it up toward the narrow top edge (y≈16.7). This
-    // is the displacement affine cannot express; affine would give exactly 50.
     const q = quad([40, 0], [60, 0], [100, 100], [0, 100]);
     const m = squareToQuad(q)!;
     const centre = project(m, { x: 0.5, y: 0.5 })!;
-    const centroidY = (0 + 0 + 100 + 100) / 4; // 50
-    expect(centre.x).toBeCloseTo(50, 4); // symmetric in x
-    expect(centre.y).toBeLessThan(centroidY - 10); // pulled well above the linear midpoint
+    const centroidY = (0 + 0 + 100 + 100) / 4;
+    expect(centre.x).toBeCloseTo(50, 4);
+    expect(centre.y).toBeLessThan(centroidY - 10);
     expect(centre.y).toBeCloseTo(16.6667, 3);
   });
 
@@ -66,7 +62,6 @@ describe('project — perspective foreshortening, not linear', () => {
     const q = quad([40, 0], [60, 0], [100, 100], [0, 100]);
     const m = squareToQuad(q)!;
     const topMid = project(m, { x: 0.5, y: 0 })!;
-    // Along the top edge (v=0) the map is affine in u, so exactly the midpoint.
     expect(topMid.x).toBeCloseTo(50, 4);
     expect(topMid.y).toBeCloseTo(0, 4);
   });
@@ -74,14 +69,42 @@ describe('project — perspective foreshortening, not linear', () => {
   it('returns null on the vanishing line rather than an infinite coordinate', () => {
     const q = quad([40, 0], [60, 0], [100, 100], [0, 100]);
     const m = squareToQuad(q)!;
-    // The vanishing line is where w = g·u + h·v + 1 = 0. Construct a point on it
-    // from the matrix's own projective row (m[2]=g, m[5]=h) rather than guessing
-    // a direction — geometry there projects to infinity and must read as null.
     const g = m[2]!, h = m[5]!;
     const onLine = Math.abs(h) > 1e-9 ? { x: 0, y: -1 / h } : { x: -1 / g, y: 0 };
     expect(project(m, onLine)).toBeNull();
-    // Just inside the vanishing line it is still finite.
     expect(project(m, { x: onLine.x, y: onLine.y * 0.9 })).not.toBeNull();
+  });
+});
+
+describe('fitHomography — N≥4 least-squares', () => {
+  it('recovers squareToQuad for 4 exact corners', () => {
+    const q = quad([10, 20], [110, 15], [120, 90], [5, 100]);
+    const H = fitHomography([...UNIT_QUAD], [...q])!;
+    expect(H).not.toBeNull();
+    for (let i = 0; i < 4; i++) {
+      const p = project(H, UNIT_QUAD[i]!)!;
+      expect(p.x).toBeCloseTo(q[i]!.x, 3);
+      expect(p.y).toBeCloseTo(q[i]!.y, 3);
+    }
+  });
+
+  it('stays accurate with extra noisy interior points', () => {
+    const q = quad([0, 0], [100, 0], [100, 80], [0, 80]);
+    const H0 = squareToQuad(q)!;
+    const src: Vec2[] = [...UNIT_QUAD, { x: 0.5, y: 0.5 }, { x: 0.25, y: 0.75 }];
+    const dst = src.map((p) => project(H0, p)!);
+    dst[4] = { x: dst[4]!.x + 0.4, y: dst[4]!.y - 0.3 };
+    dst[5] = { x: dst[5]!.x - 0.2, y: dst[5]!.y + 0.5 };
+    const H = fitHomography(src, dst)!;
+    const corners = UNIT_QUAD.map((c) => project(H, c)!);
+    for (let i = 0; i < 4; i++) {
+      expect(corners[i]!.x).toBeCloseTo(q[i]!.x, 0);
+      expect(corners[i]!.y).toBeCloseTo(q[i]!.y, 0);
+    }
+  });
+
+  it('rejects fewer than 4 points', () => {
+    expect(fitHomography(UNIT_QUAD.slice(0, 3), UNIT_QUAD.slice(0, 3))).toBeNull();
   });
 });
 
@@ -105,7 +128,7 @@ describe('invertProjective — round-trips a homography', () => {
   });
 
   it('returns null for a singular matrix', () => {
-    const singular = new Float32Array([1, 2, 3, 2, 4, 6, 3, 6, 9]) as Mat3; // rank 1
+    const singular = new Float32Array([1, 2, 3, 2, 4, 6, 3, 6, 9]) as Mat3;
     expect(invertProjective(singular)).toBeNull();
   });
 });
@@ -117,7 +140,6 @@ describe('isConvexQuad — the degenerate-guard the interaction layer needs', ()
   });
 
   it('rejects a bow-tie (self-intersecting) quad', () => {
-    // Swap the bottom two corners → the edges cross.
     expect(isConvexQuad(quad([0, 0], [1, 0], [0, 1], [1, 1]))).toBe(false);
   });
 

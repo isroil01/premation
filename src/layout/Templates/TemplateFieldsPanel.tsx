@@ -152,6 +152,17 @@ function TemplateCard({ template, onPick }: { template: TemplateDefinition; onPi
   );
 }
 
+function fieldKindLabel(kind: TemplateField['kind']): string {
+  switch (kind) {
+    case 'media': return 'Media';
+    case 'image': return 'Image';
+    case 'text': return 'Text';
+    case 'color': return 'Color';
+    case 'number': return 'Number';
+    default: return kind;
+  }
+}
+
 /**
  * "Make this composition a template" — expose selected layers as fields.
  *
@@ -199,9 +210,9 @@ export function TemplateAuthoringSection(): JSX.Element | null {
     <div className={styles.authoring}>
       <div className={styles.groupLabel}>Make this a template</div>
       <div className={styles.introText}>
-        Select a text, image or shape layer and expose it as an editable input.
-        Give each input a public id (<code>character</code>, <code>backgroundVideo</code>) —
-        that is what n8n sends.
+        Select a text, image or video layer and expose it as an automation input.
+        n8n sends the <strong>ID</strong> (e.g. <code>character</code>, <code>backgroundVideo</code>) —
+        not Premation layer ids.
       </div>
       <Button
         variant="secondary"
@@ -217,31 +228,43 @@ export function TemplateAuthoringSection(): JSX.Element | null {
         <>
           <div className={styles.authoredList}>
             {fields.map((f) => (
-              <div key={f.id} className={styles.authoredRow}>
-                <Input
-                  defaultValue={f.id}
-                  key={`${f.id}-id`}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v && v !== f.id) renameAuthoredFieldId(f.id, v);
-                  }}
-                  aria-label="Input id"
-                  title={isPublicFieldId(f.id) ? 'Public input id' : 'Must be a camelCase slug like character'}
-                />
-                <Input
-                  value={f.label}
-                  onChange={(e) => renameAuthoredField(f.id, e.target.value)}
-                  aria-label="Field label"
-                />
-                <span className={styles.kindBadge}>{f.kind}</span>
-                <button
-                  type="button"
-                  className={styles.iconBtn}
-                  title="Remove field"
-                  onClick={() => removeAuthoredField(f.id)}
-                >
-                  <Icon name="trash" size="sm" />
-                </button>
+              <div key={f.id} className={styles.authoredCard}>
+                <div className={styles.authoredHead}>
+                  <Input
+                    value={f.label}
+                    onChange={(e) => renameAuthoredField(f.id, e.target.value)}
+                    aria-label="Field label"
+                    className={styles.authoredLabel}
+                  />
+                  <button
+                    type="button"
+                    className={styles.iconBtn}
+                    title="Remove field"
+                    onClick={() => removeAuthoredField(f.id)}
+                  >
+                    <Icon name="trash" size="sm" />
+                  </button>
+                </div>
+                <div className={styles.authoredMeta}>
+                  <span className={styles.authoredMetaLabel}>Automation input</span>
+                  <div className={styles.authoredMetaRow}>
+                    <span className={styles.authoredMetaKey}>ID</span>
+                    <Input
+                      defaultValue={f.id}
+                      key={`${f.id}-id`}
+                      onBlur={(e) => {
+                        const v = e.target.value.trim();
+                        if (v && v !== f.id) renameAuthoredFieldId(f.id, v);
+                      }}
+                      aria-label="Input id"
+                      title={isPublicFieldId(f.id) ? 'Public input id for n8n' : 'Must be a camelCase slug like character'}
+                    />
+                  </div>
+                  <div className={styles.authoredMetaRow}>
+                    <span className={styles.authoredMetaKey}>Type</span>
+                    <span className={styles.kindBadge}>{fieldKindLabel(f.kind)}</span>
+                  </div>
+                </div>
               </div>
             ))}
           </div>

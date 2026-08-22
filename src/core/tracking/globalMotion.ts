@@ -10,9 +10,9 @@
  * difference between this and locking to a point.
  *
  * Scope, stated plainly: similarity-model stabilization (position, rotation,
- * scale — AE Warp Stabilizer's default visible result on most shots). The
- * subspace warp and rolling-shutter repair are different machinery and remain
- * open; auto-crop/auto-scale is left to the user's scale control.
+ * scale — AE Warp Stabilizer's default visible result on most shots). Subspace
+ * warp and rolling-shutter repair live in `subspaceWarp.ts` (grid of local
+ * similarities + per-row shear) for Mesh Warp / repair apply paths.
  *
  * Everything here is pure and deterministic: closed-form least squares, fixed
  * trim rounds, Gaussian weights from an explicit sigma. Same frames → same

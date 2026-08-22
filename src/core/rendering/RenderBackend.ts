@@ -150,6 +150,11 @@ export interface RenderLayer {
   /** Paint strokes (AE Paint effect) drawn over the layer content in local
    *  space — paint composites colour, erase cuts holes. */
   paint?: import('@core/paint/paintStrokes').PaintConfig;
+  /**
+   * Content-Aware Fill stamp — full-frame PNG data-URL for this time, replacing
+   * the video/image pixels when present (PatchMatch bake).
+   */
+  contentAwareFillSrc?: string;
   /** Source playhead time in seconds (for video/audio/precomps with timeRemap or stretch). Defaults to current composition time if undefined. */
   sourceTime?: number;
   /** Frame blending (AE's Frame Mix) for retimed footage: cross-dissolve the
@@ -303,6 +308,10 @@ export interface RenderLayer {
   fontFamily?: string;
   /** CSS font-weight ('300'..'700'). Falls back to 600. */
   fontWeight?: string;
+  /** Variable-font wdth axis (typically 50–200). */
+  fontWidth?: number;
+  /** Variable-font slnt axis (typically −15..0). */
+  fontSlant?: number;
   /** 'normal' | 'italic'. */
   fontStyle?: string;
   /** Extra spacing between characters (px). */
@@ -549,6 +558,10 @@ export interface RenderBackend {
    * warning next to a delivered file is not a warning anyone acts on.
    */
   lastFrameDiagnostics?(): ReadonlyArray<{ code: string; detail: string; layerId?: string }>;
+  /** Linear float RGBA of the last composed scene (EXR export). */
+  readLinearRgba?(): Float32Array | null;
+  /** Async linear readback (WebGPU). */
+  readLinearRgbaAsync?(): Promise<Float32Array | null>;
   /** Enable preview-only chrome (float shadow + transparency checkerboard).
    *  Left off for export so transparent comps yield real alpha. */
   setPreviewChrome?(on: boolean): void;
@@ -571,6 +584,8 @@ export interface RenderBackend {
    * captured frame shows whatever stale frame the element still held.
    */
   setExactMediaTiming?(on: boolean): void;
+  /** Timeline playback — plain video uses hardware decode instead of WebCodecs. */
+  setPlaybackMode?(on: boolean): void;
   /** Drain the media waits started by renders since the last call. Empty when
    *  every media layer drew its exact frame — the settle signal. */
   takeMediaWaits?(): Promise<void>[];

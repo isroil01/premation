@@ -106,7 +106,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
     abortRef.current = controller;
     setProgress(0);
     try {
-      await runExport({
+      const done = await runExport({
         format,
         width,
         height,
@@ -119,7 +119,13 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         onProgress: setProgress,
         signal: controller.signal,
       });
-      notify({ level: 'success', message: 'Export complete', durationMs: 2600 });
+      const hdrNote =
+        done.videoCodec === 'libx265'
+          ? ' (HEVC / libx265)'
+          : done.videoCodec === 'libx264'
+            ? ' (H.264 10-bit — host ffmpeg has no libx265)'
+            : '';
+      notify({ level: 'success', message: `Export complete${hdrNote}`, durationMs: 3200 });
     } catch (err) {
       if (isAbortError(err)) {
         notify({ level: 'info', message: 'Export cancelled', durationMs: 2600 });

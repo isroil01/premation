@@ -15,7 +15,7 @@ function touched(): void {
 }
 
 export type WorkingSpace = 'srgb-linear' | 'aces-cg';
-export type DisplayTransform = 'srgb' | 'aces';
+export type DisplayTransform = 'srgb' | 'aces' | 'pq' | 'hlg';
 export type IntermediateBitDepth = 16 | 32;
 
 export interface ColorManagementSettings {
@@ -54,7 +54,12 @@ export const useColorManagementStore = create<ColorManagementStore>((set, get) =
     if (s.workingSpace === 'srgb-linear' || s.workingSpace === 'aces-cg') {
       g.setWorkingSpace(s.workingSpace);
     }
-    if (s.displayTransform === 'srgb' || s.displayTransform === 'aces') {
+    if (
+      s.displayTransform === 'srgb'
+      || s.displayTransform === 'aces'
+      || s.displayTransform === 'pq'
+      || s.displayTransform === 'hlg'
+    ) {
       g.setDisplayTransform(s.displayTransform);
     }
     if (s.bitDepth === 16 || s.bitDepth === 32) g.setBitDepth(s.bitDepth);

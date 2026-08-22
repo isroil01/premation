@@ -376,6 +376,28 @@ function registerRenderIpc(): void {
     return 'ffmpeg'; // fall back to PATH
   };
 
+  /** Cached encoder probe — avoids spawning ffmpeg on every HDR export. */
+  let libx265Available: boolean | null = null;
+  const probeLibx265 = async (): Promise<boolean> => {
+    if (libx265Available !== null) return libx265Available;
+    const out = await new Promise<string | null>((resolve) => {
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn(resolveFfmpeg(), ['-hide_banner', '-encoders'], { stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch {
+        resolve(null);
+        return;
+      }
+      let text = '';
+      proc.stdout?.on('data', (d) => (text += String(d)));
+      proc.stderr?.on('data', (d) => (text += String(d)));
+      proc.on('error', () => resolve(null));
+      proc.on('close', () => resolve(text || null));
+    });
+    libx265Available = !!out && /\bV[\.F]{3,}.*\blibx265\b|\blibx265\b/.test(out);
+    return libx265Available;
+  };
+
   const runFfmpeg = (jobId: string, args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
       const proc = spawn(resolveFfmpeg(), args, { stdio: ['ignore', 'ignore', 'pipe'] });
@@ -606,7 +628,19 @@ function registerRenderIpc(): void {
     async (
       _e,
       jobId: string,
-      opts: { format: 'mp4' | 'webm' | 'gif' | 'mov'; fps: number; hasAudio?: boolean; quality?: 'high' | 'medium' | 'draft' },
+      opts: {
+        format: 'mp4' | 'webm' | 'gif' | 'mov';
+        fps: number;
+        hasAudio?: boolean;
+        quality?: 'high' | 'medium' | 'draft';
+        hdr?: 'pq' | 'hlg';
+        hdrMastering?: {
+          maxCll: number;
+          maxFall: number;
+          displayMaxNits: number;
+          displayMinNits: number;
+        };
+      },
     ) => {
       const dir = jobs.get(jobId);
       if (!dir) throw new Error('unknown render job');
@@ -628,6 +662,65 @@ function registerRenderIpc(): void {
 
       const base = ['-y', '-framerate', String(opts.fps), '-i', input, ...(hasAudio ? ['-i', audio!] : [])];
       let args: string[];
+
+      // HDR10 / HLG: frames are already PQ/HLG-baked; tag BT.2020 + transfer.
+      // Prefer libx265 10-bit; fall back to libx264 high10 with the same tags.
+      if (opts.hdr === 'pq' || opts.hdr === 'hlg') {
+        const trc = opts.hdr === 'pq' ? 'smpte2084' : 'arib-std-b67';
+        const md = opts.hdrMastering ?? {
+          maxCll: 1000,
+          maxFall: 400,
+          displayMaxNits: 1000,
+          displayMinNits: 0.005,
+        };
+        const Lmax = Math.round(md.displayMaxNits * 10000);
+        const Lmin = Math.round(md.displayMinNits * 10000);
+        const masterDisplay =
+          `G(8500,39850)B(6550,2300)R(35400,14600)WP(15635,16450)L(${Lmax},${Lmin})`;
+        const x265Params =
+          `hdr-opt=1:repeat-headers=1:colorprim=bt2020:transfer=${trc === 'smpte2084' ? 'smpte2084' : 'arib-std-b67'}:colormatrix=bt2020nc` +
+          `:master-display=${masterDisplay}:max-cll=${md.maxCll},${md.maxFall}`;
+        const hdrCommon = [
+          '-color_primaries', 'bt2020',
+          '-color_trc', trc,
+          '-colorspace', 'bt2020nc',
+          '-color_range', 'tv',
+          '-vf', evenScale,
+          ...(hasAudio ? ['-c:a', 'aac', '-b:a', '192k', '-shortest'] : []),
+          '-movflags', '+faststart',
+        ];
+        const x265Args = [
+          ...base,
+          '-c:v', 'libx265',
+          '-pix_fmt', 'yuv420p10le',
+          '-crf', opts.quality === 'draft' ? '28' : opts.quality === 'medium' ? '24' : '20',
+          '-x265-params', x265Params,
+          ...hdrCommon,
+          out,
+        ];
+        const x264Args = [
+          ...base,
+          '-c:v', 'libx264',
+          '-profile:v', 'high10',
+          '-pix_fmt', 'yuv420p10le',
+          '-preset', opts.quality === 'draft' ? 'veryfast' : 'medium',
+          '-crf', crf,
+          ...hdrCommon,
+          out,
+        ];
+        // Probe once so we don't pay a failed x265 spawn when the binary lacks it.
+        const can265 = await probeLibx265();
+        if (can265) {
+          try {
+            await runFfmpeg(jobId, x265Args);
+            return { path: out, frames, videoCodec: 'libx265' as const };
+          } catch {
+            // Rare: probe said yes but encode failed — fall through.
+          }
+        }
+        await runFfmpeg(jobId, x264Args);
+        return { path: out, frames, videoCodec: 'libx264' as const };
+      }
 
       switch (opts.format) {
         case 'webm':

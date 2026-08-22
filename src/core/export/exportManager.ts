@@ -39,8 +39,26 @@ import {
 } from './videoSink';
 
 import { useUIStore } from '@stores/uiStore';
+import { exportEdlText } from './exportEdl';
+import { exportOtioText } from './exportOtio';
+import { exportFcpxmlText } from './exportFcpxml';
+import { exportAleText } from './exportAle';
+import { exportMogrtZip } from './exportMogrt';
+import { encodeExr } from '@core/media/exr';
 
-export type ExportFormat = VideoFormat | 'png' | 'png-sequence' | 'jpg-sequence' | 'json' | 'lottie';
+export type ExportFormat =
+  | VideoFormat
+  | 'png'
+  | 'png-sequence'
+  | 'jpg-sequence'
+  | 'exr-sequence'
+  | 'json'
+  | 'lottie'
+  | 'edl'
+  | 'otio'
+  | 'fcpxml'
+  | 'ale'
+  | 'mogrt';
 
 export interface ExportOptions {
   format: ExportFormat;
@@ -271,6 +289,118 @@ function exportJSON(opts: ExportOptions): void {
   download(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }), 'motion-project.json');
 }
 
+/** CMX 3600-style EDL of the active timeline's clip bars. */
+function exportEDL(opts: ExportOptions): void {
+  const text = exportEdlText('MOTION');
+  opts.onProgress?.(1);
+  download(new Blob([text], { type: 'text/plain' }), 'timeline.edl');
+}
+
+/** OpenTimelineIO document of the same clip bars (see exportOtio.ts). */
+function exportOTIO(opts: ExportOptions): void {
+  const text = exportOtioText('MOTION');
+  opts.onProgress?.(1);
+  download(new Blob([text], { type: 'application/json' }), 'timeline.otio');
+}
+
+/** Final Cut Pro X XML of the same clip bars. */
+function exportFCPXML(opts: ExportOptions): void {
+  const text = exportFcpxmlText('MOTION');
+  opts.onProgress?.(1);
+  download(new Blob([text], { type: 'text/xml' }), 'timeline.fcpxml');
+}
+
+/** Premation .mogrt foothold — template fields + document in a zip (not Adobe AME). */
+function exportMogrt(opts: ExportOptions): void {
+  const bytes = exportMogrtZip('MOTION');
+  opts.onProgress?.(1);
+  download(new Blob([bytes as BlobPart], { type: 'application/zip' }), 'template.mogrt.zip');
+}
+
+/** Avid Log Exchange — text cut list Media Composer imports. */
+function exportALE(opts: ExportOptions): void {
+  const text = exportAleText();
+  opts.onProgress?.(1);
+  download(new Blob([text], { type: 'text/plain' }), 'timeline.ale');
+}
+
+/** sRGB byte → approximate linear light. */
+function srgbToLinear(u: number): number {
+  const c = u / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+function encodeExrFromLinearRgba(w: number, h: number, rgba: Float32Array): Uint8Array {
+  const n = w * h;
+  const r = new Float32Array(n);
+  const g = new Float32Array(n);
+  const b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    r[i] = rgba[i * 4]!;
+    g[i] = rgba[i * 4 + 1]!;
+    b[i] = rgba[i * 4 + 2]!;
+  }
+  const buf = encodeExr({
+    width: w,
+    height: h,
+    channels: [
+      { name: 'R', data: r },
+      { name: 'G', data: g },
+      { name: 'B', data: b },
+    ],
+  });
+  return new Uint8Array(buf);
+}
+
+/** Read canvas pixels into an OpenEXR HALF RGB file (display-referred → linear). */
+async function canvasToExrBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {
+  const w = canvas.width;
+  const h = canvas.height;
+  const scratch = document.createElement('canvas');
+  scratch.width = w;
+  scratch.height = h;
+  const ctx = scratch.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('EXR: no 2d context');
+  ctx.drawImage(canvas, 0, 0);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const n = w * h;
+  const rgba = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    rgba[i * 4] = srgbToLinear(data[i * 4]!);
+    rgba[i * 4 + 1] = srgbToLinear(data[i * 4 + 1]!);
+    rgba[i * 4 + 2] = srgbToLinear(data[i * 4 + 2]!);
+    rgba[i * 4 + 3] = data[i * 4 + 3]! / 255;
+  }
+  return encodeExrFromLinearRgba(w, h, rgba);
+}
+
+async function exportExrSequence(opts: ExportOptions): Promise<void> {
+  const audio = await exportAudioEntries(opts);
+  const entries: ZipEntry[] = [];
+  await renderOffline(
+    offlineParams(opts),
+    async (canvas, frame, count, backend) => {
+      const linear =
+        (await backend?.readLinearRgbaAsync?.())
+        ?? backend?.readLinearRgba?.()
+        ?? null;
+      const data = linear && linear.length >= canvas.width * canvas.height * 4
+        ? encodeExrFromLinearRgba(canvas.width, canvas.height, linear)
+        : await canvasToExrBytes(canvas);
+      entries.push({
+        name: `frame_${String(frame).padStart(FRAME_SEQUENCE_PAD, '0')}.exr`,
+        data,
+      });
+      opts.onProgress?.((frame + 1) / count);
+    },
+    opts.signal,
+  );
+  if (entries.length === 0) throw new Error('No frames were rendered.');
+  const bytes = await encodeZipBytes([...entries, ...audio]);
+  opts.onProgress?.(1);
+  download(new Blob([bytes as BlobPart], { type: 'application/zip' }), `${defaultBaseName()}-exr-sequence.zip`);
+}
+
 // ── Video / GIF export ───────────────────────────────────────────────
 
 /**
@@ -456,19 +586,21 @@ function defaultBaseName(): string {
   return `motion-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
 }
 
-async function exportVideoFormat(opts: ExportOptions, format: VideoFormat): Promise<void> {
+async function exportVideoFormat(opts: ExportOptions, format: VideoFormat): Promise<{ videoCodec?: string }> {
   // GIF has a dedicated encoder in the browser (no browser will mux one), so it
   // only routes through the video sink where ffmpeg is available.
   if (format === 'gif' && !canEncodeLocally()) {
     const blob = await renderGifBlob(opts, opts.onProgress, opts.signal);
     download(blob, `${defaultBaseName()}.gif`);
-    return;
+    return {};
   }
   const result = await renderVideo(opts, format, opts.onProgress, opts.signal);
   const delivered = await deliver(result, defaultBaseName());
   if (!delivered) {
-    useUIStore.getState().notify({ level: 'info', message: 'Export discarded — no file was saved.', durationMs: 2600 });
+    if (result.kind === 'file') await result.discard();
+    throw new DOMException('The user cancelled the save dialog.', 'AbortError');
   }
+  return { videoCodec: result.kind === 'file' ? result.videoCodec : undefined };
 }
 
 /**
@@ -779,17 +911,25 @@ export async function exportAudioEntries(opts: ExportOptions): Promise<ZipEntry[
   return bytes ? [{ name: 'audio.wav', data: bytes }] : [];
 }
 
-export async function runExport(opts: ExportOptions): Promise<void> {
+export async function runExport(opts: ExportOptions): Promise<{ videoCodec?: string }> {
   switch (opts.format) {
-    case 'png': return exportPNG(opts);
-    case 'png-sequence': return exportSequence(opts, 'png');
-    case 'jpg-sequence': return exportSequence(opts, 'jpg');
-    case 'json': return exportJSON(opts);
-    case 'lottie': return exportLottie(opts);
+    case 'png': await exportPNG(opts); return {};
+    case 'png-sequence': await exportSequence(opts, 'png'); return {};
+    case 'jpg-sequence': await exportSequence(opts, 'jpg'); return {};
+    case 'exr-sequence': await exportExrSequence(opts); return {};
+    case 'json': exportJSON(opts); return {};
+    case 'edl': exportEDL(opts); return {};
+    case 'otio': exportOTIO(opts); return {};
+    case 'fcpxml': exportFCPXML(opts); return {};
+    case 'ale': exportALE(opts); return {};
+    case 'mogrt': exportMogrt(opts); return {};
+    case 'lottie': exportLottie(opts); return {};
     case 'webm':
     case 'mp4':
     case 'gif':
     case 'mov':
+    case 'hdr10':
+    case 'hlg':
       return exportVideoFormat(opts, opts.format);
   }
 }
@@ -812,14 +952,22 @@ export interface ExportPreset {
  */
 export const EXPORT_PRESETS: ExportPreset[] = [
   { format: 'mp4', label: 'MP4 · H.264', ext: 'mp4', hint: 'Plays everywhere. Best default for sharing.', desktopOnly: true },
+  { format: 'hdr10', label: 'MP4 · HDR10 (PQ)', ext: 'mp4', hint: 'ST.2084 PQ + BT.2020. HEVC 10-bit when ffmpeg has libx265; else tagged H.264 10-bit.', desktopOnly: true },
+  { format: 'hlg', label: 'MP4 · HLG', ext: 'mp4', hint: 'Hybrid Log-Gamma + BT.2020 for broadcast HDR. Same encode path as HDR10.', desktopOnly: true },
   { format: 'webm', label: 'WebM · VP9', ext: 'webm', hint: 'Smaller than MP4, keeps transparency, ideal for the web.' },
   { format: 'mov', label: 'MOV · ProRes 4444', ext: 'mov', hint: 'Lossless with alpha, for editing in another app. Large files.', desktopOnly: true },
   { format: 'gif', label: 'Animated GIF', ext: 'gif', hint: 'No audio, 256 colours. Keep it short and small.' },
   { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames with alpha, zipped. The archival option.' },
   { format: 'jpg-sequence', label: 'JPEG sequence', ext: 'zip', hint: 'Smaller frames, no alpha.' },
+  { format: 'exr-sequence', label: 'EXR sequence', ext: 'zip', hint: 'Half-float linear RGB per frame. Prefers GPU linear RT readback (WebGL2 sync / WebGPU async); falls back to display undo-gamma.' },
   { format: 'png', label: 'Still frame', ext: 'png', hint: 'The current frame as one PNG.' },
   { format: 'lottie', label: 'Lottie', ext: 'json', hint: 'Vector animation for web/mobile players. Shapes only.' },
   { format: 'json', label: 'Project file', ext: 'json', hint: 'The editable document, re-openable with File ▸ Open.' },
+  { format: 'edl', label: 'EDL (CMX 3600)', ext: 'edl', hint: 'Clip list for Premiere / Avid. No nested comps or AAF.' },
+  { format: 'otio', label: 'OpenTimelineIO', ext: 'otio', hint: 'Editorial interchange: Resolve opens it natively; OTIO adapters convert to AAF/FCPXML. Cuts only — no effects.' },
+  { format: 'fcpxml', label: 'FCPXML', ext: 'fcpxml', hint: 'Final Cut / Premiere XML cuts. Same clip bars as EDL — no nested comps.' },
+  { format: 'ale', label: 'ALE (Avid)', ext: 'ale', hint: 'Avid Log Exchange cut list. Binary AAF still needs OTIO adapters.' },
+  { format: 'mogrt', label: 'Essential Graphics (.mogrt.zip)', ext: 'zip', hint: 'Premation template package (fields + project). Not Adobe AME — re-importable here.' },
 ];
 
 /** Presets this build can actually produce. */

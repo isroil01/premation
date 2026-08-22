@@ -338,6 +338,7 @@ export function emitLayerTexture(
   cmds: CommandBuffer = ctx.services.commands,
   modelOverride?: Mat3,
   blendOverride?: BlendMode,
+  sampleLinear = false,
 ): void {
   const viewport = ctx.viewport;
   const blend = blendOverride ?? r.blend;
@@ -369,6 +370,7 @@ export function emitLayerTexture(
       indexBuffer,
       indexCount,
       r.colorMatrix,
+      sampleLinear,
     );
   } else {
     emitTextured(
@@ -381,6 +383,7 @@ export function emitLayerTexture(
       tex.sampler,
       r.uvRect ?? tex.uv,
       r.colorMatrix,
+      sampleLinear,
     );
   }
 }

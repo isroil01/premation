@@ -32,12 +32,16 @@ import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
+import { staticOrDefaultValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';
+import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
+import { buildPropertyRows } from '@layout/Timeline/buildPropertyRows';
 import {
-  resolvePropertyMeta,
-  propertyLabel,
-  propertyOrder,
-  groupPlaceholderPath,
-} from '@core/inspector/propertyMeta';
+  keyframeMask,
+  clearMaskAnim,
+  moveMaskKeyframe,
+  removeMaskKeyframe,
+  readNodeMaskAnim,
+} from '@core/effects/mask';
 import { Icon } from '@components/Icon';
 import { EditorLayout } from '@layout/EditorLayout';
 
@@ -93,7 +97,6 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { useResponsiveLayout } from '@hooks/useResponsiveLayout';
 import type { TimelineKeyframeRef } from '@layout/Timeline';
 import type { KeyId, NodeId } from '@app-types/common';
-import { updateNodeComponentProp } from '@core/inspector/InspectorAPI';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
@@ -114,17 +117,11 @@ import { customPrompt } from '@components/Modal';
 function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
   const sampled = defaultAnimation.sample(nodeId, prop, layerT);
   if (sampled !== undefined) return sampled;
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (node) {
-    for (const c of node.components) {
-      const v = (c.props as Record<string, unknown>)[prop];
-      if (typeof v === 'number') return v;
-    }
-    if (prop === 'x') return node.transform.position.x;
-    if (prop === 'y') return node.transform.position.y;
-  }
-  const DEFAULTS: Record<string, number> = { scaleX: 1, scaleY: 1, opacity: 100 };
-  return DEFAULTS[prop] ?? 0;
+  // The static value, through the one reader that understands STRUCTURED paths
+  // as well as flat component props. The timeline's tree keys effect params,
+  // path operators and text animators now; a component scan answers 0 for all
+  // three, so a stopwatch on a 40px Glow radius used to key it to 0.
+  return staticOrDefaultValue(nodeId, prop);
 }
 
 /** Times within this many seconds of each other are the same keyframe. */
@@ -255,161 +252,46 @@ function EditorShellInner(): JSX.Element {
       const nodes = [...defaultSceneGraph.getChildren(parentId)].reverse();
       for (const node of nodes) {
         const kind = readNodeKind(node);
-        // Per-property sub-tracks (revealed when the layer is expanded).
-        let properties: TimelinePropertyTrack[] = defaultAnimation
-          .tracksFor(node.id)
-          .map((track) => ({
-            prop: track.prop,
-            // Label and unit both come from the property registry, resolved with
-            // this node so `effect.<id>.<key>` reads "Glow Radius" and not its
-            // raw path.
-            label: propertyLabel(track.prop, node.id),
-            keyframes: track.keyframes.map((kf, kfIndex, all) => ({
-              id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
-              nodeId: node.id as NodeId,
-              // Diamonds draw at the comp time where the renderer actually
-              // applies the keyframe — the canonical inverse, which honors
-              // trim/sourceIn, the active clip, stretch and precomp remaps.
-              time: keyframeToCompTime(node.id, kf.t, track.prop),
-              roving: kf.roving,
-              // Both spellings: Easy Ease → Hold writes 'step' on a scalar track,
-              // so checking only 'hold' meant a held keyframe never drew as one.
-              isHold: kf.easing === 'hold' || kf.easing === 'step',
-              // The glyph is drawn as two halves, so it needs BOTH sides. The
-              // engine stores easing on the segment that starts at a keyframe, so
-              // the incoming side is the previous keyframe's.
-              easeIn: all[kfIndex - 1]?.easing,
-              easeOut: kf.easing,
-              isFirst: kfIndex === 0,
-              isLast: kfIndex === all.length - 1,
-            })),
-            // A real (animated) row edits its own prop — one field, so the value
-            // can be changed here rather than only in the inspector.
-            valueProps: [track.prop],
-            valueUnit: resolvePropertyMeta(track.prop, node.id).unit || undefined,
-            // The row's stopwatch toggles exactly what its fields edit.
-            stopwatchProps: [track.prop],
-          }));
+        const isExpanded = expandedIds.includes(node.id);
+        // Collapsed rows only need a cheap keyframe summary for the layer
+        // diamond strip — the full property tree (every group AE shows, keyed
+        // or not) is built when the user twirls open. At 10k layers this is the
+        // difference between a usable timeline and one that freezes on every
+        // scene bump.
+        const properties: TimelinePropertyTrack[] = isExpanded ? buildPropertyRows(node.id) : [];
 
-        // Non-scalar (data) tracks: Source Text, gradient stops, path points.
-        // Diamond-only rows — there is no numeric value to scrub; the stopwatch
-        // key is the data prop so the reveal/expand machinery treats them like
-        // any other animated row.
-        for (const dt of defaultAnimation.dataTracksFor(node.id)) {
-          if (dt.keyframes.length === 0) continue;
-          properties.push({
-            prop: dt.prop,
-            label: propertyLabel(dt.prop, node.id),
-            keyframes: dt.keyframes.map((kf, kfIndex, all) => ({
-              id: makeKeyframeId(node.id, dt.prop, kf.t) as KeyId,
-              nodeId: node.id as NodeId,
-              time: keyframeToCompTime(node.id, kf.t, dt.prop),
-              // `text` can never tween, so its rows are always hold. Otherwise
-              // report the keyframe's own curve — data keyframes carry easing
-              // exactly like scalar ones, so the diamond must draw it or Easy
-              // Ease on a puppet pin would apply with no visible feedback.
-              isHold: dt.kind === 'text' || kf.easing === 'hold' || kf.easing === 'step' || undefined,
-              easeIn: all[kfIndex - 1]?.easing,
-              easeOut: kf.easing,
-              isFirst: kfIndex === 0,
-              isLast: kfIndex === all.length - 1,
-            })),
-            stopwatchProps: [dt.prop],
-          });
-        }
-
-        const separated = node.components.find((c) => c.type === 'Transform')?.props.separateDimensions === true;
-        if (!separated) {
-          const posProps = properties.filter(p => p.prop === 'x' || p.prop === 'y' || p.prop === 'z');
-          if (posProps.length > 0) {
-            properties = properties.filter(p => p.prop !== 'x' && p.prop !== 'y' && p.prop !== 'z');
-            const mergedKfs = new Map<number, TimelineKeyframeRef>();
-            for (const pt of posProps) {
-              for (const kf of pt.keyframes) {
-                if (!mergedKfs.has(kf.time)) {
-                  // The id must carry the STORED keyframe time, like every
-                  // per-property row — `kf.time` is absolute. The source row's id
-                  // already encodes the exact stored time, so lift it from there
-                  // rather than round-tripping through the (frame-quantizing)
-                  // inverse conversion.
-                  const layerT = parseKeyframeId(kf.id)?.t ?? compToKeyframeTime(node.id, kf.time);
-                  mergedKfs.set(kf.time, {
-                    ...kf,
-                    id: makeKeyframeId(node.id, POSITION_PSEUDO_PROP, layerT) as KeyId,
+        // Flat union of all keyframes (collapsed summary row). When collapsed we
+        // still want diamonds on the layer bar — build a minimal list without
+        // the property-row machinery.
+        const keyframes: TimelineKeyframeRef[] = isExpanded
+          ? properties.flatMap((p) => p.keyframes)
+          : (() => {
+              const out: TimelineKeyframeRef[] = [];
+              for (const track of defaultAnimation.tracksFor(node.id)) {
+                for (const kf of track.keyframes) {
+                  out.push({
+                    id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
+                    nodeId: node.id as NodeId,
+                    time: keyframeToCompTime(node.id, kf.t, track.prop),
+                    roving: kf.roving,
+                    isHold: kf.easing === 'hold' || kf.easing === 'step',
+                    easeOut: kf.easing,
                   });
                 }
               }
-            }
-            properties.unshift({
-              prop: POSITION_PSEUDO_PROP,
-              label: propertyLabel(POSITION_PSEUDO_PROP),
-              keyframes: Array.from(mergedKfs.values()).sort((a, b) => a.time - b.time),
-              // The merged Position row edits the two real props behind it.
-              valueProps: ['x', 'y'],
-              valueUnit: resolvePropertyMeta(POSITION_PSEUDO_PROP).unit || undefined,
-              stopwatchProps: ['x', 'y'],
-            });
-          }
-        }
-
-        // AE-style static property tree: every transformable layer always
-        // exposes its Transform group in the timeline — even with zero
-        // keyframes — so animation can START here (twirl open → stopwatch),
-        // not only from the inspector. Placeholder rows carry animated:false
-        // and the engine props their stopwatch keys.
-        const hasTransform = node.components.some((c) => c.type === 'Transform');
-        const hasStyle = node.components.some((c) => c.type === 'Style' || c.type === 'Text');
-        if (hasTransform && kind !== 'audio') {
-          const has = (...props: string[]) => properties.some((p) => props.includes(p.prop));
-          const placeholders: TimelinePropertyTrack[] = [];
-          // Label, unit and sort position all come from the property registry —
-          // the placeholder only decides WHICH real props it stands for.
-          const placeholder = (key: string, stopwatchProps: string[]) => {
-            const path = groupPlaceholderPath(key);
-            const meta = resolvePropertyMeta(path);
-            placeholders.push({
-              prop: path, label: meta.label, keyframes: [], animated: false, stopwatchProps,
-              // A static row is still editable: AE lets you set a value before
-              // keyframing, and the props it would key are the props it edits.
-              valueProps: stopwatchProps, valueUnit: meta.unit || undefined
-            });
-          };
-          const is3DNode = is3DEnabled(node);
-          if (kind !== 'camera' && !has('anchorX', 'anchorY', 'anchorZ')) {
-            placeholder('anchor', is3DNode ? ['anchorX', 'anchorY', 'anchorZ'] : ['anchorX', 'anchorY']);
-          }
-          if (!has(POSITION_PSEUDO_PROP, 'x', 'y', 'z')) {
-            placeholder('position', is3DNode || kind === 'camera' ? ['x', 'y', 'z'] : ['x', 'y']);
-          }
-          if (kind !== 'camera' && !has('scale', 'scaleX', 'scaleY', 'scaleZ')) {
-            placeholder('scale', is3DNode ? ['scaleX', 'scaleY', 'scaleZ'] : ['scaleX', 'scaleY']);
-          }
-          if (kind !== 'camera' && !has('rotation', 'rotationX', 'rotationY', 'orientationX', 'orientationY', 'orientationZ')) {
-            placeholder('rotation', is3DNode ? ['rotation', 'rotationX', 'rotationY'] : ['rotation']);
-          }
-          // Cameras DO get orientation rows — they are the one transform group a
-          // camera shares with a layer. `orientationX/Y/Z` turn the camera on the
-          // spot (tripod pan / tilt / roll) and are resolved by `cameraFromNode`.
-          // Anchor, scale and 2D rotation stay excluded above because a camera has
-          // none of them; orientation was excluded with them by association, which
-          // left the only camera rotation you can keyframe unreachable from the
-          // timeline. `kind === 'camera'` rather than `is3DNode` because a camera
-          // carries no 3D switch — it is 3D by nature (see toolHandlers).
-          if ((is3DNode || kind === 'camera') && !has('orientationX', 'orientationY', 'orientationZ')) {
-            placeholder('orientation', ['orientationX', 'orientationY', 'orientationZ']);
-          }
-          if (hasStyle && !has('opacity')) placeholder('opacity', ['opacity']);
-          // Stable-sort into AE's canonical Transform order (Anchor → Position →
-          // Scale → Rotation → Orientation → Opacity), leaving non-transform rows
-          // after them in their original relative order. The order lives on each
-          // property's registry entry, so a new property sorts itself.
-          properties = [...placeholders, ...properties].sort(
-            (a, b) => propertyOrder(a.prop, node.id) - propertyOrder(b.prop, node.id),
-          );
-        }
-
-        // Flat union of all keyframes (collapsed summary row).
-        const keyframes: TimelineKeyframeRef[] = properties.flatMap((p) => p.keyframes);
+              for (const dt of defaultAnimation.dataTracksFor(node.id)) {
+                for (const kf of dt.keyframes) {
+                  out.push({
+                    id: makeKeyframeId(node.id, dt.prop, kf.t) as KeyId,
+                    nodeId: node.id as NodeId,
+                    time: keyframeToCompTime(node.id, kf.t, dt.prop),
+                    isHold: dt.kind === 'text' || kf.easing === 'hold' || kf.easing === 'step' || undefined,
+                    easeOut: kf.easing,
+                  });
+                }
+              }
+              return out;
+            })();
         // The asset a clip's waveform is drawn from. Audio layers carry it on
         // their Audio component; a VIDEO layer's own track hangs off the same
         // asset as its picture, so the bar can show the sound it will actually
@@ -436,6 +318,17 @@ function EditorShellInner(): JSX.Element {
           sourceInSec: l.clip.sourceIn / compFps,
           sourceOutSec: (l.clip.sourceIn + l.clip.duration) / compFps,
         }));
+        // Whether the chevron is live. Computed for COLLAPSED rows too (where
+        // `properties` is deliberately empty), because the static Transform tree
+        // exists for every transformable layer whether or not anything is keyed —
+        // that is exactly the layer you need to twirl open to key it in the first
+        // place. Cheap: a component scan plus the track lookups the summary strip
+        // already does.
+        const canExpand =
+          kind === 'group' ||
+          (kind !== 'audio' && node.components.some((c) => c.type === 'Transform')) ||
+          defaultAnimation.tracksFor(node.id).length > 0 ||
+          defaultAnimation.dataTracksFor(node.id).length > 0;
         const track: TimelineTrack = {
           id: node.id as TrackId,
           name: node.name ?? node.id,
@@ -474,6 +367,7 @@ function EditorShellInner(): JSX.Element {
           })),
           depth,
           isGroup: kind === 'group',
+          canExpand,
           expanded: expandedIds.includes(node.id),
         };
 
@@ -933,6 +827,18 @@ function EditorShellInner(): JSX.Element {
     const ref = parseKeyframeId(kfId);
     // The timeline commits once on release, so one move = one undoable command.
     if (ref) {
+      // Mask keyframes live on the scene graph as whole-shape snapshots, so
+      // they retime through the mask store. Same gesture, different owner.
+      if (ref.prop === MASK_ANIM_PROP) {
+        if (time < 0) {
+          runAnimEdit('Delete mask keyframe', () => removeMaskKeyframe(ref.nodeId, ref.t));
+        } else {
+          runAnimEdit('Move mask keyframe', () =>
+            moveMaskKeyframe(ref.nodeId, ref.t, compToKeyframeTime(ref.nodeId, time, ref.prop)),
+          );
+        }
+        return;
+      }
       // Non-scalar (data) tracks — Source Text / gradient stops — have their
       // own keyframe store; route by which store actually holds the prop.
       if (defaultAnimation.isDataAnimated(ref.nodeId, ref.prop)) {
@@ -1005,6 +911,17 @@ function EditorShellInner(): JSX.Element {
   const handlePropertyStopwatch = (trackId: string, props: ReadonlyArray<string>): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node || node.locked) return;
+    // The mask row is not a numeric track: its keyframes are whole-mask
+    // snapshots kept on the scene graph, so its stopwatch routes to the mask
+    // store instead of the animation engine.
+    if (props[0] === MASK_ANIM_PROP) {
+      const animated = readNodeMaskAnim(node).length > 0;
+      runAnimEdit(animated ? 'Disable mask animation' : 'Enable mask animation', () => {
+        if (animated) clearMaskAnim(trackId);
+        else keyframeMask(trackId, getRemappedTime(trackId, activeTime));
+      });
+      return;
+    }
     // The stopwatch is lit when animated, so clicking it means "turn this off" —
     // the same control both ways, as in AE. It used to only ever create, so the
     // timeline could start an animation but never end one.
@@ -1049,8 +966,12 @@ function EditorShellInner(): JSX.Element {
       );
       return;
     }
-    const comp = node.components.find((c) => typeof (c.props as Record<string, unknown>)[prop] === 'number');
-    if (comp) updateNodeComponentProp(defaultSceneGraph, trackId, comp.id, prop, value);
+    // One writer, which knows where a structured path stores its value — an
+    // effect param, a path operator, a text animator — not just flat component
+    // props. Rows whose base cannot be written carry no value field at all
+    // (see `placeholderRow`), so a false here is a stale row, not a swallowed
+    // edit.
+    writeStaticPropertyValue(trackId, prop, value);
   };
   const handleKeyframeContextMenu = (kfId: string, x: number, y: number): void => {
     const ref = parseKeyframeId(kfId);
@@ -1135,8 +1056,27 @@ function EditorShellInner(): JSX.Element {
   const handleClipMove = (clipId: string, start: number): void => {
     getTimelineController().setClipStart(clipId, start);
   };
-  const handleClipTrim = (clipId: string, edge: 'start' | 'end', time: number): void => {
-    getTimelineController().trimClipTo(clipId, edge, time);
+  const handleClipTrim = (clipId: string, edge: 'start' | 'end', time: number, opts?: { ripple?: boolean }): void => {
+    const c = getTimelineController();
+    if (opts?.ripple && edge === 'end') c.rippleTrimClipEnd(clipId, time);
+    else if (opts?.ripple && edge === 'start') c.rippleTrimClipStart(clipId, time);
+    else c.trimClipTo(clipId, edge, time);
+  };
+  const handleClipSlip = (clipId: string, sourceInSec: number): void => {
+    const c = getTimelineController();
+    const layer = c.timeline.getLayer(clipId);
+    if (!layer) return;
+    const fps = c.timeline.getFrameRate().fps;
+    const currentIn = layer.clip.sourceIn / fps;
+    c.slipClip(clipId, sourceInSec - currentIn);
+  };
+  const handleClipSlide = (clipId: string, startSec: number): void => {
+    const c = getTimelineController();
+    const layer = c.timeline.getLayer(clipId);
+    if (!layer) return;
+    const fps = c.timeline.getFrameRate().fps;
+    const currentStart = layer.clip.start / fps;
+    c.slideClip(clipId, startSec - currentStart);
   };
   const handleClipContextMenu = (clipId: string, x: number, y: number): void => {
     const c = getTimelineController();
@@ -1172,6 +1112,30 @@ function EditorShellInner(): JSX.Element {
         onSelect: () => {
           if (nodeId) c.trimSelectedEndToPlayhead([nodeId]);
           else c.trimClipTo(clipId, 'end', c.currentSeconds);
+          bumpScene();
+        },
+      },
+      {
+        id: 'ripple-trim-out',
+        label: 'Ripple Trim Out to Playhead',
+        onSelect: () => {
+          c.rippleTrimClipEnd(clipId, c.currentSeconds);
+          bumpScene();
+        },
+      },
+      {
+        id: 'ripple-trim-in',
+        label: 'Ripple Trim In to Playhead',
+        onSelect: () => {
+          c.rippleTrimClipStart(clipId, c.currentSeconds);
+          bumpScene();
+        },
+      },
+      {
+        id: 'ripple-insert',
+        label: 'Ripple Insert 1s Gap at Playhead',
+        onSelect: () => {
+          c.rippleInsertGapAt(clipId, c.currentSeconds, 1);
           bumpScene();
         },
       },
@@ -1231,6 +1195,15 @@ function EditorShellInner(): JSX.Element {
         : []),
       { id: 'sep-del', separator: true },
       { id: 'delete', label: 'Delete Clip (Del)', danger: true, onSelect: () => c.deleteLayer(clipId) },
+      {
+        id: 'ripple-delete',
+        label: 'Ripple Delete Clip',
+        danger: true,
+        onSelect: () => {
+          c.rippleDeleteLayer(clipId);
+          bumpScene();
+        },
+      },
     ]);
   };
 
@@ -1342,6 +1315,8 @@ function EditorShellInner(): JSX.Element {
               onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
               onClipMove={handleClipMove}
               onClipTrim={handleClipTrim}
+              onClipSlip={handleClipSlip}
+              onClipSlide={handleClipSlide}
               onClipContextMenu={handleClipContextMenu}
               onScroll={(px) => getTimelineController().setScrollPixels(px)}
               onZoom={handleZoom}

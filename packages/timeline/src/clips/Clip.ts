@@ -99,6 +99,22 @@ export class Clip {
   }
 
   /**
+   * Slip: shift which part of the source plays under a FIXED bar.
+   * `start` and `duration` stay put; only `sourceIn` moves. Bounded sources
+   * clamp so the window stays inside `[0, sourceDuration]`.
+   */
+  slip(deltaFrames: number): void {
+    let next = this.sourceIn + deltaFrames;
+    if (this.sourceDuration !== null) {
+      const maxIn = Math.max(0, this.sourceDuration - this.duration);
+      next = Math.max(0, Math.min(maxIn, next));
+    } else {
+      next = Math.max(0, next);
+    }
+    this.sourceIn = next;
+  }
+
+  /**
    * Split at a timeline frame, returning the data for the right-hand clip. This
    * clip becomes the left part (end at `frame`); the returned data is a new clip
    * starting at `frame` with the correct `sourceIn`. Returns null when the frame

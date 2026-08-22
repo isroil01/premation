@@ -21,7 +21,7 @@ import {
   subpathBatches,
   traceBatch,
 } from './vectorDraw';
-import { textCssFont } from '../AppTextureProvider';
+import { textCssFont, textFontVariationSettings } from '../AppTextureProvider';
 
 /** Cache statistics reported by the rasterizer (defined locally — not in @motion/renderer). */
 export interface RasterStats {
@@ -257,6 +257,10 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     // Everything below lays out in the UNPADDED box, so shift into it once.
     ctx.translate(pad, pad);
     ctx.font = textCssFont(spec);
+    {
+      const vars = textFontVariationSettings(spec);
+      if (vars) (ctx as CanvasRenderingContext2D & { fontVariationSettings?: string }).fontVariationSettings = vars;
+    }
     ctx.textBaseline = 'middle';
     ctx.letterSpacing = spec.letterSpacing ? `${spec.letterSpacing}px` : '0px';
     ctx.fillStyle = spec.color;

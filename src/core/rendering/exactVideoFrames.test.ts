@@ -265,4 +265,175 @@ describe('ExactVideoFrameCache', () => {
     expect(stub.source.close).toHaveBeenCalled();
     expect(cache.stats('a.mp4')).toBeNull();
   });
+
+  describe('streaming playback', () => {
+    const STREAM_FRAMES = 90;
+
+    /** A 90-frame stub grid + a fake demux (only samples.length is read) +
+     *  a recording fake reader — streaming without WebCodecs. */
+    function streamHarness(): {
+      cache: ExactVideoFrameCache;
+      decoded: number[];
+      readers: Array<{ from: number; delivered: number[]; closed: boolean }>;
+    } {
+      const decoded: number[] = [];
+      const source: ExactSourceLike = {
+        frameIndexAt(timeUs: number): number {
+          let idx = 0;
+          while (idx + 1 < STREAM_FRAMES && ((idx + 1) / FPS) * 1e6 <= timeUs) idx += 1;
+          return idx;
+        },
+        frameAt(presIdx: number): Promise<DecodedFrameLike> {
+          decoded.push(presIdx);
+          return Promise.resolve({
+            timestamp: Math.round((presIdx / FPS) * 1e6),
+            displayWidth: 4,
+            displayHeight: 4,
+            close: () => undefined,
+          } as unknown as DecodedFrameLike);
+        },
+        close: jest.fn(),
+      };
+      const demuxed = { samples: new Array(STREAM_FRAMES) } as unknown as import('@core/video/mp4Demuxer').DemuxedVideo;
+      const readers: Array<{ from: number; delivered: number[]; closed: boolean }> = [];
+      const cache = new ExactVideoFrameCache(
+        1024 * 1024,
+        () => Promise.resolve({ source, width: 4, height: 4, demuxed }),
+        () => true,
+        (_d, from) => {
+          const rec = { from, delivered: [] as number[], closed: false };
+          readers.push(rec);
+          return {
+            frameAt(presIdx: number): Promise<DecodedFrameLike> {
+              rec.delivered.push(presIdx);
+              return Promise.resolve({
+                timestamp: Math.round((presIdx / FPS) * 1e6),
+                displayWidth: 4,
+                displayHeight: 4,
+                close: () => undefined,
+              } as unknown as DecodedFrameLike);
+            },
+            close(): void {
+              rec.closed = true;
+            },
+          };
+        },
+      );
+      return { cache, decoded, readers };
+    }
+
+    /** Drain the pump loop (one await per frame). */
+    const drain = async (n = 20): Promise<void> => {
+      for (let i = 0; i < n; i++) await flush();
+    };
+
+    it('an ascending miss run flips the source into a decode-ahead stream', async () => {
+      const { cache, decoded, readers } = streamHarness();
+      cache.get('a.mp4', 0);
+      await flush(); // load
+      // Playback: frames 0, 1, 2, … — the first misses go to random access.
+      for (const idx of [0, 1, 2]) {
+        cache.get('a.mp4', idx / FPS);
+        await flush();
+      }
+      expect(readers.length).toBe(1);
+      expect(readers[0]!.from).toBe(0);
+      await drain();
+      // The stream decoded ahead of the newest request…
+      expect(Math.max(...readers[0]!.delivered)).toBeGreaterThanOrEqual(10);
+      // …so the frames playback needs next are already exact cache hits.
+      for (const idx of [3, 4, 5, 6]) {
+        expect(cache.get('a.mp4', idx / FPS)).toMatchObject({ state: 'frame', presIndex: idx, exact: true });
+      }
+      // Random access served only the pre-stream miss (stream arms on frame 1).
+      expect(decoded).toEqual([]);
+    });
+
+    it('cache hits keep the stream ahead of the playhead', async () => {
+      const { cache, readers } = streamHarness();
+      cache.get('a.mp4', 0);
+      await flush();
+      for (const idx of [0, 1, 2]) {
+        cache.get('a.mp4', idx / FPS);
+        await flush();
+      }
+      await drain();
+      const before = Math.max(...readers[0]!.delivered);
+      // Ride the cache: every hit advances the target, the pump follows.
+      for (const idx of [3, 4, 5, 6, 7, 8]) {
+        cache.get('a.mp4', idx / FPS);
+        await drain(4);
+      }
+      expect(Math.max(...readers[0]!.delivered)).toBeGreaterThan(before);
+    });
+
+    it('a far seek kills the stream and random access resumes', async () => {
+      const { cache, decoded, readers } = streamHarness();
+      cache.get('a.mp4', 0);
+      await flush();
+      for (const idx of [0, 1, 2]) {
+        cache.get('a.mp4', idx / FPS);
+        await flush();
+      }
+      await drain();
+      // Jump far past the stream window — a scrub, not playback.
+      cache.get('a.mp4', 80 / FPS);
+      await flush();
+      expect(readers[0]!.closed).toBe(true);
+      expect(decoded).toContain(80);
+    });
+
+    it('a loop wrap restarts streaming instead of random-access per frame', async () => {
+      const { cache, decoded, readers } = streamHarness();
+      cache.get('a.mp4', 0);
+      await flush(); // load
+      // Warm streaming through the middle of the clip.
+      for (const idx of [0, 1, 2, 3, 4, 5]) {
+        cache.get('a.mp4', idx / FPS);
+        await flush();
+      }
+      await drain();
+      const decodedBeforeWrap = decoded.length;
+      // Simulate comp/footage loop: jump from near the end back to frame 0.
+      cache.get('a.mp4', (STREAM_FRAMES - 2) / FPS);
+      await flush();
+      await drain(8);
+      cache.get('a.mp4', 0);
+      await flush();
+      await drain(12);
+      // A fresh reader should have been opened at the wrap target…
+      expect(readers.length).toBeGreaterThanOrEqual(2);
+      const wrapReader = readers[readers.length - 1]!;
+      expect(wrapReader.from).toBe(0);
+      expect(wrapReader.closed).toBe(false);
+      // …and playback after the wrap should not fall back to one random-access
+      // decode per frame (the failure mode that made loops unwatchable).
+      expect(decoded.length - decodedBeforeWrap).toBeLessThan(8);
+      for (const idx of [1, 2, 3, 4]) {
+        expect(cache.get('a.mp4', idx / FPS)).toMatchObject({ state: 'frame', presIndex: idx, exact: true });
+      }
+    });
+
+    it('test-stub sources without a demux never stream', async () => {
+      const stub = stubSource();
+      const readers: number[] = [];
+      const cache = new ExactVideoFrameCache(
+        1024 * 1024,
+        loaderFor(stub),
+        () => true,
+        () => {
+          readers.push(1);
+          throw new Error('should not be constructed');
+        },
+      );
+      cache.get('a.mp4', 0);
+      await flush();
+      for (const idx of [0, 1, 2, 3, 4, 5]) {
+        cache.get('a.mp4', idx / FPS);
+        await flush();
+      }
+      expect(readers.length).toBe(0);
+      expect(stub.decoded).toEqual([0, 1, 2, 3, 4, 5]);
+    });
+  });
 });

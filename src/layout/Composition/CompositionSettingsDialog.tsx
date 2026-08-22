@@ -504,7 +504,25 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                 >
                   ACES (sRGB ODT)
                 </Button>
+                <Button
+                  variant={cm.displayTransform === 'pq' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setDisplayTransform('pq')}
+                >
+                  PQ (preview)
+                </Button>
+                <Button
+                  variant={cm.displayTransform === 'hlg' ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => setDisplayTransform('hlg')}
+                >
+                  HLG (preview)
+                </Button>
               </div>
+              <p className={styles.hint}>
+                PQ / HLG are display ODTs on the SDR canvas. Use EXR sequence export for float delivery;
+                float EXR imports keep linear planes in the working cache.
+              </p>
             </div>
             <div className={styles.section}>
               <div className={styles.label}>Intermediate bit depth</div>

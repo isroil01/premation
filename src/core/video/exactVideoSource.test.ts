@@ -11,7 +11,7 @@
  * on flush, which is the only decoder behaviour the session relies on.
  */
 
-import { ExactVideoSource, webCodecsAvailable, type DecoderIO, type DecodedFrameLike, type EncodedChunkInit } from './exactVideoSource';
+import { ExactVideoSource, SequentialFrameReader, webCodecsAvailable, type DecoderIO, type DecodedFrameLike, type EncodedChunkInit } from './exactVideoSource';
 import type { DemuxedVideo } from './mp4Demuxer';
 
 const TS = 15360;
@@ -183,5 +183,108 @@ describe('ExactVideoSource', () => {
 
   it('webCodecsAvailable is false where there is no WebCodecs (here)', () => {
     expect(webCodecsAvailable()).toBe(false);
+  });
+});
+
+/**
+ * Incremental fake for the streaming reader: unlike the flush-only fake
+ * above, this emits during decode the way real decoders do — holding a small
+ * reorder window (3 frames), releasing in ascending presentation order, and
+ * draining on flush. The reader depends on incremental emission (it only
+ * flushes once, at end of stream), so this is the decoder behaviour to fake.
+ */
+function makeStreamingFakeIO() {
+  const feeds: EncodedChunkInit[][] = [];
+  let decodersBuilt = 0;
+  const io: DecoderIO = {
+    createDecoder(_config, handlers) {
+      decodersBuilt++;
+      feeds.push([]);
+      const mine = feeds[feeds.length - 1]!;
+      let held: EncodedChunkInit[] = [];
+      const emit = (c: EncodedChunkInit): void => {
+        const f: FakeFrame = {
+          timestamp: c.timestamp,
+          closed: false,
+          close() { this.closed = true; },
+        };
+        handlers.output(f);
+      };
+      return {
+        decode(chunk) {
+          const c = chunk as EncodedChunkInit;
+          mine.push(c);
+          held.push(c);
+          held.sort((a, b) => a.timestamp - b.timestamp);
+          while (held.length > 3) emit(held.shift()!);
+        },
+        async flush() {
+          for (const c of held) emit(c);
+          held = [];
+        },
+        close() { /* nothing */ },
+      };
+    },
+    createChunk: (init) => init,
+  };
+  return { io, feeds, decoders: () => decodersBuilt };
+}
+
+describe('SequentialFrameReader', () => {
+  it('feeds each sample exactly once for the whole walk, in decode order', async () => {
+    const { io, feeds, decoders } = makeStreamingFakeIO();
+    const reader = new SequentialFrameReader(demuxed(), 0, 23, io);
+    for (let i = 0; i <= 23; i++) {
+      const f = await reader.frameAt(i);
+      expect(f.timestamp).toBe(frameUs(i));
+    }
+    reader.close();
+    expect(decoders()).toBe(1);
+    // 24 samples, one decode() each — the whole point vs frameAt's prefixes.
+    expect(feeds[0]!.length).toBe(24);
+    const seen = new Set(feeds[0]!.map((c) => c.timestamp));
+    expect(seen.size).toBe(24);
+  });
+
+  it('starts mid-stream at the GOP key', async () => {
+    const { io, feeds } = makeStreamingFakeIO();
+    const reader = new SequentialFrameReader(demuxed(), 9, 15, io);
+    const f = await reader.frameAt(9);
+    expect(f.timestamp).toBe(frameUs(9));
+    expect(feeds[0]![0]!.type).toBe('key');
+    expect(feeds[0]![0]!.timestamp).toBe(frameUs(8)); // GOP 2's key frame
+    reader.close();
+  });
+
+  it('closes the previous frame on the next request, and skipped frames outright', async () => {
+    const { io } = makeStreamingFakeIO();
+    const reader = new SequentialFrameReader(demuxed(), 0, 23, io);
+    const f0 = (await reader.frameAt(0)) as FakeFrame;
+    // Duplicate request: same frame back, still open.
+    expect(await reader.frameAt(0)).toBe(f0);
+    expect(f0.closed).toBe(false);
+    const f5 = (await reader.frameAt(5)) as FakeFrame; // skips 1..4
+    expect(f0.closed).toBe(true);
+    expect(f5.closed).toBe(false);
+    reader.close();
+    expect(f5.closed).toBe(true);
+  });
+
+  it('rejects decreasing requests instead of silently rewinding', async () => {
+    const { io } = makeStreamingFakeIO();
+    const reader = new SequentialFrameReader(demuxed(), 0, 23, io);
+    await reader.frameAt(6);
+    await expect(reader.frameAt(3)).rejects.toThrow(/non-decreasing/);
+    reader.close();
+  });
+
+  it('drains the tail through the single end-of-stream flush', async () => {
+    const { io } = makeStreamingFakeIO();
+    const reader = new SequentialFrameReader(demuxed(), 20, 23, io);
+    // The last frames sit inside the fake's reorder hold until flush.
+    for (let i = 20; i <= 23; i++) {
+      expect((await reader.frameAt(i)).timestamp).toBe(frameUs(i));
+    }
+    reader.close();
   });
 });

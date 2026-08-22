@@ -29,7 +29,7 @@ import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectI
 import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openModal } from '@stores/modalStore';
-import { customPrompt } from '@components/Modal';
+import { customConfirm, customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
 import { Button } from '@components/Button';
 import { Logo } from '@components/Logo';
@@ -93,7 +93,7 @@ import {
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
-import { readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
 import { audioEngine } from '@core/audio/AudioEngine';
 import { AudioPlaybackBridge } from '@core/audio/useAudioPlayback';
@@ -111,6 +111,7 @@ import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { addEffect } from '@core/effects/effects';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
+import { deleteComposition } from '@core/composition/compositionOps';
 
 interface ProvidersProps {
   children: ReactNode;
@@ -890,12 +891,95 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => openNewCompositionDialog(),
     },
     {
+      id: asCommandId('comp.multicam'),
+      label: 'New Multicam from Library…',
+      icon: 'layers',
+      enabled: () => useAssetStore.getState().assets.filter((a) => a.type === 'video' || a.type === 'image').length >= 2,
+      execute: async () => {
+        const vids = useAssetStore.getState().assets.filter((a) => a.type === 'video' || a.type === 'image');
+        if (vids.length < 2) return;
+        const { createMulticamComposition } = await import('@core/composition/multicam');
+        try {
+          await createMulticamComposition(vids.slice(0, Math.min(8, vids.length)));
+        } catch (e) {
+          console.error(e);
+        }
+      },
+    },
+    ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => ({
+      id: asCommandId(`comp.multicamAngle${n}`),
+      label: `Multicam Cut → Angle ${n}`,
+      shortcut: { key: String(n), alt: true },
+      enabled: () => true,
+      execute: async () => {
+        const { switchMulticamAngle } = await import('@core/composition/multicam');
+        switchMulticamAngle(n);
+      },
+    })),
+    {
+      id: asCommandId('comp.multicamViewer'),
+      label: 'Multicam Viewer…',
+      icon: 'layers',
+      enabled: () => true,
+      execute: async () => {
+        const { openMulticamViewer } = await import('@layout/Multicam/MulticamViewer');
+        openMulticamViewer();
+      },
+    },
+    {
+      id: asCommandId('comp.multicamSync'),
+      label: 'Sync Multicam by Audio',
+      icon: 'audio',
+      enabled: () => true,
+      execute: async () => {
+        const { alignMulticamByAudio } = await import('@core/composition/multicam');
+        const report = await alignMulticamByAudio();
+        useUIStore.getState().notify({
+          level: report.shifted > 0 ? 'success' : 'info',
+          message: report.note,
+          durationMs: 5000,
+        });
+      },
+    },
+    {
       id: asCommandId('comp.settings'),
       label: 'Composition Settings…',
       shortcut: { key: 'k', meta: true },
       enabled: () => true,
       execute: () => {
         openCompositionSettings();
+      },
+    },
+    {
+      // AE: select a composition in the Project panel and press Delete.
+      // Menu home for the same op when the Assets bin isn't focused.
+      id: asCommandId('comp.delete'),
+      label: 'Delete Composition',
+      icon: 'trash',
+      enabled: () => {
+        const st = useProjectStore.getState();
+        const tabId = st.activeTabId;
+        if (!tabId) return false;
+        const compId = st.tabs[tabId]?.compositionId;
+        if (!compId) return false;
+        const comp = st.comps[compId];
+        return Boolean(comp && !comp.pristine);
+      },
+      execute: async () => {
+        const st = useProjectStore.getState();
+        const tabId = st.activeTabId;
+        if (!tabId) return;
+        const compId = st.tabs[tabId]?.compositionId;
+        if (!compId) return;
+        const comp = st.comps[compId];
+        if (!comp || comp.pristine) return;
+        const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+        const warn = layers > 0
+          ? `Delete “${comp.name}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+          : `Delete “${comp.name}”?`;
+        if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+          deleteComposition(compId);
+        }
       },
     },
     {

@@ -41,6 +41,13 @@ RENDER_WORKER_SECRET=… CLOUDINARY_URL=cloudinary://… npm start
 Without `CLOUDINARY_URL` it stops at the upload step and reports that as a pass —
 reaching upload proves render and mux both worked.
 
+`npm run smoke:tiktok` posts the TikTok automation scenario (1080×1920, remote MP4
+background + transparent PNG character, position/scale/rotation/opacity keyframes).
+Default 3 seconds (`TIKTOK_SMOKE_SECONDS=30` for full-length).
+
+`npm run benchmark` measures render time for the same scenario (default 30s, 900 frames).
+Set `BENCHMARK_CONCURRENT=2` when `RENDER_WORKER_MAX_CONCURRENT >= 2`.
+
 `npm run build` must run before `npm start`; the worker refuses to boot without
 the bundle, and refuses to boot without a secret rather than listen
 unauthenticated.

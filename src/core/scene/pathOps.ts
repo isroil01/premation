@@ -211,6 +211,100 @@ export const PATHOP_PARAMS = [
 export type PathOpParam = (typeof PATHOP_PARAMS)[number];
 
 /**
+ * One editable parameter of an operator: which param, and how to present it.
+ *
+ * `PATHOP_PARAMS` above is the SAMPLING vocabulary — every param every operator
+ * could have, read for all of them because `resolveOne` is type-blind. This is
+ * the per-type view: which of those a `twist` actually has, in which order, and
+ * under what name. Both are needed and they are not the same list.
+ */
+export interface PathOpParamSpec {
+  param: PathOpParam;
+  label: string;
+  unit?: string;
+  /** Explicit bounds/granularity, when the type alone does not imply them. */
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Signed parameter — suppresses the default non-negative floor. */
+  signed?: boolean;
+}
+
+/** Per-operator labels for the two generic numeric params (some have no detail). */
+function paramLabels(type: PathOpType): { amount: string; detail: string | null } {
+  switch (type) {
+    case 'roundCorners':
+      return { amount: 'Radius', detail: 'Steps' };
+    case 'pucker':
+      return { amount: 'Amount', detail: null };
+    case 'twist':
+      return { amount: 'Angle', detail: null };
+    case 'offset':
+      return { amount: 'Offset', detail: null };
+    case 'roughen':
+      return { amount: 'Size', detail: 'Detail' };
+    default:
+      return { amount: 'Amount', detail: 'Ridges' };
+  }
+}
+
+/**
+ * The rows a given operator actually has.
+ *
+ * Lives here rather than in the inspector card that used to own it because it
+ * is a fact about the operator, and the card stopped being its only reader: the
+ * timeline's property tree lists the same parameters under Contents, and two
+ * lists of "which params does a Repeater have" would drift the moment one grew
+ * a row.
+ */
+export function pathOpParamSpecs(type: PathOpType): ReadonlyArray<PathOpParamSpec> {
+  if (type === 'trim') {
+    return [
+      { param: 'start', label: 'Start', unit: '%' },
+      { param: 'end', label: 'End', unit: '%' },
+      { param: 'offset', label: 'Offset', unit: '%' },
+    ];
+  }
+  if (type === 'repeater') {
+    // Same rows, same labels and the same order the Repeater section had, so
+    // the fold is a move rather than a redesign. `offset` is the ladder Offset
+    // — AE's, shifting which rung copy 0 starts on — sharing the param slot
+    // with Trim's, which is safe because an operator is exactly one type.
+    // Bounds and steps carried over verbatim: a ladder that cannot be nudged in
+    // hundredths is a scale field that jumps from 1 to 2, and the positions,
+    // rotation and anchors are all signed — a repeater marching left is as
+    // ordinary as one marching right.
+    return [
+      { param: 'copies', label: 'Copies', min: 1, max: 200, step: 1 },
+      { param: 'offset', label: 'Offset', step: 0.1, signed: true },
+      { param: 'anchorX', label: 'Anchor X', unit: 'px', signed: true },
+      { param: 'anchorY', label: 'Anchor Y', unit: 'px', signed: true },
+      { param: 'offsetX', label: 'Position X', unit: 'px', signed: true },
+      { param: 'offsetY', label: 'Position Y', unit: 'px', signed: true },
+      { param: 'offsetRotation', label: 'Rotation', unit: '°', signed: true },
+      { param: 'offsetScale', label: 'Scale', min: 0, step: 0.02 },
+      { param: 'offsetOpacity', label: 'Opacity', min: 0, max: 1, step: 0.02 },
+    ];
+  }
+  if (type === 'wiggleTransform') {
+    // AE's Wiggle Transform rows: three amplitudes and the pivot. The
+    // amplitudes are magnitudes (the noise is signed), so their floor is 0;
+    // the pivot is a position and goes both ways.
+    return [
+      { param: 'amount', label: 'Position', unit: 'px', min: 0 },
+      { param: 'wiggleRotation', label: 'Rotation', unit: '°', min: 0 },
+      { param: 'wiggleScale', label: 'Scale', unit: '%', min: 0 },
+      { param: 'anchorX', label: 'Anchor X', unit: 'px', signed: true },
+      { param: 'anchorY', label: 'Anchor Y', unit: 'px', signed: true },
+    ];
+  }
+  const { amount, detail } = paramLabels(type);
+  const rows: PathOpParamSpec[] = [{ param: 'amount', label: amount }];
+  if (detail) rows.push({ param: 'detail', label: detail });
+  return rows;
+}
+
+/**
  * The keyframe path for one operator's parameter.
  *
  * Scoped by the operator's ID, not by its index. That is the whole reason

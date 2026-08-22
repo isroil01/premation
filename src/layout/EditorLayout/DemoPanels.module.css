@@ -91,12 +91,161 @@
   flex: none;
 }
 
+/* Scene panel — compositions above layers (Assets stays media-only). */
+.sceneShell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.compSection {
+  flex: none;
+  border-bottom: 1px solid var(--color-divider);
+  background: var(--color-panel);
+}
+
+.compSectionHead,
+.layerSectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 6px var(--space-4) 4px;
+}
+
+.layerSectionHead {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.compSectionLabel {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.compAddBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.compAddBtn:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.compEmpty {
+  padding: 4px var(--space-4) 10px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.35;
+}
+
+.compList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 var(--space-2) 8px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.compRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 6px 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+
+.compRow:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.compRowActive {
+  background: color-mix(in srgb, var(--color-primary, #4c8dff) 16%, transparent);
+  color: var(--color-text-primary);
+}
+
+.compRowActive:hover {
+  background: color-mix(in srgb, var(--color-primary, #4c8dff) 22%, transparent);
+}
+
+.compGlyph {
+  flex: none;
+  color: #5b9fd4;
+}
+
+.compName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.compMeta {
+  flex: none;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.compDeleteBtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  cursor: pointer;
+}
+
+.compRow:hover .compDeleteBtn,
+.compRow:focus-within .compDeleteBtn {
+  opacity: 1;
+}
+
+.compDeleteBtn:hover {
+  background: color-mix(in srgb, var(--color-danger, #e5484d) 18%, transparent);
+  color: var(--color-danger, #e5484d);
+}
+
 .body {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
   padding: var(--space-2) var(--space-2);
-  overflow: auto;
+  /* TreeView owns the scroll — overflow here would stretch the tree to full
+     content height and defeat row virtualization at 10k layers. */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .empty {

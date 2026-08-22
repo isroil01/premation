@@ -56,6 +56,7 @@ import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/sc
 import { faceEffectsFor } from '@core/scene/faceEffects';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
+import { contentAwareFillAt } from '@core/effects/contentAwareFillVideo';
 import { resolvePathOps, applyPathOpChain, shapeOutline, type PolyRun } from '@core/scene/pathOps';
 import { corner } from '../../../packages/workspace/src/math/BezierPoint';
 import { resolveAnimators, evaluateTextAnimators } from '@core/text/textAnimators';
@@ -245,6 +246,10 @@ function readBase(node: SceneNode): {
   backdropBlur?: number;
   fill?: string; text?: string; fontSize: number;
   fontFamily?: string; fontWeight?: string; fontStyle?: string;
+  /** Variable-font wdth axis. */
+  fontWidth?: number;
+  /** Variable-font slnt axis. */
+  fontSlant?: number;
   letterSpacing?: number; lineHeight?: number; align?: string;
   paragraphSpacing?: number;
   strokeOverFill?: boolean;
@@ -262,6 +267,8 @@ function readBase(node: SceneNode): {
   let fontSize = 48;
   let fontFamily: string | undefined;
   let fontWeight: string | undefined;
+  let fontWidth: number | undefined;
+  let fontSlant: number | undefined;
   let fontStyle: string | undefined;
   let letterSpacing: number | undefined;
   let lineHeight: number | undefined;
@@ -294,6 +301,8 @@ function readBase(node: SceneNode): {
     if (typeof p.fontFamily === 'string') fontFamily = p.fontFamily;
     if (typeof p.fontWeight === 'string') fontWeight = p.fontWeight;
     else if (typeof p.fontWeight === 'number') fontWeight = String(p.fontWeight);
+    if (typeof p.fontWidth === 'number') fontWidth = p.fontWidth;
+    if (typeof p.fontSlant === 'number') fontSlant = p.fontSlant;
     if (typeof p.fontStyle === 'string') fontStyle = p.fontStyle;
     letterSpacing = num(p.letterSpacing) ?? letterSpacing;
     lineHeight = num(p.lineHeight) ?? lineHeight;
@@ -332,6 +341,8 @@ function readBase(node: SceneNode): {
     fontSize,
     fontFamily,
     fontWeight,
+    fontWidth,
+    fontSlant,
     fontStyle,
     letterSpacing,
     lineHeight,
@@ -1464,6 +1475,59 @@ export function buildSnapshot(
     return prefixLayerIds(nested.layers, `${node.id}::`);
   };
 
+  // Which layers must be fully materialized this frame. Invisible / un-soloed
+  // layers still occupy stack slots (mattes, paint order) but a 1×1 stub is
+  // enough — building geometry, effects and text for 10k hidden layers is the
+  // main per-frame cost once the scene tree is virtualized. Matte sources of
+  // layers that WILL draw stay in the full-build set so the matte still has
+  // real pixels.
+  const layerWillDraw = (n: SceneNode): boolean =>
+    n.visible !== false
+    && (!anySolo || n.solo === true)
+    && !(comp.forExport === true && readIsGuideLayer(n));
+
+  const needsFullBuild = new Set<string>();
+  {
+    const emitOrder: SceneNode[] = [];
+    for (const n of nodes) {
+      const k = readNodeKind(n);
+      if (k === 'group' || k === 'null' || k === 'camera' || k === 'audio') continue;
+      if (k === 'comp' && readCompCollapse(n)) continue;
+      if (isBooleanOperand(n)) continue;
+      if (!isLiveAt(n.id)) continue;
+      if (k === 'light' && comp.draft3d) continue;
+      emitOrder.push(n);
+    }
+    for (let i = 0; i < emitOrder.length; i++) {
+      const n = emitOrder[i]!;
+      if (!layerWillDraw(n)) continue;
+      needsFullBuild.add(n.id);
+      const m = readMatte(readNodeMatte(n));
+      if (!m) continue;
+      if (m.sourceId) needsFullBuild.add(m.sourceId);
+      else if (i + 1 < emitOrder.length) needsFullBuild.add(emitOrder[i + 1]!.id);
+    }
+  }
+
+  const emitInvisibleStub = (node: SceneNode): void => {
+    emitLayer({
+      id: node.id,
+      kind: 'shape',
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      depth: 0,
+      opacity: 0,
+      width: 1,
+      height: 1,
+      fill: '#000',
+      visible: false,
+      matte: readNodeMatte(node),
+    }, node);
+  };
+
   for (const node of nodes) {
     const kind = readNodeKind(node);
     if (kind === 'comp') {
@@ -1472,9 +1536,14 @@ export function buildSnapshot(
       // also mint a container — that would render its content twice, once
       // spliced and once as a card.
       const ref = readCompRef(node);
-      const innerLayers =
-        ref !== null && !readCompCollapse(node) ? nestedCompLayers(node, ref) : null;
-      if (innerLayers) emitLayer(buildPrecompContainer(node, innerLayers), node);
+      const sealed = ref !== null && !readCompCollapse(node);
+      if (sealed) {
+        if (!needsFullBuild.has(node.id)) {
+          emitInvisibleStub(node);
+        } else {
+          emitLayer(buildPrecompContainer(node, nestedCompLayers(node, ref) ?? undefined), node);
+        }
+      }
       continue;
     }
     // Groups / nulls / cameras / audio are structural — they never draw.
@@ -1497,6 +1566,12 @@ export function buildSnapshot(
 
     // Draft 3D: light layers draw nothing (their glow wash IS lighting).
     if (kind === 'light' && comp.draft3d) continue;
+
+    // Hidden / un-soloed: keep a stack stub, skip the expensive materialize.
+    if (!needsFullBuild.has(node.id)) {
+      emitInvisibleStub(node);
+      continue;
+    }
 
     // Light: a radial glow at its world position, composited (screen) to
     // brighten what's beneath. Intensity / radius are keyframeable.
@@ -2201,6 +2276,7 @@ export function buildSnapshot(
       isAdjustment: readNodeAdjustment(node) || undefined,
       quality: readNodeQuality(node) === 'draft' ? 'draft' : undefined,
       paint: readNodePaint(node) ?? undefined,
+      contentAwareFillSrc: contentAwareFillAt(node, remapOf(node.id)(t)) ?? undefined,
       sourceTime: (() => {
         const remapped = anim.sample(node.id, 'timeRemap', t) ?? anim.sample(node.id, 'precompTime', t);
         if (remapped !== undefined) return remapOf(node.id)(remapped);
@@ -2340,6 +2416,16 @@ export function buildSnapshot(
       fontWeight: (() => {
         const w = a?.get('fontWeight');
         return w !== undefined ? String(Math.max(1, Math.min(1000, w))) : base.fontWeight;
+      })(),
+      // Variable-font width / slant — Canvas uses font-variation-settings, not
+      // the font shorthand (see textFontVariationSettings).
+      fontWidth: (() => {
+        const w = a?.get('fontWidth');
+        return w !== undefined ? w : base.fontWidth;
+      })(),
+      fontSlant: (() => {
+        const s = a?.get('fontSlant');
+        return s !== undefined ? s : base.fontSlant;
       })(),
       fontStyle: base.fontStyle,
       letterSpacing: a?.get('letterSpacing') ?? base.letterSpacing,

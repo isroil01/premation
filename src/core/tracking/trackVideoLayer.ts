@@ -28,8 +28,10 @@ import { assetIdOf } from '@core/source/sourceInfo';
 import { useAssetStore } from '@stores/assetStore';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { demuxMp4 } from '@core/video/mp4Demuxer';
-import { ExactVideoSource, webCodecsAvailable } from '@core/video/exactVideoSource';
-import { lumaFromRGBA, type LumaPlane } from './patchMatch';
+import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
+import { ExactVideoSource, SequentialFrameReader, webCodecsAvailable } from '@core/video/exactVideoSource';
+import type { LumaPlane } from './patchMatch';
+import { lumaFromDecodedFrame, makeCanvasLumaReader } from './lumaExtract';
 import { trackPoints, type TrackSample } from './tracker';
 import { sourceDisplaySize } from './trackerSource';
 
@@ -79,19 +81,9 @@ export interface MultiVideoTrackResult {
   status: 'completed' | 'lost' | 'cancelled';
 }
 
-/** Draw a decoded frame once and hand back its luma. One canvas, reused. */
-function makeLumaReader(width: number, height: number): (frame: CanvasImageSource) => LumaPlane {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  return (frame) => {
-    if (!ctx) throw new Error('2D context unavailable');
-    ctx.drawImage(frame, 0, 0, width, height);
-    const img = ctx.getImageData(0, 0, width, height);
-    return lumaFromRGBA(img.data, width, height);
-  };
-}
+// Luma extraction lives in lumaExtract.ts: Y-plane copyTo fast path for raw
+// VideoFrames (the streaming reader hands those over), canvas readback for
+// everything else.
 
 export async function trackVideoLayerPoints(req: MultiVideoTrackRequest): Promise<MultiVideoTrackResult> {
   if (!webCodecsAvailable()) {
@@ -110,7 +102,9 @@ export async function trackVideoLayerPoints(req: MultiVideoTrackRequest): Promis
   // proxy switch is on is the "proxy silently in use" bug all over again.
   const res = await fetch(asset.src);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
-  const demuxed = await demuxMp4(await res.arrayBuffer());
+  const buf = await res.arrayBuffer();
+  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
   const source = new ExactVideoSource(demuxed);
 
   try {
@@ -145,16 +139,59 @@ export async function trackVideoLayerPoints(req: MultiVideoTrackRequest): Promis
     const toCodedX = demuxed.codedWidth / display.width;
     const toCodedY = demuxed.codedHeight / display.height;
 
-    const readLuma = makeLumaReader(demuxed.codedWidth, demuxed.codedHeight);
-    const result = await trackPoints({
-      frameAt: async (idx) => readLuma((await source.frameAt(idx)) as unknown as CanvasImageSource),
-      fromFrame: srcFrom,
-      toFrame: srcTo,
-      points: req.points.map((p) => ({ x: p.x * toCodedX, y: p.y * toCodedY })),
-      featureHalf: req.featureHalf,
-      searchHalf: req.searchHalf,
-      onProgress: (done, total) => req.onProgress?.(done / total),
-    });
+    const readLuma = makeCanvasLumaReader(demuxed.codedWidth, demuxed.codedHeight);
+    const toLuma = (frame: unknown): Promise<LumaPlane> =>
+      lumaFromDecodedFrame(frame, demuxed.codedWidth, demuxed.codedHeight, readLuma);
+    // Forward walks stream through a SequentialFrameReader: each source frame
+    // is decoded exactly once and closed after its luma copy. The random-
+    // access frameAt path here was quadratic in GOP length AND pinned enough
+    // decoder-pool frames to hang flush() — the "tracking freezes at 2–4%"
+    // bug on real (long-GOP) footage. Backward walks (reversed clips) keep
+    // the random-access path; they are rare and correctness comes first.
+    // prefer-software: the tracker reads EVERY pixel back to the CPU, and a
+    // hardware frame's copyTo pays ~60ms of GPU sync at 4K where a software
+    // frame memcpys in ~2ms. Decoding is slower in software but the total is
+    // ~3× faster — and the decoded pixels are spec-identical. Probed first:
+    // an unsupported preference must degrade to the default, not kill the walk.
+    let softwareOk = false;
+    try {
+      const vd = (globalThis as unknown as {
+        VideoDecoder?: { isConfigSupported?: (c: object) => Promise<{ supported?: boolean }> };
+      }).VideoDecoder;
+      const sup = await vd?.isConfigSupported?.({
+        codec: demuxed.codec,
+        codedWidth: demuxed.codedWidth,
+        codedHeight: demuxed.codedHeight,
+        ...(demuxed.description ? { description: demuxed.description } : {}),
+        hardwareAcceleration: 'prefer-software',
+      });
+      softwareOk = sup?.supported === true;
+    } catch {
+      // probe unavailable — stay on the default
+    }
+    const reader = srcTo >= srcFrom
+      ? new SequentialFrameReader(
+          demuxed, srcFrom, srcTo, undefined,
+          softwareOk ? { hardwareAcceleration: 'prefer-software' } : {},
+        )
+      : null;
+    const frameAt = reader
+      ? async (idx: number) => toLuma(await reader.frameAt(idx))
+      : async (idx: number) => toLuma(await source.frameAt(idx));
+    let result;
+    try {
+      result = await trackPoints({
+        frameAt,
+        fromFrame: srcFrom,
+        toFrame: srcTo,
+        points: req.points.map((p) => ({ x: p.x * toCodedX, y: p.y * toCodedY })),
+        featureHalf: req.featureHalf,
+        searchHalf: req.searchHalf,
+        onProgress: (done, total) => req.onProgress?.(done / total),
+      });
+    } finally {
+      reader?.close();
+    }
 
     // Read the comp samples out of the source-frame walk. A comp frame whose
     // source frame the walk never reached (lost/cancelled early) is dropped —

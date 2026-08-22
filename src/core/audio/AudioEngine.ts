@@ -53,6 +53,17 @@ export interface AudioLayerState {
   /** In/out trim within the clip, seconds. */
   inSec: number;
   outSec: number;
+  /**
+   * Playback rate for varispeed (tape-style). `1` = natural.
+   * Stretch 200% (half-speed picture) → `0.5`. Pitch follows rate.
+   */
+  playbackRate?: number;
+  /**
+   * Layer-time reverse: play the source window backwards (same buffer
+   * reverse path as the Backwards effect). Combined with `playbackRate`
+   * for stretch+reverse.
+   */
+  retimeReverse?: boolean;
   /** Muted layers decode (for waveform) but never sound. */
   muted: boolean;
 }
@@ -299,7 +310,9 @@ class AudioEngine {
   private voiceKey(l: AudioLayerState): string {
     // `levelAnimated` is part of the identity: turning keyframes on or off
     // changes how the voice must be scheduled, not just its value.
-    return `${l.assetId}|${l.levelDb}|${l.levelAnimated ? 'a' : 's'}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}`;
+    const rate = l.playbackRate ?? 1;
+    const rev = l.retimeReverse ? 'r' : 'f';
+    return `${l.assetId}|${l.levelDb}|${l.levelAnimated ? 'a' : 's'}|${l.startSec}|${l.inSec}|${l.outSec}|${l.muted}|${rate}|${rev}`;
   }
 
   /** Stable per-voice identity — the clip id when the caller supplies one. */
@@ -344,13 +357,20 @@ class AudioEngine {
       // the span it was scheduled with; a bar trimmed shorter mid-playback (or
       // a playhead that jumped past the tail) has to be caught here or the
       // clip keeps sounding after its bar ends.
+      //
+      // With playbackRate (stretch), buffer time advances at `rate` × wall
+      // time: a 200% stretch (rate 0.5) consumes half a second of source per
+      // second of timeline.
+      const rate = Math.max(0.01, l.playbackRate ?? 1);
       const localT = timeSec - l.startSec;
-      const wanted0 = l.inSec + localT;
-      if (localT < 0 || wanted0 >= (l.outSec > 0 ? l.outSec : Infinity)) {
+      const outSec = l.outSec > 0 ? l.outSec : Infinity;
+      const barLen = Math.max(0, (l.outSec > 0 ? l.outSec : 0) - l.inSec);
+      const wanted0 = l.inSec + localT * rate;
+      if (localT < 0 || (barLen > 0 && localT >= barLen) || wanted0 >= outSec) {
         this.stopVoice(voiceId);
         continue;
       }
-      const predicted = voice.startOffset + (ctx.currentTime - voice.startCtxTime);
+      const predicted = voice.startOffset + (ctx.currentTime - voice.startCtxTime) * rate;
       if (Math.abs(wanted0 - predicted) > SEEK_TOLERANCE) this.stopVoice(voiceId);
     }
 
@@ -360,10 +380,12 @@ class AudioEngine {
       if (this.voices.has(voiceId)) continue;
       const asset = this.assets.get(l.assetId);
       if (!asset) continue; // not decoded yet; a later sync will start it
+      const rate = Math.max(0.01, l.playbackRate ?? 1);
       const localT = timeSec - l.startSec;
-      const offset = l.inSec + localT;
       const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
-      if (localT < 0 || offset >= outSec) continue; // playhead outside the clip
+      const barLen = Math.max(0, outSec - l.inSec);
+      const offset = l.inSec + localT * rate;
+      if (localT < 0 || localT >= barLen || offset >= outSec) continue;
       this.startVoice(voiceId, l, asset, offset);
     }
   }
@@ -377,15 +399,19 @@ class AudioEngine {
   private startVoice(voiceId: string, l: AudioLayerState, asset: LoadedAsset, offset: number): void {
     const ctx = this.ctx!;
     const source = ctx.createBufferSource();
-    // Backwards reverses the BUFFER, so it is decided before the graph exists.
-    const reversed = hasBackwards(l.effects);
+    // Layer-time reverse OR the Backwards effect — same buffer flip. Decided
+    // before the graph exists.
+    const reversed = l.retimeReverse === true || hasBackwards(l.effects);
     source.buffer = reversed ? reverseBuffer(ctx, asset.buffer) : asset.buffer;
+    const rate = Math.max(0.01, l.playbackRate ?? 1);
+    if (source.playbackRate) source.playbackRate.value = rate;
     const gain = ctx.createGain();
     // Effects sit BEFORE the gain, so the layer's level (and its automation)
     // has the last word on loudness — a delay's feedback cannot outrun a fade
     // to silence. Built by the same function the offline mixdown calls; see
     // audioEffects.ts for why that is one function and not two.
     const outSec = l.outSec > 0 ? l.outSec : asset.buffer.duration;
+    // Remaining BUFFER seconds; wall duration = remaining / rate.
     const remaining = Math.max(0, outSec - offset);
     /*
       TWO offsets, and they are not interchangeable.
@@ -403,7 +429,10 @@ class AudioEngine {
     const readAt = reversed
       ? backwardsOffset(asset.buffer.duration, clipAt, remaining)
       : clipAt;
-    const resumeCompSec = l.startSec + (clipAt - l.inSec);
+    // Comp time for this buffer offset: invert the rate mapping.
+    const resumeCompSec = l.startSec + (clipAt - l.inSec) / rate;
+    // Wall-clock length of this voice window.
+    const remainingWall = remaining / rate;
 
     /*
       Built HERE rather than above, because the chain needs the voice window to
@@ -414,7 +443,7 @@ class AudioEngine {
     const chain = connectAudioEffects(ctx, source, l.effects, {
       nodeId: l.nodeId,
       startCompSec: resumeCompSec,
-      durationSec: remaining,
+      durationSec: remainingWall,
       whenCtx: ctx.currentTime,
     });
     chain.node.connect(gain).connect(this.master ?? ctx.destination);
@@ -430,12 +459,13 @@ class AudioEngine {
     // restarts from its beginning every time the transport moves. (Computed
     // above, because the effect chain schedules its own curves from the same
     // window.)
-    const ramp = buildParamRamp(l.nodeId, l.levelDb, resumeCompSec, remaining, {
+    const ramp = buildParamRamp(l.nodeId, l.levelDb, resumeCompSec, remainingWall, {
       animated: l.levelAnimated === true,
     });
     applyRamp(gain.gain, ramp, ctx.currentTime);
 
     try {
+      // duration is BUFFER seconds; playbackRate stretches wall time.
       source.start(ctx.currentTime, readAt, remaining);
     } catch {
       return;
@@ -451,7 +481,7 @@ class AudioEngine {
     for (const s of chain.sources) {
       try {
         s.start(ctx.currentTime);
-        s.stop(ctx.currentTime + remaining);
+        s.stop(ctx.currentTime + remainingWall);
       } catch {
         /* already started — cannot happen for a freshly built chain */
       }

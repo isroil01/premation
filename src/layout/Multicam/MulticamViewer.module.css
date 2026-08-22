@@ -1,0 +1,74 @@
+/* Multicam Viewer — angle grid + cut buttons. */
+
+.grid {
+  display: grid;
+  gap: 8px;
+  /* 2 columns up to 4 angles, 3 beyond — set inline from the angle count. */
+}
+
+.cell {
+  position: relative;
+  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  overflow: hidden;
+  padding: 0;
+  background: #000;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+}
+
+.cell:focus-visible {
+  outline: 2px solid var(--color-primary, #4c8dff);
+  outline-offset: 1px;
+}
+
+.cellLive {
+  border-color: var(--color-primary, #4c8dff);
+  box-shadow: 0 0 0 1px var(--color-primary, #4c8dff);
+}
+
+.video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #000;
+  pointer-events: none;
+}
+
+.label {
+  position: absolute;
+  left: 6px;
+  top: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  pointer-events: none;
+}
+
+.labelLive {
+  background: var(--color-primary, #4c8dff);
+}
+
+.hint {
+  margin-top: 8px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.55));
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.syncNote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.55));
+}

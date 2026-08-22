@@ -245,8 +245,17 @@ export interface MotionEditorApi {
         fps: number;
         hasAudio?: boolean;
         quality?: 'high' | 'medium' | 'draft';
+        /** ST.2084 PQ or HLG — HEVC 10-bit with BT.2020 tags when ffmpeg has libx265. */
+        hdr?: 'pq' | 'hlg';
+        /** Measured MaxCLL / MaxFALL + mastering display (HDR10 SEI foothold). */
+        hdrMastering?: {
+          maxCll: number;
+          maxFall: number;
+          displayMaxNits: number;
+          displayMinNits: number;
+        };
       },
-    ): Promise<{ path: string; frames: number }>;
+    ): Promise<{ path: string; frames: number; videoCodec?: string }>;
     /** Kill an in-flight encode (Cancel / queue Pause). */
     cancel?(jobId: string): Promise<void>;
     /** Native save dialog, then move the encoded file there. Null if cancelled. */

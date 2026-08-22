@@ -185,7 +185,7 @@ export function EmptyCompositionView(): JSX.Element {
       <input
         ref={fileInputRef}
         type="file"
-        accept="video/*,image/*,audio/*,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg,.gif,.svg,.mp3,.wav,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv"
+        accept="video/*,image/*,audio/*,.mp4,.mov,.webm,.m4v,.png,.jpg,.jpeg,.gif,.svg,.mp3,.wav,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv,.dng,.cr2,.cr3,.nef,.arw,.exr,.dpx,.psd"
         style={{ display: 'none' }}
         onChange={(e) => void handleFileSelected(e)}
       />

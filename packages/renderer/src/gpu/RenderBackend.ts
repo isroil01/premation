@@ -156,6 +156,21 @@ export interface RenderBackend {
   setFrameClip?(rect: { x: number; y: number; width: number; height: number } | null): void;
   /** Present the frame to the surface (no-op for offscreen/null). */
   present(): void;
+  /**
+   * Optional float readback of a render target (linear working-space RGBA).
+   * Used by EXR export. Backends without float RT support return null.
+   */
+  readRenderTargetFloat?(
+    target: RenderTargetHandle,
+    width: number,
+    height: number,
+  ): Float32Array | null;
+  /** Async float readback (WebGPU). Prefer this from export loops. */
+  readRenderTargetFloatAsync?(
+    target: RenderTargetHandle,
+    width: number,
+    height: number,
+  ): Promise<Float32Array | null>;
 
   resize(width: number, height: number, devicePixelRatio: number): void;
 

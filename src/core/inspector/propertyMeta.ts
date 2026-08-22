@@ -71,6 +71,10 @@ export type PropertyGroup =
   | 'text'
   | 'geometry'
   | 'controls'
+  /** AE's Material Options — how a 3D layer answers lights and shadows. */
+  | 'material'
+  /** AE's Audio group. */
+  | 'audio'
   | 'other';
 
 export interface PropertyMeta {
@@ -90,6 +94,21 @@ export interface PropertyMeta {
   /** The value a reset restores. `null` for non-numeric/unknown. */
   defaultValue: number | string | boolean | null;
   resettable: boolean;
+  /**
+   * FALSE for a property this registry describes but that cannot hold a
+   * keyframe — the render path reads its stored value once, not per frame.
+   *
+   * Material Options are the case: `readNodeMaterial` is a static read, so a
+   * track on `ambient` would be sampled by nobody. They are described here
+   * anyway because the timeline and the inspector both need their labels,
+   * units and ranges; what they must NOT get is a stopwatch. Absent means
+   * keyframeable, which is nearly everything.
+   *
+   * `animatablePropertyReaders.test.ts` reads this flag to decide whether a
+   * property belongs in its sweep, which is why it is stated on the entry
+   * rather than kept as a list of names in the test.
+   */
+  keyframeable?: false;
   /**
    * Multiply the STORED value by this to get the DISPLAYED one.
    *
@@ -134,6 +153,12 @@ const PCT = (label: string, group: PropertyGroup, order: number, max = 100): Met
   label, group, type: 'percent', unit: '%', min: 0, max, step: 1, precision: 1, defaultValue: max, resettable: true, order,
 });
 
+/** A Material Option: a percentage the renderer reads STATICALLY (see below). */
+const MATERIAL = (label: string): MetaSpec => ({
+  ...PCT(label, 'material', ORDER.material),
+  keyframeable: false,
+});
+
 // ── Order slots (AE's Transform order, then the rest) ────────────────
 
 export const ORDER = {
@@ -154,6 +179,11 @@ export const ORDER = {
   text: 14,
   controls: 15,
   other: 16,
+  // Appended rather than slotted in beside `transform`, so no existing entry's
+  // order number changes. The timeline groups these under their own headings
+  // anyway; the number only orders rows WITHIN a group.
+  material: 17,
+  audio: 18,
 } as const;
 
 // ── The static table ────────────────────────────────────────────────
@@ -311,16 +341,43 @@ const STATIC: Record<string, MetaSpec> = {
   fontSize: { ...PX('Font Size', 'text', ORDER.text), min: 1, defaultValue: 48 },
   // Variable-font weight, continuous 1–1000 (AE 26's keyframeable wght axis).
   // Canvas honours fractional numeric weights on variable fonts through the
-  // ordinary font shorthand, which is what makes this animatable at all; the
-  // other axes (wdth/slnt) do not survive that shorthand and are filed, not
-  // faked. Static (non-variable) fonts snap to their nearest real weight —
-  // the browser's fallback, not ours.
+  // ordinary font shorthand. Width/slant use font-variation-settings
+  // (see textFontVariationSettings) so they survive rasterization.
   fontWeight: {
     label: 'Font Weight', group: 'text', type: 'number', unit: '',
     min: 1, max: 1000, step: 1, precision: 0, defaultValue: 400, resettable: true, order: ORDER.text,
   },
+  // Variable-font wdth / slnt — rasterized via font-variation-settings.
+  fontWidth: {
+    label: 'Font Width', group: 'text', type: 'number', unit: '',
+    min: 50, max: 200, step: 1, precision: 0, defaultValue: 100, resettable: true, order: ORDER.text,
+  },
+  fontSlant: {
+    label: 'Font Slant', group: 'text', type: 'number', unit: '°',
+    min: -15, max: 0, step: 0.5, precision: 1, defaultValue: 0, resettable: true, order: ORDER.text,
+  },
   letterSpacing: PX('Letter Spacing', 'text', ORDER.text),
   lineHeight: { ...MULT('Line Height', 'text', ORDER.text), min: 0, defaultValue: 1.2, step: 0.01 },
+
+  // Material Options (3D). Stored as flat props on the Transform component and
+  // read by `readNodeMaterial` — a STATIC read, once per frame, off the stored
+  // value. So they are described here for their labels, units and ranges, and
+  // marked `keyframeable: false`: the timeline lists them and shows no
+  // stopwatch. Making them animate is a render-path change (thread the sampled
+  // values through `readNodeMaterial`), not a registry one.
+  ambient: MATERIAL('Ambient'),
+  diffuse: MATERIAL('Diffuse'),
+  specular: { ...MATERIAL('Specular Intensity'), defaultValue: 0 },
+  shininess: { ...MATERIAL('Shininess'), defaultValue: 5 },
+  metal: { ...MATERIAL('Metal'), defaultValue: 0 },
+  lightTransmission: { ...MATERIAL('Light Transmission'), defaultValue: 0 },
+
+  // Audio Levels, in decibels — the one audio property that keyframes today
+  // (`audioParams.ts` samples it per frame and schedules the gain ramp).
+  audioLevelDb: {
+    label: 'Audio Levels', group: 'audio', type: 'number', unit: 'dB',
+    min: -60, max: 12, step: 0.5, precision: 1, defaultValue: 0, resettable: true, order: ORDER.audio,
+  },
 };
 
 // The synthesized Position group row the timeline shows when X/Y are not

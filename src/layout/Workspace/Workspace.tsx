@@ -291,7 +291,7 @@ export function WorkspaceViewport({
     if (files && files.length > 0) {
       e.preventDefault();
       const media = Array.from(files).filter((f) =>
-        /^(video|image|audio)\//.test(f.type) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|mp3|wav|m4a|aac|ogg|mxf|avi|wmv|flv|mts|m2ts|mpg|mpeg|vob|ts|mkv)$/i.test(f.name));
+        /^(video|image|audio)\//.test(f.type) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|exr|mp3|wav|m4a|aac|ogg|mxf|avi|wmv|flv|mts|m2ts|mpg|mpeg|vob|ts|mkv)$/i.test(f.name));
       if (media.length === 0) {
         useUIStore.getState().notify({ level: 'info', message: 'Drop video, image or audio files.', durationMs: 2600 });
         return;

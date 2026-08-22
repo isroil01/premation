@@ -468,6 +468,13 @@ export function TopNav(): JSX.Element {
       icon: 'mask-circle',
       onSelect: () => setTool('mask-ellipse')
     });
+    overflowItems.push({
+      type: 'item',
+      id: 'mask-pen-item',
+      label: 'Pen Mask Tool',
+      icon: 'mask-pen',
+      onSelect: () => setTool('mask-pen')
+    });
   }
 
   if (hidePuppet) {

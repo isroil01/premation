@@ -461,6 +461,189 @@ export class Timeline {
     return true;
   }
 
+  /**
+   * Ripple-delete: remove a layer and shift every later clip on the same track
+   * left by its duration, closing the gap (NLE ripple). Undo restores the
+   * removed layer and every shifted neighbour.
+   */
+  rippleRemoveLayer(id: string): boolean {
+    const layer = this.layerIndex.get(id);
+    if (!layer) return false;
+    const track = this.trackIndex.get(layer.trackId);
+    if (!track) return false;
+    const index = track.indexOfLayer(id);
+    const delta = layer.clip.duration;
+    const cut = layer.clip.start;
+    const later = track.layers
+      .filter((l) => l.id !== id && l.clip.start >= cut)
+      .map((l) => ({ id: l.id, prev: l.clip.toJSON() }));
+
+    this.history.run({
+      label: 'Ripple Delete Layer',
+      do: () => {
+        this.detachLayer(id);
+        for (const { id: lid } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip.shift(-delta);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+      undo: () => {
+        this.attachLayer(layer, track, index);
+        for (const { id: lid, prev } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip = Clip.fromJSON(prev);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Ripple-trim the tail: shorten the layer's end and pull later clips left by
+   * the same amount. Returns false when locked or the trim is a no-op.
+   */
+  rippleTrimEnd(id: string, newEnd: number, minDuration = 1): boolean {
+    const layer = this.layerIndex.get(id);
+    if (!layer || layer.locked) return false;
+    const track = this.trackIndex.get(layer.trackId);
+    if (!track) return false;
+    const prevSelf = layer.clip.toJSON();
+    const trial = layer.clip.clone();
+    trial.trimEnd(newEnd, minDuration);
+    const delta = prevSelf.duration - trial.duration;
+    if (delta <= 0) return false;
+    const later = track.layers
+      .filter((l) => l.id !== id && l.clip.start >= prevSelf.start + prevSelf.duration)
+      .map((l) => ({ id: l.id, prev: l.clip.toJSON() }));
+
+    const nextSelf = trial.toJSON();
+    this.history.run({
+      label: 'Ripple Trim Layer',
+      do: () => {
+        layer.clip = Clip.fromJSON(nextSelf);
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+        for (const { id: lid } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip.shift(-delta);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+      undo: () => {
+        layer.clip = Clip.fromJSON(prevSelf);
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+        for (const { id: lid, prev } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip = Clip.fromJSON(prev);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Ripple-trim the head: discard/extend source from the in-point while keeping
+   * the bar's timeline start fixed, then shift later clips by the duration
+   * change (NLE ripple edit on the left edge).
+   */
+  rippleTrimStart(id: string, newStart: number, minDuration = 1): boolean {
+    const layer = this.layerIndex.get(id);
+    if (!layer || layer.locked) return false;
+    const track = this.trackIndex.get(layer.trackId);
+    if (!track) return false;
+    const prevSelf = layer.clip.toJSON();
+    const trial = layer.clip.clone();
+    // Ordinary trimStart moves the bar's start; ripple keeps start fixed and
+    // only changes duration/sourceIn, then ripples neighbours by Δduration.
+    trial.trimStart(newStart, minDuration);
+    const delta = prevSelf.duration - trial.duration; // >0 shorten, <0 extend
+    if (delta === 0) return false;
+    const nextSelf = {
+      ...trial.toJSON(),
+      start: prevSelf.start,
+      duration: trial.duration,
+      sourceIn: trial.sourceIn,
+    };
+    const oldEnd = prevSelf.start + prevSelf.duration;
+    const later = track.layers
+      .filter((l) => l.id !== id && l.clip.start >= oldEnd)
+      .map((l) => ({ id: l.id, prev: l.clip.toJSON() }));
+
+    this.history.run({
+      label: 'Ripple Trim Start',
+      do: () => {
+        layer.clip = Clip.fromJSON(nextSelf);
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+        for (const { id: lid } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip.shift(-delta);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+      undo: () => {
+        layer.clip = Clip.fromJSON(prevSelf);
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+        for (const { id: lid, prev } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip = Clip.fromJSON(prev);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Ripple-insert empty time on a track: push every clip that starts at/after
+   * `atFrame` to the right by `durationFrames` (NLE insert edit / open gap).
+   */
+  rippleInsertGap(trackId: string, atFrame: number, durationFrames: number): boolean {
+    if (!(durationFrames > 0)) return false;
+    const track = this.trackIndex.get(trackId);
+    if (!track) return false;
+    const later = track.layers
+      .filter((l) => l.clip.start >= atFrame)
+      .map((l) => ({ id: l.id, prev: l.clip.toJSON() }));
+    if (later.length === 0) return false;
+
+    this.history.run({
+      label: 'Ripple Insert Gap',
+      do: () => {
+        for (const { id: lid } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip.shift(durationFrames);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+      undo: () => {
+        for (const { id: lid, prev } of later) {
+          const n = this.layerIndex.get(lid);
+          if (n) {
+            n.clip = Clip.fromJSON(prev);
+            this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+          }
+        }
+      },
+    });
+    return true;
+  }
+
   /** Move a layer to another track (or reorder within a track). */
   moveLayer(id: string, toTrackId: string, index?: number): boolean {
     const layer = this.layerIndex.get(id);
@@ -596,6 +779,103 @@ export class Timeline {
       undo: () => {
         layer.clip = Clip.fromJSON(prevClip);
         this.events.emit('LayerTrimmed', { layer });
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Slip a layer: shift `sourceIn` by `deltaFrames` without moving the bar.
+   * Undoable. Returns false when locked or the slip is a no-op after clamp.
+   */
+  slipLayer(id: string, deltaFrames: number): boolean {
+    const layer = this.layerIndex.get(id);
+    if (!layer || layer.locked) return false;
+    const prevClip = layer.clip.toJSON();
+    const trial = layer.clip.clone();
+    trial.slip(deltaFrames);
+    if (trial.sourceIn === prevClip.sourceIn) return false;
+    const nextClip = trial.toJSON();
+    this.history.run({
+      label: 'Slip Layer',
+      do: () => {
+        layer.clip = Clip.fromJSON(nextClip);
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+      },
+      undo: () => {
+        layer.clip = Clip.fromJSON(prevClip);
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Slide a layer: move its bar by `deltaFrames` while trimming abutting
+   * neighbors on the same track so the edit stays gapless (NLE slide).
+   * After a split, this is how you roll the cut without opening a hole.
+   * Undoable. Returns false when locked, no-op, or no room to slide.
+   */
+  slideLayer(id: string, deltaFrames: number, minDuration = 1): boolean {
+    const layer = this.layerIndex.get(id);
+    if (!layer || layer.locked || deltaFrames === 0) return false;
+    const track = this.trackIndex.get(layer.trackId);
+    if (!track) return false;
+
+    const ordered = [...track.layers].sort((a, b) => a.clip.start - b.clip.start);
+    const idx = ordered.findIndex((l) => l.id === id);
+    if (idx < 0) return false;
+    const prev = ordered[idx - 1];
+    const next = ordered[idx + 1];
+    const clip = layer.clip;
+
+    // Abut within one frame — split clips and tight edits count; open gaps do not.
+    const abuts = (aEnd: number, bStart: number): boolean => Math.abs(aEnd - bStart) <= 1;
+    const abutsPrev = !!prev && abuts(prev.clip.end, clip.start);
+    const abutsNext = !!next && abuts(clip.end, next.clip.start);
+
+    let d = deltaFrames;
+    if (d > 0) {
+      if (abutsNext && next) d = Math.min(d, next.clip.duration - minDuration);
+      else if (next) d = Math.min(d, Math.max(0, next.clip.start - clip.end));
+    } else {
+      d = Math.max(d, -clip.start);
+      if (abutsPrev && prev) d = Math.max(d, -(prev.clip.duration - minDuration));
+      else if (prev) d = Math.max(d, -Math.max(0, clip.start - prev.clip.end));
+    }
+    d = Math.trunc(d);
+    if (d === 0) return false;
+
+    const selfPrev = clip.toJSON();
+    const neighborPrev = new Map<string, ReturnType<Clip['toJSON']>>();
+    if (abutsPrev && prev) neighborPrev.set(prev.id, prev.clip.toJSON());
+    if (abutsNext && next) neighborPrev.set(next.id, next.clip.toJSON());
+
+    this.history.run({
+      label: 'Slide Layer',
+      do: () => {
+        if (abutsPrev && prev) prev.clip.trimEnd(prev.clip.end + d, minDuration);
+        if (abutsNext && next) next.clip.trimStart(next.clip.start + d, minDuration);
+        clip.shift(d);
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+        if (prev && neighborPrev.has(prev.id)) {
+          this.events.emit('LayerUpdated', { layer: prev, changed: 'clip' });
+        }
+        if (next && neighborPrev.has(next.id)) {
+          this.events.emit('LayerUpdated', { layer: next, changed: 'clip' });
+        }
+      },
+      undo: () => {
+        layer.clip = Clip.fromJSON(selfPrev);
+        for (const [nid, data] of neighborPrev) {
+          const n = this.layerIndex.get(nid);
+          if (n) n.clip = Clip.fromJSON(data);
+        }
+        this.events.emit('LayerUpdated', { layer, changed: 'clip' });
+        for (const nid of neighborPrev.keys()) {
+          const n = this.layerIndex.get(nid);
+          if (n) this.events.emit('LayerUpdated', { layer: n, changed: 'clip' });
+        }
       },
     });
     return true;

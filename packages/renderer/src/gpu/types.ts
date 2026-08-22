@@ -108,7 +108,15 @@ export interface BufferDescriptor {
 export type TextureSource = (
   | { type: 'bitmap'; bitmap: ImageBitmap }
   | { type: 'video'; video: HTMLVideoElement }
-  | { type: 'buffer'; data: ArrayBufferView; width: number; height: number }
+  | {
+      type: 'buffer';
+      data: ArrayBufferView;
+      width: number;
+      height: number;
+      /** Pixel layout of `data`. Default `rgba8unorm` (4 bytes/texel).
+       *  `rgba32float` expects a Float32Array (or view) of length width*height*4. */
+      format?: TextureFormat;
+    }
   | { type: 'canvas'; canvas: HTMLCanvasElement | OffscreenCanvas }
 ) & {
   /**

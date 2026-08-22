@@ -334,8 +334,10 @@ not looking through the shot camera), and under Draft 3D.
   earlier version of this section claimed the opposite; see `EDITOR_REFERENCE.md`
   §5 (2026-08-10) for the correction and `retiredDocClaims.test.ts` for the guard
   that now keeps it corrected.
-- **No camera tracking or 3D camera solve.** There is zero tracker code in the
-  repo. This is a direction decision, not an omission to be fixed casually.
+- **Camera tracking & planar 3D solve.** Point / planar / mesh / Smooth Stabilize
+  live under `src/core/tracking/`; `applyPlanarCameraSolve` keys a one-node
+  camera from a tracked plane (homography decomposition — not full SfM).
+  Subspace warp + rolling-shutter footholds are in `subspaceWarp.ts`.
 - **Rotation is three scalars, not two groups.** AE splits a camera's rotation
   into Orientation and X/Y/Z Rotation; here `orientationX/Y/Z` are the single
   set, composing as offsets onto the base aim (§4.3). The expressible moves are

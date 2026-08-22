@@ -219,7 +219,7 @@ export class RenderGraph {
     return map;
   }
 
-  execute(args: RenderGraphExecuteArgs): void {
+  execute(args: RenderGraphExecuteArgs): Map<string, RenderTargetHandle> {
     const order = this.compile();
     const targetMap = this.resolveTargets(
       args.services.backend,
@@ -245,6 +245,7 @@ export class RenderGraph {
       args.services.commands.clear();
       pass.execute(ctx);
     }
+    return targetMap;
   }
 
   get passNames(): string[] {

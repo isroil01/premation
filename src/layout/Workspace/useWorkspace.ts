@@ -307,9 +307,22 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     backendRef.current = backend;
 
     // AnimationChanged revision — part of the cache key so a keyframe edit
-    // during a playing loop invalidates every cached frame.
+    // during a playing loop invalidates every cached frame. Media decode
+    // completions (video frames landing, texture uploads) also emit
+    // AnimationChanged but must NOT bump this — doing so cleared the RAM
+    // preview cache on every decoded frame and playback could never warm up.
     let animRev = 0;
+    /** Bumped when the playhead loops backward so stale inexact video pixels
+     *  cached on the first pass are not blitted on the second. */
+    let playbackLoopRev = 0;
+    let lastPlaybackFrame = -1;
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
+
+    const isMediaDecodeRepaint = (nodeId?: string): boolean => {
+      if (!nodeId) return false;
+      if (nodeId === '__texture__') return true;
+      return nodeId.startsWith('blob:') || nodeId.startsWith('motion-blob:');
+    };
 
     const onionPainter = createOnionSkinPainter({
       content: () => contentCanvasRef?.current ?? null,
@@ -348,8 +361,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const ws = useWorkspaceStore.getState();
       const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : null;
       const playing = tab?.playing === true;
+      b.setPlaybackMode?.(playing);
       const fps = compRef.current.fps || 60;
       const frame = Math.round(timeRef.current * fps);
+      if (playing) {
+        if (lastPlaybackFrame >= 0 && frame < lastPlaybackFrame) playbackLoopRev += 1;
+        lastPlaybackFrame = frame;
+      }
       // Everything that changes pixels goes in the key; a change clears the RAM
       // cache wholesale. Built from scalars rather than JSON.stringify — this
       // runs every frame while playing, including on the cache-hit path below.
@@ -379,6 +397,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const invalidationKey = [
         contentKey, focusKeyRef.current,
         compRef.current.id, compRef.current.width, compRef.current.height, fps,
+        playbackLoopRev,
         camera3dModeRef.current, draft3dRef.current ? 1 : 0,
         useRenderQualityStore.getState().resolution,
         view.scale, view.offsetX, view.offsetY,
@@ -582,9 +601,16 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     });
 
     // Content also depends on the animation engine (keyframe edits, playback).
-    const animSub = getEventBus().on('AnimationChanged', () => {
-      animRev++; // invalidates the frame cache key
-      controller.requestRender();
+    const animSub = getEventBus().on('AnimationChanged', (payload) => {
+      if (!isMediaDecodeRepaint(payload?.nodeId)) animRev++;
+      // During playback the playhead pump already re-renders every frame;
+      // decode-landing repaints on top of that were a render storm.
+      const tabPlaying = useWorkspaceStore.getState().activeTabId
+        ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.playing
+        : false;
+      if (!isMediaDecodeRepaint(payload?.nodeId) || !tabPlaying) {
+        controller.requestRender();
+      }
     });
 
     const nodeSub = getEventBus().on('NodeUpdated', () => {
@@ -600,6 +626,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (playing === wasPlaying) return;
       wasPlaying = playing;
       if (!playing) {
+        lastPlaybackFrame = -1;
         cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
         controller.requestRender();
       }

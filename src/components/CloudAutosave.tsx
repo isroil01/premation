@@ -21,6 +21,8 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>();
   const inFlightRef = useRef(false);
   const armedRef = useRef(false);
+  // A change arrived while still arming — save once armed, don't drop it.
+  const pendingRef = useRef(false);
   // Consecutive failure count — resets to 0 on success.
   const failureCountRef = useRef(0);
 
@@ -28,6 +30,17 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
     // Arm after initial delay
     armTimerRef.current = setTimeout(() => {
       armedRef.current = true;
+      // Changes during the arm window are DEFERRED, not dropped. The window
+      // exists so the load's own restore events don't hammer a save, but the
+      // "start from a video" footage import lands right inside it — dropping
+      // that event meant the inserted clip was never persisted, and a project
+      // created from an upload REOPENED AS AN EMPTY SCENE unless the user
+      // happened to edit something afterwards. One possibly-redundant save of
+      // a freshly loaded doc is the cheap end of that trade.
+      if (pendingRef.current) {
+        pendingRef.current = false;
+        schedule();
+      }
     }, AUTOSAVE_DEBOUNCE_MS);
 
     const flush = async () => {
@@ -64,7 +77,12 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
     };
 
     const schedule = () => {
-      if (!armedRef.current) return;
+      if (!armedRef.current) {
+        // Defer, don't drop — the arm callback above schedules this change
+        // the moment the window closes.
+        pendingRef.current = true;
+        return;
+      }
       if (timerRef.current) clearTimeout(timerRef.current);
       // Backoff: 1.2s * 2^failures, capped at 30s.
       const delay = Math.min(1200 * Math.pow(2, failureCountRef.current), BACKOFF_MAX_MS);

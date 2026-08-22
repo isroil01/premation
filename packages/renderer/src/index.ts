@@ -121,6 +121,8 @@ export {
   invertProjective,
   isConvexQuad,
   isIdentityQuad,
+  fitHomography,
+  unitQuadThrough,
   UNIT_QUAD,
   type Quad,
 } from './core/math/Homography';

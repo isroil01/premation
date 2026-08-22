@@ -100,6 +100,84 @@ describe('Timeline layers', () => {
     expect(track.layerCount).toBe(2);
   });
 
+  it('slides a split cut by trimming abutting neighbours', () => {
+    const t = timeline();
+    const track = t.addTrack();
+    // Three abutting clips — classic NLE slide keeps the sequence span fixed.
+    const a = t.addLayer(track.id, { clip: { start: 0, duration: 10, sourceIn: 0 } })!;
+    const b = t.addLayer(track.id, { clip: { start: 10, duration: 10, sourceIn: 10 } })!;
+    const c = t.addLayer(track.id, { clip: { start: 20, duration: 20, sourceIn: 20 } })!;
+    expect(t.slideLayer(b.id, 5)).toBe(true);
+    expect(a.end).toBe(15);
+    expect(b.start).toBe(15);
+    expect(b.duration).toBe(10);
+    expect(c.start).toBe(25);
+    expect(c.duration).toBe(15);
+    expect(c.clip.sourceIn).toBe(25);
+    t.history.undo();
+    expect(a.end).toBe(10);
+    expect(b.start).toBe(10);
+    expect(c.start).toBe(20);
+    expect(c.duration).toBe(20);
+  });
+
+  it('ripple-deletes a clip and closes the gap', () => {
+    const t = timeline();
+    const track = t.addTrack();
+    const a = t.addLayer(track.id, { clip: { start: 0, duration: 10 } })!;
+    const b = t.addLayer(track.id, { clip: { start: 10, duration: 10 } })!;
+    const c = t.addLayer(track.id, { clip: { start: 20, duration: 10 } })!;
+    expect(t.rippleRemoveLayer(b.id)).toBe(true);
+    expect(t.getLayer(b.id)).toBeUndefined();
+    expect(a.end).toBe(10);
+    expect(c.start).toBe(10);
+    t.history.undo();
+    expect(t.getLayer(b.id)).toBeDefined();
+    expect(c.start).toBe(20);
+  });
+
+  it('ripple-trims the out point and pulls later clips', () => {
+    const t = timeline();
+    const track = t.addTrack();
+    const a = t.addLayer(track.id, { clip: { start: 0, duration: 20 } })!;
+    const b = t.addLayer(track.id, { clip: { start: 20, duration: 10 } })!;
+    expect(t.rippleTrimEnd(a.id, 12)).toBe(true);
+    expect(a.end).toBe(12);
+    expect(b.start).toBe(12);
+    t.history.undo();
+    expect(a.end).toBe(20);
+    expect(b.start).toBe(20);
+  });
+
+  it('ripple-trims the in point, keeps start, pulls later clips', () => {
+    const t = timeline();
+    const track = t.addTrack();
+    const a = t.addLayer(track.id, { clip: { start: 0, duration: 20, sourceIn: 0 } })!;
+    const b = t.addLayer(track.id, { clip: { start: 20, duration: 10 } })!;
+    // Trim head as if the left edge moved to frame 8, then ripple keeps start=0.
+    expect(t.rippleTrimStart(a.id, 8)).toBe(true);
+    expect(a.start).toBe(0);
+    expect(a.duration).toBe(12);
+    expect(a.clip.sourceIn).toBe(8);
+    expect(b.start).toBe(12);
+    t.history.undo();
+    expect(a.duration).toBe(20);
+    expect(a.clip.sourceIn).toBe(0);
+    expect(b.start).toBe(20);
+  });
+
+  it('ripple-inserts a gap and pushes later clips right', () => {
+    const t = timeline();
+    const track = t.addTrack();
+    const a = t.addLayer(track.id, { clip: { start: 0, duration: 10 } })!;
+    const b = t.addLayer(track.id, { clip: { start: 10, duration: 10 } })!;
+    expect(t.rippleInsertGap(track.id, 10, 5)).toBe(true);
+    expect(a.start).toBe(0);
+    expect(b.start).toBe(15);
+    t.history.undo();
+    expect(b.start).toBe(10);
+  });
+
   it('moves a layer clip (undoable)', () => {
     const t = timeline();
     const track = t.addTrack();

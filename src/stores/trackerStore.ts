@@ -40,7 +40,8 @@ export interface TrackerResult {
 
 export function pointCountFor(mode: TrackerMode): number {
   // Smooth stabilize is DENSE — the flow grid is its points, so it places none.
-  return mode === 'corner' ? 4 : mode === 'transform' ? 2 : mode === 'mask' || mode === 'smooth' ? 0 : 1;
+  // Corner/planar seeds 4 corners + centre for an overdetermined LS fit.
+  return mode === 'corner' ? 5 : mode === 'transform' ? 2 : mode === 'mask' || mode === 'smooth' ? 0 : 1;
 }
 
 /** Seed positions for a mode, in source px. Multi-point modes start spread
@@ -54,6 +55,7 @@ export function seedPointsFor(mode: TrackerMode, w: number, h: number): Array<{ 
       { x: w - ix, y: iy },
       { x: w - ix, y: h - iy },
       { x: ix, y: h - iy },
+      { x: w / 2, y: h / 2 }, // interior — tightens planar LS fit
     ];
   }
   if (mode === 'transform') {
@@ -69,6 +71,13 @@ export function seedPointsFor(mode: TrackerMode, w: number, h: number): Array<{ 
 interface TrackerStore {
   /** The video layer being tracked, or null when the tracker is idle. */
   nodeId: string | null;
+  /**
+   * True only while the Track Motion section is OPEN in the inspector. The
+   * canvas overlay renders only when armed: merely selecting a video layer
+   * must not put track-point chrome (and its hit targets) over the viewport.
+   * Disarming keeps points/result, so closing the section loses nothing.
+   */
+  armed: boolean;
   mode: TrackerMode;
   /** Feature centres in source pixels — count depends on mode. */
   points: Array<{ x: number; y: number }>;
@@ -76,6 +85,13 @@ interface TrackerStore {
   featureHalf: number;
   /** Search window half-size in source px. */
   searchHalf: number;
+  /**
+   * Corner mode only: densify the quad into an interior feature lattice at
+   * track time (`densifyQuad`), so the planar fit is overdetermined and
+   * RANSAC can outvote occluded features. The stored `points` stay the
+   * user's 4+1 handles — the lattice is derived per run.
+   */
+  dense: boolean;
   tracking: boolean;
   /** 0..1 while tracking. */
   progress: number;
@@ -84,10 +100,12 @@ interface TrackerStore {
   note: string | null;
 
   activate: (nodeId: string) => void;
+  disarm: () => void;
   setMode: (mode: TrackerMode, sourceW: number, sourceH: number) => void;
   seedPoints: (sourceW: number, sourceH: number) => void;
   setPoint: (index: number, x: number, y: number) => void;
   setSizes: (featureHalf: number, searchHalf: number) => void;
+  setDense: (dense: boolean) => void;
   beginTracking: () => void;
   setProgress: (p: number) => void;
   finishTracking: (result: TrackerResult | null, note: string | null) => void;
@@ -96,10 +114,12 @@ interface TrackerStore {
 
 export const useTrackerStore = create<TrackerStore>((set, get) => ({
   nodeId: null,
+  armed: false,
   mode: 'follow',
   points: [],
   featureHalf: 10,
   searchHalf: 24,
+  dense: false,
   tracking: false,
   progress: 0,
   result: null,
@@ -109,9 +129,12 @@ export const useTrackerStore = create<TrackerStore>((set, get) => ({
     // Switching layers drops the points and result — a track point positioned
     // on one clip's pixels means nothing on another clip.
     if (get().nodeId !== nodeId) {
-      set({ nodeId, points: [], result: null, note: null, tracking: false, progress: 0 });
+      set({ nodeId, armed: true, points: [], result: null, note: null, tracking: false, progress: 0 });
+    } else if (!get().armed) {
+      set({ armed: true });
     }
   },
+  disarm: () => set({ armed: false }),
   setMode: (mode, sourceW, sourceH) => {
     if (get().mode === mode) return;
     set({ mode, points: seedPointsFor(mode, sourceW, sourceH), result: null, note: null });
@@ -128,9 +151,10 @@ export const useTrackerStore = create<TrackerStore>((set, get) => ({
       return { ...s, points, result: null, note: null };
     }),
   setSizes: (featureHalf, searchHalf) => set({ featureHalf, searchHalf }),
+  setDense: (dense) => set({ dense }),
   beginTracking: () => set({ tracking: true, progress: 0, result: null, note: null }),
   setProgress: (p) => set({ progress: p }),
   finishTracking: (result, note) => set({ tracking: false, progress: 0, result, note }),
   clear: () =>
-    set({ nodeId: null, points: [], result: null, note: null, tracking: false, progress: 0 }),
+    set({ nodeId: null, armed: false, points: [], result: null, note: null, tracking: false, progress: 0 }),
 }));

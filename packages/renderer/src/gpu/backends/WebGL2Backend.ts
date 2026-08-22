@@ -303,7 +303,18 @@ export class WebGL2Backend implements RenderBackend {
     if (source.type === 'buffer') {
       // Raw bytes are handed to us already in the invariant's space — there is
       // no decode step to reinterpret, so the unpack flags do not apply.
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, source.width, source.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, source.data as unknown as ArrayBufferView);
+      const fmt = source.format ?? native.format;
+      const float32 = fmt === 'rgba32float' && this.capabilities.float32Textures;
+      const float16 = fmt === 'rgba16float' && this.capabilities.float16Textures;
+      const internalFormat = float32 ? gl.RGBA32F : float16 ? gl.RGBA16F : gl.RGBA8;
+      const texType = float32 ? gl.FLOAT : float16 ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE;
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, float32 || float16 ? 1 : 4);
+      gl.texImage2D(
+        gl.TEXTURE_2D, 0, internalFormat,
+        source.width, source.height, 0,
+        gl.RGBA, texType,
+        source.data as unknown as ArrayBufferView,
+      );
     } else {
       // THE ALPHA INVARIANT (see TextureSource in ../types.ts): premultiplied
       // alpha, every source kind, both backends.
@@ -573,6 +584,40 @@ export class WebGL2Backend implements RenderBackend {
     this.gl.bindVertexArray(null);
   }
   present(): void {}
+  readRenderTargetFloat(target: RenderTargetHandle, width: number, height: number): Float32Array | null {
+    const gl = this.gl;
+    const rt = target.native as NativeRenderTarget;
+    const prev = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fbo);
+    const float = rt.format === 'rgba16float' || rt.format === 'rgba32float';
+    if (float && this.capabilities.float16Textures) {
+      const data = new Float32Array(width * height * 4);
+      try {
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, data);
+        const out = new Float32Array(data.length);
+        const row = width * 4;
+        for (let y = 0; y < height; y++) {
+          out.set(data.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+        return out;
+      } catch {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+        return null;
+      }
+    }
+    const u8 = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, u8);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+    const out = new Float32Array(u8.length);
+    const row = width * 4;
+    for (let y = 0; y < height; y++) {
+      const src = (height - 1 - y) * row;
+      const dst = y * row;
+      for (let i = 0; i < row; i++) out[dst + i] = u8[src + i]! / 255;
+    }
+    return out;
+  }
   resize(width: number, height: number, devicePixelRatio = 1): void {
     // width/height arrive in CSS px (Renderer.resize contract); the canvas
     // backing store is CSS×dpr. The GL viewport is in PHYSICAL pixels — using

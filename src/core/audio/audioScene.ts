@@ -37,8 +37,8 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import type { AudioLayerState } from './AudioEngine';
 import { percentToDb, isLevelAnimated, AUDIO_LEVEL_DB_PROP } from './audioParams';
 import { readNodeLayerTime } from '@core/scene/layerTime';
-import { defaultAnimation } from '@motion/animation';
 import { readAudioEffects } from './audioEffects';
+import { buildAudioRetimeSegments } from './audioRetimeSegments';
 
 interface CompRef {
   id: string;
@@ -256,26 +256,26 @@ function readVideoAudioSource(node: SceneNode): AudioSource | null {
 }
 
 /**
- * Does this layer's speed differ from natural?
+ * Does this layer's speed force audio to mute?
  *
- * Time stretch, reverse and time remap all retime the PICTURE by remapping
- * which source frame is shown. Audio cannot be remapped that way — playing
- * samples at a different rate is RESAMPLING, which needs a pitch decision
- * (varispeed like tape, or time-stretch preserving pitch) and a real DSP pass.
- * Neither exists here.
+ * Freeze holds one picture frame — there is no continuous soundtrack, so we
+ * mute. Time-remap keyframes used to mute too; they now expand into piecewise
+ * varispeed segments (see {@link buildAudioRetimeSegments}).
  *
- * So the choice was: play the audio at natural speed while the picture runs at
- * another, or mute it. Natural speed means a 50% stretch drifts five seconds
- * apart over a ten-second clip, silently, and the user discovers it after
- * export. Muting loses the audio but says so, in the inspector, at the moment
- * the speed is changed — and it is recoverable, because the level and the file
- * are untouched. Drift is not recoverable; it has to be re-cut.
+ * Constant stretch and reverse play via Web Audio `playbackRate` / buffer reverse.
  */
 export function speedAltersAudio(node: SceneNode): boolean {
-  const lt = readNodeLayerTime(node);
-  if (lt?.reverse === true) return true;
-  if (lt?.stretch !== undefined && Math.abs(lt.stretch - 100) > 0.01) return true;
-  return defaultAnimation.tracksFor(node.id).some((t) => t.prop === 'timeRemap' && t.keyframes.length > 0);
+  return readNodeLayerTime(node)?.freeze === true;
+}
+
+/** Stretch → playbackRate. 100 = 1×, 200 = half-speed, 50 = 2×. */
+export function videoAudioPlaybackRate(node: SceneNode): number {
+  const stretch = readNodeLayerTime(node)?.stretch ?? 100;
+  return 100 / Math.max(0.01, stretch);
+}
+
+export function videoAudioRetimeReverse(node: SceneNode): boolean {
+  return readNodeLayerTime(node)?.reverse === true;
 }
 
 /**
@@ -286,36 +286,75 @@ export function speedAltersAudio(node: SceneNode): boolean {
  * Empty when the layer has no resolvable asset. A layer whose file turns out to
  * have no audio track still yields a voice here; the engine skips it once the
  * decode fails, which is cheaper than probing every video up front.
+ *
+ * Time-remap tracks expand into several short varispeed voices so the soundtrack
+ * follows the same curve as the picture (preview and export share this list).
  */
 export function readVideoAudioVoices(node: SceneNode): AudioLayerState[] {
   const s = readVideoAudioSource(node);
   if (!s) return [];
-  // Muted at the source, not filtered out: the layer keeps its voice so the
-  // waveform, decode cache and inspector still see it, and un-stretching the
-  // clip brings the sound straight back.
-  const speedMuted = speedAltersAudio(node);
+  const freezeMuted = speedAltersAudio(node);
+  const playbackRate = videoAudioPlaybackRate(node);
+  const retimeReverse = videoAudioRetimeReverse(node);
   const base = {
     nodeId: node.id, assetId: s.assetId, src: s.src,
     levelDb: s.levelDb, levelAnimated: isLevelAnimated(node.id),
     source: 'video' as const,
   };
 
+  const fps = getTimelineController().fpsForNode(node.id) || 30;
   const timings = readAudioClipTimings(node.id);
-  if (timings.length === 0) {
-    // No bar (video nested in a plain group, headless scene): play the whole
-    // file from comp time 0. `outSec: 0` means "to the end of the buffer" to
-    // both the engine and the mixdown, which is right when the duration is
-    // unknown.
-    return [{ id: node.id, ...base, startSec: 0, inSec: 0, outSec: s.duration, muted: s.muted || speedMuted }];
+  const spans: Array<AudioClipTiming & { id: string; enabled: boolean }> =
+    timings.length > 0
+      ? timings
+      : [{ id: node.id, enabled: true, startSec: 0, inSec: 0, outSec: s.duration }];
+
+  const out: AudioLayerState[] = [];
+  for (const t of spans) {
+    const muted = s.muted || !t.enabled || freezeMuted;
+    const segs = freezeMuted ? [] : buildAudioRetimeSegments(node, t, fps);
+    if (segs === null) {
+      out.push({
+        id: t.id,
+        ...base,
+        startSec: t.startSec,
+        inSec: t.inSec,
+        outSec: t.outSec,
+        playbackRate,
+        retimeReverse,
+        muted,
+      });
+      continue;
+    }
+    if (segs.length === 0) {
+      // Freeze / empty remap — keep a muted voice for waveform + inspector.
+      out.push({
+        id: t.id,
+        ...base,
+        startSec: t.startSec,
+        inSec: t.inSec,
+        outSec: t.outSec,
+        playbackRate: 1,
+        muted: true,
+      });
+      continue;
+    }
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i]!;
+      // Convention: outSec − inSec is WALL duration (see AudioEngine / mixdown).
+      out.push({
+        id: `${t.id}::r${i}`,
+        ...base,
+        startSec: seg.startSec,
+        inSec: seg.inSec,
+        outSec: seg.inSec + seg.durationSec,
+        playbackRate: seg.rate,
+        retimeReverse: seg.reverse,
+        muted,
+      });
+    }
   }
-  return timings.map((t) => ({
-    id: t.id,
-    ...base,
-    startSec: t.startSec,
-    inSec: t.inSec,
-    outSec: t.outSec,
-    muted: s.muted || !t.enabled || speedMuted,
-  }));
+  return out;
 }
 
 /**

@@ -187,3 +187,102 @@ export function isIdentityQuad(quad: Quad, eps = 1e-6): boolean {
   }
   return true;
 }
+
+/**
+ * Least-squares homography from N≥4 point correspondences (DLT, h₂₂ = 1).
+ * Maps `src[i]` → `dst[i]`. Returns null when underdetermined or singular.
+ * Column-major storage matches {@link squareToQuad}.
+ */
+export function fitHomography(src: readonly Vec2[], dst: readonly Vec2[]): Mat3 | null {
+  const n = src.length;
+  if (n < 4 || dst.length !== n) return null;
+
+  // Normal equations AtA (8×8) and Atb (8) for unknowns
+  // [a,b,c, d,e,f, g,h] with math matrix [[a,b,c],[d,e,f],[g,h,1]].
+  const AtA = new Float64Array(64);
+  const Atb = new Float64Array(8);
+
+  const addRow = (row: Float64Array, rhs: number): void => {
+    for (let i = 0; i < 8; i++) {
+      Atb[i]! += row[i]! * rhs;
+      for (let j = 0; j < 8; j++) AtA[i * 8 + j]! += row[i]! * row[j]!;
+    }
+  };
+
+  for (let k = 0; k < n; k++) {
+    const x = src[k]!.x;
+    const y = src[k]!.y;
+    const u = dst[k]!.x;
+    const v = dst[k]!.y;
+    // a·x + b·y + c − g·x·u − h·y·u = u
+    const r1 = new Float64Array(8);
+    r1[0] = x; r1[1] = y; r1[2] = 1;
+    r1[6] = -x * u; r1[7] = -y * u;
+    addRow(r1, u);
+    // d·x + e·y + f − g·x·v − h·y·v = v
+    const r2 = new Float64Array(8);
+    r2[3] = x; r2[4] = y; r2[5] = 1;
+    r2[6] = -x * v; r2[7] = -y * v;
+    addRow(r2, v);
+  }
+
+  const h = solveSymmetric8(AtA, Atb);
+  if (!h) return null;
+
+  const m = new Float32Array(9) as Mat3;
+  // Column-major [a,d,g, b,e,h, c,f,1]
+  m[0] = h[0]!; m[1] = h[3]!; m[2] = h[6]!;
+  m[3] = h[1]!; m[4] = h[4]!; m[5] = h[7]!;
+  m[6] = h[2]!; m[7] = h[5]!; m[8] = 1;
+  return m;
+}
+
+/** Gaussian elimination with partial pivoting on an 8×8 system. */
+function solveSymmetric8(A: Float64Array, b: Float64Array): Float64Array | null {
+  const M = new Float64Array(72); // 8×9 augmented
+  for (let i = 0; i < 8; i++) {
+    for (let j = 0; j < 8; j++) M[i * 9 + j] = A[i * 8 + j]!;
+    M[i * 9 + 8] = b[i]!;
+  }
+  for (let col = 0; col < 8; col++) {
+    let pivot = col;
+    let best = Math.abs(M[col * 9 + col]!);
+    for (let r = col + 1; r < 8; r++) {
+      const v = Math.abs(M[r * 9 + col]!);
+      if (v > best) { best = v; pivot = r; }
+    }
+    if (best < 1e-14) return null;
+    if (pivot !== col) {
+      for (let j = col; j < 9; j++) {
+        const tmp = M[col * 9 + j]!;
+        M[col * 9 + j] = M[pivot * 9 + j]!;
+        M[pivot * 9 + j] = tmp;
+      }
+    }
+    const diag = M[col * 9 + col]!;
+    for (let j = col; j < 9; j++) M[col * 9 + j]! /= diag;
+    for (let r = 0; r < 8; r++) {
+      if (r === col) continue;
+      const f = M[r * 9 + col]!;
+      if (f === 0) continue;
+      for (let j = col; j < 9; j++) M[r * 9 + j]! -= f * M[col * 9 + j]!;
+    }
+  }
+  const x = new Float64Array(8);
+  for (let i = 0; i < 8; i++) x[i] = M[i * 9 + 8]!;
+  return x;
+}
+
+/**
+ * Map the unit square through a fitted homography and return the destination
+ * quad (TL,TR,BR,BL). Null when any corner hits the vanishing line.
+ */
+export function unitQuadThrough(H: Mat3): Quad | null {
+  const out: Vec2[] = [];
+  for (const p of UNIT_QUAD) {
+    const q = project(H, p);
+    if (!q) return null;
+    out.push(q);
+  }
+  return out as unknown as Quad;
+}
