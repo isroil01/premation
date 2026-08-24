@@ -213,7 +213,7 @@ export function ToolOptionsBar(): JSX.Element | null {
                 aria-pressed={active}
                 onClick={() => setBoneRigMode(mode.id)}
               >
-                <Icon name={mode.icon} size={12} />
+                <Icon name={mode.icon} size="sm" />
                 <span>{mode.label}</span>
               </button>
             );
@@ -244,7 +244,7 @@ export function ToolOptionsBar(): JSX.Element | null {
                   onClick={() => setBoneWeightMode(tool.id)}
                   style={{ display: 'flex', alignItems: 'center', gap: 4 }}
                 >
-                  <Icon name={tool.icon} size={12} />
+                  <Icon name={tool.icon} size="sm" />
                   <span>{tool.label}</span>
                 </button>
               ))}

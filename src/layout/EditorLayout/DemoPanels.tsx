@@ -533,7 +533,7 @@ export function ScenePanel(): JSX.Element {
             aria-label="New Composition"
             onClick={() => openNewCompositionDialog()}
           >
-            <Icon name="plus" size={12} />
+            <Icon name="plus" size="sm" />
           </button>
         </div>
         {listedComps.length === 0 ? (
@@ -551,7 +551,7 @@ export function ScenePanel(): JSX.Element {
                   onClick={() => openComposition(c.id)}
                   onContextMenu={(e) => openCompMenu(c.id, e)}
                 >
-                  <Icon name="component" size={13} className={styles.compGlyph} />
+                  <Icon name="component" size="sm" className={styles.compGlyph} />
                   <span className={styles.compName}>{c.name}</span>
                   <span className={styles.compMeta}>{c.width}×{c.height}</span>
                   <button
@@ -564,7 +564,7 @@ export function ScenePanel(): JSX.Element {
                       void confirmDeleteComp(c.id);
                     }}
                   >
-                    <Icon name="trash" size={12} />
+                    <Icon name="trash" size="sm" />
                   </button>
                 </div>
               );
@@ -1308,7 +1308,7 @@ export function AssetsPanel(): JSX.Element {
             }
           }}
         >
-          <Icon name="component" size={14} />
+          <Icon name="component" size="sm" />
         </button>
 
         <button
@@ -1317,7 +1317,7 @@ export function AssetsPanel(): JSX.Element {
           title="New Folder"
           onClick={handleNewFolder}
         >
-          <Icon name="folder-plus" size={14} style={{ color: '#f5b041' }} />
+          <Icon name="folder-plus" size="sm" style={{ color: '#f5b041' }} />
         </button>
 
         <button
@@ -1326,7 +1326,7 @@ export function AssetsPanel(): JSX.Element {
           title="Import Folder (keeps folder structure)…"
           onClick={() => folderInputRef.current?.click()}
         >
-          <Icon name="folder-open" size={14} style={{ color: '#f5b041' }} />
+          <Icon name="folder-open" size="sm" style={{ color: '#f5b041' }} />
         </button>
 
         <button
@@ -1335,7 +1335,7 @@ export function AssetsPanel(): JSX.Element {
           title="Import Media Files…"
           onClick={() => fileInputRef.current?.click()}
         >
-          <Icon name="upload" size={14} />
+          <Icon name="upload" size="sm" />
         </button>
 
         {derivedCount > 0 && (
@@ -1349,7 +1349,7 @@ export function AssetsPanel(): JSX.Element {
                 : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
             }
           >
-            <Icon name="sparkles" size={14} />
+            <Icon name="sparkles" size="sm" />
           </button>
         )}
 
@@ -1362,7 +1362,7 @@ export function AssetsPanel(): JSX.Element {
             if (singleSelectedAsset) openInterpretFootage(singleSelectedAsset);
           }}
         >
-          <Icon name="sliders-h" size={14} />
+          <Icon name="sliders-h" size="sm" />
         </button>
 
         <button
@@ -1374,7 +1374,7 @@ export function AssetsPanel(): JSX.Element {
             void deleteSelectedAssets();
           }}
         >
-          <Icon name="trash" size={14} />
+          <Icon name="trash" size="sm" />
         </button>
       </div>
     </Panel>
@@ -1842,10 +1842,10 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
         action={
           <>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('bone')}>
-              <Icon name="bone" size={13} style={{ color: '#f97316' }} /> Bone Tool
+              <Icon name="bone" size="sm" style={{ color: '#f97316' }} /> Bone Tool
             </Button>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
-              <Icon name="puppet-pin" size={13} /> Puppet Pin Tool
+              <Icon name="puppet-pin" size="sm" /> Puppet Pin Tool
             </Button>
           </>
         }
@@ -2517,7 +2517,7 @@ export function LibraryPanel(): JSX.Element {
             className={section === s.id ? styles.libTabActive : styles.libTab}
             title={s.label}
             onClick={() => setSection(s.id)}>
-            <Icon name={s.icon} size={13} />
+            <Icon name={s.icon} size="sm" />
             <span>{s.label}</span>
           </button>
         ))}

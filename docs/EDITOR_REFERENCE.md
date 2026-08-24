@@ -68,7 +68,7 @@ rediscovered in git history and believed a second time.
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
 | Light types | 4 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
-| AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
+| AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 17 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
 | Stores | 46 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
@@ -99,7 +99,7 @@ Electron main ── IPC ──▶ renderer (React 19 + Vite)
                                 ├── renderer    WebGPU → WebGL2 → Null
                                 ├── workspace   tools, selection, gizmos
                                 ├── timeline    timeline model
-                                ├── ai-tools    the 61-tool registry
+                                ├── ai-tools    the 65-tool registry
                                 ├── caster      deterministic technique caster
                                 ├── technique-library
                                 ├── product-motion, audio, design-system, render-tests
@@ -259,7 +259,7 @@ zero hits repo-wide. It was listed here as shipped; it does not exist, and
 building it is greenfield work rather than a remainder.
 
 ### AI
-61 typed tools over a deterministic caster and a hand-authored technique
+65 typed tools over a deterministic caster and a hand-authored technique
 library, with a validator that assumes the model lies, a self-critique pass using
 rendered-frame evidence, and a hard *one prompt = one undo entry* contract.
 **Server edition only** — `aiEnabled()` is `isServerEdition()`, and the panel,
@@ -568,7 +568,7 @@ Recorded so the same claims are not reconstructed from git history and believed.
 | "38 effects" / "58 effects" (same file, two tables) | **73** |
 | "Chainable path operators — `trim` and `rep` remain single-slot", recorded as a permanent decision | Both **are** chain entries in `PathOpType` |
 | "Continuous rasterization — the one remaining gap" | **Shipped**, with a renderer read path and an inspector control |
-| "62 AI tools" | **61** |
+| "62 AI tools" | **65** |
 | "47 Zustand stores" | **39** |
 | "Cameras / lights / shadows — parity" | Shading is per-fragment on the depth path (see the 2026-08-10 row below); shadows really are 2.5D projections |
 | Depth of field implied working | Per-face / strip Gaussian CoC; no per-pixel DOF in the renderer |

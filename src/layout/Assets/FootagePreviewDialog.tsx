@@ -224,7 +224,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
 
       <div className={styles.actions}>
         <Button size="sm" variant="secondary" onClick={() => { void insertMedia(asset); close(); }}>
-          <Icon name="plus" size={12} /> Add to Comp
+          <Icon name="plus" size="sm" /> Add to Comp
         </Button>
         <Button
           size="sm"
@@ -232,7 +232,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
           onClick={() => { void insertMediaAtPlayhead(asset); close(); }}
           title="Insert with the clip starting at the playhead instead of frame 0"
         >
-          <Icon name="play" size={12} /> Add at Playhead
+          <Icon name="play" size="sm" /> Add at Playhead
         </Button>
         {asset.type !== 'audio' && (
           <Button
@@ -241,7 +241,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
             onClick={() => { void createCompositionFromFootage(asset); close(); }}
             title="New composition sized, timed and paced to this clip"
           >
-            <Icon name="component" size={12} /> New Comp
+            <Icon name="component" size="sm" /> New Comp
           </Button>
         )}
         {replaceTarget && asset.type !== 'audio' && (
@@ -253,7 +253,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
             // named is a button that might do anything to anything.
             title={`Point the selected layer at this footage — keyframes, effects and masks survive`}
           >
-            <Icon name="refresh" size={12} /> {`Use for “${targetName ?? 'layer'}”`}
+            <Icon name="refresh" size="sm" /> {`Use for “${targetName ?? 'layer'}”`}
           </Button>
         )}
       </div>

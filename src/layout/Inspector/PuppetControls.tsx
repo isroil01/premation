@@ -58,7 +58,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
     <div className={styles.root}>
       <div className={styles.headerCard}>
         <div className={styles.headerTitle}>
-          <Icon name="puppet-pin" size={14} />
+          <Icon name="puppet-pin" size="sm" />
           <span>Puppet</span>
           <span className={styles.badge}>{pinCountLabel(pins.length)}</span>
         </div>
@@ -67,7 +67,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           variant="secondary"
           onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
         >
-          <Icon name="plus" size={12} /> Add Pin
+          <Icon name="plus" size="sm" /> Add Pin
         </Button>
       </div>
 
@@ -90,7 +90,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 })
               }
             >
-              <Icon name="user" size={12} />
+              <Icon name="user" size="sm" />
               <span>Character (Tight)</span>
             </button>
             <button
@@ -105,7 +105,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 })
               }
             >
-              <Icon name="shape" size={12} />
+              <Icon name="shape" size="sm" />
               <span>Graphic (Smooth)</span>
             </button>
           </div>
@@ -275,7 +275,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 >
                   <Icon
                     name={isAnchored ? 'lock' : 'anchor'}
-                    size={11}
+                    size="sm"
                     style={{ color: isAnchored ? '#f5b041' : 'inherit' }}
                   />
                   <span>{isAnchored ? 'Locked' : 'Anchor'}</span>
@@ -287,7 +287,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                   aria-label={`Delete pin ${pin.name || pin.id}`}
                   title="Delete pin"
                 >
-                  <Icon name="trash" size={12} />
+                  <Icon name="trash" size="sm" />
                 </Button>
               </div>
             </div>

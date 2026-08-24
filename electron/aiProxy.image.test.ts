@@ -13,7 +13,7 @@ import {
   geminiAspectRatio,
   parseOpenAiImageBody,
   parseGeminiImageBody,
-} from './aiProxy';
+} from './aiImageHelpers';
 
 describe('openaiImageSize', () => {
   it('picks the three DALL·E 3 sizes from aspect', () => {

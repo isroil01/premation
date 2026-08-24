@@ -520,7 +520,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             style={{ flex: 1, justifyContent: 'center', background: 'rgba(245, 176, 65, 0.12)', color: '#f5b041', borderColor: 'rgba(245, 176, 65, 0.35)', gap: 5 }}
             onClick={() => groupSelectedNodes()}
           >
-            <Icon name="folder" size={12} style={{ color: '#f5b041' }} />
+            <Icon name="folder" size="sm" style={{ color: '#f5b041' }} />
             <span>Group Parts (⌘G)</span>
           </button>
         )}
@@ -531,7 +531,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             style={{ flex: 1, justifyContent: 'center', borderColor: 'var(--color-border-glass)', gap: 5 }}
             onClick={() => ungroupSelectedNode(nodeId)}
           >
-            <Icon name="layout" size={12} />
+            <Icon name="layout" size="sm" />
             <span>Detach Parts (Ungroup)</span>
           </button>
         )}
@@ -671,7 +671,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             style={{ gap: 5 }}
             onClick={() => setNodeFills(nodeId, [...fills, solidFill('#ffffff')])}
           >
-            <Icon name="plus" size={12} />
+            <Icon name="plus" size="sm" />
             <span>Add fill</span>
           </button>
         )}
@@ -926,7 +926,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
             style={{ gap: 5 }}
             onClick={() => setNodeStrokes(nodeId, [...(strokes.length ? strokes : [defaultStroke()]), normalizeStroke({ ...defaultStroke('#ffffff'), width: 2 })])}
           >
-            <Icon name="plus" size={12} /> Add stroke
+            <Icon name="plus" size="sm" /> Add stroke
           </button>
         )}
 
@@ -942,7 +942,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
                 style={{ marginLeft: 6 }}
                 aria-pressed={cornersLinked}
               >
-                <Icon name={cornersLinked ? 'lock' : 'unlock'} size={12} style={{ color: cornersLinked ? '#f59e0b' : '#94a3b8' }} />
+                <Icon name={cornersLinked ? 'lock' : 'unlock'} size="sm" style={{ color: cornersLinked ? '#f59e0b' : '#94a3b8' }} />
               </button>
               {isCornerAnimated && <span className={styles.animatedDot} />}
             </div>

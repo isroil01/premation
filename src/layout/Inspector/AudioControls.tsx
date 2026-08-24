@@ -331,7 +331,7 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
           title={`Write the loudness envelope as keyframes (${AUDIO_AMPLITUDE_PROP}, 0–100) — drive any property from it`}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
         >
-          <Icon name="keyframe" size={12} />
+          <Icon name="keyframe" size="sm" />
           <span>Convert audio to keyframes…</span>
         </button>
       }

@@ -6,7 +6,7 @@
  */
 
 import { handle } from './ipcGuard';
-import { getMediaKeyForProvider, type MediaVaultProvider } from './mediaKeyVault';
+import { getMediaKeyForProvider } from './mediaKeyVault';
 
 /** Complete URLs — never built from renderer input. */
 const ENDPOINTS = {

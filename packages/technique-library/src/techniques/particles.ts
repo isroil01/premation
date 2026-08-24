@@ -3,12 +3,19 @@
  */
 
 import { mk, mulberry32, pick, type ToolCall } from '@motion/design-system';
-import type { TechniqueDef } from '../schema';
+import type { AnimatableRole, TechniqueDef } from '../schema';
 import {
-  CURVES, blurIfFast, fadeIn, fadeOut, heroMove, offsetFor, subFrame, track,
+  CURVES, blurIfFast, emitCamera, enterCameraSpace, fadeIn, fadeOut, heroMove,
+  offsetFor, subFrame, track,
 } from '../emit';
 
 const PARTICLE_REQUIRES = ['create_layer', 'set_keyframes', 'update_layer', 'set_motion_blur'] as const;
+
+/** Same staged roles as the operated-camera set — beats never expose a `camera` slot. */
+const CAMERA_STAGED_ROLES: readonly AnimatableRole[] = [
+  'camera', 'background', 'media', 'mark', 'rule',
+  'overline', 'headline', 'subhead', 'support', 'quote', 'cta',
+];
 
 export const particleDrift: TechniqueDef = {
   id: 'background.particle_drift',
@@ -129,18 +136,19 @@ export const particleBurst: TechniqueDef = {
 export const particleParallaxField: TechniqueDef = {
   id: 'camera.particle_parallax',
   category: 'camera',
+  exclusiveResource: 'camera',
   displayName: 'Particle Parallax Field',
   intent: 'Depth-layered particles that sell a slow camera push through space.',
-  tags: ['camera', 'parallax', 'particles', 'depth', 'cinematic'],
-  energy: [0.25, 0.7],
-  dimensionality: '3d',
+  tags: ['camera', 'parallax', 'particles', 'depth', 'cinematic', '2.5d', 'calm'],
+  energy: [0.2, 0.7],
+  dimensionality: '2.5d',
   params: {
     layers: { kind: 'number', default: 3, min: 2, max: 3 },
   },
-  roles: ['background', 'camera'],
-  requires: [...PARTICLE_REQUIRES, 'add_camera_move'],
-  minDurationMs: 2500,
-  maxDurationMs: 60_000,
+  roles: CAMERA_STAGED_ROLES,
+  requires: ['create_layer', 'update_layer', 'set_keyframes', 'set_motion_blur'],
+  minDurationMs: 2200,
+  maxDurationMs: 14_000,
   approxLayerCount: 3,
   approxToolCalls: 18,
   antipatterns: { maxPerComposition: 1 },
@@ -151,12 +159,27 @@ export const particleParallaxField: TechniqueDef = {
     const sig = ctx.pack.pack.motionSignature;
     const layerCount = Math.min(3, Math.max(2, Math.round(p.layers as number)));
     const calls: ToolCall[] = [];
+    const camId = `${ctx.idPrefix}_particlecam`;
     const staggerCurve = ctx.pack.pack.pacing.staggerCurve;
+
+    // Long lens: dust layers read as depth when the push is telephoto, not wide.
+    calls.push(...emitCamera(ctx, camId, 'Particle Parallax Camera', 'long').calls);
+    calls.push(...enterCameraSpace(ctx, CAMERA_STAGED_ROLES));
+    calls.push(
+      track(camId, 'z', [
+        { t: ctx.startMs, value: 40, bezier: CURVES.drift },
+        { t: ctx.startMs + ctx.durationMs, value: -80 - sig.overshootBias * 40, bezier: CURVES.settle },
+      ]),
+    );
 
     for (let i = 0; i < layerCount; i++) {
       const id = `${ctx.idPrefix}particle_parallax_${seed}_${i}`;
       const z = 120 + i * (140 + sig.overshootBias * 40);
-      const start = ctx.startMs + Math.pow(i / Math.max(1, layerCount - 1), staggerCurve) * ctx.durationMs * 0.22;
+      // Keep the first layer off frame 0 so opacity's −1-frame lead stays ≥ 0.
+      const start = Math.max(
+        ctx.startMs + ctx.frameMs * 2,
+        ctx.startMs + Math.pow(i / Math.max(1, layerCount - 1), staggerCurve) * ctx.durationMs * 0.22,
+      );
       const zTravel = 60 * (i + 1) * (0.9 + sig.overshootBias * 0.3);
       calls.push(
         mk('create_layer', {
@@ -173,7 +196,8 @@ export const particleParallaxField: TechniqueDef = {
           startMs: offsetFor(ctx, 'z', start),
           durationMs: ctx.durationMs * (0.85 - i * 0.05),
         }),
-        fadeIn(ctx, id, offsetFor(ctx, 'opacity', start), Math.min(400, ctx.durationMs * 0.18)),
+        // fadeIn applies the opacity lead itself — pass the nominal start only.
+        fadeIn(ctx, id, start, Math.min(400, ctx.durationMs * 0.18)),
         mk('set_motion_blur', { nodeId: id, enabled: true }),
       );
       calls.push(...blurIfFast(ctx, id, zTravel, ctx.durationMs * 0.7));
