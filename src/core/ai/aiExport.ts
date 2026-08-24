@@ -35,7 +35,7 @@ export type AiExportResult =
   | { ok: false; message: string };
 
 function fileStem(name: string): string {
-  return name.replace(/[^\w\-]+/g, '_').replace(/^_|_$/g, '') || 'output';
+  return name.replace(/[^\w-]+/g, '_').replace(/^_|_$/g, '') || 'output';
 }
 
 /** Queue the active composition for export (does not encode yet). */

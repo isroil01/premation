@@ -291,7 +291,7 @@ export function ccRepeTileData(
     if (modeStr === 'unfold') {
       const cycle = 2 * (size - 1);
       if (cycle <= 0) return 0;
-      let m = ((p % cycle) + cycle) % cycle;
+      const m = ((p % cycle) + cycle) % cycle;
       return m >= size ? cycle - m : m;
     }
     if (modeStr === 'repeat') {
@@ -299,12 +299,12 @@ export function ccRepeTileData(
     }
     if (modeStr === 'flip-h' && isHorizontal) {
       const tile = Math.floor(p / size);
-      let m = ((p % size) + size) % size;
+      const m = ((p % size) + size) % size;
       return Math.abs(tile) % 2 === 1 ? size - 1 - m : m;
     }
     if (modeStr === 'flip-v' && !isHorizontal) {
       const tile = Math.floor(p / size);
-      let m = ((p % size) + size) % size;
+      const m = ((p % size) + size) % size;
       return Math.abs(tile) % 2 === 1 ? size - 1 - m : m;
     }
     return ((p % size) + size) % size;

@@ -59,7 +59,7 @@ export function layoutCacheBarSegments(
   const out: CacheBarSegment[] = [];
   for (let i = 0; i < raw.length; i++) {
     const cur = raw[i]!;
-    let left = Math.floor(cur.left);
+    const left = Math.floor(cur.left);
     let right = Math.ceil(cur.right);
     if (i + 1 < raw.length) {
       const nextLeft = Math.floor(raw[i + 1]!.left);
