@@ -24,6 +24,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
 import { renderOffline, exportView, exportComp, resolveRange, type OfflineRenderParams } from './offlineRenderer';
+import { FramePipeline, CanvasPool, defaultConcurrency } from './framePipeline';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { type ZipEntry } from './zip';
 import { encodeGifBytes, encodeZipBytes } from './encodeClient';
@@ -232,18 +233,32 @@ export async function renderSequenceZip(
   extraEntries: ReadonlyArray<ZipEntry> = [],
 ): Promise<Blob> {
   const type = ext === 'png' ? 'image/png' : 'image/jpeg';
+  // Multi-frame staging, as in the desktop video sink: the render hands each
+  // frame to a pooled canvas and moves on while several encodes run. Entries
+  // are slotted by frame index so completion order never reorders the zip.
   const entries: ZipEntry[] = [];
+  const pipeline = new FramePipeline();
+  let pool: CanvasPool | null = null;
   await renderOffline(
     offlineParams(opts),
     async (canvas, frame, count) => {
-      entries.push({
-        name: frameFileName(frame, ext),
-        data: await canvasBytes(canvas, type, ext === 'jpg' ? 0.92 : undefined),
+      pool ??= new CanvasPool(canvas.width, canvas.height, defaultConcurrency() + 1);
+      const p = pool;
+      const snap = p.snapshot(canvas);
+      const name = frameFileName(frame, ext);
+      const slot = frame;
+      await pipeline.push(async () => {
+        try {
+          entries[slot] = { name, data: await canvasBytes(snap, type, ext === 'jpg' ? 0.92 : undefined) };
+        } finally {
+          p.release(snap);
+        }
       });
       onProgress?.((frame + 1) / count);
     },
     signal,
   );
+  await pipeline.drain();
   if (entries.length === 0) throw new Error('No frames were rendered.');
   // Assemble the archive off the main thread (falls back to sync if no worker).
   const bytes = await encodeZipBytes([...entries, ...extraEntries]);
@@ -374,7 +389,11 @@ async function canvasToExrBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> 
   return encodeExrFromLinearRgba(w, h, rgba);
 }
 
-async function exportExrSequence(opts: ExportOptions): Promise<void> {
+export async function renderExrSequenceZip(
+  opts: ExportOptions,
+  onProgress?: (f: number) => void,
+  signal?: AbortSignal,
+): Promise<Blob> {
   const audio = await exportAudioEntries(opts);
   const entries: ZipEntry[] = [];
   await renderOffline(
@@ -391,14 +410,19 @@ async function exportExrSequence(opts: ExportOptions): Promise<void> {
         name: `frame_${String(frame).padStart(FRAME_SEQUENCE_PAD, '0')}.exr`,
         data,
       });
-      opts.onProgress?.((frame + 1) / count);
+      onProgress?.((frame + 1) / count);
     },
-    opts.signal,
+    signal,
   );
   if (entries.length === 0) throw new Error('No frames were rendered.');
   const bytes = await encodeZipBytes([...entries, ...audio]);
-  opts.onProgress?.(1);
-  download(new Blob([bytes as BlobPart], { type: 'application/zip' }), `${defaultBaseName()}-exr-sequence.zip`);
+  onProgress?.(1);
+  return new Blob([bytes as BlobPart], { type: 'application/zip' });
+}
+
+async function exportExrSequence(opts: ExportOptions): Promise<void> {
+  const blob = await renderExrSequenceZip(opts, opts.onProgress, opts.signal);
+  download(blob, `${defaultBaseName()}-exr-sequence.zip`);
 }
 
 // ── Video / GIF export ───────────────────────────────────────────────
@@ -717,6 +741,10 @@ function lottieShapesFor(node: SceneNode): unknown[] {
 
   const shapeType = typeof p.shapeType === 'string' ? p.shapeType : 'rect';
   const fill = (style?.props as Record<string, unknown> | undefined)?.fill;
+  const stroke = (style?.props as Record<string, unknown> | undefined)?.stroke;
+  const strokeWidth = (style?.props as Record<string, unknown> | undefined)?.strokeWidth;
+  const hasFill = typeof fill === 'string' && fill !== '' && fill !== 'none' && fill !== 'transparent';
+  const hasStroke = typeof stroke === 'string' && stroke !== '' && stroke !== 'none' && typeof strokeWidth === 'number' && strokeWidth > 0;
 
   const geomComp = node.components.find((c) => c.type === 'Geometry');
   let geometry: unknown;
@@ -753,19 +781,41 @@ function lottieShapesFor(node: SceneNode): unknown[] {
     };
   }
 
+  const groupItems: unknown[] = [geometry];
+  if (hasFill || !hasStroke) {
+    groupItems.push({
+      ty: 'fl',
+      c: { a: 0, k: [...hexToLottieRgb(hasFill ? fill : '#ffffff'), 1] },
+      o: { a: 0, k: hasFill ? 100 : 0 },
+      r: 1,
+      nm: 'Fill',
+    });
+  }
+  if (hasStroke) {
+    groupItems.push({
+      ty: 'st',
+      c: { a: 0, k: [...hexToLottieRgb(stroke), 1] },
+      o: { a: 0, k: 100 },
+      w: { a: 0, k: strokeWidth },
+      lc: 2,
+      lj: 2,
+      nm: 'Stroke',
+    });
+  }
+  groupItems.push({
+    ty: 'tr',
+    p: { a: 0, k: [0, 0] },
+    a: { a: 0, k: [0, 0] },
+    s: { a: 0, k: [100, 100] },
+    r: { a: 0, k: 0 },
+    o: { a: 0, k: 100 },
+  });
+
   return [
     {
       ty: 'gr',
       nm: 'Group',
-      it: [
-        geometry,
-        { ty: 'fl', c: { a: 0, k: [...hexToLottieRgb(fill), 1] }, o: { a: 0, k: 100 }, r: 1, nm: 'Fill' },
-        {
-          ty: 'tr',
-          p: { a: 0, k: [0, 0] }, a: { a: 0, k: [0, 0] },
-          s: { a: 0, k: [100, 100] }, r: { a: 0, k: 0 }, o: { a: 0, k: 100 },
-        },
-      ],
+      it: groupItems,
     },
   ];
 }

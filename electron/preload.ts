@@ -240,6 +240,17 @@ const bridge = {
       ipcRenderer.on('ai:stream:event', listener);
       return () => ipcRenderer.removeListener('ai:stream:event', listener);
     },
+    /** One image as base64 bytes. Counterpart to motion-back `POST /ai/image`. */
+    image: (request: unknown) => ipcRenderer.invoke('ai:image', request),
+    video: (request: unknown) => ipcRenderer.invoke('ai:video', request),
+    speech: (request: unknown) => ipcRenderer.invoke('ai:speech', request),
+    model3d: (request: unknown) => ipcRenderer.invoke('ai:3d', request),
+    mediaKeys: {
+      status: () => ipcRenderer.invoke('mediaKeys:status'),
+      set: (provider: string, key: string) => ipcRenderer.invoke('mediaKeys:set', provider, key),
+      clear: (provider?: string) => ipcRenderer.invoke('mediaKeys:clear', provider ?? null),
+      available: () => ipcRenderer.invoke('mediaKeys:available'),
+    },
   },
 
   /**

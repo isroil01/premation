@@ -35,6 +35,14 @@ import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { depthEligible3D } from '@motion/renderer';
 
+// These cases pin the QUAD-SYNTHESIS extrusion (scene/extrusion.ts), which is
+// now the FALLBACK behind the mesh path (scene/extrusionMesh.ts) — taken when
+// an outline cannot be produced. The fallback is still live code, so its
+// guarantees are kept by switching the mesh path off for this file.
+import { setExtrusionMeshPath } from '@core/scene/extrusionMesh';
+beforeAll(() => setExtrusionMeshPath(false));
+afterAll(() => setExtrusionMeshPath(true));
+
 const COMP = { width: 800, height: 600, background: '#101014' };
 
 function node3D(id: string, kind: string, props: Record<string, unknown>, style: Record<string, unknown> = {}): SceneNode {

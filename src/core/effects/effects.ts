@@ -50,6 +50,7 @@ export type EffectType =
   | 'keylight'
   | 'wave-warp'
   | 'turbulent-displace'
+  | 'curl-noise'
   | 'echo'
   | 'inner-shadow'
   | 'inner-glow'
@@ -254,7 +255,16 @@ export type EffectType =
   | 'jaws'
   | 'pixel-polly'
   | 'twister'
-  | 'card-dance';
+  | 'card-dance'
+  // ── Round six: iconic AE & CC effects ──
+  | 'unmult'
+  | 'cc-composite'
+  | 'cc-repetile'
+  | 'cc-scatterize'
+  | 'radial-fast-blur'
+  | 'cross-blur'
+  | 'scale-wipe'
+  | 'plastic';
 
 /** Curve control points: `[inputX, outputY]` pairs in 0–255. */
 export type CurvePoints = ReadonlyArray<readonly [number, number]>;
@@ -1968,6 +1978,21 @@ export const EFFECT_DEFS: EffectDef[] = [
     css: () => '',
   },
 
+  // Curl Noise (AE 26.3) — swirling, divergence-free displacement: the curl of
+  // a noise field, so the picture rotates around itself instead of piling up
+  // the way Turbulent Displace does at high amounts. Keyframe `evolution`.
+  {
+    type: 'curl-noise',
+    label: 'Curl Noise',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: 'px', min: 0, max: 500, default: 40 },
+      { key: 'size', label: 'Size', type: 'number', unit: 'px', min: 4, max: 1000, default: 160 },
+      { key: 'complexity', label: 'Complexity', type: 'number', min: 1, max: 6, default: 3 },
+      { key: 'evolution', label: 'Evolution', type: 'number', min: -10000, max: 10000, default: 0 },
+    ],
+    css: () => '',
+  },
+
   // Echo — temporal: composite the layer at several points in time. NOT a
   // pixel pass; buildSnapshot emits decaying ghost copies at past/future
   // transforms (echo.ts). Renders on both backends (ghosts are normal layers).
@@ -3385,6 +3410,134 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 30 },
       { key: 'cardRotation', label: 'Rotation', type: 'number', unit: '°', min: -180, max: 180, default: 20 },
       { key: 'phase', label: 'Phase', type: 'number', min: 0, max: 36000, default: 0 },
+    ],
+    css: () => '',
+  },
+  // ── Round six: iconic AE & CC effects ──
+  {
+    type: 'unmult',
+    label: 'Unmult',
+    params: [
+      { key: 'threshold', label: 'Threshold', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'boost', label: 'Boost', type: 'number', unit: '%', min: 50, max: 200, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'cc-composite',
+    label: 'CC Composite',
+    params: [
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      {
+        key: 'blendMode',
+        label: 'Composite Original',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'In Front' },
+          { value: 1, label: 'Behind' },
+          { value: 2, label: 'Add' },
+          { value: 3, label: 'Multiply' },
+          { value: 4, label: 'Screen' },
+          { value: 5, label: 'Overlay' },
+          { value: 6, label: 'Hard Light' },
+          { value: 7, label: 'Soft Light' },
+          { value: 8, label: 'Difference' },
+          { value: 9, label: 'Stencil Alpha' },
+          { value: 10, label: 'Silhouette Alpha' },
+        ],
+      },
+      { key: 'rgbOnly', label: 'RGB Only', type: 'checkbox', default: false },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'cc-repetile',
+    label: 'CC RepeTile',
+    params: [
+      { key: 'expandLeft', label: 'Expand Left', type: 'number', unit: 'px', min: 0, max: 2000, default: 0 },
+      { key: 'expandRight', label: 'Expand Right', type: 'number', unit: 'px', min: 0, max: 2000, default: 0 },
+      { key: 'expandUp', label: 'Expand Up', type: 'number', unit: 'px', min: 0, max: 2000, default: 0 },
+      { key: 'expandDown', label: 'Expand Down', type: 'number', unit: 'px', min: 0, max: 2000, default: 0 },
+      {
+        key: 'tiling',
+        label: 'Tiling',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Unfold' },
+          { value: 1, label: 'Repeat' },
+          { value: 2, label: 'Flip H' },
+          { value: 3, label: 'Flip V' },
+        ],
+      },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'cc-scatterize',
+    label: 'CC Scatterize',
+    params: [
+      { key: 'amount', label: 'Scatter Amount', type: 'number', min: 0, max: 1000, default: 0 },
+      { key: 'windX', label: 'Right Wind', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'windY', label: 'Down Wind', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'twist', label: 'Twist', type: 'number', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'seed', label: 'Random Seed', type: 'number', min: 1, max: 10000, default: 1 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'radial-fast-blur',
+    label: 'CC Radial Fast Blur',
+    params: [
+      { key: 'amount', label: 'Amount', type: 'number', unit: '%', min: 0, max: 100, default: 20 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      {
+        key: 'zoomMode',
+        label: 'Zoom Mode',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Standard' },
+          { value: 1, label: 'Brightest' },
+          { value: 2, label: 'Darkest' },
+        ],
+      },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'cross-blur',
+    label: 'CC Cross Blur',
+    params: [
+      { key: 'radiusX', label: 'Radius X', type: 'number', unit: 'px', min: 0, max: 200, default: 15 },
+      { key: 'radiusY', label: 'Radius Y', type: 'number', unit: 'px', min: 0, max: 200, default: 15 },
+      { key: 'repeatEdges', label: 'Repeat Edge Pixels', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'scale-wipe',
+    label: 'CC Scale Wipe',
+    params: [
+      { key: 'completion', label: 'Completion', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'stretch', label: 'Stretch', type: 'number', min: 1, max: 50, default: 10 },
+      { key: 'direction', label: 'Direction', type: 'number', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'centerX', label: 'Center X', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+      { key: 'centerY', label: 'Center Y', type: 'number', unit: 'px', min: -4000, max: 4000, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'plastic',
+    label: 'CC Plastic',
+    params: [
+      { key: 'surfaceBump', label: 'Surface Bump', type: 'number', unit: '%', min: 0, max: 100, default: 25 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 50, default: 5 },
+      { key: 'lightAngle', label: 'Light Angle', type: 'number', unit: '°', min: 0, max: 360, default: 45 },
+      { key: 'lightIntensity', label: 'Light Intensity', type: 'number', unit: '%', min: 0, max: 200, default: 100 },
+      { key: 'specular', label: 'Specular', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
     ],
     css: () => '',
   },

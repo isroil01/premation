@@ -646,6 +646,15 @@ export class MotionRendererBackend implements RenderBackend {
                     height: layer.height,
                     fillOpacity: layer.fillOpacity,
                     ...(layer.mask && layer.mask.paths.length > 0 ? { mask: layer.mask } : {}),
+                    // Device px per layer unit this frame — the view's raster
+                    // scale (which already folds in Preview Quality) times the
+                    // layer's own scale — so the bake runs at the size that
+                    // will be shown, not the footage's native size. At export
+                    // the raster scale is 1:1 at comp resolution, so a
+                    // full-frame clip still bakes at native there.
+                    targetScale:
+                      (snapshot.view?.scale ?? 1) * this.dpr
+                      * Math.max(Math.abs(layer.scaleX ?? 1), Math.abs(layer.scaleY ?? 1)),
                   }
                 : undefined;
               if (bakeVid) {

@@ -52,6 +52,42 @@
 .searchWrap {
   padding: var(--space-2);
   border-bottom: 1px solid var(--color-border-subtle);
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Variable-font filter (AE 26.3). A chip, not a checkbox row: it sits in the
+   search bar because it narrows the same list the search does. */
+.filterChip {
+  flex: none;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.filterChip:hover:not(:disabled) { color: var(--color-text-primary); }
+.filterChip:disabled { opacity: 0.5; cursor: default; }
+.filterChipOn {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-primary-contrast, #fff);
+}
+
+.variableBadge {
+  flex: none;
+  font-size: var(--font-size-micro);
+  font-family: var(--font-family-mono);
+  letter-spacing: 0.06em;
+  padding: 1px 4px;
+  border-radius: 2px;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
 }
 
 .listWrap {

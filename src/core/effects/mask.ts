@@ -481,6 +481,60 @@ export function readNodeMaskAt(node: SceneNode, t: number): LayerMask | undefine
   return readNodeMask(node);
 }
 
+// ── Per-property mask tracks (AE's Mask Feather / Opacity / Expansion) ──
+
+/** The per-path mask settings that animate as ordinary numeric tracks. */
+export const MASK_PROPERTY_KEYS = ['feather', 'opacity', 'expansion'] as const;
+export type MaskPropertyKey = (typeof MASK_PROPERTY_KEYS)[number];
+
+/**
+ * The animation prop path for one mask path's setting: `mask.<pathId>.feather`.
+ *
+ * Id-scoped like effect params and path operators, so reordering or deleting
+ * a sibling path cannot hand a keyframe to the wrong mask.
+ */
+export function maskPropPath(pathId: string, key: MaskPropertyKey): string {
+  return `mask.${pathId}.${key}`;
+}
+
+export function parseMaskPropPath(prop: string): { pathId: string; key: MaskPropertyKey } | null {
+  const m = /^mask\.([^.]+)\.(feather|opacity|expansion)$/.exec(prop);
+  return m ? { pathId: m[1]!, key: m[2] as MaskPropertyKey } : null;
+}
+
+/**
+ * Lay the frame's animated mask settings over the resolved mask.
+ *
+ * The SHAPE still comes from the whole-mask snapshot track (or the static
+ * mask); this is the other half of AE's model — Feather, Opacity and
+ * Expansion as independent curves. `av` is the node's evaluated map for the
+ * frame. A path with no tracks is returned as-is (same object), so the mask
+ * raster cache keyed on the mask's identity keeps hitting for static masks.
+ */
+export function applyMaskPropertyTracks(
+  mask: LayerMask | undefined,
+  av: ReadonlyMap<string, number> | undefined,
+): LayerMask | undefined {
+  if (!mask || !av || av.size === 0) return mask;
+  let changed = false;
+  const paths = mask.paths.map((p) => {
+    const f = av.get(maskPropPath(p.id, 'feather'));
+    const o = av.get(maskPropPath(p.id, 'opacity'));
+    const e = av.get(maskPropPath(p.id, 'expansion'));
+    if (f === undefined && o === undefined && e === undefined) return p;
+    changed = true;
+    return {
+      ...p,
+      ...(f !== undefined ? { feather: Math.max(0, f) } : {}),
+      // Opacity tracks are 0..100 like every other opacity in the registry;
+      // the mask stores 0..1.
+      ...(o !== undefined ? { opacity: Math.max(0, Math.min(1, o / 100)) } : {}),
+      ...(e !== undefined ? { expansion: e } : {}),
+    };
+  });
+  return changed ? { ...mask, paths } : mask;
+}
+
 /** Keyframe the layer's current mask shape at time `t` (replaces same-t kf). */
 export function keyframeMask(nodeId: string, t: number): void {
   const node = defaultSceneGraph.getNode(nodeId);

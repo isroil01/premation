@@ -122,14 +122,18 @@ function decodeOptions(premultipliedFile?: boolean): ImageBitmapOptions {
 
 /** Draw an already-decoded <img> to a canvas at w×h and hand back a bitmap. */
 async function imageToBitmap(img: HTMLImageElement, w: number, h: number, premultipliedFile?: boolean): Promise<ImageBitmap> {
+  const maxDim = RASTER_MAX;
+  const scale = Math.max(w, h) > maxDim ? maxDim / Math.max(w, h) : 1;
+  const targetW = Math.max(1, Math.round(w * scale));
+  const targetH = Math.max(1, Math.round(h * scale));
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(1, Math.min(RASTER_MAX, Math.round(w)));
-  canvas.height = Math.max(1, Math.min(RASTER_MAX, Math.round(h)));
+  canvas.width = targetW;
+  canvas.height = targetH;
   const ctx = canvas.getContext('2d');
   if (!ctx) return createImageBitmap(img, decodeOptions(premultipliedFile));
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, targetW, targetH);
   return createImageBitmap(canvas, decodeOptions(premultipliedFile));
 }
 
@@ -282,6 +286,40 @@ export interface ImageBakeSpec {
   /** Baked BEFORE the chain, so interior styles shape themselves from the
    *  masked silhouette rather than the bitmap's rectangle. */
   mask?: LayerMask;
+  /**
+   * Device pixels per layer unit on screen THIS frame — the view's raster scale
+   * times the layer's own scale. When present, the bake runs at
+   * `min(native, layer box × targetScale)` instead of the source's native size.
+   *
+   * This is where the cost of effects on footage lives. A 1080p clip shown in
+   * a 960 px viewport at Half preview covers 480 × 270 device pixels, yet every
+   * CPU effect used to run over all 2,073,600 source pixels per frame, only for
+   * the compositor to shrink the result 16×. Baking at the size that will be
+   * shown makes a four-effect chain cost what it costs at that size — and the
+   * export path, whose raster scale is 1:1 at comp resolution, still bakes at
+   * native. Absent → native, the old behaviour.
+   */
+  targetScale?: number;
+}
+
+/**
+ * The pixel size to bake at: the layer box scaled to the screen, clamped to
+ * the source's native size, never below 1 px. Aspect follows the SOURCE (the
+ * layer box may be letterboxed around it), so the chain's px parameters scale
+ * by the same factor on both axes as before.
+ */
+export function bakeSize(nativeW: number, nativeH: number, bake: Pick<ImageBakeSpec, 'width' | 'height' | 'targetScale'>): { w: number; h: number } {
+  const ts = bake.targetScale;
+  if (!(ts !== undefined && ts > 0 && Number.isFinite(ts))) return { w: nativeW, h: nativeH };
+  // Device pixels the layer box covers, per axis; the source is fitted into
+  // that box, so the limiting axis decides the factor.
+  const boxW = Math.max(1, bake.width) * ts;
+  const boxH = Math.max(1, bake.height) * ts;
+  const factor = Math.min(1, Math.max(boxW / nativeW, boxH / nativeH));
+  return {
+    w: Math.max(1, Math.round(nativeW * factor)),
+    h: Math.max(1, Math.round(nativeH * factor)),
+  };
 }
 
 interface ImageEntry {
@@ -576,6 +614,8 @@ export class AppTextureProvider implements TextureProvider {
    *  flush inside a five-effect stack was a major source of main-thread freezes.
    *  Two slots so silhouette + flushCss never alias the same surface. */
   private bakeWork: HTMLCanvasElement | null = null;
+  /** The baked-video upload surface, reused frame to frame (see setVideoBaked). */
+  private videoBakeOut: HTMLCanvasElement | null = null;
   private bakeScratchA: HTMLCanvasElement | null = null;
   private bakeScratchB: HTMLCanvasElement | null = null;
   private bakeScratchToggle = 0;
@@ -671,6 +711,7 @@ export class AppTextureProvider implements TextureProvider {
   ) {
     this.loader = opts.loader ?? defaultLoader;
     this.videoFactory = opts.videoFactory ?? defaultVideoFactory;
+    this.maxRasterDimension = this.resources.maxTextureSize || DEFAULT_MAX_RASTER_DIMENSION;
     this.rasterizer = new Canvas2DVectorRasterizer(this.resources);
   }
 
@@ -1165,12 +1206,12 @@ export class AppTextureProvider implements TextureProvider {
     const loopWrap = prev !== undefined && timeSec + 0.05 < prev;
     const largeJump = prev !== undefined && Math.abs(timeSec - prev) > 0.35;
     const drift = Math.abs(v.currentTime - timeSec);
-    if (!entry.hasSeeked || loopWrap || largeJump || drift > 0.1) {
+    if (!entry.hasSeeked || loopWrap || largeJump || (drift > 0.25 && !v.seeking)) {
       entry.hasSeeked = true;
       entry.requestedTime = timeSec;
       v.currentTime = timeSec;
       void v.play().catch(() => undefined);
-    } else if (v.paused) {
+    } else if (v.paused && !v.seeking) {
       void v.play().catch(() => undefined);
     }
     this.uploadVideoTexture(entry, key, fields, bucket);
@@ -1181,8 +1222,14 @@ export class AppTextureProvider implements TextureProvider {
     const v = entry.video;
     const w = v.videoWidth || 1;
     const h = v.videoHeight || 1;
-    const bw = bucket >= 1 || fields ? w : Math.max(1, Math.round(w * bucket));
-    const bh = bucket >= 1 || fields ? h : Math.max(1, Math.round(h * bucket));
+    let bw = bucket >= 1 || fields ? w : Math.max(1, Math.round(w * bucket));
+    let bh = bucket >= 1 || fields ? h : Math.max(1, Math.round(h * bucket));
+    const maxDim = this.maxRasterDimension;
+    if ((bw > maxDim || bh > maxDim) && bw > 0 && bh > 0) {
+      const scale = Math.min(maxDim / bw, maxDim / bh);
+      bw = Math.max(1, Math.round(bw * scale));
+      bh = Math.max(1, Math.round(bh * scale));
+    }
     const poolKey = `vid:${key}:${bw}x${bh}`;
     if (entry.texture === null || entry.w !== bw || entry.h !== bh) {
       if (entry.texture && entry.poolKey) this.resources.freeTexture(entry.poolKey);
@@ -1231,9 +1278,11 @@ export class AppTextureProvider implements TextureProvider {
     const entry = this.videoEntries.get(key);
     if (!entry || entry.video.readyState < HAVE_CURRENT_DATA || !entry.hasSeeked) return;
     const v = entry.video;
-    const w = v.videoWidth || 0;
-    const h = v.videoHeight || 0;
-    if (!(w > 0) || !(h > 0)) return;
+    const nativeW = v.videoWidth || 0;
+    const nativeH = v.videoHeight || 0;
+    if (!(nativeW > 0) || !(nativeH > 0)) return;
+    // Bake at the displayed size, never above native. See `ImageBakeSpec.targetScale`.
+    const { w, h } = bakeSize(nativeW, nativeH, bake);
     try {
       const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
@@ -1243,7 +1292,9 @@ export class AppTextureProvider implements TextureProvider {
       ctx.globalAlpha = 1;
       ctx.filter = 'none';
       ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(v, 0, 0);
+      // drawImage downsamples in one step; for a 2–4× reduction the browser's
+      // bilinear filter is close enough for a preview bake.
+      ctx.drawImage(v, 0, 0, w, h);
       if (fields) {
         // Before the effect chain: effects sampling a combed frame would smear
         // the comb teeth into their output.
@@ -1281,14 +1332,18 @@ export class AppTextureProvider implements TextureProvider {
       const maskSig = bake.mask ? `:m${bake.mask.paths.length}` : '';
       // Frame entries win over video entries in get(), so the baked canvas is
       // what the compositor samples while the video element stays alive for the
-      // next seek. Copy out of the pooled work surface before upload.
-      const out = document.createElement('canvas');
-      out.width = w;
-      out.height = h;
+      // next seek. Copy out of the pooled work surface before upload — into a
+      // POOLED output canvas, not a fresh element per frame: at 30 fps that was
+      // thirty 1080p canvas allocations a second, which is GC pressure the
+      // frame budget cannot afford.
+      const out = this.ensureCanvas('videoBakeOut', w, h);
       const oc = out.getContext('2d');
       if (!oc) return;
+      oc.setTransform(1, 0, 0, 1, 0, 0);
+      oc.globalCompositeOperation = 'copy';
       oc.drawImage(canvas, 0, 0);
-      this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}:f${fields ?? ''}`);
+      oc.globalCompositeOperation = 'source-over';
+      this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${w}x${h}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}:f${fields ?? ''}`);
     } catch {
       /* leave the raw video upload from setVideo in place */
     }
@@ -1310,6 +1365,22 @@ export class AppTextureProvider implements TextureProvider {
       // carries the field order, so toggling it re-uploads.
       const clean = deinterlaceInto(this.fieldsWork, canvas, canvas.width, canvas.height, fields);
       if (clean) canvas = clean;
+    }
+    const maxDim = this.maxRasterDimension;
+    if ((canvas.width > maxDim || canvas.height > maxDim) && canvas.width > 0 && canvas.height > 0) {
+      const scale = Math.min(maxDim / canvas.width, maxDim / canvas.height);
+      const targetW = Math.max(1, Math.round(canvas.width * scale));
+      const targetH = Math.max(1, Math.round(canvas.height * scale));
+      const scaled = document.createElement('canvas');
+      scaled.width = targetW;
+      scaled.height = targetH;
+      const ctx = scaled.getContext('2d');
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(canvas, 0, 0, targetW, targetH);
+        canvas = scaled;
+      }
     }
     // ONE texture per key, rewritten in place — the setVideo/setParticles pattern.
     //
@@ -1534,15 +1605,20 @@ export class AppTextureProvider implements TextureProvider {
    * Returns null if anything is unavailable, leaving the untouched bitmap in
    * place rather than dropping the layer.
    */
-  private ensureCanvas(slot: 'work' | 'a' | 'b', w: number, h: number): HTMLCanvasElement {
-    const cur = slot === 'work' ? this.bakeWork : slot === 'a' ? this.bakeScratchA : this.bakeScratchB;
+  private ensureCanvas(slot: 'work' | 'a' | 'b' | 'videoBakeOut', w: number, h: number): HTMLCanvasElement {
+    const cur =
+      slot === 'work' ? this.bakeWork
+      : slot === 'a' ? this.bakeScratchA
+      : slot === 'b' ? this.bakeScratchB
+      : this.videoBakeOut;
     if (cur && cur.width === w && cur.height === h) return cur;
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
     if (slot === 'work') this.bakeWork = c;
     else if (slot === 'a') this.bakeScratchA = c;
-    else this.bakeScratchB = c;
+    else if (slot === 'b') this.bakeScratchB = c;
+    else this.videoBakeOut = c;
     return c;
   }
 
@@ -1589,8 +1665,14 @@ export class AppTextureProvider implements TextureProvider {
     const BAKE_HEADROOM = 1.5;
     const needW = bake.width > 0 ? bake.width * this.bakeResolutionTier() * BAKE_HEADROOM : srcW;
     const factor = Math.min(1, Math.max(0.05, needW / srcW));
-    const w = Math.max(1, Math.round(srcW * factor));
-    const h = Math.max(1, Math.round(srcH * factor));
+    let w = Math.max(1, Math.round(srcW * factor));
+    let h = Math.max(1, Math.round(srcH * factor));
+    const maxDim = this.maxRasterDimension;
+    if (w > maxDim || h > maxDim) {
+      const clampScale = Math.min(maxDim / w, maxDim / h);
+      w = Math.max(1, Math.round(w * clampScale));
+      h = Math.max(1, Math.round(h * clampScale));
+    }
     try {
       const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
@@ -1700,6 +1782,59 @@ export class AppTextureProvider implements TextureProvider {
         // now hold is a premultiplied-labelled bitmap — the "straight file" row
         // of the table below — and the upload flag has to say so or the browser
         // un-premultiplies it and the halo comes back.
+        entry.premultipliedFile = false;
+      }
+    }
+
+    // Downscale oversized bitmaps that exceed the GPU's maximum texture dimension
+    // (e.g. giant screenshots such as 3072x24608 exceeding 8192/16384).
+    // WebGPU and WebGL reject textures above maxTextureDimension2D, which otherwise
+    // invalidates the texture and prevents any content from rendering.
+    const maxDim = this.maxRasterDimension;
+    if ((bitmap.width > maxDim || bitmap.height > maxDim) && bitmap.width > 0 && bitmap.height > 0) {
+      const scale = Math.min(maxDim / bitmap.width, maxDim / bitmap.height);
+      const targetW = Math.max(1, Math.round(bitmap.width * scale));
+      const targetH = Math.max(1, Math.round(bitmap.height * scale));
+      let downscaled: ImageBitmap | null = null;
+      if (typeof OffscreenCanvas !== 'undefined') {
+        try {
+          const off = new OffscreenCanvas(targetW, targetH);
+          const ctx = off.getContext('2d');
+          if (ctx) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+            downscaled = typeof createImageBitmap === 'function'
+              ? await createImageBitmap(off, decodeOptions(false))
+              : ({ width: targetW, height: targetH, close() {} } as unknown as ImageBitmap);
+          }
+        } catch {
+          downscaled = null;
+        }
+      }
+      if (!downscaled && typeof document !== 'undefined') {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = targetW;
+          canvas.height = targetH;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+            downscaled = typeof createImageBitmap === 'function'
+              ? await createImageBitmap(canvas, decodeOptions(false))
+              : ({ width: targetW, height: targetH, close() {} } as unknown as ImageBitmap);
+          }
+        } catch {
+          downscaled = null;
+        }
+      }
+      if (downscaled) {
+        if (bitmap !== entry.unbaked) {
+          try { bitmap.close(); } catch { /* */ }
+        }
+        bitmap = downscaled;
         entry.premultipliedFile = false;
       }
     }

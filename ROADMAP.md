@@ -10,7 +10,7 @@ If you want to help, the **Now** section is where help changes the most.
 ## Where it stands today
 
 Working and used daily: compositions and nesting, 2D/3D layers with cameras and
-lights, keyframes and the graph editor, 174 effects, masks and mattes, shape
+lights, keyframes and the graph editor, 183 effects, masks and mattes, shape
 layers, per-glyph text animators, expressions, bone and puppet rigging,
 particles, SVG and Lottie import, and export to mp4/mov/webm/GIF/PNG/Lottie
 through a local ffmpeg.
@@ -115,6 +115,10 @@ storage layer.
   explicitly out of scope — see
   [`docs/3d-layer-model.md`](docs/3d-layer-model.md). The target is AE's
   *Classic* 3D, plus extrusion and bevels.
+- **Local AI conversation persistence.** The assistant ships in the local
+  edition (BYOK via OS keystore + `aiProxy`, including `ai:image`). Thread
+  history still only persists when a backend is present; in-session history
+  works. Wiring `aiBundleIO` into the chat UI would close the gap.
 
 ---
 
@@ -123,25 +127,10 @@ storage layer.
 - **A web version.** The app depends on the filesystem, native menus and a local
   ffmpeg. The renderer runs in a browser tab for development, but that is a
   development convenience, not a product.
-- **Re-implementing the hosted backend in this repo.** Accounts, billing, the
-  metered AI service and the encrypted sync vault are a separate closed service.
-  The local edition is designed to need none of them, and that is the intended
-  shape — not a temporary state.
-- **Shipping the AI assistant in the local edition.** This section used to open
-  with "Bring-your-own-key AI — the biggest gap, and the best contribution
-  available", followed by a four-step plan. All four steps were completed: the
-  transport in `streamTurn` is injectable, the provider call happens in the
-  Electron main process, keys are stored with `safeStorage` in the OS keystore,
-  and `aiEnabled()` was flipped.
-
-  It has since been flipped back, deliberately. The local edition does not ship
-  the assistant — no panel, no commands, no settings tab, and no AI IPC
-  registered in the shell. The machinery all still exists and is unchanged; what
-  changed is the decision about what the open-source build includes. Worth
-  stating plainly so nobody rebuilds it: the work is done, the gate is one line
-  in `src/core/config/edition.ts`, and the local build's no-network guarantee is
-  now enforced in the main process rather than by the UI declining to offer a
-  button.
+- **Re-implementing the hosted backend in this repo.** Accounts, billing and the
+  encrypted sync vault are a separate closed service. The local edition is
+  designed to need none of them for editing — BYOK AI talks to the user's
+  provider directly from the desktop shell.
 
 ---
 

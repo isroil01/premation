@@ -11,12 +11,12 @@
  * produce byte-identical main bundles, so nothing here could tell the two apart.
  *
  * That was fine while the two editions had the same IPC surface. It stopped
- * being fine when the local edition stopped shipping the assistant: hiding the
- * AI panel in the renderer while `ai:stream` stays registered in main is not a
- * gate, it is a curtain. The renderer is the untrusted side of this boundary —
- * a plugin panel, an imported document, or someone typing in DevTools can invoke
- * any channel this process registers, whatever the UI chooses to render. So the
- * gate has to be enforced HERE, by not registering the channels at all.
+ * being fine when capabilities started diverging: hiding a feature in the
+ * RENDERER while its IPC stays registered in main is not a gate — the renderer
+ * is the untrusted side of this boundary. So each capability that contacts a
+ * host we do not control is gated HERE by not registering the channels at all
+ * when the matching predicate is false (today: plugins via `pluginsEnabled`).
+ * The assistant is on in both editions; its IPC is always registered.
  *
  * ── The two-readers problem, and what forces them to agree ──────────────────
  *
@@ -108,18 +108,16 @@ export function __setEditionForTests(next: Edition | null): void {
 /**
  * The assistant, in this process.
  *
- * Mirrors `aiEnabled()` on the renderer side, and gates the same thing from the
- * privileged end: when this is false, `registerAiKeyIpc` and `registerAiProxyIpc`
- * are never called, so `aiKeys:*`, `ai:stream` and `ai:cancel` do not exist as
- * channels. An `ipcRenderer.invoke` against them rejects with "No handler
- * registered", which is the correct answer — not a soft refusal that a caller
- * could mistake for a transient failure and retry.
+ * Mirrors `aiEnabled()` on the renderer side. On in both editions: when true,
+ * `registerAiKeyIpc` and `registerAiProxyIpc` register `aiKeys:*`, `ai:stream`,
+ * `ai:cancel` and `ai:image`. The local edition spends keys from the OS
+ * keystore; the server edition ignores these channels and posts to motion-back.
  *
- * This is one of the two things preserving the local edition's network story:
  * `aiProxy` and `pluginNet` are the only code in this process that contacts a
- * third-party host, and each is unreachable when its gate is false.
+ * third-party host. Plugin net stays gated by `pluginsEnabled()`; the assistant
+ * contacts a provider only when the user has connected a key and run a prompt.
  */
-export const aiEnabled = (): boolean => isServerEdition();
+export const aiEnabled = (): boolean => true;
 
 /**
  * Plugins, in this process.

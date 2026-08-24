@@ -26,6 +26,14 @@ import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { DEFAULT_COLOR_OVERLAY, styledSurfaceFill, type LayerStyles } from '@core/effects/layerStyles';
 
+// These cases pin the QUAD-SYNTHESIS extrusion (scene/extrusion.ts), which is
+// now the FALLBACK behind the mesh path (scene/extrusionMesh.ts) — taken when
+// an outline cannot be produced. The fallback is still live code, so its
+// guarantees are kept by switching the mesh path off for this file.
+import { setExtrusionMeshPath } from '@core/scene/extrusionMesh';
+beforeAll(() => setExtrusionMeshPath(false));
+afterAll(() => setExtrusionMeshPath(true));
+
 const W = 1920;
 const H = 1080;
 const FOCAL = 2666.5025797583758;

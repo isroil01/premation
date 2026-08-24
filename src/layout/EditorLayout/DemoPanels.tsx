@@ -49,8 +49,6 @@ import { findLayerKind, findKindFor } from '@core/plugins/layerKindRegistry';
 import { splitKind } from '@core/plugins/layerKindSchema';
 import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
-import { ClonerSection } from '@layout/Inspector/ClonerSection';
-import { PhysicsSection } from '@layout/Inspector/PhysicsSection';
 import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
 import { ActiveTemplateFields, TemplateAuthoringSection } from '@layout/Templates/TemplateFieldsPanel';
 import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
@@ -137,6 +135,22 @@ const KIND_ICON: Record<SceneKind, IconName> = {
   comp: 'component',
 };
 
+const KIND_COLOR: Record<SceneKind, string> = {
+  group: '#a78bfa',
+  null: '#94a3b8',
+  shape: '#2dd4bf',
+  text: '#60a5fa',
+  image: '#f59e0b',
+  video: '#f43f5e',
+  svg: '#34d399',
+  audio: '#10b981',
+  camera: '#fb923c',
+  light: '#facc15',
+  adjustment: '#c084fc',
+  particle: '#ec4899',
+  comp: '#818cf8',
+};
+
 function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
   const kind = readNodeKind(node);
   // Stacking convention (matches the timeline): the TOP entry is the
@@ -209,6 +223,7 @@ function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
     id: node.id,
     label,
     icon: iconName,
+    iconColor: KIND_COLOR[kind],
     labelColor: readNodeLabelColor(node),
     data: { type: kind },
     children: children.length ? children : undefined,
@@ -518,7 +533,7 @@ export function ScenePanel(): JSX.Element {
             aria-label="New Composition"
             onClick={() => openNewCompositionDialog()}
           >
-            <Icon name="plus" size="sm" />
+            <Icon name="plus" size={12} />
           </button>
         </div>
         {listedComps.length === 0 ? (
@@ -536,7 +551,7 @@ export function ScenePanel(): JSX.Element {
                   onClick={() => openComposition(c.id)}
                   onContextMenu={(e) => openCompMenu(c.id, e)}
                 >
-                  <Icon name="component" size="sm" className={styles.compGlyph} />
+                  <Icon name="component" size={13} className={styles.compGlyph} />
                   <span className={styles.compName}>{c.name}</span>
                   <span className={styles.compMeta}>{c.width}×{c.height}</span>
                   <button
@@ -549,7 +564,7 @@ export function ScenePanel(): JSX.Element {
                       void confirmDeleteComp(c.id);
                     }}
                   >
-                    <Icon name="trash" size="sm" />
+                    <Icon name="trash" size={12} />
                   </button>
                 </div>
               );
@@ -1293,7 +1308,7 @@ export function AssetsPanel(): JSX.Element {
             }
           }}
         >
-          <Icon name="component" size="sm" />
+          <Icon name="component" size={14} />
         </button>
 
         <button
@@ -1302,7 +1317,7 @@ export function AssetsPanel(): JSX.Element {
           title="New Folder"
           onClick={handleNewFolder}
         >
-          <Icon name="folder-plus" size="sm" />
+          <Icon name="folder-plus" size={14} style={{ color: '#f5b041' }} />
         </button>
 
         <button
@@ -1311,7 +1326,7 @@ export function AssetsPanel(): JSX.Element {
           title="Import Folder (keeps folder structure)…"
           onClick={() => folderInputRef.current?.click()}
         >
-          <Icon name="folder-open" size="sm" />
+          <Icon name="folder-open" size={14} style={{ color: '#f5b041' }} />
         </button>
 
         <button
@@ -1320,7 +1335,7 @@ export function AssetsPanel(): JSX.Element {
           title="Import Media Files…"
           onClick={() => fileInputRef.current?.click()}
         >
-          <Icon name="upload" size="sm" />
+          <Icon name="upload" size={14} />
         </button>
 
         {derivedCount > 0 && (
@@ -1334,7 +1349,7 @@ export function AssetsPanel(): JSX.Element {
                 : `Show ${derivedCount} generated image${derivedCount === 1 ? '' : 's'} — duplicates and rasterized copies made by effects and plugins`
             }
           >
-            <Icon name="sparkles" size="sm" />
+            <Icon name="sparkles" size={14} />
           </button>
         )}
 
@@ -1347,7 +1362,7 @@ export function AssetsPanel(): JSX.Element {
             if (singleSelectedAsset) openInterpretFootage(singleSelectedAsset);
           }}
         >
-          <Icon name="sliders-h" size="sm" />
+          <Icon name="sliders-h" size={14} />
         </button>
 
         <button
@@ -1359,7 +1374,7 @@ export function AssetsPanel(): JSX.Element {
             void deleteSelectedAssets();
           }}
         >
-          <Icon name="trash" size="sm" />
+          <Icon name="trash" size={14} />
         </button>
       </div>
     </Panel>
@@ -1735,20 +1750,9 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  // Cloner is NOT kind-gated: any layer that draws can be multiplied, and a
-  // group is the obvious thing to clone. Closed by default — it is off until
-  // switched on, and an open panel of inert controls is noise on every layer.
-  items.push({
-    id: 'cloner', title: 'Cloner', icon: 'grid',
-    content: <ClonerSection nodeId={nodeId} />,
-  });
-
-  // Physics, same reasoning as Cloner: any layer can be a body, and a static
-  // wall is as likely to be a group as a shape.
-  items.push({
-    id: 'physics', title: 'Physics', icon: 'zap',
-    content: <PhysicsSection nodeId={nodeId} />,
-  });
+  // Cloner + Physics live in Effects → Simulation (add) / Effect Controls
+  // (edit). They used to sit in this Properties accordion on every layer,
+  // which buried Fill & Stroke under two always-present modifier sections.
 
   // Shapes / media: full Fill & Stroke. Text layers already own Character Color
   // in Text — Appearance still mounts for Stroke (and corner radius is N/A),
@@ -1838,10 +1842,10 @@ function RigPanelContent({ nodeId, query = '' }: { nodeId: string | null; query?
         action={
           <>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('bone')}>
-              <Icon name="bone" size="sm" /> Bone Tool
+              <Icon name="bone" size={13} style={{ color: '#f97316' }} /> Bone Tool
             </Button>
             <Button size="sm" variant="secondary" fullWidth onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}>
-              <Icon name="puppet-pin" size="sm" /> Puppet Pin Tool
+              <Icon name="puppet-pin" size={13} /> Puppet Pin Tool
             </Button>
           </>
         }
@@ -2489,12 +2493,6 @@ const LIBRARY_SECTIONS: ReadonlyArray<{ id: LibrarySection; label: string; icon:
   { id: 'transitions', label: 'Transitions', icon: 'scissors' },
   { id: 'sfx',         label: 'Sound FX',    icon: 'voice' },
   { id: 'lottie',      label: 'Lottie UI',   icon: 'video' },
-  // Components / Shapes / Text were written, exported, and then left with no way
-  // in: their only references were getAllPanelRenderers entries under panel ids
-  // that are never registered, and the Library — where they were supposedly
-  // folded — never included them. Saved Components in particular is a whole
-  // feature (it is what componentThumb renders thumbnails for) that no user
-  // could reach. Surfaced here rather than deleted.
   { id: 'components',  label: 'Components',  icon: 'component' },
   { id: 'shapes',      label: 'Shapes',      icon: 'shape' },
   { id: 'text',        label: 'Text',        icon: 'type' },
@@ -2519,8 +2517,8 @@ export function LibraryPanel(): JSX.Element {
             className={section === s.id ? styles.libTabActive : styles.libTab}
             title={s.label}
             onClick={() => setSection(s.id)}>
-            <Icon name={s.icon} size="sm" />
-            {s.label}
+            <Icon name={s.icon} size={13} />
+            <span>{s.label}</span>
           </button>
         ))}
       </div>
@@ -2560,11 +2558,10 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     // drops panelOrder ids that no longer register, so persisted layouts and
     // saved workspaces holding the old ids simply lose the dead tabs.
     //
-    // The assistant is spread conditionally rather than listed: the local
-    // edition does not ship it. Not registering the panel (panelDefs.ts) already
-    // stops the dock rendering it, but PopoutRoute resolves renderers by id
-    // straight from this map — so a pop-out window deep-linked at /popout/ai
-    // would have re-mounted the whole panel around the gate.
+    // The assistant is spread conditionally rather than listed so a future
+    // `aiEnabled()` flip still keeps PopoutRoute honest — it resolves renderers
+    // by id straight from this map, so a pop-out at /popout/ai must not remount
+    // the panel around a gate that says the surface is absent.
     ...(aiEnabled() ? { ai: () => <AiChatPanel /> } : {}),
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,

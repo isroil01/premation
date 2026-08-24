@@ -144,6 +144,10 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'deformed-mesh-linear', pack: () => packDeformedMesh(MVP, COLOR, 1) },
   { shader: 'textured3d-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'masked-textured3d-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
+  // Extruded-mesh materials share the textured3d Object block.
+  { shader: 'mesh3d-solid', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
+  { shader: 'mesh3d-textured', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
+  { shader: 'mesh3d-textured-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
 ];
 

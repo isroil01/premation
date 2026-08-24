@@ -58,6 +58,20 @@ describe('Effect Controls panel wiring', () => {
     expect(src).not.toMatch(/addChip/);
   });
 
+  it('hosts Cloner and Physics once attached from Effects → Simulation', () => {
+    const controls = readFileSync(join(SRC, 'layout/Effects/EffectControlsPanel.tsx'), 'utf8');
+    const library = readFileSync(join(SRC, 'layout/Effects/EffectsPanel.tsx'), 'utf8');
+    const props = readFileSync(join(SRC, 'layout/EditorLayout/DemoPanels.tsx'), 'utf8');
+    expect(library).toMatch(/Simulation/);
+    expect(library).toMatch(/enableNodeCloner/);
+    expect(library).toMatch(/enableNodePhysics/);
+    expect(controls).toMatch(/ClonerSection/);
+    expect(controls).toMatch(/PhysicsSection/);
+    // Properties must not still mount them on every layer.
+    expect(props).not.toMatch(/id:\s*'cloner'/);
+    expect(props).not.toMatch(/id:\s*'physics'/);
+  });
+
   it('the right Effects panel is where presets are applied', () => {
     const src = readFileSync(join(SRC, 'layout/Effects/EffectsPanel.tsx'), 'utf8');
     expect(src).toMatch(/listEffectPresets/);

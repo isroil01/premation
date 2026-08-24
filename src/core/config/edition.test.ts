@@ -29,16 +29,10 @@ import {
 /**
  * Capabilities the local edition does not have.
  *
- * `aiEnabled` has been in and out of this list, so the current reason is worth
- * stating plainly: it is here because the local edition does not SHIP the
- * assistant, not because it cannot run one. The key path it grew — OS keystore in
- * the main process, `electron/aiProxy.ts` spending it — still exists and still
- * works; the edition simply does not offer the surface. Every other entry is here
- * for the older, structural reason: no backend to talk to.
- *
- * `aiRunsThroughBackend` stays listed separately from `aiEnabled` even though
- * both are now false in local, because they answer different questions and one is
- * about to be true again the moment someone flips the distribution decision.
+ * Structural: no backend to talk to. `aiEnabled` is deliberately NOT here —
+ * the assistant ships in the local edition via BYOK (OS keystore + main-process
+ * proxy). `aiRunsThroughBackend` stays listed because that answers a different
+ * question (where the key lives), and it is false locally.
  */
 const CLOUD_CAPABILITIES = {
   cloudAccountsEnabled,
@@ -47,7 +41,6 @@ const CLOUD_CAPABILITIES = {
   cloudSyncEnabled,
   pluginRegistryEnabled,
   aiRunsThroughBackend,
-  aiEnabled,
 };
 
 describe('edition', () => {
@@ -73,21 +66,13 @@ describe('edition', () => {
     expect(off).toEqual(Object.fromEntries(Object.keys(CLOUD_CAPABILITIES).map((n) => [n, false])));
   });
 
-  it('ships the assistant in the server edition only', () => {
-    // This assertion has been all three values, so read the reason before
-    // changing it a fourth time. It is NOT "local cannot run the assistant" —
-    // local has a complete BYOK path (OS keystore + main-process proxy) and that
-    // code is untouched. It is "the local edition does not ship it", a
-    // distribution decision, and this predicate is the entire mechanism.
-    //
-    // Flipping it back on is a one-line change here. What that one line must NOT
-    // become again is `() => true` with no callers: this used to be exactly that,
-    // which is why turning it false hid nothing until the surfaces were gated
-    // individually. `editionAiSurface.test.ts` is what holds that line.
+  it('ships the assistant in both editions', () => {
+    // Local runs BYOK through the OS keystore; server runs through motion-back.
+    // `aiRunsThroughBackend()` is what discriminates those two paths.
     setEdition('server');
     expect(aiEnabled()).toBe(true);
     setEdition('local');
-    expect(aiEnabled()).toBe(false);
+    expect(aiEnabled()).toBe(true);
   });
 
   it('routes the assistant through the backend only in the server edition', () => {

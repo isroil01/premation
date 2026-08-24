@@ -75,14 +75,14 @@
  * fighting a specificity war that did not exist.
  */
 .headerBtnActive {
-  background: var(--color-primary-subtle);
+  background: transparent;
   color: var(--color-primary);
   border-color: transparent;
   box-shadow: none;
 }
 
 .headerBtnActive:hover {
-  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  background: var(--color-surface-3);
   color: var(--color-primary);
   border-color: transparent;
 }

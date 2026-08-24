@@ -15,6 +15,7 @@ import { create } from 'zustand';
 import {
   exportAudioEntries,
   renderSequenceZip,
+  renderExrSequenceZip,
   renderVideo,
   downloadBlob,
   renderGifBlob,
@@ -28,7 +29,7 @@ import { compSizeOf } from '@core/composition/compSizes';
 
 export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
 
-export type OutputFormat = VideoFormat | 'png-sequence' | 'jpg-sequence';
+export type OutputFormat = VideoFormat | 'png-sequence' | 'jpg-sequence' | 'exr-sequence';
 
 export interface RenderJob {
   id: string;
@@ -96,7 +97,7 @@ interface RenderQueueState {
   /** Aborts the in-flight render when the user pauses. */
   _abort: AbortController | null;
 
-  addJob: (job: Omit<RenderJob, 'id' | 'status' | 'progress'>) => void;
+  addJob: (job: Omit<RenderJob, 'id' | 'status' | 'progress'>) => string;
   removeJob: (id: string) => void;
   duplicateJob: (id: string) => void;
   updateJob: (id: string, patch: Partial<RenderJob>) => void;
@@ -125,6 +126,7 @@ export function outputExtFor(format: OutputFormat): string {
   switch (format) {
     case 'png-sequence':
     case 'jpg-sequence':
+    case 'exr-sequence':
       return 'zip';
     default:
       return format;
@@ -136,7 +138,7 @@ let jobSeq = 1;
 /** The exporter options a queued job renders with. */
 function jobOptions(job: RenderJob): ExportOptions {
   return {
-    format: job.format === 'png-sequence' || job.format === 'jpg-sequence' ? 'png-sequence' : job.format,
+    format: job.format,
     width: job.width,
     height: job.height,
     fps: job.fps,
@@ -182,6 +184,10 @@ async function renderJob(
     const ext = job.format === 'png-sequence' ? 'png' : 'jpg';
     const audio = await exportAudioEntries(opts);
     return { kind: 'blob', blob: await renderSequenceZip(opts, ext, onProgress, signal, audio), ext: 'zip' };
+  }
+
+  if (job.format === 'exr-sequence') {
+    return { kind: 'blob', blob: await renderExrSequenceZip(opts, onProgress, signal), ext: 'zip' };
   }
 
   // GIF has no browser encoder path through the sink, so it keeps its own.
@@ -242,6 +248,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   addJob(job) {
     const id = `rq_${Date.now()}_${jobSeq++}`;
     set((s) => ({ jobs: [...s.jobs, { ...job, id, status: 'queued', progress: 0 }] }));
+    return id;
   },
 
   removeJob(id) {

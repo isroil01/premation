@@ -32,6 +32,8 @@ export interface TreeNode<T> {
   id: string;
   label: ReactNode;
   icon?: IconName;
+  /** Optional icon color. */
+  iconColor?: string;
   /** Optional label color — renders a small color dot before the label. */
   labelColor?: string;
   children?: ReadonlyArray<TreeNode<T>>;
@@ -358,10 +360,17 @@ export function TreeView<T = unknown>({
                 }
               >
                 {row.hasChildren ? (
-                  <Icon name={row.expanded ? 'chevron-down' : 'chevron-right'} size="sm" />
+                  <Icon name={row.expanded ? 'chevron-down' : 'chevron-right'} size={12} />
                 ) : null}
               </span>
-              {row.node.icon ? <Icon name={row.node.icon} size="md" className={styles.icon} /> : null}
+              {row.node.icon ? (
+                <Icon
+                  name={row.node.icon}
+                  size={14}
+                  className={styles.icon}
+                  style={row.node.iconColor ? { color: row.node.iconColor } : undefined}
+                />
+              ) : null}
               {row.node.labelColor ? (
                 <span
                   className={styles.labelDot}

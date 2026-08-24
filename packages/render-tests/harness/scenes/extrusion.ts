@@ -291,10 +291,76 @@ function oneSidedLightPair(): Scene[] {
   ];
 }
 
+/**
+ * Mesh-path subjects — what the quad synthesis could not draw at all.
+ *
+ * The extrusion body is now ONE mesh with per-vertex normals
+ * (core/geometry/extrudeMesh.ts). These scenes exist because the older
+ * geometry had no equivalent: a cylinder's wall was twenty flat strips, each
+ * lit as its own facet, with a seam at every join; text had no walls, only a
+ * stack of plates. Lit from one side, the wall of a cylinder must now shade
+ * as a CONTINUOUS gradient around the body, and the walls and chamfer of a
+ * glyph must read as surfaces in their own right.
+ */
+function meshPathScenes(): Scene[] {
+  const light = (graph: Parameters<Scene['build']>[0]): void => {
+    graph.addNode(node('L', {
+      kind: 'light',
+      position: { x: -400, y: 120 },
+      // A FRONTAL key: the aim is mostly −z (out of the screen) with a little
+      // +x/+y rake, so the one-sided fronts and bevels catch it and the walls
+      // still grade off — the classic key light an AE scene would carry.
+      transform: { lightType: 'parallel', intensity: 100, radius: 60, z: 400, poiX: 340, poiY: 240, poiZ: -500 },
+      style: { fill: '#ffffff' },
+    }));
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: CAM }));
+  };
+  return [
+    scene('ext-mesh-cylinder', 'A lit extruded ELLIPSE — the wall shades continuously around the body, no facets, no seams.', (graph) => {
+      graph.addNode(node('disc', {
+        kind: 'shape',
+        position: CENTER,
+        transform: { width: 180, height: 180, shapeType: 'ellipse', extrusionDepth: 120, rotationY: 55, rotationX: -20, z: 0, acceptsLights: true },
+        style: { fill: '#9fb4c8' },
+      }));
+      light(graph);
+    }),
+    scene('ext-mesh-text-bevel', 'Lit extruded TEXT with a convex bevel — real side walls and a rounded chamfer per glyph.', (graph) => {
+      // A REAL text node (Text component), so the outline reader finds its
+      // content and the mesh path traces it — a bare transform `text` prop
+      // renders the placeholder string through the plate-stack fallback.
+      graph.addNode(node('t', {
+        kind: 'text',
+        position: CENTER,
+        transform: {
+          extrusionDepth: 50, bevelDepth: 6, bevelStyle: 'convex',
+          rotationY: 30, rotationX: -14, z: 0, acceptsLights: true,
+        },
+        components: [{
+          id: 't_text',
+          type: 'Text',
+          props: { content: 'MESH', fontSize: 84, fontWeight: 700, opacity: 100, fontFamily: 'Arial', align: 'center', fill: '#7fb2f0' },
+        }],
+      }));
+      light(graph);
+    }, 0.025),
+    scene('ext-mesh-rounded-concave', 'A lit rounded card with a CONCAVE bevel — the cove catches the light along the rim.', (graph) => {
+      graph.addNode(node('card', {
+        kind: 'shape',
+        position: CENTER,
+        transform: { width: 220, height: 150, shapeType: 'rect', cornerRadius: 30, extrusionDepth: 60, bevelDepth: 12, bevelStyle: 'concave', rotationY: 28, rotationX: -16, z: 0, acceptsLights: true },
+        style: { fill: '#7fb2f0' },
+      }));
+      light(graph);
+    }),
+  ];
+}
+
 export const extrusionScenes: Scene[] = [
   ...invertPair(),
   ...dofWallPair(),
   roundedBevelScene(),
   ...sliceDensityScenes(),
   ...oneSidedLightPair(),
+  ...meshPathScenes(),
 ];

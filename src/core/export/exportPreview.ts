@@ -79,19 +79,28 @@ export function frameCoverage(
   return content / total;
 }
 
-/** `#rgb`, `#rrggbb` or `rgb/rgba` → 0–255 components, or null if unparseable. */
+/** `#rgb`, `#rrggbb`, `#rgba`, `#rrggbbaa` or `rgb/rgba` → 0–255 components, or null if unparseable. */
 export function parseCssColor(color: string | undefined): { r: number; g: number; b: number } | null {
   if (!color) return null;
-  const hex = color.trim().replace('#', '');
+  const raw = color.trim();
+  const hex = raw.replace('#', '');
   if (/^[0-9a-f]{3}$/i.test(hex)) {
     const [r, g, b] = hex.split('') as [string, string, string];
+    return { r: parseInt(r + r, 16), g: parseInt(g + g, 16), b: parseInt(b + b, 16) };
+  }
+  if (/^[0-9a-f]{4}$/i.test(hex)) {
+    const [r, g, b] = hex.slice(0, 3).split('') as [string, string, string];
     return { r: parseInt(r + r, 16), g: parseInt(g + g, 16), b: parseInt(b + b, 16) };
   }
   if (/^[0-9a-f]{6}$/i.test(hex)) {
     const n = parseInt(hex, 16);
     return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
   }
-  const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(color);
+  if (/^[0-9a-f]{8}$/i.test(hex)) {
+    const n = parseInt(hex.slice(0, 6), 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+  const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(raw);
   if (m) return { r: Math.round(+m[1]!), g: Math.round(+m[2]!), b: Math.round(+m[3]!) };
   return null;
 }
@@ -131,11 +140,13 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
   const scratch = document.createElement('canvas');
   let sized = { width: 0, height: 0 };
   let disposed = false;
+  let currentGen = 0;
 
   return {
     canvas,
 
     async render(request: PreviewFrameRequest): Promise<PreviewFrame> {
+      const gen = ++currentGen;
       const compW = request.comp?.width ?? request.width;
       const compH = request.comp?.height ?? request.height;
       const scale = Math.min(1, PREVIEW_MAX_EDGE / Math.max(compW, compH));
@@ -147,7 +158,7 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         sized = { width, height };
       }
       if (backend.readyPromise) await backend.readyPromise;
-      if (disposed) return { coverage: 0, blank: true };
+      if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
       if (backend.initFailed) {
         throw new Error(backend.initErrorMessage ?? 'The renderer could not be initialized.');
       }
@@ -165,6 +176,7 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         undefined, // motion blur is a per-frame accumulation; not worth it here
         exportComp(request.comp),
       );
+      if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
       backend.renderFrame(snapshot);
       // Converge async media (image decodes, video seeks) exactly like the
       // offline renderer does, or the preview shows placeholders for footage the
@@ -173,9 +185,11 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         const waits = backend.takeMediaWaits?.();
         if (!waits || waits.length === 0) break;
         await Promise.all(waits);
-        if (disposed) return { coverage: 0, blank: true };
+        if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
         backend.renderFrame(snapshot);
       }
+
+      if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
 
       scratch.width = width;
       scratch.height = height;
@@ -193,6 +207,7 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
 
     dispose(): void {
       disposed = true;
+      currentGen++;
       backend.dispose();
     },
   };

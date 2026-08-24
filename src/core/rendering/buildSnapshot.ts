@@ -18,7 +18,7 @@ import { resolveGlass } from '@core/effects/glassResolve';
 import { resolveGlobalLight } from '@stores/projectStore';
 import { readNodeBlend } from '@core/effects/blendMode';
 import { readNodePreserveTransparency } from '@core/effects/preserveTransparency';
-import { readNodeMaskAt, roundedRectMask, type LayerMask } from '@core/effects/mask';
+import { readNodeMaskAt, roundedRectMask, applyMaskPropertyTracks, type LayerMask } from '@core/effects/mask';
 import {
   clampCornerRadii,
   hasIndependentCornerRadii,
@@ -52,6 +52,8 @@ import { readNodeQuality } from '@core/effects/layerQuality';
 import { resolveAudioSpectrum } from '@core/audio/audioSpectrum';
 import { readNodeMaterial } from '@core/scene/material';
 import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
+import { extrusionOutlineFor, extrusionMeshFor } from '@core/scene/extrusionMesh';
+import { isColorEffect } from '@core/effects/effectColorMatrix';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { faceEffectsFor } from '@core/scene/faceEffects';
 import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
@@ -1050,7 +1052,7 @@ export function buildSnapshot(
     // The id is derived from the node, NOT minted per call: the mask raster is
     // cached on a signature that includes it, so a fresh id every frame would
     // miss the cache on every frame.
-    const authoredMask = readNodeMaskAt(groupNode, remapOf(groupNode.id)(t));
+    const authoredMask = applyMaskPropertyTracks(readNodeMaskAt(groupNode, remapOf(groupNode.id)(t)), valuesOf(groupNode.id));
     const frameMask: LayerMask | undefined = isInstance && refSize
       ? {
           paths: [
@@ -1739,6 +1741,46 @@ export function buildSnapshot(
       // `primitive` choice, the rig silhouette). The full set is installed on
       // the layer below, and is what actually gets drawn.
       ?? staticSubpaths?.[0]?.points;
+    /**
+     * POINTS FOLLOW NULLS — AE's other Create-Nulls-From-Paths direction.
+     *
+     * `pointBindings` on the Geometry names, per vertex index, a null layer
+     * whose position that vertex should track. Resolved HERE, per frame, from
+     * the null's world position pulled into this layer's local space, so the
+     * outline follows the nulls live through any parenting — the null can be
+     * parented elsewhere, rigged, keyframed, and the path keeps up. A
+     * render-time resolver rather than an expression because the expression
+     * language has no data-track form; this is the honest live version, not a
+     * one-shot copy that looks live and then is not.
+     *
+     * Handles move with their vertex (same delta), so a smooth corner stays
+     * smooth as it is dragged.
+     */
+    const pointBindings = geomComponent?.props.pointBindings as
+      | ReadonlyArray<{ index: number; nullId: string }>
+      | undefined;
+    if (pointBindings && pointBindings.length > 0 && pathPoints && pathPoints.length > 0) {
+      const shapeW = worldMatrixOf(node.id, rawLocalOf, rawParentOf, rawWorldCache);
+      if (shapeW) {
+        const inv = Matrix.invert(shapeW);
+        const moved = pathPoints.map((p) => ({ ...p }));
+        let any = false;
+        for (const b of pointBindings) {
+          const pt = moved[b.index];
+          if (!pt || !graph.getNode(b.nullId)) continue;
+          const nullW = worldMatrixOf(b.nullId, rawLocalOf, rawParentOf, rawWorldCache);
+          if (!nullW) continue;
+          const local = Matrix.transformPoint(inv, { x: nullW.e, y: nullW.f });
+          const dx = local.x - pt.x, dy = local.y - pt.y;
+          if (dx === 0 && dy === 0) continue;
+          pt.x += dx; pt.y += dy;
+          pt.inX += dx; pt.inY += dy;
+          pt.outX += dx; pt.outY += dy;
+          any = true;
+        }
+        if (any) pathPoints = moved;
+      }
+    }
     // Open strokes (line / freehand pencil) must not be closed into a loop.
     const pathOpen = geomComponent?.props.open === true;
     // Explicit shape type set at insert time; falls back to the legacy
@@ -2236,7 +2278,10 @@ export function buildSnapshot(
       resolvedCornerRadii[2],
       resolvedCornerRadii[3],
     );
-    let resolvedMask: LayerMask | undefined = readNodeMaskAt(node, remapOf(node.id)(t));
+    // Shape from the mask's own track, then Feather / Opacity / Expansion from
+    // their per-path numeric tracks (AE's four mask properties, minus Path
+    // which the shape track already is).
+    let resolvedMask: LayerMask | undefined = applyMaskPropertyTracks(readNodeMaskAt(node, remapOf(node.id)(t)), a);
     if (
       (layerKind === 'image' || layerKind === 'video')
       && resolvedCornerRadius > 0.5
@@ -2438,7 +2483,7 @@ export function buildSnapshot(
       // fine until someone set Focus Distance, at which point every 2D title,
       // logo and UI layer blurred along with the 3D scene. AE never defocuses 2D
       // layers; they are not in the camera's space at all.
-      filter: isSolid || !readNodeMaterial(node).castsShadows
+      filter: isSolid || !readNodeMaterial(node, a).castsShadows
         ? withDof(filter, is3D ? depth : undefined)
         : withShadow(withDof(filter, is3D ? depth : undefined), px, py),
       effects: resolvedEffects.length ? resolvedEffects : undefined,
@@ -2484,7 +2529,7 @@ export function buildSnapshot(
     // adapter folds into the draw tint — identical on the GPU depth path and
     // the affine fallback. No lights in the scene ⇒ identity ⇒ nothing added.
     if (is3D && world3d && sceneLights.length > 0) {
-      const mat = readNodeMaterial(node);
+      const mat = readNodeMaterial(node, a);
       if (mat.acceptsLights) {
         const lit = shadeLayer(
           planeNormalOf(world3d),
@@ -2500,6 +2545,7 @@ export function buildSnapshot(
           specular: mat.specular / 100,
           shininess: mat.shininess,
           ...(mat.metal > 0 ? { metal: mat.metal / 100 } : {}),
+          ...(mat.shading === 'pbr' ? { roughness: mat.roughness / 100 } : {}),
         };
       }
     }
@@ -2825,7 +2871,7 @@ export function buildSnapshot(
       // 3D only — see the `filter` twin above.
       const dofFx = is3D ? dofEffectOf(depth) : null;
       if (dofFx) gpuFx.push(dofFx);
-      const mat = readNodeMaterial(node);
+      const mat = readNodeMaterial(node, a);
       if (!isSolid && mat.castsShadows) {
         // A 3D layer under a shadow-casting light gets a REAL projected shadow
         // (emitted after this walk, once every receiver plane is known). The
@@ -2933,12 +2979,14 @@ export function buildSnapshot(
     // below), which extrusionFaces cannot shrink, so we inset it here so the
     // shrunk front edge meets the front chamfer ring. 0 = no bevel.
     let frontInset = 0;
+    /** The extrusion mesh drew the front cap itself — do not emit the quad. */
+    let frontDrawnByMesh = false;
     if (is3D && world3d && extrusionDepth > 0) {
       const isComplexContent =
         layer.kind === 'text' ||
         (layer.kind === 'shape' && layer.primitive !== 'rect' && layer.primitive !== 'ellipse');
 
-      const extMat = readNodeMaterial(node);
+      const extMat = readNodeMaterial(node, a);
       // Per-face materials (front / side / bevel / back). Absent → the previous
       // single-colour behaviour, since resolveFaceMaterial falls back to the
       // layer fill × the kind's original hardcoded gain.
@@ -2999,7 +3047,143 @@ export function buildSnapshot(
       const wallFillAt = (m: import('@motion/scene').Matrix4): string =>
         styledSurfaceFill(extStyles, sampleFillAt(layer.fillPaint, layerW, layerH, m[12]!, m[13]!) ?? wallFill);
 
-      if (isComplexContent) {
+      /*
+        MESH path — the preferred one. The outline of the layer (rect, rounded
+        rect, ellipse, path, traced text) is swept into ONE solid with real
+        side walls, bevel rings and a back cap, carrying per-vertex normals
+        (core/scene/extrusionMesh.ts). It replaces both branches below: the
+        plate stack for text/paths (no walls, visible combing when yawed) and
+        the flat-strip quads for rect/ellipse (20 facets, a seam at every
+        join, flat lighting per facet). Those remain as the FALLBACK for an
+        outline that cannot be produced — text with no canvas to trace from,
+        an open path — so nothing ever renders without a body.
+
+        The front face is still the layer's own quad, emitted after this
+        (inset by the bevel the mesh actually applied), drawn on top so its
+        antialiased edge blends over the opaque wall rather than against the
+        background.
+      */
+      const meshBevel = Math.max(0, a?.get('bevelDepth') ?? d3.bevelDepth);
+      const meshOutline = extrusionOutlineFor(layer, node, layerW, layerH);
+      /*
+        Who draws the FRONT cap. Normally the layer's own quad — it carries the
+        content, styles, mask and effects, and a bevel merely insets it. That
+        inset is the layer box shrunk by `bevel` per side, which is exact for a
+        rect and near enough for an ellipse, but WRONG for text and paths: a
+        smaller box re-lays the glyphs out smaller instead of insetting their
+        outline, and the full-size raster then sits over the chamfer ring it
+        was meant to meet. So a bevelled complex outline hands the front cap to
+        the mesh — the inset polygon, textured with the layer's own raster —
+        and the quad is not emitted.
+      */
+      const complexOutline = layer.kind === 'text' || (layer.kind === 'shape' && layer.primitive === 'path');
+      const meshOwnsFront = complexOutline && meshBevel > 0;
+      /*
+        Effect REACH decides the path. COLOUR effects (invert, tint, …) fold
+        into the mesh's range colours / colour matrix on the CPU, so they reach
+        every surface of the body. SPATIAL effects (blur, glow, DOF's appended
+        blur, drop shadow) need per-face offscreen resolves that only the quad
+        synthesis can stage — so their presence sends the whole object down the
+        fallback, where each face still carries them (see faceEffectsFor).
+      */
+      const meshBlockedByFx = (layer.effects ?? []).some((e) => e.enabled !== false && !isColorEffect(e.type));
+      const builtMesh = meshOutline && !meshBlockedByFx
+        ? extrusionMeshFor(meshOutline, layerW, layerH, { depth: extrusionDepth, bevel: meshBevel, bevelStyle: d3.bevelStyle, frontCap: meshOwnsFront })
+        : null;
+      let meshEmitted = false;
+      if (builtMesh) {
+        const { key, mesh } = builtMesh;
+        frontInset = mesh.bevel;
+        const M = world3d as import('@motion/scene').Matrix4;
+        const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+        // Same near-plane rule as the faces: an origin behind the camera must
+        // not be drawn through the clamped projector.
+        if (!O.clipped) {
+          const isMedia = layer.kind === 'image' || layer.kind === 'video';
+          const hasFrontCap = mesh.ranges.some((r) => r.role === 'front');
+          const ranges = mesh.ranges.map((r) => {
+            if (r.role === 'front') {
+              // The layer's own content, on the inset cap, undimmed.
+              return { role: r.role, first: r.first, count: r.count, fill: wallFill, gain: 1, textured: true };
+            }
+            const fm = resolveFaceMaterial(faceMats, r.role, wallFill);
+            // An explicit per-face colour is taken literally; a derived one is
+            // dimmed by the kind's gain (same rule as the quad path).
+            const gain = faceMats[r.role]?.fill ? 1 : fm.gain;
+            // Media keeps its picture on the back cap unless a back colour
+            // was chosen, as the quad path's spread back cap did.
+            const textured = isMedia && r.role === 'back' && !faceMats.back?.fill;
+            return { role: r.role, first: r.first, count: r.count, fill: fm.fill, gain, ...(textured ? { textured: true } : {}) };
+          });
+          // A carrier that samples the layer's raster (media back cap, or a
+          // front cap the mesh owns) must keep the layer's content fields so
+          // the texture provider rasterises the same thing under the new id.
+          const carriesContent = isMedia || hasFrontCap;
+          const scrub = {
+            // Colour-only by the gate above; the adapter folds them into the
+            // range colours (solid) / colour matrix (textured).
+            effects: layer.effects,
+            matte: undefined,
+            isMatteSource: undefined,
+            isAdjustment: undefined,
+            motionSamples: undefined,
+            deformedMesh: undefined,
+            frameBlend: undefined,
+            glass: undefined,
+            backdropBlur: undefined,
+            preserveTransparency: undefined,
+            lighting: undefined as RenderLayer['lighting'],
+            shade3d: undefined as RenderLayer['shade3d'],
+          };
+          const meshLayer: RenderLayer = carriesContent
+            ? {
+                ...layer,
+                ...scrub,
+                id: `${layer.id}::ext-mesh`,
+                extrudedMesh: { key, vertices: mesh.vertices, indices: mesh.indices, ranges },
+              }
+            : {
+                ...scrub,
+                id: `${layer.id}::ext-mesh`,
+                kind: 'shape',
+                primitive: 'rect',
+                blend: layer.blend,
+                x: layer.x,
+                y: layer.y,
+                rotation: layer.rotation,
+                scaleX: layer.scaleX,
+                scaleY: layer.scaleY,
+                matrix: layer.matrix,
+                world3d: layer.world3d,
+                depth: layer.depth,
+                opacity: layer.opacity,
+                width: layerW,
+                height: layerH,
+                fill: resolveFaceMaterial(faceMats, 'side', wallFill).fill,
+                visible: layer.visible,
+                flatFacet: true,
+                extrudedMesh: { key, vertices: mesh.vertices, indices: mesh.indices, ranges },
+              };
+          if (extLit) {
+            // Per-fragment lighting from the interpolated vertex normals, one
+            // sided: every face of the mesh bounds the volume.
+            meshLayer.lighting = [1, 1, 1];
+            meshLayer.shade3d = {
+              specular: extMat.specular / 100,
+              shininess: extMat.shininess,
+              oneSided: true,
+              ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}),
+            };
+          }
+          emitLayer(meshLayer, node);
+          meshEmitted = true;
+          if (hasFrontCap) frontDrawnByMesh = true;
+        }
+      }
+
+      if (meshEmitted) {
+        // Body drawn; the quad synthesis below is the fallback only.
+      } else if (isComplexContent) {
         // Contour Volume Extrusion: For text and complex shapes, slice the
         // depth axis (z ∈ [1, extrusionDepth]) into continuous slices matching the exact
         // glyph/path silhouette so text extrudes as a solid 3D body without empty gaps.
@@ -3092,7 +3276,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
             if (lg) {
               sliceLayer.lighting = lg;
-              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess };
+              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // Same rule as the geometric path: an explicit per-face colour is
@@ -3266,7 +3450,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, undefined, true);
             if (lg) {
               faceLayer.lighting = lg;
-              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true };
+              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // An explicit per-face fill is taken literally — dimming a colour
@@ -3312,7 +3496,7 @@ export function buildSnapshot(
         : [];
 
     if (perCharGlyphs.length > 0 && world3d) {
-      const pcMat = readNodeMaterial(node);
+      const pcMat = readNodeMaterial(node, a);
       const pcLit = pcMat.acceptsLights && sceneLights.length > 0;
       for (const g of perCharGlyphs) {
         // Glyph frame: offset within the text box, its own depth, tumble
@@ -3364,11 +3548,13 @@ export function buildSnapshot(
           const lg = shadeLayer(planeNormalOf(M), { x: O.x, y: O.y, z: z3 + g.offsetZ }, sceneLights);
           if (lg) {
             glyphLayer.lighting = lg;
-            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess };
+            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess, ...(pcMat.shading === 'pbr' ? { roughness: pcMat.roughness / 100, metal: pcMat.metal / 100 } : {}) };
           }
         }
         emitLayer(glyphLayer, node);
       }
+    } else if (frontDrawnByMesh) {
+      // Front cap already drawn as part of the extrusion mesh (see meshOwnsFront).
     } else if (frontInset > 0) {
       emitLayer({ ...layer, width: layerW - 2 * frontInset, height: layerH - 2 * frontInset }, node);
     } else if (

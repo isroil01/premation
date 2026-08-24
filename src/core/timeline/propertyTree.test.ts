@@ -9,8 +9,9 @@
  *
  * The second claim is that a row only promises what the engine can keep. A row
  * with `members` says "my stopwatch keys these paths and the renderer will read
- * them"; Material Options carry none, because `readNodeMaterial` is a static
- * read and a stopwatch there would key a track nothing samples.
+ * them"; a registry entry flagged `keyframeable: false` gets a value row and
+ * no members. (Material Options carried that flag until `readNodeMaterial`
+ * learned to take the frame's animated values; none does today.)
  */
 
 import SceneGraph from '@core/scene/SceneGraph';
@@ -99,15 +100,14 @@ describe('the tree exists before anything is animated', () => {
     expect(labels('a')).toEqual(expect.arrayContaining(['Width', 'Height']));
   });
 
-  it('gives a masked layer ONE mask row, because one track is what it has', () => {
+  it('gives a masked layer a shape row whose stopwatch routes to the mask store', () => {
     addMaskPath('a', rectangleMask(100, 50));
-    const masks = buildStaticPropertyTree('a').filter((r) => r.group === 'masks');
-    expect(masks).toHaveLength(1);
-    expect(masks[0]!.maskTrack).toBe(true);
-    // Not a numeric track: its stopwatch routes to the mask store, so it names
-    // no engine members at all.
-    expect(masks[0]!.members).toHaveLength(0);
-    expect(masks[0]!.prop).toBe(MASK_ANIM_PROP);
+    const shape = buildStaticPropertyTree('a').find((r) => r.maskTrack)!;
+    // The SHAPE is a whole-mask snapshot track, not a numeric one: its
+    // stopwatch names no engine members at all.
+    expect(shape.members).toHaveLength(0);
+    expect(shape.prop).toBe(MASK_ANIM_PROP);
+    expect(shape.group).toBe('masks');
   });
 
   it('says how many paths a multi-path mask has, since they share one track', () => {
@@ -129,11 +129,11 @@ describe('the tree exists before anything is animated', () => {
 });
 
 describe('a row only promises what the engine keeps', () => {
-  it('gives Material Options no stopwatch, because nothing samples them', () => {
+  it('gives Material Options a stopwatch now that the snapshot samples them', () => {
     defaultSceneGraph.addNode(node('m', 'shape', { threeD: true, ambient: 100, diffuse: 50 }));
     const rows = buildStaticPropertyTree('m').filter((r) => r.group === 'material');
-    expect(rows.length).toBeGreaterThan(0);
-    for (const r of rows) expect(r.members).toHaveLength(0);
+    expect(rows.map((r) => r.prop).sort()).toEqual(['ambient', 'diffuse']);
+    for (const r of rows) expect(r.members).toEqual([r.prop]);
   });
 
   it('collapses Position into one row, and splits it when dimensions separate', () => {
@@ -180,5 +180,16 @@ describe('groupForProp places what the tree did not describe', () => {
 describe('the tree is only as big as the layer', () => {
   it('says nothing about a layer that has no effects, styles, masks or ops', () => {
     expect(groups('a')).toEqual(expect.not.arrayContaining(['effects', 'styles', 'masks', 'text']));
+  });
+});
+
+describe('mask property tracks', () => {
+  it('lists Feather, Opacity and Expansion per mask path after the shape row', () => {
+    addMaskPath('a', { ...rectangleMask(100, 50), id: 'mk_1' });
+    const rows = buildStaticPropertyTree('a').filter((r) => r.group === 'masks');
+    expect(rows[0]!.maskTrack).toBe(true);
+    expect(rows.slice(1).map((r) => r.prop)).toEqual(['mask.mk_1.feather', 'mask.mk_1.opacity', 'mask.mk_1.expansion']);
+    expect(rows.slice(1).map((r) => r.label)).toEqual(['Mask 1 Feather', 'Mask 1 Opacity', 'Mask 1 Expansion']);
+    for (const r of rows.slice(1)) expect(r.members).toEqual([r.prop]);
   });
 });

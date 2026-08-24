@@ -14,6 +14,7 @@
 import type { CreativeBrief, CastReport, Casting } from './types';
 
 import { sequence, validate, type SequenceProblem } from './sequencer';
+import { audioGridUsable, sequenceToAudioGrid, type AudioGrid } from './audioGrid';
 import { layoutCastPrompts, motionCastPrompts, validateCasting, type CastProblem } from './cast';
 import { emitAndValidate } from './emit';
 import type { ToolCall } from '@motion/design-system';
@@ -61,6 +62,14 @@ export interface RunCasterOptions {
    * would not be if the model authored the keyframes.
    */
   variants?: number;
+  /**
+   * Optional beat grid from scene audio. When tempo confidence is high enough,
+   * beat boundaries align to the music instead of the brief's stopwatch.
+   *
+   * A Promise is allowed so the host can decode audio in parallel with the
+   * brief LLM call — decode is slow; the brief is slower.
+   */
+  audio?: AudioGrid | Promise<AudioGrid | undefined>;
 }
 
 /** User-supplied overrides on the creative brief. */
@@ -134,7 +143,9 @@ export async function runCaster(o: RunCasterOptions): Promise<RunCasterResult> {
       };
 
   // ── 2. Sequencer ────────────────────────────────────────────────────────
-  const seq = sequence(brief);
+  const audio = await Promise.resolve(o.audio);
+  const seq =
+    audio && audioGridUsable(audio) ? sequenceToAudioGrid(brief, audio) : sequence(brief);
   const sequenceProblems = validate(seq);
 
   // ── 3. Cast layout, THEN motion ─────────────────────────────────────────

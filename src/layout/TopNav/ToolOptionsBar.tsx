@@ -23,9 +23,9 @@ import { Icon } from '@components/Icon';
 import styles from './ToolOptionsBar.module.css';
 
 const BONE_MODES = [
-  { id: 'draw', label: 'Draw', icon: 'bone', hint: 'Draw connected bones and branches.' },
-  { id: 'pose', label: 'Pose', icon: 'move', hint: 'Pose bones, IK goals, poles, and controllers.' },
-  { id: 'weights', label: 'Weights', icon: 'brush', hint: 'Bind artwork by painting bone influence.' },
+  { id: 'draw', label: 'Draw', icon: 'bone', hint: 'Draw connected bones and branches.', color: '#f97316' },
+  { id: 'pose', label: 'Pose', icon: 'move', hint: 'Pose bones, IK goals, poles, and controllers.', color: '#38bdf8' },
+  { id: 'weights', label: 'Weights', icon: 'brush', hint: 'Bind artwork by painting bone influence.', color: '#ec4899' },
 ] as const;
 
 function Row({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
@@ -213,8 +213,8 @@ export function ToolOptionsBar(): JSX.Element | null {
                 aria-pressed={active}
                 onClick={() => setBoneRigMode(mode.id)}
               >
-                <Icon name={mode.icon} size="sm" />
-                {mode.label}
+                <Icon name={mode.icon} size={12} />
+                <span>{mode.label}</span>
               </button>
             );
           })}
@@ -228,15 +228,24 @@ export function ToolOptionsBar(): JSX.Element | null {
         {boneRigMode === 'weights' && (
           <>
             <div className={styles.kinds} role="group" aria-label="Bone weight tool">
-              {(['add', 'subtract', 'smooth', 'pick'] as const).map((mode) => (
+              {(
+                [
+                  { id: 'add', label: 'Add', icon: 'plus' },
+                  { id: 'subtract', label: 'Subtract', icon: 'minus' },
+                  { id: 'smooth', label: 'Smooth', icon: 'waves' },
+                  { id: 'pick', label: 'Pick', icon: 'mouse-pointer' },
+                ] as const
+              ).map((tool) => (
                 <button
-                  key={mode}
+                  key={tool.id}
                   type="button"
-                  className={boneWeightMode === mode ? styles.kindActive : styles.kind}
-                  aria-pressed={boneWeightMode === mode}
-                  onClick={() => setBoneWeightMode(mode)}
+                  className={boneWeightMode === tool.id ? styles.kindActive : styles.kind}
+                  aria-pressed={boneWeightMode === tool.id}
+                  onClick={() => setBoneWeightMode(tool.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 4 }}
                 >
-                  {mode === 'add' ? 'Add' : mode === 'subtract' ? 'Subtract' : mode === 'smooth' ? 'Smooth' : 'Pick'}
+                  <Icon name={tool.icon} size={12} />
+                  <span>{tool.label}</span>
                 </button>
               ))}
             </div>

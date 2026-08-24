@@ -9,7 +9,7 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL } from '../../shaders/Material';
 import { TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
 import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
 import { HARDWARE_SRGB_UPLOADS, LINEAR_INTERMEDIATE_STORAGE } from '../../shaders/linearWorkingSpace';
@@ -126,6 +126,52 @@ export function emitTextured3D(
     uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade, texturedSkipsDecode(sampleLinear)),
     texture,
     sampler,
+  });
+}
+
+/**
+ * Queue one material group of an extruded mesh (walls / bevel / cap) as a
+ * depth-tested indexed draw off the mesh's shared buffers. `mvp` and
+ * `shade.model` map the mesh's layer-centred pixel frame straight to 3D comp
+ * space (no unit-quad bridge — the vertices already carry real positions).
+ */
+export function emitMesh3D(
+  cmds: CommandBuffer,
+  mvp: Mat4,
+  color: Color,
+  opacity: number,
+  blend: BlendMode,
+  geometry: { vertexBuffer: BufferHandle; indexBuffer: BufferHandle; indexFormat: 'uint16' | 'uint32'; firstIndex: number; indexCount: number },
+  shade?: Shade3D,
+  textured?: { texture: TextureHandle; sampler: SamplerHandle; uvRect?: Rect; color?: ColorTransform; sampleLinear?: boolean },
+): void {
+  if (textured) {
+    const lin = texturedSkipsDecode(textured.sampleLinear ?? false);
+    cmds.add({
+      batchKey: `mesh3d-tex|${textured.texture.id}|${blend}|${lin ? 'lin' : 'srgb'}`,
+      material: lin ? MESH3D_TEXTURED_LINEAR_MATERIAL : MESH3D_TEXTURED_MATERIAL,
+      blend,
+      uniforms: packTextured3D(mvp, textured.uvRect ?? FULL_UV, color, opacity, textured.color, shade, lin),
+      texture: textured.texture,
+      sampler: textured.sampler,
+      vertexBuffer: geometry.vertexBuffer,
+      indexBuffer: geometry.indexBuffer,
+      indexCount: geometry.indexCount,
+      firstIndex: geometry.firstIndex,
+      indexFormat: geometry.indexFormat,
+    });
+    return;
+  }
+  cmds.add({
+    batchKey: `mesh3d|${blend}`,
+    material: MESH3D_SOLID_MATERIAL,
+    blend,
+    uniforms: packTextured3D(mvp, FULL_UV, color, opacity, undefined, shade, false),
+    vertexBuffer: geometry.vertexBuffer,
+    indexBuffer: geometry.indexBuffer,
+    indexCount: geometry.indexCount,
+    firstIndex: geometry.firstIndex,
+    indexFormat: geometry.indexFormat,
   });
 }
 

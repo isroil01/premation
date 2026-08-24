@@ -213,8 +213,14 @@ export class WebGL2Backend implements RenderBackend {
     // texture-filter extension is required. Reflect the REAL capability: when it
     // is absent, resolveTargets falls the intermediates back to 8-bit rather than
     // creating an incomplete framebuffer.
-    this.capabilities.float16Textures = !!gl.getExtension('EXT_color_buffer_float');
-    this.capabilities.float32Textures = this.capabilities.float16Textures;
+    //
+    // 32-bit float textures (RGBA32F) require OES_texture_float_linear to be
+    // sampled with LINEAR filtering. Without it, sampling RGBA32F with a linear
+    // sampler marks the texture incomplete and returns transparent black (0,0,0,0).
+    const floatColor = !!gl.getExtension('EXT_color_buffer_float');
+    const floatLinear = !!gl.getExtension('OES_texture_float_linear');
+    this.capabilities.float16Textures = floatColor;
+    this.capabilities.float32Textures = floatColor && floatLinear;
   }
 
   /** True while the GL context is lost — draws are no-ops until restore. */
@@ -411,7 +417,10 @@ export class WebGL2Backend implements RenderBackend {
     const gl = this.gl;
     // Clamp to what the device actually supports; 1 disables MSAA entirely.
     const wanted = Math.max(1, Math.floor(desc.samples ?? 1));
-    const samples = wanted > 1
+    // In WebGL2, only 8-bit and 16-bit float renderbuffers support multisampling.
+    // RGBA32F is not multisample-renderable.
+    const canMsaa = desc.format !== 'rgba32float';
+    const samples = (wanted > 1 && canMsaa)
       ? Math.min(wanted, (gl.getParameter(gl.MAX_SAMPLES) as number) || 1)
       : 1;
     const msaa = samples > 1;
@@ -758,12 +767,14 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     if (instanceCount > 1) this.gl.drawArraysInstanced(mode, 0, vertexCount, instanceCount);
     else this.gl.drawArrays(mode, 0, vertexCount);
   }
-  drawIndexed(indexCount: number, instanceCount = 1): void {
+  drawIndexed(indexCount: number, instanceCount = 1, firstIndex = 0): void {
     const gl = this.gl;
     const mode = this.pipeline ? topo(gl, this.pipeline.topology) : gl.TRIANGLES;
-    const type = this.indexFormat === 'uint16' ? gl.UNSIGNED_SHORT : gl.UNSIGNED_INT;
-    if (instanceCount > 1) gl.drawElementsInstanced(mode, indexCount, type, 0, instanceCount);
-    else gl.drawElements(mode, indexCount, type, 0);
+    const u16 = this.indexFormat === 'uint16';
+    const type = u16 ? gl.UNSIGNED_SHORT : gl.UNSIGNED_INT;
+    const offset = firstIndex * (u16 ? 2 : 4);
+    if (instanceCount > 1) gl.drawElementsInstanced(mode, indexCount, type, offset, instanceCount);
+    else gl.drawElements(mode, indexCount, type, offset);
   }
   end(): void {
     // Resolve multisample → single-sample so readers can sample the texture.

@@ -124,3 +124,15 @@ describe('path operators', () => {
     expect(readPathOps(node)[0]!.end).toBe(30);
   });
 });
+
+describe('mask properties', () => {
+  it('reads and writes a path setting, with opacity in 0..100', async () => {
+    const { addMaskPath, rectangleMask, getNodeMask } = await import('@core/effects/mask');
+    addMaskPath('a', { ...rectangleMask(10, 10), id: 'mk', feather: 3, opacity: 0.5 });
+    expect(readStaticPropertyValue('a', 'mask.mk.feather')).toBe(3);
+    expect(readStaticPropertyValue('a', 'mask.mk.opacity')).toBe(50);
+    expect(writeStaticPropertyValue('a', 'mask.mk.opacity', 20)).toBe(true);
+    expect(getNodeMask('a').paths[0]!.opacity).toBeCloseTo(0.2);
+    expect(canWriteStaticPropertyValue('a', 'mask.nope.feather')).toBe(false);
+  });
+});

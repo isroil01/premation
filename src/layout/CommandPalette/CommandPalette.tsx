@@ -37,13 +37,14 @@ import { asCommandId } from '@app-types/common';
 import { formatChord } from '@layout/Menu/formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import { parseQuery, fuzzyScore, parseTimecode } from './paletteSearch';
+import { effectHits, presetHits } from './quickApply';
 import styles from './CommandPalette.module.css';
 
 /** Frames-per-second used to derive a frame number for timecode jumps. */
 const FPS = 30;
 const MAX_PER_GROUP = 8;
 
-type Section = 'Commands' | 'Layers' | 'Compositions' | 'Go to time';
+type Section = 'Commands' | 'Layers' | 'Compositions' | 'Go to time' | 'Effects' | 'Presets';
 
 interface Item {
   key: string;
@@ -80,6 +81,10 @@ function buildItems(query: string, closePalette: () => void): Item[] {
   const wantLayers = mode === 'all' || mode === 'layers';
   const wantComps = mode === 'all' || mode === 'compositions';
   const wantTime = mode === 'timecode' || (mode === 'all' && term !== '');
+  // Quick Apply sources. In `all` mode they only join once there is a term —
+  // an empty palette listing 174 effects buries the commands it opened for.
+  const wantEffects = mode === 'effects' || (mode === 'all' && term !== '');
+  const wantPresets = mode === 'presets' || (mode === 'all' && term !== '');
 
   // ── Commands ──────────────────────────────────────────────────────
   if (wantCommands) {
@@ -157,6 +162,40 @@ function buildItems(query: string, closePalette: () => void): Item[] {
           },
         });
       }
+    }
+  }
+
+  // ── Quick Apply: effects + animation presets ──────────────────────
+  if (wantEffects) {
+    for (const h of effectHits(term, mode === 'effects' ? MAX_PER_GROUP * 4 : MAX_PER_GROUP)) {
+      items.push({
+        key: h.key,
+        section: 'Effects',
+        label: h.label,
+        hint: h.enabled ? h.hint : 'select a layer',
+        icon: 'sparkles',
+        disabled: !h.enabled,
+        run: () => {
+          closePalette();
+          h.apply();
+        },
+      });
+    }
+  }
+  if (wantPresets) {
+    for (const h of presetHits(term, mode === 'presets' ? MAX_PER_GROUP * 4 : MAX_PER_GROUP)) {
+      items.push({
+        key: h.key,
+        section: 'Presets',
+        label: h.label,
+        hint: h.enabled ? h.hint : 'select a layer this fits',
+        icon: 'zap',
+        disabled: !h.enabled,
+        run: () => {
+          closePalette();
+          h.apply();
+        },
+      });
     }
   }
 
@@ -289,7 +328,7 @@ export function CommandPalette(): JSX.Element | null {
             className={styles.input}
             value={query}
             spellCheck={false}
-            placeholder="Search commands, layers, compositions…"
+            placeholder="Search commands, layers, effects, presets…"
             onChange={(e) => {
               setQuery(e.currentTarget.value);
               setActive(0);
@@ -344,6 +383,8 @@ export function CommandPalette(): JSX.Element | null {
             <kbd className={styles.kbd}>@</kbd> layers
             <kbd className={styles.kbd}>#</kbd> comps
             <kbd className={styles.kbd}>:</kbd> time
+            <kbd className={styles.kbd}>+</kbd> effects
+            <kbd className={styles.kbd}>*</kbd> presets
           </span>
         </div>
       </div>

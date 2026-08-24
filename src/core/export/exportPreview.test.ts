@@ -25,7 +25,9 @@ describe('parseCssColor', () => {
   it('reads the hex and rgb forms the comp background uses', () => {
     expect(parseCssColor('#101014')).toEqual({ r: 16, g: 16, b: 20 });
     expect(parseCssColor('101014')).toEqual({ r: 16, g: 16, b: 20 });
+    expect(parseCssColor('#101014ff')).toEqual({ r: 16, g: 16, b: 20 });
     expect(parseCssColor('#fff')).toEqual({ r: 255, g: 255, b: 255 });
+    expect(parseCssColor('#ffff')).toEqual({ r: 255, g: 255, b: 255 });
     expect(parseCssColor('rgb(10, 20, 30)')).toEqual({ r: 10, g: 20, b: 30 });
     expect(parseCssColor('rgba(10, 20, 30, 0.5)')).toEqual({ r: 10, g: 20, b: 30 });
   });

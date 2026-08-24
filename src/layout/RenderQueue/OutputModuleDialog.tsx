@@ -35,10 +35,11 @@ const FORMATS: ReadonlyArray<{ value: OutputFormat; label: string; desktopOnly?:
   { value: 'gif', label: 'Animated GIF' },
   { value: 'png-sequence', label: 'PNG Sequence' },
   { value: 'jpg-sequence', label: 'JPEG Sequence' },
+  { value: 'exr-sequence', label: 'EXR Sequence' },
 ];
 
 /** Formats that carry an alpha channel — the rest cannot honour "transparent". */
-const ALPHA_FORMATS: ReadonlySet<OutputFormat> = new Set(['webm', 'mov', 'gif', 'png-sequence']);
+const ALPHA_FORMATS: ReadonlySet<OutputFormat> = new Set(['webm', 'mov', 'gif', 'png-sequence', 'exr-sequence']);
 
 interface OutputModuleDialogProps {
   initialWidth: number;

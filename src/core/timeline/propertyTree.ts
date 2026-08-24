@@ -17,11 +17,12 @@
  *
  * A row names REAL animation prop paths in `members`, and its stopwatch keys
  * exactly those. Which means a row is only emitted for something the engine can
- * actually animate — with one deliberate exception, Material Options, whose
- * values `readNodeMaterial` reads statically. Those rows carry no `members`, so
- * the timeline shows them with a value and no stopwatch rather than offering a
- * keyframe that the renderer would ignore. A dead stopwatch is worse than an
- * absent one: it reports success and changes nothing.
+ * actually animate. A registry entry flagged `keyframeable: false` is the one
+ * exception: it gets a value row with no `members`, so the timeline shows it
+ * without a stopwatch rather than offering a keyframe the renderer would
+ * ignore. A dead stopwatch is worse than an absent one: it reports success and
+ * changes nothing. (Material Options were that case until `readNodeMaterial`
+ * took the frame's animated values; nothing is today.)
  *
  * ## What this module does NOT do
  *
@@ -55,7 +56,7 @@ import {
   type LayerStyles,
 } from '@core/effects/layerStyles';
 import { readPathOps, pathOpParamSpecs, pathOpPropPath } from '@core/scene/pathOps';
-import { readNodeMask, readNodeMaskAnim } from '@core/effects/mask';
+import { readNodeMask, readNodeMaskAnim, maskPropPath, MASK_PROPERTY_KEYS } from '@core/effects/mask';
 import {
   readAnimatorData,
   animatorPropPath,
@@ -139,7 +140,7 @@ const MATERIAL_PROPS: ReadonlySet<string> = new Set([
  * property from a plugin layer kind. Those still deserve the right heading.
  */
 export function groupForProp(prop: string, nodeId?: string): TimelineGroupKey {
-  if (prop === MASK_ANIM_PROP) return 'masks';
+  if (prop === MASK_ANIM_PROP || prop.startsWith('mask.')) return 'masks';
   if (prop.startsWith(GROUP_PLACEHOLDER_PREFIX) || prop === POSITION_PSEUDO_PROP) return 'transform';
   if (MATERIAL_PROPS.has(prop)) return 'material';
   if (prop === AUDIO_LEVEL_DB_PROP || prop === 'audioLevel') return 'audio';
@@ -329,12 +330,12 @@ function layerStyleRows(nodeId: string): StaticPropertyRow[] {
  * keyframe. Drawing four rows off one track would claim four independent curves
  * that do not exist. The row says what the engine actually holds.
  */
-function maskRows(node: SceneNode): StaticPropertyRow[] {
+function maskRows(node: SceneNode, nodeId: string): StaticPropertyRow[] {
   const mask = readNodeMask(node);
   const animated = readNodeMaskAnim(node).length > 0;
   if (!mask && !animated) return [];
   const count = mask?.paths.length ?? 0;
-  return [
+  const out: StaticPropertyRow[] = [
     {
       prop: MASK_ANIM_PROP,
       label: count > 1 ? `Mask Shape (${count} paths)` : 'Mask Shape',
@@ -344,6 +345,15 @@ function maskRows(node: SceneNode): StaticPropertyRow[] {
       maskTrack: true,
     },
   ];
+  // Then AE's other three mask properties, per path, as ordinary numeric
+  // tracks — Feather, Opacity, Expansion — layered over the shape at render.
+  for (const p of mask?.paths ?? []) {
+    for (const key of MASK_PROPERTY_KEYS) {
+      const path = maskPropPath(p.id, key);
+      out.push(row(path, 'masks', [path], { nodeId }));
+    }
+  }
+  return out;
 }
 
 // ── Contents: the layer's own geometry, paint and path operators ────
@@ -483,7 +493,7 @@ export function buildStaticPropertyTree(nodeId: string): StaticPropertyRow[] {
     ...text,
     ...scanned.filter((r) => r.group === 'contents'),
     ...contents,
-    ...maskRows(node),
+    ...maskRows(node, nodeId),
     ...effectRows(nodeId),
     ...scanned.filter((r) => r.group === 'effects'),
     ...transform,

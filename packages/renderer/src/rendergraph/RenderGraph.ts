@@ -213,6 +213,9 @@ export class RenderGraph {
         HDR_INTERMEDIATES &&
         floatFormat !== 'rgba8unorm';
       desc.format = wantsFloat ? floatFormat : colorFormat;
+      if (desc.format === 'rgba32float' && desc.samples && desc.samples > 1) {
+        desc.samples = 1;
+      }
       const handle = resources.renderTarget(`graph-target:${decl.name}:${width}x${height}`, desc);
       map.set(decl.name, handle);
     }

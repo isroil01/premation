@@ -182,13 +182,17 @@ describe('the control is reachable', () => {
     expect(src).toMatch(/px \+= cloneOff\.x/);
   });
 
-  it('ClonerSection is mounted in the inspector, for every layer kind', () => {
-    const ui = readSource('layout/EditorLayout/DemoPanels.tsx');
-    expect(ui).toMatch(/import \{ ClonerSection \}/);
-    expect(ui).toMatch(/<ClonerSection nodeId=\{nodeId\} \/>/);
-    // Pushed unconditionally — NOT inside a `kind === …` branch. A group is the
-    // obvious thing to clone, and gating it to shapes would hide it there.
-    const mount = ui.slice(ui.indexOf("id: 'cloner'"));
-    expect(mount.slice(0, 200)).not.toMatch(/kind ===/);
+  it('ClonerSection is mounted from Effects → Simulation into Effect Controls', () => {
+    const library = readSource('layout/Effects/EffectsPanel.tsx');
+    const controls = readSource('layout/Effects/EffectControlsPanel.tsx');
+    const props = readSource('layout/EditorLayout/DemoPanels.tsx');
+    // Add from the Effects browser…
+    expect(library).toMatch(/enableNodeCloner/);
+    expect(library).toMatch(/Simulation/);
+    // …edit in Effect Controls once attached.
+    expect(controls).toMatch(/import \{ ClonerSection \}/);
+    expect(controls).toMatch(/<ClonerSection nodeId=\{primary\} \/>/);
+    // Not a always-on Properties accordion section any more.
+    expect(props).not.toMatch(/id:\s*'cloner'/);
   });
 });

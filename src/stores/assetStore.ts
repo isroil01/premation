@@ -740,6 +740,19 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
                 : null;
               if (svgSize) {
                 asset.metadata = svgSize;
+              } else {
+                await new Promise<void>((resolve) => {
+                  const img = new Image();
+                  img.onload = () => {
+                    asset.metadata = {
+                      width: img.naturalWidth || img.width,
+                      height: img.naturalHeight || img.height,
+                    };
+                    resolve();
+                  };
+                  img.onerror = () => resolve();
+                  img.src = src;
+                });
               }
               // Downscaled preview so the panel doesn't decode full-res originals.
               thumb = await makeImageThumb(file);

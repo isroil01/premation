@@ -492,11 +492,10 @@ function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string }> {
     { id: 'shortcuts', label: 'Shortcuts' },
     { id: 'tabs', label: 'Workspaces' },
     { id: 'appearance', label: 'Appearance' },
-    // Server edition only. AI setup used to live ONLY on the dashboard settings
-    // page, and the assistant panel linked to it with `#/dashboard?tab=settings`
-    // — a route the local edition does not register, so the OSS build had
-    // nowhere to put a key. The editor owns the surface now, and the local
-    // edition does not ship the assistant at all, so it has no key to enter.
+    // Both editions. AI setup used to live ONLY on the dashboard settings page,
+    // and the assistant panel linked to it with `#/dashboard?tab=settings` —
+    // a route the local edition does not register. The editor owns the surface
+    // now so BYOK works without an account.
     ...(aiEnabled() ? ([{ id: 'ai' as const, label: 'AI' }]) : []),
   ];
 }

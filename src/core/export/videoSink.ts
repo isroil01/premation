@@ -24,6 +24,7 @@
  */
 
 import { createHdrMasteringAccumulator } from './hdrTransfer';
+import { FramePipeline, CanvasPool, defaultConcurrency } from './framePipeline';
 
 export type VideoFormat = 'mp4' | 'webm' | 'gif' | 'mov' | 'hdr10' | 'hlg';
 
@@ -103,6 +104,15 @@ class FfmpegSink implements VideoSink {
   private readonly frameExt: 'jpg' | 'png';
   private readonly hdrTransfer: 'pq' | 'hlg' | null;
   private readonly hdrStats = createHdrMasteringAccumulator(1000);
+  /**
+   * Multi-frame staging. `addFrame` snapshots the renderer's canvas into a
+   * pooled one and returns; the encode + IPC write run in the background with
+   * several in flight, so the GPU renders frame N+1 while frames N−k..N are
+   * still being encoded. See framePipeline.ts. Staged files are named by
+   * index, so completion order does not matter to ffmpeg.
+   */
+  private readonly pipeline = new FramePipeline();
+  private pool: CanvasPool | null = null;
 
   constructor(params: VideoSinkParams) {
     this.params = params;
@@ -131,7 +141,8 @@ class FfmpegSink implements VideoSink {
     let frameCanvas = canvas;
     if (this.hdrTransfer) {
       // Measure MaxCLL/MaxFALL on display buffer (approx linear via undo-sRGB)
-      // before baking the OETF into staging PNGs.
+      // before baking the OETF into staging PNGs. Synchronous and on the
+      // renderer's canvas, BEFORE the snapshot: the accumulator is ordered.
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (ctx) {
         try {
@@ -142,11 +153,23 @@ class FfmpegSink implements VideoSink {
       const { canvasWithHdrTransfer } = await import('./hdrTransfer');
       frameCanvas = canvasWithHdrTransfer(canvas, this.hdrTransfer);
     }
-    const bytes =
-      this.frameExt === 'png'
-        ? await canvasBytes(frameCanvas, 'image/png')
-        : await canvasBytes(frameCanvas, 'image/jpeg', STAGE_JPEG_QUALITY);
-    await this.bridge().stageFrame!(jobId, index, bytes, this.frameExt);
+    // Snapshot now, encode later: the renderer reuses its canvas for the next
+    // frame the moment this returns, so the pixels must be copied out first.
+    this.pool ??= new CanvasPool(frameCanvas.width, frameCanvas.height, defaultConcurrency() + 1);
+    const pool = this.pool;
+    const snap = pool.snapshot(frameCanvas);
+    const ext = this.frameExt;
+    const bridge = this.bridge();
+    await this.pipeline.push(async () => {
+      try {
+        const bytes = ext === 'png'
+          ? await canvasBytes(snap, 'image/png')
+          : await canvasBytes(snap, 'image/jpeg', STAGE_JPEG_QUALITY);
+        await bridge.stageFrame!(jobId, index, bytes, ext);
+      } finally {
+        pool.release(snap);
+      }
+    });
     this.frames++;
   }
 
@@ -154,6 +177,10 @@ class FfmpegSink implements VideoSink {
     if (this.frames === 0 || !this.jobId) {
       throw new Error('No frames were rendered — nothing to encode.');
     }
+    // Every staged frame must be on disk before ffmpeg reads the sequence —
+    // and a frame that failed to stage must fail the export here, not leave
+    // a gap ffmpeg would silently stop at.
+    await this.pipeline.drain();
     const r = this.bridge();
     const jobId = this.jobId;
     // Container is always mp4 for HDR presets; codec/tags differ inside ffmpeg.
@@ -200,6 +227,8 @@ class FfmpegSink implements VideoSink {
   async dispose(): Promise<void> {
     const jobId = this.jobId;
     this.jobId = null;
+    // Let in-flight writes land before the directory is deleted under them.
+    await this.pipeline.close();
     if (!jobId) return;
     const r = window.motionEditor?.render;
     await r?.cancel?.(jobId).catch(() => undefined);

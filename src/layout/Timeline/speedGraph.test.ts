@@ -35,8 +35,8 @@ describe('reading speed off a bezier', () => {
     expect(incomingSpeed(EASY_EASE, DV, DT)).toBeCloseTo(20, 6);
   });
 
-  it('a negative value change gives a negative speed', () => {
-    expect(outgoingSpeed(LINEAR, -DV, DT)).toBeCloseTo(-50, 6);
+  it('a negative value change gives a positive speed magnitude', () => {
+    expect(outgoingSpeed(LINEAR, -DV, DT)).toBeCloseTo(50, 6);
   });
 
   it('a zero-width influence reports zero rather than dividing by it', () => {
@@ -51,12 +51,19 @@ describe('reading speed off a bezier', () => {
 });
 
 describe('writing speed back — the round trip', () => {
-  it.each([0, 10, 50, 120, -30])('setting outgoing speed to %p reads back the same', (target) => {
+  it.each([0, 10, 50, 120])('setting outgoing speed to %p reads back the same', (target) => {
     const bz = withOutgoingSpeed(LINEAR, DV, DT, target);
     expect(outgoingSpeed(bz, DV, DT)).toBeCloseTo(target, 6);
   });
 
-  it.each([0, 10, 50, 120, -30])('setting incoming speed to %p reads back the same', (target) => {
+  it.each([0, 10, 50, 120])('setting outgoing speed on negative dv segment reads back the same', (target) => {
+    const bz = withOutgoingSpeed(LINEAR, -DV, DT, target);
+    expect(outgoingSpeed(bz, -DV, DT)).toBeCloseTo(target, 6);
+    // Ensure y1 is non-negative and within bounds so easing curve never inverts value
+    expect(bz[1]).toBeGreaterThanOrEqual(0);
+  });
+
+  it.each([0, 10, 50, 120])('setting incoming speed to %p reads back the same', (target) => {
     const bz = withIncomingSpeed(LINEAR, DV, DT, target);
     expect(incomingSpeed(bz, DV, DT)).toBeCloseTo(target, 6);
   });
@@ -120,5 +127,81 @@ describe('influence — the horizontal axis', () => {
   it('clamps influence into (0, 1] so the handle cannot invert', () => {
     expect(influences(withOutgoingInfluence(LINEAR, DV, DT, 5)).out).toBeLessThanOrEqual(1);
     expect(influences(withOutgoingInfluence(LINEAR, DV, DT, -1)).out).toBeGreaterThan(0);
+  });
+});
+
+// ── Resolving the bezier a keyframe ACTUALLY samples with ───────────
+
+import {
+  effectiveBezier,
+  isHoldEasing,
+  LINEAR_BEZIER,
+  outgoingSlope,
+  incomingSlope,
+  withOutgoingSlope,
+  withIncomingSlope,
+} from './speedGraph';
+
+describe('effectiveBezier', () => {
+  it('uses the stored handles for bezier easings', () => {
+    expect(effectiveBezier({ easing: 'bezier', bezier: EASY_EASE })).toEqual(EASY_EASE);
+    expect(effectiveBezier({ easing: 'autoBezier', bezier: EASY_EASE })).toEqual(EASY_EASE);
+  });
+
+  it('IGNORES stale handles once the easing is a named curve (the Linear-preset jump)', () => {
+    // 'Linear' preset keeps kf.bezier — the sampler does not read it, so neither may the editor.
+    expect(effectiveBezier({ easing: 'linear', bezier: EASY_EASE })).toEqual(LINEAR_BEZIER);
+    expect(effectiveBezier({ easing: undefined, bezier: EASY_EASE })).toEqual(LINEAR_BEZIER);
+  });
+
+  it('seeds named easings with a cubic approximation of their shape', () => {
+    const easeIn = effectiveBezier({ easing: 'easeIn' });
+    expect(outgoingSpeed(easeIn, DV, DT)).toBe(0); // starts from rest
+    const easeOut = effectiveBezier({ easing: 'easeOut' });
+    expect(incomingSpeed(easeOut, DV, DT)).toBe(0); // arrives at rest
+  });
+
+  it('returns a fresh array — callers mutate handles in place', () => {
+    const kf = { easing: 'bezier', bezier: EASY_EASE };
+    expect(effectiveBezier(kf)).not.toBe(kf.bezier);
+  });
+
+  it('knows both spellings of hold', () => {
+    expect(isHoldEasing('hold')).toBe(true);
+    expect(isHoldEasing('step')).toBe(true);
+    expect(isHoldEasing('bezier')).toBe(false);
+    expect(isHoldEasing(undefined)).toBe(false);
+  });
+});
+
+describe('signed slopes — linked value-graph tangents', () => {
+  it('a linear segment has slope = dv/dt on both ends, sign included', () => {
+    expect(outgoingSlope(LINEAR, DV, DT)).toBeCloseTo(50, 6);
+    expect(incomingSlope(LINEAR, -DV, DT)).toBeCloseTo(-50, 6);
+  });
+
+  it.each([-80, 0, 35, 200])('withOutgoingSlope(%p) reads back the same slope', (slope) => {
+    const bz = withOutgoingSlope(EASY_EASE, DV, DT, slope);
+    expect(outgoingSlope(bz, DV, DT)).toBeCloseTo(slope, 6);
+    expect(bz[0]).toBeCloseTo(EASY_EASE[0], 6); // influence held
+  });
+
+  it.each([-80, 0, 35, 200])('withIncomingSlope(%p) reads back the same slope', (slope) => {
+    const bz = withIncomingSlope(EASY_EASE, DV, DT, slope);
+    expect(incomingSlope(bz, DV, DT)).toBeCloseTo(slope, 6);
+    expect(bz[2]).toBeCloseTo(EASY_EASE[2], 6);
+  });
+
+  it('collinear across a keyframe: matching the neighbour keeps a smooth join', () => {
+    // A(0,0) → B(2,100) → C(4,-50). Drag B's out handle to leave at −120/s …
+    const out = withOutgoingSlope(LINEAR, -150, 2, -120);
+    // … and the in side of A→B is solved to ARRIVE at −120/s (overshoot past B).
+    const inn = withIncomingSlope(LINEAR, 100, 2, outgoingSlope(out, -150, 2));
+    expect(incomingSlope(inn, 100, 2)).toBeCloseTo(-120, 6);
+  });
+
+  it('a flat segment cannot express a slope and is left alone', () => {
+    expect(withOutgoingSlope(EASY_EASE, 0, DT, 50)).toBe(EASY_EASE);
+    expect(withIncomingSlope(EASY_EASE, 0, DT, 50)).toBe(EASY_EASE);
   });
 });

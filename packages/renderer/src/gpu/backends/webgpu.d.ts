@@ -112,10 +112,13 @@ interface GPUDevice {
    * reviewer, and never fires. Typing it as a resolving promise makes the
    * correct shape the natural one to write.
    */
+  readonly limits?: Record<string, number>;
   readonly lost: Promise<{ reason?: string; message?: string }>;
 }
 
 interface GPUAdapter {
+  readonly features?: GPUSupportedFeatures;
+  readonly limits?: Record<string, number>;
   requestDevice(desc?: Record<string, unknown>): Promise<GPUDevice>;
 }
 

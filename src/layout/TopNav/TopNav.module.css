@@ -211,15 +211,15 @@
 }
 
 .toolDropdownTriggerActive {
-  background: var(--color-primary-subtle);
+  background: transparent;
   color: var(--color-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border-color: transparent;
 }
 
 .toolDropdownTriggerActive:hover {
-  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-  color: var(--color-primary-hover);
-  border-color: var(--color-primary);
+  background: var(--color-surface-3);
+  color: var(--color-primary-hover, var(--color-primary));
+  border-color: transparent;
 }
 
 .toolDropdownTrigger:focus-visible,
@@ -274,18 +274,17 @@
   color: var(--color-text-primary);
 }
 
-/* ON. The tinted fill carries the state and the hairline gives it an edge, so
-   it reads as pressed among a row of flat icons rather than merely bluer. */
+/* ON: Icon color changes to primary, no heavy bluish fill or border. */
 .toolActive {
-  background: var(--color-primary-subtle);
+  background: transparent;
   color: var(--color-primary);
-  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border-color: transparent;
 }
 
 .toolActive:hover {
-  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-  color: var(--color-primary-hover);
-  border-color: var(--color-primary);
+  background: var(--color-surface-3);
+  color: var(--color-primary-hover, var(--color-primary));
+  border-color: transparent;
 }
 
 .tool:active,

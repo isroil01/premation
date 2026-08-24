@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 174 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 183 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 38 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 61 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 17 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 45 | `src/stores/*.ts` |
+| Stores | 46 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        45 Zustand stores
+                          ├── src/stores/*        46 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -409,8 +409,8 @@ output.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 174 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 174 effects present are properly
+**Effect breadth: 183 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 183 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -423,7 +423,7 @@ written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
-GPU shader. The count is now phrased as "174 effects" rather than as a bare
+GPU shader. The count is now phrased as "183 effects" rather than as a bare
 figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
 **Variable-width mask feather LANDED** (2026-08-20). `MaskPoint` gained an
@@ -994,14 +994,14 @@ answers what can be answered exactly and refuses the rest.
 
 | | |
 |---|---|
-| CPU-baked effects (`CANVAS2D_ONLY`) | **132** of 174 |
-| already a pure `(data, w, h, …)` kernel | **112** (85%) |
+| CPU-baked effects (`CANVAS2D_ONLY`) | **133** of 175 |
+| already a pure `(data, w, h, …)` kernel | **113** (85%) |
 | need a whole-image reduction | **4** — `equalize`, `auto-levels`, `auto-contrast`, `auto-color` |
 | drawn with canvas ops, no pure kernel | **16** |
 
-The **132** (112 before round five) confirms the figure every brief has been quoting; unlike the effect
+The **133** (112 before round five; Curl Noise is the 133rd) confirms the figure every brief has been quoting; unlike the effect
 count, this one was right. Derived from the predicate rather than a copy of the
-list, and `unaccounted: 0` — every one of the 174 lands in exactly one bucket,
+list, and `unaccounted: 0` — every one of the 175 lands in exactly one bucket,
 so there is no silent third category rendering as a no-op.
 
 **The 82% is the finding that decides the answer.** The pixel work is already
@@ -1578,7 +1578,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "174 effects".
+it. Prose stating a count should say "183 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and

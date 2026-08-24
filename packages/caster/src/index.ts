@@ -72,3 +72,5 @@ export {
   type RunCasterOptions,
   type RunCasterResult,
 } from './run';
+
+export { audioGridUsable, sequenceToAudioGrid, type AudioGrid } from './audioGrid';

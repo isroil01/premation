@@ -1,9 +1,10 @@
 /**
  * Cloner controls.
  *
- * The panel deliberately shows the CLONE COUNT next to the toggle rather than
- * burying it: every clone is a real renderable, so the count is the cost, and
- * the difference between a 5×5 grid and a 20×20 one is 25 layers versus 400.
+ * Lives in Effect Controls once attached from Effects → Simulation. The panel
+ * deliberately shows the CLONE COUNT next to the toggle rather than burying it:
+ * every clone is a real renderable, so the count is the cost, and the
+ * difference between a 5×5 grid and a 20×20 one is 25 layers versus 400.
  * A control whose expense is invisible gets dragged to the top of its range
  * once and blamed on the app.
  *
@@ -12,15 +13,13 @@
  * people learn to distrust the whole section.
  */
 
-import { useMemo } from 'react';
 import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
 import { InspectorRow } from '@components/Inspector';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeCloner, CLONER_PROP } from '@core/scene/clonerExpand';
+import { readNodeClonerRaw, CLONER_PROP } from '@core/scene/clonerExpand';
 import {
-  DEFAULT_CLONER,
   cloneCount,
   MAX_CLONES,
   type ClonerConfig,
@@ -46,23 +45,14 @@ const FALLOFFS: ReadonlyArray<{ value: FalloffShape; label: string }> = [
 export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
   const node = defaultSceneGraph.getNode(nodeId);
-  const stored = readNodeCloner(node);
   // `readNodeCloner` returns null for a DISABLED cloner — correct for the
-  // renderer, wrong for a panel that has to show the toggle in its off state
-  // and keep the settings the user already dialled in.
-  const cfg = useMemo<ClonerConfig>(() => {
-    if (stored) return stored;
-    const fx = node?.components.find((c) => c.type === 'fx');
-    const raw = (fx?.props as Record<string, unknown> | undefined)?.[CLONER_PROP];
-    return { ...DEFAULT_CLONER, ...(raw && typeof raw === 'object' ? raw as Partial<ClonerConfig> : {}) };
-  }, [stored, node]);
+  // renderer; `readNodeClonerRaw` keeps the toggle + dialled-in settings.
+  const cfg = readNodeClonerRaw(node);
 
   if (!node) return null;
 
   const write = (patch: Partial<ClonerConfig>): void => {
-    const fx = node.components.find((c) => c.type === 'fx');
-    if (!fx) return;
-    defaultSceneGraph.writeProp(nodeId, fx.id, CLONER_PROP, { ...cfg, ...patch });
+    defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, { ...cfg, ...patch });
     bumpScene();
   };
 

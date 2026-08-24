@@ -98,11 +98,11 @@ export interface PropertyMeta {
    * FALSE for a property this registry describes but that cannot hold a
    * keyframe — the render path reads its stored value once, not per frame.
    *
-   * Material Options are the case: `readNodeMaterial` is a static read, so a
-   * track on `ambient` would be sampled by nobody. They are described here
-   * anyway because the timeline and the inspector both need their labels,
-   * units and ranges; what they must NOT get is a stopwatch. Absent means
-   * keyframeable, which is nearly everything.
+   * No entry carries it today — Material Options did, until `readNodeMaterial`
+   * learned to take the frame's animated values — but the seam stays: the
+   * next property the render path reads once declares it HERE, on its entry,
+   * and the timeline then lists it without a stopwatch. Absent means
+   * keyframeable, which is everything at the moment.
    *
    * `animatablePropertyReaders.test.ts` reads this flag to decide whether a
    * property belongs in its sweep, which is why it is stated on the entry
@@ -151,12 +151,6 @@ const MULT = (label: string, group: PropertyGroup, order: number): MetaSpec => (
 
 const PCT = (label: string, group: PropertyGroup, order: number, max = 100): MetaSpec => ({
   label, group, type: 'percent', unit: '%', min: 0, max, step: 1, precision: 1, defaultValue: max, resettable: true, order,
-});
-
-/** A Material Option: a percentage the renderer reads STATICALLY (see below). */
-const MATERIAL = (label: string): MetaSpec => ({
-  ...PCT(label, 'material', ORDER.material),
-  keyframeable: false,
 });
 
 // ── Order slots (AE's Transform order, then the rest) ────────────────
@@ -359,18 +353,18 @@ const STATIC: Record<string, MetaSpec> = {
   letterSpacing: PX('Letter Spacing', 'text', ORDER.text),
   lineHeight: { ...MULT('Line Height', 'text', ORDER.text), min: 0, defaultValue: 1.2, step: 0.01 },
 
-  // Material Options (3D). Stored as flat props on the Transform component and
-  // read by `readNodeMaterial` — a STATIC read, once per frame, off the stored
-  // value. So they are described here for their labels, units and ranges, and
-  // marked `keyframeable: false`: the timeline lists them and shows no
-  // stopwatch. Making them animate is a render-path change (thread the sampled
-  // values through `readNodeMaterial`), not a registry one.
-  ambient: MATERIAL('Ambient'),
-  diffuse: MATERIAL('Diffuse'),
-  specular: { ...MATERIAL('Specular Intensity'), defaultValue: 0 },
-  shininess: { ...MATERIAL('Shininess'), defaultValue: 5 },
-  metal: { ...MATERIAL('Metal'), defaultValue: 0 },
-  lightTransmission: { ...MATERIAL('Light Transmission'), defaultValue: 0 },
+  // Material Options (3D). Stored as flat props on the Transform component;
+  // `readNodeMaterial(node, av)` overrides each with its track when the
+  // snapshot passes the frame's animated values, so these keyframe like any
+  // transform property. `lightShading.ts` / the 3D shaders read the resolved
+  // MaterialOptions, never the props, so the sample lands everywhere at once.
+  ambient: PCT('Ambient', 'material', ORDER.material),
+  diffuse: PCT('Diffuse', 'material', ORDER.material),
+  specular: { ...PCT('Specular Intensity', 'material', ORDER.material), defaultValue: 0 },
+  shininess: { ...PCT('Shininess', 'material', ORDER.material, 200), defaultValue: 32, min: 1 },
+  metal: { ...PCT('Metal', 'material', ORDER.material), defaultValue: 0 },
+  lightTransmission: { ...PCT('Light Transmission', 'material', ORDER.material), defaultValue: 0 },
+  roughness: { ...PCT('Roughness', 'material', ORDER.material), defaultValue: 50 },
 
   // Audio Levels, in decibels — the one audio property that keyframes today
   // (`audioParams.ts` samples it per frame and schedules the gain ramp).
@@ -646,6 +640,35 @@ function resolvePathOpParam(path: string, nodeId?: string): PropertyMeta | null 
   };
 }
 
+/**
+ * `mask.<pathId>.<feather|opacity|expansion>` — one mask path's setting.
+ *
+ * Named for the path when the node is known ("Mask 2 Feather"), else by key.
+ * Opacity is 0..100 here like every other opacity; the mask stores 0..1 and
+ * `applyMaskPropertyTracks` scales.
+ */
+function resolveMaskProperty(path: string, nodeId?: string): PropertyMeta | null {
+  const m = /^mask\.([^.]+)\.(feather|opacity|expansion)$/.exec(path);
+  if (!m) return null;
+  const [, pathId, key] = m as unknown as [string, string, 'feather' | 'opacity' | 'expansion'];
+  let maskName = 'Mask';
+  if (nodeId) {
+    const node = defaultSceneGraph.getNode(nodeId);
+    const fx = node?.components.find((c) => c.type === 'fx');
+    const paths = (fx?.props.mask as { paths?: Array<{ id: string; name?: string }> } | undefined)?.paths ?? [];
+    const idx = paths.findIndex((p) => p.id === pathId);
+    if (idx >= 0) maskName = paths[idx]!.name ?? `Mask ${idx + 1}`;
+  }
+  const base = { path, group: 'other' as const, resettable: true, order: ORDER.other };
+  if (key === 'opacity') {
+    return { ...base, label: `${maskName} Opacity`, type: 'percent', unit: '%', min: 0, max: 100, step: 1, precision: 1, defaultValue: 100 };
+  }
+  if (key === 'feather') {
+    return { ...base, label: `${maskName} Feather`, type: 'number', unit: 'px', min: 0, step: 1, precision: 1, defaultValue: 0 };
+  }
+  return { ...base, label: `${maskName} Expansion`, type: 'number', unit: 'px', step: 1, precision: 1, defaultValue: 0 };
+}
+
 /** `<base>_r` / `_g` / `_b` / `_a` — one channel of a decomposed colour track. */
 function resolveColorChannel(path: string, nodeId?: string): PropertyMeta | null {
   const m = /^(.+)(_[rgba])$/.exec(path);
@@ -842,6 +865,7 @@ function readAnimatorsForMeta(
  * named `a`/`r`/`g`/`b` isn't mistaken for a colour channel of `ctrl`.
  */
 const RESOLVERS: ReadonlyArray<(path: string, nodeId?: string) => PropertyMeta | null> = [
+  resolveMaskProperty,
   resolveGroupPlaceholder,
   resolveControl,
   resolveColorChannel,

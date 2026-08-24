@@ -88,7 +88,7 @@ files:
 publish:
   provider: github
   owner: isroil01
-  repo: motion-editor
+  repo: premation
   releaseType: draft
 
 win:

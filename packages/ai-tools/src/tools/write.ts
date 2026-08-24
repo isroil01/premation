@@ -469,7 +469,7 @@ export const addEffectDef: AiToolDef = {
           // Distort
           'displacement-map', 'motion-tile', 'bend', 'wide-time', 'force-motion-blur',
           'bevel-alpha', 'bevel-edges', 'spotlight', 'sphere', 'cylinder', 'arithmetic',
-          'wave-warp', 'turbulent-displace', 'transform',
+          'wave-warp', 'turbulent-displace', 'curl-noise', 'transform',
           'bulge', 'twirl', 'spherize', 'corner-pin', 'bezier-warp', 'polar-coordinates', 'optics-compensation', 'mesh-warp', 'liquify',
           'mirror', 'offset',
           // Keying
@@ -517,6 +517,9 @@ export const addEffectDef: AiToolDef = {
           'flo-motion', 'lens', 'griddler', 'ball-action', 'drizzle',
           // Round five — Transition
           'jaws', 'pixel-polly', 'twister', 'card-dance',
+          // Round six — Iconic AE & CC effects
+          'unmult', 'cc-composite', 'cc-repetile', 'cc-scatterize',
+          'radial-fast-blur', 'cross-blur', 'scale-wipe', 'plastic',
         ],
       },
       amount: { type: 'number', description: 'Initial value for the primary param. Omit for the effect default.' },

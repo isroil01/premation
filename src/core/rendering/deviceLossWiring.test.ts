@@ -39,7 +39,7 @@ describe('the WebGPU backend', () => {
   it('attaches the handler before the device is used', () => {
     // A device lost during initialisation is exactly the case a later
     // attachment misses, and it is a real one on a machine already in trouble.
-    const acquired = backend.indexOf('adapter.requestDevice()');
+    const acquired = backend.indexOf('adapter.requestDevice');
     const subscribed = backend.indexOf('this.device.lost');
     const configured = backend.indexOf('this.context.configure');
 

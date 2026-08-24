@@ -68,4 +68,38 @@ describe('RenderGraph', () => {
     g.removePass('a');
     expect(g.compile().map((p) => p.name)).toEqual(['b']);
   });
+
+  it('resolves float targets to rgba32float only when backend supports float32Textures and bitDepth is 32', () => {
+    const { setActiveColorPipeline } = require('../shaders/colorPipeline');
+    const { ResourceManager } = require('../gpu/ResourceManager');
+    const { NullBackend } = require('../gpu/backends/NullBackend');
+
+    const backend = new NullBackend();
+    const resources = new ResourceManager(backend);
+    const g = new RenderGraph();
+    g.declareTarget('test-float', () => ({
+      label: 'test-float',
+      width: 100,
+      height: 100,
+      format: 'rgba16float',
+      samples: 4,
+    }));
+    g.addPass(new NamedPass('pass1', ['test-float'], [SURFACE]));
+
+    // 1. bitDepth = 16 -> rgba16float
+    setActiveColorPipeline({ workingSpace: 'srgb-linear', displayTransform: 'srgb', bitDepth: 16 });
+    let targets = g.resolveTargets(backend, resources, { pixelSize: { width: 100, height: 100 } } as any, 'rgba8unorm');
+    expect(targets.get('test-float')).toBeDefined();
+
+    // 2. bitDepth = 32 with float32Textures = true -> rgba32float (and samples clamped to 1)
+    setActiveColorPipeline({ workingSpace: 'srgb-linear', displayTransform: 'srgb', bitDepth: 32 });
+    backend.capabilities.float32Textures = true;
+    targets = g.resolveTargets(backend, resources, { pixelSize: { width: 100, height: 100 } } as any, 'rgba8unorm');
+    expect(targets.get('test-float')).toBeDefined();
+
+    // 3. bitDepth = 32 with float32Textures = false -> falls back safely to rgba16float
+    backend.capabilities.float32Textures = false;
+    targets = g.resolveTargets(backend, resources, { pixelSize: { width: 100, height: 100 } } as any, 'rgba8unorm');
+    expect(targets.get('test-float')).toBeDefined();
+  });
 });

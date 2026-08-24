@@ -30,8 +30,14 @@
 | Responsive/protected time | `responsiveTime.ts` regions | Responsive Design — Time | Parity |
 | Markers | Comp + layer markers, duration, color (`layerMarkers`, `markerShortcuts`) | Comp + layer markers, cue points | Parity |
 | Interpret Footage | fps, PAR, alpha, looping, Separate Fields, **3:2 pulldown detect + Remove Pulldown** | Same | Parity |
-| Layer property tree | Twirl-down tree built from the layer itself (`propertyTree.ts`): Text, Contents, Masks, Effects, Transform, Layer Styles, Material Options, Audio — every row present with its stopwatch before anything is keyed | Same groups | Parity, except Material Options (listed, values editable, not yet keyframeable — `readNodeMaterial` is a static read) |
-| Mask animation | ONE Mask Shape track — whole-shape snapshots (`setMaskAnim`), so path, feather, opacity and expansion move together | Four independent properties per mask | **Coarser than AE** |
+| Layer property tree | Twirl-down tree built from the layer itself (`propertyTree.ts`): Text, Contents, Masks, Effects, Transform, Layer Styles, Material Options, Audio — every row present with its stopwatch before anything is keyed; Material Options keyframe via `readNodeMaterial(node, av)` | Same groups | Parity |
+| **Quick Apply** | Command palette `+` (effects) / `*` (presets): fuzzy search, Enter applies to every selected layer (`quickApply.ts`) | 26.2 Quick Apply | Parity |
+| **Scene Edit Detection** | Luma-histogram cut detector over the exact decode path, adaptive threshold, **plus dissolve detection** (steady-drift windows, reported at the midpoint) → markers or splits (`sceneEditDetect.ts`) | Sensei-based | Parity on cuts and dissolves |
+| **Proportional Scrubbing** | Ordered property-row selection; a drag ramps 0 % → 100 % first→last (`propertySelectionStore.ts`) | 26.2 | Parity |
+| **Adaptive Resolution** | Viewport drops to a floor (Half by default) during any drag, restores on release (`renderQualityStore.ts`) | Fast Previews ▸ Adaptive Resolution | Parity |
+| Copy Frame to Clipboard | `comp.copyFrame` — deterministic still → clipboard PNG | 26.3 | Parity |
+| Multi-Frame Rendering | Encode stage pipelined (`framePipeline.ts`): the desktop sink and the image-sequence export snapshot each frame and run up to cores−1 PNG/JPEG encodes + disk writes concurrently while the GPU renders the next frame; the per-frame render itself stays serial | Parallel frame rendering across cores | Foothold — the encode/IO half overlaps; parallel *rendering* needs worker-side scene graph + GPU backend |
+| Mask animation | Mask Shape as a whole-shape track, plus per-path **Feather / Opacity / Expansion as independent numeric tracks** (`mask.<id>.<key>`, layered at render by `applyMaskPropertyTracks`) | Four independent properties per mask | Parity |
 
 ### 2.2 Keyframes & expressions
 
@@ -40,6 +46,7 @@
 | Interpolation | Linear, hold, bezier, continuous, **roving** (`interpolate.ts`), spatial auto-tangents | Same set | Parity |
 | Graph editor | Value + speed graphs, handle editing, Easy Ease, presets | Same | Parity |
 | Generators | Physics bounce (`bounce.ts`) | Keyframe assistants + expressions | Parity |
+| Layer utilities | **Create Nulls From Path Points**, both directions — one-shot, and live **Points Follow Nulls** via a render-time binding (`Geometry.pointBindings`); **Create Shapes From Text** with the **font's own `glyf`/CFF outlines** (`openType.ts`, `fontOutlines.ts`) and a traced fallback when the face cannot be read; **Auto-trace** (layer alpha → add + subtract mask paths incl. holes, per-frame keyframes) | Same three | Parity (font-exact needs Local Font Access permission; web fonts fall back to trace) |
 | Expression engine | ~50 identifiers incl. `wiggle`, `valueAtTime`, `velocityAtTime`, `loopOut` (with working `pingpong`), `sourceRectAtTime`, `key(n)`, `numKeys`, and `audio` | Full JS; 26.0 adds per-character styling via expressions | Parity for standard motion; no arbitrary JS by design |
 
 ### 2.3 Compositing, mattes, masks
@@ -51,13 +58,13 @@
 | Masks | Bezier, 7 modes, expansion, opacity, uniform + **variable-width per-vertex feather**; effect-scoped masks | Same | Parity |
 | Layer styles | **10** = 9 in `LAYER_STYLE_LABEL` + backdrop `glass` | 9 Photoshop styles | Parity (+ backdrop glass) |
 | Continuous rasterization | Collapse transforms, vector CR for precomps & SVG | Same toggle | Parity |
-| Roto / segment | Roto Brush (flow-propagated mattes), GrabCut seed, **SAM-class click/box** (`samSegment.ts`, ONNX hook) | Roto Brush 3 (neural) | Classical shipped; neural open |
+| Roto / segment | Roto Brush (flow-propagated mattes), GrabCut seed, **SAM-class click/box** (`samSegment.ts`); `onnxruntime-web` installed, model registered at boot from `VITE_SAM_MODEL_URL` | Roto Brush 3 / **Object Matte** (neural) | Classical shipped; neural needs only a hosted model URL |
 
 ### 2.4 Effects & color
 
 | Feature | Premation | AE 26.3 | Status |
 |---|---|---|---|
-| Effect stack | **174** effects (`EffectType` union, completeness-tested) | 400+ (26.0 adds **Unmult** with 32-bit HDR) + third-party | High coverage of the used set |
+| Effect stack | **183** effects (`EffectType` union, completeness-tested) incl. **Unmult**, **CC Composite**, **CC RepeTile**, **CC Scatterize**, **CC Radial Fast Blur**, **CC Cross Blur**, **CC Scale Wipe**, **CC Plastic**, **Curl Noise** | 400+ (26.0 adds **Unmult** with 32-bit HDR) + third-party | High coverage of the used set |
 | Keying | Full Keylight parameter set (`keylight.ts`) | Keylight 1.2 | Parity |
 | Content-Aware Fill | PatchMatch still + **video bake with bidirectional temporal polish** | Content-Aware Fill | Classical foothold; Adobe quality open |
 | Color spaces | ACEScg, linear sRGB, 16/32-bpc intermediates, ACES ODT, CUBE LUT; **HDR10/HLG export with MaxCLL/MaxFALL + master-display SEI**; float EXR → GPU (`rgba32float`) | OCIO, 32-bpc, HDR delivery | Strong; libx265 availability still host-dependent |
@@ -69,7 +76,7 @@
 |---|---|---|---|
 | Text animators | Per-character 3D, range/wiggly selectors (`textSelectors.ts`) | Range/Wiggly/Expression selectors | Parity |
 | Text on path | `textPath.ts` — margins, perpendicular, reverse | Same | Parity |
-| **Variable fonts** | Keyframeable **wght** + **wdth/slnt** via `font-variation-settings` (`fontWidth` / `fontSlant`) | 26.0: keyframeable weight/width/slant | Parity for axes that the loaded face exposes |
+| **Variable fonts** | Keyframeable **wght** + **wdth/slnt** via `font-variation-settings` (`fontWidth` / `fontSlant`); font picker **Variable filter + badge** (`fvar` probe, `variableFontProbe.ts`) | 26.0: keyframeable weight/width/slant; 26.3: variable-font filter | Parity |
 | SVG import | SVG parsing + continuous rasterization | **26.0: native SVG → editable shape layers with gradients** | Rough parity |
 | Path operators | **9** chainable (`PathOpType` incl. **wiggleTransform**) | Same set | Parity |
 
@@ -79,7 +86,8 @@
 |---|---|---|---|
 | Cameras | 1/2-node (`cameraOrientation`), DoF, **quad view**; **SfM + bundle adjust** camera solve (`sfmCamera.ts`, `bundleAdjust.ts`) | Same + denser commercial solver | Foothold shipped; COLMAP-grade open |
 | Lights | 4 types (`LightType: point, ambient, spot, parallel`), falloff, cone feather, Blinn-Phong | 4 types + cast shadows | Parity |
-| Geometry | Extrusion + bevels + per-face materials (`FACE_SURFACE_IDS`) | Advanced 3D: glTF + parametric meshes + Substance PBR | ⚠️ Gap (Tier 2) — out of scope per `docs/3d-layer-model.md` |
+| Geometry | Extrusion + bevels + per-face materials (`FACE_SURFACE_IDS`); primitives are FACET QUADS (a cylinder = 20 flat strips, each a layer with its own matrix), not meshes | Advanced 3D: glTF + parametric meshes + Substance PBR, height displacement, IBL | ⚠️ Gap (Tier 2) — displacement needs per-vertex meshes and IBL needs an environment texture in both backends' pipeline layouts: a new mesh pipeline, not a feature on this one |
+| **Shading model** | Phong (original) **or Physical: Cook-Torrance GGX + Smith-Schlick + Schlick Fresnel, roughness / metalness**, in all four 3D shade blocks (WGSL + GLSL, solid + textured); Specular Intensity scales dielectric F₀ (0.5 → 4 %); roughness keyframeable | PBR (roughness / metalness) | Parity on the reflectance model; no IBL |
 | Rigging | Bones, FK/IK with FABRIK, IK/FK blending, geodesic auto-weights, weight painting, ARAP puppet, bend pins | Puppet pins; bones via paid third-party | 🏆 Premation outclasses native AE |
 
 ### 2.7 Footage, audio, export
@@ -97,7 +105,8 @@
 ## 3. Gap Matrix (current)
 
 **🔴 Tier 1 — high impact**
-1. Neural rotoscoping (Roto Brush 3 / SAM ONNX model) — classical + **`tryRegisterSamOnnxFromUrl`** hook shipped; needs model weights + `onnxruntime-web`
+1. Neural rotoscoping (Roto Brush 3 / Object Matte) — classical + SAM hook + **`onnxruntime-web` + boot registration** shipped; needs only a hosted model URL (`VITE_SAM_MODEL_URL`)
+1b. Multi-Frame Rendering — encode/IO stage pipelined; parallel *rendering* still needs a worker-side scene graph + GPU backend. Investigated and declined for now: 20+ render-path modules touch `document`/`window`, `AppTextureProvider` uses HTMLImage/HTMLVideo (19 sites), and page-loaded web fonts are invisible to a worker's OffscreenCanvas — a worker render would produce different pixels from the preview for any comp with text, which is the one failure the export pipeline is built to refuse
 2. Vendor camera raw / MXF as **working float** media — DNG/CR2 stills + MXF transcode footholds shipped; R3D/BRAW need SDKs; float masters still open
 
 **🟡 Tier 2 — pro workflow**
@@ -115,7 +124,7 @@
 
 ## 4. Roadmap (corrected)
 
-**Phase 1 — neural priors:** ship/host a SAM ONNX model and `npm i onnxruntime-web`; call `tryRegisterSamOnnxFromUrl`.
+**Phase 1 — neural priors:** host a SAM ONNX decoder and set `VITE_SAM_MODEL_URL` — the runtime and the boot call are in.
 
 **Phase 2 — footage depth:** camera raw / MXF float pipelines.
 

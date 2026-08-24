@@ -28,6 +28,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { cn } from '@utils/cn';
+import { coalesceCacheBarRanges, layoutCacheBarSegments } from './cacheBarLayout';
 import { Icon, type IconName } from '@components/Icon';
 import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
 import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
@@ -63,6 +64,7 @@ import styles from './Timeline.module.css';
 import { ColorPicker } from '@components/ColorPicker';
 import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
 import { TIMELINE_GROUP_ORDER, type TimelineGroupKey } from '@core/timeline/propertyTree';
+import { useUIStore } from '@stores/uiStore';
 
 const RULER_HEIGHT_DEFAULT = 36;
 const TRACK_HEIGHT_DEFAULT = 30;
@@ -145,6 +147,12 @@ export interface TimelineProps {
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
   onTrackSelect?: (trackId: string, additive: boolean) => void;
   onScroll?: (scrollLeft: number) => void;
+  /**
+   * Horizontal scroll to RESTORE (px). The lanes own their scroll position, but
+   * while the Graph Editor replaces them it scrolls on its own; on return the
+   * lanes jump to wherever the graph left off so the two views stay aligned.
+   */
+  scrollLeftSync?: number;
   onZoom?: (pixelsPerSecond: number) => void;
   selectedTrackIds?: ReadonlyArray<string>;
   /** Tracks whose animated properties are revealed (expanded). */
@@ -187,6 +195,17 @@ export interface TimelineProps {
   onPropertyValue?: (trackId: string, prop: string) => number;
   /** Set a property's value from the timeline (keyframes when animated). */
   onPropertyValueChange?: (trackId: string, prop: string, value: number) => void;
+  /**
+   * A value-field scrub is beginning / has ended on this property. Lets the
+   * owner snapshot the selected properties' start values so the drag can be
+   * distributed across them (Proportional Scrubbing).
+   */
+  onPropertyScrubStart?: (trackId: string, prop: string) => void;
+  onPropertyScrubEnd?: () => void;
+  /** Property ROW selection: `${trackId}::${prop}` keys, in selection order. */
+  selectedPropertyKeys?: ReadonlyArray<string>;
+  /** Click on a property name. `toggle` is Ctrl/Cmd-click (add/remove). */
+  onPropertySelect?: (trackId: string, prop: string, mode: 'replace' | 'toggle') => void;
   /** Called when user drags a track row to a new position. toIndex is 0-based. */
   onTrackReorder?: (fromId: string, toIndex: number) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
@@ -215,6 +234,7 @@ function Timeline({
   onClipContextMenu,
   onTrackSelect,
   onScroll,
+  scrollLeftSync,
   onZoom,
   selectedTrackIds,
   expandedTrackIds,
@@ -237,6 +257,10 @@ function Timeline({
   onPropertyStopwatch,
   onPropertyValue,
   onPropertyValueChange,
+  onPropertyScrubStart,
+  onPropertyScrubEnd,
+  selectedPropertyKeys,
+  onPropertySelect,
   onTrackReorder,
   onTrackColorChange,
   className,
@@ -458,6 +482,13 @@ function Timeline({
     [onScroll],
   );
 
+  // Restore an externally-driven scroll (the Graph Editor's) when it changes.
+  useEffect(() => {
+    const el = lanesRef.current;
+    if (scrollLeftSync === undefined || !el) return;
+    if (Math.abs(el.scrollLeft - scrollLeftSync) > 0.5) el.scrollLeft = scrollLeftSync;
+  }, [scrollLeftSync]);
+
   // ── Wheel zoom (Ctrl + Wheel) ──────────────────────────────────
   const onWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
@@ -475,6 +506,9 @@ function Timeline({
   const onPlayheadDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (!lanesRef.current) return;
     draggingRef.current = true;
+    // A scrub is a drag the viewport should degrade for (Adaptive Resolution),
+    // exactly like a gizmo drag — same flag, same subscriber.
+    useUIStore.getState().setDragging(true);
     const rect = lanesRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left + lanesRef.current.scrollLeft - TIMELINE_LEFT_OFFSET;
     const time = clamp(x / pps, 0, totalSeconds);
@@ -493,6 +527,7 @@ function Timeline({
     const onUp = (): void => {
       if (!draggingRef.current) return;
       draggingRef.current = false;
+      useUIStore.getState().setDragging(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
@@ -1079,6 +1114,24 @@ function Timeline({
 
   const playheadX = TIMELINE_LEFT_OFFSET + currentTime * pps;
 
+  const fps = model.frameRate || 30;
+  const diskCacheSegments = useMemo(
+    () => layoutCacheBarSegments(
+      coalesceCacheBarRanges(model.diskCachedRanges ?? [], fps, pps),
+      pps,
+      TIMELINE_LEFT_OFFSET,
+    ),
+    [model.diskCachedRanges, fps, pps, TIMELINE_LEFT_OFFSET],
+  );
+  const ramCacheSegments = useMemo(
+    () => layoutCacheBarSegments(
+      coalesceCacheBarRanges(model.cachedRanges ?? [], fps, pps),
+      pps,
+      TIMELINE_LEFT_OFFSET,
+    ),
+    [model.cachedRanges, fps, pps, TIMELINE_LEFT_OFFSET],
+  );
+
   return (
     <div ref={containerRef} className={cn(styles.root, className)} onWheel={onWheel}>
       <div
@@ -1222,6 +1275,31 @@ function Timeline({
                       ? (p, v) => onPropertyValueChange(row.track.id, p, v)
                       : undefined
                   }
+                  onScrubStart={
+                    onPropertyScrubStart ? (p) => onPropertyScrubStart(row.track.id, p) : undefined
+                  }
+                  onScrubEnd={onPropertyScrubEnd}
+                  selected={
+                    // A row is selected when ANY of the props it edits is — a
+                    // merged Position row stands for x and y together.
+                    !!selectedPropertyKeys?.some((k) =>
+                      (row.prop.valueProps ?? row.prop.stopwatchProps ?? [row.prop.prop]).some(
+                        (p) => k === `${row.track.id}::${p}`,
+                      ),
+                    )
+                  }
+                  onSelect={
+                    onPropertySelect
+                      ? (mode) => {
+                          for (const p of row.prop.valueProps ?? row.prop.stopwatchProps ?? [row.prop.prop]) {
+                            onPropertySelect(row.track.id, p, mode);
+                            // A plain click replaces, but a row with several
+                            // props must end up with ALL of them selected.
+                            mode = 'toggle';
+                          }
+                        }
+                      : undefined
+                  }
                   onSeek={onScrub}
                 />
               );
@@ -1263,21 +1341,22 @@ function Timeline({
 
           {/* Disk-tier cache bar. Drawn BEFORE the RAM bar and one lane lower,
               so where both hold a frame the green one is what you see. */}
-          {model.diskCachedRanges?.map((r, i) => (
+          {diskCacheSegments.map((seg, i) => (
             <div
               key={`diskcache_${i}`}
               className={styles.diskCacheBar}
-              style={{ left: TIMELINE_LEFT_OFFSET + r.start * pps, width: Math.max(1, (r.end - r.start) * pps), top: rulerHeight - 1 }}
+              style={{ left: seg.left, width: seg.width, top: rulerHeight - 2 }}
               aria-hidden
             />
           ))}
 
-          {/* RAM-preview cache bar */}
-          {model.cachedRanges?.map((r, i) => (
+          {/* RAM-preview cache bar — sits on top of ruler minor ticks so short
+              spans read as a continuous strip, not green dots between grey marks. */}
+          {ramCacheSegments.map((seg, i) => (
             <div
               key={`cache_${i}`}
               className={styles.cacheBar}
-              style={{ left: TIMELINE_LEFT_OFFSET + r.start * pps, width: Math.max(1, (r.end - r.start) * pps), top: rulerHeight - 3 }}
+              style={{ left: seg.left, width: seg.width, top: rulerHeight - 4 }}
               aria-hidden
             />
           ))}
@@ -2025,6 +2104,10 @@ export function PropertyHeader({
   valueUnit,
   propertyValue,
   onValueChange,
+  onScrubStart,
+  onScrubEnd,
+  selected = false,
+  onSelect,
   onToggleKeyframe,
   onStopwatch,
   onSeek,
@@ -2040,6 +2123,11 @@ export function PropertyHeader({
   valueUnit?: string;
   propertyValue?: (prop: string) => number;
   onValueChange?: (prop: string, value: number) => void;
+  onScrubStart?: (prop: string) => void;
+  onScrubEnd?: () => void;
+  /** This row is in the property selection (highlighted name). */
+  selected?: boolean;
+  onSelect?: (mode: 'replace' | 'toggle') => void;
   onToggleKeyframe?: () => void;
   /** Enable animation for a static placeholder row (create first keyframe). */
   onStopwatch?: () => void;
@@ -2061,6 +2149,8 @@ export function PropertyHeader({
             value={propertyValue(p)}
             unit={valueUnit}
             onChange={(v) => onValueChange(p, v)}
+            onScrubStart={onScrubStart ? () => onScrubStart(p) : undefined}
+            onScrubEnd={onScrubEnd}
             aria-label={valueProps.length > 1 ? `${label} ${p}` : label}
           />
         ))}
@@ -2082,21 +2172,57 @@ export function PropertyHeader({
     <StopwatchButton animated={animated} label={label} onToggle={onStopwatch} />
   ) : null;
 
+  // The name is the row's SELECT target — AE's property selection, on which
+  // proportional scrubbing is defined. Ctrl/Cmd-click adds to the ordered
+  // selection; a plain click replaces it.
+  const name = (
+    <span
+      className={cn(styles.propName, onSelect && styles.propNameSelectable, selected && styles.propNameSelected)}
+      title={label}
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      aria-pressed={onSelect ? selected : undefined}
+      onClick={
+        onSelect
+          ? (e) => {
+              e.stopPropagation();
+              onSelect(e.ctrlKey || e.metaKey ? 'toggle' : 'replace');
+            }
+          : undefined
+      }
+      onKeyDown={
+        onSelect
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelect(e.ctrlKey || e.metaKey ? 'toggle' : 'replace');
+              }
+            }
+          : undefined
+      }
+    >
+      {label}
+    </span>
+  );
+
   if (!animated) {
     // Static placeholder: the AE property tree before any keyframes exist.
     return (
-      <div className={`${styles.propHeader} ${styles.propHeaderStatic}`} style={style}>
+      <div
+        className={cn(styles.propHeader, styles.propHeaderStatic, selected && styles.propHeaderSelected)}
+        style={style}
+      >
         {stopwatch}
-        <span className={styles.propName} title={label}>{label}</span>
+        {name}
         {fields}
       </div>
     );
   }
 
   return (
-    <div className={styles.propHeader} style={style}>
+    <div className={cn(styles.propHeader, selected && styles.propHeaderSelected)} style={style}>
       {stopwatch}
-      <span className={styles.propName} title={label}>{label}</span>
+      {name}
       {fields}
       <div className={styles.propNav}>
         <KeyframeNavigator

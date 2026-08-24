@@ -161,3 +161,89 @@ export function turbulentDisplaceData(
   }
   return out;
 }
+
+/**
+ * Curl Noise (AE 26.3): displace along the CURL of a noise field.
+ *
+ * Turbulent Displace pushes each pixel by two independent noise values — a
+ * field with sources and sinks, which is why at high amounts it tears and
+ * bunches. The curl of a scalar field has zero divergence by construction, so
+ * pixels swirl around each other and the picture never piles up or voids:
+ * the organic "ink in water" motion the effect is for.
+ *
+ *   v = ∇ × (0, 0, ψ) = (∂ψ/∂y, −∂ψ/∂x)
+ *
+ * ψ is the same fBm the other warps use; its partials are taken by central
+ * differences at one source-pixel step, which is both the cheapest estimate
+ * and the one whose scale matches the buffer. Backward-mapped, bilinear,
+ * edge-clamped like its siblings, so a curled layer stays hole-free.
+ */
+/**
+ * The curl-noise displacement field, two floats (vx, vy) per pixel.
+ *
+ * Exported separately from the pixel pass so the field's defining property —
+ * zero divergence — can be asserted directly. With the same central-difference
+ * stencil for the curl and for the test's divergence, the discrete divergence
+ * of the discrete curl is identically zero (the mixed partials cancel term by
+ * term), so the test is exact to float error, not a tolerance picked by eye.
+ */
+export function curlNoiseField(
+  w: number,
+  h: number,
+  amount: number,
+  size: number,
+  complexity: number,
+  evolution: number,
+): Float32Array {
+  const field = new Float32Array(w * h * 2);
+  if (amount === 0 || size <= 0) return field;
+  const inv = 1 / size;
+  const ev = evolution * 0.01;
+  // ψ sampled one source pixel apart; the derivative is in noise units per
+  // pixel, scaled back by `size` so the swirl amplitude is `amount` px
+  // regardless of feature size — otherwise doubling `size` halves the motion
+  // and the two sliders fight.
+  const psi = (x: number, y: number): number => fbm(x * inv + ev, y * inv - ev, 53, complexity);
+  const k = amount * size * 0.5;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const dpdx = psi(x + 1, y) - psi(x - 1, y);
+      const dpdy = psi(x, y + 1) - psi(x, y - 1);
+      const i = (y * w + x) * 2;
+      // Curl of (0,0,ψ): (∂ψ/∂y, −∂ψ/∂x).
+      field[i] = dpdy * k;
+      field[i + 1] = -dpdx * k;
+    }
+  }
+  return field;
+}
+
+export function curlNoiseData(
+  src: Uint8ClampedArray,
+  w: number,
+  h: number,
+  amount: number,
+  size: number,
+  complexity: number,
+  evolution: number,
+): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(src.length);
+  if (amount === 0 || size <= 0) {
+    out.set(src);
+    return out;
+  }
+  const field = curlNoiseField(w, h, amount, size, complexity, evolution);
+  const sample: [number, number, number, number] = [0, 0, 0, 0];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const f = (y * w + x) * 2;
+      bilinear(src, w, h, x - field[f]!, y - field[f + 1]!, sample);
+      const i = (y * w + x) * 4;
+      out[i] = sample[0];
+      out[i + 1] = sample[1];
+      out[i + 2] = sample[2];
+      out[i + 3] = sample[3];
+    }
+  }
+  return out;
+}

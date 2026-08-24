@@ -83,8 +83,8 @@ export class QuadRenderer {
 
         if (item.vertexBuffer && item.indexBuffer && item.indexCount !== undefined) {
           encoder.setVertexBuffer(0, item.vertexBuffer);
-          encoder.setIndexBuffer(item.indexBuffer, 'uint16');
-          encoder.drawIndexed(item.indexCount);
+          encoder.setIndexBuffer(item.indexBuffer, item.indexFormat ?? 'uint16');
+          encoder.drawIndexed(item.indexCount, 1, item.firstIndex ?? 0);
         } else {
           encoder.setVertexBuffer(0, quad);
           encoder.draw(QUAD_VERTEX_COUNT);

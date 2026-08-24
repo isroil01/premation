@@ -21,6 +21,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useRenderQualityStore, RESOLUTION_LABELS, RESOLUTION_PERCENT, type PreviewResolution } from '@stores/renderQualityStore';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
+import { usePropertySelectionStore } from '@stores/propertySelectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 
@@ -101,8 +102,13 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
     playheadTime,
   };
 
+  const proportionalScrub = usePropertySelectionStore((s) => s.proportional);
+  const setProportionalScrub = usePropertySelectionStore((s) => s.setProportional);
   const previewResolution = useRenderQualityStore((s) => s.resolution);
   const setResolution = useRenderQualityStore((s) => s.setResolution);
+  const adaptive = useRenderQualityStore((s) => s.adaptive);
+  const adaptiveFloor = useRenderQualityStore((s) => s.adaptiveFloor);
+  const setAdaptive = useRenderQualityStore((s) => s.setAdaptive);
   const [looping, setLoopingState] = useState(() => getTimelineController().isLooping());
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -240,13 +246,25 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                     <span>{RESOLUTION_LABELS[previewResolution]}</span>
                   </button>
                 }
-                items={([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
-                  type: 'item' as const,
-                  id: `res-${r}`,
-                  label: `${RESOLUTION_LABELS[r]} · ${RESOLUTION_PERCENT[r]}`,
-                  icon: (r === previewResolution ? 'check' : undefined) as any,
-                  onSelect: () => setResolution(r),
-                }))}
+                items={[
+                  ...([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
+                    type: 'item' as const,
+                    id: `res-${r}`,
+                    label: `${RESOLUTION_LABELS[r]} · ${RESOLUTION_PERCENT[r]}`,
+                    icon: (r === previewResolution ? 'check' : undefined) as any,
+                    onSelect: () => setResolution(r),
+                  })),
+                  { type: 'separator' as const },
+                  // AE's Fast Previews ▸ Adaptive Resolution: drop to the floor
+                  // while dragging, snap back on release.
+                  {
+                    type: 'checkbox' as const,
+                    id: 'adaptive',
+                    label: `Adaptive Resolution while dragging (${RESOLUTION_LABELS[adaptiveFloor]})`,
+                    checked: adaptive,
+                    onChange: setAdaptive,
+                  },
+                ]}
               />
             </div>
 
@@ -372,6 +390,24 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 onClick={toggleOnion}
               >
                 <Icon name="layers" size="sm" />
+              </button>
+
+              {/* Proportional Scrubbing (AE 26.2): with several property rows
+                  selected, a value drag ramps 0 % → 100 % across the
+                  selection instead of moving every property by the same amount. */}
+              <button
+                type="button"
+                className={proportionalScrub ? styles.toggleIconActive : styles.toggleIcon}
+                title={
+                  proportionalScrub
+                    ? 'Proportional Scrubbing (On) — a drag on one selected property ramps across the selection, first 0% → last 100%'
+                    : 'Proportional Scrubbing (Off) — a drag moves every selected property by the same amount'
+                }
+                aria-label="Proportional Scrubbing"
+                aria-pressed={proportionalScrub}
+                onClick={() => setProportionalScrub(!proportionalScrub)}
+              >
+                <Icon name="distribute-horizontal" size="sm" />
               </button>
 
               {/* Row Height Size Changer Button */}
@@ -530,6 +566,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               setScrollLeft(px);
               timelineProps.onScroll?.(px);
             }}
+            scrollLeftSync={graphEditorOpen ? undefined : scrollLeft}
           />
         </div>
 
@@ -541,6 +578,12 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
             duration={props.model.duration}
             pixelsPerSecond={pps}
             scrollLeft={scrollLeft}
+            onScrollChange={(px) => {
+              setScrollLeft(px);
+              timelineProps.onScroll?.(px);
+            }}
+            onZoom={onZoom ? (next) => onZoom(clampZoom(next)) : undefined}
+            frameRate={fps}
             onScrub={props.onScrub}
           />
         )}

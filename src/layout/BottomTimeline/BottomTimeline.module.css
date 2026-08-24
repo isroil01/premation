@@ -201,10 +201,10 @@
 }
 
 .transportBtnActive {
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15)) !important;
-  border-color: color-mix(in srgb, var(--color-primary, #2988ff) 40%, transparent) !important;
+  background: transparent !important;
+  border-color: transparent !important;
   color: var(--color-primary, #2988ff) !important;
-  box-shadow: 0 1px 6px color-mix(in srgb, var(--color-primary, #2988ff) 20%, transparent);
+  box-shadow: none;
 }
 
 .playBtn {
@@ -434,9 +434,9 @@ button.play:hover {
 .toggleBtnActive {
   composes: toggleBtn;
   color: var(--color-primary, #2988ff);
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15));
-  border-color: color-mix(in srgb, var(--color-primary, #2988ff) 40%, transparent);
-  box-shadow: 0 1px 6px color-mix(in srgb, var(--color-primary, #2988ff) 20%, transparent);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .toggleIcon {

@@ -309,7 +309,9 @@ export class ExactVideoFrameCache {
   private isLoopWrap(presIdx: number, lastReq: number, end: number): boolean {
     if (lastReq < 0 || presIdx >= lastReq) return false;
     const window = Math.max(STREAM_AHEAD * 3, 15);
-    return presIdx <= window && lastReq >= end - window;
+    // Either a full clip loop (near clip end back to near clip start),
+    // or a composition/work-area loop (any backward jump from >=15 frames back to near start).
+    return presIdx <= window && (lastReq >= end - window || lastReq >= presIdx + 15);
   }
 
   /** Start (or restart) a decode-ahead stream at `presIdx`. */

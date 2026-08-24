@@ -14,6 +14,7 @@
  *     repeatedly leaked in this renderer.
  */
 
+import { setExtrusionMeshPath } from '@core/scene/extrusionMesh';
 import { buildSnapshot } from './buildSnapshot';
 import { snapshotToFrameScene } from './snapshotToFrameScene';
 import SceneGraph from '@core/scene/SceneGraph';
@@ -163,15 +164,35 @@ describe('it survives the non-flat-quad paths', () => {
     // is the back CAP silently losing it: it is the one synthesized surface that
     // is textured, so premultiplied footage would fringe on the back of an
     // extruded object only, which reads as a lighting artefact.
+    //
+    // On the MESH path the body is one carrier layer (`::ext-mesh`): its back
+    // cap range samples the image, so the carrier keeps the flag and the
+    // layer's source; its walls are solid ranges of the same mesh and select
+    // nothing on their own.
     const layers = build({ z: 0, rotationX: 0, rotationY: 20, extrusionDepth: 40 }).layers;
     const textured = layers.filter((l) => l.src);
-    const walls = layers.filter((l) => l.id.startsWith('l::ext') && !l.src);
 
-    expect(textured.map((l) => l.id).sort()).toEqual(['l', 'l::ext-back']);
+    expect(textured.map((l) => l.id).sort()).toEqual(['l', 'l::ext-mesh']);
     for (const t of textured) expect(t.premultipliedSource).toBe(true);
+    const body = layers.find((l) => l.id === 'l::ext-mesh')!;
+    expect(body.extrudedMesh).toBeDefined();
+    expect(body.extrudedMesh!.ranges.some((r) => r.role === 'back' && r.textured)).toBe(true);
+    expect(body.extrudedMesh!.ranges.filter((r) => r.role === 'side').every((r) => !r.textured)).toBe(true);
+  });
 
-    expect(walls.length).toBeGreaterThan(0);
-    for (const w of walls) expect(w.premultipliedSource).toBeUndefined();
+  it('the quad-synthesis FALLBACK flags its textured faces and not its solid walls', () => {
+    setExtrusionMeshPath(false);
+    try {
+      const layers = build({ z: 0, rotationX: 0, rotationY: 20, extrusionDepth: 40 }).layers;
+      const textured = layers.filter((l) => l.src);
+      const walls = layers.filter((l) => l.id.startsWith('l::ext') && !l.src);
+      expect(textured.map((l) => l.id).sort()).toEqual(['l', 'l::ext-back']);
+      for (const t of textured) expect(t.premultipliedSource).toBe(true);
+      expect(walls.length).toBeGreaterThan(0);
+      for (const w of walls) expect(w.premultipliedSource).toBeUndefined();
+    } finally {
+      setExtrusionMeshPath(true);
+    }
   });
 
   it('stops at the snapshot — the FrameScene renderable does NOT carry it', () => {

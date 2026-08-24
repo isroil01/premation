@@ -111,14 +111,14 @@
 }
 
 .layoutToggle[data-active] {
-  background: var(--color-primary-subtle) !important;
+  background: transparent !important;
   color: var(--color-primary) !important;
   border: none !important;
 }
 
 .layoutToggle[data-active]:hover {
-  background: var(--color-primary-subtle) !important;
-  color: var(--color-primary-hover) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: var(--color-primary-hover, var(--color-primary)) !important;
 }
 
 .previewBtn {

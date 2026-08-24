@@ -2,25 +2,16 @@
  * The main process's edition gate, and the thing that keeps it agreeing with the
  * renderer's.
  *
- * ── The bug this exists to prevent ──────────────────────────────────────────
+ * Plugins (and any future capability that contacts a host we do not control)
+ * must be gated HERE by not registering IPC when the matching predicate is
+ * false — hiding a button in the renderer is not a gate. The assistant is on in
+ * both editions; its IPC is always registered.
  *
- * The local edition hides the assistant. Hiding it in the RENDERER while
- * `ai:stream` stays registered in main is not a gate — the renderer is the
- * untrusted side of that boundary, and a plugin panel, an imported document or
- * the DevTools console of a packaged build can invoke any channel this process
- * registers regardless of what the UI draws. So the gate is "the channel does not
- * exist", and this file asserts that.
- *
- * ── The §2·0 half ───────────────────────────────────────────────────────────
- *
- * There are now two independent answers to "which edition is this": this file's
+ * There are two independent answers to "which edition is this": this file's
  * subject (`electron/edition.ts`, reading MOTION_EDITION / baked package.json)
- * and the renderer's (`src/core/config/edition.ts`, reading VITE_EDITION). They
- * are separate because a Vite define does not exist in the main process — but
- * separate readers with nothing forcing agreement is exactly the shape that keeps
- * producing bugs on this project. Two assertions below force it: the parsers must
- * agree on a shared table, and every npm script setting one env var must set the
- * other.
+ * and the renderer's (`src/core/config/edition.ts`, reading VITE_EDITION). The
+ * parsers must agree on a shared table, and every npm script setting one env
+ * var must set the other.
  */
 
 jest.mock('electron', () => ({ app: { getAppPath: () => '/nonexistent-app-path' } }));
@@ -62,15 +53,13 @@ describe('the main process resolves its own edition', () => {
     expect(isLocalEdition()).toBe(true);
   });
 
-  it('turns the assistant off in the local edition', () => {
+  it('leaves the assistant on in the local edition', () => {
     process.env.MOTION_EDITION = 'local';
     __setEditionForTests(null);
-    // What this actually controls: main.ts calls registerAiKeyIpc and
-    // registerAiProxyIpc only when this is true, so `aiKeys:*`, `ai:stream` and
-    // `ai:cancel` are never registered. An invoke against them rejects with "no
-    // handler", which is the honest answer — not a soft refusal a caller could
-    // mistake for a transient failure and retry.
-    expect(aiEnabled()).toBe(false);
+    // main.ts registers AI IPC when this is true — keys, stream, cancel, image.
+    // Local spends keys from the OS keystore; that is intentional BYOK, not a
+    // leak of cloud-only channels.
+    expect(aiEnabled()).toBe(true);
   });
 
   it('turns plugins off in the local edition', () => {

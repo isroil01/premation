@@ -353,6 +353,16 @@ function representativeColor(layer: RenderLayer): string {
   return p && p.type === 'solid' ? p.color : '#000000';
 }
 
+/** One mesh-range fill graded by the layer's colour effects — the per-range
+ *  form of {@link gradedSolidColor}, for extruded walls / bevels / caps. */
+function gradeFillByEffects(layer: RenderLayer, fill: string): Color {
+  const base = Color.fromHex(fill);
+  if (!layer.effects || layer.effects.length === 0) return base;
+  const cm = effectColorMatrix(layer.effects);
+  const [r, g, b] = applyColorMatrix(cm, [base.r, base.g, base.b]);
+  return { r, g, b, a: base.a };
+}
+
 /** The layer's solid fill graded by its colour effects (brightness/contrast/…),
  *  applied on the CPU since the colour is uniform. Spatial effects (blur/glow)
  *  are ignored here — they need offscreen passes. */
@@ -1315,6 +1325,46 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
     ...(layer.world3d && layer.matrix && !pinned && (!parentMatrix || isIdentityMat3(parentMatrix))
       ? { threeD: { model: model3dFor(layer.world3d, layer) } }
       : {}),
+    // Extruded mesh: the vertices are already in the layer's centred pixel
+    // frame, so the model is the bare world3d — no unit-quad bridge. Placed
+    // after the quad `threeD` so it wins.
+    //
+    // A textured cap samples the layer's raster with LAYER-BOX UVs, but a
+    // rasterized texture (text, path shape) covers the box EXPANDED by its
+    // raster padding — the quad path absorbs that by growing the quad, which a
+    // mesh cap cannot. So the carrier maps the box into the padded texture via
+    // uvRect; pad 0 (media assets keep their own crop rect above) is identity.
+    ...(layer.extrudedMesh && layer.world3d && layer.matrix && (!parentMatrix || isIdentityMat3(parentMatrix))
+      ? {
+          threeD: { model: layer.world3d },
+          ...(!layer.uvRect && pad > 0
+            ? {
+                uvRect: {
+                  x: pad / (layer.width + 2 * pad),
+                  y: pad / (layer.height + 2 * pad),
+                  width: layer.width / (layer.width + 2 * pad),
+                  height: layer.height / (layer.height + 2 * pad),
+                },
+              }
+            : {}),
+          extrudedMesh: {
+            key: layer.extrudedMesh.key,
+            vertices: layer.extrudedMesh.vertices,
+            indices: layer.extrudedMesh.indices,
+            ranges: layer.extrudedMesh.ranges.map((r) => ({
+              role: r.role,
+              first: r.first,
+              count: r.count,
+              // Solid ranges are uniform colour, so the layer's colour effects
+              // grade them here on the CPU — the mesh equivalent of
+              // gradedSolidColor, and what makes an Invert reach the walls.
+              color: r.textured ? Color.fromHex(r.fill) : gradeFillByEffects(layer, r.fill),
+              gain: r.gain,
+              ...(r.textured ? { textured: true } : {}),
+            })),
+          },
+        }
+      : {}),
   };
   // Accepts-Lights routing: a renderable that will take the depth-tested group
   // path carries per-fragment shade data (the shader lights it for real, with
@@ -1326,6 +1376,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         specular: layer.shade3d.specular,
         shininess: layer.shade3d.shininess,
         ...(layer.shade3d.metal ? { metal: layer.shade3d.metal } : {}),
+        ...(layer.shade3d.roughness !== undefined ? { roughness: layer.shade3d.roughness } : {}),
         ...(layer.shade3d.oneSided ? { oneSided: true } : {}),
         quadGain: layer.lighting,
       };
@@ -1726,6 +1777,25 @@ function enforceExtrusionPathAgreement(renderables: Renderable[]): void {
   for (const r of renderables) {
     if (split.has(extrusionBaseId(r.id))) r.depthExempt = true;
   }
+  // An extruded MESH has no affine form — the painter path would draw its
+  // carrier as a flat quad in the wall colour over the object. Drop it with
+  // the object that left the depth group; the front face still draws.
+  dropMeshesOutsideDepthPath(renderables);
+}
+
+function dropMeshesOutsideDepthPath(renderables: Renderable[]): void {
+  for (let i = renderables.length - 1; i >= 0; i--) {
+    const r = renderables[i]!;
+    if (r.extrudedMesh && (r.depthExempt || !r.threeD)) renderables.splice(i, 1);
+  }
+}
+
+function dropMeshesEverywhere(renderables: Renderable[]): void {
+  for (let i = renderables.length - 1; i >= 0; i--) {
+    const r = renderables[i]!;
+    if (r.precomp) dropMeshesEverywhere(r.precomp.renderables as Renderable[]);
+    if (r.extrudedMesh) renderables.splice(i, 1);
+  }
 }
 
 export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
@@ -1762,6 +1832,7 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
   const checkThreeD = (rs: ReadonlyArray<Renderable>): boolean =>
     rs.some((r) => !!r.threeD || (r.precomp ? checkThreeD(r.precomp.renderables) : false));
   const has3d = !!snapshot.camera3d && checkThreeD(renderables);
+  if (!has3d) dropMeshesEverywhere(renderables);
   const hasEffects = checkEffects(snapshot.layers) || hasAdvancedBlend || hasBackdropBlur || has3d;
   return {
     composition: {

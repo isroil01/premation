@@ -40,7 +40,7 @@ kept behind it as fallbacks.
                        │                    │                └─► [B] DirectorRunner ─► POST /ai/director/run
                        │                    └─ 'trivial_edit' ─► [C] direct tool loop (≤22 turns)       │
                        │                                                                                 │
-                       │   every path executes through ONE ToolRegistry (62 tools) inside ONE            │
+                       │   every path executes through ONE ToolRegistry (65 tools) inside ONE            │
                        │   aiTransaction  ⇒  one prompt = one undo entry                                 │
                        └────────────────────────────────┬────────────────────────────────────────────────┘
                                                         │ provider bytes
@@ -484,7 +484,7 @@ schemas, and it is how the undo boundary is enforced — a handler can only touc
 hands it, and **the context has no access to the command history**. A handler physically cannot push
 its own undo entry, so one prompt can never fragment into thirty undo steps.
 
-- **62 tools** in four wire formats (OpenAI / Anthropic / Gemini / MCP), described once.
+- **65 tools** in four wire formats (OpenAI / Anthropic / Gemini / MCP), described once.
 - `ToolKind` is `read | write | compose`, and **`compose` exists to make one number computable**: the
   share of a run's mutations that went through the technique library rather than hand-authored
   primitives. All 43 mutating tools used to share `kind: 'write'`, so the ratio could not be computed
@@ -745,14 +745,9 @@ Not covered by unit tests: real-provider behaviour (schema rejection, truncation
 
 ## 15. Open gaps (ranked, all verified in the current tree)
 
-1. **`useAiChat.submit` has a stale-closure bug on `direction` and `projectId`.**
-   `src/layout/Workspace/useAiChat.ts:799` — deps are `[busy, hasPendingTx, isManualMode, persist]`,
-   but the body reads `direction` (line 692) and `projectId` (line 709). Setting a look pack, energy,
-   accent, duration or variant count re-renders but does **not** recreate `submit`, so the next run
-   sends the *previous* direction — the composer's whole direction bar is one edit behind, and on a
-   first-ever setting sends nothing. Same for `projectId`, which silently defeats the director memory
-   threading that was just added. Fix: add `direction` and `projectId` to the dep array (or read both
-   from a ref).
+1. **~~`useAiChat.submit` has a stale-closure bug on `direction` and `projectId`.~~ FIXED.**
+   `directionRef` + live `useCloudProjectStore.getState().projectId` in `submit`; pinned by
+   `directionReachesRun.test.tsx`.
 
 2. **`DirectorRunDto.provider` accepts providers the director cannot speak.**
    `motion-back/src/ai/director/dto/director-run.dto.ts:177` validates against `ALL_PROVIDERS`, which
@@ -762,11 +757,7 @@ Not covered by unit tests: real-provider behaviour (schema rejection, truncation
    `run_failed`. Narrow the DTO to the three chat providers. (`/ai/stream` has the same DTO breadth but
    degrades gracefully — the gateway has a real endpoint and header for every one.)
 
-3. **`generate_image` has no local-edition path.** `toolHandlers.ts:759` calls `api.generateImage` →
-   `POST /ai/image`. There is no `ai:image` IPC counterpart in `electron/aiProxy.ts`. Harmless today
-   (the local edition ships no assistant), but the caster's `art` direction depends on this tool, so
-   flipping `aiEnabled()` back on for local would produce briefs whose imagery silently degrades to the
-   template's placeholder panel.
+3. **~~`generate_image` has no local-edition path.~~ FIXED.** Plus media tools (`generate_video` / `generate_speech` / `generate_3d_model`) via `aiMedia.ts` and `electron/aiMediaProxy.ts`. Released product still spends keys through motion-back; local Electron is BYOK.
 
 4. **Conversation / motion / user-preference memory is process-local.** `MemoryStore` keeps them in
    `TtlCache` only (30–60 min). Project and brand memory persist to Postgres; these three do not
@@ -778,12 +769,9 @@ Not covered by unit tests: real-provider behaviour (schema rejection, truncation
    consumers. `ContextManager` (token budgeting) and `CircuitBreakerManager` are the two whose absence
    is a real capability gap, not just dead weight.
 
-6. **`recipes.ts` and `toolHandlers.ts` carry an unresolved F11 marker** — both files open with
-   `eslint-disable no-restricted-syntax / TODO(F11): SUSPECTED DEFECT, NOT YET VERIFIED`: handlers do
-   `defaultSceneGraph.getNode(id)` then write into `component.props` in place, and `SceneGraph` returns
-   a fresh copy per read, so those writes are likely discarded and the affected tools may be silent
-   no-ops. Deliberately not fixed blind (10 call sites, no coverage). The fix is `writeProp()` — which
-   `generateImage` at `toolHandlers.ts:788` already uses correctly, so the pattern is available.
+6. **~~F11 prop-write silent no-ops in AI tools.~~ FIXED.** Trim / repeater / path-op / recolor
+   handlers and the radial-burst / path-morph recipes write through `SceneGraph` setters /
+   `writeProp` / `pathOps` APIs; `propWriteSurvival.test.ts` + eslint `no-restricted-syntax` guard.
 
 7. **Cosmetic:** `AgentLoop.ts:367` declares `let requestPrompt = prompt` and never reassigns it;
    `CasterRunner`'s `'Comparing N directions…'` activity matches no pipeline stage (harmless, returns
@@ -829,7 +817,7 @@ Extracted from the code because they are the reasoning that keeps paying off:
 | Auto/Manual toggle was **write-only** (`preview: true` hardcoded) | `preview: isManualMode` |
 | Three generative paths competing; client `PipelineOrchestrator` (~2 200 LOC) | Two paths. The client orchestrator is deleted — it was a second LLM-authors-keyframes pipeline behind the first |
 | `getModelLabel` had no branch for the default model; `discardPending` did `slice(0,-2)`; `activityFor` mapped 3 non-existent tools | All fixed, each with a drift test |
-| Tool registry: 45 tools | **62** (8 read / 38 write / 16 compose) |
+| Tool registry: 45 tools | **65** (8 read / 41 write / 16 compose) |
 
 ---
 

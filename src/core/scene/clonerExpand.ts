@@ -31,6 +31,8 @@
 
 import type { SceneNode } from '@core/types';
 import { renderComponentsOf } from './SceneGraph';
+import defaultSceneGraph from './DefaultSceneGraph';
+import { bumpScene } from '@stores/sceneStore';
 import { clonerPlan, cloneCount, DEFAULT_CLONER, type ClonerConfig, type CloneTransform, type FieldCenter, type PathGeometry } from './cloner';
 
 /**
@@ -57,22 +59,59 @@ export const CLONER_PROP = '__cloner';
 /** Carried on an expanded clone root; read by buildSnapshot. */
 export const CLONE_OFFSET_PROP = '__cloneOffset';
 
+function mergeClonerRaw(raw: Partial<ClonerConfig> | undefined): ClonerConfig {
+  const cfg = { ...DEFAULT_CLONER, ...(raw ?? {}) };
+  // Nested objects merge too, or a config saved before a field existed would
+  // arrive with `step`/`random`/`falloff` partially undefined and every read
+  // of them would be NaN.
+  cfg.step = { ...DEFAULT_CLONER.step, ...(cfg.step ?? {}) };
+  cfg.random = { ...DEFAULT_CLONER.random, ...(cfg.random ?? {}) };
+  cfg.falloff = { ...DEFAULT_CLONER.falloff, ...(cfg.falloff ?? {}) };
+  return cfg;
+}
+
+/** Stored cloner config including a disabled one — for the inspector. */
+export function readNodeClonerRaw(node: SceneNode | undefined): ClonerConfig {
+  if (!node) return { ...DEFAULT_CLONER };
+  for (const c of renderComponentsOf(node)) {
+    const raw = (c.props as Record<string, unknown>)[CLONER_PROP];
+    if (raw && typeof raw === 'object') return mergeClonerRaw(raw as Partial<ClonerConfig>);
+  }
+  return { ...DEFAULT_CLONER };
+}
+
+/** True when the layer carries a cloner prop (enabled or not). */
+export function nodeHasCloner(node: SceneNode | undefined): boolean {
+  if (!node) return false;
+  for (const c of renderComponentsOf(node)) {
+    const raw = (c.props as Record<string, unknown>)[CLONER_PROP];
+    if (raw && typeof raw === 'object') return true;
+  }
+  return false;
+}
+
 /** The cloner config on a node, or null when it has none / is disabled. */
 export function readNodeCloner(node: SceneNode | undefined): ClonerConfig | null {
   if (!node) return null;
   for (const c of renderComponentsOf(node)) {
     const raw = (c.props as Record<string, unknown>)[CLONER_PROP];
     if (!raw || typeof raw !== 'object') continue;
-    const cfg = { ...DEFAULT_CLONER, ...(raw as Partial<ClonerConfig>) };
-    // Nested objects merge too, or a config saved before a field existed would
-    // arrive with `step`/`random`/`falloff` partially undefined and every read
-    // of them would be NaN.
-    cfg.step = { ...DEFAULT_CLONER.step, ...(cfg.step ?? {}) };
-    cfg.random = { ...DEFAULT_CLONER.random, ...(cfg.random ?? {}) };
-    cfg.falloff = { ...DEFAULT_CLONER.falloff, ...(cfg.falloff ?? {}) };
+    const cfg = mergeClonerRaw(raw as Partial<ClonerConfig>);
     return cfg.enabled ? cfg : null;
   }
   return null;
+}
+
+/**
+ * Attach / enable a cloner on the layer (Effects browser → Simulation).
+ * Creates the fx component when the layer does not have one yet.
+ */
+export function enableNodeCloner(nodeId: string): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const next = { ...readNodeClonerRaw(node), enabled: true };
+  defaultSceneGraph.setFxKey(nodeId, CLONER_PROP, next);
+  bumpScene();
 }
 
 /** The clone offset carried on an expanded node, or null. */

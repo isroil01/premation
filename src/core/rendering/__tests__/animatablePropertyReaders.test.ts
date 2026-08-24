@@ -86,6 +86,17 @@ const PIXEL_SOURCE = PIXEL_PATH.flatMap((d) => readAll(join(REPO_ROOT, d))).join
 const EXPLAINED: Record<string, string> = {
   // Decomposed into per-axis tracks; the group path itself is never sampled.
   scale: "'scaleX'",
+  // Material Options are sampled as a SET: buildSnapshot hands the frame's
+  // animated-value map to `readNodeMaterial(node, a)`, which overrides each
+  // stored option with its track (material.ts, MATERIAL_ANIMATABLE). The
+  // property names are quoted there, not in the pixel path; the call is.
+  ambient: 'readNodeMaterial(node, a)',
+  diffuse: 'readNodeMaterial(node, a)',
+  specular: 'readNodeMaterial(node, a)',
+  shininess: 'readNodeMaterial(node, a)',
+  metal: 'readNodeMaterial(node, a)',
+  lightTransmission: 'readNodeMaterial(node, a)',
+  roughness: 'readNodeMaterial(node, a)',
 };
 
 /**
@@ -121,11 +132,11 @@ const isGroupRow = (path: string): boolean => {
 /**
  * Excluded on the same terms: the entry declares `keyframeable: false`, so the
  * registry is describing a property for its label and range while stating that
- * nothing samples it per frame — Material Options, read once by
- * `readNodeMaterial`. The surfaces honour that by offering no stopwatch, which
- * is what puts these outside this guard's subject rather than inside it as
- * findings. Making one animate means deleting its flag, and this sweep then
- * demands the reader before it will go green again.
+ * nothing samples it per frame. The surfaces honour that by offering no
+ * stopwatch, which is what puts such a property outside this guard's subject
+ * rather than inside it as a finding. Making one animate means deleting its
+ * flag, and this sweep then demands the reader before it will go green again
+ * — which is exactly what happened to Material Options (see EXPLAINED).
  */
 const isStaticOnly = (path: string): boolean => {
   try { return resolvePropertyMeta(path).keyframeable === false; } catch { return false; }
@@ -179,13 +190,16 @@ describe('every keyframeable property is sampled where it draws', () => {
     // red the moment a SECOND, equally legitimate exclusion existed. What
     // matters is that each one bites and that the kept set is still the bulk.
     const all = staticPropertyPaths();
+    // `staticOnlyExcluded` is whatever the registry flags — currently nothing,
+    // since Material Options became keyframeable. The exclusion stays wired
+    // so the next static-read property is declared on its entry, not here.
     expect({
       groupRowsExcluded: all.filter(isGroupRow).length,
       staticOnlyExcluded: all.filter(isStaticOnly).length,
       keptTheBulk: PATHS.length > all.length * 0.8,
     }).toEqual({
       groupRowsExcluded: 1,
-      staticOnlyExcluded: all.filter((p) => resolvePropertyMeta(p).group === 'material').length,
+      staticOnlyExcluded: all.filter((p) => resolvePropertyMeta(p).keyframeable === false).length,
       keptTheBulk: true,
     });
   });

@@ -466,6 +466,9 @@ export interface AiMessageRecord {
 /** A provider the user can hold their own key for. */
 export type AiProviderId = 'openai' | 'anthropic' | 'gemini';
 
+/** Media generation providers (video, speech, 3D). */
+export type MediaProviderId = 'fal' | 'elevenlabs' | 'tripo';
+
 /** What the assistant can be pointed at: a BYOK provider, or our metered AI. */
 export type GatewayProviderId = AiProviderId | 'motion';
 
@@ -875,6 +878,24 @@ export const api = {
    */
   generateImage: (body: { provider: string; prompt: string; width?: number; height?: number }) =>
     request<{ ok: boolean; base64: string; mime: string }>('/ai/image', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  generateVideo: (body: { prompt: string; durationSec?: number }) =>
+    request<{ ok: boolean; base64?: string; mime?: string; extension?: string; message?: string }>('/ai/video', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  generateSpeech: (body: { text: string; voiceId?: string }) =>
+    request<{ ok: boolean; base64?: string; mime?: string; extension?: string; message?: string }>('/ai/speech', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  generate3d: (body: { prompt: string }) =>
+    request<{ ok: boolean; base64?: string; mime?: string; extension?: string; message?: string }>('/ai/3d', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

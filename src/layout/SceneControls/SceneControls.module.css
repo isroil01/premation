@@ -42,7 +42,7 @@
   outline-offset: 1px;
 }
 
-/* Matches TopNav .toolActive exactly */
+/* Matches TopNav .toolActive */
 .buttonActive {
   width: var(--control-height-lg);
   height: var(--control-height-lg);
@@ -50,17 +50,17 @@
   place-items: center;
   cursor: pointer;
   border-radius: var(--radius-md);
-  background: var(--color-primary-subtle);
+  background: transparent;
   color: var(--color-primary);
-  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border: 1px solid transparent;
   transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
   outline: none;
 }
 
 .buttonActive:hover {
-  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-  color: var(--color-primary-hover);
-  border-color: var(--color-primary);
+  background: var(--color-surface-3);
+  color: var(--color-primary-hover, var(--color-primary));
+  border-color: transparent;
 }
 
 .buttonActive:active {

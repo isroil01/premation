@@ -213,15 +213,20 @@ describe('one-sided shading: CPU and GPU agree on what the flag means', () => {
     // Every shade block derives it, and every lambert/specular term uses it.
     expect((shaders.match(/twoSided = select\(1\.0, 0\.0, obj\.eyeLit\.w > 1\.5\)/g) ?? []).length).toBe(2);
     expect((shaders.match(/twoSided = eyeLit\.w > 1\.5 \? 0\.0 : 1\.0/g) ?? []).length).toBe(2);
-    // 4 blocks x (aim + toLight + specular).
-    expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(12);
+    // 4 blocks x (aim + toLight + Phong specular + PBR N·L + PBR N·V + PBR N·H).
+    // The PBR branch must honour the flag in every dot product it takes, or a
+    // one-sided extrusion wall would light from behind under GGX while staying
+    // dark under Phong — the divergence this file exists to catch.
+    expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(24);
   });
 
-  it('only an extrusion FACE asks for it', () => {
+  it('only an extrusion BODY asks for it', () => {
     // Slices and the front face must not: their normals are +Z, so clamping
-    // would black them out under a front light.
+    // would black them out under a front light. Two sites: the extruded MESH
+    // (every vertex normal points out of the solid) and the quad-synthesis
+    // fallback's walls + back cap.
     const build = readSource('core/rendering/buildSnapshot.ts');
-    expect((build.match(/oneSided: true/g) ?? []).length).toBe(1);
+    expect((build.match(/oneSided: true/g) ?? []).length).toBe(2);
     expect((build.match(/sceneLights, undefined, true\)/g) ?? []).length).toBe(1);
   });
 });

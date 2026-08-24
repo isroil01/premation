@@ -3584,6 +3584,16 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
   let metal = obj.shadeParams.w;
+  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
+  // the PBR model is selected (see packShade3D). Same slot, same layout.
+  let pbr = obj.shadeParams.z < 0.0;
+  let rough = clamp(-obj.shadeParams.z, 0.02, 1.0);
+  let alpha2 = rough * rough * rough * rough; // GGX α = roughness², squared again in D
+  // F0: a dielectric reflects ~4 % at normal incidence at the default
+  // Specular Intensity (0.5), scaled by that intensity so the slider keeps its
+  // AE meaning — 0 is no highlight, 1 is a lacquer. A metal reflects its own
+  // colour; the metal slider blends between the two.
+  let F0 = mix(vec3<f32>(0.08 * obj.shadeParams.y), baseRgb, metal);
   let shin = max(obj.shadeParams.z, 1.0);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
@@ -3645,6 +3655,27 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
     if (skip) { continue; }
     let k = gain * lambert * atten;
+    if (pbr) {
+      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V),
+      // times the light's radiance N·L; diffuse is what Fresnel leaves and
+      // metals have none. Two-sided surfaces use |N·x| like the Phong path.
+      let V = normalize(obj.eyeLit.xyz - world);
+      let H = normalize(toLight + V);
+      let NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+      let NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
+      let NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
+      let VdotH = max(dot(V, H), 0.0);
+      let dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+      let D = alpha2 / (3.14159265 * dd * dd);
+      let kG = (rough + 1.0) * (rough + 1.0) / 8.0;
+      let G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
+      let F = F0 + (vec3<f32>(1.0) - F0) * pow(1.0 - VdotH, 5.0);
+      let specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
+      let kd = (vec3<f32>(1.0) - F) * (1.0 - metal);
+      diff = diff + colGain.rgb * gain * atten * NdotL * kd;
+      spec = spec + colGain.rgb * gain * atten * NdotL * specular;
+      continue;
+    }
     diff = diff + colGain.rgb * k;
     if (specI > 0.0) {
       let V = normalize(obj.eyeLit.xyz - world);
@@ -3653,6 +3684,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
+  if (pbr) {
+    // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
+    // an intensity-scaled highlight, so specI does not apply.
+    return baseRgb * diff + clamp(spec, vec3<f32>(0.0), vec3<f32>(8.0));
+  }
   // Metal tints the highlight by the SURFACE colour rather than the light's:
   // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
   return baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal);
@@ -3712,6 +3748,14 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
   float metal = shadeParams.w;
+  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
+  // the PBR model is selected (see packShade3D). Same slot, same layout.
+  bool pbr = shadeParams.z < 0.0;
+  float rough = clamp(-shadeParams.z, 0.02, 1.0);
+  float alpha2 = rough * rough * rough * rough;
+  // F0: 8 % × Specular Intensity for dielectrics (0.5 → the canonical 4 %),
+  // the surface colour for metals.
+  vec3 F0 = mix(vec3(0.08 * shadeParams.y), baseRgb, metal);
   float shin = max(shadeParams.z, 1.0);
   vec3 diff = vec3(0.0);
   vec3 spec = vec3(0.0);
@@ -3769,6 +3813,25 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
       }
     }
     float k = gain * lambert * atten;
+    if (pbr) {
+      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V).
+      vec3 V = normalize(eyeLit.xyz - world);
+      vec3 H = normalize(toLight + V);
+      float NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+      float NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
+      float NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
+      float VdotH = max(dot(V, H), 0.0);
+      float dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+      float D = alpha2 / (3.14159265 * dd * dd);
+      float kG = (rough + 1.0) * (rough + 1.0) / 8.0;
+      float G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
+      vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
+      vec3 specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
+      vec3 kd = (vec3(1.0) - F) * (1.0 - metal);
+      diff += colGain.rgb * gain * atten * NdotL * kd;
+      spec += colGain.rgb * gain * atten * NdotL * specular;
+      continue;
+    }
     diff += colGain.rgb * k;
     if (specI > 0.0) {
       vec3 V = normalize(eyeLit.xyz - world);
@@ -3777,6 +3840,9 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
+  if (pbr) {
+    return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
+  }
   // Metal tints the highlight by the SURFACE colour rather than the light's:
   // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
   return baseRgb * diff + spec * specI * mix(vec3(1.0), baseRgb, metal);
@@ -3850,6 +3916,16 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
   let metal = obj.shadeParams.w;
+  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
+  // the PBR model is selected (see packShade3D). Same slot, same layout.
+  let pbr = obj.shadeParams.z < 0.0;
+  let rough = clamp(-obj.shadeParams.z, 0.02, 1.0);
+  let alpha2 = rough * rough * rough * rough; // GGX α = roughness², squared again in D
+  // F0: a dielectric reflects ~4 % at normal incidence at the default
+  // Specular Intensity (0.5), scaled by that intensity so the slider keeps its
+  // AE meaning — 0 is no highlight, 1 is a lacquer. A metal reflects its own
+  // colour; the metal slider blends between the two.
+  let F0 = mix(vec3<f32>(0.08 * obj.shadeParams.y), baseRgb, metal);
   let shin = max(obj.shadeParams.z, 1.0);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
@@ -3911,6 +3987,27 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
     if (skip) { continue; }
     let k = gain * lambert * atten;
+    if (pbr) {
+      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V),
+      // times the light's radiance N·L; diffuse is what Fresnel leaves and
+      // metals have none. Two-sided surfaces use |N·x| like the Phong path.
+      let V = normalize(obj.eyeLit.xyz - world);
+      let H = normalize(toLight + V);
+      let NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+      let NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
+      let NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
+      let VdotH = max(dot(V, H), 0.0);
+      let dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+      let D = alpha2 / (3.14159265 * dd * dd);
+      let kG = (rough + 1.0) * (rough + 1.0) / 8.0;
+      let G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
+      let F = F0 + (vec3<f32>(1.0) - F0) * pow(1.0 - VdotH, 5.0);
+      let specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
+      let kd = (vec3<f32>(1.0) - F) * (1.0 - metal);
+      diff = diff + colGain.rgb * gain * atten * NdotL * kd;
+      spec = spec + colGain.rgb * gain * atten * NdotL * specular;
+      continue;
+    }
     diff = diff + colGain.rgb * k;
     if (specI > 0.0) {
       let V = normalize(obj.eyeLit.xyz - world);
@@ -3919,6 +4016,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
+  if (pbr) {
+    // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
+    // an intensity-scaled highlight, so specI does not apply.
+    return baseRgb * diff + clamp(spec, vec3<f32>(0.0), vec3<f32>(8.0));
+  }
   // Metal tints the highlight by the SURFACE colour rather than the light's:
   // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
   return baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal);
@@ -3937,6 +4039,14 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
   float metal = shadeParams.w;
+  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
+  // the PBR model is selected (see packShade3D). Same slot, same layout.
+  bool pbr = shadeParams.z < 0.0;
+  float rough = clamp(-shadeParams.z, 0.02, 1.0);
+  float alpha2 = rough * rough * rough * rough;
+  // F0: 8 % × Specular Intensity for dielectrics (0.5 → the canonical 4 %),
+  // the surface colour for metals.
+  vec3 F0 = mix(vec3(0.08 * shadeParams.y), baseRgb, metal);
   float shin = max(shadeParams.z, 1.0);
   vec3 diff = vec3(0.0);
   vec3 spec = vec3(0.0);
@@ -3994,6 +4104,25 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
       }
     }
     float k = gain * lambert * atten;
+    if (pbr) {
+      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V).
+      vec3 V = normalize(eyeLit.xyz - world);
+      vec3 H = normalize(toLight + V);
+      float NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+      float NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
+      float NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
+      float VdotH = max(dot(V, H), 0.0);
+      float dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+      float D = alpha2 / (3.14159265 * dd * dd);
+      float kG = (rough + 1.0) * (rough + 1.0) / 8.0;
+      float G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
+      vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
+      vec3 specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
+      vec3 kd = (vec3(1.0) - F) * (1.0 - metal);
+      diff += colGain.rgb * gain * atten * NdotL * kd;
+      spec += colGain.rgb * gain * atten * NdotL * specular;
+      continue;
+    }
     diff += colGain.rgb * k;
     if (specI > 0.0) {
       vec3 V = normalize(eyeLit.xyz - world);
@@ -4002,6 +4131,9 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
+  if (pbr) {
+    return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
+  }
   // Metal tints the highlight by the SURFACE colour rather than the light's:
   // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
   return baseRgb * diff + spec * specI * mix(vec3(1.0), baseRgb, metal);
@@ -4064,6 +4196,161 @@ void main() {
   vec4 v = vec4(c.rgb, 1.0);
   vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
   vec3 lit = shade3d(vWorld, graded);
+  frag = vec4(lit * c.a, c.a);
+}
+`,
+  },
+};
+
+
+// ── Extruded-mesh 3D shaders ────────────────────────────────────────────────
+// The mesh path for extruded objects (core/geometry/extrudeMesh.ts): real
+// side walls, bevel rings and caps as ONE indexed mesh with PER-VERTEX
+// normals, instead of the flat-strip quads the quad path synthesises. The
+// light model is the shared `shade3d` text above, re-derived here so its
+// normal comes from the interpolated vertex normal (transformed by the
+// model's inverse-transpose) rather than from the quad's +Z column — a
+// cylinder therefore lights as a smooth surface, and a box keeps its crisp
+// edges because its corner vertices are split. Both variants use the
+// textured3d Object block, so `packTextured3D` packs them.
+function withVertexNormal(fn: string, lang: 'wgsl' | 'glsl'): string {
+  const sig = lang === 'wgsl'
+    ? ['fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {', 'fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {']
+    : ['vec3 shade3d(vec3 world, vec3 baseRgb) {', 'vec3 shade3dN(vec3 world, vec3 nrmIn, vec3 baseRgb) {'];
+  const nrm = lang === 'wgsl'
+    ? ['let N = normalize(obj.model[2].xyz);', 'let N = normalize(nrmIn);']
+    : ['vec3 N = normalize(model[2].xyz);', 'vec3 N = normalize(nrmIn);'];
+  for (const [from] of [sig, nrm]) {
+    if (!fn.includes(from!)) throw new Error(`withVertexNormal(${lang}): no site matching ${JSON.stringify(from)}`);
+  }
+  return fn.split(sig[0]!).join(sig[1]!).split(nrm[0]!).join(nrm[1]!);
+}
+const WGSL_SHADE3D_N_FN = withVertexNormal(WGSL_SHADE3D_FN, 'wgsl');
+const GLSL_SHADE3D_N_FN = withVertexNormal(GLSL_SHADE3D_FN, 'glsl');
+
+const WGSL_MESH3D_VS = /* wgsl */ `
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+  @location(1) world : vec3<f32>,
+  @location(2) nrm : vec3<f32>,
+};
+
+// Inverse-transpose of the model's 3×3, so a non-uniformly scaled layer still
+// lights with correct normals (and a mirrored one keeps them outward).
+fn normalMatrix(m : mat3x3<f32>) -> mat3x3<f32> {
+  let c0 = cross(m[1], m[2]);
+  let c1 = cross(m[2], m[0]);
+  let c2 = cross(m[0], m[1]);
+  let det = dot(m[0], c0);
+  let inv = select(1.0 / det, 1.0, abs(det) < 1e-12);
+  return mat3x3<f32>(c0 * inv, c1 * inv, c2 * inv);
+}
+
+@vertex
+fn vs(@location(0) pos : vec3<f32>, @location(1) nrm : vec3<f32>, @location(2) uv : vec2<f32>) -> VOut {
+  var o : VOut;
+  o.pos = obj.mvp * vec4<f32>(pos, 1.0);
+  o.uv = obj.uvRect.xy + uv * obj.uvRect.zw;
+  o.world = (obj.model * vec4<f32>(pos, 1.0)).xyz;
+  let m = mat3x3<f32>(obj.model[0].xyz, obj.model[1].xyz, obj.model[2].xyz);
+  o.nrm = normalMatrix(m) * nrm;
+  return o;
+}
+`;
+
+const GLSL_MESH3D_VS = /* glsl */ `#version 300 es
+layout(location = 0) in vec3 pos;
+layout(location = 1) in vec3 nrm;
+layout(location = 2) in vec2 uv;
+${GLSL_TEX3D_UBO}
+out vec2 vUv;
+out vec3 vWorld;
+out vec3 vNrm;
+mat3 normalMatrix(mat3 m) {
+  vec3 c0 = cross(m[1], m[2]);
+  vec3 c1 = cross(m[2], m[0]);
+  vec3 c2 = cross(m[0], m[1]);
+  float det = dot(m[0], c0);
+  float inv = abs(det) < 1e-12 ? 1.0 : 1.0 / det;
+  return mat3(c0 * inv, c1 * inv, c2 * inv);
+}
+void main() {
+  gl_Position = mvp * vec4(pos, 1.0);
+  vUv = uvRect.xy + uv * uvRect.zw;
+  vWorld = (model * vec4(pos, 1.0)).xyz;
+  vNrm = normalMatrix(mat3(model)) * nrm;
+}
+`;
+
+/** Solid-colour extruded mesh (walls, bevels, back cap): tint is the colour. */
+const MESH3D_SOLID: ShaderSource = {
+  name: 'mesh3d-solid',
+  wgsl: /* wgsl */ `
+${WGSL_TEX3D_OBJECT}
+${WGSL_MESH3D_VS}
+${WGSL_SHADE3D_N_FN}
+@fragment
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>) -> @location(0) vec4<f32> {
+  let a = obj.tint.a;
+  let rgb = shade3dN(world, nrm, obj.tint.rgb);
+  return vec4<f32>(rgb * a, a);
+}
+`,
+  glsl: {
+    vertex: GLSL_MESH3D_VS,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${GLSL_TEX3D_UBO}
+in vec2 vUv;
+in vec3 vWorld;
+in vec3 vNrm;
+out vec4 frag;
+${GLSL_SHADE3D_N_FN}
+void main() {
+  float a = tint.a;
+  vec3 rgb = shade3dN(vWorld, vNrm, tint.rgb);
+  frag = vec4(rgb * a, a);
+}
+`,
+  },
+};
+
+/** Textured extruded mesh (a cap carrying the layer's own content). Fragment
+ *  stage is textured3d's, so the unpremultiply/linearize rewrites apply. */
+const MESH3D_TEXTURED: ShaderSource = {
+  name: 'mesh3d-textured',
+  wgsl: /* wgsl */ `
+${WGSL_TEX3D_OBJECT}
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+${WGSL_MESH3D_VS}
+${WGSL_SHADE3D_N_FN}
+@fragment
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let lit = shade3dN(world, nrm, graded);
+  return vec4<f32>(lit * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: GLSL_MESH3D_VS,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${GLSL_TEX3D_UBO}
+uniform sampler2D uTex;
+in vec2 vUv;
+in vec3 vWorld;
+in vec3 vNrm;
+out vec4 frag;
+${GLSL_SHADE3D_N_FN}
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 lit = shade3dN(vWorld, vNrm, graded);
   frag = vec4(lit * c.a, c.a);
 }
 `,
@@ -4450,7 +4737,7 @@ function unpremultiplyingSample(base: ShaderSource, src: 'srgb' | 'linear' = 'sr
       fragment = sub(fragment, 'graded = vec3(lr, lg, lb);', 'graded = srgbToLinearRgb(vec3(lr, lg, lb));', 'glsl lut decode');
     }
   } else if (!LINEAR_INTERMEDIATE_STORAGE) {
-    if (base.name === 'textured3d') {
+    if (base.name === 'textured3d' || base.name === 'mesh3d-textured') {
       wgsl = sub(wgsl, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'wgsl encode lit');
       fragment = sub(fragment, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'glsl encode lit');
     } else if (base.name === 'masked-textured3d') {
@@ -4570,6 +4857,9 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   unpremultiplyingSample(TEXTURED3D, 'linear'),
   unpremultiplyingSample(MASKED_TEXTURED3D),
   unpremultiplyingSample(MASKED_TEXTURED3D, 'linear'),
+  MESH3D_SOLID,
+  unpremultiplyingSample(MESH3D_TEXTURED),
+  unpremultiplyingSample(MESH3D_TEXTURED, 'linear'),
   TEXTURED_SILHOUETTE,
   SCENE_BLIT,
   GLASS_COMPOSITE,

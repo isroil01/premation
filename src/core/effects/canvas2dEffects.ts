@@ -33,7 +33,7 @@
 import type { Effect } from './effects';
 import { effectNumber, paramsOf } from './effects';
 import { applyKeyData, chokeAlpha, softenAlpha } from './keylight';
-import { waveWarpData, turbulentDisplaceData } from './warp';
+import { waveWarpData, turbulentDisplaceData, curlNoiseData } from './warp';
 import { blurRgba, radialBlurData, blurDimensions, channelBlurData, unsharpMaskData } from './blurs';
 import { mosaicData, findEdgesData, roughenEdgesData, embossData, scatterData } from './stylize';
 import { vibranceData, coloramaData, COLORAMA_PALETTES } from './colorEffects';
@@ -98,6 +98,20 @@ import {
 import {
   jawsData, pixelPollyData, twisterData, cardDanceData,
 } from './aeTransitionsRoundFive';
+// ── Round six kernels ──
+import {
+  unmultData,
+  ccCompositeData,
+  compositeBlendMode,
+  ccRepeTileData,
+  repeTileModeOf,
+  ccScatterizeData,
+  radialFastBlurData,
+  radialFastBlurModeOf,
+  crossBlurData,
+  scaleWipeData,
+  plasticData,
+} from './aeRoundSix';
 
 /** Effects implemented only by the Canvas2D backend, with no GPU shader form.
  *  (Distinct from `isCanvas2dProcedural`, whose two members ALSO have GPU
@@ -112,6 +126,7 @@ const CANVAS2D_ONLY = new Set<string>([
   'keylight',
   'wave-warp',
   'turbulent-displace',
+  'curl-noise',
   'inner-shadow',
   'inner-glow',
   'satin',
@@ -310,6 +325,15 @@ const CANVAS2D_ONLY = new Set<string>([
   'pixel-polly',
   'twister',
   'card-dance',
+  // ── Round six ──
+  'unmult',
+  'cc-composite',
+  'cc-repetile',
+  'cc-scatterize',
+  'radial-fast-blur',
+  'cross-blur',
+  'scale-wipe',
+  'plastic',
 ]);
 
 export function isCanvas2dOnlyEffect(type: string): boolean {
@@ -481,6 +505,8 @@ export function applyCanvas2dEffect(
       return applyWaveWarp(oc, w, h, e);
     case 'turbulent-displace':
       return applyTurbulentDisplace(oc, w, h, e);
+    case 'curl-noise':
+      return applyCurlNoise(oc, w, h, e);
     case 'gaussian-blur':
       return applyGaussianBlur(oc, w, h, e);
     case 'fast-box-blur':
@@ -727,6 +753,23 @@ export function applyCanvas2dEffect(
       return applyTwister(oc, w, h, e);
     case 'card-dance':
       return applyCardDance(oc, w, h, e);
+    // ── Round six ──
+    case 'unmult':
+      return applyUnmult(oc, w, h, e);
+    case 'cc-composite':
+      return applyCcComposite(oc, w, h, e);
+    case 'cc-repetile':
+      return applyCcRepeTile(oc, w, h, e);
+    case 'cc-scatterize':
+      return applyCcScatterize(oc, w, h, e);
+    case 'radial-fast-blur':
+      return applyRadialFastBlur(oc, w, h, e);
+    case 'cross-blur':
+      return applyCrossBlur(oc, w, h, e);
+    case 'scale-wipe':
+      return applyScaleWipe(oc, w, h, e);
+    case 'plastic':
+      return applyPlastic(oc, w, h, e);
   }
 }
 
@@ -1287,9 +1330,24 @@ function applyTurbulentDisplace(oc: CanvasRenderingContext2D, w: number, h: numb
   oc.putImageData(img, 0, 0);
 }
 
+function applyCurlNoise(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  if (amount === 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const out = curlNoiseData(
+    img.data, w, h,
+    amount,
+    Math.max(4, effectNumber(e, 'size')),
+    effectNumber(e, 'complexity'),
+    effectNumber(e, 'evolution'),
+  );
+  img.data.set(out);
+  oc.putImageData(img, 0, 0);
+}
+
 // ── helpers ──────────────────────────────────────────────────────────
 
-const clamp255 = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : v);
 const str = (e: Effect, k: string, fb: string): string => {
   const v = paramsOf(e)[k];
   return typeof v === 'string' ? v : fb;
@@ -1512,21 +1570,26 @@ export function sharpenData(
   amount: number,
 ): Uint8ClampedArray {
   const k = amount;
+  const centre = 1 + 4 * k;
   const out = new Uint8ClampedArray(data);
-  const at = (x: number, y: number, c: number): number => {
-    const cx = x < 0 ? 0 : x >= w ? w - 1 : x;
-    const cy = y < 0 ? 0 : y >= h ? h - 1 : y;
-    return data[(cy * w + cx) * 4 + c]!;
-  };
+  const stride = w * 4;
+  // Clamped-edge neighbours without a per-sample helper: each neighbour offset
+  // is resolved once per pixel from the clamped x/y, and the interior (the
+  // overwhelming majority of a frame) takes the branch-free path. The previous
+  // version called a bounds-checking closure fifteen times per pixel.
   for (let y = 0; y < h; y++) {
+    const up = (y > 0 ? y - 1 : 0) * stride;
+    const down = (y < h - 1 ? y + 1 : y) * stride;
+    const row = y * stride;
     for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
+      const i = row + x * 4;
       if (data[i + 3] === 0) continue; // don't invent colour in transparent pixels
+      const left = row + (x > 0 ? x - 1 : 0) * 4;
+      const right = row + (x < w - 1 ? x + 1 : x) * 4;
+      const col = x * 4;
       for (let c = 0; c < 3; c++) {
-        const v =
-          (1 + 4 * k) * at(x, y, c) -
-          k * (at(x - 1, y, c) + at(x + 1, y, c) + at(x, y - 1, c) + at(x, y + 1, c));
-        out[i + c] = clamp255(v);
+        const v = centre * data[i + c]! - k * (data[left + c]! + data[right + c]! + data[up + col + c]! + data[down + col + c]!);
+        out[i + c] = v < 0 ? 0 : v > 255 ? 255 : v;
       }
     }
   }
@@ -1584,19 +1647,22 @@ export function addNoiseData(
 ): void {
   const strength = amount * 255;
   const h = data.length / 4 / w;
+  // Uint8ClampedArray clamps on store, so no per-channel clamp call is needed —
+  // the store IS the clamp.
   for (let y = 0; y < h; y++) {
+    const row = y * w * 4;
     for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
+      const i = row + x * 4;
       if (data[i + 3] === 0) continue;
       if (mono) {
         const n = noiseHash(x, y, evolution, 0) * strength;
-        data[i] = clamp255(data[i]! + n);
-        data[i + 1] = clamp255(data[i + 1]! + n);
-        data[i + 2] = clamp255(data[i + 2]! + n);
+        data[i] = data[i]! + n;
+        data[i + 1] = data[i + 1]! + n;
+        data[i + 2] = data[i + 2]! + n;
       } else {
-        data[i] = clamp255(data[i]! + noiseHash(x, y, evolution, 0) * strength);
-        data[i + 1] = clamp255(data[i + 1]! + noiseHash(x, y, evolution, 1) * strength);
-        data[i + 2] = clamp255(data[i + 2]! + noiseHash(x, y, evolution, 2) * strength);
+        data[i] = data[i]! + noiseHash(x, y, evolution, 0) * strength;
+        data[i + 1] = data[i + 1]! + noiseHash(x, y, evolution, 1) * strength;
+        data[i + 2] = data[i + 2]! + noiseHash(x, y, evolution, 2) * strength;
       }
     }
   }
@@ -3134,5 +3200,115 @@ function applyNoiseAlpha(oc: CanvasRenderingContext2D, w: number, h: number, e: 
   applyInPlace(oc, w, h, (d) => noiseAlphaData(
     d, w, effectNumber(e, 'amount'), bool(e, 'uniformNoise', true),
     effectNumber(e, 'seed'), effectNumber(e, 'noisePhase'), bool(e, 'clipResult', true),
+  ));
+}
+
+// ── Round six handlers ──
+
+function applyUnmult(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => unmultData(
+    d, w, h, effectNumber(e, 'threshold'), effectNumber(e, 'boost'),
+  ));
+}
+
+function applyCcComposite(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const opacity = effectNumber(e, 'opacity');
+  if (opacity <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const currentImg = oc.getImageData(0, 0, w, h);
+  const out = ccCompositeData(
+    currentImg.data,
+    currentImg.data,
+    w,
+    h,
+    opacity,
+    compositeBlendMode(effectNumber(e, 'blendMode')),
+    bool(e, 'rgbOnly', false),
+  );
+  currentImg.data.set(out);
+  oc.putImageData(currentImg, 0, 0);
+}
+
+function applyCcRepeTile(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const el = effectNumber(e, 'expandLeft');
+  const er = effectNumber(e, 'expandRight');
+  const eu = effectNumber(e, 'expandUp');
+  const ed = effectNumber(e, 'expandDown');
+  if (el <= 0 && er <= 0 && eu <= 0 && ed <= 0) return;
+  oc.setTransform(1, 0, 0, 1, 0, 0);
+  const img = oc.getImageData(0, 0, w, h);
+  const res = ccRepeTileData(
+    img.data,
+    w,
+    h,
+    el,
+    er,
+    eu,
+    ed,
+    repeTileModeOf(effectNumber(e, 'tiling')),
+  );
+  const tempCanvas = scratch('repetile', res.width, res.height);
+  if (!tempCanvas) return;
+  const tc = tempCanvas.getContext('2d');
+  if (!tc) return;
+  const repImg = tc.createImageData(res.width, res.height);
+  repImg.data.set(res.data);
+  tc.putImageData(repImg, 0, 0);
+  oc.clearRect(0, 0, w, h);
+  oc.drawImage(tempCanvas, el, eu, w, h, 0, 0, w, h);
+}
+
+function applyCcScatterize(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  if (amount <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => ccScatterizeData(
+    d, w, h, amount,
+    effectNumber(e, 'windX'),
+    effectNumber(e, 'windY'),
+    effectNumber(e, 'twist'),
+    effectNumber(e, 'seed'),
+  ));
+}
+
+function applyRadialFastBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const amount = effectNumber(e, 'amount');
+  if (amount <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => radialFastBlurData(
+    d, w, h, amount,
+    effectNumber(e, 'centerX'),
+    effectNumber(e, 'centerY'),
+    radialFastBlurModeOf(effectNumber(e, 'zoomMode')),
+  ));
+}
+
+function applyCrossBlur(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const rx = effectNumber(e, 'radiusX');
+  const ry = effectNumber(e, 'radiusY');
+  if (rx <= 0 && ry <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => crossBlurData(
+    d, w, h, rx, ry, bool(e, 'repeatEdges', true),
+  ));
+}
+
+function applyScaleWipe(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  const comp = effectNumber(e, 'completion');
+  if (comp <= 0) return;
+  applyRemapEffect(oc, w, h, (d) => scaleWipeData(
+    d, w, h, comp,
+    effectNumber(e, 'stretch'),
+    effectNumber(e, 'direction'),
+    effectNumber(e, 'centerX'),
+    effectNumber(e, 'centerY'),
+  ));
+}
+
+function applyPlastic(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
+  applyRemapEffect(oc, w, h, (d) => plasticData(
+    d, w, h,
+    effectNumber(e, 'surfaceBump'),
+    effectNumber(e, 'softness'),
+    effectNumber(e, 'lightAngle'),
+    effectNumber(e, 'lightIntensity'),
+    effectNumber(e, 'specular'),
   ));
 }

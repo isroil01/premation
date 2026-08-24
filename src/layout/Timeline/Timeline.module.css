@@ -1209,11 +1209,12 @@
 /* RAM-preview cache coverage — a thin green run under the ruler. */
 .cacheBar {
   position: absolute;
-  height: 3px;
+  height: 4px;
   background: var(--color-success);
-  opacity: 0.8;
+  opacity: 0.85;
   pointer-events: none;
-  z-index: 2;
+  /* Above ruler minor ticks (z-index unset) so cached spans read as one bar. */
+  z-index: 4;
 }
 
 /* Disk-cached coverage, a second lane UNDER the green one (AE's convention, and
@@ -1231,7 +1232,7 @@
   background: var(--color-primary);
   opacity: 0.6;
   pointer-events: none;
-  z-index: 1;
+  z-index: 3;
 }
 
 /* Static placeholder rows (property tree before any keyframes): slightly
@@ -1380,4 +1381,29 @@
 .kfSnapKeyframe {
   background: var(--color-primary);
   box-shadow: 0 0 4px color-mix(in srgb, var(--color-primary) 70%, transparent);
+}
+
+/* ── Property selection (proportional scrubbing acts on it) ─────────── */
+
+.propNameSelectable {
+  cursor: default;
+  border-radius: 2px;
+  padding: 0 3px;
+  margin-left: -3px;
+}
+.propNameSelectable:hover {
+  color: var(--color-text-primary);
+}
+.propNameSelectable:focus-visible {
+  outline: 1px solid var(--color-primary);
+  outline-offset: 1px;
+}
+/* Selected = AE's inverted property name: the name lights, not the row. */
+.propNameSelected,
+.propHeaderStatic .propNameSelected {
+  color: var(--color-primary-contrast, #fff);
+  background: var(--color-primary);
+}
+.propHeaderSelected {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }

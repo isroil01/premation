@@ -441,6 +441,46 @@ export function kaleidoscopeData(
  * Multiplies the layer's own alpha region only; it does not paint into
  * transparent areas, so a vignette on a title does not draw a dark box.
  */
+/**
+ * The vignette's per-pixel gain depends on position and the parameters only —
+ * not on the pixels — so for a video it is identical on every frame. One
+ * `Float32Array` per (size, params) is kept; the frame then costs one
+ * multiply per channel. Computing it per frame cost two `Math.hypot` per pixel,
+ * which at 1080p was ~220 ms — more than the rest of a typical chain.
+ */
+let vignetteGainKey = '';
+let vignetteGain: Float32Array | null = null;
+
+function vignetteGainMap(
+  w: number, h: number, amt: number, inner: number, feath: number, round: number, cx: number, cy: number,
+): Float32Array {
+  const key = `${w}x${h}|${amt}|${inner}|${feath}|${round}|${cx}|${cy}`;
+  if (vignetteGain && vignetteGainKey === key) return vignetteGain;
+  const halfW = w / 2, halfH = h / 2;
+  const invDiag = 1 / (Math.sqrt(halfW * halfW + halfH * halfH) || 1);
+  const invFeath = 1 / feath;
+  const map = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const dy = y + 0.5 - cy;
+    const ey = dy / halfH;
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      const dx = x + 0.5 - cx;
+      const ex = dx / halfW;
+      const dEllipse = Math.sqrt(ex * ex + ey * ey);
+      const dCircle = Math.sqrt(dx * dx + dy * dy) * invDiag;
+      const d = dEllipse + (dCircle - dEllipse) * round;
+      // Smooth ramp from `inner` outward over `feather`.
+      let t = (d - inner) * invFeath;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      map[row + x] = 1 - amt * (t * t * (3 - 2 * t));
+    }
+  }
+  vignetteGainKey = key;
+  vignetteGain = map;
+  return map;
+}
+
 export function vignetteData(
   data: Uint8ClampedArray,
   w: number,
@@ -454,32 +494,18 @@ export function vignetteData(
 ): Uint8ClampedArray {
   const amt = amount / 100;
   if (amt === 0) return data;
-  const cx = w / 2 + centerX;
-  const cy = h / 2 + centerY;
-  const round = clamp01(roundness / 100);
-  const halfW = w / 2, halfH = h / 2;
-  // Elliptical uses per-axis normalisation; circular uses the half-diagonal.
-  const diag = Math.hypot(halfW, halfH) || 1;
-  const inner = clamp01(size / 100);
-  const feath = Math.max(1e-3, clamp01(feather / 100));
-
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const o = (y * w + x) * 4;
-      if (data[o + 3] === 0) continue;
-      const ex = (x + 0.5 - cx) / halfW;
-      const ey = (y + 0.5 - cy) / halfH;
-      const dEllipse = Math.hypot(ex, ey);
-      const dCircle = Math.hypot(x + 0.5 - cx, y + 0.5 - cy) / diag;
-      const d = dEllipse + (dCircle - dEllipse) * round;
-      // Smooth ramp from `inner` outward over `feather`.
-      const t = clamp01((d - inner) / feath);
-      const s = t * t * (3 - 2 * t);
-      const k = 1 - amt * s;
-      data[o] = clamp255(data[o]! * k);
-      data[o + 1] = clamp255(data[o + 1]! * k);
-      data[o + 2] = clamp255(data[o + 2]! * k);
-    }
+  const gain = vignetteGainMap(
+    w, h, amt, clamp01(size / 100), Math.max(1e-3, clamp01(feather / 100)), clamp01(roundness / 100),
+    w / 2 + centerX, h / 2 + centerY,
+  );
+  const n = w * h;
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
+    if (data[o + 3] === 0) continue;
+    const k = gain[i]!;
+    // Uint8ClampedArray clamps on store; k ≤ 1 so no overflow anyway.
+    data[o] = data[o]! * k;
+    data[o + 1] = data[o + 1]! * k;
+    data[o + 2] = data[o + 2]! * k;
   }
   return data;
 }

@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
+import { Icon } from '@components/Icon';
 import { insertMedia } from '@core/scene/sceneInsert';
 import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
@@ -191,10 +192,10 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
       {inFrames && (
         <div className={styles.transport}>
           <Button size="sm" variant="secondary" onClick={() => stepper.step(-1)} disabled={stepper.frameIdx <= 0} title="Previous frame">
-            ◀
+            <Icon name="chevron-left" size="sm" />
           </Button>
           <Button size="sm" variant="secondary" onClick={() => stepper.step(1)} disabled={stepper.frameIdx >= stepper.frameCount - 1} title="Next frame">
-            ▶
+            <Icon name="chevron-right" size="sm" />
           </Button>
           <span className={styles.transportReadout}>
             {`frame ${stepper.frameIdx + 1} / ${stepper.frameCount} · ${fmtSec(stepper.timeUs)}s`}
@@ -223,7 +224,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
 
       <div className={styles.actions}>
         <Button size="sm" variant="secondary" onClick={() => { void insertMedia(asset); close(); }}>
-          Add to Comp
+          <Icon name="plus" size={12} /> Add to Comp
         </Button>
         <Button
           size="sm"
@@ -231,7 +232,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
           onClick={() => { void insertMediaAtPlayhead(asset); close(); }}
           title="Insert with the clip starting at the playhead instead of frame 0"
         >
-          Add at Playhead
+          <Icon name="play" size={12} /> Add at Playhead
         </Button>
         {asset.type !== 'audio' && (
           <Button
@@ -240,7 +241,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
             onClick={() => { void createCompositionFromFootage(asset); close(); }}
             title="New composition sized, timed and paced to this clip"
           >
-            New Comp
+            <Icon name="component" size={12} /> New Comp
           </Button>
         )}
         {replaceTarget && asset.type !== 'audio' && (
@@ -252,7 +253,7 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
             // named is a button that might do anything to anything.
             title={`Point the selected layer at this footage — keyframes, effects and masks survive`}
           >
-            {`Use for “${targetName ?? 'layer'}”`}
+            <Icon name="refresh" size={12} /> {`Use for “${targetName ?? 'layer'}”`}
           </Button>
         )}
       </div>

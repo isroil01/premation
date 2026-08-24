@@ -36,49 +36,50 @@ function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
-/** Average speed across a segment — the scale everything else is relative to. */
+/** Average speed (magnitude, >= 0) across a segment — the scale everything else is relative to. */
 export function averageSpeed(dv: number, dt: number): number {
-  return dt === 0 ? 0 : dv / dt;
+  return dt === 0 ? 0 : Math.abs(dv) / dt;
 }
 
-/** Speed leaving the segment's FIRST keyframe. */
+/** Speed (units/s, >= 0) leaving the segment's FIRST keyframe. */
 export function outgoingSpeed(bezier: Bezier, dv: number, dt: number): number {
   const [x1, y1] = bezier;
   if (x1 < MIN_INFLUENCE) return 0;
-  return averageSpeed(dv, dt) * (y1 / x1);
+  return Math.max(0, averageSpeed(dv, dt) * (y1 / x1));
 }
 
-/** Speed arriving at the segment's SECOND keyframe. */
+/** Speed (units/s, >= 0) arriving at the segment's SECOND keyframe. */
 export function incomingSpeed(bezier: Bezier, dv: number, dt: number): number {
   const [, , x2, y2] = bezier;
   const run = 1 - x2;
   if (run < MIN_INFLUENCE) return 0;
-  return averageSpeed(dv, dt) * ((1 - y2) / run);
+  return Math.max(0, averageSpeed(dv, dt) * ((1 - y2) / run));
 }
 
 /**
- * Solve for the bezier that gives `speed` leaving the first keyframe, holding
+ * Solve for the bezier that gives `speed` (units/s >= 0) leaving the first keyframe, holding
  * influence (x1) fixed.
  *
  * Returns the input unchanged when the segment has no value change or no
- * duration — with dv = 0 every speed is 0 and there is nothing to solve, so
- * pretending otherwise would write a meaningless handle.
+ * duration — with dv = 0 every speed is 0 and there is nothing to solve.
  */
 export function withOutgoingSpeed(bezier: Bezier, dv: number, dt: number, speed: number): Bezier {
   const avg = averageSpeed(dv, dt);
   if (avg === 0) return bezier;
   const [x1, , x2, y2] = bezier;
-  const influence = Math.max(x1, MIN_INFLUENCE);
-  return [influence, clamp((speed / avg) * influence, MIN_Y, MAX_Y), x2, y2];
+  const safeSpeed = Math.max(0, speed);
+  const influence = clamp(x1, MIN_INFLUENCE, 0.999);
+  return [influence, clamp((safeSpeed / avg) * influence, 0, MAX_Y), x2, y2];
 }
 
-/** Solve for the bezier that gives `speed` arriving at the second keyframe. */
+/** Solve for the bezier that gives `speed` (units/s >= 0) arriving at the second keyframe. */
 export function withIncomingSpeed(bezier: Bezier, dv: number, dt: number, speed: number): Bezier {
   const avg = averageSpeed(dv, dt);
   if (avg === 0) return bezier;
   const [x1, y1, x2] = bezier;
-  const run = Math.max(1 - x2, MIN_INFLUENCE);
-  return [x1, y1, x2, clamp(1 - (speed / avg) * run, MIN_Y, MAX_Y)];
+  const safeSpeed = Math.max(0, speed);
+  const run = clamp(1 - x2, MIN_INFLUENCE, 0.999);
+  return [x1, y1, 1 - run, clamp(1 - (safeSpeed / avg) * run, 1 - MAX_Y, 1)];
 }
 
 /**
@@ -92,13 +93,94 @@ export function influences(bezier: Bezier): { out: number; in: number } {
 /** Set the outgoing influence, preserving the SPEED it currently expresses. */
 export function withOutgoingInfluence(bezier: Bezier, dv: number, dt: number, influence: number): Bezier {
   const speed = outgoingSpeed(bezier, dv, dt);
-  const next: Bezier = [clamp(influence, MIN_INFLUENCE, 1), bezier[1], bezier[2], bezier[3]];
+  const next: Bezier = [clamp(influence, MIN_INFLUENCE, 0.999), bezier[1], bezier[2], bezier[3]];
   return withOutgoingSpeed(next, dv, dt, speed);
 }
 
 /** Set the incoming influence, preserving the SPEED it currently expresses. */
 export function withIncomingInfluence(bezier: Bezier, dv: number, dt: number, influence: number): Bezier {
   const speed = incomingSpeed(bezier, dv, dt);
-  const next: Bezier = [bezier[0], bezier[1], 1 - clamp(influence, MIN_INFLUENCE, 1), bezier[3]];
+  const next: Bezier = [bezier[0], bezier[1], 1 - clamp(influence, MIN_INFLUENCE, 0.999), bezier[3]];
   return withIncomingSpeed(next, dv, dt, speed);
+}
+
+// ── Keyframe → bezier resolution ──────────────────────────────────
+
+/** Hold keyframes — the scalar engine spells them 'step', the data sampler 'hold'. */
+export function isHoldEasing(easing: string | undefined): boolean {
+  return easing === 'hold' || easing === 'step';
+}
+
+/** The cubic-bezier equivalent of linear — handles at ⅓ along the segment. */
+export const LINEAR_BEZIER: Bezier = [1 / 3, 1 / 3, 2 / 3, 2 / 3];
+
+/**
+ * cubic-bezier approximations of the named easings the sampler evaluates
+ * analytically. Used ONLY to seed a handle drag, so the first drag starts from
+ * the curve the user can see instead of jumping to a stale `kf.bezier`.
+ */
+const NAMED_EASING_BEZIER: Record<string, Bezier> = {
+  linear: LINEAR_BEZIER,
+  ease: [0.25, 0.1, 0.25, 1],
+  easeIn: [0.42, 0, 1, 1],
+  easeOut: [0, 0, 0.58, 1],
+  easeInOut: [0.42, 0, 0.58, 1],
+  autoBezier: [0.333, 0, 0.667, 1],
+  continuousBezier: [0.333, 0, 0.667, 1],
+};
+
+/**
+ * The bezier the sampler ACTUALLY uses for the segment leaving `kf`.
+ *
+ * A keyframe keeps its `bezier` field after its easing is switched to a named
+ * curve ('Linear' preset → easing: 'linear', bezier untouched). Reading
+ * `kf.bezier ?? LINEAR` therefore resurrects a stale shape on the first drag
+ * — the curve visibly jumps. Resolve through the easing instead.
+ */
+export function effectiveBezier(kf: { easing?: string; bezier?: readonly number[] }): Bezier {
+  const e = kf.easing;
+  if ((e === 'bezier' || e === 'autoBezier' || e === 'continuousBezier') && kf.bezier && kf.bezier.length === 4) {
+    return [kf.bezier[0]!, kf.bezier[1]!, kf.bezier[2]!, kf.bezier[3]!];
+  }
+  return NAMED_EASING_BEZIER[e ?? 'linear'] ?? LINEAR_BEZIER;
+}
+
+// ── Signed slopes (value graph) ───────────────────────────────────
+//
+// The value graph's "linked handles" mean COLLINEAR tangents: the same signed
+// dv/dt on both sides of the keyframe. Speed (above) is unsigned — so the
+// value-graph solvers live here, in value units per second, with the sign.
+
+/** Signed dv/dt leaving the segment's first keyframe. */
+export function outgoingSlope(bezier: Bezier, dv: number, dt: number): number {
+  const [x1, y1] = bezier;
+  if (dt === 0 || x1 < MIN_INFLUENCE) return 0;
+  return (dv / dt) * (y1 / x1);
+}
+
+/** Signed dv/dt arriving at the segment's second keyframe. */
+export function incomingSlope(bezier: Bezier, dv: number, dt: number): number {
+  const [, , x2, y2] = bezier;
+  const run = 1 - x2;
+  if (dt === 0 || run < MIN_INFLUENCE) return 0;
+  return (dv / dt) * ((1 - y2) / run);
+}
+
+/**
+ * Solve y1 so the segment LEAVES at `slope` (signed), holding influence x1.
+ * A flat segment (dv = 0) cannot express a slope through y — returned as is.
+ */
+export function withOutgoingSlope(bezier: Bezier, dv: number, dt: number, slope: number): Bezier {
+  if (dv === 0 || dt === 0) return bezier;
+  const [x1, , x2, y2] = bezier;
+  const influence = clamp(x1, MIN_INFLUENCE, 0.999);
+  return [influence, clamp((slope * dt * influence) / dv, MIN_Y, MAX_Y), x2, y2];
+}
+
+/** Solve y2 so the segment ARRIVES at `slope` (signed), holding influence 1 − x2. */
+export function withIncomingSlope(bezier: Bezier, dv: number, dt: number, slope: number): Bezier {
+  if (dv === 0 || dt === 0) return bezier;
+  const [x1, y1, x2] = bezier;
+  const run = clamp(1 - x2, MIN_INFLUENCE, 0.999);
+  return [x1, y1, 1 - run, clamp(1 - (slope * dt * run) / dv, 1 - MAX_Y, 1 - MIN_Y)];
 }

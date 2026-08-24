@@ -115,7 +115,7 @@ export class WebGPUBackend implements RenderBackend {
     instancing: true,
     storageBuffers: true,
     float16Textures: true,
-    float32Textures: true,
+    float32Textures: false,
     timestampQueries: false,
   };
 
@@ -139,7 +139,24 @@ export class WebGPUBackend implements RenderBackend {
       adapter = await gpu.requestAdapter();
     }
     if (!adapter) throw new Error('No WebGPU adapter');
-    this.device = await adapter.requestDevice();
+
+    const hasFloat32Filterable = !!adapter.features?.has?.('float32-filterable');
+    const requiredFeatures: string[] = [];
+    if (hasFloat32Filterable) {
+      requiredFeatures.push('float32-filterable');
+    }
+
+    const requiredLimits: Record<string, number> = {};
+    if (adapter.limits?.maxTextureDimension2D) {
+      requiredLimits.maxTextureDimension2D = adapter.limits.maxTextureDimension2D;
+    }
+
+    this.device = await adapter.requestDevice({
+      ...(requiredFeatures.length > 0 ? { requiredFeatures } : {}),
+      ...(Object.keys(requiredLimits).length > 0 ? { requiredLimits } : {}),
+    });
+    this.capabilities.float32Textures = hasFloat32Filterable;
+    this.capabilities.maxTextureSize = this.device.limits?.maxTextureDimension2D ?? adapter.limits?.maxTextureDimension2D ?? 8192;
 
     /*
       `device.lost` RESOLVES on a device reset — it does not reject. A `.catch`
@@ -201,11 +218,14 @@ export class WebGPUBackend implements RenderBackend {
     // so `externalCopy` textures get it too — not just render targets.
     const usage =
       TEX.TEXTURE_BINDING | TEX.COPY_DST | (desc.renderable || desc.externalCopy ? TEX.RENDER_ATTACHMENT : 0);
+    const maxDim = this.capabilities.maxTextureSize || 8192;
+    const tw = Math.max(1, Math.min(maxDim, desc.width));
+    const th = Math.max(1, Math.min(maxDim, desc.height));
     const texture = this.device.createTexture({
       label: desc.label,
-      size: { width: desc.width, height: desc.height },
+      size: { width: tw, height: th },
       format: desc.format,
-      mipLevelCount: desc.mipmapped ? mipCount(desc.width, desc.height) : 1,
+      mipLevelCount: desc.mipmapped ? mipCount(tw, th) : 1,
       usage,
     });
     return h('texture', texture);

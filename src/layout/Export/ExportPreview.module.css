@@ -1,7 +1,8 @@
 .root {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  outline: none;
 }
 
 .stage,
@@ -9,10 +10,14 @@
   position: relative;
   width: 100%;
   max-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
   border-radius: var(--radius-surface);
   border: 1px solid var(--color-border);
   background: #000000;
+  margin: 0 auto;
 }
 
 .stageTransparent {
@@ -26,8 +31,10 @@
 
 .canvas {
   display: block;
-  width: 100%;
-  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
   object-fit: contain;
 }
 

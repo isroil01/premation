@@ -53,86 +53,116 @@ export function blurDimensions(v: number): BlurDimensions {
  * kernel runs on `getImageData` output, which is straight — so it does the
  * multiply itself and undoes it at the end.
  */
+/**
+ * One separable box-blur pass over PREMULTIPLIED 16-bit planes.
+ *
+ * The planes are `Uint16Array`s of premultiplied R, G, B and A, one value per
+ * pixel — premultiplied R·A is at most 255·255 = 65 025, so 16 bits hold it
+ * exactly, and halving the bytes over a `Float32Array` halves what a pass has
+ * to stream through the cache; the kernel is memory-bound at 1080p. The
+ * running sums are ordinary numbers, so the window never overflows. Each
+ * store rounds (+0.5) so six passes do not drift dark — `blurRgba` premultiplies ONCE up front and un-premultiplies
+ * ONCE at the end, so the six passes of a Gaussian never touch the multiply
+ * again. (Averaging straight RGBA is the classic blur bug: a transparent
+ * pixel's unused colour pulls every blurred edge toward black. Weighting each
+ * sample by its alpha and dividing back out is what makes an edge fade to
+ * transparent instead.)
+ *
+ * Both directions walk memory in ROW order. The horizontal pass slides a
+ * window along each row. The vertical pass keeps one running sum PER COLUMN
+ * and slides all of them down together, row by row — so it reads the image
+ * exactly as the horizontal pass does, sequentially, instead of striding a
+ * full row between samples. That stride was the expensive part on a 1080p
+ * frame: every sample a cache miss, for two of every three passes.
+ *
+ * No closures, no per-sample calls: the previous version allocated an
+ * `accumulate` function per scanline and called it twice per pixel through a
+ * bounds helper, which costs more than the arithmetic it wrapped.
+ */
 function boxBlurPass(
-  src: Uint8ClampedArray,
-  dst: Uint8ClampedArray,
+  src: Uint16Array,
+  dst: Uint16Array,
   w: number,
   h: number,
   radius: number,
   horizontal: boolean,
   repeatEdge: boolean,
 ): void {
-  const len = horizontal ? w : h;
-  const lines = horizontal ? h : w;
-  const stride = horizontal ? 4 : w * 4;
-  const lineStep = horizontal ? w * 4 : 4;
   const r = Math.max(0, Math.floor(radius));
   if (r === 0) {
     dst.set(src);
     return;
   }
-  const window = r * 2 + 1;
+  // The divisor is the WINDOW WIDTH, always — never "however many samples were
+  // in range". That is the whole difference Repeat Edge Pixels makes: ON, an
+  // out-of-range sample clamps to the edge pixel and a full-frame layer stays
+  // full-frame; OFF, it contributes a transparent-black sample — nothing to the
+  // sum, a full slot to the divisor — which is the fading border the checkbox
+  // exists to let you turn off.
+  const inv = 1 / (r * 2 + 1);
+  const n = w * h;
+  // Planes are interleaved as [R.., G.., B.., A..] in one buffer.
+  const G = n, B = 2 * n, A = 3 * n;
 
-  for (let line = 0; line < lines; line++) {
-    const base = line * lineStep;
-    let sumR = 0, sumG = 0, sumB = 0, sumA = 0;
-
-    // The divisor is the WINDOW WIDTH, always — never "however many samples
-    // happened to be in range". That is the whole difference the Repeat Edge
-    // Pixels checkbox makes:
-    //
-    //   ON  — an out-of-range sample clamps to the edge pixel, so it contributes
-    //         that pixel's alpha and a full-frame layer stays full-frame.
-    //   OFF — it contributes a transparent-black sample: nothing to the sums,
-    //         but a full slot to the divisor. That is what produces the fading
-    //         border, which is correct sampling and exactly what the checkbox
-    //         exists to let you turn off.
-    //
-    // Dividing by an in-range-only count instead makes the two settings
-    // identical, because the average of the in-range samples is the same either
-    // way — the falloff has to come from the divisor, not from the sum.
-    for (let k = -r; k <= r; k++) accumulate(k, 1);
-
-    for (let p = 0; p < len; p++) {
-      const o = base + p * stride;
-      if (sumA > 0) {
-        dst[o] = sumR / sumA;
-        dst[o + 1] = sumG / sumA;
-        dst[o + 2] = sumB / sumA;
-      } else {
-        dst[o] = 0; dst[o + 1] = 0; dst[o + 2] = 0;
+  if (horizontal) {
+    for (let y = 0; y < h; y++) {
+      const row = y * w;
+      let sR = 0, sG = 0, sB = 0, sA = 0;
+      // Prime the window over [-r, r].
+      for (let k = -r; k <= r; k++) {
+        let i = k;
+        if (i < 0) { if (!repeatEdge) continue; i = 0; }
+        else if (i >= w) { if (!repeatEdge) continue; i = w - 1; }
+        const o = row + i;
+        sR += src[o]!; sG += src[G + o]!; sB += src[B + o]!; sA += src[A + o]!;
       }
-      dst[o + 3] = sumA / window;
-
-      // Slide: drop the sample leaving the window, add the one entering it.
-      accumulate(p - r, -1);
-      accumulate(p + r + 1, 1);
+      for (let x = 0; x < w; x++) {
+        const o = row + x;
+        dst[o] = sR * inv + 0.5; dst[G + o] = sG * inv + 0.5; dst[B + o] = sB * inv + 0.5; dst[A + o] = sA * inv + 0.5;
+        // Slide: drop x − r, add x + r + 1.
+        let iOut = x - r, iIn = x + r + 1;
+        let useOut = true, useIn = true;
+        if (iOut < 0) { if (repeatEdge) iOut = 0; else useOut = false; }
+        if (iIn >= w) { if (repeatEdge) iIn = w - 1; else useIn = false; }
+        if (useOut) { const q = row + iOut; sR -= src[q]!; sG -= src[G + q]!; sB -= src[B + q]!; sA -= src[A + q]!; }
+        if (useIn) { const q = row + iIn; sR += src[q]!; sG += src[G + q]!; sB += src[B + q]!; sA += src[A + q]!; }
+      }
     }
+    return;
+  }
 
-    /** Add (`sign` 1) or remove (-1) one sample from the running window. */
-    function accumulate(i: number, sign: number): void {
-      const idx = sampleIndex(i, len, repeatEdge);
-      if (idx < 0) return; // out of range with edges NOT repeated → all zeroes
-      const o = base + idx * stride;
-      const a = src[o + 3]!;
-      sumR += sign * src[o]! * a;
-      sumG += sign * src[o + 1]! * a;
-      sumB += sign * src[o + 2]! * a;
-      sumA += sign * a;
+  // Vertical: one running sum per column, all slid down one row at a time.
+  const sums = new Float32Array(w * 4);
+  const rowAt = (y: number): number => {
+    if (y < 0) return repeatEdge ? 0 : -1;
+    if (y >= h) return repeatEdge ? h - 1 : -1;
+    return y;
+  };
+  for (let k = -r; k <= r; k++) {
+    const y = rowAt(k);
+    if (y < 0) continue;
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      const o = row + x, c = x * 4;
+      sums[c] = sums[c]! + src[o]!; sums[c + 1] = sums[c + 1]! + src[G + o]!; sums[c + 2] = sums[c + 2]! + src[B + o]!; sums[c + 3] = sums[c + 3]! + src[A + o]!;
     }
   }
-}
-
-/**
- * Index into a scanline.
- *
- * Returns -1 for "sample transparent black" when the edge is not repeated — the
- * caller still counts it toward the divisor, which is what makes the border fade.
- */
-function sampleIndex(i: number, len: number, repeatEdge: boolean): number {
-  if (i >= 0 && i < len) return i;
-  if (!repeatEdge) return -1;
-  return i < 0 ? 0 : len - 1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      const o = row + x, c = x * 4;
+      dst[o] = sums[c]! * inv + 0.5; dst[G + o] = sums[c + 1]! * inv + 0.5; dst[B + o] = sums[c + 2]! * inv + 0.5; dst[A + o] = sums[c + 3]! * inv + 0.5;
+    }
+    const yOut = rowAt(y - r), yIn = rowAt(y + r + 1);
+    if (yOut >= 0) {
+      const ro = yOut * w;
+      for (let x = 0; x < w; x++) { const o = ro + x, c = x * 4; sums[c] = sums[c]! - src[o]!; sums[c + 1] = sums[c + 1]! - src[G + o]!; sums[c + 2] = sums[c + 2]! - src[B + o]!; sums[c + 3] = sums[c + 3]! - src[A + o]!; }
+    }
+    if (yIn >= 0) {
+      const ri = yIn * w;
+      for (let x = 0; x < w; x++) { const o = ri + x, c = x * 4; sums[c] = sums[c]! + src[o]!; sums[c + 1] = sums[c + 1]! + src[G + o]!; sums[c + 2] = sums[c + 2]! + src[B + o]!; sums[c + 3] = sums[c + 3]! + src[A + o]!; }
+    }
+  }
 }
 
 /**
@@ -160,27 +190,45 @@ export function blurRgba(
   // Iterations changes, which is what makes that control usable.
   const perPass = radius / Math.sqrt(iterations);
 
-  // Ping-pong between the caller's buffer and one scratch. Held in a 2-slot
-  // array rather than two `let`s so the swap does not need a destructuring
-  // assignment — TS narrows `Uint8ClampedArray`'s buffer type parameter
-  // differently for an ImageData-owned array and a freshly constructed one, and
-  // swapping the two directly is a variance error rather than a real problem.
-  const buf: Uint8ClampedArray[] = [data, new Uint8ClampedArray(data.length)];
+  // Premultiply once into planar 16-bit. Four planes in one buffer, pixel-major
+  // within each plane, so every pass reads sequentially.
+  const n = w * h;
+  const planes = [new Uint16Array(n * 4), new Uint16Array(n * 4)];
+  const p0 = planes[0]!;
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
+    const a = data[o + 3]!;
+    p0[i] = data[o]! * a;
+    p0[n + i] = data[o + 1]! * a;
+    p0[2 * n + i] = data[o + 2]! * a;
+    p0[3 * n + i] = a;
+  }
+
   let cur = 0;
   for (let i = 0; i < iterations; i++) {
     if (dimensions !== 'vertical') {
-      boxBlurPass(buf[cur]!, buf[1 - cur]!, w, h, perPass, true, repeatEdge);
+      boxBlurPass(planes[cur]!, planes[1 - cur]!, w, h, perPass, true, repeatEdge);
       cur = 1 - cur;
     }
     if (dimensions !== 'horizontal') {
-      boxBlurPass(buf[cur]!, buf[1 - cur]!, w, h, perPass, false, repeatEdge);
+      boxBlurPass(planes[cur]!, planes[1 - cur]!, w, h, perPass, false, repeatEdge);
       cur = 1 - cur;
     }
   }
 
-  // An odd number of passes leaves the result in the scratch; copy it back so
-  // the caller's buffer always holds the answer.
-  if (cur !== 0) data.set(buf[cur]!);
+  // Un-premultiply back into the caller's straight RGBA buffer.
+  const out = planes[cur]!;
+  for (let i = 0, o = 0; i < n; i++, o += 4) {
+    const a = out[3 * n + i]!;
+    if (a > 0) {
+      const ia = 1 / a;
+      data[o] = out[i]! * ia;
+      data[o + 1] = out[n + i]! * ia;
+      data[o + 2] = out[2 * n + i]! * ia;
+    } else {
+      data[o] = 0; data[o + 1] = 0; data[o + 2] = 0;
+    }
+    data[o + 3] = a;
+  }
   return data;
 }
 

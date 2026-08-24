@@ -474,6 +474,47 @@ export const DEFORMED_MESH_MATERIAL: MaterialDescriptor = {
   buffers: [DEFORMED_MESH_LAYOUT],
 };
 
+/**
+ * Extruded 3D mesh vertex: position xyz, normal xyz, uv — 32 bytes. Produced by
+ * core/geometry/extrudeMesh.ts; consumed by the `mesh3d-*` shaders.
+ */
+export const MESH3D_LAYOUT: VertexBufferLayout = {
+  strideBytes: 32,
+  stepMode: 'vertex',
+  attributes: [
+    { shaderLocation: 0, offsetBytes: 0, format: 'float32x3' },
+    { shaderLocation: 1, offsetBytes: 12, format: 'float32x3' },
+    { shaderLocation: 2, offsetBytes: 24, format: 'float32x2' },
+  ],
+};
+
+/** Depth-tested solid-colour extruded mesh (walls / bevels / back cap). */
+export const MESH3D_SOLID_MATERIAL: MaterialDescriptor = {
+  shader: 'mesh3d-solid',
+  topology: 'triangle-list',
+  layout: [{ binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] }],
+  buffers: [MESH3D_LAYOUT],
+  depth: { test: true, write: true },
+};
+
+/** Depth-tested textured extruded mesh (a cap carrying layer content). */
+export const MESH3D_TEXTURED_MATERIAL: MaterialDescriptor = {
+  shader: 'mesh3d-textured',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+  buffers: [MESH3D_LAYOUT],
+  depth: { test: true, write: true },
+};
+
+export const MESH3D_TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
+  ...MESH3D_TEXTURED_MATERIAL,
+  shader: 'mesh3d-textured-linear',
+};
+
 export const DEFORMED_MESH_LINEAR_MATERIAL: MaterialDescriptor = {
   ...DEFORMED_MESH_MATERIAL,
   shader: 'deformed-mesh-linear',

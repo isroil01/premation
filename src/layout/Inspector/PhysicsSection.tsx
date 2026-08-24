@@ -1,11 +1,12 @@
 /**
  * Physics controls — per-layer body settings, plus the shared world.
  *
- * The world (gravity, walls, solver passes) is shown here rather than in a
- * separate panel because it is meaningless on its own and nobody would go
- * looking for it: you reach for gravity the moment the first body falls the
- * wrong way. It is labelled as shared, so it is clear that changing it here
- * changes it for every body in the composition.
+ * Lives in Effect Controls once attached from Effects → Simulation. The world
+ * (gravity, walls, solver passes) is shown here rather than in a separate panel
+ * because it is meaningless on its own and nobody would go looking for it: you
+ * reach for gravity the moment the first body falls the wrong way. It is
+ * labelled as shared, so it is clear that changing it here changes it for every
+ * body in the composition.
  *
  * The "no rotation" limit is stated in the panel rather than left to be
  * discovered. A solver that translates but never spins is a reasonable tool; a
@@ -32,9 +33,7 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
   const cfg = readNodePhysicsRaw(node);
 
   const write = (patch: Partial<PhysicsBodyConfig>): void => {
-    const fx = node.components.find((c) => c.type === 'fx');
-    if (!fx) return;
-    defaultSceneGraph.writeProp(nodeId, fx.id, PHYSICS_PROP, { ...cfg, ...patch });
+    defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, { ...cfg, ...patch });
     bumpScene();
   };
 

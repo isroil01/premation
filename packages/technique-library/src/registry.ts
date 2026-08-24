@@ -32,6 +32,7 @@ import { SCENE_TECHNIQUES } from './techniques/scene';
 import { SCENE_TECHNIQUES_2 } from './techniques/scene2';
 import { SCENE_TECHNIQUES_3 } from './techniques/scene3';
 import { CAMERA_TECHNIQUES_2 } from './techniques/camera';
+import { PARTICLE_TECHNIQUES } from './techniques/particles';
 import type { AnimatableRole, TechniqueDef } from './schema';
 
 export const TECHNIQUES: readonly TechniqueDef[] = [
@@ -50,6 +51,8 @@ export const TECHNIQUES: readonly TechniqueDef[] = [
   // The second camera set — 6 → 14. See techniques/camera.ts for why six was
   // a fallback rather than a vocabulary.
   ...CAMERA_TECHNIQUES_2,
+  // Particle atmosphere — engine-supported, previously agent-primitive only.
+  ...PARTICLE_TECHNIQUES,
 ];
 
 const BY_ID = new Map(TECHNIQUES.map((t) => [t.id, t]));

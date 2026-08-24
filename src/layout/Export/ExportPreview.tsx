@@ -8,7 +8,7 @@
  * says so plainly when a frame has nothing in it.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { IconButton } from '@components/IconButton';
 import type { SnapshotComp } from '@core/rendering/buildSnapshot';
@@ -58,9 +58,10 @@ export function ExportPreview({
   const [blank, setBlank] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const frameCount = Math.max(1, Math.round(durationSec * fps));
-  const clampedFrame = Math.min(frame, frameCount - 1);
+  const clampedFrame = Math.max(0, Math.min(frame, frameCount - 1));
   const time = startSec + clampedFrame / fps;
 
   // One renderer (and one GPU context) for the dialog's lifetime.
@@ -84,6 +85,37 @@ export function ExportPreview({
     };
   }, []);
 
+  // Continuous playback loop at the composition's frame rate.
+  useEffect(() => {
+    if (!isPlaying || disabled || singleFrame || frameCount <= 1) return;
+    let animId: number;
+    let lastTime = performance.now();
+    let accumulatedSec = 0;
+
+    const tick = (now: number) => {
+      const deltaSec = Math.min(0.25, (now - lastTime) / 1000);
+      lastTime = now;
+      accumulatedSec += deltaSec;
+      const stepSec = 1 / Math.max(1, fps);
+      if (accumulatedSec >= stepSec) {
+        const framesToAdvance = Math.floor(accumulatedSec / stepSec);
+        accumulatedSec -= framesToAdvance * stepSec;
+        setFrame((prev) => (prev + framesToAdvance) % frameCount);
+      }
+      animId = requestAnimationFrame(tick);
+    };
+
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [isPlaying, disabled, singleFrame, frameCount, fps]);
+
+  // Pause playback automatically when export begins or switching to still frame.
+  useEffect(() => {
+    if (disabled || singleFrame) {
+      setIsPlaying(false);
+    }
+  }, [disabled, singleFrame]);
+
   // Re-render whenever the preview time or any output setting changes. A render
   // in flight is left to finish and its result discarded — the generation guard
   // is what stops a fast scrub from painting frames out of order.
@@ -93,9 +125,9 @@ export function ExportPreview({
     let cancelled = false;
     void (async () => {
       try {
-        const frame = await renderer.render({ width, height, fps, comp, time });
+        const frameRes = await renderer.render({ width, height, fps, comp, time });
         if (cancelled) return;
-        setBlank(frame.blank);
+        setBlank(frameRes.blank);
         setError(null);
         setReady(true);
       } catch (err) {
@@ -107,8 +139,43 @@ export function ExportPreview({
     };
   }, [width, height, fps, comp, time, disabled]);
 
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (disabled) return;
+      if (e.key === ' ' || e.code === 'Space') {
+        if (!singleFrame) {
+          e.preventDefault();
+          setIsPlaying((p) => !p);
+        }
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setFrame((f) => Math.max(0, f - (e.shiftKey ? 10 : 1)));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setFrame((f) => Math.min(frameCount - 1, f + (e.shiftKey ? 10 : 1)));
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setFrame(0);
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        setIsPlaying(false);
+        setFrame(frameCount - 1);
+      }
+    },
+    [disabled, singleFrame, frameCount],
+  );
+
   return (
-    <div className={styles.root}>
+    <div
+      className={styles.root}
+      tabIndex={0}
+      role="region"
+      aria-label="Export preview and scrubber"
+      onKeyDown={handleKeyDown}
+    >
       <div
         ref={hostRef}
         className={comp.transparent ? styles.stageTransparent : styles.stage}
@@ -139,10 +206,23 @@ export function ExportPreview({
       ) : (
         <div className={styles.scrubRow}>
           <IconButton
-            aria-label="Previous frame"
+            aria-label={isPlaying ? 'Pause preview (Space)' : 'Play preview (Space)'}
+            size="xs"
+            disabled={disabled}
+            onClick={() => setIsPlaying((p) => !p)}
+            title={isPlaying ? 'Pause preview (Space)' : 'Play preview (Space)'}
+          >
+            <Icon name={isPlaying ? 'pause' : 'play'} size="sm" />
+          </IconButton>
+          <IconButton
+            aria-label="Previous frame (Left arrow)"
             size="xs"
             disabled={disabled || clampedFrame <= 0}
-            onClick={() => setFrame((f) => Math.max(0, f - 1))}
+            onClick={() => {
+              setIsPlaying(false);
+              setFrame((f) => Math.max(0, f - 1));
+            }}
+            title="Previous frame (Left arrow)"
           >
             <Icon name="chevron-left" size="sm" />
           </IconButton>
@@ -155,13 +235,20 @@ export function ExportPreview({
             value={clampedFrame}
             disabled={disabled}
             aria-label="Preview frame"
-            onChange={(e) => setFrame(Number(e.target.value))}
+            onChange={(e) => {
+              setIsPlaying(false);
+              setFrame(Number(e.target.value));
+            }}
           />
           <IconButton
-            aria-label="Next frame"
+            aria-label="Next frame (Right arrow)"
             size="xs"
             disabled={disabled || clampedFrame >= frameCount - 1}
-            onClick={() => setFrame((f) => Math.min(frameCount - 1, f + 1))}
+            onClick={() => {
+              setIsPlaying(false);
+              setFrame((f) => Math.min(frameCount - 1, f + 1));
+            }}
+            title="Next frame (Right arrow)"
           >
             <Icon name="chevron-right" size="sm" />
           </IconButton>

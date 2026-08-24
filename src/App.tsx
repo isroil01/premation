@@ -35,6 +35,9 @@ import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToC
 import { staticOrDefaultValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
 import { buildPropertyRows } from '@layout/Timeline/buildPropertyRows';
+import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
+import { bindAdaptiveResolution } from '@stores/renderQualityStore';
+import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
 import {
   keyframeMask,
   clearMaskAnim,
@@ -155,6 +158,14 @@ function EditorShellInner(): JSX.Element {
   const selectionCount = useSelectionStore((s) => s.ids.length);
   const selectedIds = useSelectionStore((s) => s.ids);
   const setSelected = useSelectionStore((s) => s.set);
+  // Property-row selection (ordered) — what proportional scrubbing acts on.
+  const propertyEntries = usePropertySelectionStore((s) => s.entries);
+  const selectedPropertyKeys = useMemo(() => propertyEntries.map(propertyKey), [propertyEntries]);
+  const handlePropertySelect = (trackId: string, prop: string, mode: 'replace' | 'toggle'): void => {
+    const store = usePropertySelectionStore.getState();
+    if (mode === 'replace') store.select({ nodeId: trackId, prop });
+    else store.toggle({ nodeId: trackId, prop });
+  };
   const addSelected = useSelectionStore((s) => s.add);
   const sceneRev = useSceneRevision((s) => s.rev);
   // Scalar selectors, NOT `useActiveWorkspace`.
@@ -195,6 +206,16 @@ function EditorShellInner(): JSX.Element {
    * split across three tabs. They are one panel now, so every layer kind's
    * controls are already on screen and there is nothing to switch to.
    */
+
+  // Adaptive Resolution: the viewport degrades while ANY drag is in flight.
+  // The UI store's drag flag is already set by every gizmo, scrub and value
+  // field, so one subscription covers them all.
+  useEffect(
+    () => bindAdaptiveResolution((cb) => useUIStore.subscribe((s, prev) => {
+      if (s.isDragging !== prev.isDragging) cb(s.isDragging);
+    })),
+    [],
+  );
 
   // Register the default panels exactly once.
   useEffect(() => {
@@ -664,23 +685,25 @@ function EditorShellInner(): JSX.Element {
     };
   }, []);
 
-  // RAM-preview coverage for the timeline's green cache bar — throttled to
-  // 250ms so per-frame cache puts during playback don't thrash React.
+  // RAM-preview coverage for the timeline's green cache bar — coalesced to
+  // one React update per animation frame so playback fills read smoothly.
   const [cachedRanges, setCachedRanges] = useState<ReadonlyArray<{ start: number; end: number }>>([]);
   const [diskCachedRanges, setDiskCachedRanges] = useState<ReadonlyArray<{ start: number; end: number }>>([]);
   useEffect(() => {
-    let pending: ReturnType<typeof setTimeout> | null = null;
+    let raf: number | null = null;
+    const flush = (): void => {
+      raf = null;
+      setCachedRanges(viewportFrameCache.ranges(compFps || 30));
+      setDiskCachedRanges(viewportFrameCache.diskRanges(compFps || 30));
+    };
     const off = viewportFrameCache.onChange(() => {
-      if (pending) return;
-      pending = setTimeout(() => {
-        pending = null;
-        setCachedRanges(viewportFrameCache.ranges(compFps || 30));
-        setDiskCachedRanges(viewportFrameCache.diskRanges(compFps || 30));
-      }, 250);
+      if (raf !== null) return;
+      raf = requestAnimationFrame(flush);
     });
+    flush();
     return () => {
       off();
-      if (pending) clearTimeout(pending);
+      if (raf !== null) cancelAnimationFrame(raf);
     };
   }, [compFps]);
 
@@ -949,11 +972,43 @@ function EditorShellInner(): JSX.Element {
   const handlePropertyValue = (trackId: string, prop: string): number =>
     propertyValueAt(trackId, prop, getRemappedTime(trackId, activeTime));
 
-  const handlePropertyValueChange = (trackId: string, prop: string, value: number): void => {
+  /**
+   * Proportional Scrubbing (AE 26.2).
+   *
+   * While a value field is being dragged and its property is one of SEVERAL
+   * selected, the drag's delta is spread across the whole selection — 0 % at
+   * the first-selected, 100 % at the last — so one drag cascades ten layers.
+   * The snapshot is taken at scrub START (see `ValueField.onScrubStart`): a
+   * scrub is relative to where things were, and reading the live values
+   * mid-drag would compound the ramp on every pointer move.
+   */
+  const scrubRef = useRef<null | {
+    trackId: string;
+    prop: string;
+    entries: ReadonlyArray<{ nodeId: string; prop: string }>;
+    starts: Map<string, number>;
+  }>(null);
+  const handlePropertyScrubStart = (trackId: string, prop: string): void => {
+    const sel = usePropertySelectionStore.getState();
+    const inSelection = sel.has({ nodeId: trackId, prop });
+    if (!inSelection || sel.entries.length < 2) {
+      scrubRef.current = null;
+      return;
+    }
+    const layerT = (id: string) => getRemappedTime(id, activeTime);
+    const starts = new Map<string, number>();
+    for (const e of sel.entries) starts.set(propertyKey(e), propertyValueAt(e.nodeId, e.prop, layerT(e.nodeId)));
+    scrubRef.current = { trackId, prop, entries: sel.entries, starts };
+  };
+  const handlePropertyScrubEnd = (): void => {
+    scrubRef.current = null;
+  };
+
+  /** One property's write, shared by the single and the distributed paths. */
+  const writePropertyValue = (trackId: string, prop: string, value: number): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node || node.locked) return;
-    const rawTime = activeTime;
-    const layerT = getRemappedTime(trackId, rawTime);
+    const layerT = getRemappedTime(trackId, activeTime);
     // Same contract as the inspector: an animated property keyframes at the
     // playhead; an un-animated one edits its static base.
     if (defaultAnimation.isAnimated(trackId, prop) || usePreferenceStore.getState().timelineAutoKeyframe) {
@@ -973,6 +1028,22 @@ function EditorShellInner(): JSX.Element {
     // edit.
     writeStaticPropertyValue(trackId, prop, value);
   };
+
+  const handlePropertyValueChange = (trackId: string, prop: string, value: number): void => {
+    const scrub = scrubRef.current;
+    if (scrub && scrub.trackId === trackId && scrub.prop === prop) {
+      const start = scrub.starts.get(propertyKey({ nodeId: trackId, prop }));
+      if (start !== undefined) {
+        const proportional = usePropertySelectionStore.getState().proportional;
+        for (const { ref, value: v } of distributeScrub(scrub.entries, scrub.starts, value - start, proportional)) {
+          writePropertyValue(ref.nodeId, ref.prop, v);
+        }
+        return;
+      }
+    }
+    writePropertyValue(trackId, prop, value);
+  };
+
   const handleKeyframeContextMenu = (kfId: string, x: number, y: number): void => {
     const ref = parseKeyframeId(kfId);
     if (!ref) return;
@@ -1191,6 +1262,21 @@ function EditorShellInner(): JSX.Element {
               label: 'Interpret Footage… (Ctrl+Alt+G)',
               onSelect: () => openInterpretFootage(asset),
             },
+            // AE's Layer ▸ Scene Edit Detection. Video only: a still has no cuts.
+            ...(asset.type === 'video' && nodeId
+              ? [
+                  {
+                    id: 'scene-edit-markers',
+                    label: 'Scene Edit Detection → Markers',
+                    onSelect: () => void runSceneEditDetection(nodeId, 'markers'),
+                  },
+                  {
+                    id: 'scene-edit-split',
+                    label: 'Scene Edit Detection → Split Clips',
+                    onSelect: () => void runSceneEditDetection(nodeId, 'split'),
+                  },
+                ]
+              : []),
           ]
         : []),
       { id: 'sep-del', separator: true },
@@ -1286,7 +1372,7 @@ function EditorShellInner(): JSX.Element {
                   <button
                     type="button"
                     onClick={() => openPalette()}
-                    title="Search commands, layers, timecode…"
+                    title="Search commands, layers, effects, presets…"
                     style={{
                       display: 'inline-flex', alignItems: 'center', gap: 6,
                       padding: '2px 8px', borderRadius: 'var(--radius-full)',
@@ -1395,6 +1481,10 @@ function EditorShellInner(): JSX.Element {
               onPropertyStopwatch={handlePropertyStopwatch}
               onPropertyValue={handlePropertyValue}
               onPropertyValueChange={handlePropertyValueChange}
+              onPropertyScrubStart={handlePropertyScrubStart}
+              onPropertyScrubEnd={handlePropertyScrubEnd}
+              selectedPropertyKeys={selectedPropertyKeys}
+              onPropertySelect={handlePropertySelect}
               selectedTrackIds={selectedIds}
               expandedTrackIds={expandedIds}
               revealProps={revealFilter}

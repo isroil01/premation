@@ -143,6 +143,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
       { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
+      { commandId: 'comp.copyFrame', label: 'Copy Frame to Clipboard' },
     ],
   },
   {
@@ -162,6 +163,11 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'layer.sendToBack', label: 'Send to Back' },
       { separator: true },
       { commandId: 'layer.precompose', label: 'Pre-compose…' },
+      { separator: true },
+      { commandId: 'layer.nullsFromPath', label: 'Create Nulls From Path Points' },
+      { commandId: 'layer.nullsFromPathLive', label: 'Create Nulls From Path Points (Points Follow Nulls)' },
+      { commandId: 'layer.shapesFromText', label: 'Create Shapes From Text' },
+      { commandId: 'layer.autoTrace', label: 'Auto-trace…' },
     ],
   },
   {

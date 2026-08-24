@@ -52,15 +52,20 @@ import {
 } from '@core/scene/material';
 import { rectangleMask, ellipseMask, addMaskPath, type MaskMode } from '@core/effects/mask';
 import { bumpScene } from '@stores/sceneStore';
-import { useAssetStore } from '@stores/assetStore';
+import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { insertMedia, insertSvgLayer } from '@core/scene/sceneInsert';
 import { analyseAudio } from '@motion/audio';
-import { api } from '@core/api/client';
 import { resolveStyle, buildCustomStyle, setRuntimeStyle, type CustomStyleInput } from './design';
+import { decodeBase64Bytes } from './decodeBase64';
+import { generateImageBytes } from './aiImage';
+import { generateVideoBytes, generateSpeechBytes, generate3dBytes } from './aiMedia';
+import { exportCompositionVideo } from './aiExport';
+import { readAudioAssetId } from './audioForCaster';
+import type { AiImageResult, AiMediaResult } from '@app-types/motionEditor';
 import type { EntranceArchetype } from './archetypes';
 import {
   recipeBackground,
@@ -782,14 +787,15 @@ const createMedia: AiTool['handler'] = async (input, ctx) => {
  * code rather than invented here:
  *
  *  • **The key never comes near this process.** The request carries a provider
- *    id and a prompt; the server holds the key and makes the call. Same boundary
- *    as `/ai/stream`.
+ *    id and a prompt; the gateway (motion-back) or the desktop shell
+ *    (`ai:image` IPC) holds the key and makes the call. Same boundary as
+ *    `/ai/stream` / `ai:stream`.
  *  • **The result becomes a real asset.** Bytes go through `addAsset`, so the
  *    image lands in the user's library, survives a reload, saves with the
  *    project, and can be reused — rather than living as a blob URL that dies
  *    with the tab.
  *  • **Failures are reported, never swallowed.** An image that did not arrive
- *    has to say why, because it cost the user credits and several seconds.
+ *    has to say why, because it costs the user money and several seconds.
  */
 const generateImage: AiTool['handler'] = async (input, ctx) => {
   const { id: alias, prompt, aspect, x, y } = input as {
@@ -797,7 +803,7 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
   };
 
   const comp = ctx.comp.get();
-  // Aspect is advisory — the gateway maps it onto a size the provider accepts.
+  // Aspect is advisory — the gateway / shell maps it onto a size the provider accepts.
   // Sending the comp's own dimensions lets a square comp get a square image
   // without the model having to reason about it.
   const dims =
@@ -808,9 +814,9 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
 
   const provider = useAiProviderStore.getState().provider;
 
-  let res: { ok: boolean; base64: string; mime: string };
+  let res: AiImageResult;
   try {
-    res = await api.generateImage({ provider, prompt, ...dims });
+    res = await generateImageBytes({ provider, prompt, ...dims });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return fail(
@@ -818,12 +824,14 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
       `Carry on with the rest of the piece rather than retrying — a second attempt costs again.`,
     );
   }
-  if (!res.ok || !res.base64) return fail('The image provider returned nothing. Try rewording the prompt.');
+  if (!res.ok) {
+    return fail(`Image generation failed: ${res.message}. The scene is unchanged.`);
+  }
 
   // base64 → File. Tagged `source: 'ai'` so it uploads to the cloud (small,
   // generated, worth syncing) rather than taking the local-disk path that user
   // library imports now use.
-  const bytes = Uint8Array.from(atob(res.base64), (ch) => ch.charCodeAt(0));
+  const bytes = decodeBase64Bytes(res.base64);
   const ext = res.mime === 'image/jpeg' ? 'jpg' : 'png';
   const name = `${prompt.slice(0, 40).replace(/[^\w -]/g, '').trim() || 'generated'}.${ext}`;
   const file = new File([bytes as BlobPart], name, { type: res.mime });
@@ -850,6 +858,145 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
     `Generated an image and placed it as layer '${id}'.` +
       ` It is in the asset library as "${name}" — reuse it rather than generating again.`,
     { id, assetId: asset.id },
+  );
+};
+
+async function bytesToAsset(
+  res: AiMediaResult,
+  name: string,
+  mimeOverride?: string,
+): Promise<{ ok: true; asset: ImportedAsset } | { ok: false; message: string }> {
+  if (!res.ok) return { ok: false, message: res.message };
+  const mime = mimeOverride ?? res.mime;
+  const bytes = decodeBase64Bytes(res.base64);
+  const file = new File([bytes as BlobPart], name, { type: mime });
+  const asset = await useAssetStore.getState().addAsset(file, null, { source: 'ai' });
+  return { ok: true, asset };
+}
+
+const generateVideo: AiTool['handler'] = async (input, ctx) => {
+  const { id: alias, prompt, durationSec, x, y } = input as {
+    id?: string; prompt: string; durationSec?: number; x?: number; y?: number;
+  };
+  let res: AiMediaResult;
+  try {
+    res = await generateVideoBytes({ prompt, durationSec });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return fail(`Video generation failed: ${message}. The scene is unchanged.`);
+  }
+  if (!res.ok) return fail(`Video generation failed: ${res.message}. The scene is unchanged.`);
+
+  const name = `${prompt.slice(0, 36).replace(/[^\w -]/g, '').trim() || 'generated'}.${res.extension}`;
+  const placed = await bytesToAsset(res, name, 'video/mp4');
+  if (!placed.ok) return fail(placed.message);
+
+  await insertMedia(placed.asset);
+  const nodeId = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
+  if (!nodeId) return fail(`Generated "${name}" but could not resolve the new layer id.`);
+  bindAlias(ctx, alias, nodeId);
+  if (x !== undefined || y !== undefined) {
+    const node = defaultSceneGraph.getNode(nodeId);
+    const t = node?.components.find((c) => c.type === 'Transform');
+    if (t) {
+      if (x !== undefined) defaultSceneGraph.writeProp(nodeId, t.id, 'x', x);
+      if (y !== undefined) defaultSceneGraph.writeProp(nodeId, t.id, 'y', y);
+    }
+  }
+  bumpScene();
+  return ok(`Generated a video clip and placed it as layer '${nodeId}'. Asset "${name}" is in the library.`, { id: nodeId });
+};
+
+const generateSpeech: AiTool['handler'] = async (input, ctx) => {
+  const { text, voiceId } = input as { text: string; voiceId?: string };
+  let res: AiMediaResult;
+  try {
+    res = await generateSpeechBytes({ text, voiceId });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return fail(`Speech generation failed: ${message}.`);
+  }
+  if (!res.ok) return fail(`Speech generation failed: ${res.message}.`);
+
+  const name = `voiceover.${res.extension}`;
+  const placed = await bytesToAsset(res, name, 'audio/mpeg');
+  if (!placed.ok) return fail(placed.message);
+
+  await insertMedia(placed.asset);
+  const nodeId = ctx.scene.selection()[0] ?? useSelectionStore.getState().ids[0];
+  bumpScene();
+  return ok(
+    nodeId
+      ? `Generated voice-over and added audio layer '${nodeId}'.`
+      : `Generated voice-over and added it to the library as "${name}".`,
+    { id: nodeId },
+  );
+};
+
+const generate3dModel: AiTool['handler'] = async (input, ctx) => {
+  const { prompt, name: assetName } = input as { prompt: string; name?: string };
+  let res: AiMediaResult;
+  try {
+    res = await generate3dBytes({ prompt });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return fail(`3D generation failed: ${message}.`);
+  }
+  if (!res.ok) return fail(`3D generation failed: ${res.message}.`);
+
+  const label = assetName?.trim()
+    || `${prompt.slice(0, 36).replace(/[^\w -]/g, '').trim() || 'model'}.${res.extension}`;
+  const placed = await bytesToAsset(res, label, res.mime);
+  if (!placed.ok) return fail(placed.message);
+
+  // Place a 3D null as a scene placeholder — the compositor does not yet draw
+  // glTF meshes, but the asset is in the library and the layer anchors it.
+  const comp = ctx.comp.get();
+  const nodeId = ctx.scene.create('null', label.replace(/\.(glb|gltf)$/i, '') || '3D Model', {
+    x: comp.width / 2,
+    y: comp.height / 2,
+  });
+  set3DEnabled(nodeId, true);
+  const node = defaultSceneGraph.getNode(nodeId);
+  const t = node?.components.find((c) => c.type === 'Transform');
+  if (t) {
+    defaultSceneGraph.writeProp(nodeId, t.id, 'assetId', placed.asset.id);
+  }
+  bumpScene();
+
+  return ok(
+    `Generated a 3D model (asset ${placed.asset.id}) and placed null layer '${nodeId}' in 3D space. ` +
+    'The GLB is in the library; mesh draw of glTF is not in the compositor yet — the null marks its place.',
+    { id: nodeId, assetId: placed.asset.id },
+  );
+};
+
+const exportVideoTool: AiTool['handler'] = async (input, ctx) => {
+  const { format, quality, useWorkArea, mode } = input as {
+    format?: 'mp4' | 'webm' | 'gif';
+    quality?: 'high' | 'medium' | 'draft';
+    useWorkArea?: boolean;
+    mode?: 'queue' | 'immediate';
+  };
+  const result = await exportCompositionVideo({
+    format,
+    quality,
+    useWorkArea,
+    mode: mode ?? 'queue',
+    signal: ctx.signal,
+  });
+  if (!result.ok) {
+    return fail(`Export failed: ${result.message}. The composition is unchanged.`);
+  }
+  if (result.mode === 'queue') {
+    return ok(
+      `Queued ${format ?? 'mp4'} export as job '${result.jobId}' in the Render Queue` +
+      (result.started ? ' and started rendering.' : '. Open Render Queue to choose an output folder and Start.'),
+      { jobId: result.jobId },
+    );
+  }
+  return ok(
+    `Exported the composition as ${format ?? 'mp4'}${result.videoCodec ? ` (${result.videoCodec})` : ''}.`,
   );
 };
 
@@ -942,15 +1089,6 @@ const analyseAudioTool: AiTool['handler'] = async (input) => {
     return fail(`Could not analyse that audio: ${err instanceof Error ? err.message : String(err)}`);
   }
 };
-
-/** The asset id an audio layer points at, whatever component carries it. */
-function readAudioAssetId(node: { components: { props: Record<string, unknown> }[] }): string | undefined {
-  for (const c of node.components) {
-    const v = c.props.assetId ?? c.props.src;
-    if (typeof v === 'string' && v) return v;
-  }
-  return undefined;
-}
 
 const createMediaFromAttachment: AiTool['handler'] = async (input, ctx) => {
   const { index, name, x, y } = input as { index: number; name?: string; x?: number; y?: number };
@@ -1635,6 +1773,10 @@ const HANDLERS: Record<string, AiTool['handler']> = {
   text_animator: textAnimator,
   create_media: createMedia,
   generate_image: generateImage,
+  generate_video: generateVideo,
+  generate_speech: generateSpeech,
+  generate_3d_model: generate3dModel,
+  export_video: exportVideoTool,
   import_svg: importSvg,
   analyse_audio: analyseAudioTool,
   create_media_from_attachment: createMediaFromAttachment,

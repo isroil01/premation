@@ -38,6 +38,7 @@ import {
 } from '@motion/caster';
 import type { GatewayProviderId } from '@core/api/client';
 import type { ProviderId } from '@motion/ai-tools';
+import { analyseSceneAudioForCaster } from './audioForCaster';
 import { streamTurn, recordAiPathFailure, type AgentEvents } from './AgentLoop';
 import { renderCritiqueEvidence } from './filmstrip';
 
@@ -406,6 +407,9 @@ export async function runCasterPipeline(
 ): Promise<CasterRunResult> {
   const comp = ctx.comp.get();
 
+  // Decode in parallel with the brief — do not wait here.
+  const audioPromise = analyseSceneAudioForCaster();
+
   const hooks: CasterHooks = {
     brief: async (system, userPrompt) => {
       o.events?.onActivity?.('Writing the creative brief…');
@@ -433,12 +437,15 @@ export async function runCasterPipeline(
     },
   };
 
+  const audio = await audioPromise;
+
   const result = await runCaster({
     userPrompt: o.prompt,
     hooks,
     width: comp.width,
     height: comp.height,
     fps: comp.fps,
+    ...(audio ? { audio } : {}),
     ...(o.direction ? { direction: o.direction } : {}),
     ...(o.variants && o.variants > 1 ? { variants: o.variants } : {}),
   });

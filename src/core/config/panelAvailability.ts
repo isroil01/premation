@@ -33,8 +33,8 @@ import { aiEnabled, pluginsEnabled } from './edition';
  */
 export const PANEL_AVAILABILITY: Readonly<Record<string, () => boolean>> = {
   /**
-   * The assistant. Server edition only — the local (OSS) edition does not ship
-   * it. The implementation is untouched and still correct; see `aiEnabled()`.
+   * The assistant. Available in both editions — BYOK via the OS keystore
+   * locally, hosted gateway on server. See `aiEnabled()` / `aiRunsThroughBackend()`.
    */
   ai: aiEnabled,
 

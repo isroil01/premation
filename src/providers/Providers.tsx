@@ -105,6 +105,9 @@ import { openPalette } from '@stores/commandPaletteStore';
 import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
 import { findNavTarget } from '@core/workspace/cameraNav';
 import { insertNull, moveNodeInStack } from '@core/scene/parenting';
+import { createNullsFromPath, pathVertices } from '@core/scene/nullsFromPaths';
+import { createShapesFromText, canCreateShapesFromText } from '@core/scene/shapesFromText';
+import { autoTraceLayer } from '@core/effects/autoTrace';
 import { fitNodeTo, centreAnchorInContent, centreInFrame } from '@core/source/fitCommands';
 import { activeCompSize } from '@core/scene/activeComp';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
@@ -1026,6 +1029,111 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       execute: () => insertNull(),
     },
     {
+      // AE's "Create Nulls From Paths" script: a handle on every vertex of the
+      // selected shape, parented to it. Enabled only for a single shape layer
+      // with a drawn outline — a rectangle primitive has no vertices to rig.
+      id: asCommandId('layer.nullsFromPath'),
+      label: 'Create Nulls From Path Points',
+      enabled: () => {
+        const ids = useSelectionStore.getState().ids;
+        if (ids.length !== 1) return false;
+        const n = defaultSceneGraph.getNode(ids[0]!);
+        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, getTimelineController().currentSeconds).length > 0;
+      },
+      execute: () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        const made = createNullsFromPath(id, getTimelineController().currentSeconds);
+        notify(made.length ? `Created ${made.length} null${made.length === 1 ? '' : 's'} on the path` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
+      },
+    },
+    {
+      // The live direction: every vertex follows its null from now on.
+      id: asCommandId('layer.nullsFromPathLive'),
+      label: 'Create Nulls From Path Points (Points Follow Nulls)',
+      enabled: () => {
+        const ids = useSelectionStore.getState().ids;
+        if (ids.length !== 1) return false;
+        const n = defaultSceneGraph.getNode(ids[0]!);
+        return !!n && readNodeKind(n) === 'shape' && pathVertices(n, getTimelineController().currentSeconds).length > 0;
+      },
+      execute: () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        const made = createNullsFromPath(id, getTimelineController().currentSeconds, { pointsFollowNulls: true });
+        notify(made.length ? `${made.length} null${made.length === 1 ? '' : 's'} now drive the path — move one and the outline follows` : 'No path points to create nulls from', made.length ? 'success' : 'warning');
+      },
+    },
+    {
+      // AE's Layer ▸ Create Shapes from Text. The outlines are TRACED from a
+      // supersampled raster of the glyphs (see shapesFromText.ts), and the
+      // source text layer is hidden, not deleted.
+      id: asCommandId('layer.shapesFromText'),
+      label: 'Create Shapes From Text',
+      enabled: () => {
+        const ids = useSelectionStore.getState().ids;
+        return ids.length === 1 && canCreateShapesFromText(ids[0]!);
+      },
+      execute: async () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        const made = await createShapesFromText(id);
+        notify(
+          !made
+            ? 'Could not outline this text — is it empty?'
+            : made.source === 'outlines'
+              ? 'Created a shape layer from the font’s own outlines'
+              : 'Created a shape layer from traced outlines (the font file could not be read — allow local fonts for exact curves)',
+          made ? 'success' : 'warning',
+        );
+      },
+    },
+    {
+      // AE's Layer ▸ Auto-trace: the layer's alpha as mask paths — one frame,
+      // or every frame of the work area as mask keyframes.
+      id: asCommandId('layer.autoTrace'),
+      label: 'Auto-trace…',
+      enabled: () => useSelectionStore.getState().ids.length === 1,
+      execute: async () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        const c = getTimelineController();
+        const now = c.currentSeconds;
+        const wa = c.timeline.getRanges().workArea;
+        const fps = c.timeline.getFrameRate().fps;
+        const choice = await customPrompt(
+          'Auto-trace',
+          'Trace the current frame, or every frame of the work area? Type "frame" or "range". Optional threshold 0–255 after a space (default 128).',
+          'frame 128',
+        );
+        if (choice === null) return;
+        const [modeRaw, thrRaw] = choice.trim().split(/\s+/);
+        const range = (modeRaw ?? '').toLowerCase().startsWith('r');
+        const threshold = Math.max(0, Math.min(255, Number(thrRaw) || 128));
+        const startSec = range && wa ? wa.start / fps : now;
+        const endSec = range && wa ? (wa.start + wa.duration - 1) / fps : undefined;
+        const noteId = useUIStore.getState().notify({ level: 'info', message: 'Auto-trace: rendering…', durationMs: 0 });
+        try {
+          const r = await autoTraceLayer({
+            nodeId: id, startSec, endSec, threshold,
+            onProgress: (f) => {
+              useUIStore.getState().notify({ level: 'info', message: `Auto-trace: ${Math.round(f * 100)}%`, durationMs: 600 });
+            },
+          });
+          useUIStore.getState().dismissNotification(noteId);
+          notify(
+            r.pathsAdded === 0
+              ? 'Auto-trace found nothing above the threshold'
+              : `Auto-trace: ${r.pathsAdded} mask path${r.pathsAdded === 1 ? '' : 's'}${r.keyframes ? `, ${r.keyframes} keyframes` : ''}`,
+            r.pathsAdded === 0 ? 'warning' : 'success',
+          );
+        } catch (err) {
+          useUIStore.getState().dismissNotification(noteId);
+          notify(`Auto-trace failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+        }
+      },
+    },
+    {
       id: asCommandId('layer.newAdjustment'),
       label: 'Adjustment Layer',
       shortcut: { key: 'y', meta: true, alt: true },
@@ -1828,6 +1936,30 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               a.click();
               URL.revokeObjectURL(url);
               notify(`Saved frame ${frame}`, 'success');
+            },
+          });
+          registry.register({
+            id: asCommandId('comp.copyFrame'), label: 'Copy Frame to Clipboard', icon: 'copy',
+            // AE 26.3: the rendered frame straight to the clipboard, so a review
+            // screenshot is one shortcut instead of save → find → attach. Same
+            // deterministic path as Save Frame As; only the destination differs.
+            enabled: () => typeof navigator !== 'undefined' && !!navigator.clipboard?.write,
+            execute: async () => {
+              const c = useCompositionStore.getState().comp();
+              const frame = Math.round(getTimelineController().timeline.currentFrame);
+              const blob = await renderStillFrame(
+                { width: c.width, height: c.height, fps: c.fps, durationSec: c.durationSeconds, comp: { ...c, rootId: c.id, compSizeOf } },
+                frame,
+              );
+              if (!blob) { notify('Could not render the frame', 'warning'); return; }
+              try {
+                await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                notify(`Copied frame ${frame} to the clipboard`, 'success');
+              } catch (err) {
+                // Clipboard writes need a user gesture and a secure context;
+                // say which rather than failing silently.
+                notify(`Clipboard refused the frame: ${err instanceof Error ? err.message : String(err)}`, 'warning');
+              }
             },
           });
           registry.register({

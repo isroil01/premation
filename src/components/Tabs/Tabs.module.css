@@ -155,10 +155,15 @@
 }
 
 .vertical .selected {
+  background: transparent;
+  color: var(--color-primary);
+  border: 1px solid transparent;
+  box-shadow: none;
+}
+
+.vertical .selected:hover {
   background: var(--color-surface-3);
   color: var(--color-primary);
-  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .vertical .close {

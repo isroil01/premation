@@ -39,17 +39,32 @@ const QUALITY: ReadonlyArray<{ value: ExportQuality; label: string; hint: string
   { value: 'draft', label: 'Draft', hint: 'Fast and visibly compressed. For checking timing.' },
 ];
 
-const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif']);
-const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence']);
-const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence']);
-const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov']);
-const ALPHA_FORMATS: ReadonlySet<ExportFormat> = new Set(['webm', 'mov', 'png', 'png-sequence', 'gif']);
+const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif']);
+const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const ALPHA_FORMATS: ReadonlySet<ExportFormat> = new Set(['webm', 'mov', 'png', 'png-sequence', 'gif', 'exr-sequence']);
+const NON_RASTER: ReadonlySet<ExportFormat> = new Set(['lottie', 'json', 'edl', 'otio', 'fcpxml', 'ale', 'mogrt']);
 
 const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportFormat[] }> = [
-  { id: 'video', label: 'Video', formats: ['mp4', 'webm', 'mov', 'gif'] },
-  { id: 'frames', label: 'Frames', formats: ['png-sequence', 'jpg-sequence', 'png'] },
-  { id: 'data', label: 'Data', formats: ['lottie', 'json'] },
+  { id: 'video', label: 'Video', formats: ['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif'] },
+  { id: 'frames', label: 'Frames', formats: ['png-sequence', 'jpg-sequence', 'exr-sequence', 'png'] },
+  { id: 'editorial', label: 'Editorial / Interchange', formats: ['otio', 'fcpxml', 'edl', 'ale'] },
+  { id: 'data', label: 'Package & Data', formats: ['lottie', 'json', 'mogrt'] },
 ];
+
+function dataPreviewMeta(format: ExportFormat): { icon: import('@components/Icon').IconName; title: string } {
+  switch (format) {
+    case 'lottie': return { icon: 'sparkles', title: 'Lottie Animation JSON' };
+    case 'json': return { icon: 'file', title: 'Premation Project Document' };
+    case 'otio': return { icon: 'layers', title: 'OpenTimelineIO Schema' };
+    case 'fcpxml': return { icon: 'code', title: 'Final Cut Pro XML' };
+    case 'edl': return { icon: 'layers', title: 'CMX 3600 Edit Decision List' };
+    case 'ale': return { icon: 'file', title: 'Avid Log Exchange' };
+    case 'mogrt': return { icon: 'component', title: 'Motion Graphics Template (.mogrt.zip)' };
+    default: return { icon: 'file', title: 'Project document' };
+  }
+}
 
 function fileStem(name: string): string {
   const trimmed = name.trim() || 'composition';
@@ -85,7 +100,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
 
   const supportsAlpha = ALPHA_FORMATS.has(format);
   const alpha = transparent && supportsAlpha;
-  const showRaster = format !== 'json' && format !== 'lottie';
+  const showRaster = !NON_RASTER.has(format);
   const showRange = RANGED.has(format);
   const showQuality = MOVING.has(format);
   const showQueue = QUEUEABLE.has(format);
@@ -168,6 +183,7 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   const frameCount = format === 'png' ? 1 : Math.max(1, Math.round(rangeDuration * fps));
   const outputName = `${fileStem(compName ?? 'composition')}.${activePreset?.ext ?? format}`;
   const qualityHint = QUALITY.find((q) => q.value === quality)?.hint;
+  const dataMeta = dataPreviewMeta(format);
 
   return (
     <div className={styles.shell}>
@@ -186,10 +202,8 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
             />
           ) : (
             <div className={styles.dataPreview}>
-              <Icon name={format === 'lottie' ? 'sparkles' : 'file'} size="lg" />
-              <p className={styles.dataPreviewTitle}>
-                {format === 'lottie' ? 'Lottie JSON' : 'Project document'}
-              </p>
+              <Icon name={dataMeta.icon} size="lg" />
+              <p className={styles.dataPreviewTitle}>{dataMeta.title}</p>
               <p className={styles.dataPreviewHint}>
                 {activePreset?.hint ?? 'No raster preview for this format.'}
               </p>

@@ -85,7 +85,26 @@ export interface MaterialOptions {
   specular: number;
   /** Blinn-Phong exponent (AE's Shininess, higher = tighter highlight). */
   shininess: number;
+  /**
+   * Which reflectance model the GPU 3D path shades with.
+   *
+   * `phong` is the original Blinn-Phong: specular intensity + exponent. `pbr`
+   * is a Cook-Torrance microfacet model — GGX distribution, Smith-Schlick
+   * geometry, Schlick Fresnel with F0 blended from dielectric 4 % toward the
+   * surface colour by `metal`, and energy-conserving diffuse — the model AE's
+   * Advanced 3D renderer and every current real-time engine use. Roughness
+   * replaces shininess there. Default `phong` so no existing scene changes.
+   */
+  shading: 'phong' | 'pbr';
+  /** PBR roughness, 0–100 (0 mirror, 100 matte). Read only when `shading` is `pbr`. */
+  roughness: number;
 }
+
+/** The Material Options a keyframe track can drive. Mirrors the registry's
+ *  `material` group in propertyMeta.ts; both must list the same names. */
+export const MATERIAL_ANIMATABLE = [
+  'ambient', 'diffuse', 'specular', 'shininess', 'metal', 'lightTransmission', 'roughness',
+] as const;
 
 function transformProps(node: SceneNode): Record<string, unknown> {
   return (node.components.find((c) => c.type === 'Transform')?.props ?? {}) as Record<string, unknown>;
@@ -105,8 +124,28 @@ function shadowMode(v: unknown): 'off' | 'on' | 'only' {
   return 'on';
 }
 
-export function readNodeMaterial(node: SceneNode): MaterialOptions {
-  const p = transformProps(node);
+/**
+ * Material Options, with the ANIMATED value of each numeric option when one
+ * is keyframed.
+ *
+ * `av` is the node's evaluated animation map for the frame (the same one the
+ * transform reads from). Absent, every option is its stored value — which is
+ * what the inspector, the tests and any static reader want. Present, a track
+ * on `ambient`, `diffuse`, `specular`, `shininess`, `metal` or
+ * `lightTransmission` beats the stored number, exactly as `x` beats the stored
+ * position. The switches (casts / accepts) stay static: a boolean keyframe is
+ * a hold and the inspector's tri-state has no track form.
+ */
+export function readNodeMaterial(node: SceneNode, av?: ReadonlyMap<string, number>): MaterialOptions {
+  const stored = transformProps(node);
+  const p: Record<string, unknown> = av
+    ? {
+        ...stored,
+        ...Object.fromEntries(
+          MATERIAL_ANIMATABLE.filter((k) => av.has(k)).map((k) => [k, av.get(k)]),
+        ),
+      }
+    : stored;
   const castsShadowsMode = shadowMode(p.castsShadows);
   const acceptsShadowsMode = shadowMode(p.acceptsShadows);
   return {
@@ -122,7 +161,18 @@ export function readNodeMaterial(node: SceneNode): MaterialOptions {
     metal: pct(p.metal, 0),
     specular: pct(p.specular, 0),
     shininess: typeof p.shininess === 'number' ? Math.max(1, p.shininess) : 32,
+    shading: p.shadingModel === 'pbr' ? 'pbr' : 'phong',
+    roughness: pct(p.roughness, 50),
   };
+}
+
+/** Switch a layer's 3D reflectance model. */
+export function setNodeShadingModel(nodeId: string, shading: 'phong' | 'pbr'): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const t = node?.components.find((c) => c.type === 'Transform');
+  if (!node || !t) return;
+  defaultSceneGraph.writeProp(nodeId, t.id, 'shadingModel', shading === 'pbr' ? 'pbr' : undefined);
+  bumpScene();
 }
 
 /** Write one of the tri-state shadow switches; `on` is the unstored default. */
@@ -144,7 +194,7 @@ export function setNodeShadowMode(
 /** Write a 0–100 material response. `fallback` is the unstored default. */
 export function setNodeMaterialPct(
   nodeId: string,
-  prop: 'lightTransmission' | 'ambient' | 'diffuse' | 'metal',
+  prop: 'lightTransmission' | 'ambient' | 'diffuse' | 'metal' | 'roughness',
   value: number,
   fallback: number,
 ): void {
@@ -162,6 +212,7 @@ export const MATERIAL_PCT_DEFAULTS = {
   ambient: 100,
   diffuse: 50,
   metal: 0,
+  roughness: 50,
 } as const;
 
 export function setNodeSpecular(nodeId: string, specular: number): void {

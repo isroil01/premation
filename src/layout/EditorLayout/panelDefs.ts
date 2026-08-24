@@ -67,10 +67,8 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'effectControls', title: 'Effect Controls', icon: 'stopwatch', region: 'leftSidebar', weight: 9, closable: false },
   { id: 'assets',      title: 'Assets',    icon: 'image',       region: 'leftSidebar', weight: 8,   closable: false },
   { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
-  // Server edition only — see PANEL_AVAILABILITY. The local (OSS) edition does
-  // not ship the assistant, so the panel is absent from the registry rather than
-  // rendered empty: a tab that opens onto "not available in this edition" is a
-  // worse answer than no tab. `getAllPanelRenderers` drops the renderer too.
+  // Both editions — see PANEL_AVAILABILITY / `aiEnabled()`. Local runs BYOK;
+  // server runs through the hosted gateway.
   { id: 'ai',          title: 'AI',        icon: 'ai',          region: 'leftSidebar', weight: 4,   closable: false },
   // The marketplace. Distinct from the `plugins` panel in the right inspector,
   // which HOSTS the interfaces plugins provide — this one is where you find,

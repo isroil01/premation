@@ -55,11 +55,13 @@ function setup(
  */
 class RecordingBackend extends NullBackend {
   readonly writes: Array<{ label?: string; data?: Uint8Array }> = [];
+  readonly texturesCreated: Array<{ label?: string; width: number; height: number }> = [];
   private labels = new Map<number, string | undefined>();
 
   override createTexture(desc: Parameters<NullBackend['createTexture']>[0]): ReturnType<NullBackend['createTexture']> {
     const h = super.createTexture(desc);
     this.labels.set(h.id, (desc as { label?: string }).label);
+    this.texturesCreated.push({ label: (desc as { label?: string }).label, width: desc.width, height: desc.height });
     return h;
   }
 
@@ -579,6 +581,52 @@ describe('AppTextureProvider', () => {
 
       await flush();
       expect(provider.get('asset:a')!.ready).toBe(true);
+    });
+  });
+
+  describe('oversized image handling', () => {
+    it('proportionally downscales giant images (e.g. 3072x24608 screenshot) to fit within maxRasterDimension', async () => {
+      const backend = new RecordingBackend();
+      const resources = new ResourceManager(backend);
+      resources.beginFrame(1);
+      const loader: ImageLoader = async () => fakeBitmap(3072, 24608);
+      const provider = new AppTextureProvider(resources, { loader });
+
+      // Default maxRasterDimension from NullBackend capabilities is 16384
+      provider.setImage('asset:long-screenshot', 'blob:screenshot');
+      await flush();
+
+      const resolved = provider.get('asset:long-screenshot');
+      expect(resolved).not.toBeNull();
+      expect(resolved!.ready).toBe(true);
+
+      const created = backend.texturesCreated.find((t) => t.label?.includes('screenshot'));
+      expect(created).toBeDefined();
+      expect(created!.width).toBeLessThanOrEqual(16384);
+      expect(created!.height).toBeLessThanOrEqual(16384);
+      // Aspect ratio must be preserved: 3072 / 24608 = 0.124837...
+      const originalAspect = 3072 / 24608;
+      const actualAspect = created!.width / created!.height;
+      expect(Math.abs(actualAspect - originalAspect)).toBeLessThan(0.001);
+    });
+
+    it('respects setMaxRasterDimension (e.g. 8192 on baseline WebGPU)', async () => {
+      const backend = new RecordingBackend();
+      const resources = new ResourceManager(backend);
+      resources.beginFrame(1);
+      const loader: ImageLoader = async () => fakeBitmap(3072, 24608);
+      const provider = new AppTextureProvider(resources, { loader });
+      provider.setMaxRasterDimension(8192);
+
+      provider.setImage('asset:long-screenshot-8k', 'blob:screenshot8k');
+      await flush();
+
+      const created = backend.texturesCreated.find((t) => t.label?.includes('screenshot8k'));
+      expect(created).toBeDefined();
+      expect(created!.width).toBeLessThanOrEqual(8192);
+      expect(created!.height).toBe(8192);
+      // 3072 * (8192 / 24608) = 1023
+      expect(created!.width).toBe(1023);
     });
   });
 });

@@ -81,13 +81,15 @@
 .canvas {
   flex: 1;
   position: relative;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
   background: var(--color-surface-0);
 }
 
 .svg {
   display: block;
-  cursor: crosshair;
+  cursor: default;
 }
 
 /* ── SVG chrome (theme-aware; presentation attributes can't use var()) ── */
@@ -110,7 +112,7 @@
 .handleDot {
   fill: var(--color-slate-0);
   stroke: var(--color-primary);
-  cursor: crosshair;
+  cursor: default;
 }
 
 .keyframe {
@@ -130,4 +132,94 @@
 
 .playheadCap {
   fill: var(--color-timeline-playhead);
+}
+
+.btnGroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  padding-left: 6px;
+  border-left: 1px solid var(--color-border-strong);
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.iconBtn:hover {
+  background: var(--color-surface-hover, rgba(255, 255, 255, 0.08));
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.iconBtnActive {
+  background: transparent;
+  color: var(--color-primary);
+  border-color: transparent;
+}
+
+.fieldLabel {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-muted);
+  margin-right: 2px;
+  user-select: none;
+}
+
+/* ── Interaction layer ─────────────────────────────────────────── */
+.svgDragging,
+.svgDragging * {
+  cursor: grabbing !important;
+}
+
+.svgScrubbing {
+  cursor: ew-resize;
+}
+
+.curve {
+  pointer-events: none;
+}
+
+/* Invisible, generous hit targets — the visible dot is 4.5px, the grab radius 10px. */
+.kfHit {
+  fill: transparent;
+  stroke: none;
+  cursor: move;
+}
+
+.handleHit {
+  fill: transparent;
+  stroke: none;
+  cursor: grab;
+}
+
+.handleDot {
+  pointer-events: none;
+}
+
+/* Speed graph: a keyframe whose in/out speeds differ shows the jump. */
+.speedJump {
+  stroke: color-mix(in srgb, var(--color-text-primary) 35%, transparent);
+  pointer-events: none;
+}
+
+.speedInDot {
+  fill: var(--color-surface-0);
+  pointer-events: none;
+}
+
+.playhead {
+  pointer-events: none;
 }

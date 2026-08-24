@@ -220,6 +220,8 @@ export interface RenderLayer {
     specular: number;
     shininess: number;
     metal?: number;
+    /** PBR roughness 0..1. Present ⇒ the GGX model; absent ⇒ Blinn-Phong. */
+    roughness?: number;
     /** Light this surface from one side. Set only by an extrusion's walls and
      *  back cap, which bound a volume — see `lightShading.ndotl`. */
     oneSided?: boolean;
@@ -431,6 +433,28 @@ export interface RenderLayer {
    */
   continuousRaster?: boolean;
   /** Dynamic CPU-skinned mesh geometry for puppet deformation. */
+  /**
+   * Extruded solid for a 3D layer with depth — walls, bevels and back cap as
+   * ONE mesh with per-vertex normals (core/scene/extrusionMesh.ts), carried by
+   * a synthetic `::ext-mesh` layer that shares the front face's `world3d`.
+   * Vertices are in the layer's CENTRED pixel frame; `ranges` are the material
+   * groups, each with its resolved fill and the unlit brightness gain. The
+   * adapter routes it to the renderer's depth-tested mesh path.
+   */
+  extrudedMesh?: {
+    key: string;
+    vertices: Float32Array;
+    indices: Uint16Array | Uint32Array;
+    ranges: ReadonlyArray<{
+      role: 'front' | 'back' | 'side' | 'bevel';
+      first: number;
+      count: number;
+      fill: string;
+      gain: number;
+      /** Sample the layer's own texture (image/video back cap) instead of `fill`. */
+      textured?: boolean;
+    }>;
+  };
   deformedMesh?: {
     vertices: Float32Array;
     triangles: Uint16Array;

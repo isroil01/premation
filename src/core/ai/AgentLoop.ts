@@ -21,6 +21,7 @@ import type { GatewayProviderId } from '@core/api/client';
 import { classifyPrompt } from './pipeline';
 import { runBackendDirector } from './DirectorRunner';
 import { runCasterPipeline } from './CasterRunner';
+import { exportCompositionVideo } from './aiExport';
 import type { Direction as CasterDirection } from '@motion/caster';
 import { casterEnabled } from '@core/config/flags';
 import { streamProviderBytes, AiTransportError } from './aiTransport';
@@ -327,6 +328,11 @@ export interface RunAgentOptions {
    * turns.
    */
   variants?: number;
+  /**
+   * After a successful generative run (caster/director), automatically export
+   * the composition to video. Useful for "make me a video and export it" prompts.
+   */
+  exportAfterGenerative?: boolean | { format?: 'mp4' | 'webm' | 'gif'; quality?: 'high' | 'medium' | 'draft' };
 }
 
 /**
@@ -522,6 +528,26 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
       events?.onActivity?.('Pipeline failed. Falling back to direct mode…');
     }
 
+    /** Appended to the answer when auto-export runs after a generative plan. */
+    let exportNote = '';
+    if (planExecuted && !signal.aborted) {
+      const exportCfg = opts.exportAfterGenerative;
+      const wantsExport =
+        exportCfg === true
+        || typeof exportCfg === 'object'
+        || (exportCfg === undefined && /\b(export|render out|deliver|download|save as mp4|save as video)\b/i.test(prompt));
+      if (wantsExport) {
+        const cfg = typeof exportCfg === 'object' ? exportCfg : {};
+        events?.onActivity?.('Exporting video…');
+        const exp = await exportCompositionVideo({ ...cfg, signal });
+        exportNote = !exp.ok
+          ? `\n\nExport failed: ${exp.message}`
+          : exp.mode === 'queue'
+            ? `\n\nQueued ${cfg.format ?? 'mp4'} export in the Render Queue (job ${exp.jobId})${exp.started ? ' and started it.' : '.'}`
+            : `\n\nExported the composition as ${cfg.format ?? 'mp4'}${exp.videoCodec ? ` (${exp.videoCodec})` : ''}.`;
+      }
+    }
+
     // 3. Sighted polish pass — a plan (backend director OR client pipeline)
     // authored the scene, but nothing has LOOKED at it yet. Render key frames
     // and fall through into the direct loop seeded with those shots + the
@@ -543,9 +569,9 @@ export async function runAgent(prompt: string, opts: RunAgentOptions): Promise<A
         }
       }
       if (!pipelineReviewShots.length) {
-        finalText = casterCritique ? `${planSummary}
+        finalText = (casterCritique ? `${planSummary}
 
-${casterCritique}` : planSummary;
+${casterCritique}` : planSummary) + exportNote;
         const assistantTurn: AiMessage = { role: 'assistant', content: finalText };
         produced.push(assistantTurn);
 

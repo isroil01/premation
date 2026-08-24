@@ -31,6 +31,15 @@ export interface ValueFieldProps {
   onChange: (value: number) => void;
   /** Optional live callback while scrubbing (defaults to onChange). */
   onScrub?: (value: number) => void;
+  /**
+   * Fired once when a pointer drag crosses the dead zone and becomes a scrub,
+   * before the first `onScrub`. A caller that scrubs SEVERAL properties off
+   * one field (proportional scrubbing) needs to snapshot their start values
+   * here — by the first `onScrub` they have already moved.
+   */
+  onScrubStart?: () => void;
+  /** Fired after the final `onChange` of a scrub. Not fired for a click. */
+  onScrubEnd?: () => void;
   min?: number;
   max?: number;
   /** Base increment for one pixel of drag / one arrow press. */
@@ -49,6 +58,8 @@ export function ValueField({
   value,
   onChange,
   onScrub,
+  onScrubStart,
+  onScrubEnd,
   min = -Infinity,
   max = Infinity,
   step = 1,
@@ -146,12 +157,13 @@ export function ValueField({
       if (!s.moved) {
         s.moved = true;
         setDragging(true);
+        onScrubStart?.();
       }
       const next = scrubValue(s.startVal, dx, step, e, min, max);
       s.live = next;
       commitScrub(next);
     },
-    [step, min, max, commitScrub],
+    [step, min, max, commitScrub, onScrubStart],
   );
 
   const onPointerUp = useCallback(() => {
@@ -162,11 +174,12 @@ export function ValueField({
       setDragging(false);
       // Ensure the final value is committed through onChange (not just onScrub).
       onChange(clamp(s.live, min, max));
+      onScrubEnd?.();
     } else {
       // No drag → treat as a click: enter edit mode.
       beginEdit();
     }
-  }, [onPointerMove, onChange, min, max, beginEdit]);
+  }, [onPointerMove, onChange, min, max, beginEdit, onScrubEnd]);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>): void => {
     if (disabled || editing) return;

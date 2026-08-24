@@ -169,6 +169,11 @@ export class ResourceManager {
     return this.backend.capabilities.float32Textures;
   }
 
+  /** Maximum 2D texture dimension supported by the live backend. */
+  get maxTextureSize(): number {
+    return this.backend.capabilities.maxTextureSize;
+  }
+
   has(kind: keyof ResourceManagerStats, key: string): boolean {
     return this.poolFor(kind).has(key);
   }

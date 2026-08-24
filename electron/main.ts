@@ -9,6 +9,8 @@ import { registerIndexIpc } from './localIndexDb';
 import { registerThumbIpc } from './thumbCache';
 import { registerAiKeyIpc } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
+import { registerMediaKeyIpc } from './mediaKeyVault';
+import { registerAiMediaProxyIpc } from './aiMediaProxy';
 import { registerApiProxyIpc, abortAllApiStreams } from './apiProxy';
 import { installPluginPublishIpc } from './pluginPublish';
 import { registerPluginNetIpc } from './pluginNet';
@@ -1257,6 +1259,8 @@ app.whenReady().then(() => {
   if (aiEnabled()) {
     registerAiKeyIpc();
     registerAiProxyIpc();
+    registerMediaKeyIpc();
+    registerAiMediaProxyIpc();
   }
 
   // The renderer reports its own edition on first paint so a build whose two

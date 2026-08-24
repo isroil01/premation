@@ -34,6 +34,7 @@ const FORMAT_LABEL: Record<OutputFormat, string> = {
   hlg: 'HLG MP4',
   'png-sequence': 'PNG Sequence',
   'jpg-sequence': 'JPEG Sequence',
+  'exr-sequence': 'EXR Sequence',
 };
 
 function statusClass(s: RenderJob['status']): string {
@@ -146,8 +147,9 @@ export function RenderQueuePanel(): JSX.Element {
       )}
       {/* ── Toolbar ──────────────────────────────────────────────── */}
       <div className={styles.toolbar}>
-        <button type="button" className={styles.toolbarBtn} onClick={() => setShowDialog(true)} title="Add current composition to queue">
-          <Icon name="plus" size="sm" /> Add Comp
+        <button type="button" className={styles.toolbarBtn} onClick={() => setShowDialog(true)} title="Add current composition to queue" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <Icon name="plus" size="xs" />
+          <span>Add Comp</span>
         </button>
 
         {canChooseOutputDir() && (
@@ -156,9 +158,10 @@ export function RenderQueuePanel(): JSX.Element {
             className={styles.toolbarBtn}
             onClick={() => void chooseOutputDir()}
             title={outputDir ? `Renders are written to ${outputDir}` : 'Choose where renders are written'}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
           >
-            <Icon name="folder" size="sm" />
-            {outputDir ? (outputDir.split(/[\\/]/).pop() || outputDir) : 'Output folder…'}
+            <Icon name="folder" size="xs" style={{ color: '#f5b041' }} />
+            <span>{outputDir ? (outputDir.split(/[\\/]/).pop() || outputDir) : 'Output folder…'}</span>
           </button>
         )}
 

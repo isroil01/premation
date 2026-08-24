@@ -4,6 +4,7 @@ import { AppRouter } from './routes/AppRouter';
 import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
+import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
 import { parseEdition, setEdition } from '@core/config/edition';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import { installPluginNetBridge } from '@core/plugins/pluginNetBridge';
@@ -51,6 +52,22 @@ setLocalFirst(
     import.meta.env.VITE_LOCAL_FIRST === '1' ||
     import.meta.env.VITE_LOCAL_FIRST === 'true',
 );
+
+// Object Matte — neural, one-click subject selection. The segmenter and its
+// registration hook have been in the tree since the tracking column shipped;
+// what they were missing was a model. Point `VITE_SAM_MODEL_URL` at a hosted
+// SAM-class ONNX decoder and it is registered at boot; clicks in the Roto tool
+// then prefer it, with GrabCut as the fallback the user already had. Absent,
+// nothing changes — the loader is a dynamic import and costs nothing unused.
+{
+  const samUrl = import.meta.env.VITE_SAM_MODEL_URL as string | undefined;
+  if (samUrl) {
+    void tryRegisterSamOnnxFromUrl(samUrl).then((r) => {
+      if (r.status === 'ok') console.info('[sam] neural segmenter ready');
+      else console.warn(`[sam] ${r.status}: ${r.reason}`);
+    });
+  }
+}
 
 /**
  * Apply the async document-font stylesheet.

@@ -3,9 +3,9 @@ import { Mat3 } from '../../core/math/Mat3';
 import { Rect } from '../../core/math/geometry';
 import { depthEligible3D, type Renderable, type RenderableEffect, type RenderableSdf } from '../../scene/FrameScene';
 import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
-import type { TextureHandle } from '../../gpu/types';
+import type { TextureHandle, SamplerHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D } from './passUtils';
+import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D } from './passUtils';
 import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
 import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
@@ -1669,6 +1669,7 @@ export class CompositionPass extends RenderPass {
         specular: camera3d.eye ? s.specular : 0,
         shininess: s.shininess,
         ...(s.metal ? { metal: s.metal } : {}),
+        ...(s.roughness !== undefined ? { roughness: s.roughness } : {}),
         // Carried explicitly, like `metal` above. This object is built
         // field-by-field from `r.threeD.shade`, so a field added to that type
         // and not named here is silently dropped — and for a depth-eligible
@@ -1706,6 +1707,11 @@ export class CompositionPass extends RenderPass {
       if (r.opacity <= 0) continue;
       const mvp = mvp3dFor(viewport, camera3d, r.threeD!.model);
       const uv = r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 };
+
+      if (r.extrudedMesh) {
+        this.emitExtrudedMesh(ctx, r, mvp, shadeFor(r), cmds, clampSampler);
+        continue;
+      }
       const isSolid = r.kind === 'rect' || r.kind === 'path' || r.kind === 'group';
       const isTextured = r.kind === 'image' || r.kind === 'video' || r.kind === 'text';
       const shade = shadeFor(r);
@@ -1756,6 +1762,55 @@ export class CompositionPass extends RenderPass {
       }
     }
     flush();
+  }
+
+  /**
+   * Draw an extruded mesh's material groups off its cached GPU buffers. The
+   * buffers are keyed by the mesh's geometry key, so an unchanged extrusion
+   * uploads nothing frame to frame and an animated depth re-uploads only when
+   * its vertices actually change.
+   */
+  private emitExtrudedMesh(
+    ctx: RenderPassContext,
+    r: Renderable,
+    mvp: ReturnType<typeof mvp3dFor>,
+    shade: Shade3D | undefined,
+    cmds: CommandBuffer,
+    clampSampler: () => SamplerHandle,
+  ): void {
+    const mesh = r.extrudedMesh!;
+    const { resources } = ctx.services;
+    const vertexBuffer = resources.buffer(
+      `geometry:ext-vertex:${mesh.key}`,
+      { label: `ext-vertex:${r.id}`, sizeBytes: mesh.vertices.byteLength, usage: ['vertex'], data: mesh.vertices },
+    );
+    const indexFormat = mesh.indices instanceof Uint32Array ? 'uint32' : 'uint16';
+    const indexBuffer = resources.buffer(
+      `geometry:ext-index:${mesh.key}`,
+      { label: `ext-index:${r.id}`, sizeBytes: mesh.indices.byteLength, usage: ['index'], data: mesh.indices },
+    );
+    const tex = r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
+    for (const range of mesh.ranges) {
+      if (range.count === 0) continue;
+      // Lit: the shader shades the flat colour per fragment. Unlit: the fixed
+      // face gain stands in for lighting, exactly as the quad path's quadGain.
+      const c = range.color;
+      const color = shade ? c : { r: c.r * range.gain, g: c.g * range.gain, b: c.b * range.gain, a: c.a };
+      const geometry = { vertexBuffer, indexBuffer, indexFormat, firstIndex: range.first, indexCount: range.count } as const;
+      // The FRONT cap lights two-sided, like the layer quad it stands in for —
+      // a bevelled object's front must not go black the moment a light aims
+      // into the screen while its unbevelled twin's front stays lit. Walls,
+      // bevels and the back cap bound the volume and stay one-sided.
+      const rangeShade = shade && range.role === 'front' && shade.oneSided
+        ? { ...shade, oneSided: undefined }
+        : shade;
+      if (range.textured && tex) {
+        emitMesh3D(cmds, mvp, Color.white(), r.opacity, r.blend, geometry, rangeShade,
+          { texture: tex.texture, sampler: clampSampler(), uvRect: r.uvRect, color: r.colorMatrix, sampleLinear: !!tex.sampleLinear });
+      } else {
+        emitMesh3D(cmds, mvp, color, r.opacity, r.blend, geometry, rangeShade);
+      }
+    }
   }
 
   /** Render a paint-ordered renderable list into `out` (the scene colour target

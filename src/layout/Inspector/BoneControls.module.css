@@ -119,18 +119,20 @@
 
 .presetButton {
   flex: 1;
-  padding: 4px 8px;
-  font-size: var(--font-size-micro);
+  height: 24px;
+  padding: 2px 8px;
+  font-size: var(--font-size-micro, 11px);
+  line-height: 1;
   font-weight: 500;
   border-radius: 4px;
   background: var(--color-surface, #1e1e1e);
   color: var(--color-text-secondary, #aaa);
   border: 1px solid var(--color-border, #333);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 5px;
   transition: all 0.15s ease;
 }
 
@@ -164,8 +166,15 @@
 }
 
 .anchorToggle {
-  padding: 2px 6px;
-  font-size: var(--font-size-micro);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 7px;
+  height: 22px;
+  font-size: var(--font-size-micro, 11px);
+  line-height: 1;
+  vertical-align: middle;
   border-radius: 4px;
   border: 1px solid var(--color-border, #333);
   background: transparent;

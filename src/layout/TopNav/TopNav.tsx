@@ -44,7 +44,6 @@ import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { customPrompt } from '@components/Modal/Dialogs';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
-import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
 import { PIN_KIND_CATALOG, PUPPET_PIN_ICONS, puppetPinLabel } from './puppetPinTools';
 
@@ -575,10 +574,8 @@ export function TopNav(): JSX.Element {
             </IconButton>
           )}
 
-          {/* The File menu and the project it acts on, together. Electron shows
-              both in the title bar instead, so this would be a second copy. */}
+          {/* The File menu */}
           {!isElectron && <AppMenuButton />}
-          {!isElectron && <ProjectStatus />}
           <span className={styles.toolDivider} aria-hidden />
 
           {/* Cluster 1: Edit & Drawing Tools */}

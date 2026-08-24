@@ -62,6 +62,24 @@ export type AiStreamEvent =
   | { requestId: string; type: 'done' }
   | { requestId: string; type: 'error'; code: string; message: string };
 
+export interface AiImageRequest {
+  provider: AiVaultProvider;
+  prompt: string;
+  width?: number;
+  height?: number;
+}
+
+export type AiImageResult =
+  | { ok: true; base64: string; mime: string }
+  | { ok: false; code: string; message: string };
+
+export type AiMediaResult =
+  | { ok: true; base64: string; mime: string; extension: string }
+  | { ok: false; code: string; message: string };
+
+/** Media providers the desktop media vault holds keys for. */
+export type MediaVaultProvider = 'fal' | 'elevenlabs' | 'tripo';
+
 export interface ApiProxyRequest {
   path: string;
   method?: string;
@@ -162,6 +180,24 @@ export interface MotionEditorApi {
     cancel?(requestId: string): Promise<boolean>;
     /** Returns an unsubscribe function. Filter events by `requestId`. */
     onStreamEvent?(handler: (event: AiStreamEvent) => void): () => void;
+    /**
+     * Generate one image. Resolves with base64 bytes — never a provider URL.
+     * Same custody as `stream`: the shell holds the key; the renderer never sees it.
+     */
+    image?(request: AiImageRequest): Promise<AiImageResult>;
+    /** Text-to-video via fal.ai. Returns base64 mp4 bytes. */
+    video?(request: { prompt: string; durationSec?: number }): Promise<AiMediaResult>;
+    /** Text-to-speech via ElevenLabs. Returns base64 mp3 bytes. */
+    speech?(request: { text: string; voiceId?: string }): Promise<AiMediaResult>;
+    /** Text-to-3D via Tripo. Returns base64 glb bytes. */
+    model3d?(request: { prompt: string }): Promise<AiMediaResult>;
+    /** Media provider keys — separate from chat LLM keys. */
+    mediaKeys?: {
+      status?(): Promise<Record<MediaVaultProvider, AiKeyStatus>>;
+      set?(provider: MediaVaultProvider, key: string): Promise<{ persisted: boolean; hint: string }>;
+      clear?(provider?: MediaVaultProvider): Promise<void>;
+      available?(): Promise<boolean>;
+    };
   };
   project?: {
     /** Native open dialog → the chosen project file (or null if cancelled). */

@@ -27,8 +27,19 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { isAuthenticated, type AiKeyStatus, type AiProviderId } from '@core/api/client';
+import {
+  isAuthenticated,
+  type AiKeyStatus,
+  type AiProviderId,
+  type MediaProviderId,
+} from '@core/api/client';
 import { keyStorageRequiresAccount, keyStorageIsPersistent } from '@core/ai/aiKeyStore';
+import {
+  fetchMediaKeyStatuses,
+  forgetMediaKey,
+  persistMediaKey,
+  supportsMediaProviderLocally,
+} from '@core/ai/mediaKeyStore';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import styles from './AiSettingsSection.module.css';
 
@@ -40,10 +51,43 @@ interface ProviderMeta {
   placeholder: string;
 }
 
+interface MediaProviderMeta {
+  id: MediaProviderId;
+  label: string;
+  purpose: string;
+  href: string;
+  placeholder: string;
+}
+
 const PROVIDERS: readonly ProviderMeta[] = [
   { id: 'anthropic', label: 'Claude (Anthropic)', href: 'https://console.anthropic.com/settings/keys', placeholder: 'sk-ant-…' },
   { id: 'openai', label: 'OpenAI', href: 'https://platform.openai.com/api-keys', placeholder: 'sk-…' },
   { id: 'gemini', label: 'Gemini (Google)', href: 'https://aistudio.google.com/app/apikey', placeholder: 'AIza…' },
+];
+
+/** Video / speech / 3D — separate vault from chat LLMs. */
+const MEDIA_PROVIDERS: readonly MediaProviderMeta[] = [
+  {
+    id: 'fal',
+    label: 'fal.ai',
+    purpose: 'Text-to-video',
+    href: 'https://fal.ai/dashboard/keys',
+    placeholder: 'fal-…',
+  },
+  {
+    id: 'elevenlabs',
+    label: 'ElevenLabs',
+    purpose: 'Voice-over',
+    href: 'https://elevenlabs.io/app/settings/api-keys',
+    placeholder: 'sk_…',
+  },
+  {
+    id: 'tripo',
+    label: 'Tripo',
+    purpose: 'Text-to-3D',
+    href: 'https://platform.tripo3d.ai',
+    placeholder: 'tsk_…',
+  },
 ];
 
 const EMPTY: AiKeyStatus = { present: false, hint: '' };
@@ -74,8 +118,10 @@ function classifyKey(key: string): AiProviderId | null {
 
 export function AiSettingsSection(): JSX.Element {
   const [drafts, setDrafts] = useState<Partial<Record<AiProviderId, string>>>({});
-  const [busy, setBusy] = useState<AiProviderId | null>(null);
+  const [mediaDrafts, setMediaDrafts] = useState<Partial<Record<MediaProviderId, string>>>({});
+  const [busy, setBusy] = useState<AiProviderId | MediaProviderId | null>(null);
   const [error, setError] = useState<string>('');
+  const [mediaStatus, setMediaStatus] = useState<Partial<Record<MediaProviderId, AiKeyStatus>>>({});
 
   const provider = useAiProviderStore((s) => s.provider);
   const setProvider = useAiProviderStore((s) => s.setProvider);
@@ -103,6 +149,15 @@ export function AiSettingsSection(): JSX.Element {
    */
   const [persistent, setPersistent] = useState(true);
 
+  const reloadMedia = useCallback(async () => {
+    if (keyStorageRequiresAccount() && !isAuthenticated()) return;
+    try {
+      setMediaStatus(await fetchMediaKeyStatuses());
+    } catch {
+      setMediaStatus({});
+    }
+  }, []);
+
   const reload = useCallback(async () => {
     // No `isAuthenticated()` gate: only the SERVER edition needs a session to
     // answer this. Gating the local edition on one would mean its key status could
@@ -114,7 +169,8 @@ export function AiSettingsSection(): JSX.Element {
     // core/api/purgeLocalKeys.ts for why that is gone.
     await refresh({ force: true });
     setPersistent(await keyStorageIsPersistent());
-  }, [refresh]);
+    await reloadMedia();
+  }, [refresh, reloadMedia]);
 
   useEffect(() => { void reload(); }, [reload]);
 
@@ -159,9 +215,7 @@ export function AiSettingsSection(): JSX.Element {
             : res.reason === 'network'
               ? 'Could not reach the server to save the key.'
               : res.reason === 'unsupported'
-                ? // The desktop vault holds keys for the three chat providers only;
-                  // the media providers need the cloud edition. Say which, not "no".
-                  'This provider needs the cloud edition — it can’t be connected in the local build yet.'
+                ? 'This chat provider can’t be connected in this build.'
                 : 'Could not save that key.',
         );
         return;
@@ -181,6 +235,45 @@ export function AiSettingsSection(): JSX.Element {
     try {
       const res = await clearKey(id);
       if (!res.ok) setError('Could not reach the server to remove the key.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const saveMedia = async (id: MediaProviderId): Promise<void> => {
+    const key = (mediaDrafts[id] ?? '').trim();
+    if (!key) return;
+    setError('');
+    if (!supportsMediaProviderLocally(id) && keyStorageRequiresAccount() === false) {
+      setError('This media provider can’t be connected in this build.');
+      return;
+    }
+    setBusy(id);
+    try {
+      const res = await persistMediaKey(id, key);
+      if (!res.ok) {
+        setError(
+          res.reason === 'unsupported'
+            ? 'This media provider can’t be connected in this build.'
+            : res.reason === 'network'
+              ? 'Could not reach the server to save the key.'
+              : 'Could not save that media key.',
+        );
+        return;
+      }
+      setMediaDrafts((d) => ({ ...d, [id]: '' }));
+      await reloadMedia();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const removeMedia = async (id: MediaProviderId): Promise<void> => {
+    setBusy(id);
+    setError('');
+    try {
+      await forgetMediaKey(id);
+      await reloadMedia();
     } finally {
       setBusy(null);
     }
@@ -303,8 +396,7 @@ export function AiSettingsSection(): JSX.Element {
           })}
 
           <p className={styles.links}>
-            Your keys are stored encrypted on your Motion account and only used by our server to call
-            the provider. Get a key: {PROVIDERS.map((p, i) => (
+            Chat keys power the assistant’s planning. Get a key: {PROVIDERS.map((p, i) => (
               <span key={p.id}>
                 {i > 0 ? ' · ' : ''}
                 <a href={p.href} target="_blank" rel="noreferrer">{p.label.split(' ')[0]}</a>
@@ -312,6 +404,77 @@ export function AiSettingsSection(): JSX.Element {
             ))}
           </p>
         </div>
+
+      <p className={styles.intro} style={{ marginTop: 8 }}>
+        Media generation (video, voice, 3D) uses separate keys. These are only spent when the
+        assistant calls <code>generate_video</code>, <code>generate_speech</code>, or{' '}
+        <code>generate_3d_model</code>.
+      </p>
+
+      <div className={styles.providers}>
+        {MEDIA_PROVIDERS.map((p) => {
+          const s = mediaStatus[p.id] ?? EMPTY;
+          const draft = mediaDrafts[p.id] ?? '';
+          return (
+            <div
+              key={p.id}
+              className={`${styles.row} ${s.present ? styles.rowConnected : ''}`}
+            >
+              <div className={styles.rowInfo}>
+                <span className={styles.rowLabel}>
+                  <Icon name={s.present ? 'lock' : 'keyframe'} size="md" className={s.present ? styles.lockIconSecure : styles.lockIconInactive} />
+                  {p.label}
+                </span>
+                {s.present ? (
+                  <span className={styles.hint} title="Encrypted at rest">
+                    Connected · {p.purpose} · {s.hint || '••••'}
+                  </span>
+                ) : (
+                  <span className={styles.notConnectedHint}>{p.purpose} · Not configured</span>
+                )}
+              </div>
+              <div className={styles.rowRight}>
+                {s.present ? (
+                  <Button variant="ghost" size="sm" disabled={busy === p.id} onClick={() => void removeMedia(p.id)}>
+                    Remove
+                  </Button>
+                ) : (
+                  <>
+                    <input
+                      type="password"
+                      className={styles.input}
+                      value={draft}
+                      placeholder={p.placeholder}
+                      aria-label={`${p.label} API key`}
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(e) => setMediaDrafts((d) => ({ ...d, [p.id]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') void saveMedia(p.id); }}
+                    />
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={!draft.trim() || busy === p.id}
+                      onClick={() => void saveMedia(p.id)}
+                    >
+                      Save
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        <p className={styles.links}>
+          Get a media key: {MEDIA_PROVIDERS.map((p, i) => (
+            <span key={p.id}>
+              {i > 0 ? ' · ' : ''}
+              <a href={p.href} target="_blank" rel="noreferrer">{p.label}</a>
+            </span>
+          ))}
+        </p>
+      </div>
     </div>
   );
 }

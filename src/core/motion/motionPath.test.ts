@@ -5,6 +5,7 @@ import {
   positionSpan,
   keyframeTimes,
   motionPathKeyframes,
+  motionPathFrameSamples,
   motionPathTangents,
   setPathTangent,
   smoothMotionPath,
@@ -86,6 +87,14 @@ describe('engine-backed helpers', () => {
       [0, 0, 0],
       [1, 100, 0],
     ]);
+  });
+
+  it('generates per-frame tick dots according to composition FPS', () => {
+    // 0 to 1 second at 4 fps -> 5 frames: t=0, 0.25, 0.5, 0.75, 1
+    const frameDots = motionPathFrameSamples(node, 4, engine);
+    expect(frameDots).toHaveLength(5);
+    expect(frameDots.map((f) => f.t)).toEqual([0, 0.25, 0.5, 0.75, 1]);
+    expect(frameDots.map((f) => f.x)).toEqual([0, 25, 50, 75, 100]);
   });
 
   it('auto-orients along the direction of travel (rightward → 0°)', () => {

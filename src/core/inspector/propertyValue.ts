@@ -50,6 +50,7 @@ import {
   type TextAnimatorData,
 } from '@core/text/textAnimators';
 import { resolvePropertyMeta } from './propertyMeta';
+import { parseMaskPropPath, getNodeMask, updateMaskPath } from '@core/effects/mask';
 
 /** `#rrggbb` (or `#rgb`) → the 0..255 channel a `_r`/`_g`/`_b` track carries. */
 function channelOf(color: string, suffix: string): number | undefined {
@@ -223,6 +224,14 @@ export function readStaticPropertyValue(nodeId: string, prop: string): number | 
   const effect = parseEffectPath(prop);
   if (effect) return readEffectValue(nodeId, effect);
 
+  const mk = parseMaskPropPath(prop);
+  if (mk) {
+    const path = getNodeMask(nodeId).paths.find((p) => p.id === mk.pathId);
+    if (!path) return undefined;
+    // Opacity is stored 0..1 and animated 0..100, like every other opacity.
+    return mk.key === 'opacity' ? path.opacity * 100 : path[mk.key];
+  }
+
   const op = parsePathOpPath(prop);
   if (op) {
     const found = readPathOps(node).find((o) => o.id === op.opId) as
@@ -271,6 +280,13 @@ export function writeStaticPropertyValue(nodeId: string, prop: string, value: nu
   const effect = parseEffectPath(prop);
   if (effect) return writeEffectValue(nodeId, effect, value);
 
+  const mk = parseMaskPropPath(prop);
+  if (mk) {
+    if (!getNodeMask(nodeId).paths.some((p) => p.id === mk.pathId)) return false;
+    updateMaskPath(nodeId, mk.pathId, { [mk.key]: mk.key === 'opacity' ? value / 100 : value });
+    return true;
+  }
+
   const op = parsePathOpPath(prop);
   if (op) {
     if (!readPathOps(node).some((o) => o.id === op.opId)) return false;
@@ -313,6 +329,9 @@ export function canWriteStaticPropertyValue(nodeId: string, prop: string): boole
     const param = effectDefFor(stored.type)?.params.find((p) => p.key === effect.key);
     return !param || param.type === 'number' || param.type === 'checkbox' || param.type === 'enum';
   }
+
+  const mk = parseMaskPropPath(prop);
+  if (mk) return getNodeMask(nodeId).paths.some((p) => p.id === mk.pathId);
 
   const op = parsePathOpPath(prop);
   if (op) return readPathOps(node).some((o) => o.id === op.opId);

@@ -650,7 +650,7 @@ export function DashboardPage(): JSX.Element {
             {/* Stats Summary Cards Row */}
             <div className={styles.statsGrid}>
               <div className={styles.statCard}>
-                <div className={styles.statIcon} style={{ background: 'rgba(41, 136, 255, 0.1)', color: 'var(--color-primary)' }}>
+                <div className={styles.statIcon} style={{ background: 'rgba(245, 176, 65, 0.12)', color: '#f5b041' }}>
                   <Icon name="folder" size="md" />
                 </div>
                 <div className={styles.statMeta}>
@@ -731,12 +731,12 @@ export function DashboardPage(): JSX.Element {
                   onClick={handleNewFolder}
                   title="Create new folder"
                 >
-                  <Icon name="folder-plus" size="md" />
+                  <Icon name="folder-plus" size="md" style={{ color: '#f5b041' }} />
                   <span>New Folder</span>
                 </button>
 
                 <label className={styles.btnSecondary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
-                  <Icon name="folder-open" size="md" />
+                  <Icon name="folder-open" size="md" style={{ color: '#f5b041' }} />
                   <span>Import Folder</span>
                   <input
                     type="file"
@@ -752,7 +752,7 @@ export function DashboardPage(): JSX.Element {
                 </label>
 
                 <label className={styles.btnPrimary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
-                  <Icon name="plus" size="md" />
+                  <Icon name="upload" size="md" style={{ color: '#ffffff' }} />
                   <span>{assetsBusy ? 'Uploading…' : 'Import Asset'}</span>
                   <input
                     type="file"
@@ -797,7 +797,7 @@ export function DashboardPage(): JSX.Element {
 
             {subfoldersInView.length === 0 && visibleAssetsInView.length === 0 ? (
               <div className={styles.emptyState}>
-                <Icon name="folder" size="lg" />
+                <Icon name="folder" size="lg" style={{ color: '#f5b041' }} />
                 <p>{currentFolderId === null ? 'No assets yet. Import files, upload a folder, or create a new folder.' : 'This folder is empty. Import assets or create subfolders here.'}</p>
               </div>
             ) : (
@@ -814,7 +814,7 @@ export function DashboardPage(): JSX.Element {
                       style={{ cursor: 'pointer' }}
                       onClick={() => { if (renamingFolderId !== folder.id) setCurrentFolderId(folder.id); }}
                     >
-                      <div className={styles.assetPreview} style={{ color: 'var(--color-primary)' }}>
+                      <div className={styles.assetPreview} style={{ color: '#f5b041' }}>
                         <Icon name="folder" size="lg" />
                       </div>
                       <div className={styles.assetMeta}>

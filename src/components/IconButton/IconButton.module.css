@@ -49,16 +49,16 @@
   box-shadow: var(--shadow-focus-ring);
 }
 
-/* Toggled/active state — blue fill, white icon. */
+/* Toggled/active state — icon color changes to primary, no heavy fill/border. */
 .root[data-active] {
-  background: var(--color-primary);
-  color: var(--color-primary-foreground);
+  background: transparent;
+  color: var(--color-primary);
   border-color: transparent;
 }
 
 .root[data-active]:hover:not(:disabled) {
-  background: var(--color-primary-hover);
-  color: var(--color-primary-foreground);
+  background: var(--ib-bg-hover);
+  color: var(--color-primary);
   border-color: transparent;
 }
 

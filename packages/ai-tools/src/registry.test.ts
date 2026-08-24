@@ -170,9 +170,9 @@ describe('the tool surface itself', () => {
     // 62 → 61: `set_text_on_path` removed. Nothing in the repository reads the
     // keys it wrote, so it spent a turn, reported success and changed nothing —
     // the budget above is exactly why a tool that cannot work is not free.
-    expect(ALL_TOOL_DEFS).toHaveLength(61);
+    expect(ALL_TOOL_DEFS).toHaveLength(65);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(8);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(37);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(41);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'compose')).toHaveLength(16);
   });
 
@@ -197,7 +197,7 @@ describe('the tool surface itself', () => {
     // 'write' silently drops the compose tools — and it was a literal 'write'
     // test that decided which calls appear in the user's pending-changes list.
     const mutating = ALL_TOOL_DEFS.filter((t) => mutates(t.kind));
-    expect(mutating).toHaveLength(53);
+    expect(mutating).toHaveLength(57);
     expect(mutating.map((t) => t.name)).toContain('add_title');
     expect(mutating.map((t) => t.name)).toContain('set_spring');
   });

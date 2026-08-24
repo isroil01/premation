@@ -414,6 +414,27 @@ describe('ExactVideoFrameCache', () => {
       }
     });
 
+    it('a mid-clip comp loop wrap restarts streaming for compositions shorter than source', async () => {
+      const { cache, readers } = streamHarness();
+      cache.get('a.mp4', 0);
+      await flush();
+      // Comp is only 20 frames long (out of 120 source frames).
+      for (let idx = 0; idx <= 20; idx++) {
+        cache.get('a.mp4', idx / FPS);
+        await flush();
+      }
+      await drain(10);
+      const initialReaders = readers.length;
+      // Loop back to frame 0 from frame 20.
+      cache.get('a.mp4', 0);
+      await flush();
+      await drain(10);
+      expect(readers.length).toBeGreaterThan(initialReaders);
+      const loopReader = readers[readers.length - 1]!;
+      expect(loopReader.from).toBe(0);
+      expect(loopReader.closed).toBe(false);
+    });
+
     it('test-stub sources without a demux never stream', async () => {
       const stub = stubSource();
       const readers: number[] = [];

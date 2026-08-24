@@ -56,13 +56,16 @@ backend service is not.
 | Projects | on disk, `.motion` bundle | cloud, with autosave |
 | Assets | on disk, content-addressed | cloud library |
 | Export | local ffmpeg | local ffmpeg |
-| AI assistant | not included | via the hosted gateway |
+| AI assistant | bring-your-own-key (OS keystore) | via the hosted gateway (BYOK keys stored server-side) |
 | Billing / sync / plugin registry | absent | available |
 
-**The local edition is the one to build from this repository.** It makes no
-network requests at all: the API layer refuses to send, so an offline build
-cannot quietly phone home. The `server` edition targets a backend service that
-is not part of this repository, so its cloud features will not work without one.
+**The local edition is the one to build from this repository.** It does not
+talk to a Motion backend: the API layer refuses those calls, so an offline build
+cannot quietly phone home for accounts or cloud projects. The assistant, when
+you connect your own provider key, reaches OpenAI / Anthropic / Gemini from the
+desktop shell — that is intentional BYOK, not telemetry. The `server` edition
+targets a backend service that is not part of this repository, so its cloud
+features will not work without one.
 
 Read the edition as a *capability*, never as a flag — see
 [`src/core/config/edition.ts`](src/core/config/edition.ts).
@@ -125,7 +128,7 @@ registry, this section is expected to drift, so re-check before quoting it.
 - 2D and 3D layers in one space, with cameras and lights (parenting included)
 - Masks, track mattes, blend modes, layer styles
 - Shape layers, paths, trim paths, repeaters, path operations
-- **174 effects** ([`src/core/effects/effects.ts`](src/core/effects/effects.ts))
+- **183 effects** ([`src/core/effects/effects.ts`](src/core/effects/effects.ts))
 
 **Animation**
 - Keyframes with full easing control and a graph editor
@@ -179,24 +182,18 @@ The editor contains a complete AI layer: **62 tools** it can call, an agent loop
 a deterministic "caster" pipeline that assembles motion from a hand-authored
 technique library, and a self-critique pass.
 
-**The local edition does not include it.** Not "disabled pending work" — the
-surface is absent: no panel in the sidebar, no commands, no settings tab, and no
-AI IPC registered in the desktop shell at all.
+**Both editions include it.** Keys never enter the renderer:
 
-That is a distribution decision, not a technical limit, and the previous wording
-here implied the opposite — so it is worth being exact. The bring-your-own-key
-path exists and works: the shell holds provider keys in the OS keystore and makes
-the model call from the main process, which is how a desktop build reaches a
-provider without the key ever entering renderer scope. None of that code was
-removed. `aiEnabled()` in `src/core/config/edition.ts` is the entire gate.
+- **Local** — you paste an OpenAI / Anthropic / Gemini key into Settings → AI.
+  The desktop shell stores it in the OS keystore (`safeStorage`) and makes the
+  provider call from the main process (`electron/aiProxy.ts`, including
+  `ai:image` for generated imagery).
+- **Server** — the same settings UI uploads the key to motion-back, which
+  encrypts it at rest and proxies `POST /ai/stream` / `POST /ai/image`.
 
-What it means for a build from this repository: **it makes no network requests at
-all.** The API layer refuses to send, and the one piece of code here that
-contacts a third-party host — the provider proxy — is never registered. That
-guarantee now holds in the main process rather than resting on the UI declining
-to offer a button.
-
-Everything else in the editor works fully offline.
+`aiEnabled()` in `src/core/config/edition.ts` is the surface gate (on in both
+editions). `aiRunsThroughBackend()` picks the transport. Everything else in the
+editor still works fully offline when you are not using the assistant.
 
 ## Repository layout
 

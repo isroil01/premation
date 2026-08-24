@@ -562,6 +562,32 @@ export interface Renderable {
     depth?: Float32Array;
   };
   /**
+   * Extruded solid geometry for a 3D layer with depth — side walls, bevel
+   * rings and caps as ONE indexed mesh with per-vertex normals (built by
+   * core/geometry/extrudeMesh.ts). Drawn through the depth-tested mesh path;
+   * each `range` is one material group with its own colour (a back cap may
+   * instead carry the layer's content via `textured`). `threeD.model` maps the
+   * mesh's layer-centred pixel frame straight to 3D comp space — unlike a quad
+   * renderable there is no unit-quad bridge. `key` identifies the geometry for
+   * GPU buffer caching and must change whenever the vertices do.
+   */
+  extrudedMesh?: {
+    key: string;
+    /** Interleaved position xyz, normal xyz, uv — 8 floats per vertex. */
+    vertices: Float32Array;
+    indices: Uint16Array | Uint32Array;
+    ranges: ReadonlyArray<{
+      role: 'front' | 'back' | 'side' | 'bevel';
+      first: number;
+      count: number;
+      color: Color;
+      /** Fixed brightness when the scene has no lights (AE's face shading). */
+      gain: number;
+      /** Sample the layer's own texture instead of the flat colour. */
+      textured?: boolean;
+    }>;
+  };
+  /**
    * True 3D placement (AE Classic-3D GPU path). `model` is the 16-number
    * column-major world matrix mapping the unit quad [0,1]² onto the layer's
    * plane in 3D comp space (the w×h + centre bridge already folded in). When
@@ -590,6 +616,8 @@ export interface Renderable {
       shininess: number;
       /** Metal 0..1: tints the highlight toward the layer's own colour. */
       metal?: number;
+      /** PBR roughness 0..1. Present ⇒ GGX model — see `Shade3D.roughness`. */
+      roughness?: number;
       /** Per-quad Lambert gain fallback (adapter-computed). */
       quadGain?: readonly [number, number, number];
       /** Light this surface from one side — see `Shade3D.oneSided`. Set by an

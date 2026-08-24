@@ -125,6 +125,33 @@ export function motionPathKeyframes(
   });
 }
 
+/**
+ * Samples of the trajectory at every composition frame (dt = 1 / fps).
+ * These correspond to AE's per-frame velocity tick dots along the motion path,
+ * where dot spacing provides instant visual feedback of velocity and easing.
+ */
+export function motionPathFrameSamples(
+  node: SceneNode,
+  fps = 30,
+  engine: AnimationEngine = defaultAnimation,
+): PathSample[] {
+  const span = positionSpan(node.id, engine);
+  if (!span || span.max <= span.min) return [];
+  const safeFps = Math.max(1, fps);
+  const dt = 1 / safeFps;
+  const sampler = positionSamplerFor(node, engine);
+  const out: PathSample[] = [];
+
+  const eps = 1e-5;
+  for (let t = span.min; t <= span.max + eps; t += dt) {
+    const clampedT = Math.min(span.max, t);
+    const p = sampler(clampedT);
+    out.push({ t: clampedT, x: p.x, y: p.y });
+    if (clampedT >= span.max - eps) break;
+  }
+  return out;
+}
+
 // ── Spatial bezier tangents (curved motion paths) ────────────────────
 
 /** One keyframe's tangent handles in comp space, at their EFFECTIVE positions

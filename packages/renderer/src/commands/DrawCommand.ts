@@ -35,6 +35,11 @@ export interface DrawItem {
   vertexBuffer?: BufferHandle;
   indexBuffer?: BufferHandle;
   indexCount?: number;
+  /** First index of the range to draw (default 0) — lets one shared index
+   *  buffer serve several material groups of the same mesh. */
+  firstIndex?: number;
+  /** Index element type (default 'uint16'). A mesh past 65535 vertices needs 32-bit. */
+  indexFormat?: 'uint16' | 'uint32';
 }
 
 export interface CommandBatch {

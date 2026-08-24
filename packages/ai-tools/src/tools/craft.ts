@@ -408,6 +408,84 @@ export const addPathMorphDef: AiToolDef = {
 
 // ── Generated imagery ─────────────────────────────────────────────
 
+export const generateVideoDef: AiToolDef = {
+  name: 'generate_video',
+  kind: 'write',
+  description:
+    'Generate a short video clip from a text description and place it on the canvas. ' +
+    'Use for b-roll, texture plates, or hero footage the user has not supplied. ' +
+    'COSTS REAL MONEY and takes 30–120 seconds — one clip per call, subject and look only, not layout.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['prompt'],
+    properties: {
+      id: ALIAS_PROP,
+      prompt: { type: 'string', description: 'What to depict and how it should look. 8–2000 characters.' },
+      durationSec: { type: 'number', description: 'Clip length in seconds (3–10). Defaults to 5.' },
+      x: { type: 'number', description: 'Centre X in comp px.' },
+      y: { type: 'number', description: 'Centre Y in comp px.' },
+    },
+  },
+};
+
+export const generateSpeechDef: AiToolDef = {
+  name: 'generate_speech',
+  kind: 'write',
+  description:
+    'Generate spoken voice-over from text and add it as an audio layer. ' +
+    'Use for narration, VO, or dialogue when no recording exists. COSTS REAL MONEY per call.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['text'],
+    properties: {
+      text: { type: 'string', description: 'The words to speak. 1–5000 characters.' },
+      voiceId: { type: 'string', description: 'Optional ElevenLabs voice id. Omit for the default voice.' },
+    },
+  },
+};
+
+export const generate3dModelDef: AiToolDef = {
+  name: 'generate_3d_model',
+  kind: 'write',
+  description:
+    'Generate a 3D model from a text description and import it into the asset library as GLB. ' +
+    'Use for product meshes, props, or logo extrusions. COSTS REAL MONEY and may take several minutes.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['prompt'],
+    properties: {
+      prompt: { type: 'string', description: 'Object to model — shape, material, style. 8–2000 characters.' },
+      name: { type: 'string', description: 'Asset name in the library.' },
+    },
+  },
+};
+
+export const exportVideoDef: AiToolDef = {
+  name: 'export_video',
+  kind: 'write',
+  description:
+    'Queue a Render Queue job for the current composition (default), or encode immediately. ' +
+    'Use when the user asks to export, render, or deliver the finished piece. Does not change the scene.',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      format: { type: 'string', enum: ['mp4', 'webm', 'gif'], default: 'mp4', description: 'Output container.' },
+      quality: { type: 'string', enum: ['high', 'medium', 'draft'], default: 'high', description: 'Encoder quality.' },
+      useWorkArea: { type: 'boolean', default: true, description: 'When true, export the timeline work area if set.' },
+      mode: {
+        type: 'string',
+        enum: ['queue', 'immediate'],
+        default: 'queue',
+        description: 'queue adds a Render Queue job; immediate encodes and downloads now.',
+      },
+    },
+  },
+};
+
 export const generateImageDef: AiToolDef = {
   name: 'generate_image',
   kind: 'write',
@@ -503,6 +581,10 @@ export const analyseAudioDef: AiToolDef = {
 
 export const LATE_TOOL_DEFS: readonly AiToolDef[] = [
   generateImageDef,
+  generateVideoDef,
+  generateSpeechDef,
+  generate3dModelDef,
+  exportVideoDef,
   importSvgDef,
   analyseAudioDef,
   applyLayerStyleDef,

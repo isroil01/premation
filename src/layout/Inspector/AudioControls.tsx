@@ -20,6 +20,7 @@ import { Switch } from '@components/Switch';
 import { Slider } from '@components/Slider';
 import { Popover } from '@components/Popover';
 import { Button } from '@components/Button';
+import { Icon } from '@components/Icon';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useClipRevision } from '@hooks/useClipRevision';
@@ -328,8 +329,10 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
           type="button"
           className={styles.convertBtn}
           title={`Write the loudness envelope as keyframes (${AUDIO_AMPLITUDE_PROP}, 0–100) — drive any property from it`}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
         >
-          Convert audio to keyframes…
+          <Icon name="keyframe" size={12} />
+          <span>Convert audio to keyframes…</span>
         </button>
       }
     >

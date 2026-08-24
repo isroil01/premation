@@ -357,7 +357,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
             title={linkedScale ? 'Unlink Scale dimensions' : 'Link Scale dimensions (Uniform Zoom)'}
             style={{ marginLeft: 6 }}
           >
-            <Icon name={linkedScale ? 'lock' : 'unlock'} size="sm" />
+            <Icon name={linkedScale ? 'lock' : 'unlock'} size={12} style={{ color: linkedScale ? '#f5b041' : 'inherit' }} />
           </button>
           {isScaleAnimated && <span className={styles.animatedDot} />}
           <span style={{ flex: 1 }} />

@@ -17,12 +17,8 @@
  * ── One honest limitation ───────────────────────────────────────────────────
  *
  * The desktop vault holds keys for the three providers the local proxy can
- * actually call: openai, anthropic, gemini. The media providers (fal, runway,
- * luma, tripo, meshy, elevenlabs) are cloud-only for now, because each needs its
- * own endpoint and auth scheme in `electron/aiProxy.ts` and a stored key that
- * nothing can spend is worse than no key — it renders as a connected provider
- * that fails on use. `supportsProviderLocally` is what the UI should ask so it can
- * say so plainly instead of offering a field that silently does nothing.
+ * actually call: openai, anthropic, gemini. Media providers (fal, elevenlabs,
+ * tripo) use a separate vault (`mediaKeyVault.ts`) and `mediaKeyStore.ts`.
  */
 
 import { api } from '@core/api/client';

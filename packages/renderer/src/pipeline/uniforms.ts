@@ -154,6 +154,14 @@ export interface Shade3D {
    */
   metal?: number;
   /**
+   * PBR roughness, 0..1. PRESENT selects the Cook-Torrance/GGX model in the
+   * shader; absent keeps Blinn-Phong. Packed into the shininess slot as a
+   * NEGATIVE number (−roughness) so the std140 shade tail keeps its layout —
+   * the same trick the lit flag uses for one-sided. A shininess can never be
+   * negative (the shader floors it at 1), so the sign is unambiguous.
+   */
+  roughness?: number;
+  /**
    * Light this surface from ONE side: `max(dot(N, L), 0)` instead of
    * `abs(dot(N, L))`.
    *
@@ -191,7 +199,9 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
   const lights = shade.lights.filter((l) => l.gain > 0).slice(0, MAX_LIGHTS3D);
   out[o + 0] = lights.length;
   out[o + 1] = shade.specular;
-  out[o + 2] = shade.shininess;
+  // −roughness selects GGX in the shader; see `Shade3D.roughness`. Clamped
+  // away from 0 so the sign survives: roughness 0 packs as −0.001.
+  out[o + 2] = shade.roughness !== undefined ? -Math.max(0.001, Math.min(1, shade.roughness)) : shade.shininess;
   // shadeParams.w — spare padding until now, so Metal costs no layout change.
   out[o + 3] = shade.metal ?? 0;
   o += 4;

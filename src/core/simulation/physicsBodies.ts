@@ -23,6 +23,8 @@ import {
   type PhysicsWorld,
 } from './rigidBody';
 import { renderComponentsOf } from '@core/scene/SceneGraph';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { bumpScene } from '@stores/sceneStore';
 import type { SceneNode } from '@core/types';
 
 /** Stored on the layer's fx component. */
@@ -50,6 +52,28 @@ export function readNodePhysicsRaw(node: SceneNode | undefined): PhysicsBodyConf
     }
   }
   return DEFAULT_PHYSICS_BODY;
+}
+
+/** True when the layer carries a physics prop (enabled or not). */
+export function nodeHasPhysics(node: SceneNode | undefined): boolean {
+  if (!node) return false;
+  for (const c of renderComponentsOf(node)) {
+    const raw = (c.props as Record<string, unknown>)[PHYSICS_PROP];
+    if (raw && typeof raw === 'object') return true;
+  }
+  return false;
+}
+
+/**
+ * Attach / enable a physics body on the layer (Effects browser → Simulation).
+ * Creates the fx component when the layer does not have one yet.
+ */
+export function enableNodePhysics(nodeId: string): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return;
+  const next = { ...readNodePhysicsRaw(node), enabled: true };
+  defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, next);
+  bumpScene();
 }
 
 interface Entry {

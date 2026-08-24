@@ -58,7 +58,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
     <div className={styles.root}>
       <div className={styles.headerCard}>
         <div className={styles.headerTitle}>
-          <Icon name="puppet-pin" size="md" />
+          <Icon name="puppet-pin" size={14} />
           <span>Puppet</span>
           <span className={styles.badge}>{pinCountLabel(pins.length)}</span>
         </div>
@@ -67,7 +67,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           variant="secondary"
           onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
         >
-          <Icon name="plus" size="sm" /> Add Pin
+          <Icon name="plus" size={12} /> Add Pin
         </Button>
       </div>
 
@@ -90,7 +90,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 })
               }
             >
-              🧍 Character (Tight)
+              <Icon name="user" size={12} />
+              <span>Character (Tight)</span>
             </button>
             <button
               type="button"
@@ -104,7 +105,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                 })
               }
             >
-              🎨 Graphic (Smooth)
+              <Icon name="shape" size={12} />
+              <span>Graphic (Smooth)</span>
             </button>
           </div>
         </div>
@@ -231,7 +233,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             onClick={() => useUIStore.getState().setActiveTool('puppet-pin')}
             style={{ marginTop: 8 }}
           >
-            <Icon name="puppet-pin" size="sm" /> Puppet Pin Tool (Ctrl+P)
+            <Icon name="puppet-pin" size="sm" style={{ color: '#ffffff' }} /> Puppet Pin Tool (Ctrl+P)
           </Button>
         </div>
       )}
@@ -271,7 +273,12 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                     })
                   }
                 >
-                  {isAnchored ? '🔒 Locked' : '⚓ Anchor'}
+                  <Icon
+                    name={isAnchored ? 'lock' : 'anchor'}
+                    size={11}
+                    style={{ color: isAnchored ? '#f5b041' : 'inherit' }}
+                  />
+                  <span>{isAnchored ? 'Locked' : 'Anchor'}</span>
                 </button>
                 <Button
                   size="sm"
@@ -280,7 +287,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
                   aria-label={`Delete pin ${pin.name || pin.id}`}
                   title="Delete pin"
                 >
-                  <Icon name="trash" size="sm" />
+                  <Icon name="trash" size={12} />
                 </Button>
               </div>
             </div>

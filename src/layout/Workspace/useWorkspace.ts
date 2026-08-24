@@ -46,6 +46,7 @@ import {
   hasPositionAnimation,
   motionPathSamples,
   motionPathKeyframes,
+  motionPathFrameSamples,
   motionPathTangents,
   setPathTangent,
   positionSamplerFor,
@@ -316,6 +317,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
      *  cached on the first pass are not blitted on the second. */
     let playbackLoopRev = 0;
     let lastPlaybackFrame = -1;
+    /** Last frame written into the RAM preview this play-through. Used to fill
+     *  skipped frames when the playhead outruns rendering (the green cache bar
+     *  used to read as disconnected dots). */
+    let lastPlaybackPutFrame = -1;
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
 
     const isMediaDecodeRepaint = (nodeId?: string): boolean => {
@@ -362,10 +367,17 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : null;
       const playing = tab?.playing === true;
       b.setPlaybackMode?.(playing);
+      if (!playing && useRenderQualityStore.getState().slowPlayback) {
+        // Stopped: back to the chosen quality for the frame the user is looking at.
+        useRenderQualityStore.getState().setSlowPlayback(false);
+      }
       const fps = compRef.current.fps || 60;
       const frame = Math.round(timeRef.current * fps);
       if (playing) {
-        if (lastPlaybackFrame >= 0 && frame < lastPlaybackFrame) playbackLoopRev += 1;
+        if (lastPlaybackFrame >= 0 && frame < lastPlaybackFrame) {
+          playbackLoopRev += 1;
+          lastPlaybackPutFrame = -1;
+        }
         lastPlaybackFrame = frame;
       }
       // Everything that changes pixels goes in the key; a change clears the RAM
@@ -399,7 +411,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         compRef.current.id, compRef.current.width, compRef.current.height, fps,
         playbackLoopRev,
         camera3dModeRef.current, draft3dRef.current ? 1 : 0,
-        useRenderQualityStore.getState().resolution,
+        useRenderQualityStore.getState().effectiveResolution(),
         view.scale, view.offsetX, view.offsetY,
         ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridSpacing, ov.gridSubdivisions, ov.gridStyle, ov.gridColor, ov.proportionalGrid ? 1 : 0, ov.proportionalColumns, ov.proportionalRows, ov.safeArea ? 1 : 0,
         mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
@@ -423,6 +435,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             ctx.clearRect(0, 0, cacheCanvas.width, cacheCanvas.height);
             ctx.drawImage(hit, 0, 0);
             cacheCanvas.classList.add(cacheVisibleClass);
+            lastPlaybackPutFrame = frame;
             renderCache.mark(timeRef.current);
             paintChrome();
             return;
@@ -482,12 +495,28 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // thing in it when this function returns.
       onionPainter.paint(renderAt, frame, fps, playing, invalidationKey);
 
-      renderAt(timeRef.current);
-
-      // Offer the freshly rendered frame to the RAM preview. Copying FROM a
-      // WebGL canvas into a 2D one is allowed (the reverse is not), and it must
-      // happen in this same task, before the drawing buffer is composited away.
-      if (playing) viewportFrameCache.put(frame, content);
+      if (playing) {
+        // Catch up any frames the playhead skipped while the last render was
+        // still in flight — otherwise the cache bar shows one green dot per
+        // cached frame with gaps between them.
+        const catchFrom = lastPlaybackPutFrame >= 0 ? lastPlaybackPutFrame + 1 : frame;
+        const maxCatchUp = 15;
+        const from = catchFrom <= frame && frame - catchFrom + 1 > maxCatchUp
+          ? frame - maxCatchUp + 1
+          : catchFrom;
+        const renderStart = performance.now();
+        for (let f = from; f <= frame; f++) {
+          renderAt(f / fps);
+          viewportFrameCache.put(f, content);
+        }
+        lastPlaybackPutFrame = frame;
+        // Adaptive Resolution for PLAYBACK: a heavy comp's first pass renders
+        // at the floor instead of dropping frames, so the RAM preview fills at
+        // something close to real time. See `reportPlaybackFrame`.
+        useRenderQualityStore.getState().reportPlaybackFrame(performance.now() - renderStart, 1000 / fps);
+      } else {
+        renderAt(timeRef.current);
+      }
 
       renderCache.mark(timeRef.current);
       paintChrome();
@@ -508,7 +537,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Preview resolution (Full/Half/Third/Quarter) scales only the CONTENT
       // buffer — overlay chrome and interaction math stay at full dpr so
       // handles/rulers remain crisp and hit-testing is unaffected.
-      const previewRes = useRenderQualityStore.getState().resolution || 1;
+      // `effectiveResolution`, not `resolution`: Adaptive Resolution drops the
+      // buffer during a drag and this is the one place the buffer is sized.
+      const previewRes = useRenderQualityStore.getState().effectiveResolution() || 1;
       backend.resize(rect.width, rect.height, dpr / previewRes);
       overlay.width = Math.max(1, Math.round(rect.width * dpr));
       overlay.height = Math.max(1, Math.round(rect.height * dpr));
@@ -576,10 +607,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // Re-size the content buffer when the preview-resolution dropdown changes
     // (sizeAll re-reads the store), so Full/Half/Third/Quarter takes effect in
     // the main editor viewport — not just Presentation mode.
-    let lastPreviewRes = useRenderQualityStore.getState().resolution;
+    // Keyed on the EFFECTIVE resolution so a drag's degrade and its release
+    // both resize the buffer — the adaptive path has no other way in.
+    let lastPreviewRes = useRenderQualityStore.getState().effectiveResolution();
     const qualitySub = useRenderQualityStore.subscribe((s) => {
-      if (s.resolution !== lastPreviewRes) {
-        lastPreviewRes = s.resolution;
+      const eff = s.effectiveResolution();
+      if (eff !== lastPreviewRes) {
+        lastPreviewRes = eff;
         sizeAll();
       }
     });
@@ -627,6 +661,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       wasPlaying = playing;
       if (!playing) {
         lastPlaybackFrame = -1;
+        lastPlaybackPutFrame = -1;
         cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
         controller.requestRender();
       }
@@ -2492,21 +2527,37 @@ function paintMotionPath(
     }
   }
 
-  // Keyframe dots, at the size the user chose. `motionPathDots` also had no
-  // reader: the radius was hardcoded to 3.5 and 'off' still drew them, so all
-  // four menu entries were inert.
-  const dotRadius =
-    guides.motionPathDots === 'small' ? 2.5
-    : guides.motionPathDots === 'large' ? 5.5
-    : 3.5; // 'medium'
+  // Per-frame velocity tick dots (AE-style speed spacing) and keyframe markers.
   if (guides.motionPathDots !== 'off') {
+    const fps = useCompositionStore.getState().fps || 30;
+    const frameDotRadius =
+      guides.motionPathDots === 'small' ? 1.25
+      : guides.motionPathDots === 'large' ? 2.25
+      : 1.75; // 'medium'
+
+    const kfRadius =
+      guides.motionPathDots === 'small' ? 3.5
+      : guides.motionPathDots === 'large' ? 5.5
+      : 4.5; // 'medium'
+
+    // 1. Draw per-frame velocity tick dots along the trajectory
+    const frameSamples = motionPathFrameSamples(node, fps);
+    ctx.fillStyle = 'rgba(160, 205, 255, 0.9)';
+    for (const f of frameSamples) {
+      const s = toS(f);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, frameDotRadius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 2. Draw keyframe markers (distinct larger dots with white center & blue border)
     for (const k of motionPathKeyframes(node)) {
       const s = toS(k);
       ctx.beginPath();
-      ctx.arc(s.x, s.y, dotRadius, 0, Math.PI * 2);
+      ctx.arc(s.x, s.y, kfRadius, 0, Math.PI * 2);
       ctx.fillStyle = '#fff';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(120,170,255,1)';
+      ctx.strokeStyle = 'rgba(100, 160, 255, 1)';
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }

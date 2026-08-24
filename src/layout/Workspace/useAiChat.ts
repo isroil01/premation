@@ -21,6 +21,13 @@ import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { casterPacks } from '@core/ai/CasterRunner';
 import { api, isAuthenticated, type AiConversationSummary } from '@core/api/client';
+import { aiRunsThroughBackend } from '@core/config/edition';
+import {
+  appendLocalMessages,
+  deleteLocalConversation,
+  getLocalConversation,
+  listLocalConversations,
+} from '@core/ai/localConversations';
 
 export interface ChatMessage {
   role: 'user' | 'assistant';
@@ -116,6 +123,10 @@ const TOOL_ACTIVITY: Record<string, string> = {
   // Named, and named honestly: this one takes seconds and costs credits, so
   // "Working" would leave the user watching a spinner with no idea why.
   generate_image: 'Generating imagery',
+  generate_video: 'Generating video',
+  generate_speech: 'Generating voice-over',
+  generate_3d_model: 'Generating a 3D model',
+  export_video: 'Queueing export',
   import_svg: 'Drawing vectors',
   create_media_from_attachment: 'Placing media',
   create_mask: 'Masking',
@@ -456,35 +467,64 @@ export function useAiChat(): UseAiChat {
   }, []);
 
   const refreshConversations = useCallback(async () => {
-    if (!isAuthenticated()) return;
-    try {
-      const bound = useCloudProjectStore.getState().projectId;
-      setConversations((await api.listConversations(bound ?? undefined, { limit: 50 })).items);
-    } catch {
-      /* the history list is a convenience — never surface a failure */
+    const bound = useCloudProjectStore.getState().projectId;
+    const useCloud = aiRunsThroughBackend() && isAuthenticated() && !!bound;
+    if (useCloud) {
+      try {
+        setConversations((await api.listConversations(bound ?? undefined, { limit: 50 })).items);
+      } catch {
+        /* the history list is a convenience — never surface a failure */
+      }
+      return;
     }
+    const local = listLocalConversations(bound ?? 'local');
+    setConversations(
+      local.map((c) => ({
+        id: c.id,
+        title: c.title ?? c.messages.find((m) => m.role === 'user')?.content.slice(0, 60) ?? 'Chat',
+        projectId: bound ?? 'local',
+        createdAt: new Date(c.updatedAt).toISOString(),
+        updatedAt: new Date(c.updatedAt).toISOString(),
+      })),
+    );
   }, []);
 
   /** Load a stored thread into the panel and the model-facing history. */
   const hydrate = useCallback(async (id: string): Promise<boolean> => {
-    try {
-      const conv = await api.getConversation(id);
-      setMessages(conv.messages.map((m) => ({
-        role: m.role,
-        text: m.content,
-        error: m.isError || undefined,
-      })));
-      // Failed turns are warnings for the user, not prose the model said —
-      // replaying them would pollute its context with error copy.
-      history.current = conv.messages
-        .filter((m) => !m.isError)
-        .map((m) => ({ role: m.role, content: m.content } as AiMessage));
-      conversationId.current = id;
-      setActiveId(id);
-      return true;
-    } catch {
-      return false;
+    const bound = useCloudProjectStore.getState().projectId;
+    const useCloud = aiRunsThroughBackend() && isAuthenticated() && !!bound;
+    if (useCloud) {
+      try {
+        const conv = await api.getConversation(id);
+        setMessages(conv.messages.map((m) => ({
+          role: m.role,
+          text: m.content,
+          error: m.isError || undefined,
+        })));
+        history.current = conv.messages
+          .filter((m) => !m.isError)
+          .map((m) => ({ role: m.role, content: m.content } as AiMessage));
+        conversationId.current = id;
+        setActiveId(id);
+        return true;
+      } catch {
+        return false;
+      }
     }
+
+    const conv = getLocalConversation(id);
+    if (!conv) return false;
+    setMessages(conv.messages.map((m) => ({
+      role: m.role,
+      text: m.content,
+      error: m.isError || undefined,
+    })));
+    history.current = conv.messages
+      .filter((m) => !m.isError)
+      .map((m) => ({ role: m.role, content: m.content } as AiMessage));
+    conversationId.current = id;
+    setActiveId(id);
+    return true;
   }, []);
 
   // On project switch: show the thread list and reopen the last-used thread.
@@ -504,7 +544,12 @@ export function useAiChat(): UseAiChat {
     conversationId.current = null;
     setActiveId(null);
 
-    if (!projectId) return;
+    if (!projectId) {
+      void refreshConversations();
+      const stored = readLocal(convKey('local'));
+      if (stored) void hydrate(stored);
+      return;
+    }
 
     void refreshConversations();
 
@@ -532,8 +577,20 @@ export function useAiChat(): UseAiChat {
   const persist = useCallback(
     async (turns: { role: 'user' | 'assistant'; content: string; isError?: boolean }[]) => {
       const bound = useCloudProjectStore.getState().projectId;
-      if (!bound || !turns.length) return;
+      if (!turns.length) return;
       const id = conversationId.current ?? newConversationId();
+      const useCloud = aiRunsThroughBackend() && isAuthenticated() && !!bound;
+
+      if (!useCloud) {
+        const projectKey = bound ?? 'local';
+        appendLocalMessages(id, projectKey, turns, turns[0]?.content.slice(0, 60));
+        conversationId.current = id;
+        setActiveId(id);
+        writeLocal(convKey(projectKey), id);
+        void refreshConversations();
+        return;
+      }
+
       try {
         await api.appendMessages(id, {
           messages: turns,
@@ -542,7 +599,7 @@ export function useAiChat(): UseAiChat {
         });
         conversationId.current = id;
         setActiveId(id);
-        writeLocal(convKey(bound), id);
+        writeLocal(convKey(bound!), id);
         void refreshConversations();
       } catch {
         /* history is a convenience, not the product */
@@ -617,7 +674,7 @@ export function useAiChat(): UseAiChat {
     conversationId.current = null;
     setActiveId(null);
     const bound = useCloudProjectStore.getState().projectId;
-    if (bound) writeLocal(convKey(bound), null);
+    writeLocal(convKey(bound ?? 'local'), null);
   }, []);
 
   const openConversation = useCallback(async (id: string) => {
@@ -625,15 +682,21 @@ export function useAiChat(): UseAiChat {
     const ok = await hydrate(id);
     if (ok) {
       const bound = useCloudProjectStore.getState().projectId;
-      if (bound) writeLocal(convKey(bound), id);
+      writeLocal(convKey(bound ?? 'local'), id);
     }
   }, [busy, hydrate]);
 
   const removeConversation = useCallback(async (id: string) => {
-    try {
-      await api.deleteConversation(id);
-    } catch {
-      /* already gone is as good as deleted */
+    const bound = useCloudProjectStore.getState().projectId;
+    const useCloud = aiRunsThroughBackend() && isAuthenticated() && !!bound;
+    if (useCloud) {
+      try {
+        await api.deleteConversation(id);
+      } catch {
+        /* already gone is as good as deleted */
+      }
+    } else {
+      deleteLocalConversation(id);
     }
     if (conversationId.current === id) newChat();
     void refreshConversations();

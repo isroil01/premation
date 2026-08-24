@@ -6,6 +6,9 @@
  * and presets). This panel is only the applied stack: enable, reset, params.
  * Preset chips do not belong here — they are things you APPLY, and applying
  * is the right panel's job.
+ *
+ * Simulation modifiers (Cloner / Physics) and shape path ops also land here
+ * once attached from the Effects browser — same "add there, edit here" split.
  */
 
 import { EmptyState } from '@components/EmptyState';
@@ -15,7 +18,12 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getNodeEffects } from '@core/effects/effects';
+import { readPathOps } from '@core/scene/pathOps';
+import { nodeHasCloner } from '@core/scene/clonerExpand';
+import { nodeHasPhysics } from '@core/simulation/physicsBodies';
 import { PathOpControls } from '@layout/Inspector/PathOpControls';
+import { ClonerSection } from '@layout/Inspector/ClonerSection';
+import { PhysicsSection } from '@layout/Inspector/PhysicsSection';
 import { EffectStack } from './EffectStack';
 import styles from './EffectsPanel.module.css';
 
@@ -36,6 +44,10 @@ export function EffectControlsPanel(): JSX.Element {
 
   const count = getNodeEffects(primary).length;
   const layerName = node.name?.trim() || primary;
+  const hasPathOps = readPathOps(node).length > 0;
+  const hasCloner = nodeHasCloner(node);
+  const hasPhysics = nodeHasPhysics(node);
+  const hasAnything = count > 0 || hasPathOps || hasCloner || hasPhysics;
 
   return (
     <div className={styles.controlsRoot}>
@@ -50,12 +62,12 @@ export function EffectControlsPanel(): JSX.Element {
       </div>
 
       <div className={styles.controlsBody}>
-        {count === 0 ? (
+        {!hasAnything ? (
           <EmptyState
             compact
             icon="magic-wand"
             title="No effects"
-            message="Add blurs, colour grades and stylize effects from the Effects panel on the right."
+            message="Add blurs, colour grades, Cloner or Physics from the Effects panel on the right."
             action={
               <Button size="sm" onClick={() => useLayoutStore.getState().openPanel('effects')}>
                 Browse Effects
@@ -63,9 +75,13 @@ export function EffectControlsPanel(): JSX.Element {
             }
           />
         ) : (
-          <EffectStack nodeId={primary} />
+          <>
+            {count > 0 && <EffectStack nodeId={primary} />}
+            <PathOpControls nodeId={primary} />
+            {hasCloner && <ClonerSection nodeId={primary} />}
+            {hasPhysics && <PhysicsSection nodeId={primary} />}
+          </>
         )}
-        <PathOpControls nodeId={primary} />
       </div>
     </div>
   );

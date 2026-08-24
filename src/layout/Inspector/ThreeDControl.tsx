@@ -25,6 +25,7 @@ import {
   setNodeShadowMode,
   setNodeShininess,
   setNodeSpecular,
+  setNodeShadingModel,
   MATERIAL_PCT_DEFAULTS,
 } from '@core/scene/material';
 
@@ -199,24 +200,48 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
                 value={material.diffuse}
                 onChange={(v) => setNodeMaterialPct(nodeId, 'diffuse', v, MATERIAL_PCT_DEFAULTS.diffuse)}
               />
+              {/* Reflectance model. Phong is the original look and the
+                  default; Physical is Cook-Torrance/GGX — AE's Advanced 3D
+                  model — where Roughness replaces Shininess and Metal means
+                  "reflects its own colour, no diffuse". */}
+              <div className={styles.row}>
+                <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Shading</span>
+                <select
+                  value={material.shading}
+                  onChange={(e) => setNodeShadingModel(nodeId, e.currentTarget.value === 'pbr' ? 'pbr' : 'phong')}
+                  aria-label="Shading model"
+                  style={{ width: 90, fontSize: 'var(--font-size-xs)' }}
+                >
+                  <option value="phong">Phong</option>
+                  <option value="pbr">Physical (PBR)</option>
+                </select>
+              </div>
               <MaterialSlider
                 label="Specular"
                 value={material.specular}
                 onChange={(v) => setNodeSpecular(nodeId, v)}
               />
-              <div className={styles.row}>
-                <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Shininess</span>
-                <input
-                  type="range"
-                  min={1}
-                  max={128}
-                  step={1}
-                  value={material.shininess}
-                  onChange={(e) => setNodeShininess(nodeId, Number(e.currentTarget.value))}
-                  aria-label="Shininess"
-                  style={{ width: 90 }}
+              {material.shading === 'pbr' ? (
+                <MaterialSlider
+                  label="Roughness"
+                  value={material.roughness}
+                  onChange={(v) => setNodeMaterialPct(nodeId, 'roughness', v, MATERIAL_PCT_DEFAULTS.roughness)}
                 />
-              </div>
+              ) : (
+                <div className={styles.row}>
+                  <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Shininess</span>
+                  <input
+                    type="range"
+                    min={1}
+                    max={128}
+                    step={1}
+                    value={material.shininess}
+                    onChange={(e) => setNodeShininess(nodeId, Number(e.currentTarget.value))}
+                    aria-label="Shininess"
+                    style={{ width: 90 }}
+                  />
+                </div>
+              )}
               <MaterialSlider
                 label="Metal"
                 value={material.metal}
@@ -224,8 +249,9 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
               />
               {/* Metal only shows up in the highlight, so it reads as dead
                   unless Specular is up. Say so rather than letting the slider
-                  look broken. */}
-              {material.specular === 0 && (
+                  look broken. (Under PBR a metal also loses its diffuse, so it
+                  is never invisible there.) */}
+              {material.specular === 0 && material.shading !== 'pbr' && (
                 <p style={{ margin: '0 0 4px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
                   Metal tints the specular highlight — raise Specular to see it.
                 </p>
