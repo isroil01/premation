@@ -21,7 +21,9 @@ describe('layoutCacheBarSegments', () => {
       0,
     );
     expect(segments).toHaveLength(2);
-    expect(segments[0].left + segments[0].width).toBeGreaterThanOrEqual(segments[1].left);
+    const a = segments[0]!;
+    const b = segments[1]!;
+    expect(a.left + a.width).toBeGreaterThanOrEqual(b.left);
   });
 
   it('preserves real multi-frame gaps as separate segments', () => {
@@ -34,7 +36,9 @@ describe('layoutCacheBarSegments', () => {
       0,
     );
     expect(segments).toHaveLength(2);
-    expect(segments[0].left + segments[0].width).toBeLessThan(segments[1].left);
+    const a = segments[0]!;
+    const b = segments[1]!;
+    expect(a.left + a.width).toBeLessThan(b.left);
   });
 });
 

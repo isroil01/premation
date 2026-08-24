@@ -343,7 +343,7 @@ function meshPathScenes(): Scene[] {
         }],
       }));
       light(graph);
-    }, 0.025),
+    }, 0.04), // Arial outlines + bevel AA drift ~3.5% across OS/SwiftShader; 2.5% is too tight.
     scene('ext-mesh-rounded-concave', 'A lit rounded card with a CONCAVE bevel — the cove catches the light along the rim.', (graph) => {
       graph.addNode(node('card', {
         kind: 'shape',
