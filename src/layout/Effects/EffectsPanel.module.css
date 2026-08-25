@@ -42,21 +42,19 @@
   border-color: var(--color-border-strong);
 }
 
-/* Section heading. Uppercase micro is the app's chrome-label convention and the
-   one place --font-size-micro is legitimate: caps height plus tracking carry it
-   where lowercase at this size would not (see tokens/typography.css). */
 .sectionTitle {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-3);
   padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-border-subtle);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-border, #000000);
+  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold, 700);
+  color: var(--color-text-primary, #e1e1e1);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
 }
 
 .sectionTitle:first-child {
@@ -256,6 +254,87 @@
   gap: var(--space-2);
 }
 
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Favourites star on a BrowserRow — not a nested <button> (row is already one).
+   Always visible (muted); starred rows keep the accent colour. Hover on the
+   BrowserRow cannot style this from another CSS module, so we do not hide it. */
+.fxStar,
+.fxStarFilter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.fxStarFilter {
+  opacity: 1;
+  border: 1px solid var(--color-border);
+}
+
+.fxStarOn {
+  composes: fxStar;
+  opacity: 1;
+  color: var(--color-accent);
+}
+
+.fxStarFilterOn {
+  composes: fxStarFilter;
+  color: var(--color-accent);
+  background: var(--color-selected);
+  border-color: var(--color-accent);
+}
+
+.fxStar:hover,
+.fxStarFilter:hover {
+  opacity: 1;
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.fxStar:focus-visible,
+.fxStarFilter:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-accent));
+  outline-offset: 1px;
+}
+
+/* Effect Controls header label-colour swatch (AE-style). */
+.labelSwatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.labelSwatch:hover {
+  border-color: var(--color-text-secondary);
+}
+
+.labelSwatch:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-accent));
+  outline-offset: 1px;
+}
+
 .hint {
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
@@ -324,16 +403,20 @@
 .effectCardItem {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border, #000000);
 }
 
 .effectCardHead {
   display: flex;
   align-items: center;
   gap: 4px;
-  min-height: 22px;
+  min-height: 26px;
   padding: 2px 8px 2px 4px;
   user-select: none;
+  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: var(--font-weight-semibold, 600);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
 }
 
 .effectCardHead:hover {
@@ -357,10 +440,10 @@
 .fxMark {
   flex: none;
   width: 14px;
-  font-family: var(--font-family-mono);
+  font-family: 'Courier New', Courier, monospace, var(--font-family-mono);
   font-size: var(--font-size-xs);
   font-style: italic;
-  font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-bold, 700);
   line-height: 1;
   color: var(--color-primary);
   text-align: center;
@@ -396,6 +479,12 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  border-bottom: 1px solid var(--color-border, #000000);
+  padding: 1px 0;
+}
+
+.paramLine:last-child {
+  border-bottom: none;
 }
 
 .paramLineHead {
@@ -496,6 +585,7 @@
 .paramGroup {
   display: flex;
   flex-direction: column;
+  border-bottom: 1px solid var(--color-border, #000000);
 }
 
 .paramGroupHead {
@@ -503,13 +593,15 @@
   align-items: center;
   gap: 4px;
   width: 100%;
-  padding: 3px 0;
+  padding: 4px 0;
   background: none;
   border: 0;
+  border-bottom: 1px solid var(--color-border, #000000);
   cursor: pointer;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
+  font-size: 11.5px;
+  font-weight: var(--font-weight-semibold, 600);
   text-align: left;
 }
 

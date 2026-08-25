@@ -29,6 +29,8 @@ interface PersistedLayout {
   leftSidebarPosition?: 'left' | 'right';
   rightInspectorPosition?: 'left' | 'right';
   timelinePosition?: 'bottom' | 'top';
+  leftSidebarSplit?: boolean;
+  rightInspectorSplit?: boolean;
 }
 
 function loadPersistedLayout(): PersistedLayout | null {
@@ -47,7 +49,9 @@ function saveLayout(
   activePanelByRegion: Partial<Record<RegionId, string>>,
   leftSidebarPosition?: 'left' | 'right',
   rightInspectorPosition?: 'left' | 'right',
-  timelinePosition?: 'bottom' | 'top'
+  timelinePosition?: 'bottom' | 'top',
+  leftSidebarSplit?: boolean,
+  rightInspectorSplit?: boolean,
 ): void {
   try {
     const data: PersistedLayout = {
@@ -57,6 +61,8 @@ function saveLayout(
       leftSidebarPosition,
       rightInspectorPosition,
       timelinePosition,
+      leftSidebarSplit,
+      rightInspectorSplit,
     };
     localStorage.setItem(LAYOUT_PERSIST_KEY, JSON.stringify(data));
   } catch {
@@ -76,7 +82,9 @@ function applyPersistedToRegions(regions: LayoutMap, saved: Partial<Record<Regio
 
 export type RegionId =
   | 'leftSidebar'
+  | 'leftSidebar_bottom'
   | 'rightInspector'
+  | 'rightInspector_bottom'
   | 'centerWorkspace'
   | 'bottomTimeline';
 
@@ -136,11 +144,13 @@ export type LayoutMap = Record<RegionId, RegionState>;
 export interface WorkspaceLayoutInput {
   name: string;
   regions: Partial<Record<RegionId, { size: number; collapsed: boolean }>>;
-  panelOrder?: Record<RegionId, ReadonlyArray<string>>;
+  panelOrder?: Partial<Record<RegionId, ReadonlyArray<string>>>;
   activePanelByRegion?: Partial<Record<RegionId, string>>;
   leftSidebarPosition?: 'left' | 'right';
   rightInspectorPosition?: 'left' | 'right';
   timelinePosition?: 'bottom' | 'top';
+  leftSidebarSplit?: boolean;
+  rightInspectorSplit?: boolean;
 }
 
 interface LayoutActions {
@@ -160,6 +170,12 @@ interface LayoutActions {
   setRegionSize(region: RegionId, size: number): void;
   toggleRegion(region: RegionId): void;
   setCollapsed(region: RegionId, collapsed: boolean): void;
+  /** Split a sidebar into two stacked vertical panes (top & bottom). */
+  splitSidebar(side: 'left' | 'right'): void;
+  /** Unsplit a sidebar, merging bottom panels back to the top dock. */
+  unsplitSidebar(side: 'left' | 'right'): void;
+  /** Toggle split state of a sidebar. */
+  toggleSidebarSplit(side: 'left' | 'right'): void;
   /** Apply a saved workspace layout (region sizes + collapsed states + tab assignments). */
   applyWorkspaceLayout(layout: WorkspaceLayoutInput): void;
   resetLayout(): void;
@@ -181,13 +197,17 @@ export interface LayoutStore {
   leftSidebarPosition: 'left' | 'right';
   rightInspectorPosition: 'left' | 'right';
   timelinePosition: 'bottom' | 'top';
+  leftSidebarSplit: boolean;
+  rightInspectorSplit: boolean;
 }
 
 const DEFAULT_REGIONS: LayoutMap = {
-  leftSidebar:     { collapsed: false, size: 340, minSize: 320, maxSize: 640 },
-  rightInspector:  { collapsed: false, size: 340, minSize: 300, maxSize: 640 },
-  centerWorkspace: { collapsed: false, size: 0,   minSize: 0,   maxSize: 0   },
-  bottomTimeline:  { collapsed: false, size: 260, minSize: 120, maxSize: 600 },
+  leftSidebar:           { collapsed: false, size: 340, minSize: 320, maxSize: 640 },
+  leftSidebar_bottom:    { collapsed: false, size: 340, minSize: 320, maxSize: 640 },
+  rightInspector:        { collapsed: false, size: 340, minSize: 300, maxSize: 640 },
+  rightInspector_bottom: { collapsed: false, size: 340, minSize: 300, maxSize: 640 },
+  centerWorkspace:       { collapsed: false, size: 0,   minSize: 0,   maxSize: 0   },
+  bottomTimeline:        { collapsed: false, size: 260, minSize: 120, maxSize: 600 },
 };
 
 // Merge any persisted region state on top of defaults at module load time.
@@ -204,7 +224,9 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     // every sidebar tab twice.
     panelOrder: {
       leftSidebar: [...new Set(_persisted?.panelOrder?.leftSidebar ?? [])],
+      leftSidebar_bottom: [...new Set(_persisted?.panelOrder?.leftSidebar_bottom ?? [])],
       rightInspector: [...new Set(_persisted?.panelOrder?.rightInspector ?? [])],
+      rightInspector_bottom: [...new Set(_persisted?.panelOrder?.rightInspector_bottom ?? [])],
       // Only the two sidebars host panels. Any ids persisted into the center or
       // bottom (timeline) regions by the old move code are orphans — nothing
       // renders them — so drop them; the panels re-register into their home
@@ -217,6 +239,8 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     leftSidebarPosition: _persisted?.leftSidebarPosition ?? 'left',
     rightInspectorPosition: _persisted?.rightInspectorPosition ?? 'right',
     timelinePosition: _persisted?.timelinePosition ?? 'bottom',
+    leftSidebarSplit: _persisted?.leftSidebarSplit ?? false,
+    rightInspectorSplit: _persisted?.rightInspectorSplit ?? false,
 
     registerPanel: (panel) =>
       set((s) => {
@@ -229,7 +253,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
           return;
         }
         const persistedRegion = (Object.keys(s.panelOrder) as RegionId[]).find((r) =>
-          s.panelOrder[r].includes(panel.id),
+          s.panelOrder[r]?.includes(panel.id),
         );
         const region = persistedRegion ?? panel.region;
         s.panels[panel.id] = {
@@ -241,9 +265,12 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         
         // Strip this id from all regions first to guarantee no cross-dock duplicates
         for (const rKey of Object.keys(s.panelOrder) as RegionId[]) {
-          s.panelOrder[rKey] = s.panelOrder[rKey].filter((id) => id !== panel.id);
+          if (s.panelOrder[rKey]) {
+            s.panelOrder[rKey] = s.panelOrder[rKey].filter((id) => id !== panel.id);
+          }
         }
         
+        if (!s.panelOrder[region]) s.panelOrder[region] = [];
         s.panelOrder[region].push(panel.id);
         if (!s.activePanelByRegion[region]) {
           s.activePanelByRegion[region] = panel.id;
@@ -256,10 +283,12 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         const p = s.panels[panelId];
         if (!p) return;
         delete s.panels[panelId];
-        s.panelOrder[p.region] = s.panelOrder[p.region].filter((id) => id !== panelId);
+        if (s.panelOrder[p.region]) {
+          s.panelOrder[p.region] = s.panelOrder[p.region].filter((id) => id !== panelId);
+        }
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
         if (s.activePanelByRegion[p.region] === panelId) {
-          s.activePanelByRegion[p.region] = s.panelOrder[p.region][0];
+          s.activePanelByRegion[p.region] = s.panelOrder[p.region]?.[0];
         }
         getEventBus().emit('PanelClosed', { panelId });
       }),
@@ -268,7 +297,9 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         const p = s.panels[panelId];
         if (!p) return;
-        s.regions[p.region].collapsed = false;
+        const mainRegion = p.region.startsWith('leftSidebar') ? 'leftSidebar' : p.region.startsWith('rightInspector') ? 'rightInspector' : p.region;
+        s.regions[mainRegion].collapsed = false;
+        if (!s.panelOrder[p.region]) s.panelOrder[p.region] = [];
         if (!s.panelOrder[p.region].includes(panelId)) {
           s.panelOrder[p.region].push(panelId);
         }
@@ -280,10 +311,12 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         const p = s.panels[panelId];
         if (!p) return;
-        s.panelOrder[p.region] = s.panelOrder[p.region].filter((id) => id !== panelId);
+        if (s.panelOrder[p.region]) {
+          s.panelOrder[p.region] = s.panelOrder[p.region].filter((id) => id !== panelId);
+        }
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
         if (s.activePanelByRegion[p.region] === panelId) {
-          s.activePanelByRegion[p.region] = s.panelOrder[p.region][0];
+          s.activePanelByRegion[p.region] = s.panelOrder[p.region]?.[0];
         }
         getEventBus().emit('PanelClosed', { panelId });
       }),
@@ -291,7 +324,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     togglePanel: (panelId) => {
       const p = get().panels[panelId];
       if (!p) return;
-      if (get().panelOrder[p.region].includes(panelId)) {
+      if (get().panelOrder[p.region]?.includes(panelId)) {
         get().closePanel(panelId);
       } else {
         get().openPanel(panelId);
@@ -301,7 +334,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     reorderPanel: (panelId: string, toIndex: number) => {
       set((s) => {
         const panel = s.panels[panelId];
-        if (!panel) return;
+        if (!panel || !s.panelOrder[panel.region]) return;
         const order = [...s.panelOrder[panel.region]];
         const fromIndex = order.indexOf(panelId);
         if (fromIndex === -1) return;
@@ -323,7 +356,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
 
         if (fromRegion === toRegion) {
-          const order = [...s.panelOrder[fromRegion]];
+          const order = [...(s.panelOrder[fromRegion] || [])];
           const fromIndex = order.indexOf(panelId);
           if (fromIndex === -1) return;
           order.splice(fromIndex, 1);
@@ -332,6 +365,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         } else {
           // Remove from ALL regions completely so no duplicate version remains
           for (const rKey of Object.keys(s.panelOrder) as RegionId[]) {
+            if (!s.panelOrder[rKey]) continue;
             const oldLen = s.panelOrder[rKey].length;
             s.panelOrder[rKey] = s.panelOrder[rKey].filter((id) => id !== panelId);
             if (s.panelOrder[rKey].length !== oldLen && s.activePanelByRegion[rKey] === panelId) {
@@ -340,10 +374,15 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
           }
           
           panel.region = toRegion;
-          const toOrder = [...(s.panelOrder[toRegion] || [])];
+          if (!s.panelOrder[toRegion]) s.panelOrder[toRegion] = [];
+          const toOrder = [...s.panelOrder[toRegion]];
           toOrder.splice(toIndex, 0, panelId);
           s.panelOrder[toRegion] = toOrder;
           s.activePanelByRegion[toRegion] = panelId;
+
+          // Auto-activate split flag if moving to a bottom dock
+          if (toRegion === 'leftSidebar_bottom') s.leftSidebarSplit = true;
+          if (toRegion === 'rightInspector_bottom') s.rightInspectorSplit = true;
         }
       });
       getEventBus().emit('LayoutChanged', undefined);
@@ -357,6 +396,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         panel.placement = 'docked';
         panel.region = targetRegion;
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
+        if (!s.panelOrder[targetRegion]) s.panelOrder[targetRegion] = [];
         if (!s.panelOrder[targetRegion].includes(panelId)) {
           s.panelOrder[targetRegion].push(panelId);
         }
@@ -381,20 +421,87 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     setRegionSize: (region, size) =>
       set((s) => {
         const r = s.regions[region];
+        if (!r) return;
         r.size = clamp(size, r.minSize, r.maxSize);
         getEventBus().emit('PanelResized', { panelId: region, size: r.size });
       }),
 
     toggleRegion: (region) =>
       set((s) => {
-        s.regions[region].collapsed = !s.regions[region].collapsed;
-        getEventBus().emit('PanelResized', { panelId: region, size: s.regions[region].size });
+        const r = s.regions[region];
+        if (!r) return;
+        r.collapsed = !r.collapsed;
+        getEventBus().emit('PanelResized', { panelId: region, size: r.size });
       }),
 
     setCollapsed: (region, collapsed) =>
       set((s) => {
-        s.regions[region].collapsed = collapsed;
+        if (s.regions[region]) {
+          s.regions[region].collapsed = collapsed;
+        }
       }),
+
+    splitSidebar: (side) =>
+      set((s) => {
+        const topRegion: RegionId = side === 'left' ? 'leftSidebar' : 'rightInspector';
+        const bottomRegion: RegionId = side === 'left' ? 'leftSidebar_bottom' : 'rightInspector_bottom';
+        if (side === 'left') s.leftSidebarSplit = true;
+        else s.rightInspectorSplit = true;
+
+        if (!s.panelOrder[topRegion]) s.panelOrder[topRegion] = [];
+        if (!s.panelOrder[bottomRegion]) s.panelOrder[bottomRegion] = [];
+
+        const topOrder = [...s.panelOrder[topRegion]];
+        const bottomOrder = [...s.panelOrder[bottomRegion]];
+
+        // If bottom dock is empty and top dock has at least 2 panels, move the second half down
+        if (bottomOrder.length === 0 && topOrder.length >= 2) {
+          const splitIdx = Math.ceil(topOrder.length / 2);
+          const movingDown = topOrder.slice(splitIdx);
+          s.panelOrder[topRegion] = topOrder.slice(0, splitIdx);
+          s.panelOrder[bottomRegion] = movingDown;
+          for (const id of movingDown) {
+            if (s.panels[id]) s.panels[id].region = bottomRegion;
+          }
+          if (!s.activePanelByRegion[bottomRegion] && movingDown.length > 0) {
+            s.activePanelByRegion[bottomRegion] = movingDown[0];
+          }
+          if (s.activePanelByRegion[topRegion] && movingDown.includes(s.activePanelByRegion[topRegion]!)) {
+            s.activePanelByRegion[topRegion] = s.panelOrder[topRegion][0];
+          }
+        } else if (bottomOrder.length > 0 && !s.activePanelByRegion[bottomRegion]) {
+          s.activePanelByRegion[bottomRegion] = bottomOrder[0];
+        }
+        getEventBus().emit('LayoutChanged', undefined);
+      }),
+
+    unsplitSidebar: (side) =>
+      set((s) => {
+        const topRegion: RegionId = side === 'left' ? 'leftSidebar' : 'rightInspector';
+        const bottomRegion: RegionId = side === 'left' ? 'leftSidebar_bottom' : 'rightInspector_bottom';
+        if (side === 'left') s.leftSidebarSplit = false;
+        else s.rightInspectorSplit = false;
+
+        const bottomOrder = s.panelOrder[bottomRegion] || [];
+        if (bottomOrder.length > 0) {
+          const newTopOrder = [...(s.panelOrder[topRegion] || []), ...bottomOrder];
+          s.panelOrder[topRegion] = [...new Set(newTopOrder)];
+          s.panelOrder[bottomRegion] = [];
+          for (const id of bottomOrder) {
+            if (s.panels[id]) s.panels[id].region = topRegion;
+          }
+        }
+        getEventBus().emit('LayoutChanged', undefined);
+      }),
+
+    toggleSidebarSplit: (side) => {
+      const isSplit = side === 'left' ? get().leftSidebarSplit : get().rightInspectorSplit;
+      if (isSplit) {
+        get().unsplitSidebar(side);
+      } else {
+        get().splitSidebar(side);
+      }
+    },
 
     applyWorkspaceLayout: (layout) =>
       set((s) => {
@@ -408,7 +515,14 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         
         if (layout.panelOrder) {
           // Reset all arrays to ensure clean non-duplicated placement across regions
-          s.panelOrder = { leftSidebar: [], rightInspector: [], centerWorkspace: [], bottomTimeline: [] };
+          s.panelOrder = {
+            leftSidebar: [],
+            leftSidebar_bottom: [],
+            rightInspector: [],
+            rightInspector_bottom: [],
+            centerWorkspace: [],
+            bottomTimeline: [],
+          };
           for (const [regionId, order] of Object.entries(layout.panelOrder)) {
             const rId = regionId as RegionId;
             const uniqueOrder = [...new Set(order)];
@@ -430,6 +544,8 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         if (layout.leftSidebarPosition) s.leftSidebarPosition = layout.leftSidebarPosition;
         if (layout.rightInspectorPosition) s.rightInspectorPosition = layout.rightInspectorPosition;
         if (layout.timelinePosition) s.timelinePosition = layout.timelinePosition;
+        if (layout.leftSidebarSplit !== undefined) s.leftSidebarSplit = layout.leftSidebarSplit;
+        if (layout.rightInspectorSplit !== undefined) s.rightInspectorSplit = layout.rightInspectorSplit;
 
         getEventBus().emit('LayoutChanged', undefined);
       }),
@@ -441,15 +557,20 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         s.leftSidebarPosition = 'left';
         s.rightInspectorPosition = 'right';
         s.timelinePosition = 'bottom';
+        s.leftSidebarSplit = false;
+        s.rightInspectorSplit = false;
         s.panelOrder = {
           leftSidebar: [],
+          leftSidebar_bottom: [],
           rightInspector: [],
+          rightInspector_bottom: [],
           centerWorkspace: [],
           bottomTimeline: [],
         };
         for (const p of Object.values(s.panels)) {
-          const home = p.homeRegion ?? p.region;
+          const home = p.homeRegion ?? (p.region.startsWith('leftSidebar') ? 'leftSidebar' : p.region.startsWith('rightInspector') ? 'rightInspector' : p.region);
           p.region = home;
+          if (!s.panelOrder[home]) s.panelOrder[home] = [];
           if (!s.panelOrder[home].includes(p.id)) {
             s.panelOrder[home].push(p.id);
           }
@@ -506,7 +627,7 @@ useLayoutStore.subscribe((state) => {
   }
 });
 
-// Persist the full layout (regions, panelOrder, activePanelByRegion) to
+// Persist the full layout (regions, panelOrder, activePanelByRegion, split states) to
 // localStorage so the workspace survives page refresh / Electron restart.
 let _lastLayoutSig = '';
 useLayoutStore.subscribe((state) => {
@@ -520,6 +641,8 @@ useLayoutStore.subscribe((state) => {
     leftPos: state.leftSidebarPosition,
     rightPos: state.rightInspectorPosition,
     timePos: state.timelinePosition,
+    leftSplit: state.leftSidebarSplit,
+    rightSplit: state.rightInspectorSplit,
   });
   if (sig === _lastLayoutSig) return;
   _lastLayoutSig = sig;
@@ -529,9 +652,12 @@ useLayoutStore.subscribe((state) => {
     state.activePanelByRegion,
     state.leftSidebarPosition,
     state.rightInspectorPosition,
-    state.timelinePosition
+    state.timelinePosition,
+    state.leftSidebarSplit,
+    state.rightInspectorSplit,
   );
 });
 
 export const usePanel = (panelId: string): PanelRegistration | undefined =>
   useLayoutStore((s) => s.panels[panelId]);
+

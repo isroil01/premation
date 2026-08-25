@@ -58,8 +58,15 @@ import {
   LAYER_STYLE_NUMBER_PARAMS,
   LAYER_STYLE_COLOR_PARAMS,
   type LayerStyles,
+  type StrokeStylePosition,
 } from '@core/effects/layerStyles';
 import styles from './EffectsPanel.module.css';
+
+const STROKE_POSITIONS: { id: StrokeStylePosition; label: string }[] = [
+  { id: 'outside', label: 'Outside' },
+  { id: 'inside', label: 'Inside' },
+  { id: 'center', label: 'Center' },
+];
 
 /** Animation prop path for one numeric layer-style field. */
 function stylePath(style: keyof LayerStyles, field: string): string | null {
@@ -254,6 +261,16 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
           onChange={(angle) => update({ globalLightAngle: angle })}
           aria-label="Global light angle value"
         />
+        <span className={styles.blendLabel} style={{ marginLeft: 8 }}>Altitude</span>
+        <ValueField
+          value={light.altitude}
+          min={0}
+          max={90}
+          precision={0}
+          unit="°"
+          onChange={(altitude) => update({ globalLightAltitude: altitude })}
+          aria-label="Global light altitude"
+        />
       </div>
 
       {/* GLASS — first, because it is a MATERIAL rather than a decoration: the
@@ -394,6 +411,11 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
             <StyleNum nodeId={nodeId} path={stylePath('dropShadow', 'blur')}
               label="Blur" value={ds.blur} min={0} max={200} unit="px"
               onChange={(v) => updateDropShadow(nodeId, { blur: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('dropShadow', 'spread')}
+              label="Spread" value={ds.spread ?? 0} min={0} max={100} unit="%"
+              onChange={(v) => updateDropShadow(nodeId, { spread: v })} />
+          </div>
+          <div className={styles.maskControls}>
             <StyleNum nodeId={nodeId} path={stylePath('dropShadow', 'opacity')}
               label="Opacity" value={Math.round(ds.opacity * 100)} min={0} max={100} unit="%"
               onChange={(v) => updateDropShadow(nodeId, { opacity: v / 100 })} />
@@ -421,6 +443,11 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
             <StyleNum nodeId={nodeId} path={stylePath('outerGlow', 'size')}
               label="Size" value={og.size} min={0} max={200} unit="px"
               onChange={(v) => updateOuterGlow(nodeId, { size: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('outerGlow', 'spread')}
+              label="Spread" value={og.spread ?? 0} min={0} max={100} unit="%"
+              onChange={(v) => updateOuterGlow(nodeId, { spread: v })} />
+          </div>
+          <div className={styles.maskControls}>
             <StyleNum nodeId={nodeId} path={stylePath('outerGlow', 'opacity')}
               label="Opacity" value={Math.round(og.opacity * 100)} min={0} max={100} unit="%"
               onChange={(v) => updateOuterGlow(nodeId, { opacity: v / 100 })} />
@@ -577,16 +604,20 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
             <StyleColor nodeId={nodeId} path={styleColorPath('bevel', 'highlightColor')}
               label="Bevel highlight color" value={bev.highlightColor}
               onChange={(highlightColor) => updateBevel(nodeId, { highlightColor })} />
-            <ValueField value={Math.round(bev.highlightOpacity * 100)} min={0} max={100} precision={0} unit="%"
-              onChange={(v) => updateBevel(nodeId, { highlightOpacity: v / 100 })} aria-label="Bevel highlight opacity" />
+            <StyleNum nodeId={nodeId} path={stylePath('bevel', 'highlightOpacity')} bare
+              label="Bevel highlight opacity" value={Math.round(bev.highlightOpacity * 100)}
+              min={0} max={100} unit="%"
+              onChange={(v) => updateBevel(nodeId, { highlightOpacity: v / 100 })} />
           </div>
           <div className={styles.blendRow}>
             <span className={styles.blendLabel}>Shadow</span>
             <StyleColor nodeId={nodeId} path={styleColorPath('bevel', 'shadowColor')}
               label="Bevel shadow color" value={bev.shadowColor}
               onChange={(shadowColor) => updateBevel(nodeId, { shadowColor })} />
-            <ValueField value={Math.round(bev.shadowOpacity * 100)} min={0} max={100} precision={0} unit="%"
-              onChange={(v) => updateBevel(nodeId, { shadowOpacity: v / 100 })} aria-label="Bevel shadow opacity" />
+            <StyleNum nodeId={nodeId} path={stylePath('bevel', 'shadowOpacity')} bare
+              label="Bevel shadow opacity" value={Math.round(bev.shadowOpacity * 100)}
+              min={0} max={100} unit="%"
+              onChange={(v) => updateBevel(nodeId, { shadowOpacity: v / 100 })} />
           </div>
           <div className={styles.blendRow}>
             <Checkbox
@@ -685,20 +716,46 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
         />
       </div>
       {stk ? (
-        <div className={styles.maskControls}>
-          <label className={styles.maskField}>
-            <span>Color</span>
-            <StyleColor nodeId={nodeId} path={styleColorPath('stroke', 'color')}
-              label="Stroke style color" value={stk.color}
-              onChange={(color) => updateStrokeStyle(nodeId, { color })} />
-          </label>
-          <StyleNum nodeId={nodeId} path={stylePath('stroke', 'size')}
-            label="Size" value={stk.size} min={0} max={200} unit="px"
-            onChange={(v) => updateStrokeStyle(nodeId, { size: v })} />
-          <StyleNum nodeId={nodeId} path={stylePath('stroke', 'opacity')}
-            label="Opacity" value={Math.round(stk.opacity * 100)} min={0} max={100} unit="%"
-            onChange={(v) => updateStrokeStyle(nodeId, { opacity: v / 100 })} />
-        </div>
+        <>
+          <div className={styles.maskControls}>
+            <label className={styles.maskField}>
+              <span>Color</span>
+              <StyleColor nodeId={nodeId} path={styleColorPath('stroke', 'color')}
+                label="Stroke style color" value={stk.color}
+                onChange={(color) => updateStrokeStyle(nodeId, { color })} />
+            </label>
+            <StyleNum nodeId={nodeId} path={stylePath('stroke', 'size')}
+              label="Size" value={stk.size} min={0} max={200} unit="px"
+              onChange={(v) => updateStrokeStyle(nodeId, { size: v })} />
+            <StyleNum nodeId={nodeId} path={stylePath('stroke', 'opacity')}
+              label="Opacity" value={Math.round(stk.opacity * 100)} min={0} max={100} unit="%"
+              onChange={(v) => updateStrokeStyle(nodeId, { opacity: v / 100 })} />
+          </div>
+          <div className={styles.blendRow}>
+            <span className={styles.blendLabel}>Position</span>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {STROKE_POSITIONS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={styles.blendLabel}
+                  aria-pressed={(stk.position ?? 'outside') === p.id}
+                  style={{
+                    opacity: (stk.position ?? 'outside') === p.id ? 1 : 0.55,
+                    textDecoration: (stk.position ?? 'outside') === p.id ? 'underline' : 'none',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '0 2px',
+                  }}
+                  onClick={() => updateStrokeStyle(nodeId, { position: p.id })}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
       ) : null}
     </>
   );

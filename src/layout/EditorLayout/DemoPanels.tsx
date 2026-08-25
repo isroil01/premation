@@ -24,6 +24,7 @@ import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
 import { customConfirm } from '@components/Modal';
 import { isLibraryAsset, useAssetStore, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
+import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
 import { ParentControl } from '@layout/Inspector/ParentControl';
 import { PrecompControl } from '@layout/Inspector/PrecompControl';
 import { TextAnimatorControls } from '@layout/Inspector/TextAnimatorControls';
@@ -31,7 +32,12 @@ import { AudioControls } from '@layout/Inspector/AudioControls';
 import { TransformSection } from '@layout/Inspector/TransformSection';
 import { AppearanceSection } from '@layout/Inspector/AppearanceSection';
 import { AlignSection } from '@layout/Inspector/AlignSection';
-import { TextSection } from '@layout/Inspector/TextSection';
+import { CharacterPanel } from '@layout/Inspector/CharacterPanel';
+import { ParagraphPanel } from '@layout/Inspector/ParagraphPanel';
+import { AlignPanel } from '@layout/Inspector/AlignPanel';
+import { InfoAudioPanel } from '@layout/Inspector/InfoAudioPanel';
+import { PreviewPanel } from '@layout/Inspector/PreviewPanel';
+import { TrackerPanel } from '@layout/Inspector/TrackerPanel';
 import { StylePresetsSection } from '@layout/Inspector/StylePresetsSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
 import { TrackMotionSection } from '@layout/Inspector/TrackMotionSection';
@@ -646,31 +652,7 @@ function formatBytes(bytes: number): string {
  * Supports importing files or a whole folder (which mirrors its structure), and
  * dragging assets between folders.
  */
-/**
- * Asset kind → the glyph and the word for it.
- *
- * Explorer's model: the icon says what KIND of thing this is, and the Type
- * column says it in words for anyone who does not read the glyph. Neither is a
- * preview — see the note on the asset row about why thumbnails came out.
- */
-const ASSET_TYPE_ICON: Record<string, IconName> = {
-  image: 'image',
-  video: 'video',
-  audio: 'audio',
-};
 
-const ASSET_TYPE_LABEL: Record<string, string> = {
-  image: 'Image',
-  video: 'Video',
-  audio: 'Audio',
-};
-
-/** Per-kind colour class — see `.assetGlyphImage` and friends for the why. */
-const ASSET_TYPE_CLASS: Record<string, string> = {
-  image: styles.assetGlyphImage ?? '',
-  video: styles.assetGlyphVideo ?? '',
-  audio: styles.assetGlyphAudio ?? '',
-};
 
 export function AssetsPanel(): JSX.Element {
   const assets = useAssetStore((s) => s.assets);
@@ -1105,6 +1087,9 @@ export function AssetsPanel(): JSX.Element {
         if (m.hasAudioTrack) parts.push('audio');
         parts.push(formatBytes(singleSelectedAsset.size));
 
+        const visual = getAssetVisualInfo(singleSelectedAsset);
+        const glyphClass = (styles as Record<string, string>)[visual.className] ?? styles.assetGlyphFile;
+
         return (
           <div className={`${styles.assetHeaderCard} ${styles.assetMetaFooter}`} data-asset-meta="">
             <div className={styles.assetHeaderThumb}>
@@ -1112,9 +1097,10 @@ export function AssetsPanel(): JSX.Element {
                 <img src={singleSelectedAsset.thumbSrc} alt={singleSelectedAsset.name} className={styles.assetHeaderThumbImg} />
               ) : (
                 <Icon
-                  name={ASSET_TYPE_ICON[singleSelectedAsset.type] ?? 'file'}
+                  name={visual.icon}
                   size="md"
-                  className={`${styles.assetGlyph} ${ASSET_TYPE_CLASS[singleSelectedAsset.type] ?? styles.assetGlyphFile}`}
+                  className={`${styles.assetGlyph} ${glyphClass}`}
+                  style={{ color: visual.color }}
                 />
               )}
             </div>
@@ -1233,7 +1219,12 @@ export function AssetsPanel(): JSX.Element {
                     size="sm"
                     className={styles.assetTwisty}
                   />
-                  <Icon name={expandedFolders.has(row.folder.id) ? 'folder-open' : 'folder'} size="md" className={styles.assetGlyphFolder} />
+                  <Icon
+                    name={expandedFolders.has(row.folder.id) ? 'folder-open' : 'folder'}
+                    size="md"
+                    className={styles.assetGlyphFolder}
+                    style={{ color: FOLDER_COLOR }}
+                  />
                   {renamingId === row.folder.id ? (
                     <input
                       autoFocus
@@ -1252,32 +1243,37 @@ export function AssetsPanel(): JSX.Element {
                   <span className={styles.assetRowType}>Folder</span>
                   <span className={styles.assetRowSize} />
                 </div>
-              ) : (
-                <div
-                  key={row.key}
-                  role="treeitem"
-                  className={`${styles.assetRow}${selectedAssetIds.has(row.asset.id) ? ` ${styles.assetRowSelected}` : ''}`}
-                  style={{ paddingLeft: 8 + row.depth * 16 + (searching ? 0 : 16) }}
-                  title={row.asset.name}
-                  draggable
-                  onClick={(e) => selectAsset(row.asset.id, e, orderedAssetIds)}
-                  onDoubleClick={() => openFootagePreview(row.asset)}
-                  onContextMenu={(e) => openAssetMenu(row.asset, e)}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData('text/asset-id', row.asset.id);
-                    setCanvasDrag(e, { kind: 'asset', assetId: row.asset.id });
-                  }}
-                >
-                  <Icon
-                    name={ASSET_TYPE_ICON[row.asset.type] ?? 'file'}
-                    size="md"
-                    className={`${styles.assetGlyph} ${ASSET_TYPE_CLASS[row.asset.type] ?? styles.assetGlyphFile}`}
-                  />
-                  <span className={styles.assetRowName}>{row.asset.name}</span>
-                  <span className={styles.assetRowType}>{ASSET_TYPE_LABEL[row.asset.type] ?? 'File'}</span>
-                  <span className={styles.assetRowSize}>{formatBytes(row.asset.size)}</span>
-                </div>
-              ),
+              ) : (() => {
+                const visual = getAssetVisualInfo(row.asset);
+                const glyphClass = (styles as Record<string, string>)[visual.className] ?? styles.assetGlyphFile;
+                return (
+                  <div
+                    key={row.key}
+                    role="treeitem"
+                    className={`${styles.assetRow}${selectedAssetIds.has(row.asset.id) ? ` ${styles.assetRowSelected}` : ''}`}
+                    style={{ paddingLeft: 8 + row.depth * 16 + (searching ? 0 : 16) }}
+                    title={row.asset.name}
+                    draggable
+                    onClick={(e) => selectAsset(row.asset.id, e, orderedAssetIds)}
+                    onDoubleClick={() => openFootagePreview(row.asset)}
+                    onContextMenu={(e) => openAssetMenu(row.asset, e)}
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData('text/asset-id', row.asset.id);
+                      setCanvasDrag(e, { kind: 'asset', assetId: row.asset.id });
+                    }}
+                  >
+                    <Icon
+                      name={visual.icon}
+                      size="md"
+                      className={`${styles.assetGlyph} ${glyphClass}`}
+                      style={{ color: visual.color }}
+                    />
+                    <span className={styles.assetRowName}>{row.asset.name}</span>
+                    <span className={styles.assetRowType}>{visual.label}</span>
+                    <span className={styles.assetRowSize}>{formatBytes(row.asset.size)}</span>
+                  </div>
+                );
+              })(),
             )}
           </div>
         )}
@@ -1308,7 +1304,7 @@ export function AssetsPanel(): JSX.Element {
             }
           }}
         >
-          <Icon name="component" size="sm" />
+          <Icon name="component" size="sm" style={{ color: singleSelectedAsset && singleSelectedAsset.type !== 'audio' ? '#818cf8' : undefined }} />
         </button>
 
         <button
@@ -1317,7 +1313,7 @@ export function AssetsPanel(): JSX.Element {
           title="New Folder"
           onClick={handleNewFolder}
         >
-          <Icon name="folder-plus" size="sm" style={{ color: '#f5b041' }} />
+          <Icon name="folder-plus" size="sm" style={{ color: FOLDER_COLOR }} />
         </button>
 
         <button
@@ -1326,7 +1322,7 @@ export function AssetsPanel(): JSX.Element {
           title="Import Folder (keeps folder structure)…"
           onClick={() => folderInputRef.current?.click()}
         >
-          <Icon name="folder-open" size="sm" style={{ color: '#f5b041' }} />
+          <Icon name="folder-open" size="sm" style={{ color: FOLDER_COLOR }} />
         </button>
 
         <button
@@ -1335,7 +1331,7 @@ export function AssetsPanel(): JSX.Element {
           title="Import Media Files…"
           onClick={() => fileInputRef.current?.click()}
         >
-          <Icon name="upload" size="sm" />
+          <Icon name="upload" size="sm" style={{ color: '#38bdf8' }} />
         </button>
 
         {derivedCount > 0 && (
@@ -1740,10 +1736,6 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
 
   // ── How it looks ───────────────────────────────────────────────
   if (kind === 'text') {
-    items.push({
-      id: 'text', title: 'Text', icon: 'type', defaultOpen: true,
-      content: <TextSection nodeId={nodeId} />,
-    });
     items.push({
       id: 'animators', title: 'Text Animators', icon: 'sparkles',
       content: <TextAnimatorControls nodeId={nodeId} />,
@@ -2567,6 +2559,12 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     assets:    () => <AssetsPanel />,
     presets: () => <MotionPresetsPanel />,
     properties: () => <PropertiesPanel />,
+    character: () => <CharacterPanel />,
+    paragraph: () => <ParagraphPanel />,
+    align: () => <AlignPanel />,
+    info: () => <InfoAudioPanel />,
+    preview: () => <PreviewPanel />,
+    tracker: () => <TrackerPanel />,
     rig: () => <RigPanel />,
     motion: () => <MotionEditorPanel />,
     effects: () => <EffectsPanel />,

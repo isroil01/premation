@@ -825,13 +825,10 @@ function Timeline({
   }, [rows, trackHeight, rowDragOver, onTrackReorder]);
 
   // ── Multi-keyframe selection ────────────────────────────────────────────────
-  const [selectedKfIds, setSelectedKfIds] = useState<Set<string>>(new Set());
-  // Mirror the selection into a store so sibling surfaces (the timeline easing
-  // pills in BottomTimeline) can act on the same keyframes.
-  const syncKfSelection = useKeyframeSelectionStore((s) => s.set);
-  useEffect(() => {
-    syncKfSelection(selectedKfIds);
-  }, [selectedKfIds, syncKfSelection]);
+  // Shared with GraphEditor / F9 / easing pills — store is the source of truth
+  // (not a one-way mirror from local state, which would wipe graph selections).
+  const selectedKfIds = useKeyframeSelectionStore((s) => s.ids);
+  const setSelectedKfIds = useKeyframeSelectionStore((s) => s.set);
   const activeKf = useRef<{
     ids: string[];
     times: Map<string, number>;
@@ -1148,17 +1145,17 @@ function Timeline({
               <span className={styles.colHeadItem}><Icon name="lock" size="sm" title="Lock" /></span>
             </div>
             <span className={styles.colHeadLayer}>
-              <span style={{ color: '#888888', marginRight: 4 }} aria-hidden>#</span>
-              <span>Source Name</span>
+              <span className={styles.colHeadIndex} aria-hidden>#</span>
+              <span className={styles.colHeadLayerLabel}>Source Name</span>
               <button
                 type="button"
+                className={styles.colHeadPopOut}
                 onClick={() => {
                   const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
                   window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
                 }}
                 title="Pop Out Timeline into Separate Window"
                 aria-label="Pop out timeline into a separate window"
-                style={{ background: 'transparent', border: 'none', color: 'rgba(255, 255, 255, 0.6)', cursor: 'pointer', padding: 2, marginLeft: 6, display: 'inline-flex' }}
               >
                 <Icon name="export" size="sm" />
               </button>
@@ -1170,11 +1167,11 @@ function Timeline({
                 live switch is worse than no legend. */}
             <span className={styles.colHeadAeSwitches} aria-hidden>
               <span className={styles.colHeadItem}><Icon name="shy" size="sm" title="Shy" /></span>
-              <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects" style={{ fontSize: 'var(--font-size-sm)' }}>fx</span></span>
+              <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects">fx</span></span>
               <span className={styles.colHeadItem}><Icon name="motion-blur" size="sm" title="Motion Blur" /></span>
               <span className={styles.colHeadItem}><Icon name="adjustment" size="sm" title="Adjustment Layer" /></span>
               <span className={styles.colHeadItem}><Icon name="frame" size="sm" title="Guide Layer (not rendered)" /></span>
-              <span className={styles.colHeadItem}><span className={styles.fxText} title="Preserve Underlying Transparency" style={{ fontSize: 'var(--font-size-sm)' }}>T</span></span>
+              <span className={styles.colHeadItem}><span className={styles.fxText} title="Preserve Underlying Transparency">T</span></span>
               <span className={styles.colHeadItem}><Icon name="3d" size="sm" title="3D Layer" /></span>
             </span>
             <span className={styles.colHeadMode}>Mode</span>

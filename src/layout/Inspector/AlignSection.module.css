@@ -4,6 +4,18 @@
   padding-top: 16px;
 }
 
+.panelRoot {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--color-panel, #232323);
+  color: var(--color-text-primary, #e1e1e1);
+}
+
 .header {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);

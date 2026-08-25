@@ -5,7 +5,7 @@
   background: color-mix(in srgb, var(--color-toolbar) 85%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 2px solid #000000;
   user-select: none;
   position: relative;
   z-index: 100;
@@ -245,12 +245,7 @@
  * Viewport toggles — Rulers, Safe Areas, the ground plane, bounding boxes.
  *
  * `.tool` and `.toolActive` are ONE button in two states, so they share one
- * geometry block. They used to be two independent rules that happened to agree,
- * and the copy had drifted: the active one carried no `:hover` and no
- * `:active`, so the moment you turned Rulers ON the button stopped responding
- * to the pointer — it lit up and then behaved like a label. Turning a toggle
- * back off is exactly as common as turning it on, and that was the state with
- * no affordance at all.
+ * geometry block.
  */
 .tool,
 .toolActive {
@@ -274,7 +269,7 @@
   color: var(--color-text-primary);
 }
 
-/* ON: Icon color changes to primary, no heavy bluish fill or border. */
+/* ON: Active state highlights icon color without background/border fill */
 .toolActive {
   background: transparent;
   color: var(--color-primary);

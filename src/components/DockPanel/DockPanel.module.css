@@ -5,236 +5,283 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-panel);
+  background: var(--color-panel, #232323);
+  position: relative;
+  overflow: hidden;
 }
 
-.rightInspectorRoot {
-  flex-direction: row !important;
-}
-
-.leftSidebarRoot {
-  flex-direction: row !important;
-}
-
-.leftSidebarRoot .tabsCol {
-  border-left: none;
-  border-right: 1px solid var(--color-border);
-  padding-left: 4px;
-}
-
-
-.tabsRow {
+/* ── AE Horizontal Panel Tab Strip ────────────────────────────────── */
+.headerBar {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-  background: color-mix(in srgb, var(--color-panel-header) 85%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--color-border);
-  flex: none;
-  min-height: 38px;
-  padding: var(--space-2) var(--space-3) 0;
-}
-
-/* Tabs column on the right/left side of the inspector panel */
-.tabsCol {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-3);
-  background: color-mix(in srgb, var(--color-panel-header) 85%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-left: 1px solid var(--color-border);
+  justify-content: space-between;
+  background: var(--color-panel-header, #1d1d1d);
+  border-bottom: 1px solid var(--color-border, #161616);
   flex: none;
-  width: 48px;
-  padding: var(--space-2) 4px;
+  height: var(--bar-height-panel);
+  min-height: var(--bar-height-panel);
+  padding: 0 4px 0 0;
+  user-select: none;
 }
 
 .tabsScroll {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  height: 100%;
   flex: 1 1 auto;
   min-width: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
 }
 
 .tabsScroll::-webkit-scrollbar {
   display: none;
 }
 
-.extras {
+.tabItem {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
+  height: 100%;
+  padding: 0 10px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-tertiary, #8c8c8c);
+  background: var(--color-panel-header, #1d1d1d);
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
   flex: none;
+  position: relative;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease,
+    border-color 100ms ease;
 }
 
-.collapse {
-  width: 22px;
-  height: var(--control-height-sm);
+.tabItem:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-text-primary, #e1e1e1);
+}
+
+/* The tab is a role="tab" div (a <button> can't contain the close <button>),
+   so it needs its focus ring spelled out rather than inherited from the UA. */
+.tabItem:focus-visible {
+  outline: 1px solid var(--color-selection, #2988ff);
+  outline-offset: -1px;
+}
+
+.tabItemActive {
+  background: var(--color-panel, #232323) !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border-bottom: 2px solid var(--color-selection, #2988ff) !important;
+}
+
+.tabLabel {
+  display: inline-block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.tabCloseBtn {
   display: grid;
   place-items: center;
-  border-radius: 0;
-  color: var(--color-text-muted);
+  width: 14px;
+  height: 14px;
+  border-radius: 2px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted, #5a5a5a);
   cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
+  padding: 0;
+  margin-left: 2px;
+  font-size: var(--font-size-micro);
+  opacity: 0;
+  transition: opacity 100ms ease, color 100ms ease, background-color 100ms ease;
 }
 
-.collapse:hover {
-  background: var(--color-surface-3);
-  color: var(--color-text-primary);
+.tabItem:hover .tabCloseBtn,
+.tabItemActive .tabCloseBtn {
+  opacity: 1;
 }
 
+.tabCloseBtn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+/* Tab actions right header */
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding-left: 4px;
+}
+
+.actionBtn {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: var(--control-height-sm);
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary, #8c8c8c);
+  border-radius: var(--radius-control, 4px);
+  cursor: pointer;
+  padding: 0 4px;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.actionBtn:hover {
+  background: var(--color-surface-3, #333333);
+  color: var(--color-text-primary, #e1e1e1);
+}
+
+.actionBtnActive {
+  background: var(--color-surface-3, #333333) !important;
+  color: var(--color-selection, #2988ff) !important;
+}
+
+.overflowBadge {
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-text-secondary, #a6a6a6);
+  padding: 1px 4px;
+  border-radius: 8px;
+}
+
+/* ── Content Area ─────────────────────────────────────────────────── */
 .content {
   flex: 1 1 auto;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
   scrollbar-width: thin;
-  scrollbar-color: var(--color-border-strong) var(--color-surface-0);
+  scrollbar-color: var(--color-border-strong, #333333) var(--color-surface-0, #161616);
 }
+
 .content::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
+
 .content::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
+  background: var(--color-border-strong, #333333);
   border-radius: 0;
 }
+
 .content::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+  background: var(--color-text-muted, #5a5a5a);
 }
+
 .content::-webkit-scrollbar-track {
-  background: var(--color-surface-0);
+  background: var(--color-surface-0, #161616);
 }
 
-/* Drag-to-reorder wrapper for each vertical tab icon. */
-.draggableTab {
-  display: block;
-  cursor: grab;
-}
-
-.draggableTab:active {
-  cursor: grabbing;
-}
-
-.draggableTab[data-over='true'] {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 1px;
-  border-radius: 4px;
-}
-
-/* ── Grip / reposition button ────────────────────────────────── */
-.gripWrap {
-  position: relative;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.gripBtn {
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  border-radius: 4px;
-  cursor: pointer;
-  transition:
-    background-color 120ms ease,
-    color 120ms ease;
-  flex: none;
-  padding: 0;
-}
-
-.gripBtn:hover {
-  background: var(--color-surface-3);
-  color: var(--color-text-primary);
-}
-
-.gripBtnActive {
-  background: var(--color-surface-3) !important;
-  color: var(--color-primary) !important;
-}
-
+/* ── Panel Hamburger Popup Menu ───────────────────────────────────── */
 .moveMenu {
   position: absolute;
-  left: 110%;
-  top: 0;
-  z-index: var(--z-index-popover);
-  min-width: 180px;
-  background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
+  right: 6px;
+  top: 34px;
+  z-index: var(--z-index-popover, 1000);
+  min-width: 250px;
+  background: var(--color-surface-raised, #2a2a2a);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid var(--color-border-strong);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-lg);
-  padding: 4px;
+  border: 1px solid var(--color-border-strong, #333333);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md, 6px);
+  padding: 5px;
   list-style: none;
   margin: 0;
-  box-shadow: var(--shadow-popover);
-}
-
-.moveMenuRightInspector {
-  left: auto !important;
-  right: 110% !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65), 0 2px 6px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .moveMenuLabel {
   font-size: var(--font-size-micro);
   font-weight: 600;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-tertiary, #8c8c8c);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  padding: 4px 8px 6px;
+  padding: 6px 12px 4px;
+  pointer-events: none;
+}
+
+.menuSectionDivider {
+  height: 1px;
+  background: var(--color-border, rgba(255, 255, 255, 0.08));
+  margin: 4px 4px;
   pointer-events: none;
 }
 
 .moveMenuItem {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
   text-align: left;
   border: none;
   background: transparent;
-  color: var(--color-text-secondary);
+  color: var(--color-text-secondary, #a6a6a6);
   font: inherit;
-  font-size: var(--font-size-xs);
-  padding: 5px 8px;
-  border-radius: var(--radius-lg);
+  font-size: var(--font-size-sm);
+  min-height: var(--control-height-lg);
+  padding: 0 12px;
+  border-radius: var(--radius-sm, 4px);
   cursor: pointer;
-  transition: background-color 100ms ease, color 100ms ease;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+              color var(--motion-duration-fast) var(--motion-ease-standard);
   white-space: nowrap;
 }
 
 .moveMenuItem:hover {
-  background: var(--color-surface-3);
-  color: var(--color-text-primary);
+  background: var(--color-surface-3, rgba(255, 255, 255, 0.08));
+  color: var(--color-text-primary, #ffffff);
 }
 
-@media (max-width: 768px) {
-  .tabsRow {
-    overflow-x: auto;
-    scrollbar-width: none;
-    padding: var(--space-1) var(--space-2) 0;
-    gap: var(--space-2);
-  }
-  .tabsRow::-webkit-scrollbar {
-    display: none;
-  }
+.moveMenuItemActive {
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  color: var(--color-text-primary, #ffffff);
+  font-weight: 600;
 }
 
+.moveMenuItemActive:hover {
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  color: var(--color-text-primary, #ffffff);
+}
 
+.menuItemLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.activeCheck {
+  color: var(--color-primary, #2988ff);
+  font-weight: bold;
+  font-size: var(--font-size-md);
+}
+
+.draggableTab {
+  display: flex;
+  align-items: stretch;
+  cursor: grab;
+  height: 100%;
+}
+
+.draggableTab:active {
+  cursor: grabbing;
+}

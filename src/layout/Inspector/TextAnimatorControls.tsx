@@ -55,6 +55,7 @@ import {
   type ExpressionSelectorData,
   type TextAnimatorData,
 } from '@core/text/textAnimators';
+import { is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import styles from './TextAnimatorControls.module.css';
 
 const BASED_ON: { id: RangeBasedOn; label: string }[] = [
@@ -505,10 +506,14 @@ function AnimatorGroup({
   nodeId,
   index,
   data,
+  show3D,
+  perChar3D,
 }: {
   nodeId: string;
   index: number;
   data: TextAnimatorData;
+  show3D: boolean;
+  perChar3D: boolean;
 }): JSX.Element {
   const selectors = data.selectors ?? [];
   const addItems: DropdownItem[] = KINDS.map((k) => ({
@@ -564,10 +569,24 @@ function AnimatorGroup({
       <div className={styles.subhead}>Transform</div>
       <AnimatorParamRow nodeId={nodeId} index={index} param="x" label="Position X" value={data.x} unit="px" />
       <AnimatorParamRow nodeId={nodeId} index={index} param="y" label="Position Y" value={data.y} unit="px" />
+      {show3D && (
+        <AnimatorParamRow nodeId={nodeId} index={index} param="z" label="Position Z" value={data.z ?? 0} unit="px" />
+      )}
       <AnimatorParamRow nodeId={nodeId} index={index} param="scale" label="Scale X" value={data.scale} unit="%" min={0} />
       <AnimatorParamRow nodeId={nodeId} index={index} param="scaleY" label="Scale Y" value={data.scaleY ?? data.scale} unit="%" min={0} />
       <AnimatorParamRow nodeId={nodeId} index={index} param="rotation" label="Rotation" value={data.rotation} unit="°" />
+      {show3D && (
+        <>
+          <AnimatorParamRow nodeId={nodeId} index={index} param="rotationX" label="Rotation X" value={data.rotationX ?? 0} unit="°" />
+          <AnimatorParamRow nodeId={nodeId} index={index} param="rotationY" label="Rotation Y" value={data.rotationY ?? 0} unit="°" />
+        </>
+      )}
       <AnimatorParamRow nodeId={nodeId} index={index} param="skew" label="Skew" value={data.skew ?? 0} unit="°" />
+      {show3D && !perChar3D && (
+        <div className={styles.empty} style={{ padding: '4px 0 8px' }}>
+          Position Z / Rotation X·Y apply when Per-character 3D is on (Geometry Options).
+        </div>
+      )}
 
       <div className={styles.subhead}>Typography</div>
       <AnimatorParamRow nodeId={nodeId} index={index} param="tracking" label="Tracking" value={data.tracking} unit="px" />
@@ -700,7 +719,16 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
           selector Offset to stagger them.
         </div>
       ) : (
-        animators.map((a, i) => <AnimatorGroup key={a.id} nodeId={nodeId} index={i} data={a} />)
+        animators.map((a, i) => (
+          <AnimatorGroup
+            key={a.id}
+            nodeId={nodeId}
+            index={i}
+            data={a}
+            show3D={is3DEnabled(node)}
+            perChar3D={isPerChar3D(node)}
+          />
+        ))
       )}
     </div>
   );

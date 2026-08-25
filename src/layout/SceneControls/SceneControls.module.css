@@ -103,3 +103,13 @@
   line-height: 1;
   letter-spacing: 0.02em;
 }
+
+.cameraToolLabel {
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  white-space: nowrap;
+  margin-left: 2px;
+}

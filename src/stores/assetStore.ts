@@ -512,6 +512,39 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
     addAsset: async (file: File, folderId: string | null = null, opts: AddAssetOptions = {}) => {
       const source: AssetSource = opts.source ?? 'user';
 
+      /*
+        A format only a PLUGIN can read.
+
+        Checked FIRST, and deliberately: every branch below assumes the browser
+        or ffmpeg can make sense of the bytes, and a `.tga` reaching them is an
+        asset that imports as a broken image rather than as an error. Decoding
+        here turns it into a PNG `File` and re-enters — the same move the PSD
+        branch makes — so the bundle, the thumbnail and the asset record never
+        learn a plugin was involved.
+
+        Reserved extensions cannot be claimed (see `importerSchema.ts`), so this
+        can never shadow the PSD branch or any built-in format.
+      */
+      {
+        const { decodeWithPlugin } = await import('@core/assets/decodeWithPlugin');
+        let decoded: File | null = null;
+        try {
+          decoded = await decodeWithPlugin(file);
+        } catch (e) {
+          // Named, and rethrown: a plugin that failed to decode the file the
+          // user just dropped is the plugin's problem to surface, not a silent
+          // fall-through to "unsupported file" that sends them looking at
+          // their own file instead.
+          useUIStore.getState().notify({
+            level: 'error',
+            message: `Import failed: ${e instanceof Error ? e.message : String(e)}`,
+            durationMs: 6000,
+          });
+          throw e;
+        }
+        if (decoded) return get().addAsset(decoded, folderId, opts);
+      }
+
       // Layered PSD → one PNG asset per layer (AE "Import as Composition" lite).
       if (/\.psd$/i.test(file.name)) {
         try {

@@ -95,6 +95,12 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    * properties of the current selection.
    */
   { id: 'properties',  title: 'Properties', icon: 'sliders-h',  region: 'rightInspector', weight: 5,   closable: false },
+  { id: 'character',   title: 'Character', icon: 'type',        region: 'rightInspector', weight: 4.8, closable: false },
+  { id: 'paragraph',   title: 'Paragraph', icon: 'text-left',   region: 'rightInspector', weight: 4.7, closable: false },
+  { id: 'align',       title: 'Align',     icon: 'align-center', region: 'rightInspector', weight: 4.6, closable: false },
+  { id: 'info',        title: 'Info & Audio', icon: 'info',     region: 'rightInspector', weight: 4.5, closable: false },
+  { id: 'preview',     title: 'Preview',   icon: 'play',        region: 'rightInspector', weight: 4.4, closable: false },
+  { id: 'tracker',     title: 'Tracker',   icon: 'crosshair',   region: 'rightInspector', weight: 4.2, closable: false },
   { id: 'rig',         title: 'Rigging',   icon: 'bone',        region: 'rightInspector', weight: 3.5, closable: false },
   // `magic-wand`, not `zap`: Lightning is the app's speed/quick-action glyph and
   // it was already carrying the Presets tab's meaning here. A tab icon that

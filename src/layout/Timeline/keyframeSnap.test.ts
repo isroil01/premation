@@ -117,3 +117,47 @@ describe('snapKeyframeGroup — the group moves as one body', () => {
     expect(1.017 + delta).toBeCloseTo(31 / 30, 6);
   });
 });
+
+describe('snapKeyframeValue — vertical snap on the graph', () => {
+  const { snapKeyframeValue } = require('./keyframeSnap') as typeof import('./keyframeSnap');
+
+  it('snaps to a nearby keyframe value within the pixel threshold', () => {
+    // 100 px / unit → 8 px threshold = 0.08 value units
+    const { value, target } = snapKeyframeValue(10.05, {
+      pixelsPerUnit: 100,
+      keyframeValues: [10, 20],
+    });
+    expect(value).toBe(10);
+    expect(target).toEqual({ value: 10, kind: 'keyframe' });
+  });
+
+  it('snaps to zero when close', () => {
+    const { value, target } = snapKeyframeValue(0.04, {
+      pixelsPerUnit: 100,
+      keyframeValues: [],
+    });
+    expect(value).toBe(0);
+    expect(target!.kind).toBe('zero');
+  });
+
+  it('Alt disables value snap', () => {
+    const { value, target } = snapKeyframeValue(10.05, {
+      pixelsPerUnit: 100,
+      keyframeValues: [10],
+      disabled: true,
+    });
+    expect(value).toBe(10.05);
+    expect(target).toBeNull();
+  });
+
+  it('falls back to a step grid when no key is near', () => {
+    const { value, target } = snapKeyframeValue(10.02, {
+      pixelsPerUnit: 100,
+      keyframeValues: [],
+      step: 5,
+    });
+    // 10.02 is within 0.08 of 10, but step snaps to 10
+    expect(value).toBe(10);
+    expect(target!.kind).toBe('step');
+  });
+});

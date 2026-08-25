@@ -292,6 +292,11 @@ export interface MotionEditorApi {
         };
       },
     ): Promise<{ path: string; frames: number; videoCodec?: string }>;
+    /**
+     * Probe host ffmpeg for HEVC (libx265). Used by the Export dialog so HDR10/HLG
+     * can warn before encode when MaxCLL/MaxFALL SEI will not be written.
+     */
+    probeHdr?(): Promise<{ libx265: boolean }>;
     /** Kill an in-flight encode (Cancel / queue Pause). */
     cancel?(jobId: string): Promise<void>;
     /** Native save dialog, then move the encoded file there. Null if cancelled. */

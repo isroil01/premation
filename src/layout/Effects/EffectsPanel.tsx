@@ -21,6 +21,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { EFFECT_DEFS, getNodeEffects } from '@core/effects/effects';
 import { pluginEffectDefs, pluginEffectsCanRender, PLUGIN_EFFECT_CATEGORY } from '@core/effects/pluginEffectDefs';
@@ -67,6 +68,59 @@ import { EFFECT_CATEGORY } from './effectCategory';
 import styles from './EffectsPanel.module.css';
 
 export { EFFECT_CATEGORY };
+
+/** Starred effect type ids — preference, same rationale as library favourites. */
+function useEffectFavorites(): {
+  favorites: ReadonlySet<string>;
+  toggle: (id: string) => void;
+  isFavorite: (id: string) => boolean;
+} {
+  const list = usePreferenceStore((s) => s.effectFavorites);
+  const setPref = usePreferenceStore((s) => s.set);
+  const favorites = useMemo(() => new Set(list), [list]);
+  return {
+    favorites,
+    isFavorite: (id) => favorites.has(id),
+    toggle: (id) =>
+      setPref('effectFavorites', favorites.has(id) ? list.filter((x) => x !== id) : [...list, id]),
+  };
+}
+
+/**
+ * Star toggle on an effect browser row. Not a `<button>` — the row is already
+ * one (same invalid-nesting escape as LibraryBrowser's FavoriteStar).
+ */
+function EffectFavoriteStar({ id, label }: { id: string; label: string }): JSX.Element {
+  const { isFavorite, toggle } = useEffectFavorites();
+  const on = isFavorite(id);
+  const description = on ? `Remove ${label} from favourites` : `Add ${label} to favourites`;
+  const activate = (e: { stopPropagation: () => void; preventDefault: () => void }): void => {
+    e.stopPropagation();
+    e.preventDefault();
+    toggle(id);
+  };
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      className={on ? styles.fxStarOn : styles.fxStar}
+      title={description}
+      aria-label={description}
+      aria-pressed={on}
+      onClick={activate}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') activate(e);
+      }}
+      draggable={false}
+      onDragStart={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      <Icon name="star" size="sm" />
+    </span>
+  );
+}
 
 // AE menu order — `None` leads, because it is the "this path does not cut"
 // option rather than a variant of the set operations below it.
@@ -127,6 +181,8 @@ export function EffectsPanel(): JSX.Element {
   useSceneRevision((s) => s.rev);
   const maskTime = useActiveWorkspace()?.time ?? 0;
   const [effectQuery, setEffectQuery] = useState('');
+  const [starredOnly, setStarredOnly] = useState(false);
+  const { favorites: effectFavorites } = useEffectFavorites();
   // The clipboard and the preset list live outside React (module state and
   // localStorage), so a counter is what tells this panel they changed.
   const [clipboardRev, bumpClipboard] = useState(0);
@@ -159,7 +215,11 @@ export function EffectsPanel(): JSX.Element {
   );
 
   const q = effectQuery.trim().toLowerCase();
-  const browserDefs = q ? allDefs.filter((d) => d.label.toLowerCase().includes(q)) : allDefs;
+  const browserDefs = allDefs.filter((d) => {
+    if (starredOnly && !effectFavorites.has(d.type)) return false;
+    if (!q) return true;
+    return d.label.toLowerCase().includes(q);
+  });
   const browserPresets = q
     ? presets.filter((p) => p.name.toLowerCase().includes(q))
     : presets;
@@ -269,19 +329,31 @@ export function EffectsPanel(): JSX.Element {
         </button>
       </div>
       <div className={styles.browser}>
-        <Input
-          value={effectQuery}
-          placeholder="Search effects…"
-          size="sm"
-          fullWidth
-          leftIcon="search"
-          clearable
-          onClear={() => setEffectQuery('')}
-          onChange={(e) => setEffectQuery(e.currentTarget.value)}
-        />
-        {browserFolders.length > 0 || shapeOps.length > 0 || browserPresets.length > 0 || simulationItems.length > 0 ? (
+        <div className={styles.searchRow}>
+          <Input
+            value={effectQuery}
+            placeholder="Search effects…"
+            size="sm"
+            fullWidth
+            leftIcon="search"
+            clearable
+            onClear={() => setEffectQuery('')}
+            onChange={(e) => setEffectQuery(e.currentTarget.value)}
+          />
+          <button
+            type="button"
+            className={starredOnly ? styles.fxStarFilterOn : styles.fxStarFilter}
+            title={starredOnly ? 'Show all effects' : 'Show favourites only'}
+            aria-label={starredOnly ? 'Show all effects' : 'Show favourites only'}
+            aria-pressed={starredOnly}
+            onClick={() => setStarredOnly((v) => !v)}
+          >
+            <Icon name="star" size="sm" />
+          </button>
+        </div>
+        {browserFolders.length > 0 || (!starredOnly && (shapeOps.length > 0 || browserPresets.length > 0 || simulationItems.length > 0)) ? (
           <BrowserTree>
-            {browserPresets.length > 0 && (
+            {!starredOnly && browserPresets.length > 0 && (
               <BrowserFolder
                 key="presets"
                 label="Effect Presets"
@@ -328,41 +400,48 @@ export function EffectsPanel(): JSX.Element {
                 // match opens, and stays open for as long as the query does.
                 forceOpen={!!q}
               >
-                {items.map((d) => (
-                  <BrowserRow
-                    key={d.type}
-                    label={d.label}
-                    fx
-                    /*
-                      A plugin effect on the WebGL2 tier is WGSL with no
-                      pipeline to compile it, so it renders its input unchanged.
-                      Tagged here rather than left to be discovered: otherwise
-                      it adds cleanly, shows its parameters, and changes no
-                      pixels — which reads as a broken plugin.
+                {items.map((d) => {
+                  const pluginNoGpu = cat === PLUGIN_EFFECT_CATEGORY && !pluginEffectsCanRender();
+                  const tag = pluginNoGpu
+                    ? <BrowserTag>No WebGPU</BrowserTag>
+                    : d.gpuOnly ? <BrowserTag>GPU</BrowserTag> : null;
+                  return (
+                    <BrowserRow
+                      key={d.type}
+                      label={d.label}
+                      fx
+                      /*
+                        A plugin effect on the WebGL2 tier is WGSL with no
+                        pipeline to compile it, so it renders its input unchanged.
+                        Tagged here rather than left to be discovered: otherwise
+                        it adds cleanly, shows its parameters, and changes no
+                        pixels — which reads as a broken plugin.
 
-                      Still listed, still addable. It is saved with the project
-                      and draws on a machine that has WebGPU, so hiding it would
-                      make a document depend on which laptop authored it.
-                    */
-                    right={
-                      cat === PLUGIN_EFFECT_CATEGORY && !pluginEffectsCanRender()
-                        ? <BrowserTag>No WebGPU</BrowserTag>
-                        : d.gpuOnly ? <BrowserTag>GPU</BrowserTag> : undefined
-                    }
-                    title={
-                      cat === PLUGIN_EFFECT_CATEGORY && !pluginEffectsCanRender()
-                        ? `${d.label} needs WebGPU — this machine is on the WebGL2 fallback. `
-                          + 'It is saved with your project and renders on a machine that has it.'
-                        : `Add ${d.label} — or drag onto a layer`
-                    }
-                    draggable
-                    onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
-                    onClick={() => { if (primary) addEffectAndReveal(primary, d.type); }}
-                  />
-                ))}
+                        Still listed, still addable. It is saved with the project
+                        and draws on a machine that has WebGPU, so hiding it would
+                        make a document depend on which laptop authored it.
+                      */
+                      right={
+                        <>
+                          <EffectFavoriteStar id={d.type} label={d.label} />
+                          {tag}
+                        </>
+                      }
+                      title={
+                        pluginNoGpu
+                          ? `${d.label} needs WebGPU — this machine is on the WebGL2 fallback. `
+                            + 'It is saved with your project and renders on a machine that has it.'
+                          : `Add ${d.label} — or drag onto a layer`
+                      }
+                      draggable
+                      onDragStart={(e) => setCanvasDrag(e, { kind: 'effect', effectType: d.type })}
+                      onClick={() => { if (primary) addEffectAndReveal(primary, d.type); }}
+                    />
+                  );
+                })}
               </BrowserFolder>
             ))}
-            {shapeOps.length > 0 && node && (
+            {!starredOnly && shapeOps.length > 0 && node && (
               <BrowserFolder
                 key="Shape"
                 label="Shape"
@@ -390,7 +469,7 @@ export function EffectsPanel(): JSX.Element {
                 })}
               </BrowserFolder>
             )}
-            {simulationItems.length > 0 && (
+            {!starredOnly && simulationItems.length > 0 && (
               <BrowserFolder
                 key="Simulation"
                 label="Simulation"
@@ -421,7 +500,13 @@ export function EffectsPanel(): JSX.Element {
             )}
           </BrowserTree>
         ) : (
-          <BrowserEmpty>No effects match “{effectQuery}”.</BrowserEmpty>
+          <BrowserEmpty>
+            {starredOnly && effectFavorites.size === 0
+              ? 'No favourite effects yet — star one to pin it here.'
+              : starredOnly
+                ? 'No favourite effects match this search.'
+                : `No effects match “${effectQuery}”.`}
+          </BrowserEmpty>
         )}
       </div>
 

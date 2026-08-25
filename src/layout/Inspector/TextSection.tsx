@@ -58,6 +58,8 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
   const [fontSize, setFontSize] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fontSize');
   const [fontFamily, setFontFamily] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fontFamily');
   const [fontWeight, setFontWeight] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fontWeight');
+  const [fontWidth, setFontWidth] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fontWidth');
+  const [fontSlant, setFontSlant] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fontSlant');
   const [fontStyle, setFontStyle] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fontStyle');
   const [fill, setFill] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fill');
   const [align, setAlign] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'align');
@@ -416,8 +418,11 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
             animated track on `fontWeight` overrides it at render, same
             precedence every other animatable text prop has. No run key: axis
             animation is a layer-level property, per-character weight styling
-            remains the select's static job. */}
+            remains the select's static job. Width (wdth) and Slant (slnt) ride
+            the same layer-level path via font-variation-settings. */}
         {renderTextPropInner('Weight (Variable)', 'fontWeight', Number(fontWeight ?? 400) || 400, (v) => setFontWeight(String(Math.round(v))))}
+        {renderTextPropInner('Width (Variable)', 'fontWidth', typeof fontWidth === 'number' ? fontWidth : 100, setFontWidth, '', 100)}
+        {renderTextPropInner('Slant (Variable)', 'fontSlant', typeof fontSlant === 'number' ? fontSlant : 0, setFontSlant, '°', 0)}
         {renderTextPropInner('Size', 'fontSize', fontSizeVal, setFontSize, 'px', 32, 'fontSize')}
         {renderTextPropInner('Tracking', 'letterSpacing', letterSpacingVal, setLetterSpacing, 'px', 0, 'letterSpacing')}
         {/* Leading is a paragraph property, not a character one — it has no

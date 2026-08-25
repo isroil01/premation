@@ -18,14 +18,14 @@ import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsert
 import { useGuidesStore } from '@stores/guidesStore';
 import { importLottieFile } from '@core/library/lottieLibrary';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
-import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { listPresets, applyPresetByName } from '@core/animation/animationPresets';
-import { timeReverseKeyframes, easyEaseAll, sequenceLayers, applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
+import { applyTypewriter, applyBounceInWords, applySpinFadeCharacters, applyTrackingReveal } from '@core/animation/keyframeAssistants';
 import { applyBounce, describeBounce, revealBounce } from '@core/animation/bounce';
 import { useBounceStore, currentSquash } from '@stores/bounceStore';
 import { addControl, CONTROL_COMPONENTS, type ControlKind } from '@core/animation/expressionControls';
+import { asCommandId } from '@app-types/common';
 
 /** The control kinds offered in the rig menu, in the order AE lists them. */
 const CONTROL_KINDS: ReadonlyArray<{ kind: ControlKind; label: string }> = [
@@ -40,8 +40,6 @@ const CONTROL_KINDS: ReadonlyArray<{ kind: ControlKind; label: string }> = [
 import { hasTextComponent } from '@core/text/textAnimators';
 import { insertNull } from '@core/scene/parenting';
 import { useUIStore, type Tool } from '@stores/uiStore';
-import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
-import { customPrompt } from '@components/Modal/Dialogs';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import { AppMenuButton } from '@layout/Menu';
 import { SceneControls } from '@layout/SceneControls/SceneControls';
@@ -51,8 +49,6 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isRiggableLeafNode } from '@core/scene/rigLogo';
-import { getWorkspaceManager } from '@core/layout/workspaceManager';
-import { useLayoutStore } from '@stores/layoutStore';
 import styles from './TopNav.module.css';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { usePresentationStore } from '@stores/presentationStore';
@@ -70,9 +66,9 @@ const POINTER_TOOLS: ToolDef[] = [
   { id: 'select',        icon: 'mouse-pointer', label: 'Selection Tool', shortcut: 'V' },
   // Shift+V, not A: the AE preset rebinds tool.direct-select (shortcutOverrides),
   // and bare `a` falls through to the anchor-point property reveal.
-  { id: 'direct-select', icon: 'select-all',    label: 'Direct Selection Tool', shortcut: 'Shift+V' },
+  { id: 'direct-select', icon: 'direct-select', label: 'Direct Selection Tool', shortcut: 'Shift+V' },
   { id: 'rotate',        icon: 'rotate',        label: 'Rotation Tool', shortcut: 'W' },
-  { id: 'pan-behind',    icon: 'anchor',        label: 'Pan Behind Tool', shortcut: 'Y' },
+  { id: 'pan-behind',    icon: 'pan-behind',    label: 'Pan Behind (Anchor Point) Tool', shortcut: 'Y' },
   { id: 'hand',          icon: 'hand',          label: 'Hand Tool', shortcut: 'H' },
   { id: 'zoom',          icon: 'zoom-in',       label: 'Zoom Tool', shortcut: 'Z' },
 ];
@@ -138,31 +134,17 @@ function buildAnimateItems(
     { type: 'item', id: 'anim-spin-fade-chars', label: 'Spin & Fade Characters (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applySpinFadeCharacters(id, playhead)) notify('Spin & Fade Characters rig created'); } },
     { type: 'item', id: 'anim-tracking-reveal', label: 'Tracking Reveal (text)', icon: 'type', disabled: !isTextLayer, onSelect: () => { if (applyTrackingReveal(id, playhead)) notify('Tracking Reveal rig created'); } },
     { type: 'separator' },
-    { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { if (easyEaseAll(id)) notify('Eased all keyframes'); else notify('Layer has no keyframes yet', 'warning'); } },
+    { type: 'item', id: 'anim-ease-all', label: 'Easy Ease All Keyframes', icon: 'track', onSelect: () => { void getCommandSystem().execute(asCommandId('animation.easyEaseAll')); } },
     // Applies the settings the Bounce section in the Graph panel is showing —
     // the menu is a shortcut to that panel's current shape, not a second,
     // hardcoded bounce. `applyBounce` (not `bounceKeyframes`) so the item is
     // never a no-op: with nothing to rebound from it generates the fall too.
     { type: 'item', id: 'anim-bounce', label: 'Bounce', icon: 'track', onSelect: () => { const s = useBounceStore.getState(); const r = applyBounce(id, { atTime: playhead, mode: 'auto', drop: s.drop, bounce: s.bounce, squash: currentSquash() }); if (r) { revealBounce(id); notify(describeBounce(r)); } else notify('Nothing to bounce — check the layer is unlocked', 'warning'); } },
-    { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { if (timeReverseKeyframes(id)) notify('Keyframes reversed'); else notify('Layer has no keyframes yet', 'warning'); } },
-    // Overlap is ASKED FOR rather than hardcoded. `sequenceLayerBars` has taken
-    // an `overlapSeconds` since it was written, with a passing test for it, but
-    // the only caller passed 0 — so the overlap shipped unreachable. A non-zero
-    // overlap now also cross-dissolves, which is what an overlap is for.
-    { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void (async () => {
-      const raw = await customPrompt(
-        'Sequence Layers',
-        'Lay the selected layers’ bars end-to-end, in selection order. Overlap in seconds — 0 butts them together; above 0 overlaps the bars by that much and cross-dissolves opacity across the overlap.',
-        '0',
-        { placeholder: 'e.g. 0.5', confirmLabel: 'Sequence' },
-      );
-      if (raw === null) return;
-      const overlap = Number(raw);
-      if (!Number.isFinite(overlap) || overlap < 0) { notify('Overlap must be a number of seconds, 0 or more', 'warning'); return; }
-      if (!getTimelineController().sequenceLayerBars(selectedIds, overlap, { crossfade: overlap > 0 })) { notify('Select 2+ layers with timeline bars', 'warning'); return; }
-      notify(overlap > 0 ? `Layers sequenced with a ${overlap}s cross-dissolve` : 'Layers sequenced end-to-end');
-    })(); } },
-    { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { if (sequenceLayers(selectedIds, 0.3)) notify('Animations staggered'); else notify('Select 2+ animated layers first', 'warning'); } },
+    { type: 'item', id: 'anim-reverse', label: 'Time-Reverse Keyframes', icon: 'skip-back', onSelect: () => { void getCommandSystem().execute(asCommandId('animation.timeReverseKeyframes')); } },
+    // Sequence / stagger live as registered commands (Animation menu + palette);
+    // TopNav reuses them so the prompt and undo path stay one.
+    { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayerBars')); } },
+    { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayers')); } },
     { type: 'separator' },
     {
       type: 'item',
@@ -191,87 +173,6 @@ function buildAnimateItems(
 }
 
 /** Glyphs for the built-in layout presets, keyed by their registry id. */
-const WORKSPACE_ICONS: Record<string, IconName> = {
-  default: 'layout',
-  'motion-design': 'motion-blur',
-  'ai-focus': 'ai',
-  animation: 'keyframe',
-  'color-grading': 'brush',
-  'dual-monitor-studio': 'tv',
-  presentation: 'play',
-  minimal: 'fit',
-};
-
-/**
- * The Workspaces menu, built from the WORKSPACE REGISTRY rather than a hardcoded
- * list.
- *
- * "Save Current Workspace…" persisted a layout that no UI could ever offer back:
- * the menu listed only the eight builtins, and `listWorkspaces` had no caller
- * outside the manager itself. Reading the registry makes saved layouts appear
- * (and deletable), which is the difference between the command doing something
- * and quietly writing to a store nobody reads.
- */
-function buildWorkspaceItems(): DropdownItem[] {
-  const manager = getWorkspaceManager();
-  const all = manager.listWorkspaces();
-  const builtins = all.filter((w) => w.builtin);
-  const custom = all.filter((w) => !w.builtin);
-
-  const items: DropdownItem[] = builtins.map((w) => ({
-    type: 'item',
-    id: `ws-${w.id}`,
-    label: w.name,
-    icon: WORKSPACE_ICONS[w.id] ?? 'layout',
-    onSelect: () => manager.applyWorkspace(w.id),
-  }));
-
-  if (custom.length > 0) {
-    items.push({ type: 'separator' });
-    for (const w of custom) {
-      items.push({
-        type: 'item',
-        id: `ws-${w.id}`,
-        label: w.name,
-        icon: 'layout',
-        submenu: [
-          { type: 'item', id: `ws-apply-${w.id}`, label: 'Apply', icon: 'check', onSelect: () => manager.applyWorkspace(w.id) },
-          { type: 'item', id: `ws-del-${w.id}`, label: 'Delete', icon: 'trash', onSelect: () => manager.deleteWorkspace(w.id) },
-        ],
-      });
-    }
-  }
-
-  items.push({ type: 'separator' });
-  items.push({
-    type: 'item',
-    id: 'ws-save',
-    label: 'Save Current Workspace…',
-    icon: 'download',
-    onSelect: () => {
-      void (async () => {
-        const name = await customPrompt(
-          'Save Workspace',
-          'Name this layout. It will appear in this menu and in Customize ▸ Workspaces.',
-          '',
-          { placeholder: 'My layout', confirmLabel: 'Save' },
-        );
-        if (!name?.trim()) return;
-        getWorkspaceManager().saveCurrentWorkspace(name.trim());
-        useUIStore.getState().notify({ level: 'success', message: `Saved workspace “${name.trim()}”`, durationMs: 2600 });
-      })();
-    },
-  });
-  items.push({
-    type: 'item',
-    id: 'ws-reset',
-    label: 'Reset Layout to Default',
-    icon: 'undo',
-    onSelect: () => useLayoutStore.getState().resetLayout(),
-  });
-  return items;
-}
-
 const isElectron = typeof window !== 'undefined' && (!!window.motionEditor || !!window.electronAPI);
 
 export function TopNav(): JSX.Element {
@@ -385,7 +286,6 @@ export function TopNav(): JSX.Element {
   const hidePuppet = width < 1200;
   const hideMask = width < 1050;
   const hideSnap = width < 950;
-  const hideCustomize = width < 950;
   const hideAnimate = width < 850;
   const hideUndoRedo = width < 850;
   const hideSceneControls = width < 750;
@@ -446,7 +346,7 @@ export function TopNav(): JSX.Element {
       type: 'item',
       id: 'animate-layer',
       label: 'Animate Layer',
-      icon: 'keyframe',
+      icon: 'magic-wand',
       submenu: buildAnimateItems(selectedIds, isTextLayer, playhead)
     });
   }
@@ -526,29 +426,6 @@ export function TopNav(): JSX.Element {
       icon: 'redo',
       disabled: !canRedo,
       onSelect: () => performRedo()
-    });
-  }
-
-  if (hideCustomize) {
-    pushSeparator();
-    // The Workspaces dropdown lives in the same collapsed block as Customize, and
-    // only Customize was mirrored here — so below 950px the layout presets, "Save
-    // Current Workspace" and "Reset Layout" became completely unreachable. Every
-    // other collapsed control (camera tools, gizmos, masks, puppet, snap,
-    // undo/redo) is mirrored; this one was simply missed.
-    overflowItems.push({
-      type: 'item',
-      id: 'workspaces-item',
-      label: 'Workspaces & Layout',
-      icon: 'layout',
-      submenu: buildWorkspaceItems(),
-    });
-    overflowItems.push({
-      type: 'item',
-      id: 'customize-item',
-      label: 'Customize settings',
-      icon: 'settings',
-      onSelect: () => openCustomizeDialog()
     });
   }
 
@@ -724,8 +601,8 @@ export function TopNav(): JSX.Element {
               placement="bottom-start"
               noScroll
               trigger={
-                <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New layer…">
-                  <Icon name="plus" size="md" />
+                <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New Layer (Shape, Text, Solid, Null, Camera, Light, 3D…)">
+                  <Icon name="layer-plus" size="md" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -784,10 +661,10 @@ export function TopNav(): JSX.Element {
                     type="button"
                     className={styles.toolDropdownTrigger}
                     aria-label="Animate"
-                    title={selectedId ? 'Animate the selected layer…' : 'Select a layer to animate'}
+                    title={selectedId ? 'Animation presets & rigging (Easy Ease, Typewriter, Bounce, Rig)…' : 'Select a layer to apply animation presets'}
                     disabled={!selectedId}
                   >
-                    <Icon name="keyframe" size="md" />
+                    <Icon name="magic-wand" size="md" />
                     <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                   </button>
                 }
@@ -806,7 +683,7 @@ export function TopNav(): JSX.Element {
                   className={snap ? styles.toolActive : styles.tool}
                   aria-label="Toggle snapping"
                   aria-pressed={snap}
-                  title={snap ? 'Snapping ON — click to disable' : 'Snapping OFF — click to enable'}
+                  title={snap ? 'Snapping ON — Magnetically snaps layers & playhead (Click to disable)' : 'Snapping OFF — Click to enable magnetic snapping'}
                   onClick={toggleSnap}
                 >
                   <Icon name="magnet" size="md" />
@@ -867,39 +744,6 @@ export function TopNav(): JSX.Element {
                   onClick={() => performRedo()}
                 >
                   <Icon name="redo" size="md" />
-                </button>
-              </div>
-            </>
-          )}
-
-          {/* Customize / Settings & Workspaces */}
-          {!hideCustomize && (
-            <>
-              <span className={styles.toolDivider} aria-hidden />
-              <div className={styles.toolGroup}>
-                <Dropdown
-                  placement="bottom-end"
-                  trigger={
-                    <button
-                      type="button"
-                      className={styles.toolDropdownTrigger}
-                      aria-label="Workspaces"
-                      title="Workspaces & Layout Presets"
-                    >
-                      <Icon name="layout" size="md" />
-                      <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
-                    </button>
-                  }
-                  items={buildWorkspaceItems()}
-                />
-                <button
-                  type="button"
-                  className={styles.tool}
-                  aria-label="Customize"
-                  title="Customize (Shortcuts, Workspaces, Appearance)"
-                  onClick={() => openCustomizeDialog()}
-                >
-                  <Icon name="settings" size="md" />
                 </button>
               </div>
             </>

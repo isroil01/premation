@@ -6,9 +6,14 @@
 import { create } from 'zustand';
 import { getEventBus } from '@core/events/EventBus';
 
+/** Persisted + render-affecting: every setter must tell autosave AND the viewport. */
 function touched(): void {
   try {
     getEventBus().emit('DocumentChanged', { source: 'render' });
+    // Viewport listens to AnimationChanged, not DocumentChanged — without this,
+    // flipping Display Transform / working space left the preview on the old ODT
+    // until the next scrub or keyframe edit.
+    getEventBus().emit('AnimationChanged', { nodeId: '__color__' });
   } catch {
     /* no bus in headless tests */
   }

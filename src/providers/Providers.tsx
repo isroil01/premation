@@ -19,7 +19,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
-import { cutSelection, copySelection, pasteSelection, hasClipboardContent } from '@core/commands/clipboard';
+import { cutSelection, copySelection, pasteSelection } from '@core/commands/clipboard';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
@@ -90,6 +90,11 @@ import {
   eligibleExpressionProps,
   BAKE_REFUSAL_TEXT,
 } from '@core/animation/convertExpressionToKeyframes';
+import {
+  timeReverseKeyframes,
+  easyEaseAll,
+  sequenceLayers,
+} from '@core/animation/keyframeAssistants';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
@@ -629,6 +634,87 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       },
     },
     {
+      /** AE Animation ▸ Keyframe Assistant ▸ Time-Reverse Keyframes (Ctrl/Cmd+Alt+R). */
+      id: asCommandId('animation.timeReverseKeyframes'),
+      label: 'Time-Reverse Keyframes',
+      icon: 'skip-back',
+      shortcut: { key: 'r', meta: true, alt: true },
+      enabled: () => {
+        const id = useSelectionStore.getState().ids[0];
+        return !!id && defaultAnimation.animatedProps(id).length > 0;
+      },
+      execute: () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        if (timeReverseKeyframes(id)) notify('Keyframes reversed', 'success');
+        else notify('Layer has no keyframes yet', 'warning');
+      },
+    },
+    {
+      /** Easy-ease every keyframe on the selected layer (not just the selection set). */
+      id: asCommandId('animation.easyEaseAll'),
+      label: 'Easy Ease All Keyframes',
+      icon: 'track',
+      enabled: () => {
+        const id = useSelectionStore.getState().ids[0];
+        return !!id && defaultAnimation.animatedProps(id).length > 0;
+      },
+      execute: () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        if (easyEaseAll(id)) notify('Eased all keyframes', 'success');
+        else notify('Layer has no keyframes yet', 'warning');
+      },
+    },
+    {
+      /**
+       * Sequence Layers — lay selected clip bars end-to-end (AE-style). Overlap
+       * is prompted; a positive overlap also cross-dissolves opacity.
+       */
+      id: asCommandId('animation.sequenceLayerBars'),
+      label: 'Sequence Layers…',
+      icon: 'layers',
+      enabled: () => useSelectionStore.getState().ids.length >= 2,
+      execute: async () => {
+        const selectedIds = useSelectionStore.getState().ids;
+        if (selectedIds.length < 2) return;
+        const raw = await customPrompt(
+          'Sequence Layers',
+          'Lay the selected layers’ bars end-to-end, in selection order. Overlap in seconds — 0 butts them together; above 0 overlaps the bars by that much and cross-dissolves opacity across the overlap.',
+          '0',
+          { placeholder: 'e.g. 0.5', confirmLabel: 'Sequence' },
+        );
+        if (raw === null) return;
+        const overlap = Number(raw);
+        if (!Number.isFinite(overlap) || overlap < 0) {
+          notify('Overlap must be a number of seconds, 0 or more', 'warning');
+          return;
+        }
+        if (!getTimelineController().sequenceLayerBars(selectedIds, overlap, { crossfade: overlap > 0 })) {
+          notify('Select 2+ layers with timeline bars', 'warning');
+          return;
+        }
+        notify(
+          overlap > 0
+            ? `Layers sequenced with a ${overlap}s cross-dissolve`
+            : 'Layers sequenced end-to-end',
+          'success',
+        );
+      },
+    },
+    {
+      /** Stagger keyframe timing across selected animated layers (does not move bars). */
+      id: asCommandId('animation.sequenceLayers'),
+      label: 'Stagger Animations (0.3s)',
+      icon: 'layers',
+      enabled: () => useSelectionStore.getState().ids.length >= 2,
+      execute: () => {
+        const ids = useSelectionStore.getState().ids;
+        if (sequenceLayers(ids, 0.3)) notify('Animations staggered', 'success');
+        else notify('Select 2+ animated layers first', 'warning');
+      },
+    },
+    {
       /**
        * AE's keyframe assistant, in the place people look for it. The
        * conversion itself already existed but was reachable only from the
@@ -784,10 +870,15 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       id: BuiltinCommands.Paste,
       label: 'Paste',
       shortcut: { key: 'v', meta: true },
-      enabled: () => hasClipboardContent(),
+      // Always enabled: internal clipboard OR OS SVG (AE 26.3). OS content is
+      // checked async on execute — we cannot sync-probe the system clipboard.
+      enabled: () => true,
       execute: () => {
-        pasteSelection();
-        notify('Pasted', 'success');
+        void pasteSelection().then((kind) => {
+          if (kind === 'svg') notify('Pasted SVG as shapes', 'success');
+          else if (kind) notify('Pasted', 'success');
+          else notify('Nothing to paste', 'info');
+        });
       },
     },
   ];

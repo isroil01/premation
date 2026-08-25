@@ -8,10 +8,10 @@ import { PIN_KIND_CATALOG, type PinKind } from '@core/rig/puppet';
 
 export const PUPPET_PIN_ICONS: Record<PinKind, IconName> = {
   position: 'puppet-pin',
-  starch: 'push-pin',
-  bend: 'rotate',
-  advanced: 'crosshair',
-  overlap: 'layers',
+  starch: 'puppet-starch',
+  bend: 'puppet-bend',
+  advanced: 'puppet-advanced',
+  overlap: 'puppet-overlap',
 };
 
 export function puppetPinLabel(kind: PinKind): string {

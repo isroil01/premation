@@ -129,8 +129,8 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
         </div>
         <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
           {cr
-            ? 'Re-rendered at the size it is actually drawn, so it stays sharp past 400% and as a 3D camera moves in. Costs memory in proportion to scale²; Draft and reduced preview resolution cap it.'
-            : 'Rasterized once and scaled like an image, so it softens past 400%. Turn on for a logo or title that a camera pushes into.'}
+            ? 'Re-rendered at the size it is actually drawn, from the smallest scale up. Costs memory in proportion to scale²; very large layers are bounded by the VRAM budget.'
+            : 'Vector layers already re-render automatically once they pass 400%, so a title or logo a camera pushes into stays sharp on its own. Turn this on only to force re-rendering below 400% as well.'}
         </p>
       </>
     );

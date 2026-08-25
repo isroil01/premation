@@ -59,21 +59,25 @@ import {
   updateEffectParam,
   removeEffect,
   toggleEffect,
+  setEffectMaskId,
   moveEffect,
   dragEffectTo,
   effectPropPath,
   effectParam,
   effectDisplayNames,
   resetEffectParams,
+  setEffectLabelColor,
   resolveChannelColor,
   type Effect,
   type EffectDef,
   type EffectParamDef,
   type CurvePoints,
 } from '@core/effects/effects';
+import { getNodeMask } from '@core/effects/mask';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { buildPropertyMenu } from '@core/inspector/propertyMenu';
-import { openContextMenu } from '@stores/contextMenuStore';
+import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
@@ -136,8 +140,16 @@ export function splitParamGroups(
  * too many controls to show at once; opening all five of Colorama's sections
  * on selection would defeat the reason they were grouped.
  */
-function ParamGroup({ name, children }: { name: string; children: React.ReactNode }): JSX.Element {
-  const [open, setOpen] = useLocalState(false);
+function ParamGroup({
+  name,
+  children,
+  defaultOpen = false,
+}: {
+  name: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}): JSX.Element {
+  const [open, setOpen] = useLocalState(defaultOpen);
   return (
     <div className={panel.paramGroup}>
       <button
@@ -151,6 +163,59 @@ function ParamGroup({ name, children }: { name: string; children: React.ReactNod
       </button>
       {open ? <div className={panel.paramGroupBody}>{children}</div> : null}
     </div>
+  );
+}
+
+/**
+ * AE Compositing Options → Effect Mask. The bake path already honours
+ * `Effect.maskId`; this is the missing writer so authors can set it.
+ */
+function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element {
+  const paths = getNodeMask(nodeId).paths;
+  const current = effect.maskId ?? '';
+  const stale = current !== '' && !paths.some((p) => p.id === current);
+  return (
+    <ParamGroup name="Compositing Options" defaultOpen={current !== ''}>
+      <ParamLine>
+        <div className={row.paramRow}>
+          <div style={{ width: 14 }} />
+          <span className={row.paramLabel}>Effect Mask</span>
+          <select
+            value={current}
+            onChange={(ev) => {
+              const v = ev.currentTarget.value;
+              runAnimEdit('Set effect mask', () => setEffectMaskId(nodeId, effect.id, v || undefined));
+            }}
+            aria-label={`${effect.type} effect mask`}
+            title="Restrict this effect to a mask path. Prefer a path with mode None so it scopes the effect without also cutting the layer."
+            style={{
+              flex: 1,
+              minWidth: 0,
+              height: 20,
+              fontSize: 'var(--font-size-xs)',
+              background: 'var(--color-surface-0)',
+              color: 'var(--color-text-primary)',
+              border: '1px solid var(--color-border-subtle)',
+              borderRadius: 4,
+            }}
+          >
+            <option value="">None</option>
+            {stale && <option value={current}>Missing mask ({current})</option>}
+            {paths.map((p, i) => (
+              <option key={p.id} value={p.id}>
+                {p.name?.trim() || `Mask ${i + 1}`}
+                {p.mode !== 'none' ? ' · also clips layer' : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      </ParamLine>
+      {paths.length === 0 && (
+        <p className={panel.hint} style={{ margin: '4px 8px 8px', opacity: 0.65, fontSize: 'var(--font-size-micro)' }}>
+          Add a mask on this layer (mode None recommended) to scope the effect.
+        </p>
+      )}
+    </ParamGroup>
   );
 }
 
@@ -275,7 +340,7 @@ function EffectParamRow({
             flex: 1,
             minWidth: 0,
             height: 20,
-            fontSize: 11,
+            fontSize: 'var(--font-size-xs)',
             background: 'var(--color-surface-0)',
             color: 'var(--color-text-primary)',
             border: '1px solid var(--color-border-subtle)',
@@ -322,7 +387,7 @@ function EffectParamRow({
               flex: 1,
               minWidth: 0,
               height: 20,
-              fontSize: 11,
+              fontSize: 'var(--font-size-xs)',
               background: 'var(--color-surface-0)',
               color: 'var(--color-text-primary)',
               border: '1px solid var(--color-border-subtle)',
@@ -472,6 +537,45 @@ function EffectParamRow({
   );
 }
 
+/** AE-style label colour menu for one applied effect instance. */
+function effectLabelColorMenuItems(
+  nodeId: string,
+  effectId: string,
+  current: string | undefined,
+): ContextMenuItem[] {
+  return [
+    {
+      id: 'fx-label-none',
+      label: 'None (Default)',
+      icon: current === undefined ? 'check' : undefined,
+      onSelect: () => setEffectLabelColor(nodeId, effectId, undefined),
+    },
+    { id: 'fx-label-sep', separator: true },
+    ...LABEL_COLORS.map((c): ContextMenuItem => ({
+      id: `fx-label-${c.id}`,
+      label: (
+        <>
+          <span
+            aria-hidden
+            style={{
+              display: 'inline-block',
+              width: 9,
+              height: 9,
+              borderRadius: '50%',
+              background: c.color,
+              marginRight: 8,
+              verticalAlign: 'baseline',
+            }}
+          />
+          {c.label}
+        </>
+      ),
+      icon: current === c.color ? 'check' : undefined,
+      onSelect: () => setEffectLabelColor(nodeId, effectId, c.color),
+    })),
+  ];
+}
+
 export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   useSceneRevision((s) => s.rev);
   const effects = getNodeEffects(nodeId);
@@ -591,6 +695,24 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 style={{ width: 15, height: 15, flexShrink: 0 }}
               />
 
+              <button
+                type="button"
+                className={panel.labelSwatch}
+                style={e.labelColor ? { background: e.labelColor } : undefined}
+                title="Label Color"
+                aria-label={`Label color for ${name}`}
+                // Header is the drag handle — keep the swatch from starting a drag.
+                onMouseDown={(ev) => ev.stopPropagation()}
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  openContextMenu(
+                    ev.clientX,
+                    ev.clientY,
+                    effectLabelColorMenuItems(nodeId, e.id, e.labelColor),
+                  );
+                }}
+              />
+
               <span className={panel.fxMark} aria-hidden>fx</span>
 
               <span
@@ -649,7 +771,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
               </button>
             </div>
 
-            {/* Accordion Body: Effect Parameters */}
+            {/* Accordion Body: Effect Parameters + Compositing Options */}
             {!isCollapsed && !off && (
               <div className={panel.effectParamsBody}>
                 {splitParamGroups(def.params).map((section, si) => {
@@ -660,6 +782,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                     ? <ParamGroup key={`g:${section.group}:${si}`} name={section.group}>{rows}</ParamGroup>
                     : <Fragment key={`u:${si}`}>{rows}</Fragment>;
                 })}
+                <EffectMaskRow nodeId={nodeId} effect={e} />
               </div>
             )}
           </div>

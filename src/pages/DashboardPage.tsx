@@ -21,6 +21,7 @@ import {
   clampDimension, clampFps, clampDuration, describeSize, describeDuration, findSizePreset,
 } from '@core/composition/presets';
 import { useAssetStore, type AssetFolder } from '@stores/assetStore';
+import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
 import {
   api,
   type AccountRecord,
@@ -623,64 +624,82 @@ export function DashboardPage(): JSX.Element {
       case 'home':
         return (
           <>
-            {/* Continue Editing Hero Banner */}
             {mostRecentProject && (
               <div className={styles.heroBanner}>
-                <div className={styles.heroBadge}>
-                  <Icon name="sparkles" size="sm" />
-                  <span>Pick up where you left off</span>
-                </div>
-                <h2 className={styles.heroTitle}>{mostRecentProject.name}</h2>
-                <p className={styles.heroSubtitle}>
-                  Edited {timeAgo(mostRecentProject.updatedAt)} · {describeSize(mostRecentProject.width, mostRecentProject.height)} · {mostRecentProject.fps} fps · {mostRecentProject.layerCount} {mostRecentProject.layerCount === 1 ? 'layer' : 'layers'}
-                </p>
-                <div className={styles.heroActions}>
-                  <button
-                    type="button"
-                    className={styles.heroBtnPrimary}
-                    onClick={() => navigate(`/editor/${mostRecentProject.id}`)}
-                  >
-                    <Icon name="play" size="md" />
-                    <span>Resume Editing</span>
-                  </button>
+                <button
+                  type="button"
+                  className={styles.heroThumb}
+                  onClick={() => navigate(`/editor/${mostRecentProject.id}`)}
+                  aria-label={`Open ${mostRecentProject.name}`}
+                >
+                  {mostRecentProject.thumbnailUrl ? (
+                    <img src={mostRecentProject.thumbnailUrl} alt="" className={styles.heroThumbImg} />
+                  ) : (
+                    <Icon name="video" size="lg" className={styles.heroThumbIcon} />
+                  )}
+                </button>
+                <div className={styles.heroBody}>
+                  <p className={styles.heroEyeline}>Continue editing</p>
+                  <h2 className={styles.heroTitle}>{mostRecentProject.name}</h2>
+                  <p className={styles.heroSubtitle}>
+                    Edited {timeAgo(mostRecentProject.updatedAt)} · {describeSize(mostRecentProject.width, mostRecentProject.height)} · {mostRecentProject.fps} fps · {mostRecentProject.layerCount} {mostRecentProject.layerCount === 1 ? 'layer' : 'layers'}
+                  </p>
+                  <div className={styles.heroActions}>
+                    <button
+                      type="button"
+                      className={styles.heroBtnPrimary}
+                      onClick={() => navigate(`/editor/${mostRecentProject.id}`)}
+                    >
+                      <Icon name="play" size="md" />
+                      <span>Resume</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.btnSecondary}
+                      onClick={() => openTab('projects')}
+                    >
+                      <span>All projects</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             )}
 
-            {/* Stats Summary Cards Row */}
             <div className={styles.statsGrid}>
-              <div className={styles.statCard}>
-                <div className={styles.statIcon} style={{ background: 'rgba(245, 176, 65, 0.12)', color: '#f5b041' }}>
+              <button type="button" className={styles.statCard} onClick={() => openTab('projects')}>
+                <div className={`${styles.statIcon} ${styles.statIconProjects}`}>
                   <Icon name="folder" size="md" />
                 </div>
                 <div className={styles.statMeta}>
                   <div className={styles.statValue}>{overview.projects.toLocaleString()}</div>
-                  <div className={styles.statLabel}>Total Projects</div>
+                  <div className={styles.statLabel}>Projects</div>
                 </div>
-              </div>
-              <div className={styles.statCard}>
-                <div className={styles.statIcon} style={{ background: 'rgba(245, 184, 75, 0.1)', color: 'var(--color-warning)' }}>
-                  <Icon name="video" size="md" />
+              </button>
+              <button type="button" className={styles.statCard} onClick={() => openTab('renders')}>
+                <div className={`${styles.statIcon} ${styles.statIconRenders}`}>
+                  <Icon name="queue" size="md" />
                 </div>
                 <div className={styles.statMeta}>
                   <div className={styles.statValue}>{overview.activeRenders.toLocaleString()}</div>
-                  <div className={styles.statLabel}>Active Renders</div>
+                  <div className={styles.statLabel}>Active renders</div>
                 </div>
-              </div>
-              <div className={styles.statCard}>
-                <div className={styles.statIcon} style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--color-success)' }}>
+              </button>
+              <button type="button" className={styles.statCard} onClick={() => openTab('assets')}>
+                <div className={`${styles.statIcon} ${styles.statIconStorage}`}>
                   <Icon name="image" size="md" />
                 </div>
                 <div className={styles.statMeta}>
                   <div className={styles.statValue}>{formatBytes(account?.storageBytes ?? 0)}</div>
-                  <div className={styles.statLabel}>Storage Used</div>
+                  <div className={styles.statLabel}>Storage used</div>
                 </div>
-              </div>
+              </button>
             </div>
 
-            {/* Quick list of projects */}
             <div className={styles.sectionHeaderRow}>
-              <h2 className={styles.sectionTitle}>Recent Compositions</h2>
+              <h2 className={styles.sectionTitle}>Recent compositions</h2>
+              <button type="button" className={styles.sectionLink} onClick={() => openTab('projects')}>
+                View all
+              </button>
             </div>
             {renderProjectsTable()}
           </>
@@ -724,24 +743,24 @@ export function DashboardPage(): JSX.Element {
                 </button>
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <div className={styles.assetToolbar}>
                 <button
                   type="button"
                   className={styles.btnSecondary}
                   onClick={handleNewFolder}
                   title="Create new folder"
                 >
-                  <Icon name="folder-plus" size="md" style={{ color: '#f5b041' }} />
-                  <span>New Folder</span>
+                  <Icon name="folder-plus" size="md" style={{ color: FOLDER_COLOR }} />
+                  <span>New folder</span>
                 </button>
 
-                <label className={styles.btnSecondary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
-                  <Icon name="folder-open" size="md" style={{ color: '#f5b041' }} />
-                  <span>Import Folder</span>
+                <label className={`${styles.btnSecondary} ${assetsBusy ? styles.fileLabelBusy : styles.fileLabel}`}>
+                  <Icon name="folder-open" size="md" style={{ color: FOLDER_COLOR }} />
+                  <span>Import folder</span>
                   <input
                     type="file"
                     multiple
-                    style={{ display: 'none' }}
+                    className={styles.hiddenFileInput}
                     disabled={assetsBusy}
                     onChange={(e) => {
                       void handleImportFolder(e.currentTarget.files);
@@ -751,14 +770,14 @@ export function DashboardPage(): JSX.Element {
                   />
                 </label>
 
-                <label className={styles.btnPrimary} style={{ cursor: assetsBusy ? 'default' : 'pointer' }}>
-                  <Icon name="upload" size="md" style={{ color: '#ffffff' }} />
-                  <span>{assetsBusy ? 'Uploading…' : 'Import Asset'}</span>
+                <label className={`${styles.btnPrimary} ${assetsBusy ? styles.fileLabelBusy : styles.fileLabel}`}>
+                  <Icon name="upload" size="md" />
+                  <span>{assetsBusy ? 'Uploading…' : 'Import asset'}</span>
                   <input
                     type="file"
                     multiple
                     accept="image/*,video/*,audio/*"
-                    style={{ display: 'none' }}
+                    className={styles.hiddenFileInput}
                     disabled={assetsBusy}
                     onChange={(e) => {
                       void handleImportAssetFiles(e.currentTarget.files);
@@ -769,35 +788,33 @@ export function DashboardPage(): JSX.Element {
               </div>
             </div>
 
-            {/* Breadcrumb Navigation */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--color-text-secondary)', padding: '4px 0' }}>
+            <nav className={styles.breadcrumb} aria-label="Asset folder">
               <button
                 type="button"
-                className={currentFolderId === null ? styles.assetTabActive : styles.assetTab}
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: currentFolderId === null ? '#fff' : 'var(--color-text-secondary)' }}
+                className={`${styles.breadcrumbBtn} ${currentFolderId === null ? styles.breadcrumbBtnActive : ''}`}
                 onClick={() => setCurrentFolderId(null)}
               >
-                All Assets
+                All assets
               </button>
               {currentBreadcrumb.map((f, i) => (
-                <span key={f.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                  <span>/</span>
+                <span key={f.id} className={styles.breadcrumbSeg}>
+                  <span className={styles.breadcrumbSep} aria-hidden>/</span>
                   <button
                     type="button"
-                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: i === currentBreadcrumb.length - 1 ? '#fff' : 'var(--color-text-secondary)', fontWeight: i === currentBreadcrumb.length - 1 ? 600 : 400 }}
+                    className={`${styles.breadcrumbBtn} ${i === currentBreadcrumb.length - 1 ? styles.breadcrumbBtnActive : ''}`}
                     onClick={() => setCurrentFolderId(f.id)}
                   >
                     {f.name}
                   </button>
                 </span>
               ))}
-            </div>
+            </nav>
 
             {dataError ? <p className={styles.emptyHint}>{dataError}</p> : null}
 
             {subfoldersInView.length === 0 && visibleAssetsInView.length === 0 ? (
               <div className={styles.emptyState}>
-                <Icon name="folder" size="lg" style={{ color: '#f5b041' }} />
+                <Icon name="folder" size="lg" style={{ color: FOLDER_COLOR }} />
                 <p>{currentFolderId === null ? 'No assets yet. Import files, upload a folder, or create a new folder.' : 'This folder is empty. Import assets or create subfolders here.'}</p>
               </div>
             ) : (
@@ -814,7 +831,7 @@ export function DashboardPage(): JSX.Element {
                       style={{ cursor: 'pointer' }}
                       onClick={() => { if (renamingFolderId !== folder.id) setCurrentFolderId(folder.id); }}
                     >
-                      <div className={styles.assetPreview} style={{ color: '#f5b041' }}>
+                      <div className={styles.assetPreview} style={{ color: FOLDER_COLOR }}>
                         <Icon name="folder" size="lg" />
                       </div>
                       <div className={styles.assetMeta}>
@@ -855,36 +872,40 @@ export function DashboardPage(): JSX.Element {
                 })}
 
                 {/* Render assets */}
-                {pagedAssets.map((asset) => (
-                  <div key={asset.id} className={styles.assetCard}>
-                    <div className={styles.assetPreview}>
-                      {asset.type === 'image' ? (
-                        <img src={asset.src} alt="" className={styles.assetPreviewImg} />
-                      ) : (
-                        <Icon
-                          name={asset.type === 'video' ? 'video' : 'audio'}
-                          size="lg"
-                          className={styles.assetPreviewIcon}
-                        />
-                      )}
-                    </div>
-                    <div className={styles.assetMeta}>
-                      <div className={styles.assetName} title={asset.name}>{asset.name}</div>
-                      <div className={styles.assetDetails}>
-                        {formatBytes(asset.size)}
-                        {asset.metadata?.width ? ` · ${asset.metadata.width}×${asset.metadata.height}` : ''}
+                {pagedAssets.map((asset) => {
+                  const visual = getAssetVisualInfo(asset);
+                  return (
+                    <div key={asset.id} className={styles.assetCard}>
+                      <div className={styles.assetPreview}>
+                        {asset.type === 'image' && asset.src ? (
+                          <img src={asset.src} alt="" className={styles.assetPreviewImg} />
+                        ) : (
+                          <Icon
+                            name={visual.icon}
+                            size="lg"
+                            className={styles.assetPreviewIcon}
+                            style={{ color: visual.color }}
+                          />
+                        )}
                       </div>
+                      <div className={styles.assetMeta}>
+                        <div className={styles.assetName} title={asset.name}>{asset.name}</div>
+                        <div className={styles.assetDetails}>
+                          {formatBytes(asset.size)}
+                          {asset.metadata?.width ? ` · ${asset.metadata.width}×${asset.metadata.height}` : ''}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={styles.actionBtn}
+                        title="Delete asset"
+                        onClick={() => void handleDeleteAsset(asset.id, asset.name)}
+                      >
+                        <Icon name="trash" size="sm" />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      className={styles.actionBtn}
-                      title="Delete asset"
-                      onClick={() => void handleDeleteAsset(asset.id, asset.name)}
-                    >
-                      <Icon name="trash" size="sm" />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <Pagination
                 total={assetEntryTotal}
@@ -915,11 +936,10 @@ export function DashboardPage(): JSX.Element {
                 <button
                   type="button"
                   className={styles.btnSecondary}
-                  onClick={() => setActiveTab('projects')}
-                  style={{ marginTop: '8px' }}
+                  onClick={() => openTab('projects')}
                 >
                   <Icon name="folder" size="md" />
-                  <span>Go to Projects</span>
+                  <span>Go to projects</span>
                 </button>
               </div>
             ) : (
@@ -1032,8 +1052,8 @@ export function DashboardPage(): JSX.Element {
             ) : (
               <>
                 {selectedTrashIds.size > 0 && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 16px', background: 'var(--color-surface-2)', borderBottom: '1px solid var(--color-border-strong)' }}>
-                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-text-secondary)' }}>
+                  <div className={styles.selectionBar}>
+                    <span className={styles.selectionCount}>
                       {selectedTrashIds.size} {selectedTrashIds.size === 1 ? 'project' : 'projects'} selected
                     </span>
                     <button
@@ -1403,67 +1423,67 @@ export function DashboardPage(): JSX.Element {
     switch (activeTab) {
       case 'home':
         return {
-          title: 'Home overview',
-          desc: 'Your project health center. View stats and edit recent compositions.',
+          title: 'Home',
+          desc: 'Pick up recent work and see what’s happening across your library.',
         };
       case 'projects':
         return {
-          title: 'Projects & drafts',
-          desc: 'Your full editing library. Open, search, and manage project revisions.',
+          title: 'Projects',
+          desc: 'Search, open, and manage every composition in your library.',
         };
       case 'trash':
         return {
           title: 'Trash',
-          desc: 'Deleted projects, recoverable for 30 days. After that they are removed for good.',
+          desc: 'Restore deleted projects within 30 days, or remove them permanently.',
         };
       case 'assets':
         return {
-          title: 'Assets library',
-          desc: 'Upload and organize media, audio backdrops, and overlays for your timelines.',
+          title: 'Assets',
+          desc: 'Import and organize media you’ll use across projects.',
         };
       case 'plugins':
         return {
           title: 'Plugins',
-          desc: 'Find, install and manage plugins. They run sandboxed, and can only reach websites you approve by name.',
+          desc: 'Install and manage sandboxed plugins. Network access is allowlisted by name.',
         };
       case 'renders':
         return {
           title: 'Render queue',
-          desc: 'Monitor export rendering progress, completed videos, and queued exports.',
+          desc: 'Track exports in progress, finished downloads, and queued jobs.',
         };
       case 'billing':
         return {
           title: 'Billing',
-          desc: 'Your plan, what it includes, and how to change or cancel it.',
+          desc: 'Your plan, what’s included, and how to change or cancel.',
         };
       case 'developer':
         return {
-          title: 'Developer / API',
-          desc: 'API keys and usage for the Automation API — render your templates from n8n, a script, or CI.',
+          title: 'Developer',
+          desc: 'API keys and usage for rendering templates from scripts, n8n, or CI.',
         };
       case 'settings':
         return {
-          // Was "Dashboard settings / Configure application preferences,
-          // auto-save settings, and project defaults" — which described none of
-          // what the page held. It is accurate now because the page is smaller.
           title: 'Settings',
-          desc: 'Your account, the assistant, and where to change editor preferences.',
+          desc: 'Account details, assistant setup, and a link to editor preferences.',
         };
     }
   }, [activeTab]);
 
+  const displayName = user?.name || user?.email?.split('@')[0] || 'Account';
+  const displayInitial = displayName.trim().charAt(0).toUpperCase() || '?';
+
   return (
     <div className={styles.root}>
-      {/* 1. Left Sidebar Navigation */}
       <aside className={styles.sidebar}>
         <div className={styles.sidebarBrand}>
           <Logo variant="lockup" size={26} />
         </div>
-        <nav className={styles.sidebarNav}>
+        <nav className={styles.sidebarNav} aria-label="Dashboard">
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'home' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('home')}
+            aria-current={activeTab === 'home' ? 'page' : undefined}
+            onClick={() => openTab('home')}
           >
             <Icon name="home" size="md" className={styles.navIcon} />
             <span>Home</span>
@@ -1471,23 +1491,26 @@ export function DashboardPage(): JSX.Element {
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'projects' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('projects')}
+            aria-current={activeTab === 'projects' ? 'page' : undefined}
+            onClick={() => openTab('projects')}
           >
             <Icon name="folder" size="md" className={styles.navIcon} />
-            <span>Projects & Drafts</span>
+            <span>Projects</span>
           </button>
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'assets' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('assets')}
+            aria-current={activeTab === 'assets' ? 'page' : undefined}
+            onClick={() => openTab('assets')}
           >
             <Icon name="image" size="md" className={styles.navIcon} />
-            <span>Assets Library</span>
+            <span>Assets</span>
           </button>
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'plugins' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('plugins')}
+            aria-current={activeTab === 'plugins' ? 'page' : undefined}
+            onClick={() => openTab('plugins')}
           >
             <Icon name="plugin" size="md" className={styles.navIcon} />
             <span>Plugins</span>
@@ -1495,31 +1518,29 @@ export function DashboardPage(): JSX.Element {
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'renders' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('renders')}
+            aria-current={activeTab === 'renders' ? 'page' : undefined}
+            onClick={() => openTab('renders')}
           >
             <Icon name="queue" size="md" className={styles.navIcon} />
-            <span>Render Queue</span>
+            <span>Render queue</span>
           </button>
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'trash' ? styles.navLinkActive : ''}`}
-            onClick={() => setActiveTab('trash')}
+            aria-current={activeTab === 'trash' ? 'page' : undefined}
+            onClick={() => openTab('trash')}
           >
             <Icon name="trash" size="md" className={styles.navIcon} />
             <span>Trash</span>
           </button>
 
-          {/*
-            Account-level destinations, separated from the workspace ones above.
-            Everything above this line is about the WORK; everything below is
-            about the account that owns it.
-          */}
           <div className={styles.navDivider} role="separator" />
 
           {billingEnabled() && (
             <button
               type="button"
               className={`${styles.navLink} ${activeTab === 'billing' ? styles.navLinkActive : ''}`}
+              aria-current={activeTab === 'billing' ? 'page' : undefined}
               onClick={() => openTab('billing')}
             >
               <Icon name="sparkles" size="md" className={styles.navIcon} />
@@ -1529,14 +1550,16 @@ export function DashboardPage(): JSX.Element {
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'developer' ? styles.navLinkActive : ''}`}
+            aria-current={activeTab === 'developer' ? 'page' : undefined}
             onClick={() => openTab('developer')}
           >
             <Icon name="code" size="md" className={styles.navIcon} />
-            <span>Developer / API</span>
+            <span>Developer</span>
           </button>
           <button
             type="button"
             className={`${styles.navLink} ${activeTab === 'settings' ? styles.navLinkActive : ''}`}
+            aria-current={activeTab === 'settings' ? 'page' : undefined}
             onClick={() => openTab('settings')}
           >
             <Icon name="settings" size="md" className={styles.navIcon} />
@@ -1545,32 +1568,35 @@ export function DashboardPage(): JSX.Element {
         </nav>
 
         <div className={styles.sidebarFooter}>
+          <button
+            type="button"
+            className={styles.accountChip}
+            onClick={() => openTab('settings')}
+            title="Open settings"
+          >
+            <span className={styles.accountAvatar} aria-hidden>{displayInitial}</span>
+            <span className={styles.accountMeta}>
+              <span className={styles.accountName}>{displayName}</span>
+              {user?.email ? <span className={styles.accountEmail}>{user.email}</span> : null}
+            </span>
+          </button>
+
           {billingEnabled() && (
-          <div className={styles.upgradeCardBox}>
-            <div className={styles.upgradeCardHeader}>
-              <div className={styles.upgradeCardBadge}>
-                <Icon name="sparkles" size="sm" />
-              </div>
-              <span className={styles.upgradeCardTitle}>Plans &amp; billing</span>
-            </div>
-            <p className={styles.upgradeCardDesc}>
-              Compare current plans and manage your subscription.
-            </p>
             <button
               type="button"
-              className={styles.upgradeCardActionBtn}
+              className={styles.planLink}
               onClick={() => openTab('billing')}
             >
+              <Icon name="sparkles" size="sm" />
               <span>{account?.plan && account.plan !== 'free' ? 'Manage plan' : 'View plans'}</span>
             </button>
-          </div>
           )}
 
           <button
             type="button"
             className={styles.logoutSidebarBtn}
             onClick={logout}
-            title="Sign out of account"
+            title="Sign out"
           >
             <Icon name="lock" size="md" className={styles.logoutIcon} />
             <span>Log out</span>
@@ -1578,37 +1604,41 @@ export function DashboardPage(): JSX.Element {
         </div>
       </aside>
 
-      {/* 2. Main Area */}
       <div className={styles.container}>
-
-        {/* Main Content Workspace */}
         <main className={styles.mainContent}>
           <div className={`${styles.pageTitleRow} ${activeTab === 'settings' ? styles.settingsTitleRow : ''}`}>
-            <div>
+            <div className={styles.pageTitleBlock}>
               <h1 className={styles.pageTitle}>{headerDetails.title}</h1>
               <p className={styles.pageSubtitle}>{headerDetails.desc}</p>
             </div>
+            {(activeTab === 'home' || activeTab === 'projects') && (
+              <button
+                type="button"
+                className={styles.btnPrimary}
+                onClick={onCreate}
+                disabled={creating}
+              >
+                <Icon name="plus" size="md" />
+                <span>{creating ? 'Creating…' : 'Create project'}</span>
+              </button>
+            )}
           </div>
 
-          {/* Action & Filter Bar (Only visible on home / projects view) */}
           {(activeTab === 'home' || activeTab === 'projects') && (
             <div className={styles.actionBar}>
               <div className={styles.filterGroup}>
                 <div className={styles.searchWrapper}>
                   <Icon name="search" size="md" className={styles.inputSearchIcon} />
                   <input
-                    type="text"
-                    placeholder="Search projects..."
+                    type="search"
+                    placeholder="Search projects…"
                     className={styles.projectSearchInput}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
+                    aria-label="Search projects"
                   />
                 </div>
 
-                {/* Filters on a real, stored fact, server-side — see the note
-                    on `filteredProjects`' removal. The Category and Status
-                    dropdowns that used to sit here filtered on values invented
-                    from the revision counter. */}
                 <select
                   value={orientation}
                   onChange={(e) => {
@@ -1616,6 +1646,7 @@ export function DashboardPage(): JSX.Element {
                     void load({ orientation: e.target.value as OrientationFilter });
                   }}
                   className={styles.filterDropdown}
+                  aria-label="Filter by format"
                 >
                   <option value="all">Format: All</option>
                   <option value="landscape">Landscape</option>
@@ -1631,8 +1662,6 @@ export function DashboardPage(): JSX.Element {
                     className={styles.btnDanger}
                     onClick={async () => {
                       if (await customConfirm('Move to Trash', `Move ${selectedIds.size} projects to the trash? You can restore them for 30 days.`, { confirmLabel: 'Move to Trash' })) {
-                        // One refetch for the batch — `remove` per id would
-                        // reload the page between every deletion.
                         await removeMany(selectedIds);
                         setSelectedIds(new Set());
                         void refreshOverview();
@@ -1643,26 +1672,10 @@ export function DashboardPage(): JSX.Element {
                     <span>Move to trash ({selectedIds.size})</span>
                   </button>
                 )}
-
-                <button type="button" className={styles.btnSecondary} disabled>
-                  <span>Actions</span>
-                  <Icon name="chevron-down" size="sm" />
-                </button>
-
-                <button
-                  type="button"
-                  className={styles.btnPrimary}
-                  onClick={onCreate}
-                  disabled={creating}
-                >
-                  <Icon name="plus" size="md" />
-                  <span>{creating ? 'Creating…' : 'Create project'}</span>
-                </button>
               </div>
             </div>
           )}
 
-          {/* Renders Tab Content */}
           {renderTabContent()}
         </main>
       </div>
@@ -1681,7 +1694,7 @@ export function DashboardPage(): JSX.Element {
               footage, as a visible choice instead of a buried context menu. */}
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>Start from</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className={styles.startFromGrid}>
               <button
                 type="button"
                 className={setupFootage ? styles.btnSecondary : styles.btnPrimary}
@@ -1711,10 +1724,9 @@ export function DashboardPage(): JSX.Element {
               </button>
             </div>
             {setupFootage && (
-              <div className={styles.fieldNote} style={{ marginTop: 6 }}>
-                Starting from <strong>{setupFootage.name}</strong> — the settings below were
-                read from the clip and stay editable. It will be imported and placed at
-                full frame.
+              <div className={styles.fieldNote}>
+                Starting from <strong>{setupFootage.name}</strong> — settings below were
+                read from the clip and stay editable. It will be imported at full frame.
               </div>
             )}
           </div>
@@ -1884,12 +1896,12 @@ export function DashboardPage(): JSX.Element {
                 value={setupBg}
                 onChange={(e) => { setSetupBg(e.target.value); setSetupTransparent(false); }}
               />
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8rem', color: 'var(--color-text-secondary)', cursor: 'pointer', marginLeft: 'auto' }}>
+              <label className={styles.transparentToggle}>
                 <Checkbox
                   checked={setupTransparent}
                   onChange={(e) => setSetupTransparent(e.target.checked)}
                 />
-                Transparent Canvas
+                Transparent canvas
               </label>
             </div>
           </div>

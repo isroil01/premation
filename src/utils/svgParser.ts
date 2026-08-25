@@ -2,10 +2,29 @@ import type { BezierPoint } from '@motion/workspace';
 import { scanSvgAnimations, buildShapeAnimation, type SvgShapeAnimation, type SvgAnimationOptions } from './svgAnimation';
 import { readCssPresentation } from './svgCss';
 
+/** Gradient captured from SVG defs — converted to FillPaint at insert time. */
+export interface ParsedGradientFill {
+  type: 'linear' | 'radial';
+  /** Linear direction in degrees (0 = →, 90 = ↓). */
+  angle?: number;
+  /** Radial centre in the objectBoundingBox [0..1] square. */
+  cx?: number;
+  cy?: number;
+  /** Radial radius as a fraction of the objectBoundingBox unit square. */
+  radius?: number;
+  stops: Array<{ offset: number; color: string; opacity: number }>;
+}
+
 export interface ParsedShape {
   name: string;
   points: BezierPoint[];
   fill: string;
+  /**
+   * Full gradient paint when `fill` came from `url(#linearGradient|radialGradient)`.
+   * `fill` still holds the first-stop solid for legacy Style.fill; the insert
+   * path writes this onto `fx.fill` so the inspector can edit the ramp.
+   */
+  fillPaint?: ParsedGradientFill;
   strokeColor?: string;
   strokeWidth?: number;
   /** false for open outlines (polyline / line / paths without Z). */
@@ -1473,6 +1492,69 @@ function rootMatrixFromSvg(svg: Element): Mat {
   return IDENTITY;
 }
 
+/** Read stop-color / stop-opacity from attribute or style="" on a `<stop>`. */
+function stopPaintAttrs(stop: Element): { color: string; opacity: number; offset: number } {
+  const style = stop.getAttribute('style') ?? '';
+  const styleColor = /stop-color:\s*([^;]+)/i.exec(style)?.[1]?.trim();
+  const styleOpacity = /stop-opacity:\s*([^;]+)/i.exec(style)?.[1]?.trim();
+  const styleOffset = /(?:^|;)\s*offset:\s*([^;]+)/i.exec(style)?.[1]?.trim();
+  const color = (stop.getAttribute('stop-color') || styleColor || '#cccccc').trim();
+  const opacityRaw = stop.getAttribute('stop-opacity') || styleOpacity;
+  const opacity = opacityRaw != null ? Math.max(0, Math.min(1, Number.parseFloat(opacityRaw))) : 1;
+  const offsetRaw = stop.getAttribute('offset') || styleOffset || '0';
+  let offset = Number.parseFloat(offsetRaw);
+  if (/%\s*$/.test(offsetRaw)) offset /= 100;
+  if (!Number.isFinite(offset)) offset = 0;
+  return { color, opacity: Number.isFinite(opacity) ? opacity : 1, offset: Math.max(0, Math.min(1, offset)) };
+}
+
+function parseSvgGradientElement(g: Element): { solid: string; paint: ParsedGradientFill } | null {
+  const stops = Array.from(g.querySelectorAll('stop')).map(stopPaintAttrs);
+  if (stops.length === 0) {
+    return { solid: '#cccccc', paint: { type: 'linear', angle: 90, stops: [{ offset: 0, color: '#cccccc', opacity: 1 }, { offset: 1, color: '#000000', opacity: 1 }] } };
+  }
+  const solid = stops[0]!.color;
+  const tag = g.tagName.toLowerCase().replace(/^svg:/, '');
+
+  if (tag === 'radialgradient') {
+    const num = (attr: string, fallback: number): number => {
+      const raw = g.getAttribute(attr);
+      if (raw == null || raw === '') return fallback;
+      let v = Number.parseFloat(raw);
+      if (/%\s*$/.test(raw)) v /= 100;
+      return Number.isFinite(v) ? v : fallback;
+    };
+    return {
+      solid,
+      paint: {
+        type: 'radial',
+        cx: num('cx', 0.5),
+        cy: num('cy', 0.5),
+        radius: Math.max(0.01, num('r', 0.5)),
+        stops,
+      },
+    };
+  }
+
+  // linearGradient — objectBoundingBox endpoints → angle (length not preserved).
+  const num = (attr: string, fallback: number): number => {
+    const raw = g.getAttribute(attr);
+    if (raw == null || raw === '') return fallback;
+    let v = Number.parseFloat(raw);
+    if (/%\s*$/.test(raw)) v /= 100;
+    return Number.isFinite(v) ? v : fallback;
+  };
+  const x1 = num('x1', 0);
+  const y1 = num('y1', 0);
+  const x2 = num('x2', 1);
+  const y2 = num('y2', 0);
+  const angle = (Math.atan2(y2 - y1, x2 - x1) * 180) / Math.PI;
+  return {
+    solid,
+    paint: { type: 'linear', angle, stops },
+  };
+}
+
 export interface SvgParseOptions extends SvgAnimationOptions {
   /** Resolves a text run's real box. Without it text keeps its 10×10 stand-in. */
   measureText?: SvgTextMeasurer;
@@ -1501,22 +1583,24 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgParseOptions): Pa
   // only place the colours are declared at all.
   const cssPresentation = readCssPresentation(doc);
 
-  // Gradients/patterns can't be reproduced as vector fills — approximate each
-  // `url(#id)` paint with the referenced gradient's FIRST stop colour so a
-  // vectorized shape gets a sensible solid fill instead of a broken/black one.
-  const gradMap = new Map<string, string>();
+  // Gradients → ParsedGradientFill (editable FillPaint at insert). First-stop
+  // solid remains as a Style.fill fallback for consumers that only read strings.
+  const gradMap = new Map<string, { solid: string; paint: ParsedGradientFill }>();
   for (const g of Array.from(doc.querySelectorAll('linearGradient,radialGradient'))) {
     const id = g.getAttribute('id');
     if (!id) continue;
-    const stop = g.querySelector('stop');
-    const styleColor = /stop-color:\s*([^;]+)/i.exec(stop?.getAttribute('style') ?? '')?.[1]?.trim();
-    const color = stop?.getAttribute('stop-color') || styleColor || '#cccccc';
-    gradMap.set(id, color);
+    const parsed = parseSvgGradientElement(g);
+    if (parsed) gradMap.set(id, parsed);
   }
   const resolvePaint = (v: string | undefined): string | undefined => {
     if (!v) return v;
     const m = /^url\(\s*#([^)\s]+)\s*\)/i.exec(v.trim());
-    return m ? (gradMap.get(m[1]!) ?? '#cccccc') : v;
+    return m ? (gradMap.get(m[1]!)?.solid ?? '#cccccc') : v;
+  };
+  const resolveGradient = (v: string | undefined): ParsedGradientFill | undefined => {
+    if (!v) return undefined;
+    const m = /^url\(\s*#([^)\s]+)\s*\)/i.exec(v.trim());
+    return m ? gradMap.get(m[1]!)?.paint : undefined;
   };
 
   const raw: RawShape[] = [];
@@ -1585,6 +1669,7 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgParseOptions): Pa
           const cy = anchor.y - m!.baselineOffset;
           cursor += m!.advance;
           const runFill = resolvePaint(run.style.fill);
+          const runGrad = resolveGradient(run.style.fill);
           const anim = scan.anims.length > 0 && keyframeBudget > 0
             ? buildShapeAnimation(r.factors, scan, r.matrix, { x: cx, y: cy }, { staticOpacityOf }) ?? undefined
             : undefined;
@@ -1593,6 +1678,7 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgParseOptions): Pa
             name: `Text: ${run.content.trim().slice(0, 15)}`,
             points: [{ x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 }],
             fill: runFill && runFill !== 'none' ? runFill : runFill === 'none' ? 'none' : '#000000',
+            ...(runGrad ? { fillPaint: runGrad } : {}),
             closed: false,
             width: m!.width,
             height: m!.height,
@@ -1668,6 +1754,7 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgParseOptions): Pa
 
     const fillRaw = resolvePaint(r.style.fill);
     const fill = fillRaw && fillRaw !== 'none' ? fillRaw : fillRaw === 'none' ? 'none' : '#000000';
+    const fillPaint = resolveGradient(r.style.fill);
     const strokeRaw = resolvePaint(r.style.stroke);
     const strokeColor = strokeRaw && strokeRaw !== 'none' ? strokeRaw : undefined;
     const strokeWidth = r.style.strokeWidth != null && Number.isFinite(r.style.strokeWidth) ? r.style.strokeWidth : undefined;
@@ -1690,6 +1777,7 @@ export function parseSvgToShapes(svgContent: string, opts?: SvgParseOptions): Pa
       name: r.name,
       points: centeredPoints,
       fill,
+      ...(fillPaint ? { fillPaint } : {}),
       strokeColor,
       strokeWidth,
       closed: r.closed,
@@ -1778,8 +1866,7 @@ export function isSimpleSvg(svgContent: string): boolean {
   const s = svgContent.toLowerCase();
   if (UNSUPPORTED_TAGS.test(s)) return false;
   if (UNSUPPORTED_ATTRS.test(s)) return false;
-  // Gradients survive only as their first stop — a visible downgrade on any
-  // artwork that actually uses one, so hand those to the rasterizer too.
-  if (/<(lineargradient|radialgradient)[\s>]/.test(s)) return false;
+  // Gradients map to editable FillPaint (linear/radial) — no longer a reason
+  // to force the raster path. Filters / masks / patterns still are.
   return true;
 }

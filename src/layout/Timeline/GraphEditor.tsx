@@ -8,14 +8,25 @@
  *    whose in/out speeds differ shows the AE-style vertical jump.
  *  - Keyframe diamonds: drag horizontally to retime (frame-snapped, never past a
  *    neighbour), vertically to change the value (value mode) or speed (speed mode).
- *    Shift constrains to one axis, Alt disables snapping.
+ *    Shift constrains to one axis while dragging; Shift-click toggles multi-select
+ *    (shared with the timeline via keyframeSelectionStore). Dragging any diamond
+ *    in a multi-selection moves the whole set in time (and value, in value mode).
+ *    Time snaps to playhead / other keys / frames; value snaps to other keys /
+ *    zero. Alt disables snapping. Guide lines show the active snap target.
  *  - Bézier handles: drag to shape the curve. Linked keyframes keep both sides
  *    collinear (value) / equal speed (speed); Alt-drag breaks the link.
  *  - The vertical range is FROZEN for the whole drag — the graph no longer re-fits
  *    under the cursor — and re-fits on release (AE "auto-zoom graph height").
  *  - Toolbar: Easy Ease / In / Out / Linear / Hold, numeric t / value / in+out
  *    speed & influence fields (each field edits ONLY its own side), link toggle.
- *  - Click-drag on the background scrubs the playhead.
+ *    Easing presets apply to the multi-keyframe selection (same set as F9).
+ *  - Click-drag on the background scrubs the playhead. Alt-drag draws a box
+ *    zoom (time span → fill viewport), matching AE’s graph box-zoom gesture.
+ *  - Selected keyframes always show value labels; at high horizontal zoom every
+ *    in-view diamond gets a label too.
+ *  - Legend chips solo a curve (click) or toggle into a multi-solo set (Shift).
+ *  - Click a curve body (not a diamond) to select the nearest keyframe on that
+ *    track — Shift toggles it into the multi-selection, same as diamonds.
  *
  * Interaction notes (the bugs this design exists to avoid):
  *  - Pointer capture is taken on the <svg>, not the grabbed element. Diamonds
@@ -29,9 +40,11 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { Icon } from '@components/Icon';
-import { defaultAnimation, makeKeyframeId } from '@motion/animation';
+import { defaultAnimation, makeKeyframeId, parseKeyframeId } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
-import { applyEasingToKeyframes, type EasingPreset } from '@core/animation/keyframeAssistants';
+import { type EasingPreset } from '@core/animation/keyframeAssistants';
+import { applyEasingToSelection } from '@core/animation/easingSelection';
+import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
@@ -51,7 +64,14 @@ import {
   isHoldEasing,
   type Bezier,
 } from './speedGraph';
-import { snapKeyframeTime } from './keyframeSnap';
+import { snapKeyframeTime, snapKeyframeValue, type SnapTarget, type ValueSnapTarget } from './keyframeSnap';
+import { computeBoxZoomFromSvg } from './graphBoxZoom';
+import { nearestKeyframeOnCurve } from './graphCurveClick';
+import {
+  planGraphGroupTimes,
+  applyGroupValueDelta,
+  type GraphGroupMemberStart,
+} from './graphGroupMove';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import styles from './GraphEditor.module.css';
 
@@ -98,12 +118,23 @@ interface SelectedKf {
   t: number;
 }
 
+/** Keep keyframeSelectionStore ids valid when a diamond’s time (embedded in the id) changes. */
+function rewriteSelectedKeyframeId(oldId: string, newId: string): void {
+  if (oldId === newId) return;
+  const store = useKeyframeSelectionStore.getState();
+  if (!store.ids.has(oldId)) return;
+  const next = new Set(store.ids);
+  next.delete(oldId);
+  next.add(newId);
+  store.set(next);
+}
+
 interface Range {
   minV: number;
   maxV: number;
 }
 
-type DragKind = 'kf' | 'handle-in' | 'handle-out' | 'scrub';
+type DragKind = 'kf' | 'handle-in' | 'handle-out' | 'scrub' | 'box-zoom';
 
 interface DragState {
   kind: DragKind;
@@ -124,6 +155,15 @@ interface DragState {
   mode: 'value' | 'speed';
   moved: boolean;
   tx?: ReturnType<typeof beginAnimEdit>;
+  /** Live box-zoom corner (svg); start corner is ox/oy. */
+  boxX?: number;
+  boxY?: number;
+  /** Multi-select body at pointer-down (origin+delta). Absent = single diamond. */
+  group?: GraphGroupMemberStart[];
+  /** Index of the grabbed diamond inside `group`. */
+  grabIndex?: number;
+  /** Current layer times for `group` members (parallel; mutated while dragging). */
+  groupCurrentT?: number[];
 }
 
 /** Fixed multi-curve series palette (data-viz, not chrome) — shared across themes. */
@@ -133,6 +173,10 @@ const HANDLE_RADIUS = 4.5;
 /** Invisible grab radius around handles / diamonds — AE-sized hit targets. */
 const HIT_RADIUS = 10;
 const KF_SIZE = 8;
+/** Show value labels next to every in-view diamond once zoomed in this far. */
+const LABEL_PPS = 120;
+const GRAPH_PPS_MIN = 4;
+const GRAPH_PPS_MAX = 800;
 /** Pointer must travel this far before a press becomes a drag (click ≠ nudge). */
 const DRAG_DEAD_ZONE_PX = 2;
 /** Handle y is clamped to this band around the segment (overshoot allowed, runaway not). */
@@ -233,7 +277,20 @@ export function GraphEditor({
   const rev = useSceneRevision((s) => s.rev);
   const [mode, setMode] = useState<'value' | 'speed'>('value');
   const [selectedKf, setSelectedKf] = useState<SelectedKf | null>(null);
+  const selectedKfIds = useKeyframeSelectionStore((s) => s.ids);
+  const setSelectedKfIds = useKeyframeSelectionStore((s) => s.set);
   const [dragging, setDragging] = useState(false);
+  /** null = show all curves; non-empty = only these trackKeys at full opacity. */
+  const [soloKeys, setSoloKeys] = useState<Set<string> | null>(null);
+  /** Live Alt-drag box-zoom rectangle (svg coords), or null. */
+  const [boxZoom, setBoxZoom] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  /** Live snap guides while dragging a diamond (time vertical / value horizontal). */
+  const [graphSnap, setGraphSnap] = useState<{
+    time: SnapTarget | null;
+    value: ValueSnapTarget | null;
+    minV: number;
+    maxV: number;
+  } | null>(null);
   // Bumped when a drag ends so the range re-fits once (the memo below reads the
   // frozen ranges through a ref, which a state change must flush).
   const [refitTick, setRefitTick] = useState(0);
@@ -243,9 +300,10 @@ export function GraphEditor({
   const height = propsHeight ?? (size.height > 0 ? size.height : GRAPH_HEIGHT_DEFAULT);
   const viewportW = size.width > 0 ? size.width : 800;
 
-  // Clear selection when selected nodes change.
+  // Clear focus when selected nodes change. Solo follows the visible tracks.
   useEffect(() => {
     setSelectedKf(null);
+    setSoloKeys(null);
   }, [selectedNodeIds]);
 
   // ── Track / curve data ─────────────────────────────────────────
@@ -540,7 +598,31 @@ export function GraphEditor({
   const endDrag = useCallback(() => {
     const d = dragRef.current;
     if (!d) return;
-    if (d.tx) {
+    if (d.kind === 'box-zoom') {
+      const x1 = d.boxX ?? d.ox;
+      if (d.moved && onZoom) {
+        const result = computeBoxZoomFromSvg({
+          x0: d.ox,
+          x1,
+          currentPps: pps,
+          viewportW,
+          minPps: GRAPH_PPS_MIN,
+          maxPps: GRAPH_PPS_MAX,
+        });
+        if (result) {
+          zoomAnchorRef.current = { t: result.t0, localX: 0 };
+          onZoom(result.pps);
+          // scrollLeft applied by the layout effect after pps lands; also set
+          // immediately so a no-op clamp still pans to the box.
+          const el = canvasRef.current;
+          if (el) {
+            el.scrollLeft = result.scrollLeft;
+            onScrollChange?.(result.scrollLeft);
+          }
+        }
+      }
+      setBoxZoom(null);
+    } else if (d.tx) {
       if (d.moved) {
         const label = d.kind === 'kf' ? 'Move Keyframe' : 'Edit Curve';
         recordAnimEdit(d.tx.commit(label));
@@ -554,14 +636,57 @@ export function GraphEditor({
     dragRef.current = null;
     frozenRangesRef.current = null;
     setDragging(false);
+    setGraphSnap(null);
     setRefitTick((n) => n + 1);
-  }, []);
+  }, [onZoom, onScrollChange, pps, viewportW]);
 
-  // Start dragging a keyframe diamond.
+  // Start dragging a keyframe diamond. Shift-click toggles multi-select (same
+  // set the timeline / F9 commands use); plain click focuses and replaces the
+  // set unless the diamond was already part of a multi-selection (group drag
+  // keeps the set and moves every selected diamond together).
   const onKfPointerDown = useCallback(
     (e: React.PointerEvent<SVGElement>, kf: KfPoint) => {
       if (e.button !== 0) return;
+      const id = makeKeyframeId(kf.nodeId, kf.prop, kf.t);
+      const next = new Set(selectedKfIds);
+      if (e.shiftKey) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+      } else if (!next.has(id)) {
+        next.clear();
+        next.add(id);
+      }
+      setSelectedKfIds(next);
       setSelectedKf({ nodeId: kf.nodeId, prop: kf.prop, t: kf.t });
+
+      // Snapshot the moving body at pointer-down (origin+delta). Prefer the
+      // multi-selection when the grab is already in it; otherwise just the grab.
+      const idsForGroup = next.has(id) && next.size > 1 ? next : new Set([id]);
+      const group: GraphGroupMemberStart[] = [];
+      for (const sid of idsForGroup) {
+        const ref = parseKeyframeId(sid);
+        if (!ref) continue;
+        let point: KfPoint | undefined;
+        for (const p of sampledPaths) {
+          if (p.nodeId !== ref.nodeId || p.prop !== ref.prop) continue;
+          point = p.keyframes.find((k) => Math.abs(k.t - ref.t) < 1e-9);
+          if (point) break;
+        }
+        if (!point) continue;
+        group.push({
+          nodeId: point.nodeId,
+          prop: point.prop,
+          startT: point.t,
+          startCompT: point.tAbs,
+          startValue: point.value,
+          minV: point.minV,
+          maxV: point.maxV,
+        });
+      }
+      const grabIndex = Math.max(0, group.findIndex(
+        (m) => m.nodeId === kf.nodeId && m.prop === kf.prop && Math.abs(m.startT - kf.t) < 1e-9,
+      ));
+
       const { x, y } = svgCoords(e);
       beginDrag(e, {
         kind: 'kf',
@@ -577,9 +702,40 @@ export function GraphEditor({
         maxV: kf.maxV,
         mode,
         tx: beginAnimEdit(),
+        group: group.length > 0 ? group : undefined,
+        grabIndex,
+        groupCurrentT: group.length > 0 ? group.map((m) => m.startT) : undefined,
       });
     },
-    [svgCoords, beginDrag, pps, mode],
+    [svgCoords, beginDrag, pps, mode, selectedKfIds, setSelectedKfIds, sampledPaths],
+  );
+
+  // Click the curve body (fat invisible stroke) → nearest keyframe on that track.
+  // Does not start a drag; scrubbing stays on empty background.
+  const onCurvePointerDown = useCallback(
+    (e: React.PointerEvent<SVGPathElement>, nodeId: string, prop: string) => {
+      if (e.button !== 0) return;
+      e.stopPropagation();
+      const path = sampledPaths.find((p) => p.nodeId === nodeId && p.prop === prop);
+      if (!path) return;
+      const { x } = svgCoords(e);
+      const near = nearestKeyframeOnCurve(path.keyframes, x / pps);
+      if (!near) return;
+      const kf = path.keyframes.find((k) => Math.abs(k.t - near.t) < 1e-9);
+      if (!kf) return;
+      const id = makeKeyframeId(kf.nodeId, kf.prop, kf.t);
+      const next = new Set(selectedKfIds);
+      if (e.shiftKey) {
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+      } else {
+        next.clear();
+        next.add(id);
+      }
+      setSelectedKfIds(next);
+      setSelectedKf({ nodeId: kf.nodeId, prop: kf.prop, t: kf.t });
+    },
+    [sampledPaths, svgCoords, pps, selectedKfIds, setSelectedKfIds],
   );
 
   // Start dragging a Bézier handle. `hx/hy` = the handle's current svg position.
@@ -607,11 +763,32 @@ export function GraphEditor({
     [svgCoords, beginDrag, mode],
   );
 
-  // Background: click-drag scrubs the playhead.
+  // Background: Alt-drag box-zooms; plain click-drag scrubs the playhead.
   const onSvgPointerDown = useCallback(
     (e: React.PointerEvent<SVGSVGElement>) => {
-      if (!onScrub || e.button !== 0) return;
+      if (e.button !== 0) return;
       const { x, y } = svgCoords(e);
+      if (e.altKey && onZoom) {
+        setBoxZoom({ x0: x, y0: y, x1: x, y1: y });
+        beginDrag(e, {
+          kind: 'box-zoom',
+          nodeId: '',
+          prop: '',
+          kfT: 0,
+          origValue: 0,
+          ox: x,
+          oy: y,
+          px0: x,
+          py0: y,
+          minV: 0,
+          maxV: 1,
+          mode,
+          boxX: x,
+          boxY: y,
+        });
+        return;
+      }
+      if (!onScrub) return;
       onScrub(clamp(x / pps, 0, duration));
       beginDrag(e, {
         kind: 'scrub',
@@ -628,22 +805,118 @@ export function GraphEditor({
         mode,
       });
     },
-    [onScrub, svgCoords, pps, duration, beginDrag, mode],
+    [onScrub, onZoom, svgCoords, pps, duration, beginDrag, mode],
   );
 
   // ── Drag: keyframe diamond ────────────────────────────────────
   const moveKeyframe = useCallback(
     (d: DragState, ex: number, ey: number, e: React.PointerEvent) => {
+      const frameDur = frameRate > 0 ? 1 / frameRate : 0;
+      const rawComp = clamp((d.ox + ex) / pps, 0, duration);
+      const range = Math.max(1e-9, d.maxV - d.minV);
+      const pixelsPerUnit = INNER_H / range;
+
+      const collectOtherValues = (movingIds: ReadonlySet<string>): number[] => {
+        const vals: number[] = [];
+        for (const p of sampledPaths) {
+          for (const k of p.keyframes) {
+            const id = makeKeyframeId(p.nodeId, p.prop, k.t);
+            if (!movingIds.has(id)) vals.push(k.value);
+          }
+        }
+        return vals;
+      };
+
+      // Multi-select body: move every selected diamond by the same time (and
+      // value) delta. Single-diamond path below stays the neighbour-clamped one.
+      if (d.group && d.group.length > 1 && d.groupCurrentT && d.grabIndex !== undefined) {
+        const moving = new Set(d.group.map((m, i) => makeKeyframeId(m.nodeId, m.prop, d.groupCurrentT![i]!)));
+        const otherTimes: number[] = [];
+        for (const p of sampledPaths) {
+          for (const k of p.keyframes) {
+            const id = makeKeyframeId(p.nodeId, p.prop, k.t);
+            if (!moving.has(id)) otherTimes.push(k.tAbs);
+          }
+        }
+        const plan = planGraphGroupTimes({
+          members: d.group,
+          grabIndex: d.grabIndex,
+          rawGrabCompT: rawComp,
+          duration,
+          pixelsPerSecond: pps,
+          frameDuration: frameDur,
+          playheadTime: currentTime,
+          otherCompTimes: otherTimes,
+          disableSnap: e.altKey,
+        });
+        const grab = d.group[d.grabIndex]!;
+        let valueSnap: ValueSnapTarget | null = null;
+        let snappedGrabValue: number | null = null;
+        if (d.mode === 'value') {
+          const rawV = yToValue(d.oy + ey, d.minV, d.maxV, INNER_H);
+          const snapped = snapKeyframeValue(rawV, {
+            pixelsPerUnit,
+            keyframeValues: collectOtherValues(moving),
+            disabled: e.altKey,
+          });
+          snappedGrabValue = snapped.value;
+          valueSnap = snapped.target;
+        }
+
+        setGraphSnap({
+          time: plan.snapTarget?.kind === 'frame' ? null : plan.snapTarget,
+          value: valueSnap,
+          minV: d.minV,
+          maxV: d.maxV,
+        });
+
+        for (let i = 0; i < d.group.length; i++) {
+          const m = d.group[i]!;
+          const fromT = d.groupCurrentT[i]!;
+          let newT = compToKeyframeTime(m.nodeId, plan.compTimes[i]!, m.prop);
+          const kfs = defaultAnimation.getTrackKeyframes(m.nodeId, m.prop);
+          if (!kfs) continue;
+          const idx = findKfIndex(kfs, fromT);
+          if (idx < 0) continue;
+          const prev = kfs[idx - 1];
+          const next = kfs[idx + 1];
+          if (prev) {
+            const gap = Math.min(frameDur || 1e-3, (fromT - prev.t) / 2);
+            newT = Math.max(newT, prev.t + gap);
+          }
+          if (next) {
+            const gap = Math.min(frameDur || 1e-3, (next.t - fromT) / 2);
+            newT = Math.min(newT, next.t - gap);
+          }
+          if (d.mode === 'value' && snappedGrabValue !== null) {
+            const newV = applyGroupValueDelta(m, grab, snappedGrabValue);
+            defaultAnimation.updateKeyframe(m.nodeId, m.prop, fromT, { t: newT, value: newV });
+          } else {
+            defaultAnimation.updateKeyframe(m.nodeId, m.prop, fromT, { t: newT, value: m.startValue });
+            if (d.mode === 'speed' && i === d.grabIndex) {
+              const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
+              applySpeedAt(m.nodeId, m.prop, newT, speed, 'linked');
+            }
+          }
+          const oldId = makeKeyframeId(m.nodeId, m.prop, fromT);
+          d.groupCurrentT[i] = newT;
+          rewriteSelectedKeyframeId(oldId, makeKeyframeId(m.nodeId, m.prop, newT));
+          if (i === d.grabIndex) {
+            d.kfT = newT;
+            setSelectedKf({ nodeId: m.nodeId, prop: m.prop, t: newT });
+          }
+        }
+        return;
+      }
+
       const kfs = defaultAnimation.getTrackKeyframes(d.nodeId, d.prop);
       if (!kfs) return;
       const idx = findKfIndex(kfs, d.kfT);
       if (idx < 0) return;
       const prev = kfs[idx - 1];
       const next = kfs[idx + 1];
-      const frameDur = frameRate > 0 ? 1 / frameRate : 0;
 
       // Time (comp) = origin + delta, snapped to playhead / other keys / frames.
-      const rawComp = clamp((d.ox + ex) / pps, 0, duration);
       const otherTimes: number[] = [];
       for (const p of sampledPaths) {
         for (const k of p.keyframes) {
@@ -651,14 +924,14 @@ export function GraphEditor({
           otherTimes.push(k.tAbs);
         }
       }
-      const snapped = snapKeyframeTime(rawComp, {
+      const timeSnap = snapKeyframeTime(rawComp, {
         pixelsPerSecond: pps,
         frameDuration: frameDur,
         playheadTime: currentTime,
         keyframeTimes: otherTimes,
         disabled: e.altKey,
-      }).time;
-      let newT = compToKeyframeTime(d.nodeId, clamp(snapped, 0, duration), d.prop);
+      });
+      let newT = compToKeyframeTime(d.nodeId, clamp(timeSnap.time, 0, duration), d.prop);
 
       // Never cross (or land on) a neighbour — upsert would swallow it.
       if (prev) {
@@ -670,16 +943,34 @@ export function GraphEditor({
         newT = Math.min(newT, next.t - gap);
       }
 
+      let valueSnap: ValueSnapTarget | null = null;
       if (d.mode === 'value') {
-        const newV = yToValue(d.oy + ey, d.minV, d.maxV, INNER_H);
-        defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.kfT, { t: newT, value: newV });
+        const rawV = yToValue(d.oy + ey, d.minV, d.maxV, INNER_H);
+        const moving = new Set([makeKeyframeId(d.nodeId, d.prop, d.kfT)]);
+        const snapped = snapKeyframeValue(rawV, {
+          pixelsPerUnit,
+          keyframeValues: collectOtherValues(moving),
+          disabled: e.altKey,
+        });
+        valueSnap = snapped.target;
+        defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.kfT, { t: newT, value: snapped.value });
       } else {
         defaultAnimation.updateKeyframe(d.nodeId, d.prop, d.kfT, { t: newT, value: d.origValue });
         const speed = Math.max(0, yToValue(d.oy + ey, d.minV, d.maxV, INNER_H));
         applySpeedAt(d.nodeId, d.prop, newT, speed, 'linked');
       }
+
+      setGraphSnap({
+        time: timeSnap.target?.kind === 'frame' ? null : timeSnap.target,
+        value: valueSnap,
+        minV: d.minV,
+        maxV: d.maxV,
+      });
+
+      const oldId = makeKeyframeId(d.nodeId, d.prop, d.kfT);
       d.kfT = newT;
       setSelectedKf({ nodeId: d.nodeId, prop: d.prop, t: newT });
+      rewriteSelectedKeyframeId(oldId, makeKeyframeId(d.nodeId, d.prop, newT));
     },
     [pps, duration, INNER_H, frameRate, currentTime, sampledPaths],
   );
@@ -785,6 +1076,15 @@ export function GraphEditor({
         return;
       }
 
+      if (d.kind === 'box-zoom') {
+        if (!d.moved && Math.hypot(ex, ey) < DRAG_DEAD_ZONE_PX) return;
+        d.moved = true;
+        d.boxX = x;
+        d.boxY = y;
+        setBoxZoom({ x0: d.ox, y0: d.oy, x1: x, y1: y });
+        return;
+      }
+
       if (!d.moved && Math.hypot(ex, ey) < DRAG_DEAD_ZONE_PX) return;
       d.moved = true;
 
@@ -833,10 +1133,8 @@ export function GraphEditor({
     : null;
 
   const handleApplyPreset = useCallback((preset: EasingPreset) => {
-    if (!selectedKf) return;
-    const kfId = makeKeyframeId(selectedKf.nodeId, selectedKf.prop, selectedKf.t);
-    applyEasingToKeyframes([kfId], preset);
-  }, [selectedKf]);
+    applyEasingToSelection(preset);
+  }, []);
 
   // Axis labels follow the selected track (or the first one).
   const axisTrack = selectedKfData
@@ -887,8 +1185,30 @@ export function GraphEditor({
   }, [selectedKfData, sampledPaths, pps, mode, INNER_H]);
 
   const cursorClass = dragging
-    ? dragRef.current?.kind === 'scrub' ? styles.svgScrubbing : styles.svgDragging
+    ? dragRef.current?.kind === 'scrub'
+      ? styles.svgScrubbing
+      : dragRef.current?.kind === 'box-zoom'
+        ? styles.svgBoxZoom
+        : styles.svgDragging
     : '';
+
+  const showDenseLabels = pps >= LABEL_PPS;
+  const visT0 = Math.max(0, (scrollLeft - 40) / pps);
+  const visT1 = Math.min(duration, (scrollLeft + viewportW + 40) / pps);
+
+  const toggleSolo = useCallback((key: string, additive: boolean) => {
+    setSoloKeys((prev) => {
+      if (!additive) {
+        // Click the only soloed track again → show all.
+        if (prev && prev.size === 1 && prev.has(key)) return null;
+        return new Set([key]);
+      }
+      const next = new Set(prev ?? []);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next.size === 0 ? null : next;
+    });
+  }, []);
 
   return (
     <div className={styles.root} style={propsHeight ? { height: propsHeight } : undefined} ref={containerRef}>
@@ -945,10 +1265,15 @@ export function GraphEditor({
                 min={0}
                 max={duration}
                 onChange={(newT: number) => {
+                  const oldT = selectedKfData.t;
                   runAnimEdit('Move Keyframe', () => {
-                    defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, { t: newT });
+                    defaultAnimation.updateKeyframe(selectedKfData.nodeId, selectedKfData.prop, oldT, { t: newT });
                   });
                   setSelectedKf(selectedKf ? { ...selectedKf, t: newT } : null);
+                  rewriteSelectedKeyframeId(
+                    makeKeyframeId(selectedKfData.nodeId, selectedKfData.prop, oldT),
+                    makeKeyframeId(selectedKfData.nodeId, selectedKfData.prop, newT),
+                  );
                 }}
               />
             </div>
@@ -1089,12 +1414,22 @@ export function GraphEditor({
           <span className={styles.hint}>Select a layer with keyframes to view curves</span>
         )}
 
-        {allTracks.map(({ nodeId, prop, color }) => (
-          <span key={`${nodeId}:${prop}`} className={styles.legendItem}>
-            <span className={styles.legendDot} style={{ background: color }} />
-            {prop}
-          </span>
-        ))}
+        {allTracks.map(({ nodeId, prop, color }) => {
+          const key = trackKey(nodeId, prop);
+          const soloed = !soloKeys || soloKeys.has(key);
+          return (
+            <button
+              key={key}
+              type="button"
+              className={soloed ? styles.legendItem : styles.legendItemDim}
+              title={soloKeys ? 'Click to solo / Shift-click to toggle · click soloed chip to show all' : 'Click to solo this curve · Shift-click to multi-solo'}
+              onClick={(e) => toggleSolo(key, e.shiftKey)}
+            >
+              <span className={styles.legendDot} style={{ background: color }} />
+              {prop}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── SVG graph canvas ───────────────────────────────────── */}
@@ -1142,25 +1477,45 @@ export function GraphEditor({
           })}
 
           {/* Curves */}
-          {sampledPaths.map(({ color, d, nodeId, prop }) => (
-            <path
-              key={`curve-${nodeId}:${prop}`}
-              className={styles.curve}
-              d={d}
-              stroke={color}
-              strokeWidth={1.5}
-              fill="none"
-              opacity={0.9}
-            />
-          ))}
+          {sampledPaths.map(({ color, d, nodeId, prop }) => {
+            const dimmed = !!soloKeys && !soloKeys.has(trackKey(nodeId, prop));
+            return (
+              <g key={`curve-${nodeId}:${prop}`}>
+                {/* Fat invisible stroke — AE-sized grab for curve-body click. */}
+                <path
+                  d={d}
+                  stroke="transparent"
+                  strokeWidth={12}
+                  fill="none"
+                  style={{ pointerEvents: dimmed ? 'none' : 'stroke', cursor: 'pointer' }}
+                  onPointerDown={(e) => onCurvePointerDown(e, nodeId, prop)}
+                >
+                  <title>{`Select ${prop} curve`}</title>
+                </path>
+                <path
+                  className={styles.curve}
+                  d={d}
+                  stroke={color}
+                  strokeWidth={1.5}
+                  fill="none"
+                  opacity={dimmed ? 0.12 : 0.9}
+                  style={{ pointerEvents: 'none' }}
+                />
+              </g>
+            );
+          })}
 
           {/* Keyframe diamonds (all tracks) */}
-          {sampledPaths.map(({ color, keyframes, nodeId, prop }) => (
-            <g key={`kfs-${nodeId}:${prop}`}>
+          {sampledPaths.map(({ color, keyframes, nodeId, prop }) => {
+            const dimmed = !!soloKeys && !soloKeys.has(trackKey(nodeId, prop));
+            return (
+            <g key={`kfs-${nodeId}:${prop}`} opacity={dimmed ? 0.2 : 1}>
               {keyframes.map((kf) => {
                 const kx = kf.tAbs * pps;
                 const ky = kf.y;
-                const isSelected = selectedKf?.nodeId === kf.nodeId && selectedKf.prop === kf.prop && Math.abs(kf.t - selectedKf.t) < 1e-6;
+                const isSelected = selectedKfIds.has(makeKeyframeId(kf.nodeId, kf.prop, kf.t));
+                const inView = kf.tAbs >= visT0 && kf.tAbs <= visT1;
+                const showLabel = inView && (isSelected || showDenseLabels);
                 const hasInJump = mode === 'speed' && kf.inSpeed !== undefined && kf.outSpeed !== undefined
                   && Math.abs(kf.inSpeed - kf.outSpeed) > 1e-6;
                 const inJumpY = hasInJump ? valueToY(kf.inSpeed!, kf.minV, kf.maxV, INNER_H) : ky;
@@ -1183,6 +1538,18 @@ export function GraphEditor({
                       fill={color}
                       strokeWidth={isSelected ? 2 : 1.5}
                     />
+                    {showLabel && (
+                      <text
+                        className={styles.kfLabel}
+                        x={kx + KF_SIZE}
+                        y={ky - 4}
+                        fontSize={9}
+                        fill={color}
+                      >
+                        {fmtAxis(mode === 'speed' ? kf.plotted : kf.value)}
+                        {mode === 'speed' ? '/s' : ''}
+                      </text>
+                    )}
                     <circle
                       className={styles.kfHit}
                       cx={kx}
@@ -1196,7 +1563,37 @@ export function GraphEditor({
                 );
               })}
             </g>
-          ))}
+            );
+          })}
+
+          {boxZoom && (
+            <rect
+              className={styles.boxZoomRect}
+              x={Math.min(boxZoom.x0, boxZoom.x1)}
+              y={Math.min(boxZoom.y0, boxZoom.y1)}
+              width={Math.abs(boxZoom.x1 - boxZoom.x0)}
+              height={Math.abs(boxZoom.y1 - boxZoom.y0)}
+            />
+          )}
+
+          {graphSnap?.time && (
+            <line
+              className={`${styles.snapLine} ${graphSnap.time.kind === 'playhead' ? styles.snapPlayhead : styles.snapKeyframe}`}
+              x1={graphSnap.time.time * pps}
+              x2={graphSnap.time.time * pps}
+              y1={0}
+              y2={INNER_H}
+            />
+          )}
+          {graphSnap?.value && (
+            <line
+              className={`${styles.snapLine} ${styles.snapValue}`}
+              x1={0}
+              x2={totalWidth}
+              y1={valueToY(graphSnap.value.value, graphSnap.minV, graphSnap.maxV, INNER_H)}
+              y2={valueToY(graphSnap.value.value, graphSnap.minV, graphSnap.maxV, INNER_H)}
+            />
+          )}
 
           {/* Bézier handles — drawn LAST so they sit above every diamond. */}
           {handleGeom && (

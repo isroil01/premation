@@ -78,6 +78,11 @@ export interface Preferences {
    * would ship one person's shortlist to everyone who opens the file.
    */
   libraryFavorites: string[];
+  /**
+   * Effect type ids the user starred in Effects & Presets.
+   * Preference (not project data) — same rationale as libraryFavorites.
+   */
+  effectFavorites: string[];
 }
 
 interface PreferenceActions {
@@ -102,6 +107,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   showLayerBounds: true,
   useProxies: false,
   libraryFavorites: [],
+  effectFavorites: [],
 };
 
 /** Pluggable persistence backend. */

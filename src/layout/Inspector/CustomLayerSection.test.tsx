@@ -15,17 +15,18 @@
  * label, every author's property is suddenly named after our plumbing.
  */
 
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { CustomLayerSection } from './CustomLayerSection';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { seedDefaultScene } from '@core/scene/seedDefaultScene';
-import { buildCustomLayerNode } from '@core/plugins/customLayers';
+import { buildCustomLayerNode, customLayerComponent } from '@core/plugins/customLayers';
 import {
   registerLayerKinds,
   resetLayerKindsForTests,
   unregisterLayerKinds,
 } from '@core/plugins/layerKindRegistry';
 import { usePluginStore } from '@stores/pluginStore';
+import { useAssetStore } from '@stores/assetStore';
 import type { LayerKindContribution } from '@core/plugins/layerKindSchema';
 
 const PLUGIN = 'studio.acme.lab';
@@ -82,12 +83,74 @@ describe('rendered from the schema', () => {
       // `getAll`: a keyframable row is a scrubber AND an input, both labelled.
       expect(screen.getAllByLabelText(new RegExp(`^${label}$`, 'i')).length).toBeGreaterThan(0);
     }
-    // The asset slot is a read-only row rather than a control — there is no
-    // picker in this slice — so it is present as text, not as a labelled input.
-    // Shown rather than hidden: a declared slot the inspector omits reads to the
-    // author as a schema the host ignored.
+    // The asset slot is a real control now, so it is labelled like the rest.
     expect(container.textContent).toContain('Source');
-    expect(container.textContent).toContain('No image assigned');
+    expect(screen.getByLabelText('Source')).toBeTruthy();
+  });
+
+  describe('the asset picker', () => {
+    /*
+      This row was read-only until the picker landed, which made the type close
+      to useless: a plugin could SET an asset, but the user it was declared for
+      could not choose one.
+    */
+    beforeEach(() => {
+      useAssetStore.setState({
+        assets: [
+          { id: 'a_img', name: 'Backdrop.png', type: 'image', src: 'blob:1', size: 1 },
+          { id: 'a_img2', name: 'Logo.png', type: 'image', src: 'blob:2', size: 1 },
+          { id: 'a_vid', name: 'Clip.mp4', type: 'video', src: 'blob:3', size: 1 },
+          { id: 'a_aud', name: 'Track.mp3', type: 'audio', src: 'blob:4', size: 1 },
+        ],
+      } as never);
+    });
+
+    it('offers the images in the project', () => {
+      render(<CustomLayerSection nodeId="n1" />);
+      const select = screen.getByLabelText('Source') as HTMLSelectElement;
+      const options = [...select.options].map((o) => o.textContent);
+      expect(options).toContain('Backdrop.png');
+      expect(options).toContain('Logo.png');
+    });
+
+    it('★ offers ONLY images, because that is the only kind the schema allows', () => {
+      // `assetKind` can only be 'image'. Listing a video here would be a slot
+      // the user can fill with something the plugin can never be handed.
+      render(<CustomLayerSection nodeId="n1" />);
+      const select = screen.getByLabelText('Source') as HTMLSelectElement;
+      const options = [...select.options].map((o) => o.textContent);
+      expect(options).not.toContain('Clip.mp4');
+      expect(options).not.toContain('Track.mp3');
+    });
+
+    it('starts on None, since an asset prop has no default by rule', () => {
+      render(<CustomLayerSection nodeId="n1" />);
+      expect((screen.getByLabelText('Source') as HTMLSelectElement).value).toBe('');
+    });
+
+    it('writes the chosen asset id to the layer', () => {
+      render(<CustomLayerSection nodeId="n1" />);
+      const select = screen.getByLabelText('Source') as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: 'a_img2' } });
+
+      const comp = customLayerComponent(defaultSceneGraph.getNode('n1')!);
+      expect((comp!.props as Record<string, unknown>).source).toBe('a_img2');
+    });
+
+    it('★ keeps an asset that has gone missing, marked, rather than silently clearing it', () => {
+      // A reference that quietly becomes empty is a property the user has to
+      // notice was lost. One that says "missing" is a property they can fix.
+      render(<CustomLayerSection nodeId="n1" />);
+      fireEvent.change(screen.getByLabelText('Source'), { target: { value: 'a_img2' } });
+
+      useAssetStore.setState({ assets: [] } as never);
+      render(<CustomLayerSection nodeId="n1" />);
+
+      const selects = screen.getAllByLabelText('Source') as HTMLSelectElement[];
+      const live = selects[selects.length - 1]!;
+      expect(live.value).toBe('a_img2');
+      expect([...live.options].map((o) => o.textContent).join()).toContain('missing');
+    });
   });
 
   it('humanises a prop name when the schema declares no label', () => {

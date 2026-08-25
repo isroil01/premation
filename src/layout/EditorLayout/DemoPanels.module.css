@@ -43,7 +43,7 @@
   gap: var(--space-3);
   min-height: var(--control-height-lg);
   padding: var(--space-3) var(--space-5);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border, #000000);
   background: var(--color-panel-header);
 }
 
@@ -86,7 +86,7 @@
    search field and every section name share one left edge. */
 .searchRow {
   padding: var(--space-4) var(--space-5);
-  border-bottom: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-border, #000000);
   background: var(--color-panel);
   flex: none;
 }
@@ -1200,20 +1200,26 @@
   flex: 0 0 auto;
 }
 
-/* Amber — Explorer's folder, and the one kind that is structure not content. */
+/* Real Manila Folder Amber — authentic warm golden directory color */
 .assetGlyphFolder {
   flex: 0 0 auto;
-  color: #f5b041;
+  color: #f5a623;
 }
 
-.assetGlyphImage { color: #4aa96c; }
-.assetGlyphVideo { color: #7c6cf0; }
-.assetGlyphAudio { color: #d9578b; }
-/* Composition — AE Project panel purple-ish accent for comps vs footage. */
-.assetGlyphComp { color: #5b9fd4; }
-/* Anything we have no kind for. The only grey glyph, so "unknown" reads as
-   unknown rather than as another type. */
-.assetGlyphFile { color: var(--color-text-tertiary); }
+/* Media & file type colors */
+.assetGlyphImage { color: #10b981; }      /* Emerald green for raster images/photos */
+.assetGlyphSvg { color: #06b6d4; }        /* Vibrant cyan for vector SVG */
+.assetGlyphPsd { color: #3b82f6; }        /* Adobe blue for Photoshop / Illustrator */
+.assetGlyphRaw { color: #0ea5e9; }        /* Sky blue for RAW / HDR captures */
+.assetGlyphGif { color: #ec4899; }        /* Fuchsia for animated GIFs */
+.assetGlyphVideo { color: #8b5cf6; }      /* Cinema purple/violet for video footage */
+.assetGlyphVideoPro { color: #a855f7; }   /* Deep violet for pro footage (MXF/RAW) */
+.assetGlyphAudio { color: #f43f5e; }      /* Waveform rose/coral for audio tracks */
+.assetGlyphCode { color: #f97316; }       /* Warm orange for Lottie / JSON */
+.assetGlyphFont { color: #38bdf8; }       /* Sky blue for typography fonts */
+.assetGlyph3D { color: #fb923c; }         /* Mesh orange for 3D models */
+.assetGlyphComp { color: #6366f1; }       /* Indigo for compositions */
+.assetGlyphFile { color: #94a3b8; }       /* Cool slate for generic / unknown files */
 
 .assetRowName {
   flex: 1 1 auto;

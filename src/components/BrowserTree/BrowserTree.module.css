@@ -1,32 +1,27 @@
 /**
  * The After Effects browser chrome — Effects & Presets.
  *
- * Deliberately spare. A browser is a LIST YOU SCAN, not a gallery you admire:
- * the panel routinely holds ~90 effects across eight folders, and the card
- * treatment this replaces gave each one a border, a 24px icon tile, a hover
- * lift and a drop shadow. Nine rows filled the panel, so finding an effect meant
- * scrolling past furniture. These rows are 22px, borderless, and carry exactly
- * one glyph — which is why forty of them fit where nine did.
- *
- * Row height, indent and the disclosure triangle are shared by every consumer
- * so the Effects tab and the Presets tab read as one browser, as they do in AE.
+ * Designed authentically after Adobe After Effects:
+ * - Standard unified border color across sections and items.
+ * - Clean transparent background.
+ * - Crisp studio typography and calibrated font sizes.
  */
 
 .tree {
   display: flex;
   flex-direction: column;
-  /* No gap: AE's rows are contiguous, and the hover band has to be too, or the
-     pointer flickers between rows as it crosses the seams. */
   gap: 0;
   min-width: 0;
+  border-top: 1px solid var(--color-border, #000000);
 }
 
-/* ── Folder ──────────────────────────────────────────────────────── */
+/* ── Folder (Category Section) ───────────────────────────────────── */
 
 .folder {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  border-bottom: 1px solid var(--color-border, #000000);
 }
 
 .folderHead {
@@ -34,47 +29,53 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  height: var(--control-height-lg);
-  padding: 0 var(--space-3) 0 var(--space-2);
+  height: var(--control-height-row);
+  padding: 0 var(--space-3, 8px) 0 var(--space-2, 6px);
   background: transparent;
   border: none;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: -0.005em;
+  border-radius: 0;
+  color: var(--color-text-primary, #e1e1e1);
+  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: var(--font-weight-semibold, 600);
+  letter-spacing: -0.01em;
   text-align: left;
   cursor: pointer;
   user-select: none;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.folderHead[aria-expanded='true'] {
+  border-bottom: 1px solid var(--color-border, #000000);
+  background: transparent;
 }
 
 .folderIcon {
   flex: none;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-tertiary, #8c8c8c);
 }
 
 .folderHead:hover .folderIcon,
 .folderHead[aria-expanded='true'] .folderIcon {
-  color: var(--color-primary);
+  color: var(--color-primary, #2988ff);
 }
 
 .folderHead:hover {
-  background: var(--color-hover);
+  background: var(--color-hover, rgba(255, 255, 255, 0.05));
 }
 
 .folderHead:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
+  outline: 1px solid var(--color-focus-ring, #2988ff);
   outline-offset: -1px;
 }
 
 .twisty {
   display: grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   flex: none;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-tertiary, #8c8c8c);
 }
 
 .folderName {
@@ -85,14 +86,13 @@
   white-space: nowrap;
 }
 
-/* The count is orientation, not a metric — it stays quiet until the row is
-   under the pointer, which is when "how much is in here?" is being asked. */
+/* The count is orientation, not a metric — it stays quiet until hovered or open */
 .count {
   flex: none;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-mono, monospace);
   font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  font-size: var(--font-size-micro, 10px);
+  color: var(--color-text-muted, #666666);
   opacity: 0;
 }
 
@@ -106,49 +106,50 @@
   flex-direction: column;
   gap: 0;
   min-width: 0;
+  background: transparent;
 }
 
-/* ── Leaf row ────────────────────────────────────────────────────── */
+/* ── Leaf row (Inner Effect Item) ────────────────────────────────── */
 
-/**
- * Leaf row. 26px and 12px type, not 22px and 11px: --font-size-xs is the
- * product's floor for body copy, and a library you read for minutes at a time
- * is the wrong place to sit on the floor. Density still beats the card
- * treatment this replaces by better than 2:1.
- */
 .row {
   display: flex;
   align-items: center;
   gap: 7px;
   width: 100%;
-  min-height: var(--control-height-row);
-  /* 26px indent = twisty + gap above, so leaf names hang under the folder NAME
-     rather than under its triangle. */
-  padding: 0 var(--space-3) 0 26px;
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3, 8px) 0 24px;
   background: transparent;
   border: none;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--color-border, #000000);
+  border-radius: 0;
+  color: var(--color-text-secondary, #b4b4b4);
+  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
+  font-size: 11.5px;
+  font-weight: 400;
   text-align: left;
   cursor: pointer;
   user-select: none;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.row:last-child {
+  border-bottom: none;
 }
 
 .row:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
+  background: var(--color-hover, rgba(255, 255, 255, 0.06));
+  color: var(--color-text-primary, #ffffff);
 }
 
 .row:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
+  outline: 1px solid var(--color-focus-ring, #2988ff);
   outline-offset: -1px;
 }
 
 .row[data-selected] {
-  background: var(--color-selected);
-  color: var(--color-text-primary);
+  background: var(--color-selected, #2988ff);
+  color: var(--color-text-on-accent, #ffffff);
 }
 
 .row:disabled {
@@ -157,29 +158,27 @@
 }
 
 /**
- * AE's `fx` mark. A text glyph rather than an icon because that is what it is
- * in After Effects, and because every effect carrying the SAME icon (the
- * sparkles this replaces) is decoration that distinguishes nothing.
+ * AE's `fx` mark. Text glyph with italic courier look.
  */
 .fx {
   flex: none;
   width: 14px;
-  font-family: var(--font-family-mono);
+  font-family: 'Courier New', Courier, monospace, var(--font-family-mono);
   font-size: var(--font-size-xs);
   font-style: italic;
-  font-weight: var(--font-weight-bold);
+  font-weight: var(--font-weight-bold, 700);
   line-height: 1;
-  color: var(--color-primary);
+  color: var(--color-primary, #2988ff);
   text-align: center;
 }
 
 .row:disabled .fx {
-  color: var(--color-text-muted);
+  color: var(--color-text-muted, #555555);
 }
 
 .rowIcon {
   flex: none;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-tertiary, #8c8c8c);
 }
 
 .rowLabel {
@@ -196,19 +195,19 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--color-text-muted);
+  color: var(--color-text-muted, #777777);
 }
 
 .tag {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-bold);
+  font-size: var(--font-size-micro, 10px);
+  font-weight: var(--font-weight-bold, 700);
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-muted);
+  color: var(--color-text-muted, #777777);
 }
 
 .empty {
-  padding: var(--space-4) var(--space-3);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-muted);
+  padding: var(--space-4, 12px) var(--space-3, 8px);
+  font-size: var(--font-size-xs, 12px);
+  color: var(--color-text-muted, #777777);
 }

@@ -1,0 +1,103 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px;
+  background: var(--color-panel, #232323);
+  color: var(--color-text-primary, #e1e1e1);
+  font-family: inherit;
+  font-size: var(--font-size-xs, 12px);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.transportBar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--color-surface-2, #161616);
+  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-control, 4px);
+  padding: 4px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.transportBtn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary, #a6a6a6);
+  border-radius: var(--radius-control, 4px);
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  transition: background-color 100ms ease, color 100ms ease;
+}
+
+.transportBtn:hover {
+  background: var(--color-surface-3, #333333);
+  color: var(--color-text-primary, #e1e1e1);
+}
+
+.transportBtnPrimary {
+  background: var(--color-selection, #2988ff);
+  color: #ffffff;
+}
+
+.transportBtnPrimary:hover {
+  background: var(--color-selection-hover, #4097ff);
+  color: #ffffff;
+}
+
+.settingsCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--color-surface-2, #161616);
+  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-control, 4px);
+  padding: 8px 10px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary, #8c8c8c);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.select {
+  height: 24px;
+  background: var(--color-surface-1, #232323);
+  color: var(--color-text-primary, #e1e1e1);
+  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-control, 4px);
+  padding: 0 6px;
+  font-size: var(--font-size-xs);
+  outline: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.select:focus {
+  border-color: var(--color-selection, #2988ff);
+}

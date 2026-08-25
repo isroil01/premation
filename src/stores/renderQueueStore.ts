@@ -27,6 +27,41 @@ import { canEncodeLocally, type VideoFormat } from '@core/export/videoSink';
 import { DEFAULT_COMPOSITION } from './compositionStore';
 import { compSizeOf } from '@core/composition/compSizes';
 
+/**
+ * Tell plugins a render left the queue — a post-render action.
+ *
+ * Imported LAZILY, inside the notifier, for two reasons: the plugin host pulls
+ * in the whole plugin runtime, which the render queue otherwise has no reason
+ * to load; and a static import here is a cycle (the host reads the scene, the
+ * scene stores read this). Fire-and-forget by construction — the queue must
+ * never wait on a worker, and a plugin that throws must not fail a render that
+ * already succeeded.
+ */
+function notifyPlugins(info: {
+  status: 'done' | 'skipped' | 'failed';
+  job: RenderJob;
+  fileName: string | null;
+  elapsedMs: number;
+  error?: string;
+}): void {
+  void import('@core/plugins/PluginHost')
+    .then(({ pluginHost }) => {
+      pluginHost.notifyRenderFinished({
+        status: info.status,
+        compositionName: info.job.compositionName,
+        fileName: info.fileName,
+        format: info.job.format,
+        width: info.job.width,
+        height: info.job.height,
+        fps: info.job.fps,
+        durationSec: info.job.durationSec,
+        elapsedMs: info.elapsedMs,
+        ...(info.error === undefined ? {} : { error: info.error }),
+      });
+    })
+    .catch(() => { /* the host is not up; a render still succeeded */ });
+}
+
 export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
 
 export type OutputFormat = VideoFormat | 'png-sequence' | 'jpg-sequence' | 'exr-sequence';
@@ -340,16 +375,23 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
           if (savedTo === null) {
             // The user dismissed the save dialog: the render succeeded but no
             // file exists, so calling it "done" would be a lie.
-            get().updateJob(job.id, { status: 'skipped', progress: 1, elapsedMs: Date.now() - started });
+            const elapsedMs = Date.now() - started;
+            get().updateJob(job.id, { status: 'skipped', progress: 1, elapsedMs });
+            notifyPlugins({ status: 'skipped', job, fileName: null, elapsedMs });
             continue;
           }
+          const doneMs = Date.now() - started;
           get().updateJob(job.id, {
             status: 'done',
             progress: 1,
-            elapsedMs: Date.now() - started,
+            elapsedMs: doneMs,
             outputPath: savedTo,
             _resume: undefined,
           });
+          // `name`, not `savedTo`: the basename is what a plugin can use, and
+          // the directory is something about the user's machine it has no use
+          // for. See `RenderFinishedInfo`.
+          notifyPlugins({ status: 'done', job, fileName: name, elapsedMs: doneMs });
         } catch (e) {
           if (abort.signal.aborted) {
             // Non-resumable paths (sequences, browser sinks) still lose their
@@ -358,13 +400,16 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
             get().updateJob(job.id, { status: 'queued', progress: 0 });
             break;
           }
+          const failMs = Date.now() - started;
+          const message = e instanceof Error ? e.message : String(e);
           get().updateJob(job.id, {
             status: 'failed',
             progress: 0,
-            error: e instanceof Error ? e.message : String(e),
-            elapsedMs: Date.now() - started,
+            error: message,
+            elapsedMs: failMs,
             _resume: undefined,
           });
+          notifyPlugins({ status: 'failed', job, fileName: null, elapsedMs: failMs, error: message });
         }
       }
       set({ isRunning: false, _abort: null });

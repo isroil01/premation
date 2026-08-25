@@ -85,6 +85,67 @@ export function snapKeyframeTime(time: number, opts: SnapOptions): { time: numbe
   return { time, target: null };
 }
 
+export type ValueSnapKind = 'keyframe' | 'zero' | 'step';
+
+export interface ValueSnapTarget {
+  value: number;
+  kind: ValueSnapKind;
+}
+
+export interface ValueSnapOptions {
+  /**
+   * Screen pixels per value unit — `INNER_H / (maxV - minV)` on the graph.
+   * Threshold is converted to value space so snap feel stays zoom-stable.
+   */
+  pixelsPerUnit: number;
+  /** Other keyframe values currently on screen (exclude the dragged set). */
+  keyframeValues?: readonly number[];
+  thresholdPx?: number;
+  disabled?: boolean;
+  /** Lowest-priority nice step in value units (e.g. 1). */
+  step?: number;
+}
+
+/**
+ * Snap a dragged VALUE to another keyframe’s value, then 0, then an optional
+ * step grid. Same pixel-threshold idea as {@link snapKeyframeTime}.
+ */
+export function snapKeyframeValue(
+  value: number,
+  opts: ValueSnapOptions,
+): { value: number; target: ValueSnapTarget | null } {
+  if (opts.disabled) return { value, target: null };
+  const thresholdPx = opts.thresholdPx ?? DEFAULT_SNAP_THRESHOLD_PX;
+  const ppu = opts.pixelsPerUnit;
+  if (!(ppu > 0) || !(thresholdPx > 0)) return { value, target: null };
+  const threshold = thresholdPx / ppu;
+
+  let best: number | null = null;
+  let bestDist = threshold;
+  for (const v of opts.keyframeValues ?? []) {
+    const d = Math.abs(v - value);
+    if (d <= bestDist && (best === null || d < bestDist)) {
+      best = v;
+      bestDist = d;
+    }
+  }
+  if (best !== null) return { value: best, target: { value: best, kind: 'keyframe' } };
+
+  if (Math.abs(value) <= threshold) {
+    return { value: 0, target: { value: 0, kind: 'zero' } };
+  }
+
+  const step = opts.step;
+  if (step && step > 0) {
+    const snapped = Math.round(value / step) * step;
+    if (Math.abs(snapped - value) <= threshold) {
+      return { value: snapped, target: { value: snapped, kind: 'step' } };
+    }
+  }
+
+  return { value, target: null };
+}
+
 /**
  * Snap a whole multi-keyframe drag as ONE body.
  *

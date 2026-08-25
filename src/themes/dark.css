@@ -9,8 +9,8 @@
 [data-theme="dark"],
 :root:not([data-theme]) {
   /* ── Surfaces (elevation by value, not borders) ───────────────── */
-  --color-background:        #161616;
-  --color-surface-0:         #161616;  /* app frame            */
+  --color-background:        #232323;
+  --color-surface-0:         #232323;  /* app frame            */
   --color-surface-1:         #232323;  /* panels               */
   --color-surface-2:         #161616;  /* controls / raised    */
   --color-surface-3:         #333333;  /* hover step           */
@@ -20,27 +20,22 @@
   --color-toolbar:           #1d1d1d;
   --color-statusbar:         #1d1d1d;
   --color-titlebar:          #161616;
-  --color-workspace:         #181818; /* canvas void          */
-  --color-pasteboard:        #202020; /* comp surround — one fixed NEUTRAL (zero blue
-                                          tint, per theme rule), a step above the void
-                                          (#181818) and below the panels (#232323) so
-                                          the comp page reads distinct yet the surround
-                                          recedes into the chrome family. Shared across
-                                          themes; not user-customizable. */
+  --color-workspace:         #232323; /* canvas void          */
+  --color-pasteboard:        #232323; /* comp surround        */
 
   /* ── Borders & dividers ───────────────────────────────────────── */
   /* Rule: `border` only where two REGIONS meet. Inside panels use
      `border-subtle` hairlines sparingly — rows separate by hover/spacing. */
   /* Alpha seams (decoupled from surface-3) so region edges actually read. */
-  --color-border:            #161616;
+  --color-border:            #000000;
   --color-border-strong:     #333333;
   --color-border-subtle:     #1a1a1a;
-  --color-divider:           #1a1a1a;
+  --color-divider:           #000000;
   /* Recessed-field hairline (Input/Switch/ValueField/etc. inset wells) —
      one step lighter than border-subtle since these sit on the darkest well. */
   --color-field-border:       rgba(255, 255, 255, 0.08);
   --color-field-border-hover: rgba(255, 255, 255, 0.16);
-  --color-splitter:          #161616;
+  --color-splitter:          #000000;
   --color-splitter-hover:    var(--color-selection);
 
   /* ── Text ─────────────────────────────────────────────────────── */
@@ -88,6 +83,11 @@
   /* Guides the USER drags out of the rulers. Its own token rather than the
      camera-guide colour it was spelled as a literal beside: a ruler guide and
      a camera frustum are different objects and must stay tellable apart. */
+  --color-ruler-bg:          #111111;
+  --color-ruler-corner:      #161616;
+  --color-ruler-border:      #262626;
+  --color-ruler-text:        #cccccc;
+  --color-ruler-tick:        #707070;
   --color-ruler-guide:       #2dd4eb;
   --color-hud-bg:            rgba(20, 22, 30, 0.85);
   --color-hud-border:        rgba(100, 130, 255, 0.5);

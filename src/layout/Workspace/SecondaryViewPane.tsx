@@ -205,6 +205,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
         onChange={(e) => setMode(e.target.value as Camera3dMode)}
         title="Secondary pane view"
         onPointerDown={(e) => e.stopPropagation()}
+        aria-label={`${VIEW_OPTIONS.find((o) => o.id === mode)?.label ?? mode} view`}
         style={{
           position: 'absolute',
           top: 6,
@@ -224,6 +225,24 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
           </option>
         ))}
       </select>
+      {/* Always-visible quadrant label so 4-up reads without opening the select. */}
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: 6,
+          left: 8,
+          zIndex: 2,
+          fontSize: 10,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          color: 'var(--color-text-muted, rgba(255,255,255,0.55))',
+          pointerEvents: 'none',
+          userSelect: 'none',
+        }}
+      >
+        {VIEW_OPTIONS.find((o) => o.id === mode)?.label ?? mode}
+      </div>
     </div>
   );
 }

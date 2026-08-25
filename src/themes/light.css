@@ -61,6 +61,11 @@
   --color-light-guide:       #b45309;
   /* See dark.css — darkened here so a guide stays visible on a light canvas,
      which the hardcoded #2dd4eb it replaces did not. */
+  --color-ruler-bg:          #1e1e1e;
+  --color-ruler-corner:      #252525;
+  --color-ruler-border:      #333333;
+  --color-ruler-text:        #e0e0e0;
+  --color-ruler-tick:        #888888;
   --color-ruler-guide:       #0e8fa3;
   --color-hud-bg:            rgba(255, 255, 255, 0.92);
   --color-hud-border:        rgba(59, 118, 224, 0.45);

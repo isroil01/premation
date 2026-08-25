@@ -9,15 +9,12 @@
   margin-bottom: 0;
   border-radius: 0;
   background: transparent;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border, #000000);
   overflow: hidden;
 }
 
-/* The hairline separates one section from the NEXT, so the last one has
-   nothing to separate — it only drew a line across the empty space below the
-   final section. */
 .item:last-child {
-  border-bottom: none;
+  border-bottom: 1px solid var(--color-border, #000000);
 }
 
 .disabled {

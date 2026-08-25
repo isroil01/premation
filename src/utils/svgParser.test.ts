@@ -325,3 +325,48 @@ describe('determinism', () => {
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 });
+
+describe('gradients → fillPaint', () => {
+  it('linearGradient becomes a linear fillPaint with stops and angle', () => {
+    const shapes = parseSvgToShapes(svg(`
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#ff0000"/>
+          <stop offset="1" stop-color="#0000ff" stop-opacity="0.5"/>
+        </linearGradient>
+      </defs>
+      <rect id="r" x="0" y="0" width="40" height="40" fill="url(#g)"/>
+    `));
+    const r = byName(shapes, 'r');
+    expect(r.fill).toBe('#ff0000');
+    expect(r.fillPaint).toBeDefined();
+    expect(r.fillPaint!.type).toBe('linear');
+    expect(r.fillPaint!.angle).toBeCloseTo(90, 5);
+    expect(r.fillPaint!.stops).toHaveLength(2);
+    expect(r.fillPaint!.stops[0]!.color).toBe('#ff0000');
+    expect(r.fillPaint!.stops[1]!.opacity).toBeCloseTo(0.5, 5);
+  });
+
+  it('radialGradient becomes a radial fillPaint', () => {
+    const shapes = parseSvgToShapes(svg(`
+      <defs>
+        <radialGradient id="rg" cx="0.25" cy="0.75" r="0.4">
+          <stop offset="0" stop-color="#fff"/>
+          <stop offset="1" stop-color="#000"/>
+        </radialGradient>
+      </defs>
+      <circle id="c" cx="50" cy="50" r="20" fill="url(#rg)"/>
+    `));
+    const c = byName(shapes, 'c');
+    expect(c.fillPaint?.type).toBe('radial');
+    expect(c.fillPaint?.cx).toBeCloseTo(0.25, 5);
+    expect(c.fillPaint?.cy).toBeCloseTo(0.75, 5);
+    expect(c.fillPaint?.radius).toBeCloseTo(0.4, 5);
+  });
+
+  it('isSimpleSvg allows gradients (now editable FillPaint)', () => {
+    const { isSimpleSvg } = require('./svgParser') as typeof import('./svgParser');
+    expect(isSimpleSvg(svg('<linearGradient id="g"/><rect fill="url(#g)"/>'))).toBe(true);
+    expect(isSimpleSvg(svg('<filter id="f"/><rect filter="url(#f)"/>'))).toBe(false);
+  });
+});

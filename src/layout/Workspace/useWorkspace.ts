@@ -49,6 +49,7 @@ import {
   motionPathFrameSamples,
   motionPathTangents,
   setPathTangent,
+  isPathTangentContinuous,
   positionSamplerFor,
 } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
@@ -101,6 +102,15 @@ import { compSizeOf } from '@core/composition/compSizes';
 import { customPrompt } from '@components/Modal/Dialogs';
 import { RULER_CSS_PX, inStrip, rulerStrips } from './rulerGeometry';
 
+
+/**
+ * Screen-px a viewport press must travel before it counts as a drag.
+ *
+ * Mirrors the engine's `InputSystem` default `dragThreshold`, so the UI drag
+ * flag and the tool's `onDragStart` flip on the same movement instead of on
+ * two slightly different ones.
+ */
+const VIEWPORT_DRAG_SLOP = 3;
 
 // ── Ruler guides (drag-out) ──────────────────────────────────────────
 // Geometry lives in rulerGeometry.ts, shared by the painter and the hit-test —
@@ -187,6 +197,20 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     mode: PaintMode;
   } | null>(null);
   const creationDragRef = useRef<{ start: { x: number; y: number }; current: { x: number; y: number }; tool: Tool } | null>(null);
+  /**
+   * A press on open canvas that has not yet earned the "dragging" label.
+   *
+   * The UI drag flag drives Adaptive Resolution, and a resolution change
+   * reallocates the content canvas' drawing buffer. Raising the flag on PRESS
+   * therefore made every ordinary click in the viewport — selecting a layer,
+   * clicking empty space to deselect — degrade the preview to the adaptive
+   * floor and snap it back a frame after release, which reads as the artwork
+   * popping under the cursor for exactly as long as the mouse is held.
+   *
+   * A press is not a drag until it moves, so the press is ARMED here and
+   * promoted in `onMove` once it clears `VIEWPORT_DRAG_SLOP`.
+   */
+  const viewportPressRef = useRef<{ pointerId: number; x: number; y: number; dragging: boolean } | null>(null);
   // Active ruler-guide drag (drag-out / move / delete), or null.
   const guideDragRef = useRef<GuideDrag | null>(null);
   /** Active Region-of-Interest grip drag (comp space). */
@@ -321,6 +345,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
      *  skipped frames when the playhead outruns rendering (the green cache bar
      *  used to read as disconnected dots). */
     let lastPlaybackPutFrame = -1;
+    // Live-layer-set tracking for the playback auto-quality sampler: a frame
+    // where the set changes pays materialization costs and is not a fair
+    // sample of steady-state render speed (see renderAt).
+    let lastLiveSetSig = '';
+    let liveSetChangedThisRender = false;
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
 
     const isMediaDecodeRepaint = (nodeId?: string): boolean => {
@@ -449,7 +478,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // way a precomp does, so onion skins layer over each other and over the
       // live frame instead of each one painting an opaque plate over the last.
       const renderAt = (t: number, ghost = false): void => {
-        b.renderFrame({
+        const snap = {
           ...buildSnapshot(
             defaultSceneGraph,
             defaultAnimation,
@@ -480,7 +509,24 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           roi: useGuidesStore.getState().roi ?? undefined,
           // Ortho / custom views must not be cropped to the comp rect.
           viewIsActiveCamera: camera3dModeRef.current === 'active',
-        });
+        };
+        // Detect a live-set change (a layer crossed its in/out point this
+        // frame). That frame pays one-off costs — rasterize the new layer's
+        // texture, upload it, spin up its decoder — that say nothing about the
+        // comp's steady-state render cost, so the playback auto-quality
+        // sampler skips it (see the reportPlaybackFrame call below). Without
+        // this, a layer starting at 2s spiked the frame budget exactly at 2s,
+        // slowPlayback tripped, and the WHOLE viewport dropped to Half and
+        // stayed blurry for the 45-frame restore run — the "everything
+        // flashes and goes soft when my layer appears" report.
+        if (!ghost) {
+          const sig = snap.layers.map((l) => l.id).join('\n');
+          if (sig !== lastLiveSetSig) {
+            lastLiveSetSig = sig;
+            liveSetChangedThisRender = true;
+          }
+        }
+        b.renderFrame(snap);
       };
 
       // ── Onion skins ────────────────────────────────────────────────
@@ -505,6 +551,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           ? frame - maxCatchUp + 1
           : catchFrom;
         const renderStart = performance.now();
+        liveSetChangedThisRender = false;
         for (let f = from; f <= frame; f++) {
           renderAt(f / fps);
           viewportFrameCache.put(f, content);
@@ -513,9 +560,39 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // Adaptive Resolution for PLAYBACK: a heavy comp's first pass renders
         // at the floor instead of dropping frames, so the RAM preview fills at
         // something close to real time. See `reportPlaybackFrame`.
-        useRenderQualityStore.getState().reportPlaybackFrame(performance.now() - renderStart, 1000 / fps);
+        //
+        // PER-FRAME cost, not the loop total: the catch-up loop can render
+        // several frames in one tick, and charging their sum against a single
+        // frame's budget counted every catch-up as "slow" — three catch-ups in
+        // a row degraded the viewport on comps that render well inside budget.
+        //
+        // Materialization frames (live set changed) are skipped outright —
+        // their one-off raster/upload/decoder costs are not steady-state.
+        if (!liveSetChangedThisRender) {
+          const rendered = Math.max(1, frame - from + 1);
+          useRenderQualityStore.getState().reportPlaybackFrame(
+            (performance.now() - renderStart) / rendered, 1000 / fps,
+          );
+        }
       } else {
-        renderAt(timeRef.current);
+        const q = useRenderQualityStore.getState();
+        if (q.interacting) {
+          // Adaptive Resolution for DRAGS mirrors the playback path: measure
+          // the real frame cost and let the store's hysteresis decide. A drag
+          // on a light comp keeps full quality; a heavy one degrades within
+          // two frames (see `reportInteractFrame`). 30ms ≈ a 30fps feel — the
+          // point where a drag starts to read as laggy rather than live.
+          // Materialization frames are skipped for the same reason as in the
+          // playback branch: their one-off costs are not steady state.
+          const renderStart = performance.now();
+          liveSetChangedThisRender = false;
+          renderAt(timeRef.current);
+          if (!liveSetChangedThisRender) {
+            q.reportInteractFrame(performance.now() - renderStart, 30);
+          }
+        } else {
+          renderAt(timeRef.current);
+        }
       }
 
       renderCache.mark(timeRef.current);
@@ -1184,11 +1261,22 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         const p = local(e);
         creationDragRef.current = { start: p, current: p, tool: activeTool };
       }
-      useUIStore.getState().setDragging(true);
+      viewportPressRef.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, dragging: false };
       controller.ws.setFocused(true);
       controller.ws.feedPointerDown(toPointer(e));
     };
     const onMove = (e: PointerEvent): void => {
+      // Promote an armed press to a real drag on the first movement past the
+      // threshold, so `isDragging` means "the pointer is actually dragging"
+      // rather than "a button is down". Matches the engine's own drag
+      // threshold (InputSystem's `dragThreshold`), so the UI flag and the
+      // tool's onDragStart flip on the same movement.
+      const press = viewportPressRef.current;
+      if (press && !press.dragging && press.pointerId === e.pointerId
+          && Math.hypot(e.clientX - press.x, e.clientY - press.y) >= VIEWPORT_DRAG_SLOP) {
+        press.dragging = true;
+        useUIStore.getState().setDragging(true);
+      }
       // Active viewport-camera navigation (orbit / track) claims the move.
       if (camNav && camNav.pointerId === e.pointerId) {
         moveCameraNav(e);
@@ -1285,11 +1373,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             `mpdrag:${drag.nodeId}:${drag.t}`,
           );
         } else {
-          // Pull a spatial tangent handle — bends the path. Mirrored (smooth
-          // point) by default; hold Alt to break the pair.
+          // Pull a spatial tangent handle — bends the path. Mirrored when the
+          // point is still continuous (AE smooth); Alt-drag breaks and STICKS
+          // via Keyframe.continuous so the next non-Alt drag does not remirror.
+          const mirror = isPathTangentContinuous(drag.nodeId, drag.t) && !e.altKey;
           runAnimEdit(
             'Adjust path tangent',
-            () => setPathTangent(drag.nodeId, drag.t, part, w, !e.altKey),
+            () => setPathTangent(drag.nodeId, drag.t, part, w, mirror),
             `mptan:${drag.nodeId}:${drag.t}:${part}`,
           );
         }
@@ -1388,6 +1478,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         creationDragRef.current = null;
         controller.requestRender();
       }
+      viewportPressRef.current = null;
       useUIStore.getState().setDragging(false);
       controller.ws.feedPointerUp(toPointer(e));
     };
@@ -2329,14 +2420,13 @@ function themeGuides(): Omit<NonNullable<typeof guideCache>, 'key'> {
     root.getPropertyValue(token).trim() || fallback;
   guideCache = {
     key,
-    // The same strip colour as the panel headers and the toolbar, because that
-    // is what the ruler bar IS — a chrome gutter, not a third surface.
-    BAR: read('--color-panel-header', '#1d1d1d'),
-    CORNER: read('--color-surface-1', '#232323'),
-    BORDER: read('--color-border-strong', '#333333'),
+    // Dark dedicated ruler surface to ensure distinct contrast against sidebars (#232323) and canvas
+    BAR: read('--color-ruler-bg', '#111111'),
+    CORNER: read('--color-ruler-corner', '#161616'),
+    BORDER: read('--color-ruler-border', '#262626'),
     ACCENT: read('--color-primary', '#2988ff'),
-    TEXT: read('--color-text-secondary', '#a6a6a6'),
-    TICK: read('--color-text-tertiary', '#8c8c8c'),
+    TEXT: read('--color-ruler-text', '#cccccc'),
+    TICK: read('--color-ruler-tick', '#707070'),
     GUIDE: read('--color-ruler-guide', '#2dd4eb'),
   };
   return guideCache;
