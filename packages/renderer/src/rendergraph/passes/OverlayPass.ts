@@ -40,11 +40,21 @@ export class OverlayPass extends RenderPass {
 
   gridColor = Color.of(1, 1, 1, 0.06);
   guideColor = Color.of(0.23, 0.51, 0.96, 0.8);
-  /** Cap on generated grid lines (avoid pathological counts when zoomed out). */
-  maxLines = 400;
+  /** Cap on generated grid lines (avoid pathological counts when zoomed out).
+   *  A backstop, not the density control — `execute` culls by on-screen
+   *  spacing FIRST, so a hit here means something pathological, not a normal
+   *  zoom level. The old 400 was low enough that 4 subdivisions on a modest
+   *  zoom-out hit it mid-loop, truncating the grid to a partial field of
+   *  vertical-only lines — chrome that read as a renderer bug. */
+  maxLines = 2000;
   /** Minor (subdivision) lines are drawn at this fraction of the grid colour's
    *  alpha, so the major lines still read as the structure. */
   minorAlpha = 0.45;
+  /** Screen-space floors (device px). Below `minMinorPx` the subdivision pass
+   *  is dropped (it would be solid moiré); below `minMajorPx` the whole grid
+   *  is — AE hides its grid at the same point rather than painting noise. */
+  minMinorPx = 4;
+  minMajorPx = 2;
 
   execute(ctx: RenderPassContext): void {
     const { viewport, services } = ctx;
@@ -53,21 +63,36 @@ export class OverlayPass extends RenderPass {
 
     const cmds = services.commands;
     const view = viewport.visibleWorldRect;
-    const t = 1 / viewport.camera.zoom; // 1px lines
+    // 1 CSS px lines — but never thinner than 1 DEVICE px of the current
+    // buffer. Adaptive Resolution renders the content buffer at dpr/N, and a
+    // 1-CSS-px quad at an effective dpr < 1 covers under one device pixel, so
+    // rasterization dropped whichever lines missed a pixel centre — the grid
+    // half-vanished during every drag. Clamping by the effective dpr keeps
+    // every line at least one real pixel wide at any quality level.
+    const effDpr = Math.min(1, viewport.devicePixelRatio || 1);
+    const t = 1 / (viewport.camera.zoom * effDpr);
     const major = o.gridColor ?? this.gridColor;
     const minor = Color.of(major.r, major.g, major.b, major.a * this.minorAlpha);
 
     if (o.grid && o.gridSpacing > 0) {
+      // On-screen spacing in device px — the density the eye actually sees.
+      const px = (worldStep: number): number =>
+        worldStep * viewport.camera.zoom * (viewport.devicePixelRatio || 1);
       const subs = Math.max(1, Math.round(o.gridSubdivisions ?? 1));
       // Subdivisions FIRST so major lines paint over them at intersections.
-      if (subs > 1) {
+      // Culled by density before the line cap can truncate: a partial grid
+      // (the cap running out mid-loop) looks broken; a grid that cleanly drops
+      // its minor lines when they'd be 3px apart looks intentional — and is.
+      if (subs > 1 && px(o.gridSpacing / subs) >= this.minMinorPx) {
         const step = o.gridSpacing / subs;
         for (const line of gridLines(view, step, t, this.maxLines, o.gridStyle, o.gridSpacing)) {
           emitSolid(cmds, mvpFor(viewport, modelFromRect(line)), minor, 1, 'normal');
         }
       }
-      for (const line of gridLines(view, o.gridSpacing, t, this.maxLines, o.gridStyle)) {
-        emitSolid(cmds, mvpFor(viewport, modelFromRect(line)), major, 1, 'normal');
+      if (px(o.gridSpacing) >= this.minMajorPx) {
+        for (const line of gridLines(view, o.gridSpacing, t, this.maxLines, o.gridStyle)) {
+          emitSolid(cmds, mvpFor(viewport, modelFromRect(line)), major, 1, 'normal');
+        }
       }
     }
 

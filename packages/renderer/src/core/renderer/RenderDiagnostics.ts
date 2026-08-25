@@ -34,7 +34,9 @@ export type RenderDiagnosticCode =
   /** A compositing group could not be isolated (offscreen-target depth cap). */
   | 'group-unavailable'
   /** A track matte's source could not be resolved or isolated; layer drew unmatted. */
-  | 'matte-source-unavailable';
+  | 'matte-source-unavailable'
+  /** An image/video source failed to decode; preview shows colour bars. */
+  | 'media-unavailable';
 
 export interface RenderDiagnostic {
   code: RenderDiagnosticCode;

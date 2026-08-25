@@ -41,6 +41,7 @@ function makeGl(opts: { lost?: boolean; restorable?: boolean } = {}): GlStub {
     createTexture: jest.fn(() => ({ kind: 'texture' })),
     bindTexture: jest.fn(),
     texImage2D: jest.fn(),
+    texParameteri: jest.fn(),
     deleteTexture: jest.fn(),
     createSampler: jest.fn(() => ({ kind: 'sampler' })),
     samplerParameteri: jest.fn(),
@@ -51,7 +52,16 @@ function makeGl(opts: { lost?: boolean; restorable?: boolean } = {}): GlStub {
     deleteFramebuffer: jest.fn(),
     RENDERBUFFER: 0x8d41,
     DEPTH_COMPONENT24: 0x81a6,
+    DEPTH_COMPONENT: 0x1902,
     DEPTH_ATTACHMENT: 0x8d00,
+    TEXTURE_2D: 0x0de1,
+    TEXTURE_MIN_FILTER: 0x2801,
+    TEXTURE_MAG_FILTER: 0x2800,
+    TEXTURE_WRAP_S: 0x2802,
+    TEXTURE_WRAP_T: 0x2803,
+    NEAREST: 0x2600,
+    CLAMP_TO_EDGE: 0x812f,
+    UNSIGNED_INT: 0x1405,
     createRenderbuffer: jest.fn(() => ({ kind: 'renderbuffer' })),
     bindRenderbuffer: jest.fn(),
     renderbufferStorage: jest.fn(),
@@ -106,36 +116,37 @@ describe('WebGL2Backend.dispose', () => {
     expect(loseContext).toHaveBeenCalledTimes(1);
   });
 
-  test('depth render targets track and release their renderbuffer', async () => {
+  test('depth render targets track and release a sampleable depth texture', async () => {
     const { gl, loseContext } = makeGl();
     const backend = new WebGL2Backend();
     await backend.initialize(surfaceFor(gl));
 
-    // A depth target allocates a renderbuffer and attaches it.
+    // Non-MSAA depth uses a DEPTH_COMPONENT texture (sampleable), not a renderbuffer.
     const withDepth = backend.createRenderTarget({ width: 8, height: 8, format: 'rgba8unorm', depth: true });
-    expect((gl.createRenderbuffer as jest.Mock)).toHaveBeenCalledTimes(1);
-    expect((gl.framebufferRenderbuffer as jest.Mock)).toHaveBeenCalledTimes(1);
-    // A colour-only target does not.
-    backend.createRenderTarget({ width: 8, height: 8, format: 'rgba8unorm' });
-    expect((gl.createRenderbuffer as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect(backend.renderTargetDepthTexture(withDepth)).not.toBeNull();
+    expect((gl.createTexture as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2); // colour + depth
+    expect((gl.framebufferTexture2D as jest.Mock)).toHaveBeenCalled();
+    // A colour-only target does not add a depth texture.
+    const colourOnly = backend.createRenderTarget({ width: 8, height: 8, format: 'rgba8unorm' });
+    expect(backend.renderTargetDepthTexture(colourOnly)).toBeNull();
 
-    // Individual destroy releases the renderbuffer with the target…
     backend.destroyRenderTarget(withDepth);
-    expect((gl.deleteRenderbuffer as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect(backend.renderTargetDepthTexture(withDepth)).toBeNull();
 
-    // …and dispose does not double-free it (live-set bookkeeping).
     backend.dispose();
-    expect((gl.deleteRenderbuffer as jest.Mock)).toHaveBeenCalledTimes(1);
     expect(loseContext).toHaveBeenCalledTimes(1);
   });
 
-  test('an undisposed depth renderbuffer is released by dispose()', async () => {
+  test('an undisposed depth texture is released by dispose()', async () => {
     const { gl, loseContext } = makeGl();
     const backend = new WebGL2Backend();
     await backend.initialize(surfaceFor(gl));
+    const before = (gl.createTexture as jest.Mock).mock.calls.length;
     backend.createRenderTarget({ width: 8, height: 8, format: 'rgba8unorm', depth: true });
+    const afterCreate = (gl.createTexture as jest.Mock).mock.calls.length;
+    expect(afterCreate - before).toBeGreaterThanOrEqual(2);
     backend.dispose();
-    expect((gl.deleteRenderbuffer as jest.Mock)).toHaveBeenCalledTimes(1);
+    expect((gl.deleteTexture as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
     expect(loseContext).toHaveBeenCalledTimes(1);
   });
 

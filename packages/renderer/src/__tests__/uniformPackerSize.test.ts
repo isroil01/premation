@@ -33,6 +33,7 @@ import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
   packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D,
   packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock,
+  packBokeh, packCocBlur, packSceneBlitLut,
 } from '../pipeline/uniforms';
 import type { Mat3 } from '../core/math/Mat3';
 import type { Mat4 } from '../core/math/Mat4';
@@ -149,6 +150,12 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'mesh3d-textured', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'mesh3d-textured-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
+  { shader: 'bokeh', pack: () => packBokeh(MVP, RECT, 0.001, 0.001, 8, 6, 0.5, 1) },
+  { shader: 'coc-blur', pack: () => packCocBlur(MVP, RECT, RECT, 0.001, 0.001, [1, 2, 3, 4], 6, 0.5, 1) },
+  {
+    shader: 'scene-blit-lut',
+    pack: () => packSceneBlitLut(MVP, RECT, COLOR, 1, { size: 33, is1d: false, intensity: 1, domainMin: 0, domainMax: 1 }),
+  },
 ];
 
 const byName = new Map(BUILTIN_SHADERS.map((s) => [s.name, s]));

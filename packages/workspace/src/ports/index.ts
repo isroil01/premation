@@ -70,6 +70,19 @@ export interface WorkspaceNode {
    * correct control surface.
    */
   readonly is3D?: boolean;
+  /**
+   * True for a scene DEVICE — a camera or a light.
+   *
+   * Devices are grabbable (the box is a drag target) but not resizable or
+   * rotatable from the viewport: a light's reach is its Radius property and a
+   * camera's framing is its focal length, and the renderer ignores both nodes'
+   * scale/rotation outright. The eight grips were dead controls dressed as
+   * live ones, and together with a content-sized box they read as a spurious
+   * "blueprint" rectangle around a device that is really just an icon. The
+   * selection outline still draws — on the small icon-sized box — so a
+   * selected device is visibly selected; only the grips go.
+   */
+  readonly device?: boolean;
   /** Optional precise hit test in the node's *local* space (path/shape/mask). */
   readonly hitTestLocal?: (localPoint: Vec2) => boolean;
   /** Bezier path points in LOCAL space (only for shapes with custom paths). */

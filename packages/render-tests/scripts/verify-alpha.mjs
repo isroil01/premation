@@ -147,6 +147,36 @@ const results = [];
 const check = (name, ok, detail) => results.push({ name, ok, detail });
 
 /**
+ * Assert the subject band is saturated white at every ramp column — the
+ * signature of an UNCLAMPED un-premultiply amplifying a misdeclared straight
+ * source (see the alpha-control-straight-src-premul call for the contract).
+ */
+async function assertSaturatedWhite(backend, sceneId, why) {
+  let png;
+  try {
+    png = await readPng(path.join(ACTUAL, backend, sceneId, '0.png'));
+  } catch {
+    check(`[${backend}] ${sceneId}`, false, 'frame not rendered — run the harness first');
+    return;
+  }
+  const y0 = Math.round(png.height * 0.35);
+  const y1 = Math.round(png.height * 0.65);
+  let minMean = 255, n = 0;
+  for (let x = SUB_X0; x < SUB_X1; x++) {
+    const t = (x - SUB_X0) / (SUB_W - 1);
+    if (t < T_LO || t > T_HI) continue;
+    const m = columnMean(png, x, y0, y1);
+    if (m < minMean) minMean = m;
+    n++;
+  }
+  check(
+    `[${backend}] ${sceneId} — ${why}`,
+    n > 0 && minMean >= 250,
+    `${n} columns, dimmest mean ${minMean.toFixed(1)} (saturation demands ≥ 250 everywhere)`,
+  );
+}
+
+/**
  * Geometry-free form of the same claim, for scenes the ramp fit cannot reach.
  *
  * The double multiply squares an alpha in 0..1, so it can only pull a composite
@@ -218,23 +248,22 @@ for (const backend of BACKENDS) {
     backend, 'alpha-control-straight-src', BG.light, 'linear',
     'a straight source composites LINEARLY in alpha (THE UPLOAD PROBE)',
   );
-  // The same file declared premultiplied. This is LINEAR TOO, and that is the
-  // correct answer rather than a missed defect:
+  // The same file declared premultiplied — a MISDECLARATION, since the source
+  // is straight white. Under the 32-bpc contract the un-premultiply quotient is
+  // UNCLAMPED (min(rgb/a, 1) would make bitDepth:32 a no-op through every
+  // textured draw — see premultipliedAlpha.test.ts), so rgb/a = 1/a amplifies
+  // far above 1 at every column and the composite saturates to full white.
   //
-  //   unpremul clamps at min(rgb/a, 1). The source is constant WHITE, so
-  //   rgb/a = 1/a ≥ 1 for every a, and the clamp returns 1 at every column.
-  //   The shader then re-multiplies in working space and the blit encodes:
-  //   out = encode(1·a + lin(bg)·(1−a)). Linear coverage, not display lerp.
-  //
-  // So this scene cannot discriminate the two interpretations — a white source
-  // is a fixed point of the un-premultiply. What it DOES pin is the clamp
-  // itself: without `min(…, 1.0)` the divide would push RGB far above 1 and the
-  // colour matrix downstream would return bright specks instead of white, which
-  // is not linear coverage and not subtle. Asserting this curve here is asserting
-  // that invalid premultiplied data is repaired rather than amplified.
-  await assertShape(
-    backend, 'alpha-control-straight-src-premul', BG.light, 'linear',
-    'un-premultiplying a white source clamps to white instead of amplifying',
+  // That is the intended contract, not a defect: valid premultiplied HDR
+  // footage legitimately carries rgb > a, and repairing it silently would
+  // destroy exactly the data 32-bpc exists to keep. A misdeclared file instead
+  // fails LOUDLY — a blown-out white ramp nobody can miss — which is also what
+  // AE does with a wrong alpha interpretation. This probe pins the loudness:
+  // if the ramp ever composites politely again, someone has reintroduced the
+  // SDR clamp and 32-bpc unpremul is broken.
+  await assertSaturatedWhite(
+    backend, 'alpha-control-straight-src-premul',
+    'un-premultiplying a misdeclared straight white source amplifies to full white (unclamped 32-bpc unpremul)',
   );
 
   // ── the interpretation, on a genuinely premultiplied file ──────────

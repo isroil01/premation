@@ -208,7 +208,9 @@ function effectScene(spec: EffectSpec): Scene {
   // 'glow' left this list when the silhouette fill landed — see the note on the
   // glow spec above. Removing an entry here is a real promotion: the scene stops
   // being allowed to differ and starts being able to fail.
-  const isDivergent = ['blur', 'posterize', 'gradient-ramp'].includes(spec.type);
+  // Blur left this list when the CSS-sigma GPU kernel was proven
+  // (`cssBlurKernel.test.ts` + `blur-hard-edge`) and its reference re-blessed.
+  const isDivergent = ['posterize', 'gradient-ramp'].includes(spec.type);
   return defineScene({
     id: `effect-${spec.type}`,
     description: `Effect "${spec.type}"${spec.gpuOnly ? ' (gpuOnly — Canvas2D no-op)' : ''} on a gradient ellipse.`,
@@ -216,6 +218,8 @@ function effectScene(spec: EffectSpec): Scene {
     comp: COMP,
     fps: 30,
     frames: [0],
+    // Blur: GPU is the oracle (CSS-sigma kernel); Canvas2D ellipse AA is not a gate.
+    ...(spec.type === 'blur' ? { oracle: 'gpu' as const } : {}),
     gpuParity: isDivergent ? 'known-divergent' : 'expect-pass',
     ...(isDivergent ? { divergence: {
       why:
@@ -223,9 +227,8 @@ function effectScene(spec: EffectSpec): Scene {
         + 'steps, and the two engines put those step boundaries on marginally different pixels. '
         + 'analyze-gap.mjs measures 2204 of 2288 differing pixels as coverage on those boundaries; '
         + 'the 84 that are not sit where a value lands exactly on a quantisation threshold and the '
-        + 'two rounding rules disagree about which band it belongs to. Blur and glow are here for '
-        + 'the kernel reason: the GPU treats the radius as a Gaussian sigma sampled to 2.5 sigma, '
-        + 'the deleted Canvas2D reference inherited the CSS filter kernel.',
+        + 'two rounding rules disagree about which band it belongs to. Gradient-ramp differs for '
+        + 'the same class of soft-field / band-boundary reasons against a deleted Canvas2D golden.',
       wouldMatchWhen:
         'The references are re-blessed from the GPU engine, or the quantisation rounding is made '
         + 'to match a reference engine that no longer ships.',

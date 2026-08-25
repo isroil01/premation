@@ -67,6 +67,19 @@ export const SCENE_BLIT_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/** Scene blit + optional viewer LUT strip (binding 3). Same Object layout as
+ *  scene-blit; LUT params ride the unused colour-transform first row. */
+export const SCENE_BLIT_LUT_MATERIAL: MaterialDescriptor = {
+  shader: 'scene-blit-lut',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+};
+
 /** Built-in material: masked textured quad. Uniform + texture + sampler + mask texture. */
 export const MASKED_TEXTURED_MATERIAL: MaterialDescriptor = {
   shader: 'masked-textured',
@@ -145,6 +158,28 @@ export const GLASS_MATERIAL: MaterialDescriptor = {
 /** Built-in material: blur pass. Uniform + texture + sampler. */
 export const BLUR_MATERIAL: MaterialDescriptor = {
   shader: 'blur',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+/** Polygonal iris bokeh (DOF). Same bindings as blur; one gather pass. */
+export const BOKEH_MATERIAL: MaterialDescriptor = {
+  shader: 'bokeh',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+/** Planar per-pixel CoC (tilted 3D quads). Same bindings as blur. */
+export const COC_BLUR_MATERIAL: MaterialDescriptor = {
+  shader: 'coc-blur',
   topology: 'triangle-list',
   layout: [
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },

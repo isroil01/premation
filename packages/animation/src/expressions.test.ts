@@ -145,6 +145,18 @@ describe('expression API v2', () => {
     expect(e.run(ctx(2.75)).value).toBeCloseTo(275); // 75 + 2×100
   });
 
+  it("loopOut('continue') keeps the last segment's speed", () => {
+    const e = compileExpression("loopOut('continue')");
+    // Linear 0→100 over 0..1 → ~100/s; at t=1.5 expect ≈150.
+    expect(e.run(ctx(1.5)).value).toBeCloseTo(150, 0);
+    expect(e.run(ctx(0.5)).value).toBeCloseTo(50); // inside span unchanged
+  });
+
+  it("loopIn('continue') extrapolates before the first key", () => {
+    const e = compileExpression("loopIn('continue')");
+    expect(e.run(ctx(-0.5)).value).toBeCloseTo(-50, 0);
+  });
+
   it("loopIn('cycle'/'pingpong'/'offset') maps time before the first keyframe", () => {
     expect(compileExpression("loopIn('cycle')").run(ctx(-0.5)).value).toBeCloseTo(50);
     expect(compileExpression("loopIn('cycle')").run(ctx(-1.25)).value).toBeCloseTo(75);

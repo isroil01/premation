@@ -170,7 +170,7 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);
-  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   return vec4<f32>(graded * c.a, c.a);
 }
 `,
@@ -194,7 +194,7 @@ out vec4 frag;
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
   vec4 v = vec4(c.rgb, 1.0);
-  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   frag = vec4(graded * c.a, c.a);
 }
 `,
@@ -236,7 +236,7 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);
-  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   let maskAlpha = textureSample(maskTex, smp, uv).a;
   let a = c.a * maskAlpha;
   return vec4<f32>(graded * a, a);
@@ -263,7 +263,7 @@ out vec4 frag;
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
   vec4 v = vec4(c.rgb, 1.0);
-  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   float maskAlpha = texture(uMaskTex, vUv).a;
   float a = c.a * maskAlpha;
   frag = vec4(graded * a, a);
@@ -311,7 +311,7 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);
-  var graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  var graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   let lr = textureSample(lutTex, smp, vec2<f32>(graded.r, 0.5)).r;
   let lg = textureSample(lutTex, smp, vec2<f32>(graded.g, 0.5)).g;
   let lb = textureSample(lutTex, smp, vec2<f32>(graded.b, 0.5)).b;
@@ -340,7 +340,7 @@ out vec4 frag;
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
   vec4 v = vec4(c.rgb, 1.0);
-  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   float lr = texture(uLutTex, vec2(graded.r, 0.5)).r;
   float lg = texture(uLutTex, vec2(graded.g, 0.5)).g;
   float lb = texture(uLutTex, vec2(graded.b, 0.5)).b;
@@ -917,7 +917,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     let t = textureSample(tex, smp, uv + dir * off);
     var lin = t;
     if (t.a > 0.0001) {
-      let straight = min(t.rgb / t.a, vec3<f32>(1.0));
+      let straight = t.rgb / t.a;
       lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
     }
     c = c + lin * w;
@@ -925,7 +925,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   }
   let avg = c / total;
   if (avg.a > 0.0001) {
-    let straight = min(avg.rgb / avg.a, vec3<f32>(1.0));
+    let straight = avg.rgb / avg.a;
     return vec4<f32>(workingToStorage(straight) * avg.a, avg.a);
   }
   return avg;
@@ -971,7 +971,7 @@ void main() {
     vec4 t = texture(uTex, vUv + dir * off);
     vec4 lin = t;
     if (t.a > 0.0001) {
-      vec3 straight = min(t.rgb / t.a, vec3(1.0));
+      vec3 straight = t.rgb / t.a;
       lin = vec4(storageToWorking(straight) * t.a, t.a);
     }
     c += lin * w;
@@ -979,7 +979,361 @@ void main() {
   }
   vec4 avg = c / total;
   if (avg.a > 0.0001) {
-    vec3 straight = min(avg.rgb / avg.a, vec3(1.0));
+    vec3 straight = avg.rgb / avg.a;
+    frag = vec4(workingToStorage(straight) * avg.a, avg.a);
+  } else {
+    frag = avg;
+  }
+}
+`,
+  },
+};
+
+/**
+ * Polygonal bokeh gather for DOF iris.
+ *
+ * params = (texelX, texelY, radiusPx, blades)
+ * params2 = (roundness 0..1, highlightGain, 0, 0)
+ *
+ * One pass (not separable): an n-gon disk whose edges soften toward a circle
+ * with roundness. Bright taps get extra weight for specular bloom.
+ */
+const BOKEH: ShaderSource = {
+  name: 'bokeh',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+  params2 : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${SRGB_TRANSFER_WGSL}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let radius = obj.params.z;
+  let c0 = textureSampleLevel(tex, smp, uv, 0.0);
+  if (radius < 0.34) { return c0; }
+  let blades = max(3.0, min(11.0, floor(obj.params.w + 0.5)));
+  let roundness = clamp(obj.params2.x, 0.0, 1.0);
+  let gain = max(0.0, obj.params2.y);
+  let texel = obj.params.xy;
+  var acc = vec4<f32>(0.0);
+  var wsum = 0.0;
+  // 5 rings × blades samples. textureSampleLevel: WGSL forbids implicit
+  // derivatives inside a non-uniform loop.
+  for (var ring = 1; ring <= 5; ring = ring + 1) {
+    let fr = f32(ring) / 5.0;
+    let r = radius * fr;
+    for (var b = 0; b < 11; b = b + 1) {
+      if (f32(b) >= blades) { break; }
+      let a0 = 6.2831853 * f32(b) / blades;
+      // Soften polygon corners toward a circle.
+      let polyR = r / max(0.2, cos(3.14159265 / blades));
+      let rr = mix(polyR, r, roundness);
+      let off = vec2<f32>(cos(a0), sin(a0)) * rr * texel;
+      let t = textureSampleLevel(tex, smp, uv + off, 0.0);
+      var lin = t;
+      if (t.a > 0.0001) {
+        let straight = t.rgb / t.a;
+        lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+      }
+      let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+      let w = 1.0 + gain * lum * lum;
+      acc = acc + lin * w;
+      wsum = wsum + w;
+    }
+  }
+  // Centre sample.
+  {
+    var lin = c0;
+    if (c0.a > 0.0001) {
+      let straight = c0.rgb / c0.a;
+      lin = vec4<f32>(storageToWorking(straight) * c0.a, c0.a);
+    }
+    let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let w = 1.0 + gain * lum * lum;
+    acc = acc + lin * w;
+    wsum = wsum + w;
+  }
+  let avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    let straight = avg.rgb / avg.a;
+    return vec4<f32>(workingToStorage(straight) * avg.a, avg.a);
+  }
+  return avg;
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+void main() {
+  float radius = params.z;
+  vec4 c0 = texture(uTex, vUv);
+  if (radius < 0.34) { frag = c0; return; }
+  float blades = max(3.0, min(11.0, floor(params.w + 0.5)));
+  float roundness = clamp(params2.x, 0.0, 1.0);
+  float gain = max(0.0, params2.y);
+  vec2 texel = params.xy;
+  vec4 acc = vec4(0.0);
+  float wsum = 0.0;
+  for (int ring = 1; ring <= 5; ring++) {
+    float fr = float(ring) / 5.0;
+    float r = radius * fr;
+    for (int b = 0; b < 11; b++) {
+      if (float(b) >= blades) break;
+      float a0 = 6.2831853 * float(b) / blades;
+      float polyR = r / max(0.2, cos(3.14159265 / blades));
+      float rr = mix(polyR, r, roundness);
+      vec2 off = vec2(cos(a0), sin(a0)) * rr * texel;
+      vec4 t = texture(uTex, vUv + off);
+      vec4 lin = t;
+      if (t.a > 0.0001) {
+        vec3 straight = t.rgb / t.a;
+        lin = vec4(storageToWorking(straight) * t.a, t.a);
+      }
+      float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+      float w = 1.0 + gain * lum * lum;
+      acc += lin * w;
+      wsum += w;
+    }
+  }
+  {
+    vec4 lin = c0;
+    if (c0.a > 0.0001) {
+      vec3 straight = c0.rgb / c0.a;
+      lin = vec4(storageToWorking(straight) * c0.a, c0.a);
+    }
+    float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float w = 1.0 + gain * lum * lum;
+    acc += lin * w;
+    wsum += w;
+  }
+  vec4 avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    vec3 straight = avg.rgb / avg.a;
+    frag = vec4(workingToStorage(straight) * avg.a, avg.a);
+  } else {
+    frag = avg;
+  }
+}
+`,
+  },
+};
+
+/** Planar per-pixel CoC: bilinear corner radii + iris/rosette gather. */
+const COC_BLUR: ShaderSource = {
+  name: 'coc-blur',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+  params2 : vec4<f32>,
+  corners : vec4<f32>,
+  fxBox : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${SRGB_TRANSFER_WGSL}
+fn cocRadius(uv : vec2<f32>) -> f32 {
+  let box = obj.fxBox;
+  let local = clamp((uv - box.xy) / max(box.zw, vec2<f32>(1e-6)), vec2<f32>(0.0), vec2<f32>(1.0));
+  let top = mix(obj.corners.x, obj.corners.y, local.x);
+  let bot = mix(obj.corners.w, obj.corners.z, local.x);
+  return mix(top, bot, local.y);
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c0 = textureSampleLevel(tex, smp, uv, 0.0);
+  let radius = cocRadius(uv);
+  if (radius < 0.34) { return c0; }
+  let blades = obj.params.z;
+  let roundness = clamp(obj.params2.x, 0.0, 1.0);
+  let gain = max(0.0, obj.params2.y);
+  let texel = obj.params.xy;
+  var acc = vec4<f32>(0.0);
+  var wsum = 0.0;
+  if (blades >= 3.0) {
+    let n = max(3.0, min(11.0, floor(blades + 0.5)));
+    for (var ring = 1; ring <= 5; ring = ring + 1) {
+      let fr = f32(ring) / 5.0;
+      let r = radius * fr;
+      for (var b = 0; b < 11; b = b + 1) {
+        if (f32(b) >= n) { break; }
+        let a0 = 6.2831853 * f32(b) / n;
+        let polyR = r / max(0.2, cos(3.14159265 / n));
+        let rr = mix(polyR, r, roundness);
+        let off = vec2<f32>(cos(a0), sin(a0)) * rr * texel;
+        let t = textureSampleLevel(tex, smp, uv + off, 0.0);
+        var lin = t;
+        if (t.a > 0.0001) {
+          let straight = t.rgb / t.a;
+          lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+        }
+        let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let w = 1.0 + gain * lum * lum;
+        acc = acc + lin * w;
+        wsum = wsum + w;
+      }
+    }
+  } else {
+    // Golden-angle rosette (compound-blur style) when iris is off.
+    let GOLD = 2.3999632;
+    for (var i = 0; i < 24; i = i + 1) {
+      let fi = f32(i);
+      let a = fi * GOLD;
+      let fr = (fi + 0.5) / 24.0;
+      let off = vec2<f32>(cos(a), sin(a)) * radius * fr * texel;
+      let t = textureSampleLevel(tex, smp, uv + off, 0.0);
+      var lin = t;
+      if (t.a > 0.0001) {
+        let straight = t.rgb / t.a;
+        lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+      }
+      acc = acc + lin;
+      wsum = wsum + 1.0;
+    }
+  }
+  {
+    var lin = c0;
+    if (c0.a > 0.0001) {
+      let straight = c0.rgb / c0.a;
+      lin = vec4<f32>(storageToWorking(straight) * c0.a, c0.a);
+    }
+    let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let w = 1.0 + gain * lum * lum;
+    acc = acc + lin * w;
+    wsum = wsum + w;
+  }
+  let avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    let straight = avg.rgb / avg.a;
+    return vec4<f32>(workingToStorage(straight) * avg.a, avg.a);
+  }
+  return avg;
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; vec4 corners; vec4 fxBox; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; vec4 corners; vec4 fxBox; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+float cocRadius(vec2 uv) {
+  vec2 local = clamp((uv - fxBox.xy) / max(fxBox.zw, vec2(1e-6)), vec2(0.0), vec2(1.0));
+  float top = mix(corners.x, corners.y, local.x);
+  float bot = mix(corners.w, corners.z, local.x);
+  return mix(top, bot, local.y);
+}
+void main() {
+  vec4 c0 = texture(uTex, vUv);
+  float radius = cocRadius(vUv);
+  if (radius < 0.34) { frag = c0; return; }
+  float blades = params.z;
+  float roundness = clamp(params2.x, 0.0, 1.0);
+  float gain = max(0.0, params2.y);
+  vec2 texel = params.xy;
+  vec4 acc = vec4(0.0);
+  float wsum = 0.0;
+  if (blades >= 3.0) {
+    float n = max(3.0, min(11.0, floor(blades + 0.5)));
+    for (int ring = 1; ring <= 5; ring++) {
+      float fr = float(ring) / 5.0;
+      float r = radius * fr;
+      for (int b = 0; b < 11; b++) {
+        if (float(b) >= n) break;
+        float a0 = 6.2831853 * float(b) / n;
+        float polyR = r / max(0.2, cos(3.14159265 / n));
+        float rr = mix(polyR, r, roundness);
+        vec2 off = vec2(cos(a0), sin(a0)) * rr * texel;
+        vec4 t = texture(uTex, vUv + off);
+        vec4 lin = t;
+        if (t.a > 0.0001) {
+          vec3 straight = t.rgb / t.a;
+          lin = vec4(storageToWorking(straight) * t.a, t.a);
+        }
+        float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+        float w = 1.0 + gain * lum * lum;
+        acc += lin * w;
+        wsum += w;
+      }
+    }
+  } else {
+    const float GOLD = 2.3999632;
+    for (int i = 0; i < 24; i++) {
+      float fi = float(i);
+      float a = fi * GOLD;
+      float fr = (fi + 0.5) / 24.0;
+      vec2 off = vec2(cos(a), sin(a)) * radius * fr * texel;
+      vec4 t = texture(uTex, vUv + off);
+      vec4 lin = t;
+      if (t.a > 0.0001) {
+        vec3 straight = t.rgb / t.a;
+        lin = vec4(storageToWorking(straight) * t.a, t.a);
+      }
+      acc += lin;
+      wsum += 1.0;
+    }
+  }
+  {
+    vec4 lin = c0;
+    if (c0.a > 0.0001) {
+      vec3 straight = c0.rgb / c0.a;
+      lin = vec4(storageToWorking(straight) * c0.a, c0.a);
+    }
+    float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float w = 1.0 + gain * lum * lum;
+    acc += lin * w;
+    wsum += w;
+  }
+  vec4 avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    vec3 straight = avg.rgb / avg.a;
     frag = vec4(workingToStorage(straight) * avg.a, avg.a);
   } else {
     frag = avg;
@@ -2833,17 +3187,41 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
   let c = textureSample(tex, smp, uv);
   let width = obj.params.x;
   let texelSize = obj.params.yz;
+  // params.w: 0 Outside, 1 Inside, 2 Center, 3 Alpha-dilate (Spread pre-pass).
+  let mode = obj.params.w;
+  // Center straddles the edge — half the stroke outside, half inside.
+  var strokeWidth = width;
+  if (mode > 1.5 && mode < 2.5) {
+    strokeWidth = width * 0.5;
+  }
   var maxAlpha = c.a;
-  let w = i32(clamp(width, 1.0, 16.0));
+  var minAlpha = c.a;
+  // Cap matches layer-style Stroke Size (UI ≤100). Was 16 — thick strokes
+  // silently plateaued while the inspector kept climbing.
+  let w = i32(clamp(strokeWidth, 1.0, 64.0));
   for (var dy = -w; dy <= w; dy = dy + 1) {
     for (var dx = -w; dx <= w; dx = dx + 1) {
-      if (f32(dx*dx + dy*dy) <= width*width) {
+      if (f32(dx*dx + dy*dy) <= strokeWidth*strokeWidth) {
         let offsetUv = uv + vec2<f32>(f32(dx), f32(dy)) * texelSize;
-        maxAlpha = max(maxAlpha, textureSample(tex, smp, clamp(offsetUv, vec2<f32>(0.0), vec2<f32>(1.0))).a);
+        let a = textureSample(tex, smp, clamp(offsetUv, vec2<f32>(0.0), vec2<f32>(1.0))).a;
+        maxAlpha = max(maxAlpha, a);
+        minAlpha = min(minAlpha, a);
       }
     }
   }
-  let edge = maxAlpha - c.a;
+  if (mode > 2.5) {
+    // Dilate: expand alpha footprint for layer-style Spread before blur.
+    let scale = select(1.0, maxAlpha / max(c.a, 1e-5), c.a > 1e-5);
+    return vec4<f32>(c.rgb * scale, maxAlpha);
+  }
+  var edge = 0.0;
+  if (mode < 0.5) {
+    edge = maxAlpha - c.a;
+  } else if (mode < 1.5) {
+    edge = c.a - minAlpha;
+  } else {
+    edge = max(maxAlpha - c.a, c.a - minAlpha);
+  }
   let strokeCol = vec4<f32>(obj.color.rgb * obj.color.a, obj.color.a);
   return mix(c, strokeCol, edge * strokeCol.a);
 }
@@ -2869,17 +3247,36 @@ void main() {
   vec4 c = texture(uTex, vUv);
   float width = params.x;
   vec2 texelSize = params.yz;
+  float mode = params.w;
+  if (mode > 1.5 && mode < 2.5) {
+    width = width * 0.5;
+  }
   float maxAlpha = c.a;
-  int w = int(clamp(width, 1.0, 16.0));
+  float minAlpha = c.a;
+  int w = int(clamp(width, 1.0, 64.0));
   for (int dy = -w; dy <= w; dy++) {
     for (int dx = -w; dx <= w; dx++) {
       if (float(dx*dx + dy*dy) <= width*width) {
         vec2 offsetUv = vUv + vec2(float(dx), float(dy)) * texelSize;
-        maxAlpha = max(maxAlpha, texture(uTex, clamp(offsetUv, vec2(0.0), vec2(1.0))).a);
+        float a = texture(uTex, clamp(offsetUv, vec2(0.0), vec2(1.0))).a;
+        maxAlpha = max(maxAlpha, a);
+        minAlpha = min(minAlpha, a);
       }
     }
   }
-  float edge = maxAlpha - c.a;
+  if (mode > 2.5) {
+    float scale = c.a > 1e-5 ? maxAlpha / max(c.a, 1e-5) : 1.0;
+    frag = vec4(c.rgb * scale, maxAlpha);
+    return;
+  }
+  float edge = 0.0;
+  if (mode < 0.5) {
+    edge = maxAlpha - c.a;
+  } else if (mode < 1.5) {
+    edge = c.a - minAlpha;
+  } else {
+    edge = max(maxAlpha - c.a, c.a - minAlpha);
+  }
   vec4 strokeCol = vec4(color.rgb * color.a, color.a);
   frag = mix(c, strokeCol, edge * strokeCol.a);
 }
@@ -4166,7 +4563,7 @@ ${WGSL_SHADE3D_FN}
 fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);
-  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   let lit = shade3d(world, graded);
   return vec4<f32>(lit * c.a, c.a);
 }
@@ -4194,7 +4591,7 @@ ${GLSL_SHADE3D_FN}
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
   vec4 v = vec4(c.rgb, 1.0);
-  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   vec3 lit = shade3d(vWorld, graded);
   frag = vec4(lit * c.a, c.a);
 }
@@ -4330,7 +4727,7 @@ ${WGSL_SHADE3D_N_FN}
 fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);
-  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   let lit = shade3dN(world, nrm, graded);
   return vec4<f32>(lit * c.a, c.a);
 }
@@ -4349,7 +4746,7 @@ ${GLSL_SHADE3D_N_FN}
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
   vec4 v = vec4(c.rgb, 1.0);
-  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   vec3 lit = shade3dN(vWorld, vNrm, graded);
   frag = vec4(lit * c.a, c.a);
 }
@@ -4384,7 +4781,7 @@ ${WGSL_SHADE3D_FN}
 fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);
-  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   let maskAlpha = textureSample(maskTex, smp, uv).a;
   let a = c.a * maskAlpha;
   let lit = shade3d(world, graded);
@@ -4415,7 +4812,7 @@ ${GLSL_SHADE3D_FN}
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
   vec4 v = vec4(c.rgb, 1.0);
-  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   float maskAlpha = texture(uMaskTex, vUv).a;
   float a = c.a * maskAlpha;
   vec3 lit = shade3d(vWorld, graded);
@@ -4458,7 +4855,7 @@ fn vs(@location(0) pos : vec2<f32>, @location(1) uv : vec2<f32>) -> VOut {
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c = textureSample(tex, smp, uv) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);
-  let graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
   return vec4<f32>(graded * c.a, c.a);
 }
 `,
@@ -4483,7 +4880,7 @@ out vec4 frag;
 void main() {
   vec4 c = texture(uTex, vUv) * tint;
   vec4 v = vec4(c.rgb, 1.0);
-  vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   frag = vec4(graded * c.a, c.a);
 }
 `,
@@ -4637,21 +5034,22 @@ const ALPHA_FLOOR = '0.00392156862745098'; // 1.0 / 255.0
  * one alpha quantum there is no recoverable colour to begin with, so the texel
  * resolves to empty instead of to amplified noise.
  *
- * The `min(…, 1.0)` repairs invalid data: in valid premultiplied colour every
- * channel is ≤ alpha, so a quotient above 1 means the source was not really
- * premultiplied. Clamping there stops one bad texel entering the colour matrix
- * as a wild value and coming back out as a bright speck.
+ * Do NOT clamp the quotient to 1.0. With 32-bpc linear intermediates, scene-
+ * referred RGB can legitimately exceed 1 (HDR highlights, bright grades). The
+ * old SDR clamp made `bitDepth: 32` a no-op through blur/grade: every unpremul
+ * forced unity. Invalid premul (rgb > a on an 8-bit upload) is still rare after
+ * browser premultiply; alpha-floor below handles empty texels.
  */
 const UNPREMUL_WGSL = `fn unpremul(t : vec4<f32>) -> vec4<f32> {
   if (t.a < ${ALPHA_FLOOR}) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
-  return vec4<f32>(min(t.rgb / t.a, vec3<f32>(1.0)), t.a);
+  return vec4<f32>(t.rgb / t.a, t.a);
 }
 
 `;
 
 const UNPREMUL_GLSL = `vec4 unpremul(vec4 t) {
   if (t.a < ${ALPHA_FLOOR}) return vec4(0.0);
-  return vec4(min(t.rgb / t.a, vec3(1.0)), t.a);
+  return vec4(t.rgb / t.a, t.a);
 }
 
 `;
@@ -4722,13 +5120,13 @@ function unpremultiplyingSample(base: ShaderSource, src: 'srgb' | 'linear' = 'sr
   if (base.name === 'lut-textured') {
     wgsl = sub(
       wgsl,
-      'var graded = clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0));',
+      'var graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));',
       'var graded = linearToSrgbRgb(clamp(vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v)), vec3<f32>(0.0), vec3<f32>(1.0)));',
       'wgsl lut encode',
     );
     fragment = sub(
       fragment,
-      'vec3 graded = clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0);',
+      'vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));',
       'vec3 graded = linearToSrgbRgb(clamp(vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v)), 0.0, 1.0));',
       'glsl lut encode',
     );
@@ -4833,8 +5231,139 @@ void main() {
   },
 };
 
+/**
+ * Scene blit + viewer/monitor LUT. Same Object layout as scene-blit; LUT strip
+ * at binding 3. Params in cr0: x=±size (neg=1D), y=intensity, z/w=domain.
+ * Applied AFTER workingToDisplay so export (which skips this material) stays
+ * grade-clean.
+ */
+const SCENE_BLIT_LUT: ShaderSource = {
+  name: 'scene-blit-lut',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var lutTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${UNPREMUL_WGSL}${SRGB_TRANSFER_WGSL}
+fn viewerSlice(rg : vec2<f32>, slice : f32, n : f32) -> vec3<f32> {
+  let xIn = clamp(rg.x * (n - 1.0) + 0.5, 0.5, n - 0.5);
+  let u = (slice * n + xIn) / (n * n);
+  let v = clamp(rg.y * (n - 1.0) + 0.5, 0.5, n - 0.5) / n;
+  return textureSampleLevel(lutTex, smp, vec2<f32>(u, v), 0.0).rgb;
+}
+@fragment
+fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c = unpremul(textureSample(tex, smp, uv)) * obj.tint;
+  ${LINEAR_INTERMEDIATE_STORAGE
+    ? 'var rgb = workingToDisplay(c.rgb, obj.srcSpace);'
+    : 'var rgb = c.rgb;'}
+  let signedSize = obj.cr0.x;
+  let n = abs(signedSize);
+  let intensity = clamp(obj.cr0.y, 0.0, 1.0);
+  if (n >= 2.0 && intensity > 0.0001) {
+    let lo = obj.cr0.z;
+    let hi = obj.cr0.w;
+    let span = max(hi - lo, 0.0001);
+    let d = clamp((rgb - vec3<f32>(lo)) / span, vec3<f32>(0.0), vec3<f32>(1.0));
+    var graded : vec3<f32>;
+    if (signedSize < 0.0) {
+      let w = n;
+      let rr = textureSampleLevel(lutTex, smp, vec2<f32>((d.r * (w - 1.0) + 0.5) / w, 0.5), 0.0).r;
+      let gg = textureSampleLevel(lutTex, smp, vec2<f32>((d.g * (w - 1.0) + 0.5) / w, 0.5), 0.0).g;
+      let bb = textureSampleLevel(lutTex, smp, vec2<f32>((d.b * (w - 1.0) + 0.5) / w, 0.5), 0.0).b;
+      graded = vec3<f32>(rr, gg, bb);
+    } else {
+      let bz = d.b * (n - 1.0);
+      let z0 = floor(bz);
+      let z1 = min(z0 + 1.0, n - 1.0);
+      let f = bz - z0;
+      graded = mix(viewerSlice(d.rg, z0, n), viewerSlice(d.rg, z1, n), f);
+    }
+    rgb = mix(rgb, graded, intensity);
+  }
+  return vec4<f32>(rgb * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; };
+uniform sampler2D uTex;
+uniform sampler2D uMapTex;
+in vec2 vUv;
+out vec4 frag;
+${UNPREMUL_GLSL}${SRGB_TRANSFER_GLSL}
+vec3 viewerSlice(vec2 rg, float slice, float n) {
+  float xIn = clamp(rg.x * (n - 1.0) + 0.5, 0.5, n - 0.5);
+  float u = (slice * n + xIn) / (n * n);
+  float v = clamp(rg.y * (n - 1.0) + 0.5, 0.5, n - 0.5) / n;
+  return textureLod(uMapTex, vec2(u, v), 0.0).rgb;
+}
+void main() {
+  vec4 c = unpremul(texture(uTex, vUv)) * tint;
+  ${LINEAR_INTERMEDIATE_STORAGE
+    ? 'vec3 rgb = workingToDisplay(c.rgb, srcSpace);'
+    : 'vec3 rgb = c.rgb;'}
+  float signedSize = cr0.x;
+  float n = abs(signedSize);
+  float intensity = clamp(cr0.y, 0.0, 1.0);
+  if (n >= 2.0 && intensity > 0.0001) {
+    float lo = cr0.z;
+    float hi = cr0.w;
+    float span = max(hi - lo, 0.0001);
+    vec3 d = clamp((rgb - vec3(lo)) / span, 0.0, 1.0);
+    vec3 graded;
+    if (signedSize < 0.0) {
+      float w = n;
+      float rr = textureLod(uMapTex, vec2((d.r * (w - 1.0) + 0.5) / w, 0.5), 0.0).r;
+      float gg = textureLod(uMapTex, vec2((d.g * (w - 1.0) + 0.5) / w, 0.5), 0.0).g;
+      float bb = textureLod(uMapTex, vec2((d.b * (w - 1.0) + 0.5) / w, 0.5), 0.0).b;
+      graded = vec3(rr, gg, bb);
+    } else {
+      float bz = d.b * (n - 1.0);
+      float z0 = floor(bz);
+      float z1 = min(z0 + 1.0, n - 1.0);
+      float f = bz - z0;
+      graded = mix(viewerSlice(d.rg, z0, n), viewerSlice(d.rg, z1, n), f);
+    }
+    rgb = mix(rgb, graded, intensity);
+  }
+  frag = vec4(rgb * c.a, c.a);
+}
+`,
+  },
+};
+
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
-  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
+  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, BOKEH, COC_BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
   FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, LIGHT_SWEEP, LENS_FLARE, LIGHT_RAYS, BEND,
   BEVEL_ALPHA, BEVEL_EDGES, SPOTLIGHT, SPHERE, CYLINDER, ARITHMETIC,
   // Round-six per-pixel colour ports.
@@ -4862,5 +5391,6 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   unpremultiplyingSample(MESH3D_TEXTURED, 'linear'),
   TEXTURED_SILHOUETTE,
   SCENE_BLIT,
+  SCENE_BLIT_LUT,
   GLASS_COMPOSITE,
 ];
