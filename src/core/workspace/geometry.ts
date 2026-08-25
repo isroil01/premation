@@ -229,9 +229,16 @@ export function readGeometry(node: SceneNode, overrideProps?: Record<string, unk
       : null;
   const size = measured ? { w: measured.w, h: measured.h }
              : pointsBounds ? pointsBounds
+             // Devices FIRST: a light's `radius` prop is its falloff reach
+             // (~45% of the comp's long edge by default), not a shape radius.
+             // Letting the generic radius branch see it wrapped the light in a
+             // comp-sized 2·radius selection box — a giant "blueprint" border
+             // around what is really an icon. The wash is not the layer; the
+             // device is. Both get a small fixed grab box at the device point,
+             // like AE's icon-sized camera/light handles.
+             : kind === 'light' ? { w: 48, h: 48 }
+             : kind === 'camera' ? { w: 48, h: 48 }
              : radius && radius > 0 ? { w: radius * 2, h: radius * 2 }
-             : kind === 'light' ? { w: 100, h: 100 }
-             : kind === 'camera' ? { w: 80, h: 80 }
              : kind === 'particle' ? { w: 140, h: 140 }
              : kind === 'null' ? { w: 60, h: 60 }
              : kind === 'group' ? { w: 280, h: 280 }

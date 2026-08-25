@@ -17,12 +17,14 @@ export interface WorkspaceSnapshot {
   name: string;
   builtin?: boolean;
   regions: Partial<Record<RegionId, { size: number; collapsed: boolean }>>;
-  panelOrder?: Record<RegionId, ReadonlyArray<string>>;
+  panelOrder?: Partial<Record<RegionId, ReadonlyArray<string>>>;
   activePanelByRegion?: Partial<Record<RegionId, string>>;
   externalPanels?: Array<{ id: string }>;
   leftSidebarPosition?: 'left' | 'right';
   rightInspectorPosition?: 'left' | 'right';
   timelinePosition?: 'bottom' | 'top';
+  leftSidebarSplit?: boolean;
+  rightInspectorSplit?: boolean;
   createdAt?: number;
   /**
    * A panel this preset exists FOR. When the build does not have it, the whole
@@ -50,12 +52,14 @@ function stripUnavailablePanels(ws: WorkspaceSnapshot): WorkspaceSnapshot {
   // Rebuilt key-by-key off the original rather than via Object.fromEntries: the
   // region set is fixed and total, and a mapped-object round trip widens it to a
   // string index signature that no longer satisfies Record<RegionId, …>.
-  let panelOrder: Record<RegionId, ReadonlyArray<string>> | undefined;
+  let panelOrder: Partial<Record<RegionId, ReadonlyArray<string>>> | undefined;
   if (ws.panelOrder) {
     const source = ws.panelOrder;
     panelOrder = { ...source };
     for (const region of Object.keys(source) as RegionId[]) {
-      panelOrder[region] = source[region].filter((id) => isPanelAvailable(id));
+      if (source[region]) {
+        panelOrder[region] = source[region]!.filter((id) => isPanelAvailable(id));
+      }
     }
   }
 

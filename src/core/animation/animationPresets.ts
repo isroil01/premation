@@ -18,6 +18,7 @@
  */
 
 import { defaultAnimation, type AnimationEngine, type Keyframe, type PropPath } from '@motion/animation';
+import { pluginPresets } from './pluginPresets';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { getSettingsManager } from '@core/services/coreServices';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -625,11 +626,11 @@ function writeUserPresets(presets: AnimationPreset[]): void {
 /** Where saved presets land in the library tree. */
 export const USER_PRESET_FOLDER = 'User Presets';
 
-/** All presets — built-ins first, then the user's saved ones. */
+/** All presets — built-ins first, then the user's saved ones, then plugins'. */
 export function listPresets(): AnimationPreset[] {
   return [
     ...BUILTIN_PRESETS, ...TEXT_PRESETS, ...BEHAVIOR_PRESETS, ...SCENERY_PRESETS,
-    ...FILM_LOOK_PRESETS, ...readUserPresets(),
+    ...FILM_LOOK_PRESETS, ...readUserPresets(), ...pluginPresets(),
   ];
 }
 

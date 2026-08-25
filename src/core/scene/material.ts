@@ -101,9 +101,13 @@ export interface MaterialOptions {
 }
 
 /** The Material Options a keyframe track can drive. Mirrors the registry's
- *  `material` group in propertyMeta.ts; both must list the same names. */
+ *  `material` group in propertyMeta.ts; both must list the same names.
+ *
+ *  Switches are hold-friendly numbers on the track: acceptsLights 0/1;
+ *  castsShadows / acceptsShadows 0=off, 1=on, 2=only (AE parity). */
 export const MATERIAL_ANIMATABLE = [
   'ambient', 'diffuse', 'specular', 'shininess', 'metal', 'lightTransmission', 'roughness',
+  'acceptsLights', 'castsShadows', 'acceptsShadows',
 ] as const;
 
 function transformProps(node: SceneNode): Record<string, unknown> {
@@ -115,26 +119,32 @@ const pct = (v: unknown, fallback: number): number =>
 
 /**
  * Legacy props stored the switches as booleans (`false` = off, absent = on).
- * Read them as the tri-state so old projects keep their behaviour exactly and
- * only newly-set `'only'` values take the new path.
+ * Tracks store 0/1/2. Read both so old projects and hold keyframes share one path.
  */
 function shadowMode(v: unknown): 'off' | 'on' | 'only' {
-  if (v === 'only') return 'only';
-  if (v === false || v === 'off') return 'off';
+  if (v === 'only' || v === 2) return 'only';
+  if (v === false || v === 'off' || v === 0) return 'off';
+  if (typeof v === 'number') {
+    if (v >= 1.5) return 'only';
+    if (v >= 0.5) return 'on';
+    return 'off';
+  }
   return 'on';
 }
 
+function acceptsLightsFlag(v: unknown): boolean {
+  if (typeof v === 'number') return v > 0.5;
+  return v === true;
+}
+
 /**
- * Material Options, with the ANIMATED value of each numeric option when one
- * is keyframed.
+ * Material Options, with the ANIMATED value of each option when one is keyframed.
  *
  * `av` is the node's evaluated animation map for the frame (the same one the
  * transform reads from). Absent, every option is its stored value — which is
  * what the inspector, the tests and any static reader want. Present, a track
- * on `ambient`, `diffuse`, `specular`, `shininess`, `metal` or
- * `lightTransmission` beats the stored number, exactly as `x` beats the stored
- * position. The switches (casts / accepts) stay static: a boolean keyframe is
- * a hold and the inspector's tri-state has no track form.
+ * on any `MATERIAL_ANIMATABLE` name beats the stored value, exactly as `x`
+ * beats the stored position. Switches decode as holds (0/1 or 0/1/2).
  */
 export function readNodeMaterial(node: SceneNode, av?: ReadonlyMap<string, number>): MaterialOptions {
   const stored = transformProps(node);
@@ -153,7 +163,7 @@ export function readNodeMaterial(node: SceneNode, av?: ReadonlyMap<string, numbe
     castsShadowsMode,
     acceptsShadowsMode,
     shadowOnly: castsShadowsMode === 'only' || acceptsShadowsMode === 'only',
-    acceptsLights: p.acceptsLights === true,
+    acceptsLights: acceptsLightsFlag(p.acceptsLights),
     acceptsShadows: acceptsShadowsMode !== 'off',
     lightTransmission: pct(p.lightTransmission, 0),
     ambient: pct(p.ambient, 100),

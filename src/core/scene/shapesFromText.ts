@@ -23,7 +23,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
-import { readMeasuredTextStyle, measureTextBoxes } from '@core/text/measureText';
+import { readMeasuredTextStyle, measureTextBoxes, applyFontVariations } from '@core/text/measureText';
 import { useSelectionStore } from '@stores/selectionStore';
 import { bumpScene } from '@stores/sceneStore';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
@@ -63,6 +63,9 @@ function rasterizeText(node: SceneNode): { alpha: Uint8ClampedArray; w: number; 
   g.scale(OVERSAMPLE, OVERSAMPLE);
   const fontStyle = style.fontStyle === 'italic' ? 'italic ' : '';
   g.font = `${fontStyle}${style.fontWeight} ${style.fontSize}px "${style.fontFamily}", Inter, system-ui, sans-serif`;
+  // Variable Width/Slant must match the on-screen glyph — font-file outlines
+  // ignore `fvar`, so the trace path is the one that can honor them.
+  applyFontVariations(g, style);
   g.textBaseline = 'middle';
   g.textAlign = 'center';
   g.fillStyle = '#fff';
@@ -176,8 +179,15 @@ export type ShapesFromTextSource = 'outlines' | 'traced';
 export async function createShapesFromText(nodeId: string): Promise<{ id: string; source: ShapesFromTextSource } | null> {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node || readNodeKind(node) !== 'text') return null;
+  const style = readMeasuredTextStyle(node);
+  // Installed-face outlines do not apply `wdth`/`slnt`. When the author set a
+  // variable axis, prefer the variation-aware raster trace over a misleading
+  // default-axis outline.
+  const wantsVariations = style != null
+    && ((style.fontWidth !== undefined && Number.isFinite(style.fontWidth))
+      || (style.fontSlant !== undefined && Number.isFinite(style.fontSlant)));
   let source: ShapesFromTextSource = 'outlines';
-  let built = await fontRuns(node);
+  let built = wantsVariations ? null : await fontRuns(node);
   if (!built) {
     source = 'traced';
     built = tracedRuns(node);

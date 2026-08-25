@@ -208,14 +208,20 @@ describe('AppTextureProvider', () => {
     expect(loader).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps showing the placeholder if a decode throws (broken source)', async () => {
+  it('shows colour bars (not the transparent placeholder) when a decode throws', async () => {
     const { provider } = setup(async () => {
       throw new Error('404');
     });
     const placeholderId = provider.get('nope')!.texture.id;
     provider.setImage('asset:a', 'blob:broken');
     await flush();
-    expect(provider.get('asset:a')!.texture.id).toBe(placeholderId);
+    const got = provider.get('asset:a')!;
+    expect(got.texture.id).not.toBe(placeholderId);
+    expect(got.ready).toBe(true);
+    const reports = provider.offlineMediaReports();
+    expect(reports).toHaveLength(1);
+    expect(reports[0]!.layerId).toBe('a');
+    expect(reports[0]!.detail).toMatch(/Media offline/);
   });
 
   /**

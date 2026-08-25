@@ -20,7 +20,7 @@ import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
 import {
   parseSvgToShapes, isSimpleSvg, MAX_VECTOR_SHAPES,
-  type ParsedShape, type SvgTextMeasurer, type SvgPathIntersector, type SubPath as SvgSubPath,
+  type ParsedShape, type ParsedGradientFill, type SvgTextMeasurer, type SvgPathIntersector, type SubPath as SvgSubPath,
 } from '../../utils/svgParser';
 import { flattenOutline, booleanPolygons } from '@core/scene/mergePaths';
 import { measureTextSize, measureTextBoxes, DEFAULT_LINE_HEIGHT, type MeasuredTextStyle } from '@core/text/measureText';
@@ -38,6 +38,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
 import { detectImageSequence } from '@core/scene/imageSequence';
+import { makeStop, type FillPaint, type OpacityStop } from '@core/paint/fill';
 import { addTrimOp, pathOpPropPath } from '@core/scene/pathOps';
 import { sanitizeSvg } from '@core/svg/svgSanitize';
 import { scanSvgCapabilities, isAnimatedSvg, svgCapabilityWarnings, type SvgCapabilities } from '@core/svg/svgCapabilities';
@@ -470,6 +471,18 @@ export function insertSvgShapeGroup(
       // two are mutually exclusive (raster/subpaths.ts) and the flat form is
       // what filled every donut's hole.
       const scaledRuns = s.subpaths?.map((run) => ({ points: scale(run.points), open: !run.closed }));
+      const fillPaint = s.fillPaint ? parsedGradientToFillPaint(s.fillPaint) : undefined;
+      const fxProps: Record<string, unknown> = {};
+      if (fillPaint) fxProps.fill = fillPaint;
+      if (s.strokeColor) {
+        fxProps.stroke = {
+          enabled: true,
+          color: s.strokeColor,
+          width: (s.strokeWidth ?? 1) * k,
+          opacity: clamp01(s.strokeOpacity ?? 1),
+          cap: 'butt', join: 'miter', align: 'center', dash: [],
+        };
+      }
       const components: SceneNode['components'] = [
         { id: `${pathId}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: relX, y: relY, rotation: 0, width: s.width * k, height: s.height * k } },
         {
@@ -477,6 +490,8 @@ export function insertSvgShapeGroup(
           type: 'Style',
           props: {
             opacity: layerOpacity,
+            // When a FillPaint lives on fx, Style.fill is only a legacy fallback
+            // (first stop). Transparent when fill was none.
             fill: svgFillToCss(s.fill, s.fillOpacity),
           },
         },
@@ -485,20 +500,10 @@ export function insertSvgShapeGroup(
         // written onto the Style component was picked up by nothing at all:
         // every imported outline icon rendered with no stroke, which on a
         // `fill="none"` file means it rendered as nothing.
-        ...(s.strokeColor
-          ? [{
-            id: `${pathId}_fx`,
-            type: 'fx' as const,
-            props: {
-              stroke: {
-                enabled: true,
-                color: s.strokeColor,
-                width: (s.strokeWidth ?? 1) * k,
-                opacity: clamp01(s.strokeOpacity ?? 1),
-                cap: 'butt', join: 'miter', align: 'center', dash: [],
-              },
-            },
-          }]
+        // Gradients also live on fx.fill (FillPaint) so AppearanceSection can
+        // edit angle/stops — Style.fill alone cannot express a ramp.
+        ...(Object.keys(fxProps).length > 0
+          ? [{ id: `${pathId}_fx`, type: 'fx' as const, props: fxProps }]
           : []),
         {
           id: `${pathId}_g`,
@@ -630,6 +635,30 @@ function svgFillToCss(fill: string | undefined, fillOpacity: number | undefined)
   if (a >= 1) return fill;
   if (a <= 0) return 'transparent';
   return /^#|^rgba?\(/i.test(fill.trim()) ? applyAlpha(fill, a) : fill;
+}
+
+/** Parsed SVG gradient → engine FillPaint (colour stops + optional opacity ramp). */
+function parsedGradientToFillPaint(g: ParsedGradientFill): FillPaint {
+  const stops = g.stops.map((s) => makeStop(s.offset, s.color));
+  const opacityStops: OpacityStop[] = g.stops.some((s) => s.opacity < 1)
+    ? g.stops.map((s, i) => ({ id: `op_${i}`, offset: s.offset, opacity: s.opacity }))
+    : [];
+  if (g.type === 'radial') {
+    return {
+      type: 'radial',
+      cx: g.cx ?? 0.5,
+      cy: g.cy ?? 0.5,
+      radius: g.radius ?? 0.5,
+      stops,
+      ...(opacityStops.length ? { opacityStops } : {}),
+    };
+  }
+  return {
+    type: 'linear',
+    angle: g.angle ?? 90,
+    stops,
+    ...(opacityStops.length ? { opacityStops } : {}),
+  };
 }
 
 /**

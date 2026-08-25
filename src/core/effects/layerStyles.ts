@@ -53,6 +53,13 @@ export interface DropShadowStyle {
   angle: number;     // degrees (0 = →, 90 = ↓)
   blur: number;      // px
   /**
+   * Photoshop Spread — expand the shadow matte before blur, as a percent of
+   * `blur`. 0 = soft Gaussian of radius `blur`; 100 = hard silhouette dilated
+   * by `blur` px with no soft falloff. Footprint-preserving: dilate by
+   * `blur×spread/100`, then blur by `blur×(1−spread/100)`.
+   */
+  spread?: number;   // 0..100
+  /**
    * Take the angle from the composition's GLOBAL LIGHT instead of this style's
    * own `angle`.
    *
@@ -72,6 +79,8 @@ export interface OuterGlowStyle {
   color: string;
   opacity: number; // 0..1
   size: number;    // px
+  /** Same meaning as DropShadowStyle.spread, relative to `size`. */
+  spread?: number; // 0..100
 }
 
 /**
@@ -154,6 +163,9 @@ export interface GradientOverlayStyle {
   useGlobalLight?: boolean;
 }
 
+/** Where the silhouette stroke sits relative to the layer edge. */
+export type StrokeStylePosition = 'outside' | 'inside' | 'center';
+
 /**
  * An outline hugging the layer's silhouette — Photoshop's Stroke style.
  *
@@ -166,6 +178,8 @@ export interface StrokeStyle {
   color: string;
   opacity: number; // 0..1
   size: number;    // px
+  /** Photoshop Position — default Outside (grows the silhouette outward). */
+  position?: StrokeStylePosition;
 }
 
 /**
@@ -302,8 +316,11 @@ export interface StyleParamBinding {
 const N = (param: string, scale = 1): StyleParamBinding => ({ param, scale });
 
 export const LAYER_STYLE_NUMBER_PARAMS: Readonly<Record<string, Readonly<Record<string, StyleParamBinding>>>> = {
-  dropShadow: { distance: N('distance'), angle: N('angle'), blur: N('softness'), opacity: N('opacity', 100) },
-  outerGlow: { size: N('radius'), opacity: N('intensity', 100) },
+  dropShadow: {
+    distance: N('distance'), angle: N('angle'), blur: N('softness'),
+    spread: N('spread'), opacity: N('opacity', 100),
+  },
+  outerGlow: { size: N('radius'), spread: N('spread'), opacity: N('intensity', 100) },
   innerShadow: { distance: N('distance'), angle: N('angle'), size: N('softness'), opacity: N('opacity', 100) },
   innerGlow: { size: N('size'), opacity: N('opacity', 100) },
   satin: { distance: N('distance'), angle: N('angle'), size: N('size'), opacity: N('opacity', 100) },
@@ -460,6 +477,7 @@ export function layerStylesToEffects(
         distance: Math.max(0, ds.distance),
         angle,
         softness: Math.max(0, ds.blur),
+        spread: Math.max(0, Math.min(100, ds.spread ?? 0)),
         color: ds.color,
         // Opacity rides the effect's OWN param rather than being pre-multiplied
         // into an 8-digit colour. Identical output — `extractSpatialEffects`
@@ -497,6 +515,7 @@ export function layerStylesToEffects(
       type: 'glow',
       params: {
         radius: Math.max(0, og.size),
+        spread: Math.max(0, Math.min(100, og.spread ?? 0)),
         color: og.color,
         // Same as Drop Shadow: keep opacity on the param (here `intensity`, the
         // glow effect's name for it) so it can be keyframed.
@@ -591,6 +610,8 @@ export function layerStylesToEffects(
 
   const st = styles.stroke;
   if (st?.enabled && ((st.size > 0 && st.opacity > 0) || anim('stroke'))) {
+    const position: StrokeStylePosition =
+      st.position === 'inside' || st.position === 'center' ? st.position : 'outside';
     out.push({
       id: 'layerstyle:stroke',
       type: 'stroke',
@@ -598,6 +619,7 @@ export function layerStylesToEffects(
         width: Math.max(0, st.size),
         color: st.color,
         opacity: Math.round(st.opacity * 100),
+        position,
       },
     });
   }
@@ -653,12 +675,13 @@ function mixHex(a: string, b: string, t: number): string {
 
 export const DEFAULT_DROP_SHADOW: DropShadowStyle = {
   enabled: true, color: '#000000', opacity: 0.5, distance: 8, angle: 90, blur: 8,
+  spread: 0,
   // On by default, matching Photoshop/AE: a new shadow should agree with every
   // other shadow in the comp until the user deliberately breaks it out.
   useGlobalLight: true,
 };
 export const DEFAULT_OUTER_GLOW: OuterGlowStyle = {
-  enabled: true, color: '#78b4ff', opacity: 0.9, size: 16,
+  enabled: true, color: '#78b4ff', opacity: 0.9, size: 16, spread: 0,
 };
 export const DEFAULT_INNER_SHADOW: InnerShadowStyle = {
   enabled: true, color: '#000000', opacity: 0.55, distance: 6, angle: 135, size: 8, useGlobalLight: true,
@@ -682,7 +705,7 @@ export const DEFAULT_GRADIENT_OVERLAY: GradientOverlayStyle = {
   enabled: true, from: '#ffffff', to: '#2b7eff', opacity: 1, angle: 90, useGlobalLight: false,
 };
 export const DEFAULT_STROKE_STYLE: StrokeStyle = {
-  enabled: true, color: '#ffffff', opacity: 1, size: 4,
+  enabled: true, color: '#ffffff', opacity: 1, size: 4, position: 'outside',
 };
 
 function rgba(hex: string, opacity: number): string {

@@ -225,6 +225,12 @@ export interface RenderLayer {
     /** Light this surface from one side. Set only by an extrusion's walls and
      *  back cap, which bound a volume — see `lightShading.ndotl`. */
     oneSided?: boolean;
+    /** Material Options → Ambient (AE %). Scales ambient-light response on the
+     *  per-fragment path; omit ⇒ 100 (identity). */
+    ambient?: number;
+    /** Material Options → Diffuse (AE %). Scales Lambert response; omit ⇒ 50
+     *  (AE default, identity vs the pre-material gain). */
+    diffuse?: number;
   };
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */

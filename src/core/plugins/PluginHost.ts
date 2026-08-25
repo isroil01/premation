@@ -56,6 +56,7 @@ import {
   type WorkerMessage,
   type PluginCommandSpec,
   type PluginLogLevel,
+  type RenderFinishedInfo,
 } from './protocol';
 import type { PluginPackage } from './pluginPackage';
 import { activatesOnStartup, expandPermissions, type PluginPermission } from './manifest';
@@ -78,6 +79,22 @@ import { releaseAssetBudget } from './assets';
  * look broken; collapsing it into `running` would promise a worker that is not
  * there. It is its own state because it is its own situation.
  */
+/** How long one export step may take before the export fails. */
+const EXPORT_STEP_TIMEOUT_MS = 60_000;
+
+/**
+ * One export step minus the id the host assigns.
+ *
+ * Distributive on purpose: a bare `Omit<Union, 'id'>` collapses the four phases
+ * into one object type whose only keys are the ones they all share, so
+ * `phase: 'frame'` would typecheck without `pixels`.
+ */
+/** What a host-driven worker task resolves to: export bytes, or decoded pixels. */
+type HostTaskReply = ArrayBuffer | undefined | { width: number; height: number; pixels: ArrayBuffer };
+
+type ExportStepInput<T = Extract<HostMessage, { k: 'export' }>> =
+  T extends unknown ? Omit<T, 'id'> : never;
+
 export type PluginStatus = 'stopped' | 'inactive' | 'starting' | 'running' | 'error';
 
 /** One line of a plugin's own output, kept for the manager's log view. */
@@ -484,6 +501,19 @@ class PluginHost {
   }
 
   /** Restart a plugin — the fix for "it stopped responding" without a reload. */
+  private exportSeq = 0;
+  /**
+   * Replies the host is waiting on, keyed by request id.
+   *
+   * One map for exports AND imports, because both draw ids from
+   * `exportSeq` — two maps sharing one counter would be two places a reply can
+   * fail to find its waiter, for no gain.
+   */
+  private readonly exportWaiters = new Map<
+    number,
+    { resolve: (v: HostTaskReply) => void; reject: (e: Error) => void }
+  >();
+
   restart(id: string): void {
     const entry = usePluginStore.getState().get(id);
     if (!entry) return;
@@ -696,6 +726,24 @@ class PluginHost {
       case 'pong':
         rt.missedPings = 0;
         break;
+
+      case 'importResult': {
+        const pending = this.exportWaiters.get(msg.id);
+        if (!pending) break;
+        this.exportWaiters.delete(msg.id);
+        if (msg.ok) pending.resolve({ width: msg.width, height: msg.height, pixels: msg.pixels });
+        else pending.reject(new Error(msg.error));
+        break;
+      }
+
+      case 'exportResult': {
+        const pending = this.exportWaiters.get(msg.id);
+        if (!pending) break; // A reply to a step whose export was already torn down.
+        this.exportWaiters.delete(msg.id);
+        if (msg.ok) pending.resolve(msg.bytes);
+        else pending.reject(new Error(msg.error));
+        break;
+      }
 
       case 'fatal':
         this.setError(id, msg.error);
@@ -1034,6 +1082,194 @@ class PluginHost {
       // already knows how to render inert — starting it is not our call.
       if (!entry?.enabled) continue;
       void this.ensureActive(pid);
+    }
+  }
+
+  /**
+   * One step of a plugin-driven export, awaited.
+   *
+   * ── Why the timeout is here and not in the sink ─────────────────────────
+   *
+   * The render queue awaits this, so a plugin that never answers stops the
+   * queue rather than just its own export. The supervision heartbeat would
+   * eventually terminate a wedged worker, but "eventually" is up to 8 seconds
+   * of a user watching a progress bar that has stopped — and a terminated
+   * worker never replies at all, so the promise would still be pending. So the
+   * bound lives on the promise, and a step that overruns fails the export with
+   * a message naming the plugin.
+   *
+   * Generous: an encoder doing real work on a 4K frame is not fast, and a
+   * timeout that fires on a slow-but-working plugin is worse than one that
+   * takes a while to catch a broken one.
+   */
+  private runExportStep(pluginId: string, msg: ExportStepInput): Promise<HostTaskReply> {
+    const live = this.runtimes.get(pluginId);
+    if (!live || live.info.status !== 'running') {
+      return Promise.reject(new Error(`The plugin "${pluginId}" is not running.`));
+    }
+    const id = (this.exportSeq += 1);
+    return new Promise<HostTaskReply>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (!this.exportWaiters.has(id)) return;
+        this.exportWaiters.delete(id);
+        reject(new Error(`The plugin "${pluginId}" stopped responding during the export.`));
+      }, EXPORT_STEP_TIMEOUT_MS);
+
+      this.exportWaiters.set(id, {
+        resolve: (v) => { clearTimeout(timer); resolve(v); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
+
+      const full = { ...msg, id } as Extract<HostMessage, { k: 'export' }>;
+      try {
+        live.worker.postMessage(full, collectTransferables(full));
+      } catch (e) {
+        this.exportWaiters.delete(id);
+        clearTimeout(timer);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  }
+
+  /**
+   * Drive a plugin's exporter for one export. Returned to `videoSink`.
+   *
+   * The plugin is STARTED if it is not already up: a user who picked the format
+   * has asked for it by name, which is a stronger signal than any activation
+   * event. Failing with "the plugin is not running" when the user just selected
+   * it from a dropdown would be the host refusing to do the one thing it was
+   * asked.
+   */
+  async openExport(
+    pluginId: string,
+    exporterId: string,
+    info: { width: number; height: number; fps: number; durationSec: number; compositionName: string },
+  ): Promise<{
+    addFrame: (index: number, width: number, height: number, pixels: ArrayBuffer) => Promise<void>;
+    finish: () => Promise<ArrayBuffer>;
+    dispose: () => Promise<void>;
+  }> {
+    /*
+      The permission gate, checked HERE rather than in `METHOD_PERMISSIONS`.
+
+      That table gates worker→host calls, and this is the other direction: the
+      host is about to push every rendered pixel of the composition INTO a
+      worker. Nothing in the call table would ever run, so a reader looking
+      there would find this surface ungated — which is why the check is at the
+      one door frames pass through, before the plugin is even started.
+
+      Read live from the store, like `granted` in `createHostApi`, so a
+      permission the user revoked between queueing a render and running it is
+      honoured rather than a set captured at install.
+    */
+    const entry = usePluginStore.getState().get(pluginId);
+    if (!entry) throw new Error(`The plugin "${pluginId}" is not installed.`);
+    if (!expandPermissions(entry.granted ?? []).has('export:frames')) {
+      throw new Error(
+        `"${entry.manifest.name}" needs permission to receive your rendered frames, `
+        + 'which you have not granted. Turn it on under Plugins ▸ Manage Plugins… ▸ Permissions.',
+      );
+    }
+
+    await this.ensureActive(pluginId);
+    await this.runExportStep(pluginId, { k: 'export', exporterId, phase: 'begin', info });
+
+    return {
+      addFrame: async (index, width, height, pixels) => {
+        await this.runExportStep(pluginId, { k: 'export', exporterId, phase: 'frame', index, width, height, pixels });
+      },
+      finish: async () => {
+        const bytes = await this.runExportStep(pluginId, { k: 'export', exporterId, phase: 'finish' });
+        if (!(bytes instanceof ArrayBuffer)) {
+          throw new Error(`The plugin "${pluginId}" finished the export without producing a file.`);
+        }
+        return bytes;
+      },
+      dispose: async () => {
+        // Best effort: this runs on the failure path, where the plugin may be
+        // exactly what failed.
+        try { await this.runExportStep(pluginId, { k: 'export', exporterId, phase: 'dispose' }); }
+        catch { /* already broken */ }
+      },
+    };
+  }
+
+  /**
+   * Decode one file through a plugin's importer.
+   *
+   * Gated on `import:files`, checked here for the same reason `openExport`
+   * checks `export:frames`: this pushes data INTO a worker, so the worker→host
+   * call table would never run and a reader looking there would find the
+   * surface ungated.
+   *
+   * Starts the plugin if it is not running — the user opened a file only this
+   * plugin can read, which is as explicit a request as choosing its format from
+   * a dropdown.
+   */
+  async runImport(
+    pluginId: string,
+    importerId: string,
+    fileName: string,
+    bytes: ArrayBuffer,
+  ): Promise<{ width: number; height: number; pixels: ArrayBuffer }> {
+    const entry = usePluginStore.getState().get(pluginId);
+    if (!entry) throw new Error(`The plugin "${pluginId}" is not installed.`);
+    if (!expandPermissions(entry.granted ?? []).has('import:files')) {
+      throw new Error(
+        `"${entry.manifest.name}" needs permission to read files you open with it, `
+        + 'which you have not granted. Turn it on under Plugins ▸ Manage Plugins… ▸ Permissions.',
+      );
+    }
+    await this.ensureActive(pluginId);
+    const reply = await this.runExportStep(pluginId, {
+      k: 'import', importerId, fileName, bytes,
+    } as never);
+    if (!reply || reply instanceof ArrayBuffer) {
+      throw new Error(`"${entry.manifest.name}" did not return an image for "${fileName}".`);
+    }
+    return reply;
+  }
+
+  /**
+   * Tell every interested plugin that a render left the queue.
+   *
+   * ── Why this wakes plugins, and why that is not a leak ──────────────────
+   *
+   * A plugin declaring `onRenderFinished` is STARTED by one, the same way
+   * `onLayerKind` starts a plugin when a document needs it. A post-render
+   * action that only runs if the plugin happened to already be awake is a
+   * post-render action that silently does not run, which is worse than not
+   * having one.
+   *
+   * Gated on `scene:read`, and no new permission. Everything in the payload is
+   * either the composition's own name and size — which a plugin holding
+   * `scene:read` can already read whenever it likes — or the fact that a render
+   * happened. Splitting that into its own consent line would ask the user to
+   * make a distinction they cannot act on, when the wider grant is already the
+   * one they gave.
+   *
+   * Fire-and-forget, and never awaited by the queue: a wedged plugin must not
+   * be able to hold up the next render. A worker that is still booting misses
+   * the event it was started for on purpose — delivering it after `activate()`
+   * would mean the queue's timing depends on worker boot time.
+   */
+  notifyRenderFinished(info: RenderFinishedInfo): void {
+    for (const entry of usePluginStore.getState().plugins) {
+      const id = entry.manifest.id;
+      if (!entry.enabled) continue;
+      // `expandPermissions` because `scene:write` implies `scene:proxy`, and a
+      // future implication involving `scene:read` must not silently miss here.
+      if (!expandPermissions(entry.granted ?? []).has('scene:read')) continue;
+
+      const wants = entry.manifest.activationEvents.includes('onRenderFinished');
+      const live = this.runtimes.get(id);
+      if (!live || live.info.status === 'stopped' || live.info.status === 'error') {
+        if (wants) void this.ensureActive(id);
+        continue;
+      }
+      try {
+        live.worker.postMessage({ k: 'renderFinished', render: info } satisfies HostMessage);
+      } catch { /* terminated between the check and the send */ }
     }
   }
 

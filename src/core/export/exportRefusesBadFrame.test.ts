@@ -93,6 +93,18 @@ describe('export refuses frames the renderer could not honour', () => {
     ).rejects.toThrow(/Title/);
   });
 
+  it('refuses when footage is offline (media-unavailable)', async () => {
+    const be = fakeBackend([[{
+      code: 'media-unavailable',
+      detail: 'Media offline on "hero" — relink the footage or remove the layer',
+      layerId: 'hero',
+    }]]);
+    (globalThis as { __fakeBackend?: unknown }).__fakeBackend = be;
+    await expect(
+      renderOffline(params as never, async () => {}),
+    ).rejects.toThrow(/Media offline|could not be honoured/i);
+  });
+
   it('tolerates a backend with no diagnostics support at all', async () => {
     // lastFrameDiagnostics is optional on the interface; a backend without it
     // must not make export throw on every frame.

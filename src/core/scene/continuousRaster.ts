@@ -35,6 +35,24 @@
  * crosses a tier), and the tier is bounded by the GPU's real max dimension and a
  * pixel budget.
  *
+ * ## The switch is no longer what rescues a scaled-up layer
+ *
+ * Leaving that fix behind an off-by-default switch meant the DEFAULT experience
+ * was the broken one: a title scaled past 400% went soft, in the export as much
+ * as in the preview, and only a user who knew this switch existed ever got a
+ * sharp one. `AppTextureProvider.tierFor` now escalates onto the extended
+ * ladder past the 4x ceiling whether or not the layer opted in — safe to do
+ * unconditionally precisely because that ladder is bounded by the GPU's real
+ * max dimension and the pixel budget, so it cannot request an allocation that
+ * fails or quietly exhaust VRAM.
+ *
+ * What the switch still means is therefore narrower than it was: it opts a
+ * layer into the extended, box-bounded ladder from the SMALLEST scale up,
+ * rather than only past the ceiling. Below 4x that is rarely a visible
+ * difference, and for a box over ~2048px the bounds can round it DOWN. It is
+ * kept for AE parity and explicit control, not because a scaled-up layer needs
+ * it any more.
+ *
  * ## Why it is a switch, and why there is no draft cap
  *
  * OFF keeps the existing expressions verbatim — raw draw, clamped key — so every

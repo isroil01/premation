@@ -203,6 +203,56 @@ export function booleanPolygons(polys: Polygon[], op: MergeOp): MultiPolygon {
   }
 }
 
+/** Drop a GeoJSON closing vertex that duplicates the first. */
+function dropClosingPair(ring: Pair[]): Pair[] {
+  if (
+    ring.length > 1 &&
+    ring[0]![0] === ring[ring.length - 1]![0] &&
+    ring[0]![1] === ring[ring.length - 1]![1]
+  ) {
+    return ring.slice(0, -1);
+  }
+  return ring;
+}
+
+/** Every closed ring in a MultiPolygon, exterior then holes, winding preserved. */
+function collectClosedRings(multi: MultiPolygon): Pair[][] {
+  const rings: Pair[][] = [];
+  for (const polygon of multi) {
+    for (const ring of polygon) {
+      const open = dropClosingPair(ring);
+      if (open.length >= 3) rings.push(open);
+    }
+  }
+  return rings;
+}
+
+function boundsOfPairs(pts: ReadonlyArray<Pair>): {
+  minX: number; minY: number; maxX: number; maxY: number;
+  cx: number; cy: number; width: number; height: number;
+} {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [px, py] of pts) {
+    if (px < minX) minX = px;
+    if (py < minY) minY = py;
+    if (px > maxX) maxX = px;
+    if (py > maxY) maxY = py;
+  }
+  return {
+    minX, minY, maxX, maxY,
+    cx: (minX + maxX) / 2,
+    cy: (minY + maxY) / 2,
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY),
+  };
+}
+
+function pairsToLocalBezier(ring: ReadonlyArray<Pair>, cx: number, cy: number): BezierPt[] {
+  return ring.map(([px, py]) => ({
+    x: px - cx, y: py - cy, inX: px - cx, inY: py - cy, outX: px - cx, outY: py - cy,
+  }));
+}
+
 /** Read a live-boolean config off a node's fx component, or null. */
 export function readLiveBoolean(node: SceneNode): LiveBoolean | null {
   const fx = node.components.find((c) => c.type === 'fx');
@@ -226,13 +276,24 @@ export function isBooleanOperand(node: SceneNode): boolean {
  * Evaluate a live boolean into LOCAL path points for the result layer
  * (centred on the result's current x/y). Returns null when operands are gone
  * or the boolean collapses to nothing.
+ *
+ * Compound results (holes, disjoint islands) come back as `subpaths` — one
+ * closed run per ring, winding preserved so a reverse-wound hole still cuts.
+ * A single exterior still uses the `points` shorthand.
  */
 export function evaluateLiveBoolean(
   result: SceneNode,
   getNode: (id: string) => SceneNode | undefined,
   sampleOf: (nodeId: string) => NodeSample | undefined,
   pathOf: (nodeId: string) => NodePathSample | undefined,
-): { points: BezierPt[]; width: number; height: number; cx: number; cy: number } | null {
+): {
+  points: BezierPt[];
+  subpaths?: Array<{ points: BezierPt[]; open: boolean }>;
+  width: number;
+  height: number;
+  cx: number;
+  cy: number;
+} | null {
   const cfg = readLiveBoolean(result);
   if (!cfg) return null;
   const polys: Polygon[] = [];
@@ -244,50 +305,21 @@ export function evaluateLiveBoolean(
   }
   if (polys.length < 2) return null;
   const multi = booleanPolygons(polys, cfg.op);
-  // Take the largest exterior ring as the primary outline (holes stay a v1 limit).
-  let best: Pair[] | null = null;
-  let bestArea = 0;
-  for (const polygon of multi) {
-    for (const ring of polygon) {
-      if (ring.length < 3) continue;
-      let a = 0;
-      for (let i = 0; i < ring.length - 1; i++) {
-        a += ring[i]![0] * ring[i + 1]![1] - ring[i + 1]![0] * ring[i]![1];
-      }
-      const area = Math.abs(a / 2);
-      if (area > bestArea) {
-        bestArea = area;
-        best = ring;
-      }
-    }
-  }
-  if (!best || best.length < 3) return null;
-  const openRing =
-    best.length > 1 &&
-    best[0]![0] === best[best.length - 1]![0] &&
-    best[0]![1] === best[best.length - 1]![1]
-      ? best.slice(0, -1)
-      : best;
-  if (openRing.length < 3) return null;
+  const rings = collectClosedRings(multi);
+  if (rings.length === 0) return null;
 
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [px, py] of openRing) {
-    if (px < minX) minX = px;
-    if (py < minY) minY = py;
-    if (px > maxX) maxX = px;
-    if (py > maxY) maxY = py;
-  }
-  const cx = (minX + maxX) / 2;
-  const cy = (minY + maxY) / 2;
-  const points = openRing.map(([px, py]) => ({
-    x: px - cx, y: py - cy, inX: px - cx, inY: py - cy, outX: px - cx, outY: py - cy,
+  const box = boundsOfPairs(rings.flat());
+  const subpaths = rings.map((ring) => ({
+    points: pairsToLocalBezier(ring, box.cx, box.cy),
+    open: false,
   }));
   return {
-    points,
-    width: Math.max(1, maxX - minX),
-    height: Math.max(1, maxY - minY),
-    cx,
-    cy,
+    points: subpaths[0]!.points,
+    ...(subpaths.length > 1 ? { subpaths } : {}),
+    width: box.width,
+    height: box.height,
+    cx: box.cx,
+    cy: box.cy,
   };
 }
 
@@ -416,55 +448,44 @@ export function mergeSelectedPaths(op: MergeOp): string[] {
   const parentId = sources[0]!.parent ?? activeCompRootId();
   const newIds: string[] = [];
 
+  // One layer per Polygon (disconnected island). Holes of that polygon stay
+  // on the SAME layer as reverse-wound subpaths — promoting them to extra
+  // filled layers used to fill the hole instead of cutting it.
   for (const polygon of result) {
-    for (const ring of polygon) {
-      if (ring.length < 3) continue;
-      const openRing =
-        ring.length > 1 &&
-        ring[0]![0] === ring[ring.length - 1]![0] &&
-        ring[0]![1] === ring[ring.length - 1]![1]
-          ? ring.slice(0, -1)
-          : ring;
-      if (openRing.length < 3) continue;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const [px, py] of openRing) {
-        if (px < minX) minX = px;
-        if (py < minY) minY = py;
-        if (px > maxX) maxX = px;
-        if (py > maxY) maxY = py;
-      }
-      const cx = (minX + maxX) / 2;
-      const cy = (minY + maxY) / 2;
-      const id = `merge_${(mergeSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
-      const points = openRing.map(([px, py]) => ({
-        x: px - cx, y: py - cy, inX: px - cx, inY: py - cy, outX: px - cx, outY: py - cy,
-      }));
-      const node: SceneNode = {
-        id: id as ID,
-        name: `Merged (${op})`,
-        parent: null,
-        children: [],
-        transform: { position: { x: cx, y: cy }, rotation: 0, scale: { x: 1, y: 1 } },
-        visible: true,
-        locked: false,
-        components: [
-          {
-            id: `${id}_t`,
-            type: 'Transform',
-            props: {
-              [SCENE_KIND_PROP]: 'shape',
-              x: cx, y: cy, rotation: 0, scaleX: 1, scaleY: 1, anchorX: 0, anchorY: 0,
-              width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY),
-              shapeType: 'path',
-            },
+    const rings = collectClosedRings([polygon]);
+    if (rings.length === 0) continue;
+    const box = boundsOfPairs(rings.flat());
+    const local = rings.map((ring) => pairsToLocalBezier(ring, box.cx, box.cy));
+    const id = `merge_${(mergeSeq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
+    const geomProps =
+      local.length > 1
+        ? { subpaths: local.map((points) => ({ points, open: false })) }
+        : { points: local[0]! };
+    const node: SceneNode = {
+      id: id as ID,
+      name: `Merged (${op})`,
+      parent: null,
+      children: [],
+      transform: { position: { x: box.cx, y: box.cy }, rotation: 0, scale: { x: 1, y: 1 } },
+      visible: true,
+      locked: false,
+      components: [
+        {
+          id: `${id}_t`,
+          type: 'Transform',
+          props: {
+            [SCENE_KIND_PROP]: 'shape',
+            x: box.cx, y: box.cy, rotation: 0, scaleX: 1, scaleY: 1, anchorX: 0, anchorY: 0,
+            width: box.width, height: box.height,
+            shapeType: 'path',
           },
-          ...cloneStyle(sources[0]!, id),
-          { id: `${id}_g`, type: 'Geometry', props: { points } },
-        ],
-      };
-      defaultSceneGraph.addChild(parentId, node);
-      newIds.push(id);
-    }
+        },
+        ...cloneStyle(sources[0]!, id),
+        { id: `${id}_g`, type: 'Geometry', props: geomProps },
+      ],
+    };
+    defaultSceneGraph.addChild(parentId, node);
+    newIds.push(id);
   }
 
   if (newIds.length === 0) return [];

@@ -172,9 +172,9 @@ function kfAt(
   prop: 'x' | 'y',
   t: number,
   engine: AnimationEngine,
-): { value: number; si?: number; so?: number } | null {
+): { value: number; si?: number; so?: number; continuous?: boolean } | null {
   const kf = (engine.getTrackKeyframes(nodeId, prop) ?? []).find((k) => k.t === t);
-  return kf ? { value: kf.value, si: kf.si, so: kf.so } : null;
+  return kf ? { value: kf.value, si: kf.si, so: kf.so, continuous: kf.continuous } : null;
 }
 
 /**
@@ -214,8 +214,10 @@ export function motionPathTangents(
 
 /**
  * Write one tangent handle of the keyframe at `t` from an absolute comp-space
- * handle position. `mirror` reflects the opposite handle (smooth point,
- * AE-default); without it the point is "broken". Callers wrap in runAnimEdit.
+ * handle position. `mirror` reflects the opposite handle (smooth / continuous
+ * point, AE-default); without it the point is "broken" and `continuous` is
+ * cleared so the next non-Alt drag does not remirror (Graph Editor semantics).
+ * Callers wrap in runAnimEdit.
  */
 export function setPathTangent(
   nodeId: string,
@@ -237,7 +239,23 @@ export function setPathTangent(
   if (mirror) {
     engine.setSpatialTangent(nodeId, 'x', t, { [opp]: -dx });
     engine.setSpatialTangent(nodeId, 'y', t, { [opp]: -dy });
+    engine.updateKeyframe(nodeId, 'x', t, { continuous: true });
+    engine.updateKeyframe(nodeId, 'y', t, { continuous: true });
+  } else {
+    engine.updateKeyframe(nodeId, 'x', t, { continuous: false });
+    engine.updateKeyframe(nodeId, 'y', t, { continuous: false });
   }
+}
+
+/** Whether position keyframes at `t` keep linked spatial handles (AE smooth). */
+export function isPathTangentContinuous(
+  nodeId: string,
+  t: number,
+  engine: AnimationEngine = defaultAnimation,
+): boolean {
+  const kx = kfAt(nodeId, 'x', t, engine);
+  // Undefined continuous means linked — same default as the temporal graph.
+  return kx?.continuous !== false;
 }
 
 /** Auto-bezier the position path (smooth curve through every keyframe). */

@@ -204,6 +204,8 @@ describe('hdrTransfer', () => {
       createHdrMasteringAccumulator,
       x265HdrParams,
       x265MasterDisplay,
+      formatHdrCapabilityNote,
+      formatHdrExportDoneNote,
     } = await import('@core/export/hdrTransfer');
     const acc = createHdrMasteringAccumulator(1000);
     const rgba = new Float32Array(4 * 4);
@@ -219,6 +221,39 @@ describe('hdrTransfer', () => {
     expect(x265MasterDisplay(stats)).toContain('L(10000000,');
     expect(x265HdrParams('pq', stats)).toContain('max-cll=');
     expect(x265HdrParams('pq', stats)).toContain('master-display=');
+    expect(formatHdrCapabilityNote(true)).toMatch(/libx265/);
+    expect(formatHdrCapabilityNote(false)).toMatch(/no libx265/i);
+    expect(formatHdrCapabilityNote(null)).toMatch(/Checking/);
+    expect(formatHdrExportDoneNote('libx265', { maxCll: 900, maxFall: 200 })).toMatch(/MaxCLL 900/);
+    expect(formatHdrExportDoneNote('libx264')).toMatch(/H\.264/);
+  });
+
+  it('neutralizes PQ/HLG display transform around HDR encode (no double OETF)', async () => {
+    const { withNeutralDisplayForHdrEncode } = await import('@core/export/hdrTransfer');
+    let display: 'srgb' | 'aces' | 'pq' | 'hlg' = 'pq';
+    const seen: string[] = [];
+    await withNeutralDisplayForHdrEncode(
+      async () => {
+        seen.push(display);
+        return 1;
+      },
+      (v) => { display = v; },
+      () => display,
+    );
+    expect(seen).toEqual(['srgb']);
+    expect(display).toBe('pq');
+
+    display = 'aces';
+    await withNeutralDisplayForHdrEncode(
+      async () => {
+        seen.push(display);
+        return 1;
+      },
+      (v) => { display = v; },
+      () => display,
+    );
+    expect(seen).toEqual(['srgb', 'aces']);
+    expect(display).toBe('aces');
   });
 });
 

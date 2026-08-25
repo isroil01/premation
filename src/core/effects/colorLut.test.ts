@@ -7,7 +7,7 @@
  * out or clips an image, so it's tested directly.
  */
 
-import { buildChannelLut, applyChannelLut, isLutEffect } from './colorLut';
+import { buildChannelLut, applyChannelLut, applyChannelLutFloat, isLutEffect } from './colorLut';
 import type { Effect } from './effects';
 
 function levels(params: Record<string, number>): Effect {
@@ -199,5 +199,18 @@ describe('posterize', () => {
     const data = new Uint8ClampedArray([200, 50, 90, 33]);
     applyChannelLut(data, buildChannelLut([posterize(4)])!);
     expect(data[3]).toBe(33);
+  });
+});
+
+describe('applyChannelLutFloat', () => {
+  it('linear-interpolates between table entries for 32-bpc samples', () => {
+    // Posterize to 2 levels → 0 or 255. Mid-grey (0.5) lands on the boundary.
+    const lut = buildChannelLut([{ id: 'p', type: 'posterize', params: { levels: 2 } }])!;
+    const data = new Float32Array([0.25, 0.25, 0.25, 1, 0.75, 0.75, 0.75, 1]);
+    applyChannelLutFloat(data, lut);
+    // 0.25 → nearer black band; 0.75 → nearer white.
+    expect(data[0]).toBeLessThan(0.1);
+    expect(data[4]).toBeGreaterThan(0.9);
+    expect(data[3]).toBe(1);
   });
 });

@@ -460,15 +460,45 @@ export function extractSpatialEffects(
     const c = (k: string, alpha = 1): Color =>
       Color.fromHex(withAlpha(String(effectParam(e, k) ?? '#000000'), alpha));
 
-    if (e.type === 'blur') spatial.push({ type: 'blur', radiusPx: n('amount') });
+    if (e.type === 'blur') {
+      const blades = n('blades');
+      const roundness = n('roundness');
+      const highlightGain = n('highlightGain');
+      const params = paramsOf(e);
+      const hasCoc = 'coc0' in params;
+      const cocCorners = hasCoc
+        ? [n('coc0'), n('coc1'), n('coc2'), n('coc3')] as [number, number, number, number]
+        : undefined;
+      const amount = cocCorners
+        ? Math.max(n('amount'), ...cocCorners)
+        : n('amount');
+      spatial.push({
+        type: 'blur',
+        radiusPx: amount,
+        ...(blades >= 3 ? { blades } : {}),
+        ...(blades >= 3 && Number.isFinite(roundness) ? { roundness } : {}),
+        ...(highlightGain > 0 ? { highlightGain } : {}),
+        ...(cocCorners ? { cocCorners } : {}),
+      });
+    }
     if (e.type === 'glow') {
-      spatial.push({ type: 'glow', radiusPx: n('radius'), color: c('color', n('intensity') / 100) });
+      const size = n('radius');
+      const spread01 = Math.max(0, Math.min(1, n('spread') / 100));
+      spatial.push({
+        type: 'glow',
+        radiusPx: size * (1 - spread01),
+        ...(spread01 > 0 ? { spreadPx: size * spread01 } : {}),
+        color: c('color', n('intensity') / 100),
+      });
     }
     if (e.type === 'drop-shadow') {
       const rad = (n('angle') * Math.PI) / 180;
+      const size = n('softness');
+      const spread01 = Math.max(0, Math.min(1, n('spread') / 100));
       spatial.push({
         type: 'drop-shadow',
-        radiusPx: n('softness'),
+        radiusPx: size * (1 - spread01),
+        ...(spread01 > 0 ? { spreadPx: size * spread01 } : {}),
         offsetX: Math.cos(rad) * n('distance'),
         offsetY: Math.sin(rad) * n('distance'),
         color: c('color', n('opacity') / 100),
@@ -945,7 +975,19 @@ export function extractSpatialEffects(
       spatial.push({ type: 'fill', color: c('color', n('opacity') / 100) });
     }
     if (e.type === 'stroke') {
-      spatial.push({ type: 'stroke', widthPx: n('width'), color: c('color', n('opacity') / 100) });
+      const posRaw = effectParam(e, 'position');
+      let position: 0 | 1 | 2 = 0;
+      if (posRaw === 'inside' || posRaw === 1) position = 1;
+      else if (posRaw === 'center' || posRaw === 2) position = 2;
+      else if (typeof posRaw === 'number' && posRaw >= 1 && posRaw <= 2) {
+        position = Math.round(posRaw) as 1 | 2;
+      }
+      spatial.push({
+        type: 'stroke',
+        widthPx: n('width'),
+        color: c('color', n('opacity') / 100),
+        ...(position !== 0 ? { position } : {}),
+      });
     }
     if (e.type === 'sharpen') {
       spatial.push({ type: 'sharpen', amount: n('amount') / 100 });
@@ -1378,6 +1420,8 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         ...(layer.shade3d.metal ? { metal: layer.shade3d.metal } : {}),
         ...(layer.shade3d.roughness !== undefined ? { roughness: layer.shade3d.roughness } : {}),
         ...(layer.shade3d.oneSided ? { oneSided: true } : {}),
+        ...(layer.shade3d.ambient !== undefined ? { ambient: layer.shade3d.ambient } : {}),
+        ...(layer.shade3d.diffuse !== undefined ? { diffuse: layer.shade3d.diffuse } : {}),
         quadGain: layer.lighting,
       };
     } else if (out.color) {
@@ -1387,17 +1431,6 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   return out;
 }
 
-/**
- * True when a precomp container must render through an offscreen texture and
- * composite as ONE unit (RenderBackend.precompLayers contract), rather than
- * being collapsed inline:
- *   • group opacity < 1 over MULTIPLE children — per-child multiplication
- *     double-darkens every overlap, isolation fades the group as a whole;
- *   • a mask, track matte (either side), non-normal blend, or effects on the
- *     container — inline collapse silently dropped all of these.
- * Everything else (plain transform, full opacity, single child) keeps the fast
- * inline-collapse path. Exported for unit tests.
- */
 /**
  * The matrix a precomp container's CHILDREN compose under: the container's own
  * placement, with its box re-origined to its top-left so a child at (0, 0) in
@@ -1424,6 +1457,21 @@ export function precompChildParent(layer: RenderLayer, parentMatrix: Mat3): Mat3
   return Mat3.multiply(parentMatrix, Mat3.multiply(mPrecomp, tOrigin));
 }
 
+/**
+ * True when a precomp container must render through an offscreen texture and
+ * composite as ONE unit (RenderBackend.precompLayers contract), rather than
+ * being collapsed inline:
+ *   • group opacity < 1 over MULTIPLE children — per-child multiplication
+ *     double-darkens every overlap, isolation fades the group as a whole;
+ *   • a mask, track matte (either side), non-normal blend, or effects on the
+ *     container — inline collapse silently dropped all of these;
+ *   • an adjustment layer anywhere in the subtree — inline collapse would emit
+ *     the grade into the PARENT paint order, so it would re-composite siblings
+ *     that sit outside the precomp (AE keeps adjustments scoped to the comp
+ *     they live in).
+ * Everything else (plain transform, full opacity, single child) keeps the fast
+ * inline-collapse path. Exported for unit tests.
+ */
 export function precompNeedsIsolation(layer: RenderLayer): boolean {
   if (!layer.precompLayers || layer.precompLayers.length === 0) return false;
   if (layer.blend && layer.blend !== 'normal') return true;
@@ -1432,6 +1480,20 @@ export function precompNeedsIsolation(layer: RenderLayer): boolean {
   if (layer.isMatteSource) return true;
   if (layer.effects && layer.effects.length > 0) return true;
   if (layer.opacity < 1 && layer.precompLayers.filter((l) => l.visible).length > 1) return true;
+  // Adjustment (or a nested precomp that itself needs isolation for one) keeps
+  // the grade inside this unit. Checked after the cheap container flags so the
+  // common "no adjustment" path does not walk the subtree.
+  if (precompSubtreeHasAdjustment(layer.precompLayers)) return true;
+  return false;
+}
+
+/** True when any layer in a precomp subtree is an adjustment (nested precomps
+ *  included). Isolation is required so the grade cannot leak to parent siblings. */
+function precompSubtreeHasAdjustment(layers: ReadonlyArray<RenderLayer>): boolean {
+  for (const l of layers) {
+    if (l.isAdjustment) return true;
+    if (l.precompLayers && precompSubtreeHasAdjustment(l.precompLayers)) return true;
+  }
   return false;
 }
 

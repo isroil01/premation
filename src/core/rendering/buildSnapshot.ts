@@ -69,8 +69,8 @@ import { resolveTextPath, resolveTextPathMask, flattenMaskPath } from '@core/tex
 import { bracketFrames } from './videoFrameCache';
 import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
-import { readSceneCamera, readSceneDof, dofBlurPx } from '@core/scene/camera3d';
-import { planDofStrips, layerCornerDepths } from './dofStrips';
+import { readSceneCamera, readSceneDof, dofBlurPx, dofIrisParams } from '@core/scene/camera3d';
+import { planDofCocCorners, layerCornerDepths } from './dofStrips';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides, type OverrideValue } from '@core/scene/compInstanceOverrides';
 import { expandCloners, cloneOffsetOf } from '@core/scene/clonerExpand';
@@ -623,6 +623,9 @@ export function buildSnapshot(
 
   const nodes = expandCloners(expandCompInstances(
     graph, flattenComposition(graph, comp.rootId), comp.rootId, readCompCollapse,
+    // Centre-anchors collapsed expansions so toggling Collapse never moves
+    // content (see expandCompInstances' `sizeOf`).
+    comp.compSizeOf,
   // AFTER `materializeForFrame`, never before: a graph node view exposes
   // `transform` and friends through prototype getters, and the spread in
   // `applyOwnOverrides` drops them — `readBase` then died on an undefined
@@ -1246,23 +1249,39 @@ export function buildSnapshot(
     if (!dof) return null;
     const blur = dofBlurPx(depth, dof);
     if (blur < 0.3) return null;
-    return { id: 'dof', type: 'blur', params: { amount: Number(blur.toFixed(1)) } };
+    const iris = dofIrisParams(dof);
+    return {
+      id: 'dof',
+      type: 'blur',
+      params: {
+        amount: Number(blur.toFixed(1)),
+        ...(iris.blades !== undefined ? { blades: iris.blades } : {}),
+        ...(iris.roundness !== undefined ? { roundness: iris.roundness } : {}),
+        ...(iris.highlightGain !== undefined && iris.highlightGain > 0
+          ? { highlightGain: iris.highlightGain }
+          : {}),
+      },
+    };
   };
 
-  // 2.5D cast shadows: the FIRST shadow-casting point/spot light throws a
-  // soft drop-shadow off every content layer, away from the light. The layer's
-  // alpha silhouette is the shadow shape (CSS drop-shadow), so text, paths and
-  // masked layers all cast correctly. Keyframeable via the light's position
-  // and intensity.
-  const shadowLight = (() => {
-    if (comp.draft3d) return null; // Draft 3D: no cast shadows.
+  // Cast shadows: every shadow-casting non-ambient light projects casters onto
+  // receivers behind them. First light still drives the 2D CSS/drop-shadow
+  // fallback (`withShadow` / `shadowEffectOf`) for layers that never enter the
+  // projected path.
+  type ShadowLight = {
+    x: number; y: number; z: number;
+    intensity: number; darkness: number; diffusion: number;
+  };
+  const shadowLights: ShadowLight[] = (() => {
+    if (comp.draft3d) return [];
+    const out: ShadowLight[] = [];
     for (const n of nodes) {
       if (readNodeKind(n) !== 'light') continue;
       const lt = readNodeLight(n);
       if (!lt.shadows || lt.type === 'ambient') continue;
       const av = valuesOf(n.id);
       const wp = nodeWorldPosition(n);
-      return {
+      out.push({
         x: wp.x,
         y: wp.y,
         // Z matters: it is what turns a flat offset into a real projection.
@@ -1285,10 +1304,11 @@ export function buildSnapshot(
         // reproduce the previous hardcoded look (100% / +0px).
         darkness: (av.get('shadowDarkness') ?? lt.shadowDarkness) / 100,
         diffusion: av.get('shadowDiffusion') ?? lt.shadowDiffusion,
-      };
+      });
     }
-    return null;
+    return out;
   })();
+  const shadowLight = shadowLights[0] ?? null;
 
   /**
    * Planes that can RECEIVE a projected shadow: 3D layers whose material accepts
@@ -1732,7 +1752,7 @@ export function buildSnapshot(
      * raster/subpaths.ts), so a node carrying runs must not carry the flat list.
      * A live `path.points` track still wins — it is one animated outline.
      */
-    const staticSubpaths = liveOutline
+    let staticSubpaths = liveOutline
       ? undefined
       : (geomComponent?.props.subpaths as Array<{ points: typeof staticPathPoints; open?: boolean }> | undefined);
     let pathPoints = liveOutline
@@ -1861,6 +1881,12 @@ export function buildSnapshot(
       if (ev) {
         pathPoints = ev.points;
         liveBooleanPose = { cx: ev.cx, cy: ev.cy, width: ev.width, height: ev.height };
+        // Compound boolean (holes / islands): install as stored runs so the
+        // fill winding can cut holes. Single-ring results keep the shorthand.
+        if (ev.subpaths && ev.subpaths.length > 1) {
+          staticSubpaths = ev.subpaths;
+          pathPoints = ev.subpaths[0]!.points;
+        }
       }
     }
 
@@ -2546,6 +2572,8 @@ export function buildSnapshot(
           shininess: mat.shininess,
           ...(mat.metal > 0 ? { metal: mat.metal / 100 } : {}),
           ...(mat.shading === 'pbr' ? { roughness: mat.roughness / 100 } : {}),
+          ambient: mat.ambient,
+          diffuse: mat.diffuse,
         };
       }
     }
@@ -3172,6 +3200,8 @@ export function buildSnapshot(
               specular: extMat.specular / 100,
               shininess: extMat.shininess,
               oneSided: true,
+              ambient: extMat.ambient,
+              diffuse: extMat.diffuse,
               ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}),
             };
           }
@@ -3276,7 +3306,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
             if (lg) {
               sliceLayer.lighting = lg;
-              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
+              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // Same rule as the geometric path: an explicit per-face colour is
@@ -3450,7 +3480,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, undefined, true);
             if (lg) {
               faceLayer.lighting = lg;
-              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
+              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // An explicit per-face fill is taken literally — dimming a colour
@@ -3548,7 +3578,7 @@ export function buildSnapshot(
           const lg = shadeLayer(planeNormalOf(M), { x: O.x, y: O.y, z: z3 + g.offsetZ }, sceneLights);
           if (lg) {
             glyphLayer.lighting = lg;
-            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess, ...(pcMat.shading === 'pbr' ? { roughness: pcMat.roughness / 100, metal: pcMat.metal / 100 } : {}) };
+            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess, ambient: pcMat.ambient, diffuse: pcMat.diffuse, ...(pcMat.shading === 'pbr' ? { roughness: pcMat.roughness / 100, metal: pcMat.metal / 100 } : {}) };
           }
         }
         emitLayer(glyphLayer, node);
@@ -3565,31 +3595,31 @@ export function buildSnapshot(
       extrusionDepth <= 0 &&
       !layer.deformedMesh
     ) {
-      // Depth-spanning flat quads (tilted cards, ground planes): split into UV
-      // strips with per-strip CoC. Extrusions already get per-face DOF above.
+      // Depth-spanning flat quads: per-pixel planar CoC (corner radii) when the
+      // blur span is meaningful; otherwise a single uniform dof blur on the layer.
       const corners = layerCornerDepths(world3d, layer.width, layer.height, project);
-      const strips = corners ? planDofStrips(layer.matrix, corners, dof) : null;
-      if (strips) {
-        for (let si = 0; si < strips.length; si++) {
-          const s = strips[si]!;
-          const effects = (layer.effects ?? [])
-            .filter((e) => e.id !== 'dof')
-            .concat(
-              s.blurPx >= 0.3
-                ? [{ id: 'dof', type: 'blur' as const, params: { amount: s.blurPx } }]
-                : [],
-            );
-          emitLayer({
-            ...layer,
-            id: `${layer.id}::dof-${si}`,
-            matrix: s.matrix,
-            depth: s.depth,
-            uvRect: s.uvRect,
-            effects: effects.length ? effects : undefined,
-            // Strip quads share the parent content hash — UV crop is transform-
-            // side, so the rasterizer cache stays warm across strips.
-          }, node);
-        }
+      const planar = corners ? planDofCocCorners(corners, dof) : null;
+      if (planar) {
+        const iris = dofIrisParams(dof);
+        const effects = (layer.effects ?? [])
+          .filter((e) => e.id !== 'dof')
+          .concat([{
+            id: 'dof',
+            type: 'blur' as const,
+            params: {
+              amount: planar.maxPx,
+              coc0: planar.corners[0],
+              coc1: planar.corners[1],
+              coc2: planar.corners[2],
+              coc3: planar.corners[3],
+              ...(iris.blades !== undefined ? { blades: iris.blades } : {}),
+              ...(iris.roundness !== undefined ? { roundness: iris.roundness } : {}),
+              ...(iris.highlightGain !== undefined && iris.highlightGain > 0
+                ? { highlightGain: iris.highlightGain }
+                : {}),
+            },
+          }]);
+        emitLayer({ ...layer, effects }, node);
       } else {
         emitLayer(layer, node);
       }
@@ -3616,10 +3646,14 @@ export function buildSnapshot(
   // a copy of the caster, blackened, scaled by t about the light, and sorted onto
   // the receiver's plane. It grows as the caster nears the light and shrinks as
   // it approaches the receiver — the depth cue the fake never gave.
-  if (shadowLight && shadowCasters.length > 0 && shadowReceivers.length > 0) {
-    const strength = Math.max(0, Math.min(1, (shadowLight.intensity / 100) * shadowLight.darkness));
-    if (strength > 0) {
-      const L = shadowLight;
+  //
+  // Every shadow-casting light contributes a projection (AE-style multi-light
+  // cast shadows). Shadow-map soft contact remains a later renderer target.
+  if (shadowLights.length > 0 && shadowCasters.length > 0 && shadowReceivers.length > 0) {
+    let lightIndex = 0;
+    for (const L of shadowLights) {
+      const strength = Math.max(0, Math.min(1, (L.intensity / 100) * L.darkness));
+      if (strength <= 0) { lightIndex++; continue; }
       for (const caster of shadowCasters) {
         // Only planes BEHIND the caster can catch its shadow.
         const behind = shadowReceivers.filter((r) => r.z > caster.z + 1);
@@ -3644,7 +3678,7 @@ export function buildSnapshot(
 
         shadowLayers.push({
           ...src,
-          id: `${src.id}::shadow`,
+          id: lightIndex === 0 ? `${src.id}::shadow` : `${src.id}::shadow:${lightIndex}`,
           // The caster may be hidden (`Casts Shadows: Only`) — its SHADOW is
           // the whole point, so it must not inherit that invisibility.
           visible: true,
@@ -3682,6 +3716,7 @@ export function buildSnapshot(
           frameBlend: undefined,
         } as RenderLayer);
       }
+      lightIndex++;
     }
   }
   if (shadowLayers.length > 0) layers.push(...shadowLayers);

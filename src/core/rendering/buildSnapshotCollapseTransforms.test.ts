@@ -129,14 +129,27 @@ describe('a placed composition, COLLAPSED', () => {
     expect(s.layers.find((l) => l.id.endsWith('ibox'))).toBeDefined();
   });
 
-  it('composes the instance transform through to the inner layers', () => {
+  it('composes the instance transform through to the inner layers, centre-anchored', () => {
     // Collapsed, the instance's position is not flattened away first — it
-    // reaches the child, whose comp-space (200, 150) becomes (700, 550).
-    // The host camera then projects that.
+    // reaches the child THROUGH the comp's centre anchor: the sealed card is
+    // centred on the instance position, so the collapsed splice must map the
+    // inner comp's CENTRE there too, or toggling the switch teleports content
+    // (it used to, by exactly compSize/2 — caught by the precomp-collapse
+    // golden). ibox sits at the inner centre (200, 150), so it lands exactly
+    // on the instance position (500, 400); the host camera then projects that.
     const box = s.layers.find((l) => l.id.endsWith('ibox'))!;
     // Camera at x = 1400 with focal 1000 on the comp plane ⇒ scale 1, so the
-    // box lands at principal.x + (700 − 1400) = 400 − 700.
-    expect(box.x).toBeCloseTo(HOST.width / 2 - 700, 6);
+    // box lands at principal.x + (500 − 1400) = 400 − 900.
+    expect(box.x).toBeCloseTo(HOST.width / 2 - 900, 6);
+  });
+
+  it('keeps the content where the sealed card had it — the switch must not move pixels', () => {
+    // The flat sibling (2D, no camera involvement): sealed, the card is centred
+    // at (500, 400) and iflat sits at the card's centre; collapsed, the same
+    // layer must land on the same comp point.
+    const flat = s.layers.find((l) => l.id.endsWith('iflat'))!;
+    expect(flat.x).toBeCloseTo(500, 6);
+    expect(flat.y).toBeCloseTo(400, 6);
   });
 
   it('puts the inner layer under the HOST camera, which the flat card never was', () => {

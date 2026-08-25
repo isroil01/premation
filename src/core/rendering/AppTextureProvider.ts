@@ -10,7 +10,8 @@
  *      TRANSPARENT placeholder — an undecoded layer draws nothing rather than a
  *      box. It used to be opaque white, which made every layer whose clip starts
  *      partway into the timeline flash a white rectangle on its first frame
- *      (see `placeholder()`).
+ *      (see `placeholder()`). A decode that FAILS is different: colour bars are
+ *      installed (AE Media Offline) and export refuses via `media-unavailable`.
  *   3. When a decode completes we flip the entry to ready and fire `onChange`,
  *      which the app turns into a re-render so the real pixels appear next frame.
  *
@@ -36,7 +37,14 @@ import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/pain
 type LightWash = NonNullable<RenderLayer['light']>;
 import { rasterPadding } from './raster/vectorDraw';
 import { layerSubpaths } from './raster/subpaths';
-import { resolutionTier, paddingClass, continuousResolutionTier, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
+import { resolutionTier, paddingClass, continuousResolutionTier, RESOLUTION_TIERS, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
+
+/**
+ * Top rung of the clamped ladder — the scale past which `resolutionTier` stops
+ * climbing and would magnify instead. Read from the ladder rather than written
+ * as `4`, so the two cannot drift apart.
+ */
+const CLAMPED_TIER_CEILING = RESOLUTION_TIERS[RESOLUTION_TIERS.length - 1]!;
 import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake, applyEffectChain } from '@core/effects/effectBake';
@@ -47,6 +55,12 @@ import { drawParticleField, particleFieldSignature } from '@core/particles/parti
 import type { ParticleConfig } from '@core/particles/particleSim';
 import type { CubeLut } from '@core/effects/cubeLut';
 import { isLocalBlobRef, loadLocalBlobObjectUrl } from './localBlobSource';
+import {
+  offlineBarsRgba,
+  OFFLINE_BARS_W,
+  OFFLINE_BARS_H,
+  mediaUnavailableDetail,
+} from '@core/media/offlinePlaceholder';
 
 interface PathEntry {
   kind: 'path';
@@ -354,6 +368,14 @@ interface ImageEntry {
   ready: boolean;
   /** Linear float EXR (or similar) — sample without sRGB decode. */
   sampleLinear?: boolean;
+  /**
+   * Decode failed permanently for this source. The texture is AE-style colour
+   * bars (not the transparent loading placeholder). Export refuses via
+   * `media-unavailable`; preview keeps the bars so the layer stays visible.
+   */
+  offline?: boolean;
+  /** Original URL shown in the offline diagnostic (without bake suffixes). */
+  offlineSrc?: string;
 }
 
 /** What a text layer needs rasterized: string + full font + colour + box size.
@@ -470,8 +492,16 @@ interface LutEntry {
 }
 
 /** Fixed raster size for a light's radial-gradient texture — scale-invariant, so
- *  the renderable stretches this to the light's actual 2·radius box. */
-const LIGHT_TEX_SIZE = 128;
+ *  the renderable stretches this to the light's actual 2·radius box.
+ *
+ *  512, not 128: a default light's radius is ~45% of the comp's long edge, so
+ *  on a 1920 comp the quad is ~1700px across. A 128px gradient stretched 13×
+ *  showed visible banding and stair-stepping at the wash's soft edge — worst
+ *  along the top and bottom where the falloff crosses many rows slowly. At 512
+ *  the upscale is ≤4× on typical comps, under the same threshold that keeps
+ *  `GRADIENT_TEX_MAX = 512` backgrounds clean; the texture is 1MB and baked
+ *  once per light colour (per cone for spots), so the cost is negligible. */
+const LIGHT_TEX_SIZE = 512;
 
 /** Longest edge of a baked gradient-background texture. Gradients are smooth
  *  (low-frequency), so a modest raster upscales across the comp quad with no
@@ -519,6 +549,8 @@ interface VideoEntry {
   requestedTime: number | null;
   /** Previous source time during hardware playback — detects loop wraps. */
   lastPlaybackTime?: number;
+  /** Element fired `error` — source is offline; colour bars are shown. */
+  offline?: boolean;
 }
 
 interface ParticleEntry {
@@ -585,6 +617,34 @@ export class AppTextureProvider implements TextureProvider {
     return out;
   }
 
+  /**
+   * Image/video keys whose source failed to decode this session and are showing
+   * colour bars. Used by MotionRendererBackend to push `media-unavailable`
+   * diagnostics (preview warns; export refuses).
+   */
+  offlineMediaReports(): ReadonlyArray<{ key: string; layerId: string; detail: string }> {
+    const out: Array<{ key: string; layerId: string; detail: string }> = [];
+    for (const [key, entry] of this.entries) {
+      if (!entry.offline) continue;
+      const layerId = key.startsWith('asset:') ? key.slice('asset:'.length) : key;
+      out.push({
+        key,
+        layerId,
+        detail: mediaUnavailableDetail(layerId, entry.offlineSrc),
+      });
+    }
+    for (const [key, entry] of this.videoEntries) {
+      if (!entry.offline) continue;
+      const layerId = key.startsWith('asset:') ? key.slice('asset:'.length) : key;
+      out.push({
+        key,
+        layerId,
+        detail: mediaUnavailableDetail(layerId, entry.src),
+      });
+    }
+    return out;
+  }
+
   private static eventWait(el: EventTarget, event: string, timeoutMs = 4000): Promise<void> {
     return new Promise<void>((resolve) => {
       const done = (): void => {
@@ -621,6 +681,8 @@ export class AppTextureProvider implements TextureProvider {
   private bakeScratchToggle = 0;
   /** One-shot init for the transparent placeholder — see `placeholder()`. */
   private hasInitTransparent = false;
+  /** One-shot init for the shared offline colour-bars texture. */
+  private hasInitOfflineBars = false;
   /**
    * Decoded images that have fallen out of the visible set but are NOT yet
    * freed — see `retain`. Insertion-ordered, so the oldest is evicted first.
@@ -649,19 +711,43 @@ export class AppTextureProvider implements TextureProvider {
 
   setMaxRasterDimension(px: number): void {
     this.maxRasterDimension = px > 0 && Number.isFinite(px) ? px : DEFAULT_MAX_RASTER_DIMENSION;
+    // The rasterizer clamps its canvas sizes by the same device fact — its
+    // texture uploads fail past this exactly like the provider's own.
+    this.rasterizer.setMaxDimension(this.maxRasterDimension);
   }
 
   /**
-   * The tier to rasterize a drawable at: the clamped ladder by default, the
-   * extended one when the layer opted into Continuous Rasterization.
+   * The tier to rasterize a drawable at.
    *
    * One helper for both the text and path paths so they cannot diverge — they
    * did once already, over the `deviceScale` the text path silently dropped.
+   *
+   * ## Why the clamped ladder is no longer the end of the story
+   *
+   * `resolutionTier` tops out at 4x. Past that it stops climbing and the
+   * texture is simply magnified, so a title or logo pushed beyond 400% — by its
+   * own Scale, by a parent null, by viewport zoom or by a 3D camera moving in —
+   * went soft and STAYED soft, in the export as much as in the preview. That
+   * was the single most-reported quality complaint, and the per-layer
+   * Continuous Rasterization switch that fixes it was off by default, so the
+   * default experience was the broken one.
+   *
+   * Past the ceiling the tier now escalates onto the extended ladder whether or
+   * not the layer opted in. `continuousResolutionTier` is bounded by the GPU's
+   * real max texture dimension AND by a pixel budget, so this cannot ask for an
+   * allocation that fails or quietly exhaust VRAM — the escalation is bounded
+   * by construction, which is what makes it safe to do without a switch.
+   *
+   * Below the ceiling NOTHING changes: `resolutionTier` is returned verbatim
+   * rather than routing through the extended ladder, because the extended one
+   * also applies the box bounds and those can round a very large box DOWN.
+   * Taking the old path for the scales almost every layer actually lives at
+   * keeps their textures byte-identical instead of trading one regression for
+   * another.
    */
   private tierFor(scale: number, continuous: boolean | undefined, boxW: number, boxH: number): number {
-    return continuous
-      ? continuousResolutionTier(scale, boxW, boxH, undefined, this.maxRasterDimension)
-      : resolutionTier(scale);
+    if (!continuous && scale <= CLAMPED_TIER_CEILING) return resolutionTier(scale);
+    return continuousResolutionTier(scale, boxW, boxH, undefined, this.maxRasterDimension);
   }
 
   /**
@@ -675,15 +761,17 @@ export class AppTextureProvider implements TextureProvider {
    * sharp at each tier boundary, over and over; it also made the result
    * ORDER-DEPENDENT, since whichever scale rasterized first won the key.
    *
-   * The tier rounds UP, so below the ceiling it is >= the requested scale and
-   * the raster is never magnified — this is sharper than it was, not softer, as
-   * well as stable. Above the ceiling the tier clamps and the texture is
-   * magnified, which is the documented >4x limitation and exactly what
-   * CONTINUOUS RASTERIZATION exists to lift: it extends the ladder so the tier
-   * keeps up. Before, above 4x was sharp but arbitrary — the first scale
-   * rasterized was reused for every other, so the same project could render
-   * differently depending on which frame you visited first. Predictable and
-   * bounded beats sharp and arbitrary.
+   * The tier rounds UP, so it is >= the requested scale and the raster is never
+   * magnified — this is sharper than it was, not softer, as well as stable.
+   * Before, above 4x was sharp but arbitrary — the first scale rasterized was
+   * reused for every other, so the same project could render differently
+   * depending on which frame you visited first. Predictable and bounded beats
+   * sharp and arbitrary.
+   *
+   * The 4x ceiling that used to magnify past this point is gone: `tierFor` now
+   * escalates onto the bounded extended ladder instead of clamping, so "drawn
+   * at the tier" and "never magnified" hold at every scale the GPU can
+   * actually allocate, not just below 400%.
    */
   private drawScaleFor(scale: number, continuous: boolean | undefined, tier: number): number {
     void scale; void continuous;
@@ -1034,7 +1122,7 @@ export class AppTextureProvider implements TextureProvider {
    * shader samples it at U = channel value to remap that channel. Signature-keyed
    * on the table bytes so it only re-uploads when the effect actually changes.
    */
-  setLut(key: string, lut: { r: Uint8Array; g: Uint8Array; b: Uint8Array }, signature: string): void {
+  setLut(key: string, lut: { r: Float32Array | Uint8Array; g: Float32Array | Uint8Array; b: Float32Array | Uint8Array }, signature: string): void {
     const existing = this.lutEntries.get(key);
     if (existing && existing.signature === signature) return;
     if (existing) {
@@ -1047,9 +1135,9 @@ export class AppTextureProvider implements TextureProvider {
     if (!ctx) return;
     const img = ctx.createImageData(256, 1);
     for (let i = 0; i < 256; i++) {
-      img.data[i * 4] = lut.r[i]!;
-      img.data[i * 4 + 1] = lut.g[i]!;
-      img.data[i * 4 + 2] = lut.b[i]!;
+      img.data[i * 4] = Math.max(0, Math.min(255, Math.round(lut.r[i]!)));
+      img.data[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(lut.g[i]!)));
+      img.data[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(lut.b[i]!)));
       img.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
@@ -1131,6 +1219,16 @@ export class AppTextureProvider implements TextureProvider {
       this.videoEntries.set(key, entry);
       video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
       video.addEventListener('seeked', onSeeked);
+      video.addEventListener('error', () => {
+        const cur = this.videoEntries.get(key);
+        if (!cur || cur.src !== src) return;
+        this.installVideoOfflineBars(cur);
+        this.onChange?.();
+      }, { once: true });
+    }
+    if (entry.offline) {
+      if (!entry.texture) this.installVideoOfflineBars(entry);
+      return;
     }
     const v = entry.video;
     if (v.readyState < HAVE_CURRENT_DATA) {
@@ -1758,7 +1856,12 @@ export class AppTextureProvider implements TextureProvider {
           bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
         }
       } catch {
-        return; // broken source — leave the placeholder in place
+        // Broken source — AE-style colour bars + mark offline for export refuse.
+        if (this.entries.get(key) === entry) {
+          this.installOfflineBars(entry, src);
+          this.onChange?.();
+        }
+        return;
       }
       // A newer setImage for this key (different src) supersedes this decode.
       if (this.entries.get(key) !== entry) return;
@@ -1902,6 +2005,12 @@ export class AppTextureProvider implements TextureProvider {
    *
    * Transparent BLACK, not transparent white: this pipeline is premultiplied, so
    * zero coverage means all four channels zero.
+   *
+   * ── Offline (decode failed) is different ───────────────────────────────────
+   *
+   * A failed decode is permanent for this src. That path calls
+   * {@link installOfflineBars} so the layer shows colour bars (AE Media Offline)
+   * instead of staying transparent forever.
    */
   private placeholder(): ResolvedTexture {
     const texture = this.resources.texture(
@@ -1918,6 +2027,50 @@ export class AppTextureProvider implements TextureProvider {
     // reads this field today. Reporting `true` would make the flag a lie the
     // moment something starts to.
     return { texture, sampler: this.sampler(), ready: false };
+  }
+
+  /** Shared colour-bars GPU texture (pinned). Uploaded once. */
+  private offlineBarsTexture(): TextureHandle {
+    const texture = this.resources.texture(
+      'texture:offline-bars',
+      {
+        label: 'offline-bars',
+        width: OFFLINE_BARS_W,
+        height: OFFLINE_BARS_H,
+        format: 'rgba8unorm',
+      },
+      true,
+    );
+    if (!this.hasInitOfflineBars) {
+      this.resources.writeTexture(texture, {
+        type: 'buffer',
+        data: offlineBarsRgba(),
+        width: OFFLINE_BARS_W,
+        height: OFFLINE_BARS_H,
+      });
+      this.hasInitOfflineBars = true;
+    }
+    return texture;
+  }
+
+  /** Point an image entry at colour bars and flag it for export refusal. */
+  private installOfflineBars(entry: ImageEntry, src: string): void {
+    entry.texture = this.offlineBarsTexture();
+    entry.width = OFFLINE_BARS_W;
+    entry.height = OFFLINE_BARS_H;
+    entry.ready = true;
+    entry.offline = true;
+    entry.offlineSrc = src;
+    entry.bitmap = null;
+    entry.unbaked = null;
+  }
+
+  /** Point a video entry at colour bars after the element errors. */
+  private installVideoOfflineBars(entry: VideoEntry): void {
+    entry.texture = this.offlineBarsTexture();
+    entry.w = OFFLINE_BARS_W;
+    entry.h = OFFLINE_BARS_H;
+    entry.offline = true;
   }
 
   private sampler(): SamplerHandle {

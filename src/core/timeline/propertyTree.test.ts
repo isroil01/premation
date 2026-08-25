@@ -129,11 +129,19 @@ describe('the tree exists before anything is animated', () => {
 });
 
 describe('a row only promises what the engine keeps', () => {
-  it('gives Material Options a stopwatch now that the snapshot samples them', () => {
-    defaultSceneGraph.addNode(node('m', 'shape', { threeD: true, ambient: 100, diffuse: 50 }));
+  it('lists every Material Options row on a 3D layer before anything is keyed', () => {
+    // 3D is "carries a depth prop", not a `threeD` flag — match enable3D.
+    defaultSceneGraph.addNode(node('m', 'shape', { z: 0 }));
     const rows = buildStaticPropertyTree('m').filter((r) => r.group === 'material');
-    expect(rows.map((r) => r.prop).sort()).toEqual(['ambient', 'diffuse']);
+    expect(rows.map((r) => r.prop)).toEqual([
+      'acceptsLights', 'ambient', 'diffuse', 'specular', 'shininess', 'metal',
+      'castsShadows', 'acceptsShadows', 'lightTransmission', 'roughness',
+    ]);
     for (const r of rows) expect(r.members).toEqual([r.prop]);
+  });
+
+  it('does not list Material Options on a 2D layer', () => {
+    expect(buildStaticPropertyTree('a').some((r) => r.group === 'material')).toBe(false);
   });
 
   it('collapses Position into one row, and splits it when dimensions separate', () => {

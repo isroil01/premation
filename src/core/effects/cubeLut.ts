@@ -23,13 +23,15 @@
  * `size1d` set, because rejecting them means a user's file "does not work" with
  * no explanation.
  *
- * ## Why the pipeline caveat is stated here
+ * ## Working-space contract
  *
- * Sampling happens in whatever space the pixels arrive in, and this renderer is
- * **not linear-light** (see EDITOR_REFERENCE §4). A LUT authored against log or
- * linear input will therefore not match its author's intent until the linear
- * colour work lands. That is a real limitation, not a rounding error, and it is
- * recorded here rather than discovered later.
+ * Sampling is pure RGB math on whatever triples you feed it. On the live GPU
+ * path those triples are the project **working space** (`srgb-linear` or
+ * `aces-cg` via Comp Settings → Color). `DOMAIN_MIN` / `DOMAIN_MAX` still
+ * remap before lookup. This is **not** full OCIO: no roles, displays, views,
+ * or look transforms — a `.cube` is applied as authored against the working
+ * buffer. Float 3D LUT textures (HDR table precision) remain a separate gap;
+ * the uploaded strip is still 8-bit.
  */
 
 import { clamp01 } from '@utils/lang';

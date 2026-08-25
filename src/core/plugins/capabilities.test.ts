@@ -65,13 +65,13 @@ describe('the vocabulary', () => {
       rename shows up in a diff as what it is, rather than as a tidy-up.
     */
     expect([...STATIC_CAPABILITIES]).toEqual([
-      'scene.read', 'scene.write', 'scene.proxy', 'scene.batch',
+      'scene.read', 'scene.write', 'scene.proxy', 'scene.batch', 'scene.structured',
       'animation.read', 'animation.write',
       'assets.read', 'assets.write',
-      'timeline', 'net.fetch',
+      'timeline', 'composition.manage', 'audio.analyse', 'net.fetch',
       'storage.global', 'storage.project',
       'effects.single', 'effects.multipass',
-      'layerkinds', 'panels', 'wasm',
+      'layerkinds', 'exporters', 'importers', 'presets', 'panels', 'wasm',
     ]);
     expect([...RUNTIME_CAPABILITIES]).toEqual(['webgpu']);
   });
@@ -98,12 +98,19 @@ describe('the vocabulary', () => {
 });
 
 describe('the two version numbers', () => {
-  it('are separate values that happen to be equal today', () => {
-    // Equal at 5 and independent from here. Asserting they are both 5 rather
-    // than asserting they are equal — the second would pass forever and mean
-    // nothing the day one of them moves.
+  it('★ have actually diverged — the split stopped being theoretical', () => {
+    /*
+      They were both 5, and the point of separating them was that one day one
+      would move alone. That day was `contributes.exporters`: a new manifest KEY,
+      so the grammar went to 6, while the host method surface did not change at
+      all — a plugin asks whether it can register an exporter through the
+      `exporters` CAPABILITY, not by comparing a version.
+
+      Still asserted as two literals rather than as an inequality: "they differ"
+      would pass forever and say nothing the day they move again.
+    */
     expect(HOST_API_VERSION).toBe(5);
-    expect(MANIFEST_VERSION).toBe(5);
+    expect(MANIFEST_VERSION).toBe(6);
   });
 
   it('refuses a manifest whose GRAMMAR is newer than this host reads', () => {

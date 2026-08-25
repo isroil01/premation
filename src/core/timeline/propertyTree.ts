@@ -129,8 +129,21 @@ export interface StaticPropertyRow {
 // ── Which section does an arbitrary path belong to? ──────────────────
 
 const MATERIAL_PROPS: ReadonlySet<string> = new Set([
-  'ambient', 'diffuse', 'specular', 'shininess', 'metal', 'lightTransmission',
+  'ambient', 'diffuse', 'specular', 'shininess', 'metal', 'lightTransmission', 'roughness',
+  'acceptsLights', 'castsShadows', 'acceptsShadows',
 ]);
+
+/** AE Material Options rows for every 3D layer — always listed, even when
+ *  Transform still holds only defaults (unstored). Stopwatches need a row. */
+function materialRows(node: SceneNode, nodeId: string): StaticPropertyRow[] {
+  if (!is3DEnabled(node)) return [];
+  // Keep order aligned with MATERIAL_ANIMATABLE / the inspector panel.
+  const props = [
+    'acceptsLights', 'ambient', 'diffuse', 'specular', 'shininess', 'metal',
+    'castsShadows', 'acceptsShadows', 'lightTransmission', 'roughness',
+  ] as const;
+  return props.map((prop) => row(prop, 'material', [prop], { nodeId }));
+}
 
 /**
  * The section a path belongs to.
@@ -499,6 +512,7 @@ export function buildStaticPropertyTree(nodeId: string): StaticPropertyRow[] {
     ...transform,
     ...scanned.filter((r) => r.group === 'transform'),
     ...layerStyleRows(nodeId),
+    ...materialRows(node, nodeId),
     ...scanned.filter((r) => r.group === 'material'),
     ...audioRows(node, nodeId),
     ...scanned.filter((r) => r.group === 'time'),

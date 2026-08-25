@@ -49,6 +49,22 @@
     "timeline": {
       "label": "Control the playhead",
       "detail": "Read the current time and move the playhead."
+    },
+    "import:files": {
+      "label": "Read files you open with it",
+      "detail": "Read the contents of files you import whose format this plugin provides. It cannot browse your machine or open anything you did not choose."
+    },
+    "export:frames": {
+      "label": "Receive your rendered frames",
+      "detail": "See every rendered frame of a composition you export with this plugin’s format, in order. Combined with permission to contact websites, a plugin could send your finished video to them."
+    },
+    "audio:read": {
+      "label": "Analyse audio in your project",
+      "detail": "Read the loudness of audio layers over time, to drive animation from sound. It cannot play, export or copy the audio."
+    },
+    "composition:write": {
+      "label": "Add and remove compositions",
+      "detail": "Create, rename, open and delete compositions in your project. Deleting one removes every layer it contains. Every change is undoable."
     }
   }
 }

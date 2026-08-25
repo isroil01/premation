@@ -124,7 +124,7 @@ export function describeConversion(data: SvgLayerData): string[] {
   // Clip paths are CUT into the geometry now, not dropped — saying they are
   // "flattened to solid fills" described neither what used to happen (they were
   // ignored) nor what happens now.
-  out.push('Gradients, masks and filters are flattened to solid fills; clip paths are cut into the geometry, which turns curves into fine polygons.');
+  out.push('Masks and filters are flattened; clip paths are cut into the geometry, which turns curves into fine polygons. Gradients become editable FillPaint (angle/stops).');
   return out;
 }
 

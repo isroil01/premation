@@ -21,6 +21,7 @@ import {
   WebGL2Backend,
   WebGPUBackend,
   setActiveColorPipeline,
+  setActiveViewerLut,
   type RenderBackend as GpuBackend,
 } from '@motion/renderer';
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
@@ -40,6 +41,8 @@ import { setWebgpuAvailable } from '@core/plugins/capabilities';
 import { markGpuOwned } from './canvasOwnership';
 import { attachPluginEffects } from './pluginEffectBridge';
 import { useColorManagementStore } from '@stores/colorManagementStore';
+import { useViewerLutStore, VIEWER_LUT_TEXTURE_KEY } from '@stores/viewerLutStore';
+import { createRasterScaleSettle } from './rasterScaleSettle';
 
 export type RendererBackendKind = 'webgl2' | 'webgpu' | 'null';
 
@@ -556,7 +559,15 @@ export class MotionRendererBackend implements RenderBackend {
       // Target device scale for vector rasterization this frame: comp→canvas
       // scale × dpr. Drives the resolution tier so a 4K export re-rasters vectors
       // at native instead of upscaling a viewport-resolution texture.
-      this.textures.setRasterScale((snapshot.view?.scale ?? 1) * this.dpr);
+      // Routed through the zoom-settle filter (viewport role only): during an
+      // active zoom gesture the scale changes every frame, and each tier
+      // crossing used to re-rasterize EVERY vector layer inside one frame — a
+      // hitch per crossing, which is what made zooming feel stuttery. The
+      // filter keeps serving the last settled scale mid-gesture (textures are
+      // reused, stretched — briefly soft, exactly AE's behaviour) and adopts
+      // the final scale once the wheel has been quiet, with one repaint to
+      // sharpen at rest.
+      this.textures.setRasterScale(this.settledRasterScale((snapshot.view?.scale ?? 1) * this.dpr));
       // Texel density video frames actually need this frame (see
       // feedScaledFrame): comp→canvas scale × dpr, capped at source density.
       this.mediaFeedScale = Math.min(1, (snapshot.view?.scale ?? 1) * this.dpr);
@@ -889,13 +900,42 @@ export class MotionRendererBackend implements RenderBackend {
 
     setActiveColorPipeline(useColorManagementStore.getState().settings());
 
+    // Viewer/monitor LUT — viewport only. Auxiliary backends (export, thumbs)
+    // leave meta null so PNG/HDR/EXR never bake the look.
+    if (this.role === 'viewport') {
+      const v = useViewerLutStore.getState();
+      if (v.lut && this.textures) {
+        this.textures.setCubeLut(VIEWER_LUT_TEXTURE_KEY, v.lut, v.signature);
+        setActiveViewerLut({
+          size: v.lut.size1d > 0 ? v.lut.size1d : v.lut.size,
+          is1d: v.lut.size1d > 0,
+          intensity: 1,
+          domainMin: v.lut.domainMin[0] ?? 0,
+          domainMax: v.lut.domainMax[0] ?? 1,
+        });
+      } else {
+        setActiveViewerLut(null);
+      }
+    } else {
+      setActiveViewerLut(null);
+    }
+
     const result = this.renderer.render(vp, snapshotToFrameScene(snapshot));
 
     // Preview half of the M8a split: keep the frame, but say what it is not.
     // Deduped by detail — a 60fps viewport would otherwise emit the same notice
     // every frame for as long as the layer is on screen.
-    this.frameDiagnostics = result.diagnostics;
-    for (const d of result.diagnostics) {
+    //
+    // App-side media offline (decode failed → colour bars) joins the same list
+    // so export refuses via the existing lastFrameDiagnostics gate.
+    const mediaOffline = (this.textures as AppTextureProvider | null)?.offlineMediaReports?.() ?? [];
+    const mediaDiags = mediaOffline.map((m) => ({
+      code: 'media-unavailable' as const,
+      detail: m.detail,
+      layerId: m.layerId,
+    }));
+    this.frameDiagnostics = [...result.diagnostics, ...mediaDiags];
+    for (const d of this.frameDiagnostics) {
       if (this.reportedDiagnostics.has(d.detail)) continue;
       this.reportedDiagnostics.add(d.detail);
       getEventBus().emit('EngineError', {
@@ -953,6 +993,24 @@ export class MotionRendererBackend implements RenderBackend {
    */
   /** View scale × dpr, capped at 1 — set per frame in renderFrame. */
   private mediaFeedScale = 1;
+
+  /**
+   * Zoom-settle filter for the raster scale (see rasterScaleSettle.ts).
+   *
+   * Interactive viewport only — auxiliary backends (export, thumbnails, the
+   * harness) render at a constant scale, where the filter is a pass-through
+   * from the first frame, and MUST never defer: an export frame rasterized at
+   * a stale viewport scale would ship soft pixels. The settle repaint rides
+   * the same channel the texture provider uses for async media settles.
+   */
+  private readonly rasterSettle = createRasterScaleSettle(() =>
+    getEventBus().emit('AnimationChanged', { nodeId: '__texture__' }),
+  );
+
+  private settledRasterScale(target: number): number {
+    if (this.role !== 'viewport') return target;
+    return this.rasterSettle.sample(target);
+  }
 
   /** Downscaled feed canvases, one per texture key (see feedScaledFrame). */
   private scaledFeed = new Map<string, { canvas: HTMLCanvasElement; sig: string }>();
@@ -1101,6 +1159,7 @@ export class MotionRendererBackend implements RenderBackend {
     this.disposed = true;
     this.ready = false;
     this.pending = null;
+    this.rasterSettle.dispose();
     // Nothing is rendering any more, so "which tier rendered" has no answer.
     this.resolvedKind = null;
     // Release retained media BEFORE the renderer goes: <video> elements keep a

@@ -1,4 +1,4 @@
-import { dofBlurPx, type DofConfig } from './camera3d';
+import { dofBlurPx, dofIrisParams, type DofConfig } from './camera3d';
 
 const cfg = (over: Partial<DofConfig> = {}): DofConfig => ({
   strength: 20, focus: 500, aperture: 20, ...over,
@@ -33,5 +33,21 @@ describe('dofBlurPx (aperture-driven circle of confusion)', () => {
     const s = 30;
     const old = Math.min(s, (Math.abs(depth - 500) / 500) * s);
     expect(dofBlurPx(depth, cfg({ aperture: s, strength: s }))).toBeCloseTo(old, 6);
+  });
+});
+
+describe('dofIrisParams', () => {
+  test('absent or low blade count keeps Gaussian (empty extras)', () => {
+    expect(dofIrisParams(cfg())).toEqual({});
+    expect(dofIrisParams(cfg({ irisBlades: 2 }))).toEqual({});
+  });
+
+  test('6 blades expose roundness default and optional highlight gain', () => {
+    expect(dofIrisParams(cfg({ irisBlades: 6 }))).toEqual({
+      blades: 6, roundness: 0.65, highlightGain: 0,
+    });
+    expect(dofIrisParams(cfg({ irisBlades: 8, irisRoundness: 0.2, highlightGain: 2 }))).toEqual({
+      blades: 8, roundness: 0.2, highlightGain: 2,
+    });
   });
 });

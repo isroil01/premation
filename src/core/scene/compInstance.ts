@@ -113,10 +113,50 @@ export function expandCompInstances(
    * list as an un-expanded `comp` node for that walk to pick up.
    */
   expandIf: (node: SceneNode) => boolean = () => true,
+  /**
+   * Referenced-comp size resolver (the editor's `compSizeOf`). Needed so a
+   * COLLAPSED expansion can anchor the spliced layers at the comp's CENTRE —
+   * the same point the sealed card is centred on. Without it the instance
+   * position doubled as the inner comp's top-left, so toggling the Collapse
+   * switch teleported every inner layer by half the comp size. In AE that
+   * switch never moves content; now it doesn't here either. Omitted (or
+   * returning undefined) falls back to the old origin-anchored compose, which
+   * only matters for callers that cannot know comp sizes.
+   */
+  sizeOf?: (compId: string) => { width: number; height: number } | undefined,
 ): SceneNode[] {
   if (!nodes.some((n) => readCompRef(n) !== null)) return nodes;
 
   const out: SceneNode[] = [];
+
+  /**
+   * The synthetic transform node that centre-anchors a collapsed expansion.
+   *
+   * Spliced clones compose through their `parent` chain, so a plain group
+   * clone carrying x = −w/2, y = −h/2 between the instance and the clones
+   * gives world = T(pos)·R·S·T(−centre)·local — the instance's rotation and
+   * scale still pivot on the card's centre, exactly like the sealed card.
+   */
+  const anchorClone = (instanceId: string, ref: string): SceneNode | null => {
+    const size = sizeOf?.(ref);
+    if (!size) return null;
+    const aid = `${instanceId}::__anchor`;
+    return {
+      id: aid,
+      name: '__anchor',
+      parent: instanceId,
+      children: [],
+      visible: true,
+      locked: false,
+      solo: false,
+      transform: { position: { x: -size.width / 2, y: -size.height / 2 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [{
+        id: `${aid}_t`,
+        type: 'Transform',
+        props: { __kind: 'group', x: -size.width / 2, y: -size.height / 2, rotation: 0 },
+      }],
+    } as unknown as SceneNode;
+  };
 
   const cloneSubtree = (
     origs: ReadonlyArray<SceneNode>,
@@ -177,9 +217,12 @@ export function expandCompInstances(
           // Collapsed ⇒ NOT a transform barrier: the whole point is that the
           // inner layers' transforms compose through into the host.
           // A nested instance carries its OWN overrides, not the outer one's.
+          const collapsed = readCompCollapse(orig);
+          const anchor = collapsed ? anchorClone(cid, ref) : null;
+          if (anchor) out.push(anchor);
           cloneSubtree(
-            graph.getChildren(ref), cid, `${cid}::`, [...stack, ref], depth + 1,
-            !readCompCollapse(orig), readCompOverrides(orig),
+            graph.getChildren(ref), anchor ? anchor.id : cid, `${cid}::`, [...stack, ref], depth + 1,
+            !collapsed, readCompOverrides(orig),
           );
         }
       } else {
@@ -197,9 +240,12 @@ export function expandCompInstances(
     if (!expandIf(node)) continue; // rendered by its own pass, not expanded here
     if (ref === activeRootId || !graph.getNode(ref)) continue; // self/dangling
     const stack = activeRootId ? [activeRootId, ref] : [ref];
+    const collapsed = readCompCollapse(node);
+    const anchor = collapsed ? anchorClone(node.id, ref) : null;
+    if (anchor) out.push(anchor);
     cloneSubtree(
-      graph.getChildren(ref), node.id, `${node.id}::`, stack, 1,
-      !readCompCollapse(node), readCompOverrides(node),
+      graph.getChildren(ref), anchor ? anchor.id : node.id, `${node.id}::`, stack, 1,
+      !collapsed, readCompOverrides(node),
     );
   }
   return out;

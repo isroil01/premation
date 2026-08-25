@@ -101,4 +101,16 @@ describe('projected cast shadows', () => {
     expect(sh.matrix).toBeUndefined();
     expect(sh.world3d).toBeUndefined();
   });
+
+  it('projects one shadow per shadow-casting light', () => {
+    const g = scene(0);
+    g.addNode(node('light2', 'light', {
+      x: 100, y: 100, z: -600, intensity: 100, radius: 2000, castShadows: true,
+    }));
+    const s = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP as never);
+    const shadows = s.layers.filter((l) => l.id.startsWith('caster::shadow'));
+    expect(shadows).toHaveLength(2);
+    expect(shadows.some((l) => l.id === 'caster::shadow')).toBe(true);
+    expect(shadows.some((l) => l.id === 'caster::shadow:1')).toBe(true);
+  });
 });
