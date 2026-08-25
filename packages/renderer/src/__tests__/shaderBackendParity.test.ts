@@ -35,8 +35,10 @@ import { BUILTIN_SHADERS } from '../shaders/builtin';
 
 /** `(uv - obj.uvRect.xy) / obj.uvRect.zw` — target UV → layer-local, WGSL. */
 const WGSL_LOCAL = /\(\s*uv\s*-\s*obj\.uvRect\.xy\s*\)\s*\/\s*obj\.uvRect\.zw/;
-/** The same conversion in GLSL. */
-const GLSL_LOCAL = /\(\s*vUv\s*-\s*uvRect\.xy\s*\)\s*\/\s*uvRect\.zw/;
+/** The same conversion in GLSL. `vUv` is the varying; bare `uv` is the
+ *  parameter name of the shared `fieldQ` helper the round-six prolog uses —
+ *  same idiom, hoisted into a function so fourteen shaders share one copy. */
+const GLSL_LOCAL = /\(\s*v?[Uu]v\s*-\s*uvRect\.xy\s*\)\s*\/\s*uvRect\.zw/;
 
 /** Shaders that ship both backends — the only ones that can disagree. */
 const DUAL = BUILTIN_SHADERS.filter((s) => s.wgsl && s.glsl?.fragment);

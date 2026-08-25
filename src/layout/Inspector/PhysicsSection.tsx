@@ -1,60 +1,108 @@
 /**
  * Physics controls — per-layer body settings, plus the shared world.
  *
- * Lives in Effect Controls once attached from Effects → Simulation. The world
- * (gravity, walls, solver passes) is shown here rather than in a separate panel
- * because it is meaningless on its own and nobody would go looking for it: you
- * reach for gravity the moment the first body falls the wrong way. It is
- * labelled as shared, so it is clear that changing it here changes it for every
- * body in the composition.
- *
- * The "no rotation" limit is stated in the panel rather than left to be
- * discovered. A solver that translates but never spins is a reasonable tool; a
- * solver that silently fails to spin looks broken the first time someone drops
- * a domino.
+ * Rendered authentically as an AE Effect Card inside Effect Controls.
  */
 
+import { useState } from 'react';
 import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
-import { InspectorRow } from '@components/Inspector';
+import { PropertyRow } from '@components/PropertyRow';
+import { Icon } from '@components/Icon';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import { usePhysicsStore } from '@stores/physicsStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodePhysicsRaw, PHYSICS_PROP } from '@core/simulation/physicsBodies';
+import { readNodePhysicsRaw, PHYSICS_PROP, DEFAULT_PHYSICS_BODY } from '@core/simulation/physicsBodies';
 import type { BodyKind, ColliderShape, PhysicsBodyConfig } from '@core/simulation/rigidBody';
-import styles from './TransformSection.module.css';
+import panel from '@layout/Effects/EffectsPanel.module.css';
 
 export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
   const node = defaultSceneGraph.getNode(nodeId);
   const w = usePhysicsStore();
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [worldCollapsed, setWorldCollapsed] = useState(false);
+
   if (!node) return null;
 
   const cfg = readNodePhysicsRaw(node);
+  const off = !cfg.enabled;
 
   const write = (patch: Partial<PhysicsBodyConfig>): void => {
     defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, { ...cfg, ...patch });
     bumpScene();
   };
 
-  return (
-    <>
-      <InspectorRow label="Physics" align="center">
-        <div className={styles.control}>
-          <Checkbox
-            checked={cfg.enabled}
-            onChange={(e) => write({ enabled: e.target.checked })}
-            aria-label="Enable physics"
-          />
-        </div>
-      </InspectorRow>
+  const removePhysics = (): void => {
+    defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, undefined);
+    bumpScene();
+  };
 
-      {cfg.enabled && (
-        <>
-          <InspectorRow label="Type" align="center">
+  const resetPhysics = (): void => {
+    defaultSceneGraph.setFxKey(nodeId, PHYSICS_PROP, DEFAULT_PHYSICS_BODY);
+    bumpScene();
+  };
+
+  return (
+    <div className={panel.effectCardItem}>
+      {/* AE Effect Controls header: ▾ fx Physics (Rigid Body) .......... Reset */}
+      <div className={panel.effectCardHead}>
+        <span className={panel.dragGrip} aria-hidden title="Drag to reorder">
+          <Icon name="grip-vertical" size="sm" />
+        </span>
+        <button
+          type="button"
+          className={panel.disclosureBtn}
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          title={isCollapsed ? 'Expand effect parameters' : 'Collapse effect parameters'}
+        >
+          <Icon name={isCollapsed ? 'chevron-right' : 'chevron-down'} size="sm" />
+        </button>
+
+        <Checkbox
+          checked={!off}
+          onChange={(e) => write({ enabled: e.target.checked })}
+          title={off ? 'Enable physics' : 'Disable physics'}
+          style={{ width: 15, height: 15, flexShrink: 0 }}
+        />
+
+        <span className={panel.fxMark} aria-hidden>fx</span>
+
+        <span
+          className={off ? panel.itemLabelOff : panel.itemLabel}
+          onClick={() => setIsCollapsed(!isCollapsed)}
+        >
+          Physics (Rigid Body)
+        </span>
+
+        <div className={panel.itemActions}>
+          <button
+            type="button"
+            className={panel.remove}
+            aria-label="Remove Physics"
+            title="Remove Physics effect"
+            onClick={removePhysics}
+          >
+            <Icon name="close" size="sm" />
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className={panel.resetLink}
+          title="Restore physics parameters to default"
+          onClick={resetPhysics}
+        >
+          Reset
+        </button>
+      </div>
+
+      {/* Parameters Accordion Body */}
+      {!isCollapsed && !off && (
+        <div className={panel.effectParamsBody}>
+          <PropertyRow label="Body Type" compact>
             <select
-              className={styles.select}
-              style={{ width: 110 }}
+              className={panel.paramSelect}
               value={cfg.kind}
               onChange={(e) => write({ kind: e.target.value as BodyKind })}
               aria-label="Body type"
@@ -62,12 +110,11 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
               <option value="dynamic">Dynamic</option>
               <option value="static">Static</option>
             </select>
-          </InspectorRow>
+          </PropertyRow>
 
-          <InspectorRow label="Collider" align="center">
+          <PropertyRow label="Collider" compact>
             <select
-              className={styles.select}
-              style={{ width: 110 }}
+              className={panel.paramSelect}
               value={cfg.shape}
               onChange={(e) => write({ shape: e.target.value as ColliderShape })}
               aria-label="Collider shape"
@@ -75,69 +122,78 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
               <option value="box">Box</option>
               <option value="circle">Circle</option>
             </select>
-          </InspectorRow>
+          </PropertyRow>
 
           {cfg.kind === 'dynamic' && (
             <>
-              <InspectorRow label="Spin" align="center">
-                <div className={styles.control}>
+              <PropertyRow label="Allow Spin" compact>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
                   <Checkbox
                     checked={cfg.rotate}
                     onChange={(e) => write({ rotate: e.target.checked })}
                     aria-label="Allow rotation"
                   />
-                  <span style={{ marginLeft: 8, fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
-                    {cfg.rotate ? 'Tumbles and rolls' : 'Translates only'}
+                  <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+                    {cfg.rotate ? 'Tumbles & rolls' : 'Translates only'}
                   </span>
                 </div>
-              </InspectorRow>
-              <InspectorRow label="Mass">
+              </PropertyRow>
+              <PropertyRow label="Mass" compact>
                 <ValueField value={cfg.mass} min={0.01} precision={2} onChange={(v) => write({ mass: v })} aria-label="Mass" />
-              </InspectorRow>
-              <InspectorRow label="Bounce">
+              </PropertyRow>
+              <PropertyRow label="Bounce" compact>
                 <ValueField value={cfg.restitution} min={0} max={1} precision={2} onChange={(v) => write({ restitution: v })} aria-label="Restitution" />
-              </InspectorRow>
-              <InspectorRow label="Friction">
+              </PropertyRow>
+              <PropertyRow label="Friction" compact>
                 <ValueField value={cfg.friction} min={0} max={1} precision={2} onChange={(v) => write({ friction: v })} aria-label="Friction" />
-              </InspectorRow>
-              <InspectorRow label="Damping">
+              </PropertyRow>
+              <PropertyRow label="Damping" compact>
                 <ValueField value={cfg.damping} min={0} max={1} precision={3} onChange={(v) => write({ damping: v })} aria-label="Damping" />
-              </InspectorRow>
+              </PropertyRow>
             </>
           )}
 
-          <h4 className={styles.sectionNote} style={{ margin: '8px 0 2px' }}>World (shared)</h4>
-          <InspectorRow label="Gravity X">
-            <ValueField value={w.gravityX} precision={0} onChange={(v) => w.set({ gravityX: v })} aria-label="Gravity X" />
-          </InspectorRow>
-          <InspectorRow label="Gravity Y">
-            <ValueField value={w.gravityY} precision={0} onChange={(v) => w.set({ gravityY: v })} aria-label="Gravity Y" />
-          </InspectorRow>
-          <InspectorRow label="Walls" align="center">
-            <div className={styles.control}>
-              <Checkbox
-                checked={w.useCompBounds}
-                onChange={(e) => w.set({ useCompBounds: e.target.checked })}
-                aria-label="Use composition bounds"
-              />
-              <span style={{ marginLeft: 8, fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
-                {w.useCompBounds ? 'Comp edges' : 'Open — bodies leave frame'}
-              </span>
-            </div>
-          </InspectorRow>
-          <InspectorRow label="Solver">
-            <ValueField value={w.iterations} min={1} max={20} precision={0} onChange={(v) => w.set({ iterations: v })} aria-label="Solver iterations" />
-          </InspectorRow>
-
-          <p className={styles.sectionNote} style={{ marginTop: 6 }}>
-            Physics replaces a dynamic layer’s keyframed position — and its
-            rotation too, once Spin is on. Spin is off by default so scenes
-            simulated before it existed replay identically.
-          </p>
-        </>
+          {/* Simulation World (shared across composition) */}
+          <div className={panel.paramGroup}>
+            <button
+              type="button"
+              className={panel.paramGroupHead}
+              onClick={() => setWorldCollapsed(!worldCollapsed)}
+            >
+              <Icon name={worldCollapsed ? 'chevron-right' : 'chevron-down'} size="sm" />
+              <span>World (Simulation Scope)</span>
+            </button>
+            {!worldCollapsed && (
+              <div className={panel.paramGroupBody}>
+                <PropertyRow label="Gravity X" compact>
+                  <ValueField value={w.gravityX} precision={0} onChange={(v) => w.set({ gravityX: v })} aria-label="Gravity X" />
+                </PropertyRow>
+                <PropertyRow label="Gravity Y" compact>
+                  <ValueField value={w.gravityY} precision={0} onChange={(v) => w.set({ gravityY: v })} aria-label="Gravity Y" />
+                </PropertyRow>
+                <PropertyRow label="Comp Bounds" compact>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                    <Checkbox
+                      checked={w.useCompBounds}
+                      onChange={(e) => w.set({ useCompBounds: e.target.checked })}
+                      aria-label="Use composition bounds"
+                    />
+                    <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+                      {w.useCompBounds ? 'Comp edges' : 'Open (leaves frame)'}
+                    </span>
+                  </div>
+                </PropertyRow>
+                <PropertyRow label="Solver Steps" compact>
+                  <ValueField value={w.iterations} min={1} max={20} precision={0} onChange={(v) => w.set({ iterations: v })} aria-label="Solver iterations" />
+                </PropertyRow>
+              </div>
+            )}
+          </div>
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
 export default PhysicsSection;
+

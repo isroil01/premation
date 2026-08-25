@@ -1294,7 +1294,10 @@ export class CompositionPass extends RenderPass {
       } else if (effect.type === 'noise') {
         cmds.add({
           batchKey: 'noise', material: NOISE_MATERIAL, blend: 'normal',
-          uniforms: packNoise(mvp, targetUv, effect.amount, effect.evolution, effect.monochrome),
+          uniforms: packNoise(
+            mvp, targetUv, effect.amount, effect.evolution, effect.monochrome,
+            viewport.pixelSize.width, viewport.pixelSize.height,
+          ),
           texture: curTex, sampler: clampSampler(),
         });
       } else if (effect.type === 'plugin') {

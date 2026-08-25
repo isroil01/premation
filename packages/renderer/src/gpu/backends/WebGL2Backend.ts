@@ -864,31 +864,37 @@ function applyBlend(gl: GL, blend: BlendMode): void {
     return;
   }
   gl.enable(gl.BLEND);
-  
-  // Default blend equation
-  gl.blendEquation(gl.FUNC_ADD);
 
+  // ALPHA IS COVERAGE, and coverage composites `over` no matter what the
+  // colour equation does. The plain blendFunc/blendEquation calls set BOTH
+  // channels, so the additive and min/max modes dragged alpha along with the
+  // colour: two opaque layers under 'add' wrote a = 2 into the float16 scene
+  // target (floats don't clamp), and the alpha-aware encode blit then doubled
+  // the composite — the root of the webgl2-vs-webgpu additive divergence
+  // family (blend-add, light-rays, light-sweep, lens-flare, …). WebGPU's
+  // table always blended alpha `over` (see WebGPUBackend.blendFor); this
+  // mirrors it exactly, per channel.
+  gl.blendEquationSeparate(
+    blend === 'subtract' ? gl.FUNC_REVERSE_SUBTRACT
+      : blend === 'darken' ? gl.MIN
+        : blend === 'lighten' ? gl.MAX
+          : gl.FUNC_ADD,
+    gl.FUNC_ADD,
+  );
+
+  const alphaOver = [gl.ONE, gl.ONE_MINUS_SRC_ALPHA] as const;
   switch (blend) {
     case 'add':
-      gl.blendFunc(gl.ONE, gl.ONE);
+    case 'subtract':
+    case 'darken':
+    case 'lighten':
+      gl.blendFuncSeparate(gl.ONE, gl.ONE, alphaOver[0], alphaOver[1]);
       break;
     case 'multiply':
-      gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+      gl.blendFuncSeparate(gl.DST_COLOR, gl.ZERO, alphaOver[0], alphaOver[1]);
       break;
     case 'screen':
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
-      break;
-    case 'subtract':
-      gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      break;
-    case 'darken':
-      gl.blendEquation(gl.MIN);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      break;
-    case 'lighten':
-      gl.blendEquation(gl.MAX);
-      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_COLOR, alphaOver[0], alphaOver[1]);
       break;
     default:
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied over

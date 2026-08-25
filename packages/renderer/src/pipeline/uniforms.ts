@@ -914,11 +914,23 @@ export function packFxBlock(
   return out;
 }
 
-export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: number, monochrome: boolean): Float32Array {
-  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+export function packNoise(
+  mvp: Mat3,
+  uvRect: Rect,
+  amount: number,
+  evolution: number,
+  monochrome: boolean,
+  /** Chain-buffer size in texels — keys the per-PIXEL grain hash (see the
+   *  shader: pixel centres can never straddle a hash cell, which is what makes
+   *  the grain bit-identical across backends). */
+  bufW = 1,
+  bufH = 1,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
   out[o + 0] = amount; out[o + 1] = evolution; out[o + 2] = monochrome ? 1 : 0; out[o + 3] = 0;
+  out[o + 4] = Math.max(1, bufW); out[o + 5] = Math.max(1, bufH); out[o + 6] = 0; out[o + 7] = 0;
   return out;
 }
 

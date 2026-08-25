@@ -231,6 +231,23 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
     announcedBackend = true;
 
     console.log(`[harness] backend resolved: asked ${backend}, running ${be.resolvedKind}`);
+    // One-time capability report: whether THIS environment can allocate float
+    // render targets decides whether compositing runs linear (the product
+    // contract) or falls back to display-referred 8-bit — which is the root of
+    // the additive-family webgpu-vs-webgl2 divergences. Saying it out loud in
+    // the log turns "80 scenes diverge, cause unknown" into a one-line fact.
+    if (!(globalThis as Record<string, unknown>).__capsReported) {
+      (globalThis as Record<string, unknown>).__capsReported = true;
+      try {
+        const probe = document.createElement('canvas');
+        const gl = probe.getContext('webgl2');
+        console.log(
+          `[harness] webgl2 EXT_color_buffer_float: ${gl ? !!gl.getExtension('EXT_color_buffer_float') : 'no-context'}`,
+        );
+      } catch {
+        console.log('[harness] webgl2 EXT_color_buffer_float: probe failed');
+      }
+    }
   }
 
   try {

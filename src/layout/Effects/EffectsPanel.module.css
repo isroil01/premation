@@ -574,6 +574,31 @@
   --prop-field-width: 60px;
 }
 
+.paramSelect {
+  width: 100%;
+  max-width: 110px;
+  height: 22px;
+  background: var(--color-surface-2, #161616);
+  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
+  color: var(--color-text-primary, #e1e1e1);
+  font-family: inherit;
+  font-size: var(--font-size-xs, 11px);
+  padding: 0 var(--space-2, 6px);
+  border-radius: var(--radius-xs, 3px);
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.paramSelect:hover {
+  border-color: var(--color-field-border-hover, rgba(255, 255, 255, 0.16));
+}
+
+.paramSelect:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+
 /*
  * A collapsible parameter section — AE's "▸ Output Cycle".
  *

@@ -37,8 +37,16 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 @vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
 }
+// FIELD coordinate: fxBox (and every centre/offset packed in it) is authored
+// in TOP-DOWN buffer fractions, but uv's V runs the opposite way per backend
+// on FBO round-trips (targetSampleUv). All layer-pixel maths runs in field
+// space; layerUv folds the field->sample conversion back in when sampling.
+fn fieldQ(uv : vec2<f32>) -> vec2<f32> {
+  return (uv - obj.uvRect.xy) / obj.uvRect.zw;
+}
 fn layerUv(px : vec2<f32>, lwh : vec2<f32>) -> vec2<f32> {
-  return obj.fxBox.xy + (px / lwh) * obj.fxBox.zw;
+  let q = obj.fxBox.xy + (px / lwh) * obj.fxBox.zw;
+  return obj.uvRect.xy + q * obj.uvRect.zw;
 }
 fn samplePx(px : vec2<f32>, lwh : vec2<f32>) -> vec4<f32> {
   if (px.x < 0.0 || px.y < 0.0 || px.x > lwh.x || px.y > lwh.y) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
@@ -70,7 +78,8 @@ layout(std140) uniform Object { mat3 mvp; vec4 uvRect; ${Array.from({ length: ve
 uniform sampler2D uTex;
 in vec2 vUv;
 out vec4 frag;
-vec2 layerUv(vec2 px, vec2 lwh) { return fxBox.xy + (px / lwh) * fxBox.zw; }
+vec2 fieldQ(vec2 uv) { return (uv - uvRect.xy) / uvRect.zw; } // see WGSL note
+vec2 layerUv(vec2 px, vec2 lwh) { vec2 q = fxBox.xy + (px / lwh) * fxBox.zw; return uvRect.xy + q * uvRect.zw; }
 vec4 samplePx(vec2 px, vec2 lwh) {
   if (px.x < 0.0 || px.y < 0.0 || px.x > lwh.x || px.y > lwh.y) return vec4(0.0);
   return textureLod(uTex, layerUv(px, lwh), 0.0);
@@ -105,14 +114,14 @@ ${glslFs}
 
 export const MIRROR_FX = fxShader('mirror', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   let d = (pp.x - obj.p0.x) * obj.p0.z + (pp.y - obj.p0.y) * obj.p0.w;
   var sp = pp;
   if (d > 0.0) { sp = pp - 2.0 * d * obj.p0.zw; }
   return samplePx(sp, lwh);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   float d = (pp.x - p0.x) * p0.z + (pp.y - p0.y) * p0.w;
   vec2 sp = (d > 0.0) ? pp - 2.0 * d * p0.zw : pp;
@@ -120,7 +129,7 @@ export const MIRROR_FX = fxShader('mirror', 2,
 
 export const OFFSET_FX = fxShader('offset', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   // Positive modulo, like the kernel — plain % keeps the dividend's sign.
   let sp = vec2<f32>(
@@ -134,7 +143,7 @@ export const OFFSET_FX = fxShader('offset', 2,
   let mixed = mix(moved, orig, obj.p0.z);
   return encodeOut(mixed.rgb, mixed.a);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   vec2 sp = mod(mod(pp - p0.xy, lwh) + lwh, lwh);
   if (p0.z <= 0.0) { frag = textureLod(uTex, layerUv(sp, lwh), 0.0); return; }
@@ -145,7 +154,7 @@ export const OFFSET_FX = fxShader('offset', 2,
 
 export const BULGE_FX = fxShader('bulge', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   let v = pp - obj.p0.xy;
   let dist = length(v);
@@ -158,7 +167,7 @@ export const BULGE_FX = fxShader('bulge', 2,
   }
   return samplePx(sp, lwh);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   vec2 v = pp - p0.xy;
   float dist = length(v);
@@ -173,7 +182,7 @@ export const BULGE_FX = fxShader('bulge', 2,
 
 export const TWIRL_FX = fxShader('twirl', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   let v = pp - obj.p0.xy;
   let dist = length(v);
@@ -185,7 +194,7 @@ export const TWIRL_FX = fxShader('twirl', 2,
   }
   return samplePx(sp, lwh);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   vec2 v = pp - p0.xy;
   float dist = length(v);
@@ -199,7 +208,7 @@ export const TWIRL_FX = fxShader('twirl', 2,
 
 export const SPHERIZE_FX = fxShader('spherize', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   let v = pp - obj.p0.xy;
   let dist = length(v);
@@ -213,7 +222,7 @@ export const SPHERIZE_FX = fxShader('spherize', 2,
   }
   return samplePx(sp, lwh);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   vec2 v = pp - p0.xy;
   float dist = length(v);
@@ -227,7 +236,7 @@ export const SPHERIZE_FX = fxShader('spherize', 2,
 
 export const KALEIDOSCOPE_FX = fxShader('kaleidoscope', 2,
   `  let lwh = obj.p1.zw;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   let seg = obj.p1.x;
   if (seg <= 0.0) { return samplePx(pp, lwh); }
@@ -242,7 +251,7 @@ export const KALEIDOSCOPE_FX = fxShader('kaleidoscope', 2,
   let sp = obj.p0.xy + vec2<f32>(cos(ang), sin(ang)) * r;
   return samplePx(sp, lwh);`,
   `  vec2 lwh = p1.zw;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   float seg = p1.x;
   if (seg <= 0.0) { frag = samplePx(pp, lwh); return; }
@@ -259,7 +268,7 @@ export const KALEIDOSCOPE_FX = fxShader('kaleidoscope', 2,
 
 export const RIPPLE_FX = fxShader('ripple', 3,
   `  let lwh = vec2<f32>(obj.p1.w, obj.p2.x);
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   let v = pp - obj.p0.xy;
   let d = length(v);
@@ -273,7 +282,7 @@ export const RIPPLE_FX = fxShader('ripple', 3,
   }
   return samplePx(sp, lwh);`,
   `  vec2 lwh = vec2(p1.w, p2.x);
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   vec2 v = pp - p0.xy;
   float d = length(v);
@@ -289,7 +298,7 @@ export const RIPPLE_FX = fxShader('ripple', 3,
 
 export const CHROMATIC_ABERRATION_FX = fxShader('chromatic-aberration', 3,
   `  let lwh = obj.p2.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   var vx = obj.p0.z; var vy = obj.p0.w;
   if (obj.p0.y < 0.5) {
@@ -305,7 +314,7 @@ export const CHROMATIC_ABERRATION_FX = fxShader('chromatic-aberration', 3,
   let a = max(sG.a, max(sR.a, sB.a));
   return encodeOut(vec3<f32>(sR.r, sG.g, sB.b), a);`,
   `  vec2 lwh = p2.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   float vx = p0.z; float vy = p0.w;
   if (p0.y < 0.5) {
@@ -323,7 +332,7 @@ export const CHROMATIC_ABERRATION_FX = fxShader('chromatic-aberration', 3,
 
 export const MAGNIFY_FX = fxShader('magnify', 2,
   `  let lwh = obj.p1.zw;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
   let v = pp - obj.p0.xy;
   let d = select(length(v), max(abs(v.x), abs(v.y)), obj.p1.x > 0.5);
@@ -338,7 +347,7 @@ export const MAGNIFY_FX = fxShader('magnify', 2,
   }
   return samplePx(sp, lwh);`,
   `  vec2 lwh = p1.zw;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { frag = textureLod(uTex, vUv, 0.0); return; }
   vec2 v = pp - p0.xy;
   float d = (p1.x > 0.5) ? max(abs(v.x), abs(v.y)) : length(v);
@@ -354,7 +363,7 @@ export const MAGNIFY_FX = fxShader('magnify', 2,
 
 export const MOSAIC_FX = fxShader('mosaic', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   let cols = obj.p0.x; let rows = obj.p0.y;
   let bx = floor(pp.x * cols / lwh.x);
   let by = floor(pp.y * rows / lwh.y);
@@ -376,7 +385,7 @@ export const MOSAIC_FX = fxShader('mosaic', 2,
   }
   return acc / 16.0;`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   float cols = p0.x; float rows = p0.y;
   float bx = floor(pp.x * cols / lwh.x);
   float by = floor(pp.y * rows / lwh.y);
@@ -400,7 +409,7 @@ export const MOSAIC_FX = fxShader('mosaic', 2,
 
 export const FIND_EDGES_FX = fxShader('find-edges', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   // Clamped taps, like the kernel — skipping leaves a hairline frame.
   let cl = vec2<f32>(0.5, 0.5);
   let ch = lwh - vec2<f32>(0.5, 0.5);
@@ -422,7 +431,7 @@ export const FIND_EDGES_FX = fxShader('find-edges', 2,
   let outC = mix(vec3<f32>(v, v, v), src.rgb, obj.p0.y);
   return encodeOut(outC, src.a);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   vec2 cl = vec2(0.5);
   vec2 ch = lwh - vec2(0.5);
   float l[9];
@@ -444,7 +453,7 @@ export const FIND_EDGES_FX = fxShader('find-edges', 2,
 
 export const EMBOSS_FX = fxShader('emboss', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   let cl = vec2<f32>(0.5, 0.5);
   let ch = lwh - vec2<f32>(0.5, 0.5);
   // Whole-pixel taps, like the kernel's at() — it rounds before clamping.
@@ -456,7 +465,7 @@ export const EMBOSS_FX = fxShader('emboss', 2,
   let outC = mix(vec3<f32>(v, v, v), src.rgb, obj.p0.w);
   return encodeOut(outC, src.a);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   vec2 cl = vec2(0.5);
   vec2 ch = lwh - vec2(0.5);
   vec2 fwd = clamp(floor(pp + p0.xy) + vec2(0.5), cl, ch);
@@ -469,7 +478,7 @@ export const EMBOSS_FX = fxShader('emboss', 2,
 
 export const COLOR_EMBOSS_FX = fxShader('color-emboss', 2,
   `  let lwh = obj.p1.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   let cl = vec2<f32>(0.5, 0.5);
   let ch = lwh - vec2<f32>(0.5, 0.5);
   let neg = clamp(pp - obj.p0.xy, cl, ch);
@@ -480,7 +489,7 @@ export const COLOR_EMBOSS_FX = fxShader('color-emboss', 2,
   let outC = mix(src.rgb, v, obj.p0.w);
   return encodeOut(outC, src.a);`,
   `  vec2 lwh = p1.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   vec2 cl = vec2(0.5);
   vec2 ch = lwh - vec2(0.5);
   vec2 neg = clamp(pp - p0.xy, cl, ch);
@@ -493,7 +502,7 @@ export const COLOR_EMBOSS_FX = fxShader('color-emboss', 2,
 
 export const HALFTONE_FX = fxShader('halftone', 4,
   `  let lwh = obj.p3.xy;
-  let pp = (uv - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+  let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   let cell = obj.p0.x;
   let ca = obj.p0.y; let sa = obj.p0.z;
   // The CPU kernel addresses pixels by INTEGER index; pp is centre-space, so
@@ -532,7 +541,7 @@ export const HALFTONE_FX = fxShader('halftone', 4,
   let outC = mix(src.rgb, tgt, obj.p2.w);
   return encodeOut(outC, src.a);`,
   `  vec2 lwh = p3.xy;
-  vec2 pp = (vUv - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
+  vec2 pp = (fieldQ(vUv) - fxBox.xy) / max(fxBox.zw, vec2(0.000001)) * lwh;
   float cell = p0.x;
   float ca = p0.y; float sa = p0.z;
   // The CPU kernel addresses pixels by INTEGER index; pp is centre-space, so
