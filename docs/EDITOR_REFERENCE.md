@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 17 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 46 | `src/stores/*.ts` |
+| Stores | 47 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        46 Zustand stores
+                          ├── src/stores/*        47 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -876,10 +876,10 @@ a 3D LUT can rotate one hue while its neighbour holds still. Filed under Color
 Correction rather than AE's Utility folder, because a one-item folder is worse
 than a slightly wrong one.
 
-**It samples in whatever space the pixels arrive in, and this renderer is not
-linear-light.** A log-space LUT will therefore not match its author's intent
-until that work lands. Recorded in `cubeLut.ts` as well, so it is not
-rediscovered as a bug.
+**It samples the project working space** (`srgb-linear` or `aces-cg`). A LUT
+authored for a different encoding (log, display-referred) will not match its
+author's intent unless the working space matches; that is the documented limit
+vs full OCIO (no roles / displays / views). See `cubeLut.ts`.
 
 Adding it exposed a **bug in `featureCounts.cjs` itself**: `unionMembers`
 regex-matched `'…'` runs in the union body *without stripping comments*, so the
@@ -1139,10 +1139,14 @@ the subject sits inside it, so alpha is 1 where the divergence was reported, and
 premultiplied rgb IS straight rgb at alpha 1. Both recorded leads on that
 investigation — orientation, then alpha — were wrong.
 
-The remaining flat-difference cluster, by `analyze-gap`'s measure, is
+The remaining flat-difference cluster, by `analyze-gap`'s measure, was
 `light-ambient`, `layer-styles`, `mask-feather`, `three-d-dof-visible`,
-`light-cast-shadow` and `light-spot`. All six are pre-existing baseline entries,
-none newly divergent. Their real ratchet standing is UNMEASURED here.
+`light-cast-shadow` and `light-spot`. **`layer-styles` and `mask-feather`
+exited (2026-08-25):** GPU blur follows CSS sigma semantics (σ = radius,
+±2.5σ), proven on a hard-edge isolation (`blur-hard-edge` +
+`cssBlurKernel.test.ts`); both goldens re-blessed from WebGL2 as
+`expect-pass`. Still open in that cluster: `light-ambient`,
+`three-d-dof-visible`, `light-cast-shadow`, `light-spot`.
 
 ### Swept 2026-08-12 — the Renderable boundary is clean, and now stays that way
 
@@ -1316,7 +1320,7 @@ Listed as a gap: "`loopOut('cycle')` exists; no `pingpong` token." There is a
 and offers it in the editor's own autocomplete:
 
 ```
-export type LoopMode = 'cycle' | 'pingpong' | 'offset';
+export type LoopMode = 'cycle' | 'pingpong' | 'offset' | 'continue';
 ```
 
 Two evaluation sites, not one, which is the part worth checking: `loopOut` and
@@ -1326,9 +1330,19 @@ plus zero consumers — the exact shape `Command.isChecked`, `isPassthroughOnly`
 and `SelectionPass` all had in this same branch, so it is worth distinguishing
 by hand every time.
 
+`continue` extrapolates the last (or first) segment's speed past the keyframe
+span — AE's fourth loop mode. Sampled just inside the span so a hold-clamped
+`valueAtTime` does not report zero velocity at the endpoint.
+
 Unknown modes fall back to `'cycle'` deliberately, so a typo degrades instead
 of erroring — which also means "I typed pingpong and got a cycle" is a
 diagnosable symptom rather than the feature being absent.
+
+Composed bounce / inertia / delayed-follow / wiggle / loopOut idioms are pinned in
+`packages/animation/src/__tests__/aeIdioms.test.ts` (velocityAtTime + key +
+layerAt + selfSpan + posterizeTime), not as separate builtins. `suggestExpression`
+maps natural-language bounce / inertia / follow / wiggle / pingpong / loop intents
+onto those same shapes.
 
 **Fifth wrong premise in that backlog**, and the count is now the finding. The
 verify-first instruction attached to one item (variable font axes) should have

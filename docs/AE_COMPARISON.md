@@ -32,6 +32,7 @@
 | Interpret Footage | fps, PAR, alpha, looping, Separate Fields, **3:2 pulldown detect + Remove Pulldown** | Same | Parity |
 | Layer property tree | Twirl-down tree built from the layer itself (`propertyTree.ts`): Text, Contents, Masks, Effects, Transform, Layer Styles, Material Options, Audio — every row present with its stopwatch before anything is keyed; Material Options keyframe via `readNodeMaterial(node, av)` | Same groups | Parity |
 | **Quick Apply** | Command palette `+` (effects) / `*` (presets): fuzzy search, Enter applies to every selected layer (`quickApply.ts`) | 26.2 Quick Apply | Parity |
+| **Effects & Presets favourites / Effect Controls labels** | Star effect types (`effectFavorites` pref); per-instance label colour swatch on Effect Controls (`Effect.labelColor`) | Favourites + label colours | Parity |
 | **Scene Edit Detection** | Luma-histogram cut detector over the exact decode path, adaptive threshold, **plus dissolve detection** (steady-drift windows, reported at the midpoint) → markers or splits (`sceneEditDetect.ts`) | Sensei-based | Parity on cuts and dissolves |
 | **Proportional Scrubbing** | Ordered property-row selection; a drag ramps 0 % → 100 % first→last (`propertySelectionStore.ts`) | 26.2 | Parity |
 | **Adaptive Resolution** | Viewport drops to a floor (Half by default) during any drag, restores on release (`renderQualityStore.ts`) | Fast Previews ▸ Adaptive Resolution | Parity |
@@ -67,7 +68,7 @@
 | Effect stack | **183** effects (`EffectType` union, completeness-tested) incl. **Unmult**, **CC Composite**, **CC RepeTile**, **CC Scatterize**, **CC Radial Fast Blur**, **CC Cross Blur**, **CC Scale Wipe**, **CC Plastic**, **Curl Noise** | 400+ (26.0 adds **Unmult** with 32-bit HDR) + third-party | High coverage of the used set |
 | Keying | Full Keylight parameter set (`keylight.ts`) | Keylight 1.2 | Parity |
 | Content-Aware Fill | PatchMatch still + **video bake with bidirectional temporal polish** | Content-Aware Fill | Classical foothold; Adobe quality open |
-| Color spaces | ACEScg, linear sRGB, 16/32-bpc intermediates, ACES ODT, CUBE LUT; **HDR10/HLG export with MaxCLL/MaxFALL + master-display SEI**; float EXR → GPU (`rgba32float`) | OCIO, 32-bpc, HDR delivery | Strong; libx265 availability still host-dependent |
+| Color spaces | ACEScg, linear sRGB, 16/32-bpc intermediates, ACES ODT, CUBE LUT (working-space sample; **not** full OCIO roles/displays/views); viewer LUT (session, post-ODT); **HDR10/HLG export with MaxCLL/MaxFALL + master-display SEI**; float EXR → GPU (`rgba32float`) | OCIO, 32-bpc, HDR delivery | Strong; libx265 availability still host-dependent |
 | Extensibility | Sandboxed Web Worker plugins + custom WebGPU/WebGL2 shader effects | C++ AEGP/Effect SDK | Different models; Premation's is sandboxed |
 
 ### 2.5 Text & shapes

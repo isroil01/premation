@@ -52,7 +52,7 @@ const MAP = {
   search: 'search', settings: 'settings', menu: 'menu', 'more-horizontal': 'more_horiz', 'more-vertical': 'more_vert',
   eye: 'visibility', 'eye-off': 'visibility_off', lock: 'lock', unlock: 'lock_open',
   play: 'play_arrow', pause: 'pause', stop: 'stop', 'skip-back': 'skip_previous', 'skip-forward': 'skip_next',
-  refresh: 'sync', 'rotate-cw': 'rotate_right', rotate: 'rotate_left', anchor: 'anchor', move: 'open_with',
+  refresh: 'sync', 'rotate-cw': 'rotate_right', rotate: 'rotate_right', anchor: 'recenter', move: 'open_with',
 
   // Real left/right/bottom glyphs. The previous set had only ONE sidebar mark,
   // so `panel-right` and `panel-bottom` were the same glyph under a CSS
@@ -63,15 +63,9 @@ const MAP = {
 
   layout: 'dashboard', crosshair: 'center_focus_strong', theme: 'contrast', undo: 'undo', redo: 'redo',
   'select-all': 'select_all', deselect: 'deselect', 'mouse-pointer': 'arrow_selector_tool',
+  'direct-select': 'near_me', 'pan-behind': 'recenter', 'layer-plus': 'add_box',
   pen: 'ink_pen', type: 'text_fields', square: 'square', circle: 'circle',
-  // NOT `crop_square`/`radio_button_unchecked`: those are byte-identical to
-  // `square`/`circle` in this family, so the mask would have been the shape tool
-  // wearing a different name. A matte has to look like a matte.
-  'mask-square': 'filter_frames', 'mask-circle': 'vignette',
-  // The Pen Mask tool had been drawing the SAME glyph as the Pen tool, three
-  // buttons away in the same bar. `draw` is a pen laying down a path behind it,
-  // which separates them without either becoming a worse picture of itself.
-  'mask-pen': 'draw',
+  'mask-square': 'crop_square', 'mask-circle': 'circle', 'mask-pen': 'draw',
   pencil: 'edit', line: 'shape_line', star: 'star', polygon: 'pentagon', curvature: 'line_curve',
   // Arrows-in / arrows-out rather than the family's `group_work`/`workspaces`,
   // which are both clusters of circles and unreadable as opposites at 13px.
@@ -92,34 +86,24 @@ const MAP = {
   // outward from the centre. `aspect_ratio` was a framing mark and said nothing
   // about resizing a selection.
   '3d': '3d_rotation', box: 'deployed_code', cube: 'deployed_code', scale: 'zoom_out_map',
+  'draft-3d': '3d',
   heart: 'favorite', cross: 'add', crescent: 'dark_mode', adjustment: 'tune', shy: 'hide_source',
   camera: 'videocam', light: 'lightbulb', user: 'person',
   'align-left': 'align_horizontal_left', 'align-center': 'align_horizontal_center', 'align-right': 'align_horizontal_right',
   'align-top': 'align_vertical_top', 'align-middle': 'align_vertical_center', 'align-bottom': 'align_vertical_bottom',
   'distribute-horizontal': 'horizontal_distribute', 'distribute-vertical': 'vertical_distribute',
-  // `point_scan` — a crosshair inside registration brackets — is what snapping
-  // DOES. `grid_goldenratio` was a picture of guides, which is the thing being
-  // snapped to, not the act, and at 18px it read as a second grid toggle right
-  // next to the real one.
   magnet: 'point_scan', grid: 'grid_on', ruler: 'straighten', scissors: 'content_cut', queue: 'list_alt',
   plugin: 'extension', path: 'polyline', ease: 'animation', frame: 'crop_free',
   'select-arrow': 'arrow_selector_tool', 'sliders-h': 'tune', brush: 'brush', '3d-focus': 'filter_center_focus',
   loop: 'repeat', 'motion-blur': 'motion_blur', 'trim-in': 'first_page', 'trim-out': 'last_page',
   solid: 'rectangle', 'graph-value': 'show_chart', 'graph-speed': 'speed',
   export: 'ios_share', history: 'history', share: 'share', link: 'link',
-  // `device_hub` is a joint with limbs radiating off it, which is what a bone
-  // chain looks like. `account_tree` was a file-explorer tree.
-  'puppet-pin': 'keep', 'push-pin': 'keep', bone: 'device_hub', home: 'home', app: 'apps',
+  'puppet-pin': 'pin', 'push-pin': 'keep', 'puppet-starch': 'keep', 'puppet-bend': '360', 'puppet-advanced': 'transform', 'puppet-overlap': 'layers', bone: 'device_hub',
+  home: 'home', app: 'apps',
   voice: 'graphic_eq', sound: 'volume_up', mic: 'mic', ai: 'star_shine', brain: 'psychology',
   tv: 'tv', tour: 'tour',
   'text-left': 'format_align_left', 'text-center': 'format_align_center', 'text-right': 'format_align_right',
-  // These three are the toolbar's camera cluster and gizmo cluster, and each
-  // needs to say what its BUTTON does, not what its noun is:
-  //   perspective → the Dolly tool, so arrows converging inward (pushing in).
-  //     `view_in_ar` was a cube in brackets — a 3D-view mark, not a move.
-  //   axis-3d → the Universal Gizmo, so the transform mark. `line_axis` is a
-  //     plotted chart, which is what it looked like sitting next to Position.
-  orbit: 'orbit', 'hand-grab': 'back_hand', 'pan-camera': 'control_camera', perspective: 'zoom_in_map',
+  orbit: '3d_rotation', 'hand-grab': 'back_hand', 'pan-camera': 'control_camera', perspective: 'zoom_in_map',
   'axis-3d': 'transform', 'ground-grid': 'grid_4x4', sphere: 'globe', cylinder: 'database',
   'text-3d': 'font_download', 'pop-out': 'picture_in_picture_alt', gpu: 'memory',
   blur: 'blur_on', palette: 'palette', gradient: 'gradient', waves: 'waves', eraser: 'ink_eraser',
@@ -129,44 +113,24 @@ const MAP = {
 
 /**
  * Names with no exact glyph in the family, and what was chosen instead.
- *
- * Recorded because a substitution is a judgement, and a judgement that leaves no
- * trace gets re-litigated from scratch by whoever notices it next. If a future
- * release of the family adds the real thing, this is the list to re-check.
  */
 const SUBSTITUTIONS = {
   bone: 'no bone glyph; `device_hub` is a joint with limbs radiating off it',
   magnet: 'no magnet glyph; `point_scan` is the crosshair-in-brackets snap mark',
   queue: 'no plain `queue`; `list_alt` is the render-queue panel it opens',
-  'mask-circle': 'no circular-mask glyph; `vignette` is the circular matte',
-  'mask-square': 'no square-mask glyph; `filter_frames` is the frame-within-frame matte',
   'text-3d': 'no 3D-text glyph; `font_download` is the boxed glyph mark',
-  perspective: 'named for the concept but used for the DOLLY tool; `zoom_in_map` is the inward push',
-  'axis-3d': 'named for the concept but used for the UNIVERSAL GIZMO; `transform` is the gizmo mark',
 };
 
 /**
  * Glyphs drawn here because the family's nearest match means something else.
- *
- * The keyframe diamond is the case that forced this: Material's `diamond` is a
- * faceted GEM, and a gem is not what an animator is looking for on a timeline
- * row. A diamond is four straight edges, so drawing it sharp costs nothing.
- *
- * Geometry matches the family's own metrics — a 960 grid, 95 units of padding,
- * a 94-unit border (measured off `square`, whose outer box is 95..866 and inner
- * 189..771). The outline's inner contour is wound OPPOSITE to its outer one so
- * the nonzero fill rule punches it out as a hole; every other path here relies
- * on that same rule, so switching to evenodd to avoid thinking about winding
- * would break the imported glyphs that self-overlap.
  */
 const HAND_DRAWN = {
-  // Half-diagonal 420 out, and 420 - 94*sqrt(2) = 287 in, so the border reads
-  // at the same 94 units perpendicular as every imported glyph.
   keyframe: {
     d: 'M480-900 900-480 480-60 60-480Z M480-767 193-480 480-193 767-480Z',
     fill: 'M480-900 900-480 480-60 60-480Z',
   },
 };
+
 HAND_DRAWN.diamond = HAND_DRAWN.keyframe;
 
 function readPath(glyph, variant) {

@@ -601,6 +601,9 @@ function registerRenderIpc(): void {
     return jobId;
   });
 
+  /** Pre-export HDR capability — Export dialog shows HEVC vs H.264 High 10 before encode. */
+  handle('render:probeHdr', async () => ({ libx265: await probeLibx265() }));
+
   handle(
     'render:stageFrame',
     async (_e, jobId: string, index: number, bytes: Uint8Array, ext: 'jpg' | 'png' = 'jpg') => {
