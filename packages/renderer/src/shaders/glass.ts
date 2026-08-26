@@ -118,12 +118,19 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   col = mix(col, obj.p1.rgb, obj.p1.w);
 
   let rimBand = smoothstep(0.0, 1.0, gmag * max(0.01, obj.p3.x));
+  // The rim and specular ANGLES are authored top-down (comp space), but gdir
+  // was measured in SAMPLE space — whose V flips per backend on FBO
+  // round-trips (targetSampleUv). Convert the gradient to field space for the
+  // angle comparisons or the highlight sits on the wrong vertical side on
+  // WebGL2. The refraction offsets above stay in sample space on purpose:
+  // gradient and sampling agree there by construction.
+  let gfield = gdir * sign(obj.uvRect.zw);
   let rimDir = vec2<f32>(cos(obj.p3.y), sin(obj.p3.y));
-  let rimFace = 0.5 + 0.5 * dot(gdir, rimDir);
+  let rimFace = 0.5 + 0.5 * dot(gfield, rimDir);
   col = col + obj.p2.rgb * (rimBand * rimFace * obj.p2.w);
 
   let specDir = vec2<f32>(cos(obj.p4.x), sin(obj.p4.x));
-  let facing = max(0.0, dot(gdir, specDir));
+  let facing = max(0.0, dot(gfield, specDir));
   let spec = pow(facing, max(0.1, obj.p3.w)) * rimBand * obj.p3.z;
   col = col + vec3<f32>(spec, spec, spec);
 
@@ -193,12 +200,14 @@ void main() {
   col = mix(col, p1.rgb, p1.w);
 
   float rimBand = smoothstep(0.0, 1.0, gmag * max(0.01, p3.x));
+  // Field-space gradient for the angle comparisons - matches the WGSL above.
+  vec2 gfield = gdir * sign(uvRect.zw);
   vec2 rimDir = vec2(cos(p3.y), sin(p3.y));
-  float rimFace = 0.5 + 0.5 * dot(gdir, rimDir);
+  float rimFace = 0.5 + 0.5 * dot(gfield, rimDir);
   col += p2.rgb * (rimBand * rimFace * p2.w);
 
   vec2 specDir = vec2(cos(p4.x), sin(p4.x));
-  float facing = max(0.0, dot(gdir, specDir));
+  float facing = max(0.0, dot(gfield, specDir));
   float spec = pow(facing, max(0.1, p3.w)) * rimBand * p3.z;
   col += vec3(spec);
 

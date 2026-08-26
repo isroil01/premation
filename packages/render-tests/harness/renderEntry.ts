@@ -108,7 +108,23 @@ function readCanvasRGBA(canvas: HTMLCanvasElement, kind: 'webgl2' | 'webgpu' | '
     const sctx = scratch.getContext('2d')!;
     sctx.drawImage(canvas, 0, 0);
     const img = sctx.getImageData(0, 0, w, h);
-    return { width: w, height: h, data: new Uint8Array(img.data.buffer.slice(0)) };
+    const data = new Uint8Array(img.data.buffer.slice(0));
+    // RE-PREMULTIPLY (alpha untouched): getImageData is STRAIGHT alpha by
+    // spec, while the WebGL2 branch's readPixels returns PREMULTIPLIED bytes
+    // — the convention every reference was blessed in. On any FRACTIONAL-
+    // alpha pixel the two backends' PNGs therefore disagreed by exactly the
+    // un-premultiply; the whole stencil-luma / silhouette-luma /
+    // alpha-add-seam "divergence" was this readback mismatch, not the
+    // renderer (probed: the blend's inputs and outputs match bit-for-bit).
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3]!;
+      if (a < 255) {
+        data[i] = Math.round((data[i]! * a) / 255);
+        data[i + 1] = Math.round((data[i + 1]! * a) / 255);
+        data[i + 2] = Math.round((data[i + 2]! * a) / 255);
+      }
+    }
+    return { width: w, height: h, data };
   }
   if (kind === 'webgl2') {
     // GPU backends: read the drawing buffer directly (no preserveDrawingBuffer
@@ -123,6 +139,9 @@ function readCanvasRGBA(canvas: HTMLCanvasElement, kind: 'webgl2' | 'webgpu' | '
       const src = (h - 1 - y) * rowBytes;
       flipped.set(raw.subarray(src, src + rowBytes), y * rowBytes);
     }
+    // Bytes are PREMULTIPLIED with true alpha — the convention every
+    // reference is blessed in; the WebGPU branch converts its straight-alpha
+    // getImageData read to match this form.
     return { width: w, height: h, data: flipped };
   }
   // 'null' and anything else: NullBackend produces no pixels, so there is no

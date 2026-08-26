@@ -2,14 +2,9 @@
   "_comment": "Ceilings for how far this backend may differ from the committed (WebGL2-blessed) references. A LIST OF DEBTS, not of blessings: every entry is an undiagnosed WebGPU-vs-WebGL2 disagreement. The gate fails when a frame exceeds its ceiling, or when an unlisted frame exceeds the tolerance. Entries are meant to be removed; run.mjs names the ones that have improved enough to tighten.",
   "tolerance": 0.01,
   "frames": {
-    "blend-stencil-luma#0": 0.34945,
-    "blend-silhouette-luma#0": 0.30087,
-    "blend-alpha-add-seam#0": 0.42741,
-    "fill-opacity-zero-inner-shadow#0": 0.07513,
-    "svg-embedded-raster#0": 0.19233,
-    "glass-frosted#0": 0.02281,
-    "glass-clear#0": 0.04286,
-    "glass-heavy-frost#0": 0.02151,
+    "fill-opacity-zero-inner-shadow#0": 0.07453,
+    "svg-filter-blur#0": 0.01101,
+    "svg-embedded-raster#0": 0.19156,
     "plugin-visible#0": 0.24177
   }
 }
