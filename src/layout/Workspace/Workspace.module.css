@@ -6,7 +6,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
   overflow: hidden;
 }
 
@@ -16,7 +16,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
   outline: none;
   overflow: hidden;
 }
@@ -38,7 +38,7 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 .loadingSpinner {
@@ -83,13 +83,13 @@
 
 /*
  * Composition stage — the infinite-canvas viewport.
- * Uses the exact same background color as the sidebars (var(--color-panel, #232323)).
+ * Uses the exact same background color as the sidebars (var(--color-panel)).
  */
 .stage {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 /* Transparency checkerboard, CLIPPED TO THE COMP RECT.
@@ -120,12 +120,12 @@
   left: 0;
   transform-origin: 0 0;
   pointer-events: none;
-  background-color: #1a1a1a;
+  background-color: var(--color-checkerboard-a);
   background-image:
-    linear-gradient(45deg, #252525 25%, transparent 25%),
-    linear-gradient(-45deg, #252525 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, #252525 75%),
-    linear-gradient(-45deg, transparent 75%, #252525 75%);
+    linear-gradient(45deg, var(--color-checkerboard-b) 25%, transparent 25%),
+    linear-gradient(-45deg, var(--color-checkerboard-b) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--color-checkerboard-b) 75%),
+    linear-gradient(-45deg, transparent 75%, var(--color-checkerboard-b) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
 }

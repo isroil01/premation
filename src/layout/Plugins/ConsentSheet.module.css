@@ -219,7 +219,7 @@
 .consentOverlay {
   position: fixed;
   inset: 0;
-  z-index: var(--z-modal, 200);
+  z-index: var(--z-index-modal);
   display: grid;
   place-items: center;
   padding: var(--space-4);
@@ -232,8 +232,8 @@
   overflow-y: auto;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg, 8px);
-  box-shadow: var(--shadow-lg, 0 16px 48px rgb(0 0 0 / 0.45));
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 /*
@@ -252,7 +252,7 @@
 
 .netHosts li {
   position: relative;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   line-height: 1.7;
   color: var(--color-text-primary);

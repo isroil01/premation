@@ -3,10 +3,10 @@
   flex-direction: column;
   gap: 10px;
   padding: 10px;
-  background: var(--color-panel, #232323);
-  color: var(--color-text-primary, #e1e1e1);
-  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
-  font-size: var(--font-size-xs, 12px);
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-xs);
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
@@ -18,7 +18,7 @@
 .sectionTitle {
   font-size: var(--font-size-xs);
   font-weight: 700;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 2px;
@@ -27,7 +27,7 @@
 .subhead {
   font-size: var(--font-size-micro);
   font-weight: 700;
-  color: var(--color-text-tertiary, #8c8c8c);
+  color: var(--color-text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-top: 4px;
@@ -70,10 +70,10 @@
   align-items: center;
   gap: 4px;
   padding: 2px 6px;
-  border-radius: var(--radius-sm, 3px);
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  color: var(--color-text-secondary, #a6a6a6);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   font-weight: 600;
   cursor: pointer;
@@ -81,14 +81,14 @@
 }
 
 .sourceStopwatch:hover {
-  background: var(--color-surface-3, #333333);
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .sourceStopwatchActive {
-  background: var(--color-selection, #2988ff) !important;
-  color: #ffffff !important;
-  border-color: var(--color-selection, #2988ff) !important;
+  background: var(--color-selection) !important;
+  color: var(--color-primary-foreground) !important;
+  border-color: var(--color-selection) !important;
 }
 
 .contentTextarea {
@@ -96,10 +96,10 @@
   box-sizing: border-box;
   min-height: 52px;
   padding: 6px 8px;
-  background: var(--color-surface-2, #161616);
-  color: var(--color-text-primary, #e1e1e1);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   font-size: var(--font-size-xs);
   font-family: inherit;
   line-height: 1.35;
@@ -108,7 +108,7 @@
 }
 
 .contentTextarea:focus {
-  border-color: var(--color-selection, #2988ff);
+  border-color: var(--color-selection);
 }
 
 /* ── Range Styling Notice ── */
@@ -119,16 +119,16 @@
   padding: 4px 8px;
   background: rgba(41, 136, 255, 0.12);
   border: 1px solid rgba(41, 136, 255, 0.3);
-  border-radius: var(--radius-sm, 3px);
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-micro);
-  color: var(--color-selection, #2988ff);
+  color: var(--color-selection);
   font-weight: 600;
 }
 
 .resetBtn {
   background: transparent;
   border: none;
-  color: var(--color-selection, #6aa8ff);
+  color: var(--color-selection);
   font-size: var(--font-size-micro);
   font-weight: 700;
   cursor: pointer;
@@ -137,7 +137,7 @@
 }
 
 .resetBtn:hover {
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .fontRow {
@@ -153,10 +153,10 @@
   width: 100%;
   min-width: 0;
   height: 26px;
-  background: var(--color-surface-2, #161616);
-  color: var(--color-text-primary, #e1e1e1);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 0 4px;
   font-size: var(--font-size-xs);
   outline: none;
@@ -164,7 +164,7 @@
 }
 
 .fontSelect:focus {
-  border-color: var(--color-selection, #2988ff);
+  border-color: var(--color-selection);
 }
 
 /* Swatch Box (Fill & Stroke) */
@@ -199,7 +199,7 @@
   height: 28px !important;
   padding: 0 !important;
   border-radius: 3px !important;
-  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  border: 1px solid var(--color-border-strong) !important;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5) !important;
   cursor: pointer;
   display: block !important;
@@ -214,7 +214,7 @@
 }
 
 .strokeSwatchPicker {
-  border: 2px solid #ffffff !important;
+  border: 2px solid var(--color-text-primary) !important;
 }
 
 .swapBtn {
@@ -224,8 +224,8 @@
   width: 16px;
   height: 16px;
   border: none;
-  background: var(--color-surface-3, #333333);
-  color: var(--color-text-secondary, #a6a6a6);
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -236,8 +236,8 @@
 }
 
 .swapBtn:hover {
-  background: var(--color-selection, #2988ff);
-  color: #ffffff;
+  background: var(--color-selection);
+  color: var(--color-primary-foreground);
 }
 
 /* Two-column AE metric grid */
@@ -253,9 +253,9 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 2px 6px;
   height: 26px;
   min-width: 0;
@@ -265,7 +265,7 @@
 .metricLabel {
   font-size: var(--font-size-micro);
   font-weight: 700;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   letter-spacing: -0.02em;
   user-select: none;
   min-width: 18px;
@@ -278,7 +278,7 @@
   width: 100%;
   border: none;
   background: transparent;
-  color: var(--color-selection, #6aa8ff);
+  color: var(--color-selection);
   font-family: inherit;
   font-size: var(--font-size-xs);
   font-weight: 500;
@@ -290,13 +290,13 @@
 }
 
 .metricInput:focus {
-  color: #ffffff;
+  color: var(--color-text-primary);
   cursor: text;
 }
 
 .metricUnit {
   font-size: var(--font-size-micro);
-  color: var(--color-text-muted, #5a5a5a);
+  color: var(--color-text-muted);
   margin-left: 1px;
   flex-shrink: 0;
 }
@@ -305,9 +305,9 @@
 .fauxRow {
   display: flex;
   gap: 2px;
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 2px;
   width: 100%;
   box-sizing: border-box;
@@ -319,7 +319,7 @@
   height: 24px;
   border: none;
   background: transparent;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   border-radius: 2px;
   cursor: pointer;
   display: grid;
@@ -331,13 +331,13 @@
 }
 
 .fauxBtn:hover {
-  background: var(--color-surface-3, #333333);
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .fauxBtnActive {
-  background: var(--color-selection, #2988ff) !important;
-  color: #ffffff !important;
+  background: var(--color-selection) !important;
+  color: var(--color-primary-foreground) !important;
 }
 
 /* ── Path Options & Checkbox Row ── */
@@ -364,10 +364,10 @@
 
 .presetChip {
   padding: 3px 6px;
-  border-radius: var(--radius-sm, 3px);
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  color: var(--color-text-secondary, #a6a6a6);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   font-weight: 500;
   text-align: center;
@@ -379,18 +379,18 @@
 }
 
 .presetChip:hover {
-  background: var(--color-surface-3, #333333);
-  border-color: var(--color-selection, #2988ff);
-  color: var(--color-text-primary, #ffffff);
+  background: var(--color-surface-3);
+  border-color: var(--color-selection);
+  color: var(--color-text-primary);
 }
 
 /* Paragraph alignment bar */
 .alignBar {
   display: flex;
   gap: 2px;
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 2px;
   width: 100%;
   box-sizing: border-box;
@@ -402,7 +402,7 @@
   height: 24px;
   border: none;
   background: transparent;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   border-radius: 2px;
   cursor: pointer;
   display: grid;
@@ -412,19 +412,19 @@
 }
 
 .alignBtn:hover {
-  background: var(--color-surface-3, #333333);
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .alignBtnActive {
-  background: var(--color-selection, #2988ff) !important;
-  color: #ffffff !important;
+  background: var(--color-selection) !important;
+  color: var(--color-primary-foreground) !important;
 }
 
 .emptyHint {
   padding: 16px;
   text-align: center;
-  color: var(--color-text-tertiary, #8c8c8c);
+  color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   line-height: 1.4;
 }

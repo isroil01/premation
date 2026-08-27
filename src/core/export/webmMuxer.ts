@@ -53,6 +53,11 @@ const ID = {
   Video: 0xe0,
   PixelWidth: 0xb0,
   PixelHeight: 0xba,
+  Colour: 0x55b0,
+  MatrixCoefficients: 0x55b1,
+  Range: 0x55b9,
+  TransferCharacteristics: 0x55ba,
+  Primaries: 0x55bb,
   Audio: 0xe1,
   SamplingFrequency: 0xb5,
   Channels: 0x9f,
@@ -69,8 +74,21 @@ const ID = {
   CueClusterPosition: 0xf1,
 } as const;
 
-/** One millisecond, in the nanoseconds TimestampScale is measured in. */
-const TIMESTAMP_SCALE_NS = 1_000_000;
+/**
+ * One tick = 100µs (TimestampScale is measured in nanoseconds).
+ *
+ * This was 1ms, which quantised every block timestamp to the millisecond: at
+ * 23.976/29.97/59.94 fps the true frame times land BETWEEN milliseconds, so
+ * each frame carried up to ±0.5ms of jitter and A/V sync drifted audibly
+ * against the sample-exact Opus track over long exports. 100µs represents
+ * every WebCodecs timestamp this muxer is handed exactly enough (frame times
+ * are themselves rounded to 1µs from the index), while int16 cluster-relative
+ * times still span ±3.27s.
+ */
+const TIMESTAMP_SCALE_NS = 100_000;
+
+/** Microseconds (WebCodecs' unit) → timestamp-scale ticks. */
+const toTicks = (us: number): number => Math.round(us / 100);
 
 const VIDEO_TRACK = 1;
 const AUDIO_TRACK = 2;
@@ -189,23 +207,23 @@ const MATROSKA_CODEC_ID: Record<WebmVideoCodec, string> = {
 };
 
 /**
- * A SimpleBlock: track vint, int16 timestamp relative to its cluster, flags,
- * then the frame. Relative timestamps are why clusters exist at all — 16 bits
- * only spans ±32 seconds.
+ * A SimpleBlock: track vint, int16 timestamp relative to its cluster (in
+ * timestamp-scale ticks), flags, then the frame. Relative timestamps are why
+ * clusters exist at all — 16 bits only spans ±32767 ticks (±3.27s at 100µs).
  */
-function simpleBlock(track: number, relativeMs: number, keyFrame: boolean, data: Uint8Array): Uint8Array {
+function simpleBlock(track: number, relativeTicks: number, keyFrame: boolean, data: Uint8Array): Uint8Array {
   const header = new Uint8Array(3);
-  new DataView(header.buffer).setInt16(0, relativeMs, false);
+  new DataView(header.buffer).setInt16(0, relativeTicks, false);
   header[2] = keyFrame ? 0x80 : 0x00;
   return element(ID.SimpleBlock, concat([vint(track), header, data]));
 }
 
-/** Longest span of one cluster. Well inside the int16 relative-timestamp limit. */
-const MAX_CLUSTER_MS = 5_000;
+/** Longest span of one cluster, in ticks (3s). Inside the int16 ±32767 limit. */
+const MAX_CLUSTER_TICKS = 30_000;
 
 interface PendingBlock {
   track: number;
-  ms: number;
+  ticks: number;
   keyFrame: boolean;
   data: Uint8Array;
 }
@@ -239,7 +257,8 @@ export function muxWebm(
   );
 
   const lastUs = videoSamples[videoSamples.length - 1]!.timestampUs;
-  const durationMs = lastUs / 1000 + 1000 / Math.max(1, video.fps);
+  // Duration is in TimestampScale units: last frame's start plus one frame.
+  const durationTicks = toTicks(lastUs + 1e6 / Math.max(1, video.fps));
 
   const info = element(
     ID.Info,
@@ -247,7 +266,7 @@ export function muxWebm(
       uintEl(ID.TimestampScale, TIMESTAMP_SCALE_NS),
       strEl(ID.MuxingApp, 'Premation'),
       strEl(ID.WritingApp, 'Premation'),
-      floatEl(ID.Duration, durationMs),
+      floatEl(ID.Duration, durationTicks),
     ]),
   );
 
@@ -264,7 +283,23 @@ export function muxWebm(
       uintEl(ID.DefaultDuration, Math.round(1e9 / Math.max(1, video.fps))),
       element(
         ID.Video,
-        concat([uintEl(ID.PixelWidth, video.width), uintEl(ID.PixelHeight, video.height)]),
+        concat([
+          uintEl(ID.PixelWidth, video.width),
+          uintEl(ID.PixelHeight, video.height),
+          // BT.709 limited range — what Chromium's VideoEncoder actually
+          // produces from an RGB canvas. Without the Colour element players
+          // guess (often BT.601), which visibly shifts reds and greens on the
+          // exact same file across players.
+          element(
+            ID.Colour,
+            concat([
+              uintEl(ID.MatrixCoefficients, 1),
+              uintEl(ID.Primaries, 1),
+              uintEl(ID.TransferCharacteristics, 1),
+              uintEl(ID.Range, 1),
+            ]),
+          ),
+        ]),
       ),
     ]),
   );
@@ -297,39 +332,39 @@ export function muxWebm(
   // sequentially, so out-of-order audio would stall playback.
   const blocks: PendingBlock[] = videoSamples.map((s) => ({
     track: VIDEO_TRACK,
-    ms: Math.round(s.timestampUs / 1000),
+    ticks: toTicks(s.timestampUs),
     keyFrame: s.keyFrame,
     data: s.data,
   }));
   if (audio) {
     for (const s of audio.samples) {
-      blocks.push({ track: AUDIO_TRACK, ms: Math.round(s.timestampUs / 1000), keyFrame: true, data: s.data });
+      blocks.push({ track: AUDIO_TRACK, ticks: toTicks(s.timestampUs), keyFrame: true, data: s.data });
     }
-    blocks.sort((a, b) => a.ms - b.ms || a.track - b.track);
+    blocks.sort((a, b) => a.ticks - b.ticks || a.track - b.track);
   }
 
   // Clusters break on video keyframes so every cluster is independently
-  // decodable, and on MAX_CLUSTER_MS so relative timestamps stay in int16.
-  const clusters: Array<{ timeMs: number; bytes: Uint8Array }> = [];
+  // decodable, and on MAX_CLUSTER_TICKS so relative timestamps stay in int16.
+  const clusters: Array<{ timeTicks: number; bytes: Uint8Array }> = [];
   let current: PendingBlock[] = [];
-  let clusterStart = blocks[0]!.ms;
+  let clusterStart = blocks[0]!.ticks;
 
   const flush = (): void => {
     if (current.length === 0) return;
     const payload = concat([
       uintEl(ID.Timestamp, clusterStart),
-      ...current.map((b) => simpleBlock(b.track, b.ms - clusterStart, b.keyFrame, b.data)),
+      ...current.map((b) => simpleBlock(b.track, b.ticks - clusterStart, b.keyFrame, b.data)),
     ]);
-    clusters.push({ timeMs: clusterStart, bytes: element(ID.Cluster, payload) });
+    clusters.push({ timeTicks: clusterStart, bytes: element(ID.Cluster, payload) });
     current = [];
   };
 
   for (const b of blocks) {
-    const wouldSpanTooLong = b.ms - clusterStart >= MAX_CLUSTER_MS;
+    const wouldSpanTooLong = b.ticks - clusterStart >= MAX_CLUSTER_TICKS;
     const startsNewCluster = b.track === VIDEO_TRACK && b.keyFrame && current.length > 0;
     if (wouldSpanTooLong || startsNewCluster) {
       flush();
-      clusterStart = b.ms;
+      clusterStart = b.ticks;
     }
     current.push(b);
   }
@@ -346,7 +381,7 @@ export function muxWebm(
       element(
         ID.CuePoint,
         concat([
-          uintEl(ID.CueTime, c.timeMs),
+          uintEl(ID.CueTime, c.timeTicks),
           element(
             ID.CueTrackPositions,
             concat([uintEl(ID.CueTrack, VIDEO_TRACK), uintEl(ID.CueClusterPosition, clusterOffset)]),

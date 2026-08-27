@@ -195,7 +195,7 @@
 .progressBarTrack {
   height: 6px;
   width: 100%;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-surface-2);
   border-radius: 999px;
   overflow: hidden;
 }
@@ -316,7 +316,7 @@
 
 .cardDesc code {
   font-family: var(--font-family-mono);
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-surface-2);
   padding: 1px 4px;
   border-radius: 4px;
 }
@@ -387,7 +387,7 @@
   padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid var(--color-border-subtle);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-surface-2);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
   cursor: pointer;
@@ -396,7 +396,7 @@
 }
 
 .scopeChip:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-surface-3);
   color: var(--color-text-primary);
 }
 
@@ -452,7 +452,7 @@
 .presetChip {
   padding: 3px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-surface-2);
   border: 1px solid var(--color-border-subtle);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
@@ -461,7 +461,7 @@
 }
 
 .presetChip:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-surface-3);
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
 }
@@ -507,7 +507,7 @@
   font-family: var(--font-family-mono);
   font-size: var(--font-size-micro);
   padding: 1px 5px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-surface-2);
   border-radius: 4px;
   color: var(--color-text-tertiary);
 }
@@ -539,7 +539,7 @@
 }
 
 .statusPillRevoked {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-surface-2);
   color: var(--color-text-tertiary);
 }
 
@@ -660,7 +660,7 @@
 }
 
 .copyCodeBtn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-hover);
   color: var(--color-text-primary);
   border-color: var(--color-border-subtle);
 }

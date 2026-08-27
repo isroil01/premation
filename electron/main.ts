@@ -1,7 +1,7 @@
 import { app, BrowserWindow, shell, dialog, Menu, protocol, net, type MenuItemConstructorOptions, type WebContents } from 'electron';
 import { handle, on } from './ipcGuard';
 import path from 'node:path';
-import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFile, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { shouldStartBackend, startBackend, stopBackend } from './backend';
@@ -437,9 +437,40 @@ function registerRenderIpc(): void {
    */
   const stagedFrames = async (dir: string): Promise<{ count: number; ext: 'jpg' | 'png' }> => {
     const files = await readdir(dir);
-    const png = files.filter((f) => /^frame_\d+\.png$/i.test(f)).length;
-    const jpg = files.filter((f) => /^frame_\d+\.jpg$/i.test(f)).length;
-    return png > jpg ? { count: png, ext: 'png' } : { count: jpg, ext: 'jpg' };
+    const index = (re: RegExp): number[] =>
+      files
+        .map((f) => re.exec(f))
+        .filter((m): m is RegExpExecArray => !!m)
+        .map((m) => Number(m[1]));
+    const png = index(/^frame_(\d+)\.png$/i);
+    const jpg = index(/^frame_(\d+)\.jpg$/i);
+    const chosen = png.length > jpg.length ? { nums: png, ext: 'png' as const } : { nums: jpg, ext: 'jpg' as const };
+    // CONTIGUITY, not just count: ffmpeg's image2 demuxer stops at the first
+    // missing index and still exits 0 — a gap at frame 500 of 1000 shipped a
+    // half-length video while this reported the full count. Fail loudly with
+    // the missing frame named instead.
+    const nums = new Set(chosen.nums);
+    for (let i = 0; i < chosen.nums.length; i++) {
+      if (!nums.has(i)) {
+        throw new Error(
+          `Staged frame ${i} is missing (${chosen.nums.length} frames on disk) — `
+          + 'the encode would silently truncate there. Re-run the export.',
+        );
+      }
+    }
+    return { count: chosen.nums.length, ext: chosen.ext };
+  };
+
+  /**
+   * ffmpeg-exact frame rate. The NTSC family are RATIONALS (30000/1001…);
+   * handing ffmpeg the decimal builds a 2997/100 timebase — flagged by
+   * broadcast QC, and drifting against the 48kHz mix on long renders.
+   */
+  const ffmpegRate = (fps: number): string => {
+    if (Math.abs(fps - 23.976) < 0.001) return '24000/1001';
+    if (Math.abs(fps - 29.97) < 0.001) return '30000/1001';
+    if (Math.abs(fps - 59.94) < 0.001) return '60000/1001';
+    return String(fps);
   };
 
   /**
@@ -638,6 +669,8 @@ function registerRenderIpc(): void {
         fps: number;
         hasAudio?: boolean;
         quality?: 'high' | 'medium' | 'draft';
+        /** mov only — ProRes flavour. Defaults to 4444 (the alpha-capable one). */
+        proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
         hdr?: 'pq' | 'hlg';
         hdrMastering?: {
           maxCll: number;
@@ -665,7 +698,7 @@ function registerRenderIpc(): void {
       const evenScale = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
       const crf = opts.quality === 'draft' ? '28' : opts.quality === 'medium' ? '23' : '18';
 
-      const base = ['-y', '-framerate', String(opts.fps), '-i', input, ...(hasAudio ? ['-i', audio!] : [])];
+      const base = ['-y', '-framerate', ffmpegRate(opts.fps), '-i', input, ...(hasAudio ? ['-i', audio!] : [])];
       let args: string[];
 
       // HDR10 / HLG: frames are already PQ/HLG-baked; tag BT.2020 + transfer.
@@ -750,24 +783,35 @@ function registerRenderIpc(): void {
           // palette for the whole animation, paletteuse dithers against it. A
           // single-pass GIF quantises per frame and visibly bands and flickers.
           args = [
-            '-y', '-framerate', String(opts.fps), '-i', input,
+            '-y', '-framerate', ffmpegRate(opts.fps), '-i', input,
             '-filter_complex',
             `[0:v] ${evenScale},split [a][b];[a] palettegen=stats_mode=diff [p];[b][p] paletteuse=dither=bayer:bayer_scale=3:diff_mode=rectangle`,
             '-loop', '0',
             out,
           ];
           break;
-        case 'mov':
-          // ProRes 4444 keeps the alpha channel, which is the reason to pick a
-          //.mov over mp4 at all (transparent comps for compositing elsewhere).
+        case 'mov': {
+          // ProRes 4444 keeps the alpha channel (the classic reason to pick a
+          // .mov); the 422 family halves the file for opaque delivery/edit
+          // handoff, matching what AE's output modules offer.
+          const profile = opts.proresProfile ?? '4444';
+          const proresArgs: Record<string, [string, string]> = {
+            proxy: ['0', 'yuv422p10le'],
+            lt: ['1', 'yuv422p10le'],
+            '422': ['2', 'yuv422p10le'],
+            hq: ['3', 'yuv422p10le'],
+            '4444': ['4', 'yuva444p10le'],
+          };
+          const [profileFlag, pixFmt] = proresArgs[profile] ?? proresArgs['4444']!;
           args = [
             ...base,
-            '-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le',
+            '-c:v', 'prores_ks', '-profile:v', profileFlag, '-pix_fmt', pixFmt,
             '-vf', evenScale,
             ...(hasAudio ? ['-c:a', 'pcm_s16le', '-shortest'] : []),
             out,
           ];
           break;
+        }
         case 'mp4':
         default:
           args = [
@@ -1185,6 +1229,27 @@ app.whenReady().then(() => {
   // A second instance already relayed its deep link and quit; this one should not
   // have reached whenReady, but guard anyway rather than open a duplicate window.
   if (!hasSingleInstanceLock) return;
+
+  // Sweep render staging dirs older than two days. They leak whenever a save
+  // fails mid-move, the app crashes mid-export, or a finished render's save
+  // dialog is dismissed (the encode is deliberately KEPT then) — multi-GB
+  // `motion-render-*` dirs otherwise accumulate in %TEMP% forever. Age-gated
+  // so a render running in ANOTHER instance is never swept out from under it.
+  void (async () => {
+    try {
+      const temp = app.getPath('temp');
+      const entries = await readdir(temp);
+      const cutoff = Date.now() - 2 * 24 * 60 * 60 * 1000;
+      for (const name of entries) {
+        if (!name.startsWith('motion-render-')) continue;
+        const full = path.join(temp, name);
+        try {
+          const info = await stat(full);
+          if (info.mtimeMs < cutoff) await rm(full, { recursive: true, force: true });
+        } catch { /* raced with another process — leave it */ }
+      }
+    } catch { /* temp unreadable — nothing to sweep */ }
+  })();
 
   // Kick the GPU process awake NOW, during boot, so it is ready before the first
   // viewport mounts. Without this the renderer can win the race to first-init and

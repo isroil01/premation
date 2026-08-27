@@ -30,6 +30,10 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { cloneLayerNode, removeLayerNodeClone, mintSplitNodeId } from '@core/scene/cloneLayerNode';
+import { deleteLayerNode } from '@core/scene/deleteLayerNode';
+import { captureLayerSnapshot, restoreLayerSnapshot } from '@core/scene/layerSnapshot';
+import { bumpScene, batchScene } from '@stores/sceneStore';
 import { readResponsiveTime } from '@core/template/responsiveTimeStore';
 import { stretchedToAuthored } from '@core/template/responsiveTime';
 import { readNodeKind } from '@core/scene/sceneDerive';
@@ -45,6 +49,8 @@ import { runAnimEdit } from '@core/animation/animationCommands';
 
 import { getEventBus } from '@core/events/EventBus';
 import { getCommandSystem } from '@core/commands/CommandSystem';
+import type { HistoryService } from '@core/commands/HistoryService';
+import { useHistoryStore, type HistoryStore } from '@stores/historyStore';
 import type { IUndoableCommand, CommandContext } from '@core/commands/Command';
 import type { Command as TimelineCommand } from '@motion/timeline';
 
@@ -118,6 +124,35 @@ class TimelineCommandAdapter implements IUndoableCommand {
   }
 }
 
+/**
+ * The app history, or null when there isn't one.
+ *
+ * `getCommandSystem()` throws in headless tests (and during boot, before the
+ * Application wires it up). Split has to work in both — the engine mutation is
+ * the real work; recording it for undo is a bonus the caller may not have.
+ */
+function getCommandSystem_safe(): HistoryService | null {
+  try {
+    return getCommandSystem().getHistory();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The app's snapshot-history store, or null when there isn't one.
+ *
+ * Same reason as {@link getCommandSystem_safe}: it reaches into the
+ * CommandSystem, which headless tests do not build.
+ */
+function historyStore(): Pick<HistoryStore, 'flush' | 'runRestoring'> | null {
+  try {
+    return useHistoryStore.getState();
+  } catch {
+    return null;
+  }
+}
+
 export class TimelineController {
   private registries = new Map<string, Timeline>();
   private compositionTrackIds = new Map<string, string>();
@@ -171,7 +206,13 @@ export class TimelineController {
     });
 
     timeline.setRange('loop', { start: 0, duration: timeline.duration });
-    const track = timeline.addTrack({ name: 'Composition', kind: 'group' });
+    // Silently: booting a composition's own track is structure, not an edit.
+    // Recorded, it landed an "Add Track" entry on the user's undo stack the
+    // first time anything touched a comp's timeline — so a Ctrl+Z aimed at
+    // their last real edit could instead delete the track every clip lives on.
+    const track = timeline.history.silently(() =>
+      timeline.addTrack({ name: 'Composition', kind: 'group' }),
+    );
     this.compositionTrackIds.set(compId, track.id);
     timeline.setZoom(80 / compSettings.fps);
 
@@ -286,6 +327,34 @@ export class TimelineController {
   }
   get isPlaying(): boolean {
     return this.timeline.isPlaying;
+  }
+
+  /**
+   * Stop the transport on every composition EXCEPT the active one, and clear
+   * those tabs' playing flags.
+   *
+   * Only one composition can be pumped at a time: `usePlaybackClock` ticks
+   * `controller.tick()`, which resolves to whichever comp the active tab shows.
+   * Switching tabs mid-playback therefore silently retargeted the pump and left
+   * the outgoing comp's engine — and its tab flag — asserting `playing` with
+   * nothing driving them. Nothing ever cleared either, because `pause()` also
+   * resolves through the ACTIVE comp (so it paused the wrong engine, or none)
+   * and `setPlaying` only writes the ACTIVE tab. Coming back to that tab then
+   * found a store flag already true and an engine already playing, and the
+   * clock simply started pumping again: the composition played without anyone
+   * pressing play.
+   */
+  pauseInactiveComps(): void {
+    const activeCompId = this.activeCompId;
+    for (const [compId, timeline] of this.registries) {
+      if (compId !== activeCompId && timeline.isPlaying) timeline.pause();
+    }
+    const ws = useWorkspaceStore.getState();
+    for (const tab of Object.values(ws.tabs)) {
+      if (tab.id !== ws.activeTabId && tab.playing) {
+        ws.actions.setTabPlaying(tab.id, false);
+      }
+    }
   }
 
   /** Pump the engine's playhead from the app's frame clock (ms delta). */
@@ -641,21 +710,177 @@ export class TimelineController {
     if (ppf > 0) this.timeline.scrollTo(scrollLeftPx / ppf);
   }
 
+  /**
+   * Split one clip bar in two, each half backed by its OWN scene node.
+   *
+   * The node clone is the point. `Timeline.splitLayer` alone gives the right
+   * half the left half's `sourceId`, and since everything above the engine —
+   * selection, delete, the property inspector — addresses a LAYER by its node
+   * id, two bars sharing one node are not two layers. Reported symptom: split a
+   * rectangle, try to select and delete the second half, and nothing can be
+   * done to it independently; delete took both halves away because it removes
+   * the node they shared.
+   *
+   * One undo entry covers both halves of the operation. The app history is
+   * suspended across the mutation so the engine's own `splitLayer` command is
+   * not recorded separately (which would leave the user pressing Ctrl+Z twice,
+   * with an incoherent scene in between: a clip bar pointing at a node that no
+   * longer exists), and a single composite is pushed in its place.
+   *
+   * Returns the new right-hand layer id, or null when the frame does not fall
+   * strictly inside the bar.
+   */
+  private splitLayerAtFrame(layerId: string, frame: number): string | null {
+    const timeline = this.timeline;
+    const layer = timeline.getLayer(layerId);
+    if (!layer || layer.locked) return null;
+    if (!(frame > layer.start && frame < layer.end)) return null;
+
+    const sourceNodeId = layer.sourceId;
+    // Nodeless bars (an engine-level track with no scene node behind it) keep
+    // the plain engine behaviour — there is nothing to clone.
+    const rightNodeId = sourceNodeId ? mintSplitNodeId(sourceNodeId) : null;
+    const originalEnd = layer.end;
+
+    let rightLayerId: string | null = null;
+
+    /**
+     * Find the bar to split (or the one to un-split) by SCENE NODE, not by the
+     * layer id we started with.
+     *
+     * Timeline layer ids are not stable across the session: undoing any
+     * snapshot entry that touches the scene makes `syncFromScene` rebuild every
+     * bar from scratch with freshly minted ids. A command that captured an id
+     * at the moment of the split is therefore stale by its own redo — which is
+     * exactly how redo silently did nothing. Node ids live in the document and
+     * survive every restore, so they are what this addresses.
+     */
+    const barContaining = (nodeId: string | null, at: number): Layer | undefined => {
+      if (!nodeId) return timeline.getLayer(layerId);
+      this.invalidateLayerIndex();
+      return this.getLayersForNode(nodeId).find((l) => at > l.start && at < l.end);
+    };
+    const barEndingAt = (nodeId: string | null, at: number): Layer | undefined => {
+      if (!nodeId) return timeline.getLayer(layerId);
+      this.invalidateLayerIndex();
+      const bars = this.getLayersForNode(nodeId);
+      return bars.find((l) => l.end === at) ?? bars[0];
+    };
+
+    // `batchScene` holds the scene notification until BOTH halves are in place.
+    // Announcing the cloned node before its bar exists would send the
+    // reconciler down the "node with no clip" path, where it seeds a
+    // full-length bar — leaving the clone with two overlapping clips.
+    const apply = (): void => {
+      batchScene(() => {
+        const target = barContaining(sourceNodeId, frame);
+        if (!target) return;
+        if (sourceNodeId && rightNodeId) cloneLayerNode(sourceNodeId, rightNodeId);
+        timeline.history.silently(() => {
+          const right = timeline.splitLayer(target.id, frame, rightNodeId ?? undefined);
+          rightLayerId = right?.id ?? null;
+        });
+        if (!rightLayerId && rightNodeId) removeLayerNodeClone(rightNodeId);
+        this.invalidateLayerIndex();
+        bumpScene();
+      });
+    };
+
+    const revert = (): void => {
+      batchScene(() => {
+        const right = rightNodeId
+          ? this.getLayersForNode(rightNodeId)[0]
+          : rightLayerId ? timeline.getLayer(rightLayerId) : undefined;
+        const left = barEndingAt(sourceNodeId, frame);
+        timeline.history.silently(() => {
+          if (right) timeline.removeLayer(right.id);
+          // Split only shortens the left bar's END, so restoring that end is
+          // the whole inverse of the geometry change.
+          if (left) timeline.trimLayer(left.id, 'end', originalEnd);
+        });
+        rightLayerId = null;
+        if (rightNodeId) removeLayerNodeClone(rightNodeId);
+        this.invalidateLayerIndex();
+        bumpScene();
+      });
+    };
+
+    const history = getCommandSystem_safe();
+    // Two history mechanisms meet here and both want this edit.
+    //
+    //   • The ENGINE records clip geometry as explicit commands (onPush →
+    //     TimelineCommandAdapter). Geometry is invisible to a scene snapshot.
+    //   • The APP auto-captures a debounced scene+animation SNAPSHOT whenever
+    //     SceneGraphChanged fires. Cloning a node fires it.
+    //
+    // Split is the first operation that changes BOTH domains, and left alone it
+    // produced two undo entries for one act: the composite below, plus a
+    // snapshot 700ms later. Undoing them in sequence restored a scene from
+    // before the split on top of geometry that had already been reverted, and
+    // the layer disappeared entirely.
+    //
+    // `flush` commits whatever edit was mid-debounce so it keeps its own step,
+    // and `runRestoring` both silences the auto-capture for the duration and
+    // re-baselines it afterwards — so the snapshot layer sees the post-split
+    // scene as the new normal and has nothing left to record.
+    const store = historyStore();
+    store?.flush();
+    const run = (fn: () => void): void => {
+      history?.suspend();
+      try {
+        if (store) store.runRestoring(fn);
+        else fn();
+      } finally {
+        history?.resume();
+      }
+    };
+
+    run(apply);
+    if (!rightLayerId) return null;
+
+    history?.push({
+      label: 'Split Layer',
+      // Undo/redo arrive through `performUndo`/`performRedo`, which already
+      // wrap the call in `runRestoring` — so these must NOT nest another one.
+      // The engine push still has to be suspended, hence the direct calls.
+      execute: () => {
+        history?.suspend();
+        try { apply(); } finally { history?.resume(); }
+      },
+      undo: () => {
+        history?.suspend();
+        try { revert(); } finally { history?.resume(); }
+      },
+    });
+    return rightLayerId;
+  }
+
   /** Split a clip at a timeline time (seconds); returns the new right layer id. */
   splitClip(layerId: string, seconds: number): string | null {
     const frame = Math.round(secondsToFrames(seconds, this.timeline.getFrameRate()));
-    const right = this.timeline.splitLayer(layerId, frame);
-    return right?.id ?? null;
+    return this.splitLayerAtFrame(layerId, frame);
   }
 
-  /** Split every clip of the given nodes at the playhead (After Effects Ctrl+Shift+D). */
+  /**
+   * Split every clip of the given nodes at the playhead (After Effects
+   * Ctrl+Shift+D), and leave the RIGHT halves selected — AE's behaviour, and
+   * the one that makes "split, then delete the tail" a two-step operation
+   * instead of an impossible one.
+   */
   splitSelectedAtPlayhead(nodeIds: readonly string[]): void {
     const frame = Math.round(this.timeline.currentFrame);
+    const rightNodeIds: string[] = [];
     for (const nodeId of nodeIds) {
-      for (const layer of this.getLayersForNode(nodeId)) {
-        if (frame > layer.start && frame < layer.end) this.timeline.splitLayer(layer.id, frame);
+      // Snapshot the bars first: splitting appends to the same list, and
+      // iterating it live would re-split the half just created.
+      for (const layer of [...this.getLayersForNode(nodeId)]) {
+        const rightLayerId = this.splitLayerAtFrame(layer.id, frame);
+        if (!rightLayerId) continue;
+        const rightSource = this.timeline.getLayer(rightLayerId)?.sourceId;
+        if (rightSource && rightSource !== nodeId) rightNodeIds.push(rightSource);
       }
     }
+    if (rightNodeIds.length > 0) useSelectionStore.getState().set(rightNodeIds);
   }
 
   /** Trim In point of selected layers to playhead (After Effects: Alt+[). */
@@ -705,12 +930,135 @@ export class TimelineController {
 
   /** Remove a clip (engine layer). */
   deleteLayer(layerId: string): void {
-    this.timeline.removeLayer(layerId);
+    this.deleteLayerForClip(layerId, { ripple: false });
   }
 
-  /** Ripple-delete: remove and close the gap on the same track. */
+  /** Ripple-delete: remove the layer and close the gap on the same track. */
   rippleDeleteLayer(layerId: string): void {
-    this.timeline.rippleRemoveLayer(layerId);
+    this.deleteLayerForClip(layerId, { ripple: true });
+  }
+
+  /**
+   * Delete the LAYER a clip bar belongs to — its scene node, its animation and
+   * every bar of it.
+   *
+   * These two used to call `Timeline.removeLayer` / `rippleRemoveLayer`, which
+   * only ever removed the BAR. The scene node survived, so the timeline row
+   * stayed behind with nothing on it, and the next `syncFromScene` — any
+   * structural scene change at all — found a node with no clip and seeded it a
+   * fresh full-length bar. The layer came back, and the user's report was that
+   * deleting from the timeline simply does not work while deleting from the
+   * Scene tree does.
+   *
+   * `ripple` is the only real difference between the two menu entries: later
+   * clips on the same track slide left to close the gap the layer leaves. Both
+   * delete the layer completely.
+   *
+   * One undo entry covers the scene half and the clip geometry, for the reason
+   * spelled out in `splitLayerAtFrame`: geometry is invisible to the app's
+   * scene snapshot, so the two halves have to be recorded together or undo
+   * restores one without the other.
+   */
+  deleteLayerForClip(layerId: string, opts: { ripple?: boolean } = {}): boolean {
+    const timeline = this.timeline;
+    const layer = timeline.getLayer(layerId);
+    if (!layer || layer.locked) return false;
+    const nodeId = layer.sourceId;
+    if (!nodeId) {
+      // A bar with no scene node behind it (engine-level track). Nothing to
+      // delete but the bar itself, and nothing will resurrect it.
+      if (opts.ripple) timeline.rippleRemoveLayer(layerId);
+      else timeline.removeLayer(layerId);
+      return true;
+    }
+
+    // Captured BEFORE the mutation: `revert` needs the geometry back, and the
+    // node is about to stop existing.
+    const track = timeline.getTrack(layer.trackId);
+    const gap = layer.duration;
+    const shifted = opts.ripple && track
+      ? track.layers
+          .filter((l) => l.id !== layerId && l.sourceId && l.start >= layer.end)
+          .map((l) => ({ nodeId: l.sourceId as string, start: l.start }))
+      : [];
+    const snapshot = captureLayerSnapshot(nodeId);
+    // The bar's own geometry, which no scene snapshot carries.
+    snapshot.clip = { start: layer.start, end: layer.end };
+
+    const apply = (): void => {
+      batchScene(() => {
+        timeline.history.silently(() => {
+          for (const s of shifted) {
+            for (const l of this.getLayersForNode(s.nodeId)) {
+              if (l.start === s.start) timeline.setLayerStart(l.id, Math.max(0, s.start - gap));
+            }
+          }
+        });
+        deleteLayerNode(nodeId);
+        // Reconcile HERE rather than waiting for the `SceneGraphChanged`
+        // subscriber to do it. The bar outlives the node until something
+        // reconciles, and leaving that to an event round-trip is what made the
+        // old delete look like it had worked and then un-worked: the row
+        // vanished, the bar stayed, and the next sync re-seeded a full-length
+        // clip. `revert` reconciles explicitly for the same reason.
+        this.syncFromScene();
+        this.invalidateLayerIndex();
+        bumpScene();
+      });
+    };
+
+    const revert = (): void => {
+      batchScene(() => {
+        restoreLayerSnapshot(snapshot);
+        // `syncFromScene` seeds the restored node a full-length bar; put its
+        // real geometry back on top of that.
+        this.syncFromScene();
+        timeline.history.silently(() => {
+          // `syncFromScene` seeds exactly ONE bar for a node that had none, so
+          // this is the bar it just made. Move it, then trim — trimEnd takes an
+          // absolute frame, so the order matters.
+          const restored = this.getLayersForNode(nodeId)[0];
+          if (restored) {
+            timeline.setLayerStart(restored.id, snapshot.clip.start);
+            timeline.trimLayer(restored.id, 'end', snapshot.clip.end);
+          }
+          for (const s of shifted) {
+            for (const l of this.getLayersForNode(s.nodeId)) {
+              if (l.start === Math.max(0, s.start - gap)) timeline.setLayerStart(l.id, s.start);
+            }
+          }
+        });
+        this.invalidateLayerIndex();
+        bumpScene();
+      });
+    };
+
+    const history = getCommandSystem_safe();
+    const store = historyStore();
+    store?.flush();
+    const run = (fn: () => void): void => {
+      history?.suspend();
+      try {
+        if (store) store.runRestoring(fn);
+        else fn();
+      } finally {
+        history?.resume();
+      }
+    };
+
+    run(apply);
+    history?.push({
+      label: opts.ripple ? 'Ripple Delete Layer' : 'Delete Layer',
+      execute: () => {
+        history?.suspend();
+        try { apply(); } finally { history?.resume(); }
+      },
+      undo: () => {
+        history?.suspend();
+        try { revert(); } finally { history?.resume(); }
+      },
+    });
+    return true;
   }
 
   /** Ripple-trim the clip's out-point (seconds) and pull later clips left. */

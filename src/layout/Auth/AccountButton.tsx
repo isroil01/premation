@@ -8,30 +8,18 @@ import { useAuthStore } from '@stores/authStore';
 import { cloudAccountsEnabled } from '@core/config/edition';
 import { openAuthModal } from './AuthPanel';
 import { openModal } from '@stores/modalStore';
-
-const pill: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  padding: '2px 8px',
-  borderRadius: 'var(--radius-full)',
-  background: 'var(--color-surface-2)',
-  border: '1px solid var(--color-border)',
-  color: 'var(--color-text-secondary)',
-  cursor: 'pointer',
-  font: 'inherit',
-};
+import styles from './AccountButton.module.css';
 
 function openAccountMenu(email: string): void {
   openModal({
     title: 'Account',
     size: 'sm',
     render: (close) => (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 260 }}>
-        <p style={{ margin: 0, fontSize: 'var(--font-size-md)', color: 'var(--color-text-secondary)' }}>
-          Signed in as <strong style={{ color: 'var(--color-text-primary)' }}>{email}</strong>
+      <div className={styles.modalContent}>
+        <p className={styles.userEmail}>
+          Signed in as <strong>{email}</strong>
         </p>
-        <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-tertiary)' }}>
+        <p className={styles.subText}>
           Your projects and assets sync to the cloud. Open/Save uses your account.
         </p>
         <button
@@ -40,15 +28,7 @@ function openAccountMenu(email: string): void {
             useAuthStore.getState().logout();
             close();
           }}
-          style={{
-            padding: '8px 12px',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--color-surface-2)',
-            border: '1px solid var(--color-border)',
-            color: 'var(--color-text-primary)',
-            font: 'inherit',
-            cursor: 'pointer',
-          }}
+          className={styles.signOutBtn}
         >
           Sign out
         </button>
@@ -69,7 +49,7 @@ export function AccountButton(): JSX.Element | null {
   if (authed && user) {
     const label = user.name || user.email.split('@')[0];
     return (
-      <button type="button" onClick={() => openAccountMenu(user.email)} title={user.email} style={pill}>
+      <button type="button" onClick={() => openAccountMenu(user.email)} title={user.email} className={styles.pill}>
         <Icon name="user" size="sm" />
         {label}
       </button>
@@ -77,7 +57,7 @@ export function AccountButton(): JSX.Element | null {
   }
 
   return (
-    <button type="button" onClick={() => openAuthModal()} title="Sign in to sync to the cloud" style={pill}>
+    <button type="button" onClick={() => openAuthModal()} title="Sign in to sync to the cloud" className={styles.pill}>
       <Icon name="user" size="sm" />
       Sign in
     </button>

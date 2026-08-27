@@ -116,6 +116,8 @@ function topo(gl: GL, t: PrimitiveTopology): number {
 }
 
 export class WebGL2Backend implements RenderBackend {
+  /** Lazy sRGB→linear byte LUT shared by every instance (readRenderTargetFloat fallback). */
+  private static srgbToLinearLut: Float32Array | null = null;
   readonly kind = 'webgl2' as const;
   /** GL FBOs are written bottom-up: full-screen samples of a target flip V. */
   readonly renderTargetFlipV = true;
@@ -643,12 +645,27 @@ export class WebGL2Backend implements RenderBackend {
     const u8 = new Uint8Array(width * height * 4);
     gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, u8);
     gl.bindFramebuffer(gl.FRAMEBUFFER, prev);
+    // The contract is LINEAR light. An 8-bit target holds sRGB-encoded colour,
+    // so the byte fallback must undo the transfer curve — alpha stays linear.
+    const srgbLut = WebGL2Backend.srgbToLinearLut ??= (() => {
+      const lut = new Float32Array(256);
+      for (let v = 0; v < 256; v++) {
+        const c = v / 255;
+        lut[v] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      }
+      return lut;
+    })();
     const out = new Float32Array(u8.length);
     const row = width * 4;
     for (let y = 0; y < height; y++) {
       const src = (height - 1 - y) * row;
       const dst = y * row;
-      for (let i = 0; i < row; i++) out[dst + i] = u8[src + i]! / 255;
+      for (let i = 0; i < row; i += 4) {
+        out[dst + i] = srgbLut[u8[src + i]!]!;
+        out[dst + i + 1] = srgbLut[u8[src + i + 1]!]!;
+        out[dst + i + 2] = srgbLut[u8[src + i + 2]!]!;
+        out[dst + i + 3] = u8[src + i + 3]! / 255;
+      }
     }
     return out;
   }

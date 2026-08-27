@@ -3,8 +3,8 @@
   flex-direction: column;
   gap: 16px;
   padding: 4px 0 8px;
-  font-size: var(--font-size-sm, 12px);
-  color: var(--color-text-primary, #ffffff);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
 }
 
 .section {
@@ -12,18 +12,18 @@
   flex-direction: column;
   gap: 8px;
   padding: 12px;
-  background: var(--color-surface, rgba(255, 255, 255, 0.03));
-  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.08));
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
 }
 
 .sectionTitle {
   margin: 0 0 4px;
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  color: var(--color-text-secondary);
 }
 
 .radioGroup {
@@ -50,38 +50,38 @@
 .numberInput {
   width: 90px;
   padding: 4px 8px;
-  background: var(--color-input-bg, rgba(0, 0, 0, 0.3));
-  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.15));
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: var(--color-text-primary, #ffffff);
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
 }
 
 .numberInput:focus {
   outline: none;
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
 }
 
 .select {
   padding: 5px 8px;
-  background: var(--color-input-bg, rgba(0, 0, 0, 0.3));
-  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.15));
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  color: var(--color-text-primary, #ffffff);
-  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
   width: 100%;
 }
 
 .select:focus {
   outline: none;
-  border-color: var(--color-primary, #3b82f6);
+  border-color: var(--color-primary);
 }
 
 .hint {
   margin: 0;
-  font-size: var(--font-size-micro, 10px);
-  color: var(--color-text-tertiary, rgba(255, 255, 255, 0.45));
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
   line-height: 1.4;
 }
 

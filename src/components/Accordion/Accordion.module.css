@@ -9,12 +9,12 @@
   margin-bottom: 0;
   border-radius: 0;
   background: transparent;
-  border-bottom: 1px solid var(--color-border, #000000);
+  border-bottom: 1px solid var(--color-border);
   overflow: hidden;
 }
 
 .item:last-child {
-  border-bottom: 1px solid var(--color-border, #000000);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .disabled {

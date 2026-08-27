@@ -188,12 +188,31 @@ export async function renderOffline(
       for (let pass = 0; pass < 4; pass++) {
         const waits = backend.takeMediaWaits?.();
         if (!waits || waits.length === 0) break;
+        let capTimer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
           Promise.all(waits),
-          new Promise<void>((resolve) => setTimeout(resolve, 15_000)),
+          new Promise<void>((resolve) => { capTimer = setTimeout(resolve, 15_000); }),
         ]);
+        clearTimeout(capTimer);
         if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
         backend.renderFrame(snap);
+      }
+      // The exactness gate, closing the loophole the header promises is shut:
+      // the renderer KNOWS when a frame holds stand-in video pixels
+      // (nearest-neighbour while a decode is in flight, an element mid-seek,
+      // a warming source) via lastFrameMediaExact() — but only the RAM
+      // preview cache ever read it. The DELIVERABLE accepted the stale frame:
+      // after the 4-pass cap or the 15s race, the loop fell through and
+      // encoded whatever pixels were there, silently. M8b's rule is the
+      // opposite — wrong pixels on screen are recoverable; wrong pixels in a
+      // file are not — so a frame that never converged REFUSES, like every
+      // other known-bad frame below.
+      if (backend.lastFrameMediaExact?.() === false) {
+        throw new Error(
+          `Export stopped at frame ${i}: the video decode for this frame did not finish in time, `
+          + 'so the frame would contain stale footage pixels. Re-run the export; if this repeats, '
+          + 'generate a proxy for the footage or transcode it (Media Settings ▸ Proxy).',
+        );
       }
 
       // EXPORT half of the M8a split: FAIL, do not warn.

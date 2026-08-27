@@ -25,7 +25,7 @@
   gap: 8px;
   padding: 10px 12px;
   flex: 0 0 auto;
-  border-bottom: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .search {
@@ -33,16 +33,16 @@
   min-width: 0;
   padding: 7px 12px;
   border-radius: 8px;
-  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
-  background: var(--color-surface-0, #121217);
-  color: var(--color-text-primary, #ffffff);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
   font-size: 0.82rem;
   outline: none;
   transition: border-color 140ms ease;
 }
 
 .search:focus {
-  border-color: var(--color-primary, #2988ff);
+  border-color: var(--color-primary);
 }
 
 .publishBtn {
@@ -53,8 +53,12 @@
   padding: 7px 14px;
   border-radius: 8px;
   border: none;
-  background: linear-gradient(135deg, var(--color-primary, #2988ff) 0%, #1d75e0 100%);
-  color: #ffffff;
+  background: linear-gradient(
+    135deg,
+    var(--color-primary) 0%,
+    var(--color-primary-active) 100%
+  );
+  color: var(--color-primary-foreground);
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
@@ -97,7 +101,7 @@
 .rowIcon {
   width: 28px; height: 28px; flex: 0 0 auto;
   display: grid; place-items: center;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   overflow: hidden;
 }
@@ -111,24 +115,24 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rowPublisher {
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rowVerified { color: var(--color-primary); flex: 0 0 auto; display: inline-flex; }
 .rowDesc {
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   color: var(--color-text-secondary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.rowMeta { display: flex; gap: var(--space-2); font-size: var(--font-size-micro, 10px); color: var(--color-text-tertiary); }
+.rowMeta { display: flex; gap: var(--space-2); font-size: var(--font-size-micro); color: var(--color-text-tertiary); }
 
 .rowTakedown {
   display: flex;
   align-items: flex-start;
   gap: 4px;
   margin-top: 2px;
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   line-height: 1.4;
   color: var(--color-danger);
   white-space: normal;
@@ -150,7 +154,7 @@
    fact about the machine, not a fault in the plugin. */
 .rowInert {
   margin-top: 2px;
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   line-height: 1.4;
   color: var(--color-text-tertiary);
   white-space: normal;
@@ -159,11 +163,11 @@
 .rowActions { display: flex; gap: 4px; flex: 0 0 auto; align-items: center; }
 .mini {
   padding: 2px 8px;
-  border-radius: var(--radius-sm, 3px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   background: var(--color-surface-1);
   color: var(--color-text-primary);
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 .mini:hover { background: var(--color-hover); }
@@ -192,7 +196,7 @@
   margin-top: var(--space-2);
   align-self: center;
   padding: 4px 10px;
-  border-radius: var(--radius-md, 4px);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--color-surface-1);
   color: var(--color-text-primary);
@@ -217,7 +221,7 @@
 .listNote {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
   border-top: 1px solid var(--color-border-subtle);
 }
@@ -231,7 +235,7 @@
   border: 1px solid var(--color-border);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   cursor: pointer;
 }
 .chipActive { background: var(--color-primary-subtle); border-color: var(--color-primary); color: var(--color-text-primary); }
@@ -240,12 +244,12 @@
 .textarea {
   width: 100%;
   padding: 6px 8px;
-  border-radius: var(--radius-md, 4px);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-field-border);
   background: var(--color-surface-0);
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro, 10px);
+  font-size: var(--font-size-micro);
   resize: vertical;
 }
 .textarea:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -1px; }

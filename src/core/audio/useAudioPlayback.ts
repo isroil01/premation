@@ -33,6 +33,9 @@ export function useAudioPlayback(): void {
   const ws = useActiveWorkspace();
   const playing = ws?.playing ?? false;
   const time = ws?.time ?? 0;
+  // Scope to the ACTIVE composition: unscoped, a multi-comp project played
+  // every comp's audio at once — the same bleed the export mixdown had.
+  const compositionId = ws?.compositionId;
   const rev = useSceneRevision((s) => s.rev);
   // Bumped whenever a clip bar is added, removed, moved, trimmed or split.
   const clipRev = useClipRevision();
@@ -54,11 +57,11 @@ export function useAudioPlayback(): void {
   const mutedRef = useRef(false);
 
   useEffect(() => {
-    const key = `${rev}:${clipRev}:${assets.length}`;
+    const key = `${rev}:${clipRev}:${assets.length}:${compositionId ?? ''}`;
     const now = performance.now();
     let entry = cache.current;
     if (!entry || entry.key !== key || (playing && now - entry.at > PLAYBACK_REFRESH_MS)) {
-      entry = { key, at: now, layers: readAudioLayers() };
+      entry = { key, at: now, layers: readAudioLayers(compositionId) };
       cache.current = entry;
     }
     const rt = playbackHealth.realtimeFactor;
@@ -68,7 +71,7 @@ export function useAudioPlayback(): void {
       mutedRef.current = true;
     }
     audioEngine.sync(playing && !mutedRef.current, time, entry.layers);
-  }, [playing, time, rev, clipRev, assets]);
+  }, [playing, time, rev, clipRev, assets, compositionId]);
 
   useEffect(() => () => audioEngine.sync(false, 0, []), []);
 }

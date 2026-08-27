@@ -26,7 +26,7 @@
   width: 100%;
   box-sizing: border-box;
   padding: 2px var(--space-3);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   min-width: 0;
 }

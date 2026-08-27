@@ -9,6 +9,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { useAssetStore } from '@stores/assetStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import { assetIdOf } from '@core/source/sourceInfo';
 
 function esc(s: string): string {
@@ -19,9 +20,28 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function rateXml(fps: number): string {
-  const n = Math.round(fps);
-  return `<frameDuration>1/${n}s</frameDuration>`;
+/**
+ * The frame duration as an exact FCPXML rational, seconds = num/den.
+ *
+ * FCP and Premiere REQUIRE the NTSC family as 1001-based rationals: rounding
+ * 29.97 to `1/30s` shifted every cut by one frame per ~33 seconds of timeline
+ * and made drop-frame material read as non-drop. Every time value in the
+ * document must be an integer multiple of this fraction.
+ */
+export function fcpFrameDuration(fps: number): { num: number; den: number } {
+  const ntsc: ReadonlyArray<{ fps: number; den: number }> = [
+    { fps: 23.976, den: 24000 },
+    { fps: 29.97, den: 30000 },
+    { fps: 59.94, den: 60000 },
+  ];
+  for (const r of ntsc) {
+    if (Math.abs(fps - r.fps) < 0.005) return { num: 1001, den: r.den };
+  }
+  if (Number.isInteger(fps) && fps > 0) return { num: 1, den: fps };
+  // Arbitrary fractional rate: hundredths of a frame is exact for anything a
+  // comp settings dialog accepts (two decimal places).
+  const den = Math.round((fps || 30) * 100);
+  return { num: 100, den: den > 0 ? den : 3000 };
 }
 
 export interface FcpxmlClip {
@@ -36,27 +56,44 @@ export interface FcpxmlClip {
 }
 
 /** Pure builder: clips → FCPXML 1.9 document string. */
-export function buildFcpxml(clips: readonly FcpxmlClip[], fps: number, title: string): string {
-  const n = Math.round(fps) || 30;
+export function buildFcpxml(
+  clips: readonly FcpxmlClip[],
+  fps: number,
+  title: string,
+  size?: { width: number; height: number },
+): string {
+  const { num, den } = fcpFrameDuration(fps || 30);
+  /** `frames` frames as an FCPXML rational time string. */
+  const t = (frames: number): string => `${frames * num}/${den}s`;
   const total = clips.reduce((m, c) => Math.max(m, c.recordIn + c.duration), 0);
-  const assets = new Map<string, string>();
+
+  // r1 is the sequence's REAL <format> resource. It used to point at the first
+  // asset — Resolve rejected the file and FCP guessed a rate.
+  const FORMAT_ID = 'r1';
+  const assets = new Map<string, { id: string; hasVideo: boolean; hasAudio: boolean }>();
   for (const c of clips) {
-    if (!assets.has(c.mediaName)) assets.set(c.mediaName, `r${assets.size + 1}`);
+    const entry = assets.get(c.mediaName) ?? { id: `r${assets.size + 2}`, hasVideo: false, hasAudio: false };
+    // Honest per-kind flags: an audio-only asset declared hasVideo="1" made
+    // NLEs hunt for a video stream that does not exist.
+    if (c.kind === 'audio') entry.hasAudio = true;
+    else if (c.kind === 'image') entry.hasVideo = true;
+    else { entry.hasVideo = true; entry.hasAudio = true; }
+    assets.set(c.mediaName, entry);
   }
 
-  const assetXml = [...assets.entries()].map(([name, id]) => (
-    `    <asset id="${id}" name="${esc(name)}" hasVideo="1" hasAudio="1" />`
+  const sizeAttrs = size ? ` width="${Math.round(size.width)}" height="${Math.round(size.height)}"` : '';
+  const formatXml = `    <format id="${FORMAT_ID}" name="FFVideoFormatRateUndefined" frameDuration="${num}/${den}s"${sizeAttrs} />`;
+
+  const assetXml = [...assets.entries()].map(([name, a]) => (
+    `    <asset id="${a.id}" name="${esc(name)}"${a.hasVideo ? ' hasVideo="1"' : ''}${a.hasAudio ? ' hasAudio="1"' : ''} />`
   )).join('\n');
 
   const spine = clips
     .slice()
     .sort((a, b) => a.recordIn - b.recordIn)
     .map((c) => {
-      const ref = assets.get(c.mediaName) ?? 'r1';
-      const offset = `${c.recordIn}/${n}s`;
-      const dur = `${c.duration}/${n}s`;
-      const start = `${c.sourceIn}/${n}s`;
-      return `        <asset-clip ref="${ref}" name="${esc(c.name)}" offset="${offset}" duration="${dur}" start="${start}" tcFormat="NDF" />`;
+      const ref = assets.get(c.mediaName)?.id ?? 'r2';
+      return `        <asset-clip ref="${ref}" name="${esc(c.name)}" offset="${t(c.recordIn)}" duration="${t(c.duration)}" start="${t(c.sourceIn)}" tcFormat="NDF" />`;
     })
     .join('\n');
 
@@ -64,13 +101,13 @@ export function buildFcpxml(clips: readonly FcpxmlClip[], fps: number, title: st
 <!DOCTYPE fcpxml>
 <fcpxml version="1.9">
   <resources>
+${formatXml}
 ${assetXml}
   </resources>
   <library>
     <event name="${esc(title)}">
       <project name="${esc(title)}">
-        <sequence format="r1" duration="${total}/${n}s" tcStart="0/1s" tcFormat="NDF">
-          ${rateXml(n)}
+        <sequence format="${FORMAT_ID}" duration="${t(total)}" tcStart="0/1s" tcFormat="NDF">
           <spine>
 ${spine}
           </spine>
@@ -114,5 +151,6 @@ export function collectFcpxmlClips(): { clips: FcpxmlClip[]; fps: number } {
 
 export function exportFcpxmlText(title = 'MOTION'): string {
   const { clips, fps } = collectFcpxmlClips();
-  return buildFcpxml(clips, fps, title);
+  const comp = useCompositionStore.getState().comp();
+  return buildFcpxml(clips, fps, title, { width: comp.width, height: comp.height });
 }

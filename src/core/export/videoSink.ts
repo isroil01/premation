@@ -41,16 +41,37 @@ export type VideoFormat = 'mp4' | 'webm' | 'gif' | 'mov' | 'hdr10' | 'hlg' | `pl
 
 export type ExportQuality = 'high' | 'medium' | 'draft';
 
+/**
+ * ProRes flavour for `.mov` — the same family AE's output modules offer.
+ * 4444 is the only one that carries alpha; the 422 tiers trade quality for
+ * file size (HQ ≈ mastering, 422 ≈ edit, LT/Proxy ≈ offline).
+ */
+export type ProresProfile = 'proxy' | 'lt' | '422' | 'hq' | '4444';
+
+export const PRORES_PROFILE_LABELS: Record<ProresProfile, string> = {
+  '4444': 'ProRes 4444 (alpha)',
+  hq: 'ProRes 422 HQ',
+  '422': 'ProRes 422',
+  lt: 'ProRes 422 LT',
+  proxy: 'ProRes 422 Proxy',
+};
+
 export interface VideoSinkParams {
   format: VideoFormat;
   width: number;
   height: number;
   fps: number;
   quality?: ExportQuality;
+  /** mov only — which ProRes flavour ffmpeg encodes. Defaults to 4444. */
+  proresProfile?: ProresProfile;
   /** Keep an alpha channel (forces lossless frame staging). */
   transparent?: boolean;
   /** Mixed comp audio as WAV bytes, or undefined for a silent export. */
   audioWav?: Uint8Array;
+  /** Cooperative cancellation reaching INTO the encode phase — without it the
+   *  Cancel button was inert for the entire ffmpeg run, which on a long comp
+   *  is most of the export's wall clock. */
+  signal?: AbortSignal;
   /**
    * Context a PLUGIN exporter is told about the job before its first frame.
    *
@@ -103,9 +124,20 @@ export type VideoSinkResult =
       };
     };
 
+/**
+ * Optional float-linear readback of the frame just rendered, offered alongside
+ * the 8-bit canvas. The HDR sink prefers it: PQ baked from float linear
+ * quantises once, on the perceptually-uniform side, where the canvas path
+ * quantises through display sRGB first and bands in the shadows.
+ */
+export interface LinearFrameSource {
+  readLinearRgba?(): Float32Array | null;
+  readLinearRgbaAsync?(): Promise<Float32Array | null>;
+}
+
 export interface VideoSink {
   /** Encode one rendered frame. Called once per frame, in order. */
-  addFrame(canvas: HTMLCanvasElement, index: number): Promise<void>;
+  addFrame(canvas: HTMLCanvasElement, index: number, source?: LinearFrameSource): Promise<void>;
   /** Finish the encode. Throws if no frames were added. */
   finish(): Promise<VideoSinkResult>;
   /** Release everything without producing a file (cancel / error paths). */
@@ -155,8 +187,11 @@ class PluginSink implements VideoSink {
 
   async addFrame(canvas: HTMLCanvasElement, index: number): Promise<void> {
     const session = await this.ensureOpen();
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) throw new Error('The export canvas has no 2D context to read frames from.');
+    // Via the 2D scratch: the export canvas is GPU-owned, and getContext('2d')
+    // on it returns null — this threw on the FIRST frame of every plugin
+    // export before anything reached the plugin at all.
+    const ctx = readableContext(canvas);
+    if (!ctx) throw new Error('The export frame could not be read (no 2D context available).');
     const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
     await session.addFrame(index, canvas.width, canvas.height, data.data.buffer as ArrayBuffer);
     this.frames += 1;
@@ -187,6 +222,28 @@ class PluginSink implements VideoSink {
 export function canEncodeLocally(): boolean {
   const r = typeof window !== 'undefined' ? window.motionEditor?.render : undefined;
   return !!(r?.beginJob && r.stageFrame && r.encode);
+}
+
+/**
+ * A 2D-readable copy of a frame canvas.
+ *
+ * The offline renderer's canvas belongs to a GPU context, and a canvas that
+ * has ever vended WebGL/WebGPU returns NULL from `getContext('2d')` — a fact
+ * this codebase has re-discovered per call site (the GIF path and the preview
+ * both note it). The plugin sink and the HDR stats reader both read pixels,
+ * so they draw into this reused scratch canvas first.
+ */
+let readScratch: HTMLCanvasElement | null = null;
+
+function readableContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  readScratch ??= document.createElement('canvas');
+  if (readScratch.width !== canvas.width) readScratch.width = canvas.width;
+  if (readScratch.height !== canvas.height) readScratch.height = canvas.height;
+  const ctx = readScratch.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(canvas, 0, 0);
+  return ctx;
 }
 
 /** Encode a canvas to image bytes. Shared by the sinks and the sequence export. */
@@ -228,7 +285,10 @@ class FfmpegSink implements VideoSink {
   constructor(params: VideoSinkParams) {
     this.params = params;
     this.hdrTransfer = params.format === 'hdr10' ? 'pq' : params.format === 'hlg' ? 'hlg' : null;
-    this.frameExt = params.transparent || this.hdrTransfer ? 'png' : 'jpg';
+    // MOV always stages PNG: the preset promises "lossless" ProRes 4444, and
+    // an opaque comp used to stage through JPEG 0.95 — paying 4444's file
+    // size for JPEG-degraded, chroma-subsampled pixels.
+    this.frameExt = params.transparent || this.hdrTransfer || params.format === 'mov' ? 'png' : 'jpg';
   }
 
   private bridge(): NonNullable<NonNullable<Window['motionEditor']>['render']> {
@@ -247,22 +307,40 @@ class FfmpegSink implements VideoSink {
     return this.jobId;
   }
 
-  async addFrame(canvas: HTMLCanvasElement, index: number): Promise<void> {
+  async addFrame(canvas: HTMLCanvasElement, index: number, source?: LinearFrameSource): Promise<void> {
     const jobId = await this.ensureJob();
     let frameCanvas = canvas;
     if (this.hdrTransfer) {
-      // Measure MaxCLL/MaxFALL on display buffer (approx linear via undo-sRGB)
-      // before baking the OETF into staging PNGs. Synchronous and on the
-      // renderer's canvas, BEFORE the snapshot: the accumulator is ordered.
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (ctx) {
-        try {
-          const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          this.hdrStats.accumulateLinearFrame(data, false);
-        } catch { /* tainted canvas — skip stats */ }
+      // Prefer the FLOAT linear readback: PQ/HLG baked from real linear light
+      // quantises once. The 8-bit canvas fallback reconstructs linear from
+      // display sRGB bytes, which is where HDR10 exports banded in shadows.
+      const linear =
+        (await source?.readLinearRgbaAsync?.().catch(() => null))
+        ?? source?.readLinearRgba?.()
+        ?? null;
+      const exactLinear = linear && linear.length === canvas.width * canvas.height * 4 ? linear : null;
+      if (exactLinear) {
+        this.hdrStats.accumulateLinearFrame(exactLinear, true);
+        const { hdrCanvasFromLinearRgba } = await import('./hdrTransfer');
+        const baked = hdrCanvasFromLinearRgba(exactLinear, canvas.width, canvas.height, this.hdrTransfer);
+        if (baked) frameCanvas = baked;
       }
-      const { canvasWithHdrTransfer } = await import('./hdrTransfer');
-      frameCanvas = canvasWithHdrTransfer(canvas, this.hdrTransfer);
+      if (frameCanvas === canvas) {
+        // Measure MaxCLL/MaxFALL BEFORE baking the OETF into staging PNGs.
+        // Read through the 2D scratch: getContext('2d') on the GPU-owned render
+        // canvas returns null, which silently skipped the stats — every HDR10
+        // file shipped fabricated max-cll=1,1 mastering metadata that display
+        // tone-mappers actually read.
+        const ctx = readableContext(canvas);
+        if (ctx) {
+          try {
+            const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            this.hdrStats.accumulateLinearFrame(data, false);
+          } catch { /* tainted canvas — skip stats */ }
+        }
+        const { canvasWithHdrTransfer } = await import('./hdrTransfer');
+        frameCanvas = canvasWithHdrTransfer(canvas, this.hdrTransfer);
+      }
     }
     // Snapshot now, encode later: the renderer reuses its canvas for the next
     // frame the moment this returns, so the pixels must be copied out first.
@@ -310,13 +388,44 @@ class FfmpegSink implements VideoSink {
       ? 'mp4'
       : this.params.format;
     const mastering = this.hdrTransfer ? this.hdrStats.finish() : undefined;
-    const { frames, videoCodec } = await r.encode!(jobId, {
-      format: encodeFormat,
-      fps: this.params.fps,
-      hasAudio: !!this.params.audioWav,
-      quality: this.params.quality ?? 'high',
-      ...(this.hdrTransfer ? { hdr: this.hdrTransfer, hdrMastering: mastering } : {}),
-    });
+    // Encode-phase cancellation. The frame loop polls the signal itself, but
+    // the ffmpeg child is where a long export spends most of its wall clock —
+    // and without this the Cancel button was inert for that entire phase,
+    // stuck at 95% with a running child process.
+    const signal = this.params.signal;
+    if (signal?.aborted) {
+      await this.dispose();
+      throw new DOMException('Export cancelled', 'AbortError');
+    }
+    const onAbort = (): void => {
+      void r.cancel?.(jobId).catch(() => undefined);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    let encoded: { frames: number; videoCodec?: string };
+    try {
+      encoded = await r.encode!(jobId, {
+        format: encodeFormat,
+        fps: this.params.fps,
+        hasAudio: !!this.params.audioWav,
+        quality: this.params.quality ?? 'high',
+        ...(encodeFormat === 'mov' && this.params.proresProfile
+          ? { proresProfile: this.params.proresProfile }
+          : {}),
+        ...(this.hdrTransfer ? { hdr: this.hdrTransfer, hdrMastering: mastering } : {}),
+      });
+    } catch (err) {
+      // A killed child exits non-zero and rejects with an ffmpeg error — when
+      // WE killed it, surface the cancellation, not "ffmpeg exited null".
+      if (signal?.aborted) {
+        await r.cleanJob?.(jobId).catch(() => undefined);
+        this.jobId = null;
+        throw new DOMException('Export cancelled', 'AbortError');
+      }
+      throw err;
+    } finally {
+      signal?.removeEventListener('abort', onAbort);
+    }
+    const { frames, videoCodec } = encoded;
     // The staging dir (and the encoded file in it) outlives finish — the caller
     // still has to place the output. Whoever consumes the result is responsible
     // for save/saveTo/discard, each of which cleans the job up.
@@ -334,7 +443,11 @@ class FfmpegSink implements VideoSink {
       ...(mastering ? { hdrMastering: mastering } : {}),
       save: async (defaultName: string) => {
         const saved = await r.save?.(jobId, defaultName);
-        await cleanup();
+        // A cancelled save dialog must NOT clean up: cleanup deletes the
+        // staging dir INCLUDING the finished encode, so dismissing the dialog
+        // by reflex destroyed a completed multi-minute render with no way to
+        // retry. Keep it; discard()/dispose() still reclaims it later.
+        if (saved) await cleanup();
         return saved?.path ?? null;
       },
       saveTo: async (dir: string, filename: string) => {
@@ -361,7 +474,122 @@ class FfmpegSink implements VideoSink {
 
 // ── Browser: WebCodecs → WebM ────────────────────────────────────────
 
-import { muxWebm, type WebmSample, type WebmVideoCodec } from './webmMuxer';
+import { muxWebm, type WebmAudioTrack, type WebmSample, type WebmVideoCodec } from './webmMuxer';
+
+/** PCM pulled out of the mixdown's WAV container. */
+interface WavPcm {
+  sampleRate: number;
+  channels: number;
+  /** Interleaved signed 16-bit samples. */
+  data: Int16Array;
+}
+
+/** Minimal RIFF/WAVE reader for the mixdown's own output (48kHz s16 stereo).
+ *  Walks chunks rather than assuming a 44-byte header, so an extra LIST/fact
+ *  chunk cannot break it. Returns null for anything it does not understand. */
+function parseWav(bytes: Uint8Array): WavPcm | null {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.length < 44) return null;
+  if (view.getUint32(0, false) !== 0x52494646 /* RIFF */) return null;
+  if (view.getUint32(8, false) !== 0x57415645 /* WAVE */) return null;
+  let pos = 12;
+  let sampleRate = 0;
+  let channels = 0;
+  let bits = 0;
+  let data: Int16Array | null = null;
+  while (pos + 8 <= bytes.length) {
+    const id = view.getUint32(pos, false);
+    const size = view.getUint32(pos + 4, true);
+    const body = pos + 8;
+    if (id === 0x666d7420 /* fmt  */ && size >= 16) {
+      const format = view.getUint16(body, true);
+      channels = view.getUint16(body + 2, true);
+      sampleRate = view.getUint32(body + 4, true);
+      bits = view.getUint16(body + 14, true);
+      if (format !== 1 /* PCM */) return null;
+    } else if (id === 0x64617461 /* data */) {
+      const len = Math.min(size, bytes.length - body);
+      data = new Int16Array(bytes.buffer, bytes.byteOffset + body, Math.floor(len / 2));
+    }
+    pos = body + size + (size % 2);
+  }
+  if (!data || !sampleRate || !channels || bits !== 16) return null;
+  return { sampleRate, channels, data };
+}
+
+/** Opus frames per AudioData chunk — 20ms at 48kHz, Opus' native frame size. */
+const OPUS_CHUNK_FRAMES = 960;
+
+/**
+ * Encode the mixdown WAV to Opus for the WebM muxer.
+ *
+ * The muxer has carried a complete Opus audio-track implementation since it
+ * was written — and nothing ever fed it: the mixdown was computed, passed in,
+ * and dropped on the floor, so every browser export was SILENT with a green
+ * success toast. Returns null when this browser has no AudioEncoder or the
+ * encode fails — a silent file then ships exactly as before, never a failed
+ * export.
+ */
+async function encodeOpusAudio(
+  wav: Uint8Array,
+): Promise<{ track: WebmAudioTrack; samples: WebmSample[] } | null> {
+  if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined') return null;
+  const pcm = parseWav(wav);
+  if (!pcm) return null;
+  try {
+    const samples: WebmSample[] = [];
+    let description: Uint8Array | null = null;
+    let failure: Error | null = null;
+    const encoder = new AudioEncoder({
+      output: (chunk, metadata) => {
+        const d = metadata?.decoderConfig?.description;
+        if (d && !description) {
+          description = ArrayBuffer.isView(d)
+            ? new Uint8Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength) as ArrayBuffer)
+            : new Uint8Array((d as ArrayBuffer).slice(0));
+        }
+        const data = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(data);
+        samples.push({ timestampUs: chunk.timestamp, keyFrame: true, data });
+      },
+      error: (err) => {
+        failure = err instanceof Error ? err : new Error(String(err));
+      },
+    });
+    encoder.configure({
+      codec: 'opus',
+      sampleRate: pcm.sampleRate,
+      numberOfChannels: pcm.channels,
+      bitrate: 160_000,
+    });
+    const totalFrames = Math.floor(pcm.data.length / pcm.channels);
+    for (let frame = 0; frame < totalFrames; frame += OPUS_CHUNK_FRAMES) {
+      const count = Math.min(OPUS_CHUNK_FRAMES, totalFrames - frame);
+      // slice(), not subarray(): AudioData wants a view over a plain
+      // ArrayBuffer, and the WAV view may sit on a shared/offset buffer.
+      const slice = pcm.data.slice(frame * pcm.channels, (frame + count) * pcm.channels);
+      const audio = new AudioData({
+        format: 's16',
+        sampleRate: pcm.sampleRate,
+        numberOfFrames: count,
+        numberOfChannels: pcm.channels,
+        timestamp: Math.round((frame * 1e6) / pcm.sampleRate),
+        data: slice,
+      });
+      encoder.encode(audio);
+      audio.close();
+    }
+    await encoder.flush();
+    encoder.close();
+    if (failure || !description || samples.length === 0) return null;
+    return {
+      track: { sampleRate: pcm.sampleRate, channels: pcm.channels, description },
+      samples,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** Bits per second for a given frame size and quality tier. Roughly matches
  *  what a well-tuned VP9 encode needs — 0.1 bits per pixel per frame at high. */
@@ -437,10 +665,18 @@ class WebCodecsSink implements VideoSink {
     }
     this.frames++;
     // Back-pressure: without this the encoder queue grows unbounded and a long
-    // export balloons memory until the tab is killed.
+    // export balloons memory until the tab is killed. Re-checked AFTER the
+    // listener registers: the encoder drains on its own thread, and a queue
+    // that emptied between the size check and addEventListener would never
+    // fire another `dequeue` — the export hung forever with Cancel inert.
     if (encoder.encodeQueueSize > 8) {
       await new Promise<void>((resolve) => {
-        encoder.addEventListener('dequeue', () => resolve(), { once: true });
+        const onDequeue = (): void => {
+          encoder.removeEventListener('dequeue', onDequeue);
+          resolve();
+        };
+        encoder.addEventListener('dequeue', onDequeue);
+        if (encoder.encodeQueueSize <= 8) onDequeue();
       });
     }
   }
@@ -455,6 +691,12 @@ class WebCodecsSink implements VideoSink {
     this.encoder = null;
     if (this.error) throw this.error;
 
+    // Audio: the mixdown was always computed and handed in — and dropped.
+    // Encode it to Opus and give the muxer the track it has supported all
+    // along. A failed audio encode falls back to a silent file, never a
+    // failed export.
+    const audio = this.params.audioWav ? await encodeOpusAudio(this.params.audioWav) : null;
+
     const bytes = muxWebm(
       {
         codec: this.codec,
@@ -464,6 +706,7 @@ class WebCodecsSink implements VideoSink {
         ...(this.description ? { description: this.description } : {}),
       },
       this.samples,
+      audio ?? undefined,
     );
     return {
       kind: 'blob',

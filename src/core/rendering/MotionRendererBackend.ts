@@ -28,7 +28,7 @@ import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend
 import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
 import { viewportVideoFrames } from './videoFrameCache';
 import { renderPixelMotion } from './pixelMotion';
-import { exactVideoFrames } from './exactVideoFrames';
+import { exactVideoFrames, ExactVideoFrameCache } from './exactVideoFrames';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
 import { layerIsBaked } from '@core/effects/effectBake';
@@ -136,10 +136,28 @@ export class MotionRendererBackend implements RenderBackend {
    *  False frames must not enter the RAM preview cache — they would replay
    *  their stale pixels on the next loop pass. */
   private frameMediaExact = true;
+  /** True when the last renderFrame reached the draw call — see
+   *  {@link lastFrameDidRender}. */
+  private frameDidRender = false;
 
   /** Whether the last renderFrame's media was settled — see frameMediaExact. */
   lastFrameMediaExact(): boolean {
     return this.frameMediaExact;
+  }
+
+  /**
+   * Did the last `renderFrame` actually DRAW, or did it coalesce?
+   *
+   * Before the backend is ready `renderFrame` stashes the snapshot and returns
+   * without touching the drawing buffer. Callers that then read the canvas —
+   * the idle pre-render pump reads it twice, once to snapshot its freeze-mask
+   * and once to copy the frame into the RAM preview — were reading whatever was
+   * there before, and had no way to tell. `frameMediaExact` did not cover it:
+   * it stayed at its previous value across the early return, so a coalesced
+   * frame reported the exactness of a completely different frame.
+   */
+  lastFrameDidRender(): boolean {
+    return this.frameDidRender;
   }
 
   /** Comp time of the frame currently being rendered (anchor for playbackFeeds). */
@@ -187,6 +205,22 @@ export class MotionRendererBackend implements RenderBackend {
   readonly role: 'viewport' | 'auxiliary';
 
   /**
+   * The exact-decoder cache THIS backend renders from. The viewport shares
+   * the module singleton (so scrub state survives pane churn); every
+   * AUXILIARY backend — export, export preview, 2-up panes, thumbnails —
+   * gets a PRIVATE instance. Sharing one cache gave the export and the
+   * parked viewport a single lastReq/stream per source: each side's requests
+   * read as wild seeks to the other, the streaming reader was killed on
+   * nearly every frame (per-frame GOP random access — the pathology
+   * streaming exists to remove), and the export's convergence loop awaited
+   * decodes the VIEWPORT had queued (waits() is cache-wide). Isolated, an
+   * export streams cleanly no matter what the viewport does — and its landed
+   * decodes no longer emit AnimationChanged repaints that poked the parked
+   * viewport into thrashing it right back.
+   */
+  private readonly exactFrames: ExactVideoFrameCache;
+
+  /**
    * WebGPU is this product's PRIMARY engine; WebGL2 is the fallback rung.
    *
    * The default used to be `'webgl2'`, and that is not a cosmetic preference:
@@ -201,6 +235,9 @@ export class MotionRendererBackend implements RenderBackend {
     this.preferred = preferred;
     this.role = role;
     this.kind = `motion-${preferred}`;
+    this.exactFrames = role === 'viewport'
+      ? exactVideoFrames
+      : new ExactVideoFrameCache(undefined, undefined, undefined, undefined, { emitEvents: false });
     this.readyPromise = new Promise<void>((resolve) => {
       this.resolveReady = resolve;
     });
@@ -595,9 +632,17 @@ export class MotionRendererBackend implements RenderBackend {
   renderFrame(snapshot: RenderSnapshot): void {
     if (!this.ready || !this.renderer || !this.viewport) {
       // Coalesce: only the latest frame matters once we're ready.
+      //
+      // Nothing was drawn, and both frame-state flags have to say so. Leaving
+      // them at the previous frame's values told the RAM preview that the
+      // canvas held this frame's pixels when it still held the last one's (or
+      // nothing at all), which is how blank and duplicated frames got cached.
+      this.frameDidRender = false;
+      this.frameMediaExact = false;
       this.pending = snapshot;
       return;
     }
+    this.frameDidRender = true;
     const vp = this.viewport;
 
     // Feed image asset sources for this frame (keyed to match snapshotToFrameScene's
@@ -1035,7 +1080,7 @@ export class MotionRendererBackend implements RenderBackend {
     // frame must never be the `exact: false` nearest-neighbour a live
     // repaint would have corrected a tick later.
     const legacy = this.textures?.takeMediaWaits ? this.textures.takeMediaWaits() : [];
-    const exact = exactVideoFrames.waits();
+    const exact = this.exactFrames.waits();
     return exact.length > 0 ? [...legacy, ...exact] : legacy;
   }
 
@@ -1155,7 +1200,7 @@ export class MotionRendererBackend implements RenderBackend {
       if (!settled) this.frameMediaExact = false;
       return;
     }
-    const exact = exactVideoFrames.get(src, timeSec, pulldown);
+    const exact = this.exactFrames.get(src, timeSec, pulldown);
     if (exact.state === 'frame') {
       if (!exact.exact) this.frameMediaExact = false;
       // Signature is the presentation index: a repeated render of the same
@@ -1184,7 +1229,16 @@ export class MotionRendererBackend implements RenderBackend {
       }
     }
     this.textures!.releaseFrame?.(key);
-    this.textures!.setVideo(key, src, timeSec, legacyFields);
+    // The element path's own settledness. Unlike the sticky `unavailable` case
+    // above — which is deliberately NOT flagged, because the element is that
+    // source's only truth and flagging it would keep its frames out of the RAM
+    // preview forever — this is TRANSIENT: a decode still warming, or the gap
+    // between requesting a seek and it landing. Those frames genuinely hold the
+    // wrong picture, and caching them replays it at that timecode on every
+    // later pass.
+    if (!this.textures!.setVideo(key, src, timeSec, legacyFields)) {
+      this.frameMediaExact = false;
+    }
   }
 
   /** Reused output surface for Pixel Motion, per texture key. */
@@ -1206,8 +1260,8 @@ export class MotionRendererBackend implements RenderBackend {
     fields?: 'upper' | 'lower',
     pulldown?: number,
   ): void {
-    const ea = exactVideoFrames.get(src, fb.a, pulldown);
-    const eb = exactVideoFrames.get(src, fb.b, pulldown);
+    const ea = this.exactFrames.get(src, fb.a, pulldown);
+    const eb = this.exactFrames.get(src, fb.b, pulldown);
     if (ea.state === 'frame' && eb.state === 'frame') {
       // Warp signature: the frame PAIR plus the weight. The same rendered comp
       // frame re-requests this dozens of times (media-settle passes, repaints
@@ -1249,15 +1303,15 @@ export class MotionRendererBackend implements RenderBackend {
     this.textures?.dispose();
     this.scaledFeed.clear();
     this.pixelMotionOut.clear();
-    // The decoded-frame caches are MODULE SINGLETONS shared by every backend.
-    // Only the main viewport's teardown may clear them: an auxiliary backend
-    // (2-up pane, presentation mode, export, thumbnail render) disposing used
-    // to wipe the viewport's decoded frames and close every open decoder
-    // mid-playback — closing a preview pane visibly stalled the main view.
+    // Exact-decoder cache: the viewport's is the module singleton (cleared
+    // only on the viewport's own teardown — an auxiliary dispose wiping it
+    // used to stall the main view mid-playback); every auxiliary backend owns
+    // a PRIVATE instance whose decoders must die with it or each export/pane
+    // would strand its open VideoDecoders and demuxed files.
     if (this.role === 'viewport') {
       viewportVideoFrames.clear();
-      exactVideoFrames.clear();
     }
+    this.exactFrames.clear();
     // Before the renderer goes. The subscription outlives this object
     // otherwise — the effect registry is module state, so a stale listener
     // would keep compiling shaders into a registry attached to a disposed

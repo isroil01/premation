@@ -79,7 +79,7 @@
   font-weight: var(--font-weight-medium);
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-surface-2);
   border: 1px solid var(--color-border-subtle);
   color: var(--color-text-secondary);
 }
@@ -317,7 +317,7 @@
 }
 
 .currentTag {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-surface-2);
   border: 1px solid var(--color-border-strong);
   color: var(--color-text-primary);
 }

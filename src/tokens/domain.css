@@ -60,9 +60,50 @@
   --color-cache-cached:   rgba(52, 201, 142, 0.35);
   --color-cache-uncached: transparent;
 
+  /*
+   * ── Timeline surfaces ───────────────────────────────────────────
+   *
+   * The timeline was the single worst offender for hardcoded colour in the
+   * app: 58 literals in one stylesheet, none of which moved when the theme
+   * did. Switch to light and the whole bottom half of the window stayed
+   * black. These name every surface the timeline actually paints so the
+   * stylesheet can stop guessing.
+   *
+   * Distinct from `--color-ruler-*`, which belongs to the CANVAS rulers and
+   * stays dark in BOTH themes on purpose (a light ruler washes out the guides
+   * dragged off it). The timeline's ruler has no such constraint and must
+   * follow the ground like every other panel.
+   */
+  --color-timeline-header:        #202020;  /* track header row            */
+  --color-timeline-header-hover:  #272727;
+  --color-timeline-row-alt:       #191919;  /* zebra banding, solid        */
+  --color-timeline-ruler-bg:      #141414;
+  --color-timeline-ruler-border:  #0d0d0d;
+  --color-timeline-tick:          #383838;
+  --color-timeline-tick-major:    #484848;
+  /* Recessed wells: the AE-style square switches and the Mode/Matte/Parent
+     pickers, which read as inset controls rather than panel surface. */
+  --color-timeline-well:          #141414;
+  --color-timeline-well-hover:    #252525;
+  --color-timeline-well-border-hover: #3e3e3e;
+
+  /* ── Scrollbars ─────────────────────────────────────────────────
+     Flat, AE-style. Five stylesheets each spelled their own greys; a light
+     theme turned every one of them into a dark smear on a white panel. */
+  --color-scrollbar-track:        #181818;
+  --color-scrollbar-thumb:        #383838;
+  --color-scrollbar-thumb-hover:  #555555;
+
   /* Canvas dot-grid texture — white dots read against the true-black void;
      overridden below for the light theme's paler workspace ground. */
   --color-canvas-dot: rgba(255, 255, 255, 0.035);
+
+  /* Transparency checkerboard — the "nothing here" pattern behind alpha.
+     It has to read as absence against the ground it sits on, so it cannot be
+     theme-fixed: hardcoded dark, it read as a dark PATTERN on a light
+     workspace rather than as empty space. */
+  --color-checkerboard-a: #1a1a1a;
+  --color-checkerboard-b: #252525;
 }
 
 /* Timeline chrome is the one domain group that CANNOT be theme-fixed:
@@ -76,6 +117,24 @@
   --color-timeline-keyframe-stroke:        rgba(0, 0, 0, 0.25);
   --color-timeline-keyframe-stroke-active: var(--color-slate-950);
   --color-canvas-dot: rgba(0, 0, 0, 0.05);
+  --color-checkerboard-a: #ffffff;
+  --color-checkerboard-b: #e3e5ea;
+
+  /* Timeline surfaces — the ground the lanes and headers sit on. */
+  --color-timeline-header:        #e4e7ec;
+  --color-timeline-header-hover:  #d9dde4;
+  --color-timeline-row-alt:       rgba(0, 0, 0, 0.03);
+  --color-timeline-ruler-bg:      #e0e3e9;
+  --color-timeline-ruler-border:  rgba(0, 0, 0, 0.14);
+  --color-timeline-tick:          rgba(0, 0, 0, 0.30);
+  --color-timeline-tick-major:    rgba(0, 0, 0, 0.50);
+  --color-timeline-well:          #ffffff;
+  --color-timeline-well-hover:    #f2f4f7;
+  --color-timeline-well-border-hover: rgba(0, 0, 0, 0.28);
+
+  --color-scrollbar-track:        #e4e7ec;
+  --color-scrollbar-thumb:        #b8bfc9;
+  --color-scrollbar-thumb-hover:  #97a0ad;
 
   /* Layer-switch accents — darkened for AA-ish contrast on light panels. */
   --color-switch-solo:        #a97e00;
@@ -83,4 +142,7 @@
   --color-switch-adjustment:  #7c4fd8;
   --color-switch-3d:          #b06f00;
   --color-switch-shy:         #0284c7;
+
+  /* AI semantic accents on light backgrounds */
+  --color-ai-light:           var(--color-violet-700);
 }

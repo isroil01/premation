@@ -226,13 +226,12 @@ export interface TimelineModel {
   /** Work area (in/out region, seconds). Playback loops within it; a band is
    *  drawn on the ruler + a faint tint over the lanes. */
   workArea?: { start: number; end: number };
-  /** Frame-cache coverage (seconds) — the REAL RAM-preview state, drawn as a
-   *  thin green bar under the ruler. */
-  cachedRanges?: ReadonlyArray<{ start: number; end: number }>;
-  /** Disk-tier coverage (seconds) — frames that survived RAM eviction and get
-   *  read back ahead of the playhead. Drawn as a fainter blue bar beneath the
-   *  green one, and kept separate because the two are different promises. */
-  diskCachedRanges?: ReadonlyArray<{ start: number; end: number }>;
+  // NOTE: preview-coverage (RAM green lane / disk blue lane) is deliberately
+  // NOT part of this model. It changes on every rendered frame, and carrying it
+  // here meant rebuilding the whole model object — and re-rendering the whole
+  // timeline — at frame rate, which is exactly what this model is documented to
+  // avoid. `Timeline` renders `<CacheBars>`, which subscribes to the frame
+  // cache itself and throttles its own refresh.
   /** Snap to grid (UI hint; engine may ignore). */
   snapToGrid?: boolean;
   /** Total height of the track header column. */

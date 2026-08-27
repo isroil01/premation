@@ -54,6 +54,14 @@ async function session(store: ManifestFrameStore, gen: string, frames: number[])
     await flush();
   }
   await flush();
+  // Session END. Manifest writes are debounced on a timer during the session —
+  // `track` fires once per encoded frame, and serializing the whole index that
+  // often was costing a full JSON build + store write per cached frame of
+  // playback. Committing on teardown is what makes the debounce safe, and it is
+  // what the editor does when the viewport unmounts (see App.tsx), so a session
+  // in this file has to do it too or it is not modelling a session.
+  cache.flushManifest();
+  await flush();
 }
 
 describe('surviving a restart', () => {
@@ -194,6 +202,8 @@ describe('the caps', () => {
       cache.write(1, canvas());
       await flush();
     }
+    await flush();
+    cache.flushManifest();
     await flush();
     const manifest = JSON.parse(store.manifest!) as { gens: Array<{ id: string }> };
     expect(manifest.gens.map((g) => g.id)).not.toContain('g1');

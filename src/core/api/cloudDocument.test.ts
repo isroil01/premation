@@ -99,10 +99,43 @@ describe('captureDocument → restoreDocument', () => {
     expect(ctrl.getLayersForNode('layer_a').map((l) => ({ start: l.start, end: l.end }))).toEqual(before);
   });
 
-  it('preserves splits (a node backing multiple clips)', () => {
+  it('preserves splits (both halves, each on its own node)', () => {
     const ctrl = getTimelineController();
     const clip = ctrl.getLayersForNode('layer_b')[0];
-    ctrl.splitClip(clip!.id, 5);
+    const rightLayerId = ctrl.splitClip(clip!.id, 5);
+    expect(rightLayerId).toBeTruthy();
+    // Each half is its own layer now — see `splitLayerIndependence.test.ts` for
+    // why. This test used to read both bars off `layer_b`, which is precisely
+    // the shape that made the right half unselectable and undeletable.
+    const rightNodeId = ctrl.timeline.getLayer(rightLayerId!)!.sourceId!;
+    expect(rightNodeId).not.toBe('layer_b');
+
+    const geometry = (nodeId: string): Array<{ start: number; end: number }> =>
+      ctrl.getLayersForNode(nodeId).map((l) => ({ start: l.start, end: l.end }));
+    const beforeLeft = geometry('layer_b');
+    const beforeRight = geometry(rightNodeId);
+    expect(beforeLeft).toHaveLength(1);
+    expect(beforeRight).toHaveLength(1);
+
+    const doc = structuredClone(captureDocument());
+    restoreDocument(doc);
+
+    expect(geometry('layer_b')).toEqual(beforeLeft);
+    expect(geometry(rightNodeId)).toEqual(beforeRight);
+  });
+
+  it('still restores a node that backs MULTIPLE clips', () => {
+    // Split no longer produces this shape, but the engine and the serializer
+    // still allow it (a clip is free to name any source), and a document saved
+    // by an older build is full of it. Reload must not collapse those bars.
+    const ctrl = getTimelineController();
+    const clip = ctrl.getLayersForNode('layer_b')[0]!;
+    ctrl.timeline.addLayer(clip.trackId, {
+      name: 'layer_b',
+      sourceId: 'layer_b',
+      clip: { start: 200, duration: 40 },
+    });
+    ctrl.invalidateLayerIndex();
     const before = ctrl.getLayersForNode('layer_b').map((l) => ({ start: l.start, end: l.end }));
     expect(before).toHaveLength(2);
 

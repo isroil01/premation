@@ -59,7 +59,7 @@
 
 .buttonActive:hover {
   background: var(--color-surface-3);
-  color: var(--color-primary-hover, var(--color-primary));
+  color: var(--color-primary-hover);
   border-color: transparent;
 }
 

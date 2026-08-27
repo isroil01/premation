@@ -202,11 +202,11 @@
 }
 
 .hdrNoteOk {
-  border-color: color-mix(in srgb, var(--color-success, #3d9a6a) 45%, var(--color-border));
+  border-color: color-mix(in srgb, var(--color-success) 45%, var(--color-border));
 }
 
 .hdrNoteWarn {
-  border-color: color-mix(in srgb, var(--color-warning, #c9a227) 50%, var(--color-border));
+  border-color: color-mix(in srgb, var(--color-warning) 50%, var(--color-border));
   color: var(--color-text-primary);
 }
 

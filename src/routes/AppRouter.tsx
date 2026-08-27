@@ -20,6 +20,7 @@ import { cloudAccountsEnabled, cloudProjectsEnabled } from '@core/config/edition
 import { RequireAuth } from './RequireAuth';
 import { TitleBar } from '@layout/TitleBar/TitleBar';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
+import { useAutoUpdate } from '@core/update/useAutoUpdate';
 import { applyPasteboardColor } from '@core/theme/pasteboard';
 import { applyAccentColor } from '@core/theme/accent';
 import { useOAuthDeepLink } from '@hooks/useOAuthDeepLink';
@@ -52,6 +53,11 @@ function AppLayout(): JSX.Element {
   // Desktop: catch the OAuth one-time code the system browser hands back through
   // the premation:// deep link and route it to /oauth. No-op on the web.
   useOAuthDeepLink();
+
+  // Mounted beside NotificationHost, and app-wide rather than editor-only: an
+  // update that finished downloading while the user sat on the dashboard is
+  // still worth telling them about.
+  useAutoUpdate();
 
   useEffect(() => {
     if (isEditor) {

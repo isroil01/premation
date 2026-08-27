@@ -2,10 +2,10 @@
    with a subtle translucent surface blur and sleek divider seam. */
 .titleBar {
   height: 32px;
-  background: var(--color-surface-1, #1e1e24);
+  background: var(--color-surface-1);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.1));
+  border-bottom: 1px solid var(--color-border-strong);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -82,14 +82,14 @@
   width: 1px;
   height: 14px;
   margin: 0 6px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-divider);
 }
 
 .layoutToggle {
   border: none !important;
   background: transparent !important;
   box-shadow: none !important;
-  color: rgba(255, 255, 255, 0.6) !important;
+  color: var(--color-text-secondary) !important;
   border-radius: var(--radius-lg) !important;
   width: 26px !important;
   height: 26px !important;
@@ -102,8 +102,8 @@
 }
 
 .layoutToggle:hover {
-  background: rgba(255, 255, 255, 0.08) !important;
-  color: #ffffff !important;
+  background: var(--color-hover) !important;
+  color: var(--color-text-primary) !important;
 }
 
 .layoutToggle:active {
@@ -117,8 +117,8 @@
 }
 
 .layoutToggle[data-active]:hover {
-  background: rgba(255, 255, 255, 0.08) !important;
-  color: var(--color-primary-hover, var(--color-primary)) !important;
+  background: var(--color-hover) !important;
+  color: var(--color-primary-hover) !important;
 }
 
 .previewBtn {
@@ -127,7 +127,7 @@
   gap: 5px;
   height: 24px;
   padding: 0 10px;
-  border-radius: var(--radius-md, 6px);
+  border-radius: var(--radius-md);
   background: var(--color-primary-subtle);
   color: var(--color-primary);
   border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
@@ -158,9 +158,9 @@
   gap: 5px;
   height: 24px;
   padding: 0 10px;
-  border-radius: var(--radius-md, 6px);
+  border-radius: var(--radius-md);
   background: var(--color-primary);
-  color: var(--color-primary-foreground, #ffffff);
+  color: var(--color-primary-foreground);
   border: 1px solid transparent;
   font-size: var(--font-size-xs);
   font-weight: 600;
@@ -197,7 +197,7 @@
 }
 
 .avatarIcon {
-  color: #ffffff;
+  color: var(--color-primary-foreground);
   background: var(--color-primary);
   border-radius: 2px;
   width: 18px;
@@ -209,7 +209,7 @@
 .userEmail {
   font-size: var(--font-size-xs);
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--color-text-primary);
   max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -228,7 +228,7 @@
   height: 100%;
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--color-text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -238,14 +238,16 @@
 }
 
 .btn:hover {
-  background: rgba(255, 255, 255, 0.09);
-  color: #ffffff;
+  background: var(--color-hover);
+  color: var(--color-text-primary);
 }
 
 .btn:active {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--color-active);
 }
 
+/* Windows' own close-button red. Fixed in BOTH themes on purpose — it is
+   a platform convention, and white-on-#e81123 is the pairing users know. */
 .btnClose:hover {
   background: #e81123 !important;
   color: #ffffff !important;

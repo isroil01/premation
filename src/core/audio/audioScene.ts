@@ -30,6 +30,7 @@
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { compRootOf } from '@core/scene/parenting';
 import type { SceneNode } from '@core/types';
 import { assetUrl } from '@core/api/client';
 import { useAssetStore } from '@stores/assetStore';
@@ -369,8 +370,15 @@ export function readVideoAudioVoices(node: SceneNode): AudioLayerState[] {
  * as audio being out of scope. Applied here, once, so it cannot cover one kind
  * and miss the other.
  */
-export function readAudioLayers(): AudioLayerState[] {
-  const nodes = flattenScene(defaultSceneGraph);
+export function readAudioLayers(scopeRootId?: string): AudioLayerState[] {
+  // Scoped to one composition when asked. flattenScene walks the WHOLE
+  // project, so an export of comp B used to carry comp A's soundtrack under
+  // comp B's picture (the picture was rootId-scoped; the sound was not), and
+  // multi-comp projects heard every comp at once during playback.
+  const all = flattenScene(defaultSceneGraph);
+  const nodes = scopeRootId
+    ? all.filter((n) => n.id !== scopeRootId && compRootOf(n.id) === scopeRootId)
+    : all;
   const anySolo = nodes.some((n) => n.solo === true);
 
   const out: AudioLayerState[] = [];

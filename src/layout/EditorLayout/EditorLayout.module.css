@@ -6,7 +6,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
   overflow: hidden;
 }
 
@@ -17,7 +17,7 @@
   min-height: 0;
   display: flex;
   flex-direction: row;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 .split {
@@ -35,7 +35,7 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 /* ── Detached-panel placeholder ────────────────────────────────────
@@ -49,7 +49,7 @@
   justify-content: center;
   gap: var(--space-5);
   height: 100%;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
   color: var(--color-text-tertiary);
 }
 
@@ -91,7 +91,7 @@
   flex-direction: column;
   position: relative;
   overflow: hidden;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 @media (max-width: 640px) {

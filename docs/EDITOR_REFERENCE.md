@@ -69,7 +69,7 @@ rediscovered in git history and believed a second time.
 | Light types | 4 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
-| Export formats | 17 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
+| Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
 | Stores | 47 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
@@ -234,7 +234,7 @@ because the dialog previously claimed all of them kept alpha:
 
 | Format | Alpha | How |
 |---|---|---|
-| `mov` | ✅ | ProRes 4444, `yuva444p10le` |
+| `mov` | ✅ | ProRes 4444 only, `yuva444p10le` (the 422/HQ/LT/Proxy profiles are `yuv422p10le` — no alpha plane) |
 | `webm` | ✅ | VP9 `yuva420p` + `-auto-alt-ref 0`, PNG staging |
 | `png`, `png-sequence` | ✅ | staged as PNG |
 | `mp4` | ❌ | libx264 `yuv420p` — flattened over **black** |

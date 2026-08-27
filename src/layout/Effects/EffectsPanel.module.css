@@ -48,11 +48,11 @@
   gap: var(--space-2);
   margin-top: var(--space-3);
   padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-border, #000000);
-  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
+  border-bottom: 1px solid var(--color-border);
+  font-family: var(--font-family-sans);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold, 700);
-  color: var(--color-text-primary, #e1e1e1);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text-primary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -311,7 +311,7 @@
 
 .fxStar:focus-visible,
 .fxStarFilter:focus-visible {
-  outline: 2px solid var(--color-focus-ring, var(--color-accent));
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 1px;
 }
 
@@ -332,7 +332,7 @@
 }
 
 .labelSwatch:focus-visible {
-  outline: 2px solid var(--color-focus-ring, var(--color-accent));
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 1px;
 }
 
@@ -404,7 +404,7 @@
 .effectCardItem {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .effectCardHead {
@@ -414,9 +414,9 @@
   min-height: 26px;
   padding: 2px 6px 2px 4px;
   user-select: none;
-  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
-  font-size: var(--font-size-xs, 12px);
-  font-weight: var(--font-weight-semibold, 600);
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   min-width: 0;
 }
 
@@ -444,7 +444,7 @@
   font-family: 'Courier New', Courier, monospace, var(--font-family-mono);
   font-size: var(--font-size-xs);
   font-style: italic;
-  font-weight: var(--font-weight-bold, 700);
+  font-weight: var(--font-weight-bold);
   line-height: 1;
   color: var(--color-primary);
   text-align: center;
@@ -576,13 +576,13 @@
   width: 100%;
   max-width: 110px;
   height: 22px;
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  color: var(--color-text-primary);
   font-family: inherit;
-  font-size: var(--font-size-xs, 11px);
-  padding: 0 var(--space-2, 6px);
-  border-radius: var(--radius-xs, 3px);
+  font-size: var(--font-size-xs);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   box-sizing: border-box;
   min-width: 0;
@@ -590,7 +590,7 @@
 }
 
 .paramSelect:hover {
-  border-color: var(--color-field-border-hover, rgba(255, 255, 255, 0.16));
+  border-color: var(--color-field-border-hover);
 }
 
 .paramSelect:focus-visible {
@@ -621,12 +621,12 @@
   padding: 3px 0;
   background: none;
   border: 0;
-  border-radius: var(--radius-xs, 3px);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   color: var(--color-text-secondary);
-  font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
+  font-family: var(--font-family-sans);
   font-size: 11.5px;
-  font-weight: var(--font-weight-semibold, 600);
+  font-weight: var(--font-weight-semibold);
   text-align: left;
   transition: color var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -704,7 +704,7 @@
   min-height: 28px;
   padding: 6px 8px;
   border-bottom: 1px solid var(--color-border-subtle);
-  background: var(--color-panel-header, transparent);
+  background: var(--color-panel-header);
   min-width: 0;
 }
 

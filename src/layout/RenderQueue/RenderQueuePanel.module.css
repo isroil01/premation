@@ -271,7 +271,12 @@
 
 .progressFill {
   height: 100%;
-  background: linear-gradient(90deg, var(--color-primary) 0%, #5ba4ff 50%, var(--color-primary) 100%);
+  background: linear-gradient(
+    90deg,
+    var(--color-primary) 0%,
+    var(--color-primary-hover) 50%,
+    var(--color-primary) 100%
+  );
   background-size: 200% 100%;
   border-radius: var(--radius-full);
   transition: width 0.1s linear;

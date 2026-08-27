@@ -12,14 +12,14 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 .strip {
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
-  height: var(--bar-height-panel, 30px);
+  height: var(--bar-height-panel);
   background: var(--color-panel-header);
   border-bottom: 1px solid var(--color-border);
   overflow: hidden;
@@ -38,8 +38,8 @@
   background: transparent;
   color: var(--color-text-secondary);
   font-family: var(--font-family-sans);
-  font-size: var(--font-size-xs, 11px);
-  font-weight: var(--font-weight-medium, 500);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   letter-spacing: -0.01em;
   cursor: pointer;
   white-space: nowrap;
@@ -57,7 +57,7 @@
 .tabActive {
   background: var(--color-panel);
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold, 600);
+  font-weight: var(--font-weight-semibold);
   box-shadow: inset 0 -2px 0 var(--color-primary);
 }
 
@@ -85,7 +85,7 @@
   height: 16px;
   flex: 0 0 auto;
   border: none;
-  border-radius: var(--radius-sm, 3px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: inherit;
   cursor: pointer;
@@ -108,7 +108,7 @@
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: var(--radius-sm, 3px);
+  border-radius: var(--radius-sm);
   border: none;
   background: transparent;
   color: var(--color-text-secondary);
@@ -137,14 +137,14 @@
 .overflowMenu {
   position: absolute;
   right: var(--space-2);
-  top: var(--bar-height-panel, 30px);
-  z-index: var(--z-popover, 50);
+  top: var(--bar-height-panel);
+  z-index: var(--z-index-popover);
   min-width: 220px;
   padding: var(--space-1);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md, 4px);
-  box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / 0.35));
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
 }
 
 .overflowItem {
@@ -157,7 +157,7 @@
   font-size: var(--font-size-label);
   text-align: left;
   cursor: pointer;
-  border-radius: var(--radius-sm, 3px);
+  border-radius: var(--radius-sm);
 }
 .overflowItem:hover { background: var(--color-hover); }
 
@@ -166,7 +166,7 @@
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 /*
@@ -184,7 +184,7 @@
   display: flex;
   min-width: 0;
   min-height: 0;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
 }
 
 .sceneHidden {

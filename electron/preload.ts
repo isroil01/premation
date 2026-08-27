@@ -294,6 +294,33 @@ const bridge = {
   },
 
   /**
+   * Auto-update, as the renderer sees it.
+   *
+   * Read-and-act only: the renderer can observe progress, flip the
+   * download-on-its-own setting, and ask to restart into a downloaded update.
+   * It cannot point the updater at a different release feed — that comes from
+   * the build's publish config and stays in main.
+   */
+  updates: {
+    /** Current status, for a renderer that mounted after the last event. */
+    getStatus: () => ipcRenderer.invoke('updater:getStatus'),
+    /** Live status pushes. Returns an unsubscribe. */
+    onStatus: (handler: (status: unknown) => void) => {
+      const listener = (_event: unknown, status: unknown): void => handler(status);
+      ipcRenderer.on('updater:status', listener);
+      return () => ipcRenderer.removeListener('updater:status', listener);
+    },
+    getSettings: () => ipcRenderer.invoke('updater:getSettings'),
+    setAutoDownload: (enabled: boolean) => ipcRenderer.invoke('updater:setAutoDownload', enabled),
+    /** Check now (Settings' "Check for updates"). */
+    check: () => ipcRenderer.invoke('updater:check'),
+    /** Fetch an update the user declined to auto-download. */
+    downloadNow: () => ipcRenderer.invoke('updater:downloadNow'),
+    /** Quit into the installer and come back. */
+    restartAndInstall: () => ipcRenderer.invoke('updater:restartAndInstall'),
+  },
+
+  /**
    * Tell the main process which edition the RENDERER thinks it is.
    *
    * Diagnostic only. Main does not take its edition from this and must not: the

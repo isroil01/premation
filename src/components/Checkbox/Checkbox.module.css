@@ -22,7 +22,7 @@
   height: 13px;
   border-radius: 1px;
   background: var(--color-surface-0);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--color-border-strong);
   flex: none;
   transition: var(--motion-hover-transition);
 }

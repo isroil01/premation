@@ -27,6 +27,7 @@ import { measureTextSize, measureTextBoxes, DEFAULT_LINE_HEIGHT, type MeasuredTe
 import { scanSvgAnimations, type SvgShapeAnimation } from '../../utils/svgAnimation';
 import { defaultAnimation } from '@motion/animation';
 import { copyNodeAnimation } from '@core/animation/cloneNodeAnimation';
+import { deleteLayerNode } from './deleteLayerNode';
 import { bezierCorner as corner } from '@motion/workspace';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -1677,27 +1678,10 @@ export function deleteSelectedLayers(): void {
   });
   if (toDelete.length === 0) return;
 
-  for (const id of toDelete) {
-    // Animation goes with the layers — SUBTREE first, because removeNode takes
-    // the descendants with it and their ids are unreachable afterwards. Undo
-    // is safe: History snapshots scene and animation together, so restoring
-    // the layers restores their tracks. Without this, every deleted layer left
-    // orphan tracks that rode every autosave forever — and a future layer that
-    // happened to mint the same id would resurrect a stranger's animation.
-    const node = defaultSceneGraph.getNode(id);
-    if (node) {
-      const stack: SceneNode[] = [node];
-      while (stack.length > 0) {
-        const n = stack.pop()!;
-        defaultAnimation.clearNode(n.id);
-        for (const childId of n.children) {
-          const c = defaultSceneGraph.getNode(childId);
-          if (c) stack.push(c);
-        }
-      }
-    }
-    defaultSceneGraph.removeNode(id);
-  }
+  // One primitive, shared with the timeline's clip context menu — see
+  // `deleteLayerNode`. The two routes used to delete different things, which is
+  // why deleting from the timeline appeared not to work at all.
+  for (const id of toDelete) deleteLayerNode(id);
   useSelectionStore.getState().clear();
   bumpScene();
 }

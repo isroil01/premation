@@ -39,3 +39,69 @@ export function scrubValue(
 ): number {
   return clamp(startVal + dx * step * stepScale(mods), min, max);
 }
+
+/**
+ * Largest per-event pointer movement a scrub will believe, in px.
+ *
+ * Chromium reports one enormous `movementX` on the event that acquires pointer
+ * lock (the jump from the real cursor position to the locked origin). Believed
+ * literally it threw the value thousands of units off the instant the drag got
+ * long enough to lock — the exact gesture the lock exists to support.
+ */
+export const MAX_SCRUB_MOVEMENT_PX = 300;
+
+/** Clamp one pointer-move delta into the believable range. */
+export function sanitizeMovement(dx: number): number {
+  if (!Number.isFinite(dx)) return 0;
+  return clamp(dx, -MAX_SCRUB_MOVEMENT_PX, MAX_SCRUB_MOVEMENT_PX);
+}
+
+/**
+ * A scrub in progress.
+ *
+ * `anchorVal` + `dx` rather than "start value + total travel" because the
+ * modifier scale can change MID-DRAG. Multiplying the whole accumulated travel
+ * by the new scale — which is what the old code did — teleported the value:
+ * press Shift 40px into a drag and it jumped from +40 to +400 instead of
+ * merely getting coarser from that point on. Re-anchoring at the moment the
+ * modifier changes makes Shift/Alt a change of GEAR, not of position.
+ */
+export interface ScrubState {
+  /** Value this modifier segment started from. */
+  anchorVal: number;
+  /** Pixels travelled since the anchor. */
+  dx: number;
+  /** Modifier multiplier in force for this segment. */
+  scale: number;
+  /** Latest value the scrub has produced. */
+  value: number;
+}
+
+/** Open a scrub at `startVal` with whatever modifiers are already held. */
+export function beginScrub(
+  startVal: number,
+  mods: { shiftKey: boolean; altKey: boolean },
+): ScrubState {
+  return { anchorVal: startVal, dx: 0, scale: stepScale(mods), value: startVal };
+}
+
+/**
+ * Advance a scrub by one pointer-move delta, re-anchoring if the modifier
+ * scale changed since the previous move.
+ */
+export function advanceScrub(
+  state: ScrubState,
+  movementX: number,
+  step: number,
+  mods: { shiftKey: boolean; altKey: boolean },
+  min = -Infinity,
+  max = Infinity,
+): ScrubState {
+  const scale = stepScale(mods);
+  const rebased = scale !== state.scale
+    ? { anchorVal: state.value, dx: 0, scale, value: state.value }
+    : state;
+  const dx = rebased.dx + sanitizeMovement(movementX);
+  const value = clamp(rebased.anchorVal + dx * step * scale, min, max);
+  return { anchorVal: rebased.anchorVal, dx, scale, value };
+}

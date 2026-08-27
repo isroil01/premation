@@ -71,7 +71,7 @@
 }
 
 .fill {
-  fill: #22d3ee;
+  fill: var(--color-cyan-500);
   opacity: 0.85;
 }
 

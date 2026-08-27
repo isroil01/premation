@@ -43,7 +43,7 @@
   gap: var(--space-3);
   min-height: var(--control-height-lg);
   padding: var(--space-3) var(--space-5);
-  border-bottom: 1px solid var(--color-border, #000000);
+  border-bottom: 1px solid var(--color-border);
   background: var(--color-panel-header);
 }
 
@@ -86,7 +86,7 @@
    search field and every section name share one left edge. */
 .searchRow {
   padding: var(--space-4) var(--space-5);
-  border-bottom: 1px solid var(--color-border, #000000);
+  border-bottom: 1px solid var(--color-border);
   background: var(--color-panel);
   flex: none;
 }
@@ -180,17 +180,17 @@
 }
 
 .compRowActive {
-  background: color-mix(in srgb, var(--color-primary, #4c8dff) 16%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 16%, transparent);
   color: var(--color-text-primary);
 }
 
 .compRowActive:hover {
-  background: color-mix(in srgb, var(--color-primary, #4c8dff) 22%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 .compGlyph {
   flex: none;
-  color: #5b9fd4;
+  color: var(--color-info);
 }
 
 .compName {
@@ -232,8 +232,8 @@
 }
 
 .compDeleteBtn:hover {
-  background: color-mix(in srgb, var(--color-danger, #e5484d) 18%, transparent);
-  color: var(--color-danger, #e5484d);
+  background: color-mix(in srgb, var(--color-danger) 18%, transparent);
+  color: var(--color-danger);
 }
 
 .body {
@@ -622,7 +622,7 @@
 .libChipLabel {
   /* 12px via the density preference; the 10px fallback here was below the
      product's floor for text a user has to READ rather than recognise. */
-  font-size: var(--sidebar-item-font-size, 12px);
+  font-size: var(--sidebar-item-font-size);
   font-family: inherit;
   text-align: center;
   line-height: 1.3;
@@ -653,7 +653,7 @@
   padding: 1px 4px;
   border-radius: var(--radius-sm);
   background: rgba(139, 92, 246, 0.2);
-  color: #a78bfa;
+  color: var(--color-ai-primary);
   border: 1px solid rgba(139, 92, 246, 0.35);
   line-height: 1.4;
   flex-shrink: 0;
@@ -861,9 +861,9 @@
   position: absolute;
   width: 4px;
   height: 4px;
-  background: #fbbf24;
+  background: var(--color-amber-400);
   border-radius: 50%;
-  box-shadow: 0 0 4px #fbbf24;
+  box-shadow: 0 0 4px var(--color-amber-400);
   animation: twinkle 1s ease infinite alternate;
 }
 @keyframes twinkle {
@@ -1203,7 +1203,7 @@
 /* Real Manila Folder Amber — authentic warm golden directory color */
 .assetGlyphFolder {
   flex: 0 0 auto;
-  color: #f5a623;
+  color: var(--color-amber-500);
 }
 
 /* Media & file type colors */
@@ -1414,7 +1414,7 @@
 .assetHeaderThumb {
   width: 36px;
   height: 36px;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   border: 1px solid var(--color-border-subtle);
   display: flex;
@@ -1475,7 +1475,7 @@
   height: 24px;
   padding: 0;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   cursor: pointer;

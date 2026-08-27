@@ -6,7 +6,8 @@
 import { useMemo, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { OutputFormat } from '@stores/renderQueueStore';
-import { canEncodeLocally, type ExportQuality } from '@core/export/videoSink';
+import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
+import { useCompositionStore } from '@stores/compositionStore';
 import {
   listOutputTemplates,
   saveOutputTemplate,
@@ -25,13 +26,18 @@ export interface OutputSettings {
   durationSec: number;
   transparent: boolean;
   quality: ExportQuality;
+  /** mov only — which ProRes flavour ffmpeg encodes. */
+  proresProfile?: ProresProfile;
 }
+
+/** Explicit order (not Object.keys — numeric-looking keys re-sort): alpha first, then by size. */
+const PRORES_PROFILES: ReadonlyArray<ProresProfile> = ['4444', 'hq', '422', 'lt', 'proxy'];
 
 /** Every queueable format, with the formats only ffmpeg can produce marked. */
 const FORMATS: ReadonlyArray<{ value: OutputFormat; label: string; desktopOnly?: boolean }> = [
   { value: 'mp4', label: 'H.264 MP4', desktopOnly: true },
   { value: 'webm', label: 'WebM VP9' },
-  { value: 'mov', label: 'ProRes 4444 MOV (alpha)', desktopOnly: true },
+  { value: 'mov', label: 'ProRes MOV', desktopOnly: true },
   { value: 'gif', label: 'Animated GIF' },
   { value: 'png-sequence', label: 'PNG Sequence' },
   { value: 'jpg-sequence', label: 'JPEG Sequence' },
@@ -70,9 +76,13 @@ export function OutputModuleDialog({
   const [height, setHeight] = useState(initialHeight);
   const [fps, setFps] = useState(initialFps);
   const [duration, setDuration] = useState(initialDuration);
-  const [transparent, setTransparent] = useState(false);
+  // Seeded from the comp's own transparency, like the Export dialog — a
+  // comp set transparent in Composition Settings queued opaque otherwise.
+  const [transparent, setTransparent] = useState(() => !!useCompositionStore.getState().transparent);
   const [quality, setQuality] = useState<ExportQuality>('high');
-  const supportsAlpha = ALPHA_FORMATS.has(format);
+  const [proresProfile, setProresProfile] = useState<ProresProfile>('4444');
+  // MOV alpha only exists in 4444 — the 422 family has no alpha plane.
+  const supportsAlpha = ALPHA_FORMATS.has(format) && (format !== 'mov' || proresProfile === '4444');
 
   // Templates. The list lives in localStorage, not React state, so `setTemplatesRev`
   // after a save/delete is what re-renders the dropdown — and the list is simply
@@ -176,6 +186,21 @@ export function OutputModuleDialog({
             </select>
           </div>
 
+          {format === 'mov' ? (
+            <div className={styles.fieldRow}>
+              <label>ProRes Profile</label>
+              <select
+                value={proresProfile}
+                onChange={(e) => setProresProfile(e.target.value as ProresProfile)}
+                aria-label="ProRes profile"
+              >
+                {PRORES_PROFILES.map((p) => (
+                  <option key={p} value={p}>{PRORES_PROFILE_LABELS[p]}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
           <div className={styles.fieldRow}>
             <label>Resolution</label>
             <div className={styles.multiInput}>
@@ -250,14 +275,19 @@ export function OutputModuleDialog({
             type="button"
             className={styles.okBtn}
             onClick={() =>
+              // Clamped on OK: raw number inputs let a cleared field submit
+              // 0/NaN, which reached the renderer as fps 0 (NaN frame times),
+              // width 0 (a 0×N canvas) or duration 0. Fall back to the comp's
+              // own values rather than refusing — the dialog's initial state.
               onConfirm({
                 format,
-                width,
-                height,
-                fps,
-                durationSec: duration,
+                width: Number.isFinite(width) && width >= 2 ? Math.round(width) : initialWidth,
+                height: Number.isFinite(height) && height >= 2 ? Math.round(height) : initialHeight,
+                fps: Number.isFinite(fps) && fps >= 1 && fps <= 240 ? fps : initialFps,
+                durationSec: Number.isFinite(duration) && duration > 0 ? duration : initialDuration,
                 transparent: transparent && supportsAlpha,
                 quality,
+                ...(format === 'mov' ? { proresProfile } : {}),
               })
             }
           >

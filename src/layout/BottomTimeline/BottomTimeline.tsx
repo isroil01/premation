@@ -93,7 +93,11 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const prefHeaderWidth = usePreferenceStore((s) => s.timelineHeaderWidth);
   const headerWidth = props.model.trackHeaderWidth ?? prefHeaderWidth ?? 560;
 
-  const [rowTrackHeight, setRowTrackHeight] = useState(36);
+  // Compact (28px) is the default of the three sizes the button cycles. A
+  // motion comp is usually many short layers, and the taller rows pushed most
+  // of them below the fold on a laptop — you spent the first interaction with
+  // every project shrinking the rows back down.
+  const [rowTrackHeight, setRowTrackHeight] = useState(28);
 
   const playheadTime = ws?.time ?? timelineProps.model.currentTime;
   const model = useMemo<TimelineProps['model']>(

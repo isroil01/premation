@@ -17,6 +17,7 @@ import { buildSnapshot, type SnapshotComp } from '@core/rendering/buildSnapshot'
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { exportView, exportComp } from './offlineRenderer';
+import { useMotionBlurStore } from '@stores/motionBlurStore';
 
 export interface PreviewFrameRequest {
   /** Output size of the real export — the preview keeps its aspect ratio. */
@@ -34,6 +35,13 @@ export interface PreviewFrame {
   coverage: number;
   /** True when nothing in the composition is visible at this frame. */
   blank: boolean;
+  /**
+   * The renderer's own diagnostics for this frame — the SAME list the export
+   * REFUSES on (unsupported compositing ops, offline media drawn as colour
+   * bars). The preview used to show such a frame without comment, and the
+   * user learned about it when the render died at frame N.
+   */
+  warnings: string[];
 }
 
 /**
@@ -141,12 +149,14 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
   let sized = { width: 0, height: 0 };
   let disposed = false;
   let currentGen = 0;
+  /** Serializes renders. `takeMediaWaits()` is DESTRUCTIVE backend state —
+   *  two overlapping renders raced it: the later one drained the waits the
+   *  earlier one needed, broke out of convergence on pass one, and measured a
+   *  frame whose decodes had not landed (reported as blank, painted as a
+   *  placeholder — the exact failure exact-media-timing exists to prevent). */
+  let chain: Promise<unknown> = Promise.resolve();
 
-  return {
-    canvas,
-
-    async render(request: PreviewFrameRequest): Promise<PreviewFrame> {
-      const gen = ++currentGen;
+  const renderOne = async (request: PreviewFrameRequest, gen: number): Promise<PreviewFrame> => {
       const compW = request.comp?.width ?? request.width;
       const compH = request.comp?.height ?? request.height;
       const scale = Math.min(1, PREVIEW_MAX_EDGE / Math.max(compW, compH));
@@ -158,7 +168,7 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         sized = { width, height };
       }
       if (backend.readyPromise) await backend.readyPromise;
-      if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
+      if (disposed || gen !== currentGen) return { coverage: 0, blank: true, warnings: [] };
       if (backend.initFailed) {
         throw new Error(backend.initErrorMessage ?? 'The renderer could not be initialized.');
       }
@@ -166,6 +176,12 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
       // Snap to the export's frame grid so the preview shows a frame the encoder
       // will actually produce, not one sampled between two of them.
       const time = request.fps > 0 ? Math.round(request.time * request.fps) / request.fps : request.time;
+      // Motion blur mirrors the export (exportManager.exportMotionBlur): with
+      // it on, an un-blurred preview was categorically not the file.
+      const mb = useMotionBlurStore.getState();
+      const motionBlur = mb.enabled
+        ? { enabled: true, shutterAngle: mb.shutterAngle, shutterPhase: mb.shutterPhase, samples: mb.samples, adaptiveSampleLimit: mb.adaptiveSampleLimit, fps: request.fps }
+        : undefined;
       const snapshot = buildSnapshot(
         defaultSceneGraph,
         defaultAnimation,
@@ -173,10 +189,10 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         undefined,
         undefined,
         exportView(width, height, request.comp),
-        undefined, // motion blur is a per-frame accumulation; not worth it here
+        motionBlur,
         exportComp(request.comp),
       );
-      if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
+      if (disposed || gen !== currentGen) return { coverage: 0, blank: true, warnings: [] };
       backend.renderFrame(snapshot);
       // Converge async media (image decodes, video seeks) exactly like the
       // offline renderer does, or the preview shows placeholders for footage the
@@ -186,20 +202,26 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         if (!waits || waits.length === 0) break;
         // Time-capped like the offline renderer: a wedged decode degrades the
         // preview frame instead of hanging it forever.
+        let capTimer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
           Promise.all(waits),
-          new Promise<void>((resolve) => setTimeout(resolve, 15_000)),
+          new Promise<void>((resolve) => { capTimer = setTimeout(resolve, 15_000); }),
         ]);
-        if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
+        clearTimeout(capTimer);
+        if (disposed || gen !== currentGen) return { coverage: 0, blank: true, warnings: [] };
         backend.renderFrame(snapshot);
       }
 
-      if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
+      if (disposed || gen !== currentGen) return { coverage: 0, blank: true, warnings: [] };
+
+      // The refusal list the EXPORT will die on — shown here first, so "would
+      // stop at frame N" is a banner in the dialog, not a surprise mid-render.
+      const warnings = (backend.lastFrameDiagnostics?.() ?? []).map((d) => d.detail);
 
       scratch.width = width;
       scratch.height = height;
       const ctx = scratch.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return { coverage: 1, blank: false };
+      if (!ctx) return { coverage: 1, blank: false, warnings };
       ctx.clearRect(0, 0, width, height);
       ctx.drawImage(canvas, 0, 0);
       const data = ctx.getImageData(0, 0, width, height).data;
@@ -207,7 +229,19 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
         data,
         request.comp?.transparent ? null : parseCssColor(request.comp?.background),
       );
-      return { coverage, blank: coverage < BLANK_COVERAGE };
+      return { coverage, blank: coverage < BLANK_COVERAGE, warnings };
+  };
+
+  return {
+    canvas,
+
+    render(request: PreviewFrameRequest): Promise<PreviewFrame> {
+      const gen = ++currentGen;
+      const run = chain.then(() => renderOne(request, gen));
+      // The stored chain absorbs rejections so one failed render does not
+      // poison every later one; the caller still receives the real rejection.
+      chain = run.catch(() => undefined);
+      return run;
     },
 
     dispose(): void {

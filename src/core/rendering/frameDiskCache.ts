@@ -102,6 +102,22 @@ interface ManifestV1 {
   gens: Array<{ id: string; frames: Array<[frame: number, bytes: number]> }>;
 }
 
+/**
+ * How many frame encodes may be in flight at once.
+ *
+ * Encoding is slower than the render loop offers frames, so without a ceiling
+ * the queue grows for as long as playback stays ahead of it — unbounded memory
+ * for a tier whose whole job is to SAVE memory. Eight keeps the encoder busy
+ * without letting it become the backlog.
+ */
+const MAX_INFLIGHT_WRITES = 8;
+
+/** How long to sit on manifest changes before writing them out. The manifest is
+ *  reconstruction metadata, not correctness-critical (a missing row just means
+ *  a colder cache next launch), so it does not deserve an IO round trip per
+ *  encoded frame — which a per-microtask flush effectively gave it. */
+const MANIFEST_DEBOUNCE_MS = 500;
+
 /** PNG, not WebP: a preview that shows different pixels than the render is a
  *  cache that lies. `toBlob` encodes off the main thread in Chromium, so the
  *  cost lands where it belongs. */
@@ -152,6 +168,7 @@ export class FrameDiskCache {
   private reading = new Set<number>();
   private opened = false;
   private persistScheduled = false;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(opts: FrameDiskCacheOptions) {
     this.store = opts.store;
@@ -300,6 +317,14 @@ export class FrameDiskCache {
     if (!this.generation) return;
     if (this.index.has(frame) || this.writing.has(frame)) return;
     if (source.width < 1 || source.height < 1) return;
+    // Backpressure. A first playback pass over a heavy comp offers a frame
+    // every tick, and PNG encoding a full-resolution frame is slower than that
+    // — so the in-flight set grew without bound, holding a canvas copy each and
+    // queueing encodes the machine was already losing ground on. Dropping the
+    // offer is free: the frame stays in RAM, and the next pass over the same
+    // span offers it again (`put` write-throughs are unconditional), by which
+    // time the queue has drained.
+    if (this.writing.size >= MAX_INFLIGHT_WRITES) return;
     this.writing.add(frame);
     const generation = this.generation;
     void (async () => {
@@ -370,18 +395,44 @@ export class FrameDiskCache {
   private schedulePersist(): void {
     if (!this.store.writeManifest || this.persistScheduled) return;
     this.persistScheduled = true;
-    void Promise.resolve().then(() => {
+    // A trailing TIMER, not a microtask. `track` fires once per encoded frame,
+    // and a microtask flush lands between frames — so a playback pass rebuilt
+    // and re-serialized the entire frame index, thousands of entries, on
+    // essentially every frame it cached. Nothing reads the manifest until the
+    // next launch, so coalescing it over half a second costs nothing.
+    this.persistTimer = setTimeout(() => {
       this.persistScheduled = false;
-      const gens: ManifestV1['gens'] = [];
-      for (const [id, frames] of this.retained) {
-        gens.push({ id, frames: [...frames.entries()] });
-      }
-      if (this.generation && this.index.size > 0) {
-        gens.push({ id: this.generation, frames: [...this.index.entries()] });
-      }
-      const manifest: ManifestV1 = { v: 1, gens };
-      void this.store.writeManifest!(JSON.stringify(manifest));
-    });
+      this.persistTimer = null;
+      this.writeManifestNow();
+    }, MANIFEST_DEBOUNCE_MS);
+    // Node/jsdom keep the process alive for a pending timer; a cache flushing
+    // its manifest must never be the reason a test run or a quit hangs.
+    this.persistTimer.unref?.();
+  }
+
+  private writeManifestNow(): void {
+    if (!this.store.writeManifest) return;
+    const gens: ManifestV1['gens'] = [];
+    for (const [id, frames] of this.retained) {
+      gens.push({ id, frames: [...frames.entries()] });
+    }
+    if (this.generation && this.index.size > 0) {
+      gens.push({ id: this.generation, frames: [...this.index.entries()] });
+    }
+    const manifest: ManifestV1 = { v: 1, gens };
+    void this.store.writeManifest(JSON.stringify(manifest));
+  }
+
+  /** Write the manifest immediately, cancelling any pending debounce. Called on
+   *  dispose so a session's last frames are still findable next launch. */
+  flushManifest(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    if (!this.persistScheduled) return;
+    this.persistScheduled = false;
+    this.writeManifestNow();
   }
 
   /**

@@ -22,8 +22,9 @@ import { shapeOutline } from '@core/scene/pathOps';
 import { captureDocument } from '@core/api/cloudDocument';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { compRootOf } from '@core/scene/parenting';
 import type { SceneNode } from '@core/types';
-import { renderOffline, exportView, exportComp, resolveRange, type OfflineRenderParams } from './offlineRenderer';
+import { renderOffline, renderStillFrame, exportView, exportComp, resolveRange, type OfflineRenderParams } from './offlineRenderer';
 import { FramePipeline, CanvasPool, defaultConcurrency } from './framePipeline';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { type ZipEntry } from './zip';
@@ -35,6 +36,7 @@ import {
   canvasBytes,
   createVideoSink,
   type ExportQuality,
+  type ProresProfile,
   type VideoFormat,
   type VideoSinkResult,
 } from './videoSink';
@@ -54,6 +56,7 @@ export type ExportFormat =
   | 'png-sequence'
   | 'jpg-sequence'
   | 'exr-sequence'
+  | 'wav'
   | 'json'
   | 'lottie'
   | 'edl'
@@ -75,12 +78,28 @@ export interface ExportOptions {
   comp?: SnapshotComp;
   /** Encoder quality tier. Draft trades visible quality for speed. */
   quality?: ExportQuality;
+  /** mov only — which ProRes flavour to encode. Defaults to 4444 (alpha). */
+  proresProfile?: ProresProfile;
   /**
    * When false, ignore the timeline work area and export the whole composition.
    * Default (undefined/true) keeps the existing behaviour: a set work area is
    * the export range.
    */
   useWorkArea?: boolean;
+  /**
+   * EXPLICIT export range in seconds (end exclusive) — wins over the live work
+   * area. Queued render jobs capture their range at QUEUE time and pass it
+   * here: without this, every queued job read `getWorkArea()` at RUN time — a
+   * live, global value — so queueing comp A, then editing comp B's work area,
+   * rendered comp A's picture over comp B's frame range.
+   */
+  range?: { startSec: number; endSec: number };
+  /**
+   * Base filename (no extension) for the delivered file. The dialog's footer
+   * has always displayed one — and nothing downstream ever read it: the save
+   * dialog offered `motion-export-<timestamp>` regardless.
+   */
+  baseName?: string;
   onProgress?: (fraction: number) => void;
   /** Cooperative cancellation for the whole export (frame loop and encoder).
    *  Aborting rejects with a DOMException 'AbortError'. */
@@ -96,22 +115,6 @@ export function isAbortError(err: unknown): boolean {
 function exportMotionBlur(fps: number): import('@core/effects/motionBlur').MotionBlurConfig | undefined {
   const mb = useMotionBlurStore.getState();
   return mb.enabled ? { enabled: true, shutterAngle: mb.shutterAngle, shutterPhase: mb.shutterPhase, samples: mb.samples, adaptiveSampleLimit: mb.adaptiveSampleLimit, fps } : undefined;
-}
-
-/** buildSnapshot with the export comp settings (bg colour + transparency), no
- *  preview chrome, comp mapped 1:1 into the output frame (the implicit fallback
- *  fit insets 8% for preview framing — exported frames must fill exactly). */
-function exportSnapshot(opts: ExportOptions, time: number): ReturnType<typeof buildSnapshot> {
-  return buildSnapshot(
-    defaultSceneGraph,
-    defaultAnimation,
-    time,
-    undefined,
-    undefined,
-    exportView(opts.width, opts.height, opts.comp),
-    exportMotionBlur(opts.fps),
-    exportComp(opts.comp),
-  );
 }
 
 /** Longest edge of a project poster frame. Big enough for a retina card. */
@@ -173,7 +176,9 @@ function download(blob: Blob, filename: string): void {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  // 10 minutes, not 4 seconds: revoking mid-write aborts the save of a large
+  // blob (multi-hundred-MB sequence zips on slow disks) in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 10 * 60 * 1000);
 }
 
 function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; backend: RenderBackend } {
@@ -185,6 +190,7 @@ function makeCanvas(w: number, h: number): { canvas: HTMLCanvasElement; backend:
 }
 
 function activeWorkArea(opts: ExportOptions): { start: number; end: number } | null {
+  if (opts.range) return { start: opts.range.startSec, end: opts.range.endSec };
   if (opts.useWorkArea === false) return null;
   return getTimelineController().getWorkArea();
 }
@@ -198,7 +204,18 @@ function offlineParams(opts: ExportOptions): OfflineRenderParams {
     durationSec: opts.duration,
     comp: opts.comp,
     motionBlur: exportMotionBlur(opts.fps),
-    ...(wa ? { startFrame: Math.round(wa.start * opts.fps), endFrame: Math.round(wa.end * opts.fps) } : {}),
+    // getWorkArea's end is EXCLUSIVE (start + duration); resolveRange's is
+    // INCLUSIVE. Passing it straight through rendered one extra frame from
+    // OUTSIDE the work area on every partial-range export — and since the
+    // audio mixdown used the correct length, ffmpeg's `-shortest` then
+    // trimmed the picture back only when the comp had sound: same project,
+    // two different durations depending on a mute layer.
+    ...(wa
+      ? {
+          startFrame: Math.round(wa.start * opts.fps),
+          endFrame: Math.max(Math.round(wa.start * opts.fps), Math.round(wa.end * opts.fps) - 1),
+        }
+      : {}),
   };
 }
 
@@ -240,6 +257,14 @@ export async function renderSequenceZip(
   const entries: ZipEntry[] = [];
   const pipeline = new FramePipeline();
   let pool: CanvasPool | null = null;
+  // The zip writer is classic 32-bit (no ZIP64): offsets truncate past 4GB
+  // and the whole archive is assembled in memory. Enforced DURING the render
+  // — a 1080p PNG sequence crosses the limit around ~2000 frames, and the old
+  // behaviour was to render for an hour and then die (or corrupt) at
+  // assembly. 3.5GB leaves headroom for the central directory + the worker's
+  // second copy of the entries.
+  const ZIP_BYTE_LIMIT = 3.5 * 1024 * 1024 * 1024;
+  let zipBytes = 0;
   await renderOffline(
     offlineParams(opts),
     async (canvas, frame, count) => {
@@ -250,11 +275,19 @@ export async function renderSequenceZip(
       const slot = frame;
       await pipeline.push(async () => {
         try {
-          entries[slot] = { name, data: await canvasBytes(snap, type, ext === 'jpg' ? 0.92 : undefined) };
+          const data = await canvasBytes(snap, type, ext === 'jpg' ? 0.92 : undefined);
+          zipBytes += data.byteLength;
+          entries[slot] = { name, data };
         } finally {
           p.release(snap);
         }
       });
+      if (zipBytes > ZIP_BYTE_LIMIT) {
+        throw new Error(
+          `The ${ext.toUpperCase()} sequence exceeds the browser zip's 3.5GB limit at frame ${frame} of ${count}. `
+          + 'Export a shorter range, use JPG frames, or use the desktop app for video output.',
+        );
+      }
       onProgress?.((frame + 1) / count);
     },
     signal,
@@ -267,22 +300,25 @@ export async function renderSequenceZip(
 }
 
 async function exportPNG(opts: ExportOptions): Promise<void> {
-  const { canvas, backend } = makeCanvas(opts.width, opts.height);
-  try {
-    if (backend.readyPromise) await backend.readyPromise;
-    throwIfAborted(opts.signal);
-    // Snap to the frame grid the video/sequence exporter uses (`i / fps`), so a
-    // still saved from the playhead is the SAME image as that frame in a
-    // rendered sequence rather than one sampled between two of them.
-    const frameTime = opts.fps > 0 ? Math.round(opts.time * opts.fps) / opts.fps : opts.time;
-    backend.renderFrame(exportSnapshot(opts, frameTime));
-    opts.onProgress?.(1);
-    const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'));
-    throwIfAborted(opts.signal);
-    if (blob) download(blob, `motion-frame-${frameTime.toFixed(2)}s.png`);
-  } finally {
-    backend.dispose();
-  }
+  // Through renderStillFrame, NOT a bespoke render: this path used to call
+  // renderFrame once on a cold backend with no media convergence and no
+  // diagnostics gate — a comp with footage exported the transparent
+  // placeholder (or a half-decoded frame), and a broken compositing op that
+  // every other export REFUSES on shipped silently in a still.
+  const frame = opts.fps > 0 ? Math.round(opts.time * opts.fps) : 0;
+  const frameTime = opts.fps > 0 ? frame / opts.fps : opts.time;
+  const blob = await renderStillFrame({
+    width: opts.width,
+    height: opts.height,
+    fps: opts.fps,
+    durationSec: opts.duration,
+    comp: opts.comp,
+    motionBlur: exportMotionBlur(opts.fps),
+  }, frame);
+  opts.onProgress?.(1);
+  throwIfAborted(opts.signal);
+  if (!blob) throw new Error('The frame could not be encoded to PNG.');
+  download(blob, `${opts.baseName ?? `motion-frame-${frameTime.toFixed(2)}s`}.png`);
 }
 
 /** Throw the standard cancellation rejection when the signal has fired. */
@@ -346,15 +382,22 @@ function srgbToLinear(u: number): number {
   return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
 }
 
+/**
+ * RGBA planes → EXR bytes. `rgba` must be linear light with ASSOCIATED
+ * (premultiplied) alpha — the OpenEXR convention. The GPU readback is already
+ * premultiplied; the canvas fallback premultiplies before calling this.
+ */
 function encodeExrFromLinearRgba(w: number, h: number, rgba: Float32Array): Uint8Array {
   const n = w * h;
   const r = new Float32Array(n);
   const g = new Float32Array(n);
   const b = new Float32Array(n);
+  const a = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     r[i] = rgba[i * 4]!;
     g[i] = rgba[i * 4 + 1]!;
     b[i] = rgba[i * 4 + 2]!;
+    a[i] = rgba[i * 4 + 3]!;
   }
   const buf = encodeExr({
     width: w,
@@ -363,6 +406,7 @@ function encodeExrFromLinearRgba(w: number, h: number, rgba: Float32Array): Uint
       { name: 'R', data: r },
       { name: 'G', data: g },
       { name: 'B', data: b },
+      { name: 'A', data: a },
     ],
   });
   return new Uint8Array(buf);
@@ -382,10 +426,13 @@ async function canvasToExrBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> 
   const n = w * h;
   const rgba = new Float32Array(n * 4);
   for (let i = 0; i < n; i++) {
-    rgba[i * 4] = srgbToLinear(data[i * 4]!);
-    rgba[i * 4 + 1] = srgbToLinear(data[i * 4 + 1]!);
-    rgba[i * 4 + 2] = srgbToLinear(data[i * 4 + 2]!);
-    rgba[i * 4 + 3] = data[i * 4 + 3]! / 255;
+    // getImageData hands back STRAIGHT alpha; EXR stores associated
+    // (premultiplied) — multiply colour by alpha after linearizing.
+    const a = data[i * 4 + 3]! / 255;
+    rgba[i * 4] = srgbToLinear(data[i * 4]!) * a;
+    rgba[i * 4 + 1] = srgbToLinear(data[i * 4 + 1]!) * a;
+    rgba[i * 4 + 2] = srgbToLinear(data[i * 4 + 2]!) * a;
+    rgba[i * 4 + 3] = a;
   }
   return encodeExrFromLinearRgba(w, h, rgba);
 }
@@ -404,7 +451,9 @@ export async function renderExrSequenceZip(
         (await backend?.readLinearRgbaAsync?.())
         ?? backend?.readLinearRgba?.()
         ?? null;
-      const data = linear && linear.length >= canvas.width * canvas.height * 4
+      // Exact-size match only: a stale readback from a previous resolution
+      // would decode as garbled rows, which is worse than the canvas fallback.
+      const data = linear && linear.length === canvas.width * canvas.height * 4
         ? encodeExrFromLinearRgba(canvas.width, canvas.height, linear)
         : await canvasToExrBytes(canvas);
       entries.push({
@@ -423,7 +472,7 @@ export async function renderExrSequenceZip(
 
 async function exportExrSequence(opts: ExportOptions): Promise<void> {
   const blob = await renderExrSequenceZip(opts, opts.onProgress, opts.signal);
-  download(blob, `${defaultBaseName()}-exr-sequence.zip`);
+  download(blob, `${opts.baseName ?? defaultBaseName()}-exr-sequence.zip`);
 }
 
 // ── Video / GIF export ───────────────────────────────────────────────
@@ -452,6 +501,7 @@ export async function renderVideo(
     height: opts.height,
     fps: opts.fps,
     quality: opts.quality ?? 'high',
+    ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
     transparent: !!opts.comp?.transparent,
     ...(audio ? { audioWav: audio } : {}),
   });
@@ -463,8 +513,10 @@ export async function renderVideo(
     try {
       await renderOffline(
         offlineParams(opts),
-        async (canvas, frame, count) => {
-          await sink.addFrame(canvas, frame);
+        async (canvas, frame, count, backend) => {
+          // The backend rides along as the sink's optional float-linear frame
+          // source (the HDR sink stages from it instead of 8-bit sRGB bytes).
+          await sink.addFrame(canvas, frame, backend);
           // Encoding is the bulk of the work for a video, so hold the reported
           // progress just short of done until the encode itself finishes.
           onProgress?.(((frame + 1) / count) * 0.95);
@@ -552,6 +604,7 @@ export async function createResumableVideoRender(
     height: opts.height,
     fps: opts.fps,
     quality: opts.quality ?? 'high',
+    ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
     transparent: !!opts.comp?.transparent,
     ...(audio ? { audioWav: audio } : {}),
   });
@@ -572,11 +625,11 @@ export async function createResumableVideoRender(
             // The loop's own range does the skipping: nothing before the resume
             // point is rendered, let alone re-staged.
             { ...params, startFrame: start + fromOffset, endFrame: end },
-            async (canvas, frame) => {
+            async (canvas, frame, _count, backend) => {
               // `frame` is 0-based within THIS run; the sink needs the offset
               // within the whole export range, or a resume would restage over
               // frame_0000 and the encode would begin mid-composition.
-              await sink.addFrame(canvas, fromOffset + frame);
+              await sink.addFrame(canvas, fromOffset + frame, backend);
               staged = fromOffset + frame + 1;
               onProgress?.((staged / totalFrames) * 0.95);
             },
@@ -646,11 +699,11 @@ async function exportVideoFormat(
   // only routes through the video sink where ffmpeg is available.
   if (format === 'gif' && !canEncodeLocally()) {
     const blob = await renderGifBlob(opts, opts.onProgress, opts.signal);
-    download(blob, `${defaultBaseName()}.gif`);
+    download(blob, `${opts.baseName ?? defaultBaseName()}.gif`);
     return {};
   }
   const result = await renderVideo(opts, format, opts.onProgress, opts.signal);
-  const delivered = await deliver(result, defaultBaseName());
+  const delivered = await deliver(result, opts.baseName ?? defaultBaseName());
   if (!delivered) {
     if (result.kind === 'file') await result.discard();
     throw new DOMException('The user cancelled the save dialog.', 'AbortError');
@@ -735,7 +788,7 @@ async function exportSequence(opts: ExportOptions, ext: 'png' | 'jpg'): Promise<
   const audio = await exportAudioEntries(opts);
   const blob = await renderSequenceZip(opts, ext, opts.onProgress, opts.signal, audio);
   opts.onProgress?.(1);
-  download(blob, `${defaultBaseName()}-${ext}-sequence.zip`);
+  download(blob, `${opts.baseName ?? defaultBaseName()}-${ext}-sequence.zip`);
 }
 
 /** "#ff8800" → Lottie's normalized [r, g, b] triple. */
@@ -879,7 +932,11 @@ function lottieEase(k: { easing?: string; bezier?: readonly number[] }): Record<
 function exportLottie(opts: ExportOptions): void {
   const fr = opts.fps;
   const op = Math.round(opts.duration * fr);
+  // Scoped to THIS composition: flattenScene walks the whole project, so a
+  // multi-comp project exported every comp's layers stacked into one Lottie.
+  const rootId = opts.comp?.rootId;
   const layers = flattenScene(defaultSceneGraph)
+    .filter((n) => (rootId ? compRootOf(n.id) === rootId && n.id !== rootId : true))
     .filter((n) => readNodeKind(n) !== 'group')
     .map((node, idx) => {
       // Base (un-keyframed) value straight off the components — the engine's
@@ -972,10 +1029,24 @@ function exportLottie(opts: ExportOptions): void {
   }
 }
 
-/** The export range in seconds — the work area if set, else the whole comp. */
+/**
+ * The export range in seconds — derived from the SAME frame arithmetic the
+ * picture uses (offlineParams → resolveRange), so audio length always equals
+ * frameCount / fps exactly. Deriving it independently from seconds left audio
+ * shorter than video by up to a frame (work areas, fractional rates), and
+ * ffmpeg's `-shortest` silently dropped the final video frame(s) whenever the
+ * comp had sound.
+ */
 function exportRange(opts: ExportOptions): { startSec: number; endSec: number } {
   const wa = activeWorkArea(opts);
-  return wa ? { startSec: wa.start, endSec: wa.end } : { startSec: 0, endSec: opts.duration };
+  if (wa) {
+    const startFrame = Math.round(wa.start * opts.fps);
+    const endFrame = Math.max(startFrame, Math.round(wa.end * opts.fps) - 1);
+    const startSec = startFrame / opts.fps;
+    return { startSec, endSec: startSec + (endFrame - startFrame + 1) / opts.fps };
+  }
+  const frames = Math.max(1, Math.round(opts.duration * opts.fps));
+  return { startSec: 0, endSec: frames / opts.fps };
 }
 
 /**
@@ -987,7 +1058,7 @@ function exportRange(opts: ExportOptions): { startSec: number; endSec: number } 
  */
 async function exportAudioBytes(opts: ExportOptions): Promise<Uint8Array | undefined> {
   const { startSec, endSec } = exportRange(opts);
-  const mix = await mixdownAudio(startSec, endSec).catch(() => null);
+  const mix = await mixdownAudio(startSec, endSec, opts.comp?.rootId).catch(() => null);
   if (!mix) return undefined;
   return new Uint8Array(await mix.wav.arrayBuffer());
 }
@@ -998,6 +1069,27 @@ export async function exportAudioEntries(opts: ExportOptions): Promise<ZipEntry[
   return bytes ? [{ name: 'audio.wav', data: bytes }] : [];
 }
 
+/**
+ * Audio-only export: the comp's mixdown as a WAV, over the same range and with
+ * the same frame arithmetic every other format uses. Unlike the video paths a
+ * silent comp is an ERROR here — the whole point of the format is the sound,
+ * and a zero-byte-of-signal WAV with a success toast would be the export bug
+ * this module keeps having to un-ship.
+ */
+async function exportWavAudio(opts: ExportOptions): Promise<void> {
+  const { startSec, endSec } = exportRange(opts);
+  const mix = await mixdownAudio(startSec, endSec, opts.comp?.rootId);
+  throwIfAborted(opts.signal);
+  if (!mix) {
+    throw new Error(
+      'This composition has no audible audio in the export range — nothing to write. '
+      + 'Check layer mute states and the work area.',
+    );
+  }
+  opts.onProgress?.(1);
+  download(mix.wav, `${opts.baseName ?? defaultBaseName()}.wav`);
+}
+
 export async function runExport(
   opts: ExportOptions,
 ): Promise<{ videoCodec?: string; hdrMastering?: { maxCll: number; maxFall: number } }> {
@@ -1006,6 +1098,7 @@ export async function runExport(
     case 'png-sequence': await exportSequence(opts, 'png'); return {};
     case 'jpg-sequence': await exportSequence(opts, 'jpg'); return {};
     case 'exr-sequence': await exportExrSequence(opts); return {};
+    case 'wav': await exportWavAudio(opts); return {};
     case 'json': exportJSON(opts); return {};
     case 'edl': exportEDL(opts); return {};
     case 'otio': exportOTIO(opts); return {};
@@ -1054,8 +1147,9 @@ export const EXPORT_PRESETS: ExportPreset[] = [
   { format: 'hdr10', label: 'MP4 · HDR10 (PQ)', ext: 'mp4', hint: 'ST.2084 PQ + BT.2020. Probes host ffmpeg: HEVC 10-bit + MaxCLL/MaxFALL when libx265 is present; otherwise tagged H.264 High 10 (no MaxCLL SEI).', desktopOnly: true },
   { format: 'hlg', label: 'MP4 · HLG', ext: 'mp4', hint: 'Hybrid Log-Gamma + BT.2020. Same encode path as HDR10 — HEVC preferred, H.264 High 10 fallback.', desktopOnly: true },
   { format: 'webm', label: 'WebM · VP9', ext: 'webm', hint: 'Smaller than MP4, keeps transparency, ideal for the web.' },
-  { format: 'mov', label: 'MOV · ProRes 4444', ext: 'mov', hint: 'Lossless with alpha, for editing in another app. Large files.', desktopOnly: true },
+  { format: 'mov', label: 'MOV · ProRes', ext: 'mov', hint: 'For editing in another app. 4444 keeps alpha; the 422 profiles halve the file for opaque delivery.', desktopOnly: true },
   { format: 'gif', label: 'Animated GIF', ext: 'gif', hint: 'No audio, 256 colours. Keep it short and small.' },
+  { format: 'wav', label: 'Audio only · WAV', ext: 'wav', hint: 'The comp’s mixed audio as 48kHz 16-bit stereo PCM. No picture.' },
   { format: 'png-sequence', label: 'PNG sequence', ext: 'zip', hint: 'Lossless frames with alpha, zipped. The archival option.' },
   { format: 'jpg-sequence', label: 'JPEG sequence', ext: 'zip', hint: 'Smaller frames, no alpha.' },
   { format: 'exr-sequence', label: 'EXR sequence', ext: 'zip', hint: 'Half-float linear RGB per frame. Prefers GPU linear RT readback (WebGL2 sync / WebGPU async); falls back to display undo-gamma.' },

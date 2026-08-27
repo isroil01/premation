@@ -20,11 +20,26 @@
 import { useEffect, useRef } from 'react';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { videoDiag, playbackHealth, VIDEO_DIAG_LIVE_MS } from '@core/rendering/videoPlaybackDiag';
+import { videoDiag, playbackHealth } from '@core/rendering/videoPlaybackDiag';
 
 /** Element lag (ms behind the playhead) where the timeline starts slowing to
  *  meet the decoder. Under this, the rate trim absorbs it invisibly. */
 const MEDIA_LAG_SLOW_MS = 100;
+
+/**
+ * How recently a decoder must have reported for its lag to slow the transport.
+ *
+ * Deliberately much shorter than `VIDEO_DIAG_LIVE_MS` (2s), which is the window
+ * the status-bar health readout uses. Diagnostic samples are never deleted —
+ * they are only overwritten while their element is being fed — so a clip that
+ * has ended, been trimmed out, hidden or deleted leaves its LAST sample behind,
+ * and that sample is by definition the worst one it ever reported. Pacing on
+ * the 2s window meant a heavy clip kept the playhead crawling at up to 0.4×
+ * for two full seconds of content that needed no decoder at all. A decoder
+ * that is genuinely live re-reports on every rendered frame, so anything older
+ * than a few frames is not describing what is on screen now.
+ */
+const MEDIA_PACE_FRESH_MS = 250;
 
 /**
  * How much of this tick's advance the slowest live video decoder can actually
@@ -38,7 +53,7 @@ const MEDIA_LAG_SLOW_MS = 100;
 function mediaPaceFactor(now: number): number {
   let factor = 1;
   for (const s of videoDiag.samples.values()) {
-    if (now - s.updatedAt > VIDEO_DIAG_LIVE_MS) continue;
+    if (now - s.updatedAt > MEDIA_PACE_FRESH_MS) continue;
     if (s.seeking || s.ended) continue;
     // Cache-blit syncs report the element's position while its pixels are
     // NOT on screen (the cache is). Slowing the timeline for those turned
@@ -46,9 +61,14 @@ function mediaPaceFactor(now: number): number {
     // fast/slow oscillation that tracked an invisible element's struggles.
     if (s.syncOnly) continue;
     if (s.driftMs < -MEDIA_LAG_SLOW_MS) {
-      // −100ms lag ≈ 0.97; −500ms ≈ 0.7; −1s and beyond floors at 0.4 so a
-      // dying element can never stall the transport outright.
-      factor = Math.min(factor, Math.max(0.4, 1 + (s.driftMs / 1000) * 0.6));
+      // Ramp from the knee, not from zero drift. The old form
+      // (`1 + driftMs/1000 * 0.6`) evaluated to 0.94 at the −100ms threshold,
+      // so the instant a decoder crossed it the transport STEPPED down 6% —
+      // and stepped back up on the way out. Measuring the excess past the knee
+      // makes the response continuous: exactly 1.0 at −100ms, ~0.76 at −500ms,
+      // floored at 0.4 so a dying element can never stall the transport.
+      const excessMs = -s.driftMs - MEDIA_LAG_SLOW_MS;
+      factor = Math.min(factor, Math.max(0.4, 1 - (excessMs / 1000) * 0.6));
     }
   }
   return factor;
@@ -58,8 +78,18 @@ export function usePlaybackClock(): void {
   const playing = useWorkspaceStore((s) =>
     s.activeTabId ? s.tabs[s.activeTabId]?.playing ?? false : false,
   );
+  const activeTabId = useWorkspaceStore((s) => s.activeTabId);
 
   const lastRef = useRef<number | undefined>(undefined);
+
+  // Exactly one composition may hold the transport, because there is exactly
+  // one pump and it follows the active tab. Whenever the active tab changes,
+  // stop everything else — see TimelineController.pauseInactiveComps for what
+  // leaving them running did (a comp that resumed playing on its own when you
+  // switched back to its tab).
+  useEffect(() => {
+    getTimelineController().pauseInactiveComps();
+  }, [activeTabId]);
 
   useEffect(() => {
     const controller = getTimelineController();

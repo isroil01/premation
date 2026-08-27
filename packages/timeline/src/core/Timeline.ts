@@ -703,8 +703,17 @@ export class Timeline {
     return copy;
   }
 
-  /** Split a layer at a timeline frame into two layers. Returns the new right layer. */
-  splitLayer(id: string, frame: number): Layer | null {
+  /**
+   * Split a layer at a timeline frame into two layers. Returns the new right
+   * layer, or null when the frame is outside the clip (or the layer is locked).
+   *
+   * `rightSourceId` gives the right-hand half its OWN source. Left unset it
+   * inherits the original's, which makes the two bars two views of one source —
+   * fine for an engine-level test, wrong for an editor, where the halves have
+   * to be separately selectable, editable and deletable. App callers pass a
+   * freshly cloned source id; see `core/scene/cloneLayerNode`.
+   */
+  splitLayer(id: string, frame: number, rightSourceId?: string): Layer | null {
     const layer = this.layerIndex.get(id);
     if (!layer || layer.locked) return null;
     const track = this.trackIndex.get(layer.trackId)!;
@@ -722,7 +731,7 @@ export class Timeline {
       clip: new Clip(rightData),
       enabled: layer.enabled,
       locked: layer.locked,
-      sourceId: layer.sourceId,
+      sourceId: rightSourceId ?? layer.sourceId,
       metadata: { ...layer.metadata },
     });
     layer.clip = Clip.fromJSON(prevClip); // revert so `do()` applies cleanly

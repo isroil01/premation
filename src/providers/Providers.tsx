@@ -24,6 +24,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
 import { bumpScene } from '@stores/sceneStore';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { openProjectPath } from '@core/project/openProjectPath';
 import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectIO';
 import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
@@ -1943,7 +1944,18 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           }));
         });
         // Keyframe edits refresh the timeline tracks + inspector + viewport.
-        track(getEventBus().on('AnimationChanged', () => { bumpScene(); }));
+        //
+        // Media decode/upload repaints are NOT edits and must not come through
+        // here. They arrive on the same event at the source's frame rate, and
+        // bumping the scene for each one ran a full scene-graph walk, content
+        // re-hash and React reconcile per decoded video frame — while the
+        // viewport's own render loop was already filtering these events out for
+        // exactly that reason. The viewport still repaints for them; it just
+        // does it without pretending the document changed.
+        track(getEventBus().on('AnimationChanged', (payload) => {
+          if (isMediaDecodeRepaint(payload?.nodeId)) return;
+          bumpScene();
+        }));
 
         // Native (Electron) menu items dispatch through the same CommandSystem.
         window.motionEditor?.onMenuCommand?.((id) => {

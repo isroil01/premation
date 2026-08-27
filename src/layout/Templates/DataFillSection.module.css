@@ -7,15 +7,15 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border-top: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .label {
-  font-size: var(--font-size-micro, 11px);
+  font-size: var(--font-size-micro);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary, #86868f);
+  color: var(--color-text-tertiary);
 }
 
 /* A <label> wrapping a hidden input: the native file button cannot be styled
@@ -26,16 +26,16 @@
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px dashed var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border: 1px dashed var(--color-border-subtle);
   border-radius: 6px;
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-secondary, #b6b6bf);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
   cursor: pointer;
 }
 
 .picker:hover {
-  border-color: var(--color-primary, #5b8cff);
-  color: var(--color-text-primary, #f2f2f5);
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
 }
 
 .fileInput {
@@ -50,29 +50,29 @@
 }
 
 .rowCount {
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-secondary, #b6b6bf);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 
 .error {
   padding: 6px 8px;
   border-radius: 4px;
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-danger, #ff6b6b);
-  background: color-mix(in srgb, var(--color-danger, #ff6b6b) 12%, transparent);
+  font-size: var(--font-size-micro);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 }
 
 /* A field with no column is the one worth interrupting for — it silently keeps
    its authored value on every row, which reads as "the fill didn't work". */
 .warn {
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-warning, #e0a83c);
+  font-size: var(--font-size-micro);
+  color: var(--color-warning);
   line-height: 1.4;
 }
 
 .hint {
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-tertiary, #86868f);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
   line-height: 1.4;
 }

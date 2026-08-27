@@ -34,6 +34,9 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
+import { useRenderQueueStore } from '@stores/renderQueueStore';
+import { useModalStore } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore, type Tool } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -351,12 +354,6 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     let lastCssSize = '';
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
 
-    const isMediaDecodeRepaint = (nodeId?: string): boolean => {
-      if (!nodeId) return false;
-      if (nodeId === '__texture__') return true;
-      return nodeId.startsWith('blob:') || nodeId.startsWith('motion-blob:');
-    };
-
     const onionPainter = createOnionSkinPainter({
       content: () => contentCanvasRef?.current ?? null,
       target: () => onionCanvasRef?.current ?? null,
@@ -452,15 +449,39 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // pass early and the decode's own repaint re-arms it.
     const IDLE_CACHE_DELAY_MS = 1500;
     const IDLE_CACHE_AHEAD_SEC = 5;
+    /** How long one idle slice may hold the main thread before yielding. */
+    const IDLE_CACHE_SLICE_BUDGET_MS = 8;
+    /** Re-arm delay after a pass stopped on still-decoding media — short,
+     *  because user quiescence is already established by then. */
+    const IDLE_CACHE_MEDIA_RETRY_MS = 150;
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let idleSliceTimer: ReturnType<typeof setTimeout> | null = null;
     let renderSeq = 0;
+    /**
+     * Consecutive passes that stopped on unsettled media without caching a
+     * single frame. Bounds the fast retry: a source that never becomes exact
+     * (a broken decode, an offline file) would otherwise hold the pump in a
+     * 150ms loop of two full comp renders each — forever, on a PAUSED editor.
+     * That is the same perpetual-tickover failure the all-cached early-out
+     * exists to prevent, so the fast path has to be able to give up.
+     */
+    let idleMediaRetries = 0;
+    const IDLE_CACHE_MAX_MEDIA_RETRIES = 6;
 
     const isPlayingNow = (): boolean => {
       const s = useWorkspaceStore.getState();
       const t = s.activeTabId ? s.tabs[s.activeTabId] : null;
       return t?.playing === true;
     };
+
+    /** True while an export or the Export dialog's live preview is running.
+     *  The idle pump must stand down then: exports share the exact-decoder
+     *  singleton, and interleaving the pump's frame requests with the
+     *  export's forward walk kills the export's streaming readers on every
+     *  alternation — a paused viewport quietly making a queued render slow. */
+    const isExportBusy = (): boolean =>
+      useRenderQueueStore.getState().isRunning
+      || useModalStore.getState().stack.some((m) => m.id === 'export-dialog');
 
     const cancelIdleCache = (): void => {
       if (idleTimer !== null) {
@@ -476,23 +497,63 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const startIdlePass = (): void => {
       idleTimer = null;
       const b = backendRef.current;
-      if (!b || b !== backend || isPlayingNow()) return;
+      if (!b || b !== backend || isPlayingNow() || isExportBusy()) return;
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       const fps = compRef.current.fps || 60;
       const lastCompFrame = Math.max(0, Math.round((compRef.current.durationSeconds || 0) * fps) - 1);
       let f = Math.min(Math.round(timeRef.current * fps) + 1, lastCompFrame);
       const endFrame = Math.min(f + Math.round(fps * IDLE_CACHE_AHEAD_SEC), lastCompFrame);
       if (f > endFrame) return;
+
+      // Let the disk tier start promoting this window back into RAM. Probing
+      // with `has` (below) deliberately does not do this, so without an
+      // explicit nudge the pump would re-render from scratch every frame that
+      // had been evicted from RAM but is still on disk.
+      viewportFrameCache.prefetchFrom(f);
+      // Find the first frame that actually needs rendering BEFORE disturbing
+      // anything. `has` rather than `get`: a probe must not re-order the LRU
+      // (scanning a cached run used to promote all of it to most-recently-used,
+      // so eviction then dropped the frames NEAREST the playhead) and must not
+      // fire a disk look-ahead per probe.
+      while (f <= endFrame && viewportFrameCache.has(f)) f += 1;
+      // Nothing to do. Return without masking, without re-rendering and without
+      // re-arming — otherwise a settled editor sitting on a fully cached span
+      // woke every 1.5s forever to mask, scan, render the current frame again
+      // and re-arm itself: a permanent GPU/CPU tickover on an idle app.
+      // Any real render (scrub, edit, decode landing) re-arms via armIdleCache.
+      if (f > endFrame) return;
+
       const cacheCanvas = cacheCanvasRef?.current;
       if (!cacheCanvas) return;
-      // Mask: hold the CURRENT picture on the overlay while future frames
-      // render invisibly beneath it.
+      const mctx = cacheCanvas.getContext('2d');
+      if (!mctx) return;
+
+      // ── The freeze-mask ────────────────────────────────────────────────
+      //
+      // Hold the CURRENT picture on this 2D layer while future frames render
+      // invisibly beneath it on the WebGL content canvas.
+      //
+      // The mask must be snapshotted from a drawing buffer that still HOLDS
+      // those pixels, which means rendering the current frame right here, in
+      // this same task, and reading it back before the compositor runs. The
+      // WebGL2 context is created without `preserveDrawingBuffer` (the default,
+      // and the right default — preserving it costs a full extra buffer copy on
+      // every composited frame of playback), so its contents are undefined once
+      // the frame has been presented. This pass fires 1500ms after the last
+      // real paint, so the old code's bare `drawImage(content, 0, 0)` copied a
+      // cleared buffer: the mask was fully transparent, hid nothing, and the
+      // user watched the pump render five seconds of future frames onto the
+      // live canvas. That is the "it plays even though I never pressed play"
+      // report — the playhead never moved, only the picture did.
+      renderFrameAt(timeRef.current);
+      // A backend that is still initializing coalesces the snapshot instead of
+      // drawing it, which would put us right back to masking with stale or
+      // empty pixels. Stand down and let the next real render re-arm us.
+      if (b.lastFrameDidRender?.() === false) return;
       if (cacheCanvas.width !== content.width || cacheCanvas.height !== content.height) {
         cacheCanvas.width = content.width;
         cacheCanvas.height = content.height;
       }
-      const mctx = cacheCanvas.getContext('2d');
-      if (!mctx) return;
       mctx.clearRect(0, 0, cacheCanvas.width, cacheCanvas.height);
       mctx.drawImage(content, 0, 0);
       cacheCanvas.classList.add(cacheVisibleClass);
@@ -506,21 +567,56 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       };
       const slice = (): void => {
         idleSliceTimer = null;
-        if (renderSeq !== seqAtStart || isPlayingNow() || backendRef.current !== backend) return;
-        while (f <= endFrame && viewportFrameCache.get(f)) f += 1;
+        if (renderSeq !== seqAtStart || isPlayingNow() || isExportBusy() || backendRef.current !== backend) return;
+        while (f <= endFrame && viewportFrameCache.has(f)) f += 1;
         if (f > endFrame) {
           finish();
           return;
         }
-        renderFrameAt(f / fps);
-        if (b.lastFrameMediaExact?.() !== false) {
+        // Time-budget the slice instead of rendering exactly one frame per
+        // task. Back-to-back `setTimeout(…, 0)` full comp renders starve input
+        // handlers on a heavy comp, so a paused editor felt sticky to click
+        // while it pre-rendered; yielding on a budget keeps the main thread
+        // responsive without giving up throughput on light comps.
+        const sliceStart = performance.now();
+        while (f <= endFrame) {
+          renderFrameAt(f / fps);
+          // Only a frame that actually drew, with settled media, may be kept.
+          if (b.lastFrameDidRender?.() === false) {
+            finish();
+            return;
+          }
+          if (b.lastFrameMediaExact?.() === false) {
+            // Media still decoding. Its landing repaints and re-arms the pump,
+            // but a decode that lands without a repaint would otherwise leave
+            // the pass parked for the full idle delay — on a video comp that
+            // meant roughly one cached frame per 1.5 seconds. Retry soon, but
+            // only while that is plausibly a decode in flight: past the cap,
+            // fall back to the normal idle delay so a source that never settles
+            // cannot pin a paused editor in a busy loop.
+            finish();
+            cancelIdleCache();
+            idleMediaRetries += 1;
+            idleTimer = setTimeout(
+              startIdlePass,
+              idleMediaRetries <= IDLE_CACHE_MAX_MEDIA_RETRIES
+                ? IDLE_CACHE_MEDIA_RETRY_MS
+                : IDLE_CACHE_DELAY_MS,
+            );
+            return;
+          }
           viewportFrameCache.put(f, content);
+          // Progress: the fast retry has earned its budget back.
+          idleMediaRetries = 0;
           f += 1;
-          idleSliceTimer = setTimeout(slice, 0);
-        } else {
-          // Media still decoding — its landing repaints, which re-arms the pump.
-          finish();
+          if (performance.now() - sliceStart >= IDLE_CACHE_SLICE_BUDGET_MS) break;
+          while (f <= endFrame && viewportFrameCache.has(f)) f += 1;
         }
+        if (f > endFrame) {
+          finish();
+          return;
+        }
+        idleSliceTimer = setTimeout(slice, 0);
       };
       idleSliceTimer = setTimeout(slice, 0);
     };
@@ -607,8 +703,26 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
         roiK ? `${roiK.x},${roiK.y},${roiK.width},${roiK.height}` : '-',
       ].join(':');
+      // Turn the cache over on EVERY render, not just playing ones.
+      //
+      // This used to live inside `if (playing)`, from when playback was the
+      // only thing that touched the cache. The idle pre-render pump broke that
+      // assumption: it fills both tiers while PAUSED, so all of its traffic ran
+      // under whatever key was last set — an empty string on a project that has
+      // never been played. Consequences, all of them real:
+      //
+      //   • An edit made while paused did not clear the cache, so the pump then
+      //     SKIPPED those frames as already cached and the stale pre-edit
+      //     pixels blitted on the next play.
+      //   • Post-edit frames were stored under the pre-edit key, and the disk
+      //     tier persisted them there — servable as wrong pixels later.
+      //   • The disk tier stayed inert before the first play (it refuses to
+      //     write without a generation), so a paused pre-render was RAM-only.
+      //
+      // `setKey` is a string compare when nothing changed, so this is free on
+      // the hot path.
+      viewportFrameCache.setKey(invalidationKey, content.width, content.height);
       if (playing) {
-        viewportFrameCache.setKey(invalidationKey, content.width, content.height);
         const hit = viewportFrameCache.get(frame);
         const cacheCanvas = cacheCanvasRef?.current;
         if (hit && cacheCanvas) {

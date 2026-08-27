@@ -620,6 +620,12 @@ export interface RenderBackend {
    *  A false frame holds stand-in video pixels (element mid-seek, decode
    *  warming) and must not enter the RAM preview cache. */
   lastFrameMediaExact?(): boolean;
+  /** True when the last `renderFrame` reached its draw call. A backend that is
+   *  still initializing coalesces the snapshot and returns without touching the
+   *  drawing buffer, so anything that READS the canvas afterwards (the RAM
+   *  preview, the idle pump's freeze-mask) must check this first or it captures
+   *  the previous frame — or nothing at all. */
+  lastFrameDidRender?(): boolean;
   /** Keep playback video elements tracking `compT` while the viewport serves
    *  frames from the RAM cache (no renderFrame runs then). Without it the
    *  elements drift through blitted spans and every cache miss pays a hard

@@ -34,7 +34,11 @@
   aspect-ratio: 16 / 9;
   background:
     linear-gradient(135deg, rgba(99, 91, 255, 0.12), rgba(18, 18, 26, 0.9)),
-    repeating-conic-gradient(#1b1b24 0% 25%, #16161d 0% 50%) 50% / 16px 16px;
+    repeating-conic-gradient(
+      var(--color-checkerboard-a) 0% 25%,
+      var(--color-checkerboard-b) 0% 50%
+    )
+    50% / 16px 16px;
 }
 .previewFrame[data-aspect='16:9'] { aspect-ratio: 16 / 9; }
 .previewFrame[data-aspect='9:16'] { aspect-ratio: 9 / 16; max-height: 260px; margin: 0 auto; width: auto; }
@@ -64,7 +68,7 @@
   width: 24px;
   height: 24px;
   border-radius: 999px;
-  color: #fff;
+  color: var(--color-text-on-accent);
   background: var(--color-primary);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   opacity: 0;

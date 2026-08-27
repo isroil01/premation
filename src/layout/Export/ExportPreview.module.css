@@ -16,6 +16,7 @@
   overflow: hidden;
   border-radius: var(--radius-surface);
   border: 1px solid var(--color-border);
+  /* Letterbox behind the rendered frame — black in both themes. */
   background: #000000;
   margin: 0 auto;
 }
@@ -67,9 +68,9 @@
 }
 
 .overlayError {
-  color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 15%, #000 85%);
-  border: 1px solid var(--color-error);
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 15%, #000 85%);
+  border: 1px solid var(--color-danger);
 }
 
 .scrubRow {

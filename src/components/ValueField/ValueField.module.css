@@ -73,7 +73,7 @@
 .editing {
   cursor: text;
   border-color: var(--color-primary);
-  background: #161616;
+  background: var(--color-surface-2);
   color: var(--color-text-primary);
   padding: 0 var(--space-2);
   border-radius: var(--radius-control);

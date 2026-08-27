@@ -89,6 +89,23 @@ export interface Preferences {
    * Preference (not project data) — same rationale as libraryFavorites.
    */
   effectFavorites: string[];
+  /**
+   * Which Inspector property sections the user has explicitly opened or
+   * closed, by section id (`transform`, `appearance`, `time`, …).
+   *
+   * A PREFERENCE, and a sparse one on purpose. The Inspector's open/closed
+   * state used to be component-local `useState`, so it reset every time the
+   * panel unmounted — switching tabs, or clearing the selection — and Transform
+   * sprang back open no matter how many times you collapsed it. Which sections
+   * you want expanded is settled personal working style, exactly like
+   * `timelineHeaderWidth`.
+   *
+   * Sparse (only ids the user actually toggled) rather than a list of open
+   * ids: a section never touched must keep following its own `defaultOpen`, so
+   * selecting a layer KIND for the first time still opens the section that
+   * made you select it.
+   */
+  inspectorSections: Record<string, boolean>;
 }
 
 interface PreferenceActions {
@@ -114,6 +131,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   useProxies: true,
   libraryFavorites: [],
   effectFavorites: [],
+  inspectorSections: {},
 };
 
 /** Pluggable persistence backend. */

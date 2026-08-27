@@ -124,6 +124,22 @@ export interface AuthStatus {
   persisted: boolean;
 }
 
+/**
+ * What the updater is doing, mirrored from `electron/updaterPolicy.ts`.
+ *
+ * Duplicated rather than imported: the renderer must not reach into the
+ * main-process sources, which import `electron` and do not resolve in a browser
+ * build. `updaterStatusContract.test.ts` pins the two copies together.
+ */
+export type UpdateStatus =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'available'; version: string; downloading: boolean }
+  | { kind: 'downloading'; version: string; percent: number }
+  | { kind: 'ready'; version: string }
+  | { kind: 'unsupported'; reason: string }
+  | { kind: 'error'; message: string };
+
 export interface MotionEditorApi {
   readonly platform: string;
   readonly version: string;
@@ -281,6 +297,8 @@ export interface MotionEditorApi {
         fps: number;
         hasAudio?: boolean;
         quality?: 'high' | 'medium' | 'draft';
+        /** mov only — ProRes flavour ffmpeg encodes. Defaults to 4444. */
+        proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
         /** ST.2084 PQ or HLG — HEVC 10-bit with BT.2020 tags when ffmpeg has libx265. */
         hdr?: 'pq' | 'hlg';
         /** Measured MaxCLL / MaxFALL + mastering display (HDR10 SEI foothold). */
@@ -361,6 +379,26 @@ export interface MotionEditorApi {
   oauth?: {
     openExternal(url: string): Promise<void>;
     onResult(handler: (result: { code?: string; error?: string }) => void): () => void;
+  };
+  /**
+   * Auto-update, as the renderer sees it.
+   *
+   * Absent in a browser build — there is nothing to update — which is why the
+   * whole member is optional like the rest of this bridge. Callers must handle
+   * its absence rather than assume a desktop shell.
+   */
+  updates?: {
+    getStatus(): Promise<UpdateStatus>;
+    /** Live status pushes. Returns an unsubscribe fn. */
+    onStatus(handler: (status: UpdateStatus) => void): () => void;
+    getSettings(): Promise<{ autoDownload: boolean }>;
+    setAutoDownload(enabled: boolean): Promise<{ autoDownload: boolean }>;
+    /** Check now — Settings' "Check for updates" button. */
+    check(): Promise<UpdateStatus>;
+    /** Fetch an update the user declined to auto-download. */
+    downloadNow(): Promise<boolean>;
+    /** Quit into the installer and come back. */
+    restartAndInstall(): Promise<void>;
   };
   /** Subscribe to native menu command ids. Returns an unsubscribe fn. */
   onMenuCommand?(handler: (commandId: string) => void): () => void;

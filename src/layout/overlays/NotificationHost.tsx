@@ -31,6 +31,21 @@ export function NotificationHost(): JSX.Element | null {
             <Icon name={LEVEL_ICON[n.level]} size="md" />
           </span>
           <span className={styles.toastMessage}>{n.message}</span>
+          {n.action ? (
+            <button
+              type="button"
+              className={styles.toastAction}
+              onClick={() => {
+                // Dismiss first: the action may quit the app (Restart now), and
+                // a toast that is still on screen while the window tears down
+                // reads as a hang.
+                dismiss(n.id);
+                n.action?.onSelect();
+              }}
+            >
+              {n.action.label}
+            </button>
+          ) : null}
           <IconButton aria-label="Dismiss" size="sm" onClick={() => dismiss(n.id)}>
             <Icon name="close" size="sm" />
           </IconButton>

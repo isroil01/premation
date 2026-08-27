@@ -22,7 +22,7 @@ import { useRenderQueueStore, outputExtFor, type OutputFormat } from '@stores/re
 import { useLayoutStore } from '@stores/layoutStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { runExport, isAbortError, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
-import type { ExportQuality } from '@core/export/videoSink';
+import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
 import { formatHdrCapabilityNote, formatHdrExportDoneNote } from '@core/export/hdrTransfer';
 import { ExportPreview } from './ExportPreview';
 import styles from './ExportDialog.module.css';
@@ -42,20 +42,25 @@ const QUALITY: ReadonlyArray<{ value: ExportQuality; label: string; hint: string
 
 const MOVING: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif']);
 const QUEUEABLE: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
-const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+const RANGED: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif', 'wav', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
 const HAS_AUDIO: ReadonlySet<ExportFormat> = new Set(['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
 const ALPHA_FORMATS: ReadonlySet<ExportFormat> = new Set(['webm', 'mov', 'png', 'png-sequence', 'gif', 'exr-sequence']);
-const NON_RASTER: ReadonlySet<ExportFormat> = new Set(['lottie', 'json', 'edl', 'otio', 'fcpxml', 'ale', 'mogrt']);
+const NON_RASTER: ReadonlySet<ExportFormat> = new Set(['wav', 'lottie', 'json', 'edl', 'otio', 'fcpxml', 'ale', 'mogrt']);
+
+/** Explicit order (not Object.keys — numeric-looking keys re-sort): alpha-capable first, then by size. */
+const PRORES_PROFILES: ReadonlyArray<ProresProfile> = ['4444', 'hq', '422', 'lt', 'proxy'];
 
 const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportFormat[] }> = [
   { id: 'video', label: 'Video', formats: ['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif'] },
   { id: 'frames', label: 'Frames', formats: ['png-sequence', 'jpg-sequence', 'exr-sequence', 'png'] },
+  { id: 'audio', label: 'Audio', formats: ['wav'] },
   { id: 'editorial', label: 'Editorial / Interchange', formats: ['otio', 'fcpxml', 'edl', 'ale'] },
   { id: 'data', label: 'Package & Data', formats: ['lottie', 'json', 'mogrt'] },
 ];
 
 function dataPreviewMeta(format: ExportFormat): { icon: import('@components/Icon').IconName; title: string } {
   switch (format) {
+    case 'wav': return { icon: 'audio', title: 'Audio Mixdown · WAV' };
     case 'lottie': return { icon: 'sparkles', title: 'Lottie Animation JSON' };
     case 'json': return { icon: 'file', title: 'Premation Project Document' };
     case 'otio': return { icon: 'layers', title: 'OpenTimelineIO Schema' };
@@ -72,7 +77,7 @@ function fileStem(name: string): string {
   return trimmed.replace(/[<>:"/\\|?*]+/g, '-');
 }
 
-function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX.Element {
+function ExportDialog({ duration, fps, onClose }: { duration: number; fps: number; onClose?: () => void }): JSX.Element {
   const presets = useMemo(() => availableExportPresets(), []);
   const presetByFormat = useMemo(() => {
     const map = new Map<ExportFormat, ExportPreset>();
@@ -83,23 +88,51 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   const [format, setFormat] = useState<ExportFormat>(presets[0]?.format ?? 'webm');
   const [scaleIdx, setScaleIdx] = useState(0);
   const [quality, setQuality] = useState<ExportQuality>('high');
-  const [transparent, setTransparent] = useState(false);
+  const [proresProfile, setProresProfile] = useState<ProresProfile>('4444');
+  // Seeded from the COMP's own setting: a user who set "Transparent
+  // background" in Composition Settings got an opaque export (and preview)
+  // unless they re-toggled it here — the dialog's `false` overrode the comp.
+  const [transparent, setTransparent] = useState(() => !!useCompositionStore.getState().transparent);
   const [progress, setProgress] = useState<number | null>(null);
   const notify = useUIStore((s) => s.notify);
-  const time = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time : 0)) ?? 0;
   const baseComp = useCompositionStore((s) => s.comp());
   const compName = useCompositionStore((s) => s.name);
+
+  // Playhead time is only needed for the single-frame PNG preview. Gated on
+  // format: subscribing unconditionally re-rendered this whole dialog (and
+  // for PNG, a full GPU preview render) once per playback frame.
+  const time = useWorkspaceStore((s) =>
+    format === 'png' ? (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0) : 0,
+  );
 
   const workArea = getTimelineController().getWorkArea();
   const [rangeMode, setRangeMode] = useState<'full' | 'work'>(() => (workArea ? 'work' : 'full'));
   const useWorkArea = rangeMode === 'work' && !!workArea;
+
+  /** The export range, read at ACTION time (export/queue click) so it matches
+   *  the timeline as it stands — the render-time live read and the
+   *  dialog-open-time snapshot could disagree. End exclusive, seconds. */
+  const captureRange = (): { startSec: number; endSec: number } => {
+    const wa = rangeMode === 'work' ? getTimelineController().getWorkArea() : null;
+    return wa ? { startSec: wa.start, endSec: wa.end } : { startSec: 0, endSec: duration };
+  };
 
   const scale = RES[scaleIdx]!.scale;
   const width = Math.round(baseComp.width * scale);
   const height = Math.round(baseComp.height * scale);
   const busy = progress !== null;
 
-  const supportsAlpha = ALPHA_FORMATS.has(format);
+  // WebM alpha exists only on the desktop path (ffmpeg stages PNG and encodes
+  // yuva420p). The browser's WebCodecs VP9 profile-0 encode is opaque — the
+  // toggle was offered there, did nothing, and the preset even promised
+  // "keeps transparency".
+  // MOV alpha is a 4444-only fact: the 422 family is yuv422p10le, no alpha
+  // plane exists, and offering the toggle there would promise transparency
+  // the encoder physically cannot write.
+  const supportsAlpha =
+    ALPHA_FORMATS.has(format)
+    && (format !== 'webm' || canEncodeLocally())
+    && (format !== 'mov' || proresProfile === '4444');
   const alpha = transparent && supportsAlpha;
   const showRaster = !NON_RASTER.has(format);
   const showRange = RANGED.has(format);
@@ -150,7 +183,11 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         duration,
         time,
         quality,
-        useWorkArea,
+        ...(format === 'mov' ? { proresProfile } : {}),
+        // Captured NOW, not read live mid-render: what you clicked is what
+        // renders, even if the work area moves while the export runs.
+        range: captureRange(),
+        baseName: fileStem(compName ?? 'composition'),
         comp,
         onProgress: setProgress,
         signal: controller.signal,
@@ -171,11 +208,16 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
       abortRef.current = null;
       setProgress(null);
     }
-  }, [format, width, height, fps, duration, time, quality, useWorkArea, comp, notify]);
+  }, [format, width, height, fps, duration, time, quality, proresProfile, rangeMode, compName, comp, notify]);
 
   const queueJob = (): void => {
     const ext = outputExtFor(format as OutputFormat);
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    // Capture the range AT QUEUE TIME. The work area is a live, global value;
+    // without this snapshot, "Entire composition" still rendered the current
+    // work area, and editing any timeline's in/out after queueing changed
+    // what every pending job produced.
+    const range = captureRange();
     useRenderQueueStore.getState().addJob({
       compositionName: compName ?? 'Comp 1',
       compositionId: baseComp.id,
@@ -188,11 +230,17 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
       compHeight: baseComp.height,
       fps,
       durationSec: duration,
+      rangeStartSec: range.startSec,
+      rangeEndSec: range.endSec,
       transparent: alpha,
       quality,
+      ...(format === 'mov' ? { proresProfile } : {}),
     });
     useLayoutStore.getState().openPanel('renderQueue');
     notify({ level: 'success', message: 'Added to Render Queue (F6)', durationMs: 2600 });
+    // Close the modal: it used to open the Render Queue panel BEHIND itself
+    // and toast about a panel the user could not see.
+    onClose?.();
   };
 
   const activePreset = presetByFormat.get(format);
@@ -373,6 +421,33 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
             </div>
           ) : null}
 
+          {format === 'mov' ? (
+            <div className={styles.section}>
+              <div className={styles.label}>ProRes profile</div>
+              <div className={styles.seg} role="radiogroup" aria-label="ProRes profile">
+                {PRORES_PROFILES.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    role="radio"
+                    aria-checked={proresProfile === p}
+                    disabled={busy}
+                    title={PRORES_PROFILE_LABELS[p]}
+                    className={cn(styles.segChip, proresProfile === p && styles.segChipOn)}
+                    onClick={() => setProresProfile(p)}
+                  >
+                    {p === '4444' ? '4444' : p === 'hq' ? '422 HQ' : p === '422' ? '422' : p === 'lt' ? '422 LT' : 'Proxy'}
+                  </button>
+                ))}
+              </div>
+              <p className={styles.fieldNote}>
+                {proresProfile === '4444'
+                  ? 'Highest fidelity, and the only profile that carries alpha.'
+                  : 'No alpha channel — smaller files for opaque delivery and edit handoff.'}
+              </p>
+            </div>
+          ) : null}
+
           {showRaster ? (
             <div className={styles.switchRow}>
               <div className={styles.switchCopy}>
@@ -463,6 +538,10 @@ export function openExportDialog(duration: number, fps: number): void {
     title: 'Export composition',
     description: name,
     size: 'lg',
-    render: () => <ExportDialog duration={duration} fps={fps} />,
+    // Persistent: Esc / a backdrop click used to unmount the dialog, whose
+    // cleanup ABORTS a running export — a reflex keypress killed a
+    // twenty-minute render with only an "Export cancelled" toast.
+    persistent: true,
+    render: (close) => <ExportDialog duration={duration} fps={fps} onClose={close} />,
   });
 }

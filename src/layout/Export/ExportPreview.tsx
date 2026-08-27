@@ -56,6 +56,7 @@ export function ExportPreview({
   // "frame 1 of N" mean the first frame of the export, not of the composition.
   const [frame, setFrame] = useState(0);
   const [blank, setBlank] = useState(false);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -128,6 +129,7 @@ export function ExportPreview({
         const frameRes = await renderer.render({ width, height, fps, comp, time });
         if (cancelled) return;
         setBlank(frameRes.blank);
+        setWarnings(frameRes.warnings);
         setError(null);
         setReady(true);
       } catch (err) {
@@ -188,6 +190,15 @@ export function ExportPreview({
           </div>
         ) : !ready ? (
           <div className={styles.overlayMuted}>Preparing preview…</div>
+        ) : warnings.length > 0 ? (
+          <div className={styles.overlayWarn}>
+            <Icon name="warning" size="md" />
+            <span>
+              {/* The exact refusal the export will stop on — surfaced here
+                  instead of dying at frame N mid-render. */}
+              The export would stop on this frame: {warnings[0]}
+            </span>
+          </div>
         ) : blank ? (
           <div className={styles.overlayWarn}>
             <Icon name="warning" size="md" />

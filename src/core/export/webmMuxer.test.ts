@@ -173,7 +173,8 @@ describe('muxWebm', () => {
   });
 
   it('starts a new cluster at each keyframe, with timestamps relative to it', () => {
-    // Keyframes every 5 frames at 10fps → clusters at 0ms, 500ms, 1000ms.
+    // Keyframes every 5 frames at 10fps → clusters at 0s, 0.5s, 1s. Times are
+    // in 100µs ticks (TimestampScale 100_000), so 0.5s = 5000 ticks.
     const samples = Array.from({ length: 15 }, (_, i) => sample(i, 10, i % 5 === 0));
     const file = muxWebm(track, samples);
     const segment = children(children(file)[1]!.data);
@@ -181,20 +182,20 @@ describe('muxWebm', () => {
 
     expect(clusters).toHaveLength(3);
     const clusterTimes = clusters.map((c) => readUint(find(children(c.data), ID_TIMESTAMP)!.data));
-    expect(clusterTimes).toEqual([0, 500, 1000]);
+    expect(clusterTimes).toEqual([0, 5000, 10_000]);
 
     // Each cluster's first block sits at relative 0, and none exceed the span.
     for (const c of clusters) {
       const blocks = findAll(children(c.data), ID_SIMPLE_BLOCK);
       const rel = blocks.map((b) => new DataView(b.data.buffer, b.data.byteOffset + 1, 2).getInt16(0, false));
       expect(rel[0]).toBe(0);
-      expect(Math.max(...rel)).toBeLessThan(500);
+      expect(Math.max(...rel)).toBeLessThan(5000);
     }
   });
 
   it('breaks clusters before relative timestamps could overflow int16', () => {
     // 40 seconds at 1fps with a single keyframe: without a span limit the
-    // relative timestamps would run to 40000ms and wrap negative in int16.
+    // relative timestamps would run to 400000 ticks and wrap negative in int16.
     const samples = Array.from({ length: 40 }, (_, i) => sample(i, 1, i === 0));
     const file = muxWebm({ ...track, fps: 1 }, samples);
     const segment = children(children(file)[1]!.data);
@@ -236,10 +237,36 @@ describe('muxWebm', () => {
     const file = muxWebm(track, samples);
     const segment = children(children(file)[1]!.data);
     const duration = find(children(find(segment, ID_INFO)!.data), 0x4489)!;
-    const ms = new DataView(duration.data.buffer, duration.data.byteOffset, 8).getFloat64(0, false);
+    const ticks = new DataView(duration.data.buffer, duration.data.byteOffset, 8).getFloat64(0, false);
 
-    // 10 frames at 10fps = 1s of content; duration must include the last frame.
-    expect(ms).toBeCloseTo(1000, 0);
+    // 10 frames at 10fps = 1s of content; duration (in 100µs ticks) must
+    // include the last frame.
+    expect(ticks).toBeCloseTo(10_000, 0);
+  });
+
+  it('declares BT.709 limited-range colour on the video track', () => {
+    const file = muxWebm(track, [sample(0, 10, true)]);
+    const segment = children(children(file)[1]!.data);
+    const entry = find(children(find(segment, ID_TRACKS)!.data), ID_TRACK_ENTRY)!;
+    const video = children(find(children(entry.data), ID_VIDEO)!.data);
+    const colour = children(find(video, 0x55b0)!.data);
+
+    expect(readUint(find(colour, 0x55b1)!.data)).toBe(1); // MatrixCoefficients
+    expect(readUint(find(colour, 0x55bb)!.data)).toBe(1); // Primaries
+    expect(readUint(find(colour, 0x55ba)!.data)).toBe(1); // TransferCharacteristics
+    expect(readUint(find(colour, 0x55b9)!.data)).toBe(1); // Range (limited)
+  });
+
+  it('keeps NTSC-rate frame times exact to 100µs (no 1ms quantisation)', () => {
+    // At 29.97fps frame 1 sits at 33366.7µs. The old 1ms scale rounded it to
+    // 33ms; 100µs ticks carry 334 — within half a tick of the true time.
+    const samples = [sample(0, 29.97, true), sample(1, 29.97, false)];
+    const file = muxWebm({ ...track, fps: 29.97 }, samples);
+    const segment = children(children(file)[1]!.data);
+    const blocks = findAll(segment, ID_CLUSTER).flatMap((c) => findAll(children(c.data), ID_SIMPLE_BLOCK));
+    const rel = new DataView(blocks[1]!.data.buffer, blocks[1]!.data.byteOffset + 1, 2).getInt16(0, false);
+
+    expect(rel).toBe(334); // 33.4ms in 100µs ticks
   });
 
   it('interleaves audio blocks with video in presentation order', () => {

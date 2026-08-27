@@ -103,11 +103,24 @@ export interface RenderJob {
   compHeight?: number;
   fps: number;
   durationSec: number;
+  /**
+   * The export RANGE, in seconds (end exclusive), captured at QUEUE time.
+   *
+   * Without these the job read `getWorkArea()` at RENDER time — a live,
+   * GLOBAL value belonging to whichever comp is focused — so "Entire
+   * composition" still rendered only the current work area, and queueing
+   * comp A then editing comp B's in/out rendered A's picture over B's range.
+   * Absent (legacy jobs), the whole comp renders.
+   */
+  rangeStartSec?: number;
+  rangeEndSec?: number;
   transparent: boolean;
   /** The comp's own background. Was hardcoded '#101014' at render time. */
   background?: string;
   /** Encoder quality tier. Draft renders fast and looks it. */
   quality?: 'high' | 'medium' | 'draft';
+  /** mov only — ProRes flavour, captured from the dialog at queue time. */
+  proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
   /**
    * A paused render's live state: the open sink (staged frames intact on disk)
    * and the offset the loop stops resuming at. Present only between a pause and
@@ -163,8 +176,16 @@ export function outputExtFor(format: OutputFormat): string {
     case 'jpg-sequence':
     case 'exr-sequence':
       return 'zip';
+    // HDR presets encode into an MP4 container — falling through advertised a
+    // ".hdr10" file that never exists (the delivered file was always .mp4).
+    case 'hdr10':
+    case 'hlg':
+      return 'mp4';
     default:
-      return format;
+      // A plugin format's "extension" would otherwise be "plugin:id.exporter"
+      // — a colon in a filename. Fall back to a neutral extension; the sink
+      // renames by its real extension on delivery.
+      return format.startsWith('plugin:') ? 'bin' : format;
   }
 }
 
@@ -180,6 +201,14 @@ function jobOptions(job: RenderJob): ExportOptions {
     duration: job.durationSec,
     time: 0,
     quality: job.quality ?? 'high',
+    ...(job.proresProfile ? { proresProfile: job.proresProfile } : {}),
+    // The captured range, never the LIVE work area: a queued job must render
+    // what was queued, regardless of what the user does to any timeline
+    // between queueing and running.
+    ...(job.rangeStartSec !== undefined && job.rangeEndSec !== undefined
+      ? { range: { startSec: job.rangeStartSec, endSec: job.rangeEndSec } }
+      : { useWorkArea: false }),
+    baseName: job.outputPath.replace(/\.[a-z0-9]+$/i, ''),
     comp: {
       // The COMPOSITION's size, so the comp→frame fit is right at any output
       // scale. See RenderJob.compWidth for what using the output size did.
@@ -287,8 +316,12 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   },
 
   removeJob(id) {
-    // A removed job's paused sink must not leak its staging dir.
     const doomed = get().jobs.find((j) => j.id === id);
+    // A job that is RENDERING right now cannot simply vanish: the loop keeps
+    // rendering it, its progress writes become no-ops, and on completion a
+    // file is written for a job the user deleted. Stop the queue first.
+    if (doomed?.status === 'rendering') return;
+    // A removed job's paused sink must not leak its staging dir.
     void doomed?._resume?.render.dispose().catch(() => undefined);
     set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id) }));
   },
@@ -322,6 +355,13 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
       _abort: abort,
       jobs: s.jobs.map((j) => (j.status === 'failed' ? { ...j, status: 'queued', error: undefined } : j)),
     }));
+    // Epoch token: pauseAll flips isRunning while THIS loop is still parked on
+    // an await. A Start pressed in that window began a SECOND loop, and the
+    // first loop's trailing set() then stamped "not running" over it — the
+    // panel showed Stopped while a render ran, and Stop could no longer reach
+    // its controller. A loop only writes the trailing state if it is still
+    // the CURRENT loop.
+    const myAbort = abort;
 
     // Serial async runner — renders each queued job for real, then saves it.
     void (async () => {
@@ -330,7 +370,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
       if (canChooseOutputDir() && !get().outputDir) {
         const dir = await get().chooseOutputDir();
         if (!dir) {
-          set({ isRunning: false, _abort: null });
+          if (get()._abort === myAbort) set({ isRunning: false, _abort: null });
           return;
         }
       }
@@ -412,7 +452,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
           notifyPlugins({ status: 'failed', job, fileName: null, elapsedMs: failMs, error: message });
         }
       }
-      set({ isRunning: false, _abort: null });
+      if (get()._abort === myAbort) set({ isRunning: false, _abort: null });
     })();
   },
 

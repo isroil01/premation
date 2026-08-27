@@ -9,7 +9,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface-0, #141418);
+  background: var(--color-surface-0);
   overflow: auto;
 }
 
@@ -28,15 +28,15 @@
 }
 
 .title {
-  font-size: var(--font-size-2xl, 20px);
+  font-size: var(--font-size-2xl);
   font-weight: 600;
-  color: var(--color-text-primary, #f2f2f5);
+  color: var(--color-text-primary);
   margin: 0;
 }
 
 .subtitle {
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-tertiary, #86868f);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
   margin: 0;
 }
 
@@ -46,17 +46,17 @@
 }
 
 .sectionLabel {
-  font-size: var(--font-size-micro, 11px);
+  font-size: var(--font-size-micro);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--color-text-tertiary, #86868f);
+  color: var(--color-text-tertiary);
 }
 
 .list {
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -74,13 +74,13 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
   overflow: hidden;
-  background: var(--color-surface-1, #1e1e24);
+  background: var(--color-surface-1);
 }
 
-.card:hover { background: var(--color-surface-2, #26262e); }
+.card:hover { background: var(--color-surface-2); }
 
 .cardBody {
   display: flex;
@@ -99,7 +99,7 @@
 .cardBody:disabled { cursor: default; }
 
 .cardBody:focus-visible {
-  outline: 2px solid var(--color-primary, #5b8cff);
+  outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
 
@@ -109,12 +109,12 @@
   object-fit: cover;
   border-radius: 4px;
   margin-bottom: 6px;
-  background: var(--color-surface-0, #141418);
+  background: var(--color-surface-0);
 }
 
 .facts {
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-secondary, #b6b6bf);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -131,9 +131,9 @@
   gap: 12px;
   width: 100%;
   padding: 10px 12px;
-  background: var(--color-surface-1, #1e1e24);
+  background: var(--color-surface-1);
   border: 0;
-  border-bottom: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-bottom: 1px solid var(--color-border-subtle);
   text-align: left;
   cursor: pointer;
   color: inherit;
@@ -142,10 +142,10 @@
 
 .row:last-child { border-bottom: 0; }
 
-.row:hover:not(:disabled) { background: var(--color-surface-2, #26262e); }
+.row:hover:not(:disabled) { background: var(--color-surface-2); }
 
 .row:focus-visible {
-  outline: 2px solid var(--color-primary, #5b8cff);
+  outline: 2px solid var(--color-primary);
   outline-offset: -2px;
 }
 
@@ -160,16 +160,16 @@
 }
 
 .name {
-  font-size: var(--font-size-md, 13px);
-  color: var(--color-text-primary, #f2f2f5);
+  font-size: var(--font-size-md);
+  color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .path {
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-tertiary, #86868f);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
   /* A long path is more useful from its TAIL — the folder tells you which
      project this is, the drive root never does. */
   direction: rtl;
@@ -179,26 +179,26 @@
   text-overflow: ellipsis;
 }
 
-.missing { color: var(--color-danger, #ff6b6b); }
+.missing { color: var(--color-danger); }
 
 .remove {
   flex: none;
   padding: 2px 8px;
-  font-size: var(--font-size-micro, 11px);
+  font-size: var(--font-size-micro);
   background: transparent;
-  color: var(--color-text-tertiary, #86868f);
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 4px;
   cursor: pointer;
 }
 
-.remove:hover { color: var(--color-text-primary, #f2f2f5); }
+.remove:hover { color: var(--color-text-primary); }
 
 .empty {
   padding: 14px 12px;
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-tertiary, #86868f);
-  background: var(--color-surface-1, #1e1e24);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-1);
 }
 
 .dismiss {
@@ -206,10 +206,10 @@
   background: none;
   border: 0;
   padding: 0;
-  font-size: var(--font-size-micro, 11px);
-  color: var(--color-text-tertiary, #86868f);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
   cursor: pointer;
   text-decoration: underline;
 }
 
-.dismiss:hover { color: var(--color-text-secondary, #b6b6bf); }
+.dismiss:hover { color: var(--color-text-secondary); }

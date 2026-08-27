@@ -508,6 +508,48 @@ describe('AppTextureProvider', () => {
       expect(video.currentTime).toBe(3);
     });
 
+    describe('settledness — what may enter the RAM preview', () => {
+      // A frame is CACHED under the timecode it was rendered for and never
+      // re-rendered afterwards, so a frame holding the wrong picture replays
+      // that picture on every later pass. The caller folds this return value
+      // into `frameMediaExact`, which is the gate on `frameCache.put`.
+      it('is unsettled while the element has not decoded anything', () => {
+        const notReady = fakeVideo({ readyState: 0 });
+        const { provider } = setup(undefined, () => notReady);
+        expect(provider.setVideo('asset:v', 'blob:clip', 0)).toBe(false);
+      });
+
+      it('is unsettled on the pass that REQUESTS a seek', () => {
+        // The texture upload is synchronous, the seek is not — so this pass
+        // uploaded the pre-seek frame. Right to show, wrong to keep.
+        const video = fakeVideo({ currentTime: 0 });
+        const { provider } = setup(undefined, () => video);
+        expect(provider.setVideo('asset:v', 'blob:clip', 3)).toBe(false);
+      });
+
+      it('is unsettled while the element is still seeking', () => {
+        const video = fakeVideo({ currentTime: 3, seeking: true });
+        const { provider } = setup(undefined, () => video);
+        provider.setVideo('asset:v', 'blob:clip', 3); // first-decode seek
+        expect(provider.setVideo('asset:v', 'blob:clip', 3)).toBe(false);
+      });
+
+      it('is settled once the seek has landed and no new one is asked for', () => {
+        const video = fakeVideo({ currentTime: 0 });
+        const { provider } = setup(undefined, () => video);
+        provider.setVideo('asset:v', 'blob:clip', 3);
+        (video as { seeking: boolean }).seeking = false;
+        (video as { currentTime: number }).currentTime = 3;
+        expect(provider.setVideo('asset:v', 'blob:clip', 3)).toBe(true);
+      });
+
+      // NOTE: the OFFLINE branch (which reports settled on purpose — colour
+      // bars are deterministic, and refusing them would re-render a missing
+      // file forever) is not covered here. `offline` is only reachable through
+      // the element firing a real `error` event, which the fake in this suite
+      // does not model; asserting it would mean testing the fake.
+    });
+
     it('seeks before the first upload even when the time already matches', () => {
       // THE BLACK-VIDEO-AT-TIME-ZERO BUG. A loaded but never-seeked <video>
       // presents an all-black surface even at readyState 4 (measured in Chromium:

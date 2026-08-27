@@ -60,7 +60,7 @@
   gap: 8px;
   font-weight: 600;
   font-size: 0.85rem;
-  color: #fff;
+  color: var(--color-text-primary);
 }
 
 .choiceDesc {
@@ -127,11 +127,11 @@
   gap: 6px;
   font-size: 0.8rem;
   font-weight: 600;
-  color: #fff;
+  color: var(--color-text-primary);
 }
 
 .lockIconSecure {
-  color: #10b981; /* Green secure lock */
+  color: var(--color-success); /* secure lock */
 }
 
 .lockIconInactive {
@@ -163,7 +163,7 @@
   background: var(--color-surface-3);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
-  color: #fff;
+  color: var(--color-text-primary);
   font-size: 0.76rem;
   padding: 5px 8px;
   outline: none;
@@ -196,7 +196,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10b981;
+  background: var(--color-success);
   display: inline-block;
   animation: pulse-dot 2s infinite;
 }

@@ -236,9 +236,9 @@
   position: absolute;
   width: 3px;
   height: 3px;
-  background: #fbbf24;
+  background: var(--color-amber-400);
   border-radius: 50%;
-  box-shadow: 0 0 3px #fbbf24;
+  box-shadow: 0 0 3px var(--color-amber-400);
   animation: twinkle 1s ease infinite alternate;
 }
 @keyframes twinkle {
@@ -416,7 +416,7 @@
   height: 18px;
   background: linear-gradient(135deg, #ff9f43, #ee5253);
   border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #fff;
+  color: var(--color-text-on-accent);
   font-size: var(--font-size-micro);
   font-weight: 800;
   display: flex;

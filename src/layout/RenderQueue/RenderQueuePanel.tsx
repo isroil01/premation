@@ -22,13 +22,14 @@ import {
   type RenderJob,
 } from '@stores/renderQueueStore';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
+import { getTimelineController } from '@core/timeline/TimelineController';
 import { customConfirm } from '@components/Modal/Dialogs';
 import styles from './RenderQueuePanel.module.css';
 
 const FORMAT_LABEL: Record<OutputFormat, string> = {
   mp4: 'H.264 MP4',
   webm: 'WebM VP9',
-  mov: 'ProRes 4444',
+  mov: 'ProRes MOV',
   gif: 'Animated GIF',
   hdr10: 'HDR10 MP4',
   hlg: 'HLG MP4',
@@ -110,12 +111,20 @@ export function RenderQueuePanel(): JSX.Element {
     // object every store tick).
     const comp = useCompositionStore.getState().comp();
 
+    // Sanitized like the Export dialog's fileStem: a comp named "Hero / v2"
+    // otherwise put a path separator into the output filename, which
+    // path.join then treated as a directory.
+    const stem = (compName ?? 'output').trim().replace(/[<>:"/\\|?*]+/g, '-') || 'output';
+    // Capture the range at queue time — same contract as the Export dialog:
+    // a queued job renders what was queued, not the live global work area.
+    const wa = getTimelineController().getWorkArea();
+    const range = wa ?? { start: 0, end: settings.durationSec };
     addJob({
       compositionName: compName ?? 'Comp 1',
       // Bind the job to the comp it was queued FROM (see RenderJob.compositionId).
       compositionId: comp.id,
       background: comp.background,
-      outputPath: `${compName ?? 'output'}_${ts}.${ext}`,
+      outputPath: `${stem}_${ts}.${ext}`,
       format: settings.format,
       width: settings.width,
       height: settings.height,
@@ -125,8 +134,11 @@ export function RenderQueuePanel(): JSX.Element {
       compHeight: comp.height,
       fps: settings.fps,
       durationSec: settings.durationSec,
+      rangeStartSec: range.start,
+      rangeEndSec: range.end,
       transparent: settings.transparent,
       quality: settings.quality,
+      ...(settings.proresProfile ? { proresProfile: settings.proresProfile } : {}),
     });
   };
 
@@ -241,7 +253,8 @@ export function RenderQueuePanel(): JSX.Element {
                 <button
                   type="button"
                   className={styles.removeBtn}
-                  title="Remove job"
+                  title={job.status === 'rendering' ? 'Stop the queue before removing a rendering job' : 'Remove job'}
+                  disabled={job.status === 'rendering'}
                   onClick={() => removeJob(job.id)}
                 >
                   <Icon name="close" size="sm" />
@@ -254,7 +267,12 @@ export function RenderQueuePanel(): JSX.Element {
               <span className={styles.jobSpec}>
                 {job.width}×{job.height}
                 {job.compWidth && job.compWidth !== job.width ? ` (comp ${job.compWidth}×${job.compHeight})` : ''}
-                {' · '}{job.fps} fps · {job.durationSec.toFixed(2)}s
+                {' · '}{job.fps} fps
+                {' · '}
+                {(job.rangeStartSec !== undefined && job.rangeEndSec !== undefined
+                  ? job.rangeEndSec - job.rangeStartSec
+                  : job.durationSec
+                ).toFixed(2)}s
                 {job.transparent ? ' · alpha' : ''}
                 {job.quality && job.quality !== 'high' ? ` · ${job.quality}` : ''}
               </span>

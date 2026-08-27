@@ -28,7 +28,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from 'react';
 import { cn } from '@utils/cn';
-import { coalesceCacheBarRanges, layoutCacheBarSegments } from './cacheBarLayout';
+import { CacheBars } from './CacheBars';
 import { Icon, type IconName } from '@components/Icon';
 import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
 import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
@@ -503,6 +503,13 @@ function Timeline({
     [pps, onZoom],
   );
 
+  // Stable, so <Minimap>'s memo can actually skip — an inline arrow here is a
+  // new prop identity on every frame of playback, which would make the memo
+  // wrapper pure overhead.
+  const onMinimapScrollTo = useCallback((top: number) => {
+    if (lanesRef.current) lanesRef.current.scrollTop = top;
+  }, []);
+
   // ── Scrubbing / playhead drag ──────────────────────────────────
   const draggingRef = useRef(false);
   const onPlayheadDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
@@ -644,6 +651,16 @@ function Timeline({
   const clipDrag = useRef<
     null | {
       id: string;
+      /** Scene node behind the bar — the unit selection actually addresses. */
+      trackId: string;
+      /** Set when pointer-down landed on an ALREADY-selected bar: the
+       *  selection collapses to it on release, but only if no drag happened. */
+      collapseSelectionOnUp: boolean;
+      /** Client-space pointer-down origin, for the click-vs-drag threshold. */
+      downX: number;
+      downY: number;
+      /** Set once the pointer travels past the drag threshold. */
+      moved: boolean;
       mode: 'move' | 'start' | 'end' | 'slip' | 'slide';
       ripple: boolean;
       startX: number;
@@ -662,7 +679,31 @@ function Timeline({
 
   const onClipDown = useCallback(
     (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>) => {
-      if ((!onClipMove && !onClipTrim && !onClipSlip && !onClipSlide) || !lanesRef.current) return;
+      // Selection happens even when no clip-edit handler is wired: clicking a
+      // bar in the lanes is how most people reach for a layer, and requiring
+      // them to travel back to the name column for it was the single most
+      // repeated complaint about the timeline. Runs BEFORE the drag guard so
+      // a read-only timeline still selects.
+      //
+      // Deferred-collapse rules (standard for draggable rows):
+      //   • additive modifier      → add to the selection now
+      //   • bar not yet selected   → select it now, so the drag moves the
+      //                              thing under the cursor
+      //   • bar already selected   → wait for pointer-up: collapsing a
+      //                              multi-selection on pointer-DOWN would
+      //                              make a group impossible to drag
+      const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+      const alreadySelected = selectedTrackIds?.includes(clip.trackId) ?? false;
+      let collapseSelectionOnUp = false;
+      if (onTrackSelect) {
+        if (additive || !alreadySelected) onTrackSelect(clip.trackId, additive);
+        else collapseSelectionOnUp = true;
+      }
+
+      if ((!onClipMove && !onClipTrim && !onClipSlip && !onClipSlide) || !lanesRef.current) {
+        e.stopPropagation();
+        return;
+      }
       e.stopPropagation();
       // Shift+Alt on body → slide (move bar, trim abutting neighbors).
       // Alt alone → slip (shift source under a fixed bar).
@@ -673,6 +714,11 @@ function Timeline({
       const sourceInSec = clip.sourceInSec ?? 0;
       clipDrag.current = {
         id: clip.id,
+        trackId: clip.trackId,
+        collapseSelectionOnUp,
+        downX: e.clientX,
+        downY: e.clientY,
+        moved: false,
         mode: actualMode,
         // Ctrl/Cmd on an edge → ripple trim (in or out).
         ripple: (actualMode === 'start' || actualMode === 'end') && (e.ctrlKey || e.metaKey),
@@ -692,13 +738,17 @@ function Timeline({
       document.body.style.cursor =
         actualMode === 'slip' || actualMode === 'slide' ? 'ew-resize' : '';
     },
-    [onClipMove, onClipTrim, onClipSlip, onClipSlide],
+    [onClipMove, onClipTrim, onClipSlip, onClipSlide, onTrackSelect, selectedTrackIds],
   );
 
   useEffect(() => {
     const onMove = (e: PointerEvent): void => {
       const d = clipDrag.current;
       if (!d || !lanesRef.current) return;
+      // Threshold, not "any pointermove": trackpads and high-DPI mice emit
+      // sub-pixel moves during an ordinary click, and treating those as a drag
+      // swallowed the collapse-selection-on-release case below.
+      if (!d.moved && exceedsDragThreshold(e.clientX - d.downX, e.clientY - d.downY)) d.moved = true;
       const lanesRect = lanesRef.current.getBoundingClientRect();
       const currentScrollLeft = lanesRef.current.scrollLeft;
       const deltaSec = (e.clientX - lanesRect.left + currentScrollLeft - d.startX) / pps;
@@ -738,7 +788,20 @@ function Timeline({
     const onUp = (): void => {
       const d = clipDrag.current;
       if (!d) return;
+      // A click that never became a drag on an already-selected bar collapses
+      // the selection down to it (the deferred half of the rule in onClipDown).
+      if (d.collapseSelectionOnUp && !d.moved) onTrackSelect?.(d.trackId, false);
       const { start, duration, sourceInSec } = d.live;
+      // Below the drag threshold this was a SELECT, not an edit. Committing
+      // anyway pushed an identity move onto the undo stack, so every click on
+      // a bar cost the user one Ctrl+Z before their real edit.
+      if (!d.moved) {
+        clipDrag.current = null;
+        setClipPreview(null);
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        return;
+      }
       if (d.mode === 'slip') onClipSlip?.(d.id, sourceInSec);
       else if (d.mode === 'slide') onClipSlide?.(d.id, start);
       else if (d.mode === 'move') onClipMove?.(d.id, start);
@@ -755,7 +818,7 @@ function Timeline({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [pps, totalSeconds, onClipMove, onClipTrim, onClipSlip, onClipSlide, model.frameRate]);
+  }, [pps, totalSeconds, onClipMove, onClipTrim, onClipSlip, onClipSlide, onTrackSelect, model.frameRate]);
 
   // ── Playhead keyboard nudge (role="slider" must be operable) ──
   // Arrow keys step one frame; Shift steps one second; Home/End jump to bounds.
@@ -1117,22 +1180,6 @@ function Timeline({
   const playheadX = TIMELINE_LEFT_OFFSET + currentTime * pps;
 
   const fps = model.frameRate || 30;
-  const diskCacheSegments = useMemo(
-    () => layoutCacheBarSegments(
-      coalesceCacheBarRanges(model.diskCachedRanges ?? [], fps, pps),
-      pps,
-      TIMELINE_LEFT_OFFSET,
-    ),
-    [model.diskCachedRanges, fps, pps, TIMELINE_LEFT_OFFSET],
-  );
-  const ramCacheSegments = useMemo(
-    () => layoutCacheBarSegments(
-      coalesceCacheBarRanges(model.cachedRanges ?? [], fps, pps),
-      pps,
-      TIMELINE_LEFT_OFFSET,
-    ),
-    [model.cachedRanges, fps, pps, TIMELINE_LEFT_OFFSET],
-  );
 
   return (
     <div ref={containerRef} className={cn(styles.root, className)} onWheel={onWheel}>
@@ -1231,7 +1278,7 @@ function Timeline({
               if (row.type === 'category') {
                 const categoryStyle: CSSProperties = {
                   ...rowStyle,
-                  paddingLeft: 32 + (row.track.depth ?? 0) * 16,
+                  paddingLeft: 88 + (row.track.depth ?? 0) * 14,
                 };
                 return (
                   <TrackCategoryHeader
@@ -1247,7 +1294,7 @@ function Timeline({
               }
               const propStyle: CSSProperties = {
                 ...rowStyle,
-                paddingLeft: 56 + (row.track.depth ?? 0) * 16,
+                paddingLeft: 124 + (row.track.depth ?? 0) * 14,
               };
               return (
                 <PropertyHeader
@@ -1339,59 +1386,71 @@ function Timeline({
             position: 'relative',
           }}
         >
-          <Ruler ticks={ticks} height={rulerHeight} width={laneWidth} onPointerDown={onPlayheadDown} />
+          {/* The time header STICKS to the top of the lanes viewport.
+              Ruler, cache bars, work area and the playhead grabber ride in one
+              sticky stack: expand a layer's properties, scroll down, and the
+              frame ruler is still there to scrub against. Before this they
+              scrolled away with the rows and every frame change meant
+              scrolling back up first. The composition-duration handle stays
+              OUTSIDE the stack — it spans ruler + lanes, so it cannot stick. */}
+          <div className={styles.rulerStack} style={{ height: rulerHeight }}>
+            <Ruler ticks={ticks} height={rulerHeight} width={laneWidth} onPointerDown={onPlayheadDown} />
 
-          {/* Disk-tier cache bar. Drawn BEFORE the RAM bar and one lane lower,
-              so where both hold a frame the green one is what you see. */}
-          {diskCacheSegments.map((seg, i) => (
-            <div
-              key={`diskcache_${i}`}
-              className={styles.diskCacheBar}
-              style={{ left: seg.left, width: seg.width, top: rulerHeight - 2 }}
-              aria-hidden
+            {/* Preview-coverage lanes (green = RAM, blue = disk). They
+                SUBSCRIBE THEMSELVES to the frame cache rather than taking
+                coverage as a prop: it changes on every rendered frame, and
+                routing that through this component's model would re-render the
+                whole timeline — and the app shell above it — 60 times a second.
+                See CacheBars for the throttling. */}
+            <CacheBars
+              fps={fps}
+              pixelsPerSecond={pps}
+              leftOffset={TIMELINE_LEFT_OFFSET}
+              rulerHeight={rulerHeight}
             />
-          ))}
 
-          {/* RAM-preview cache bar — sits on top of ruler minor ticks so short
-              spans read as a continuous strip, not green dots between grey marks. */}
-          {ramCacheSegments.map((seg, i) => (
+            {/* Work-area band on the ruler (in/out region for looped playback).
+                Drag the body to move it; drag an edge handle to trim in/out. */}
+            {model.workArea ? (
+              <div
+                className={styles.workAreaBar}
+                style={{
+                  top: 0,
+                  height: rulerHeight,
+                  left: TIMELINE_LEFT_OFFSET + model.workArea.start * pps,
+                  width: Math.max(2, (model.workArea.end - model.workArea.start) * pps),
+                }}
+                title="Work area — drag to move, drag edges to trim"
+                aria-label="Work area"
+                onPointerDown={onWorkAreaChange ? startWaDrag('move') : undefined}
+              >
+                <div
+                  className={styles.workAreaHandle}
+                  data-edge="in"
+                  aria-label="Work area in"
+                  onPointerDown={onWorkAreaChange ? startWaDrag('in') : undefined}
+                />
+                <div
+                  className={styles.workAreaHandle}
+                  data-edge="out"
+                  aria-label="Work area out"
+                  onPointerDown={onWorkAreaChange ? startWaDrag('out') : undefined}
+                />
+              </div>
+            ) : null}
+
+            {/* Playhead grabber, pinned to the ruler. The full-height line below
+                lives in `lanesInner` and scrolls; this is the part you drag, so
+                it has to stay reachable at any scroll offset. */}
             <div
-              key={`cache_${i}`}
-              className={styles.cacheBar}
-              style={{ left: seg.left, width: seg.width, top: rulerHeight - 4 }}
+              className={styles.stickyPlayhead}
+              style={{ transform: `translateX(${playheadX}px)`, height: rulerHeight }}
+              onPointerDown={onPlayheadDown}
               aria-hidden
-            />
-          ))}
-
-          {/* Work-area band on the ruler (in/out region for looped playback).
-              Drag the body to move it; drag an edge handle to trim in/out. */}
-          {model.workArea ? (
-            <div
-              className={styles.workAreaBar}
-              style={{
-                top: 0,
-                height: rulerHeight,
-                left: TIMELINE_LEFT_OFFSET + model.workArea.start * pps,
-                width: Math.max(2, (model.workArea.end - model.workArea.start) * pps),
-              }}
-              title="Work area — drag to move, drag edges to trim"
-              aria-label="Work area"
-              onPointerDown={onWorkAreaChange ? startWaDrag('move') : undefined}
             >
-              <div
-                className={styles.workAreaHandle}
-                data-edge="in"
-                aria-label="Work area in"
-                onPointerDown={onWorkAreaChange ? startWaDrag('in') : undefined}
-              />
-              <div
-                className={styles.workAreaHandle}
-                data-edge="out"
-                aria-label="Work area out"
-                onPointerDown={onWorkAreaChange ? startWaDrag('out') : undefined}
-              />
+              <div className={styles.playheadHead} />
             </div>
-          ) : null}
+          </div>
 
           {/* Composition duration drag handle on the ruler */}
           {onDurationChange ? (
@@ -1491,6 +1550,7 @@ function Timeline({
                     pps={pps}
                     trackHeight={trackHeight}
                     top={top}
+                    selected={selectedTrackIds?.includes(row.track.id) ?? false}
                     clipPreview={clipPreview}
                     onClipDown={onClipDown}
                     onClipContextMenu={onClipContextMenu}
@@ -1607,9 +1667,7 @@ function Timeline({
           viewportTop={rulerHeight}
           viewportHeight={size.height - rulerHeight}
           scrollTop={scrollTop}
-          onScrollTo={(top) => {
-            if (lanesRef.current) lanesRef.current.scrollTop = top;
-          }}
+          onScrollTo={onMinimapScrollTo}
         />
       ) : null}
     </div>
@@ -1630,8 +1688,13 @@ function Timeline({
 const MemoizedTimeline = memo(Timeline);
 export { MemoizedTimeline as Timeline };
 
-/** Vertical overview of all rows with a draggable viewport window. */
-function Minimap({
+/** Vertical overview of all rows with a draggable viewport window.
+ *
+ *  Memoized for the same reason as {@link Ruler}: it draws a strip per row and
+ *  none of it depends on the playhead, so it should not be rebuilt by a frame
+ *  tick. Its `onScrollTo` is a useCallback at the call site — an inline arrow
+ *  there would defeat this wrapper completely. */
+function MinimapImpl({
   rows,
   trackHeight,
   totalHeight,
@@ -1694,9 +1757,22 @@ function Minimap({
   );
 }
 
+const Minimap = memo(MinimapImpl);
+
 // ── Subcomponents ───────────────────────────────────────────────
 
-function Ruler({
+/**
+ * The frame ruler.
+ *
+ * Memoized, and worth it: it emits one absolutely-positioned div per tick over
+ * the WHOLE composition, so at a 10-second comp and default zoom it is one of
+ * the largest subtrees in the panel — and it does not depend on the playhead at
+ * all. Its props are already stable across a frame tick (`ticks` is a useMemo,
+ * `onPointerDown` a useCallback, the rest numbers), so without the memo it was
+ * rebuilding every one of those nodes on every frame of playback purely because
+ * its parent re-rendered to move the playhead.
+ */
+function RulerImpl({
   ticks,
   height,
   width,
@@ -1721,6 +1797,8 @@ function Ruler({
     </div>
   );
 }
+
+const Ruler = memo(RulerImpl);
 
 // Label colours come from the ONE palette in `core/scene/labelColor`. This file
 // used to carry its own 12 hexes, so the same layer showed a different red in the
@@ -2248,6 +2326,7 @@ const TrackContent = memo(function TrackContent({
   pps,
   trackHeight,
   top,
+  selected,
   clipPreview,
   onClipDown,
   onClipContextMenu,
@@ -2260,6 +2339,9 @@ const TrackContent = memo(function TrackContent({
   pps: number;
   trackHeight: number;
   top: number;
+  /** This layer is in the selection — the bar carries the highlight so the
+   *  lanes show what is selected without a trip back to the name column. */
+  selected: boolean;
   clipPreview: { id: string; start: number; duration: number; sourceInSec?: number } | null;
   onClipDown?: (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>) => void;
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
@@ -2296,7 +2378,7 @@ const TrackContent = memo(function TrackContent({
         return (
           <div
             key={clip.id}
-            className={styles.clip}
+            className={cn(styles.clip, selected && styles.clipSelected)}
             style={{
               transform: `translateX(${8 + view.start * pps}px)`,
               width,

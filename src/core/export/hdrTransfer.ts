@@ -77,6 +77,48 @@ export function bakeHdrTransferIntoRgba8(
   }
 }
 
+/**
+ * Bake PQ/HLG straight from FLOAT linear light into a staging canvas.
+ *
+ * The 8-bit path above quantises the picture TWICE — once into the display's
+ * sRGB bytes, again after the OETF — and sRGB byte spacing is exactly wrong
+ * for PQ's shadow-heavy code allocation, which is where HDR10 exports banded.
+ * Going float→PQ→byte quantises once, on the perceptually-uniform side.
+ * Returns null when the 2D context is unavailable; callers fall back to the
+ * 8-bit path.
+ */
+export function hdrCanvasFromLinearRgba(
+  linear: Float32Array,
+  width: number,
+  height: number,
+  transfer: HdrTransfer,
+): HTMLCanvasElement | null {
+  if (linear.length < width * height * 4) return null;
+  const out = document.createElement('canvas');
+  out.width = width;
+  out.height = height;
+  const ctx = out.getContext('2d');
+  if (!ctx) return null;
+  const img = ctx.createImageData(width, height);
+  const d = img.data;
+  const n = width * height;
+  for (let i = 0; i < n; i++) {
+    const [r, g, b] = applyHdrTransferRgb(
+      linear[i * 4]!,
+      linear[i * 4 + 1]!,
+      linear[i * 4 + 2]!,
+      transfer,
+    );
+    d[i * 4] = Math.round(r * 255);
+    d[i * 4 + 1] = Math.round(g * 255);
+    d[i * 4 + 2] = Math.round(b * 255);
+    // HDR delivery is an opaque mp4 — alpha never survives the encode.
+    d[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return out;
+}
+
 /** Apply transfer to a canvas; returns a new canvas (does not mutate source). */
 export function canvasWithHdrTransfer(
   source: HTMLCanvasElement,

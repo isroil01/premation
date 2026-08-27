@@ -34,6 +34,8 @@
   --color-violet-300: #c4b5fd;  /* AI light */
   --color-violet-400: #9d6ef8;  /* AI hover */
   --color-violet-500: #8b5cf6;  /* AI primary */
+  --color-violet-600: #7c3aed;
+  --color-violet-700: #6d28d9;
 
   /* ── Azure (accent v2.1 — selection + primary, spec "pro pass") ─ */
   --color-azure-400: #6ba1ff;  /* hover */

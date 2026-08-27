@@ -52,7 +52,7 @@
 .navTabActive {
   background: var(--color-primary) !important;
   border-color: var(--color-primary) !important;
-  color: #ffffff !important;
+  color: var(--color-text-on-accent) !important;
   font-weight: 600;
 }
 
@@ -138,13 +138,13 @@
 
 .chip:hover {
   border-color: rgba(255, 255, 255, 0.22);
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: rgba(255, 255, 255, 0.08);
 }
 
 .chipOn {
   border-color: var(--color-primary) !important;
-  color: #ffffff !important;
+  color: var(--color-text-on-accent) !important;
   background: var(--color-primary) !important;
   font-weight: 600;
 }
@@ -188,14 +188,14 @@
 }
 
 .segmentBtn:hover:not(:disabled):not(.segmentBtnActive) {
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   background: rgba(255, 255, 255, 0.06);
 }
 
 .segmentBtnActive {
   background: var(--color-surface-2) !important;
   border-color: color-mix(in srgb, var(--color-primary) 50%, transparent) !important;
-  color: var(--color-primary-hover, #4097ff) !important;
+  color: var(--color-primary-hover) !important;
   font-weight: 600;
 }
 

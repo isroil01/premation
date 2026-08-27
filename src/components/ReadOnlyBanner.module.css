@@ -68,7 +68,7 @@
 /* The plan CTA — the one the business wants, so it carries the accent. */
 .primary {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-on-accent);
 }
 
 .primary:hover {

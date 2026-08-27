@@ -63,7 +63,7 @@
   position: relative;
   border: 1px solid var(--color-field-border);
   border-radius: var(--radius-xs);
-  background: var(--color-slate-950);
+  background: var(--color-surface-0);
   transition: var(--motion-hover-transition);
 }
 
@@ -74,7 +74,7 @@
 
 .codeWrap:focus-within {
   border-color: var(--color-primary);
-  background: var(--color-slate-950);
+  background: var(--color-surface-0);
 }
 
 .editor,
@@ -167,7 +167,7 @@
 .apiChip {
   padding: 2px var(--space-3);
   border-radius: var(--radius-xs);
-  background: var(--color-slate-950);
+  background: var(--color-surface-1);
   border: 1px solid var(--color-field-border);
   color: var(--color-text-secondary);
   font-family: var(--font-family-mono);

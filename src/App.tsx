@@ -781,15 +781,11 @@ function EditorShellInner(): JSX.Element {
     return tracks.map((t) => ({ ...t, ghosted: !activeSet.has(t.id) }));
   }, [tracks, activeSet]);
 
-  // User markers from the Timeline Engine (in seconds), plus Start/End bookends.
+  // User markers from the Timeline Engine (in seconds).
   const markers = useMemo(() => {
     void markerRev;
-    return [
-      { id: 'm_start', time: 0, label: 'Start' },
-      { id: 'm_end', time: compDuration, label: 'End' },
-      ...getTimelineController().getMarkers().map((m) => ({ id: m.id, time: m.time, label: m.label })),
-    ];
-  }, [markerRev, compDuration]);
+    return getTimelineController().getMarkers().map((m) => ({ id: m.id, time: m.time, label: m.label }));
+  }, [markerRev]);
 
   // Work area (in/out) from the engine, in seconds — re-read on RangeChanged.
   const workArea = useMemo(() => {
@@ -815,30 +811,22 @@ function EditorShellInner(): JSX.Element {
     return () => {
       cancelled = true;
       viewportFrameCache.attachDisk(null);
+      // End of session: commit whatever manifest changes are still sitting in
+      // the debounce. Without this the last frames written before the editor
+      // closed would be on disk but absent from the manifest, and the next
+      // launch's reconcile would delete them as orphans.
+      disk.flushManifest();
     };
   }, []);
 
-  // RAM-preview coverage for the timeline's green cache bar — coalesced to
-  // one React update per animation frame so playback fills read smoothly.
-  const [cachedRanges, setCachedRanges] = useState<ReadonlyArray<{ start: number; end: number }>>([]);
-  const [diskCachedRanges, setDiskCachedRanges] = useState<ReadonlyArray<{ start: number; end: number }>>([]);
-  useEffect(() => {
-    let raf: number | null = null;
-    const flush = (): void => {
-      raf = null;
-      setCachedRanges(viewportFrameCache.ranges(compFps || 30));
-      setDiskCachedRanges(viewportFrameCache.diskRanges(compFps || 30));
-    };
-    const off = viewportFrameCache.onChange(() => {
-      if (raf !== null) return;
-      raf = requestAnimationFrame(flush);
-    });
-    flush();
-    return () => {
-      off();
-      if (raf !== null) cancelAnimationFrame(raf);
-    };
-  }, [compFps]);
+  // NOTE: preview-coverage (the green RAM lane and blue disk lane under the
+  // ruler) is deliberately NOT state here any more. It changes on every
+  // rendered frame — 60×/s through a first playback pass, and again through
+  // every idle pre-render pass while paused — so holding it in the shell
+  // re-rendered the entire application tree at frame rate and replaced the
+  // `timelineModel` object below, defeating the memoization the comment on that
+  // model exists to protect. The lanes now subscribe themselves; see
+  // `layout/Timeline/CacheBars.tsx`.
 
   // Model object for the timeline — deliberately does NOT include the live
   // playhead time (activeTime). BottomTimeline reads ws?.time directly and
@@ -859,11 +847,8 @@ function EditorShellInner(): JSX.Element {
     pixelsPerSecond: pps,
     markers,
     tracks: focusTracks,
-    cachedRanges,
-    diskCachedRanges,
     ...(workArea ? { workArea } : {}),
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- currentTime is a deliberate snapshot (see comment above)
-  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges, diskCachedRanges]);
+  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame]);
 
   // Real-time playback clock: pumps the Timeline Engine while `playing` is set.
   usePlaybackClock();
@@ -1294,6 +1279,21 @@ function EditorShellInner(): JSX.Element {
     const currentStart = layer.clip.start / fps;
     c.slideClip(clipId, startSec - currentStart);
   };
+  /**
+   * Is there a clip after this one on the same track?
+   *
+   * "Close the gap" only means something if something can move into it — with
+   * nothing later on the track it is an identical delete wearing a longer name,
+   * which is half of what made two delete entries confusing.
+   */
+  const hasLaterClipOnTrack = (clipId: string): boolean => {
+    const c = getTimelineController();
+    const layer = c.timeline.getLayer(clipId);
+    if (!layer) return false;
+    const track = c.timeline.getTrack(layer.trackId);
+    return !!track?.layers.some((l) => l.id !== clipId && l.start >= layer.end);
+  };
+
   const handleClipContextMenu = (clipId: string, x: number, y: number): void => {
     const c = getTimelineController();
     const layer = c.timeline.getLayer(clipId);
@@ -1425,15 +1425,34 @@ function EditorShellInner(): JSX.Element {
           ]
         : []),
       { id: 'sep-del', separator: true },
-      { id: 'delete', label: 'Delete Clip (Del)', danger: true, onSelect: () => c.deleteLayer(clipId) },
+      /*
+       * Two deletes, and they have to read as genuinely different things.
+       *
+       * They used to be "Delete Clip (Del)" and "Ripple Delete Clip", which is
+       * one word apart and looks like the same command twice — and NEITHER of
+       * them deleted the layer. Both removed only the clip BAR, leaving the
+       * scene node behind, so the timeline row stayed with nothing on it and
+       * the next `syncFromScene` seeded it a fresh full-length bar. The layer
+       * came back, which is why deleting from the Scene tree "worked" and
+       * deleting from the timeline did not.
+       *
+       * Now both remove the layer for real. The only difference is what
+       * happens to the TIME the layer occupied, which is what the labels say.
+       */
+      {
+        id: 'delete',
+        label: 'Delete Layer (Del)',
+        danger: true,
+        onSelect: () => c.deleteLayerForClip(clipId, { ripple: false }),
+      },
       {
         id: 'ripple-delete',
-        label: 'Ripple Delete Clip',
+        label: 'Delete Layer and Close Gap',
         danger: true,
-        onSelect: () => {
-          c.rippleDeleteLayer(clipId);
-          bumpScene();
-        },
+        // Only meaningful when something later on the track can move left into
+        // the space. Otherwise it is the entry above under a longer name.
+        disabled: !hasLaterClipOnTrack(clipId),
+        onSelect: () => c.deleteLayerForClip(clipId, { ripple: true }),
       },
     ]);
   };

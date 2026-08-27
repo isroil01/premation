@@ -112,6 +112,16 @@ export interface ProjectStoreShape {
     // Per-tab playback state (driven by TimelineController)
     setTime: (time: number, frame: number) => void;
     setPlaying: (playing: boolean) => void;
+    /**
+     * Set the playing flag on a SPECIFIC tab, active or not.
+     *
+     * `setPlaying` writes only the active tab, which is right for the transport
+     * but leaves no way to stop a tab you have already switched away from — and
+     * a tab switch during playback did exactly that: the outgoing tab kept
+     * `playing: true` forever, so returning to it resumed playback with no user
+     * input at all. See `usePlaybackClock`.
+     */
+    setTabPlaying: (tabId: string, playing: boolean) => void;
 
     // Breadcrumb drill-down
     pushBreadcrumb: (nodeId: string) => void;
@@ -272,6 +282,21 @@ export const useProjectStore = create<ProjectStoreShape>()(
             if (active) active.playing = playing;
           });
           getEventBus().emit('PlayStateChanged', { playing });
+        },
+        setTabPlaying: (tabId, playing) => {
+          const tab = get().tabs[tabId];
+          if (!tab || tab.playing === playing) return;
+          set((s) => {
+            const t = s.tabs[tabId];
+            if (t) t.playing = playing;
+          });
+          // Only the ACTIVE tab's state is the transport's state, so only that
+          // one is worth announcing — a background tab being stopped is
+          // bookkeeping, and broadcasting it would tell the transport UI that
+          // playback stopped when the tab you are looking at is still playing.
+          if (get().activeTabId === tabId) {
+            getEventBus().emit('PlayStateChanged', { playing });
+          }
         },
         pushBreadcrumb: (nodeId) => {
           set((s) => {

@@ -8,10 +8,11 @@
 
 .cell {
   position: relative;
-  border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   overflow: hidden;
   padding: 0;
+  /* Black in both themes — this is a video surface, not chrome. */
   background: #000;
   cursor: pointer;
   display: block;
@@ -19,13 +20,13 @@
 }
 
 .cell:focus-visible {
-  outline: 2px solid var(--color-primary, #4c8dff);
+  outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
 
 .cellLive {
-  border-color: var(--color-primary, #4c8dff);
-  box-shadow: 0 0 0 1px var(--color-primary, #4c8dff);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
 }
 
 .video {
@@ -51,13 +52,13 @@
 }
 
 .labelLive {
-  background: var(--color-primary, #4c8dff);
+  background: var(--color-primary);
 }
 
 .hint {
   margin-top: 8px;
   font-size: var(--font-size-xs);
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.55));
+  color: var(--color-text-secondary);
 }
 
 .row {
@@ -70,5 +71,5 @@
 
 .syncNote {
   font-size: var(--font-size-xs);
-  color: var(--color-text-secondary, rgba(255, 255, 255, 0.55));
+  color: var(--color-text-secondary);
 }

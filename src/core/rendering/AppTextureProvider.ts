@@ -1367,11 +1367,32 @@ export class AppTextureProvider implements TextureProvider {
     videoDiag.stalledSources.add(entry.src);
   }
 
-  setVideo(key: string, src: string, timeSec: number, fields?: FieldOrder, upload = true): void {
+  /**
+   * Element (scrub / paused) video path.
+   *
+   * Returns whether the texture now holds the frame that was ASKED FOR, which
+   * the caller folds into `frameMediaExact` so unsettled frames stay out of the
+   * RAM/disk preview. It used to return void, and the two ways this function
+   * can present the wrong picture — a not-yet-decoded element, and the window
+   * between requesting a seek and that seek landing (the upload below is
+   * synchronous, the seek is not) — were therefore invisible to the caller. The
+   * frames got cached, and a cached frame is never re-rendered, so those stale
+   * pixels replayed at that timecode on every later pass.
+   *
+   * This matters more since the idle pre-render pump was fixed: a paused editor
+   * now deliberately walks five seconds of frames into the cache, which is
+   * exactly the traffic that used to bake in stale video.
+   *
+   * `offline` counts as SETTLED on purpose. Colour bars are deterministic — the
+   * honest render of a missing file — so caching them is correct, and refusing
+   * to would re-render an offline layer forever. The distinction that matters
+   * is "wrong pixels" versus "pixels that will not change".
+   */
+  setVideo(key: string, src: string, timeSec: number, fields?: FieldOrder, upload = true): boolean {
     const entry = this.ensureVideoEntry(key, src);
     if (entry.offline) {
       if (!entry.texture) this.installVideoOfflineBars(entry);
-      return;
+      return true;
     }
     const v = entry.video;
     if (v.readyState < HAVE_CURRENT_DATA) {
@@ -1379,7 +1400,7 @@ export class AppTextureProvider implements TextureProvider {
       if (this.exactMediaTiming) {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'loadeddata', 8000));
       }
-      return; // not decoded yet → placeholder
+      return false; // not decoded yet → placeholder
     }
     entry.everReady = true;
     entry.notReadySince = undefined;
@@ -1419,6 +1440,13 @@ export class AppTextureProvider implements TextureProvider {
       }
     }
     if (upload) this.uploadVideoTexture(entry, key, fields);
+    // The upload above is synchronous; the seek is not. So a pass that just
+    // asked for a new time — or that caught the element still seeking from a
+    // previous ask — has uploaded the PRE-seek picture. It is the right thing
+    // to SHOW (better than a hole, and `seeked` fires onChange → repaint), but
+    // it is the wrong thing to KEEP. Reporting it as unsettled is what keeps it
+    // out of the preview cache.
+    return !wantsSeek && !v.seeking;
   }
 
   /**

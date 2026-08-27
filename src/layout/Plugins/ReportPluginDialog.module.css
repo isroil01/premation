@@ -34,10 +34,10 @@
 .error {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-danger, var(--color-border));
+  border: 1px solid var(--color-danger);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
-  color: var(--color-danger, var(--color-text-primary));
+  color: var(--color-danger);
 }
 
 /* ── Categories ─────────────────────────────────────────────────────────── */

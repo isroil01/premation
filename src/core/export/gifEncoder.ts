@@ -1,29 +1,49 @@
+/**
+ * Growable byte buffer. This was a `number[]` pushed one byte at a time — for
+ * a 100MB GIF that is a hundred million boxed array slots plus a final
+ * element-by-element copy, and the encode spent longer feeding the array than
+ * compressing pixels. A doubling Uint8Array keeps writes at memcpy speed.
+ */
 class ByteStream {
-  private data: number[] = [];
+  private buf = new Uint8Array(64 * 1024);
+  private len = 0;
 
-  write(b: number) {
-    this.data.push(b & 0xff);
+  private ensure(extra: number): void {
+    const need = this.len + extra;
+    if (need <= this.buf.length) return;
+    let cap = this.buf.length * 2;
+    while (cap < need) cap *= 2;
+    const next = new Uint8Array(cap);
+    next.set(this.buf.subarray(0, this.len));
+    this.buf = next;
   }
 
-  writeBytes(bytes: ArrayLike<number>) {
-    for (let i = 0; i < bytes.length; i++) {
-      this.data.push(bytes[i]! & 0xff);
-    }
+  write(b: number) {
+    this.ensure(1);
+    this.buf[this.len++] = b & 0xff;
+  }
+
+  writeBytes(bytes: Uint8Array) {
+    this.ensure(bytes.length);
+    this.buf.set(bytes, this.len);
+    this.len += bytes.length;
   }
 
   writeUTF8(s: string) {
+    this.ensure(s.length);
     for (let i = 0; i < s.length; i++) {
-      this.data.push(s.charCodeAt(i) & 0xff);
+      this.buf[this.len++] = s.charCodeAt(i) & 0xff;
     }
   }
 
   writeUint16(v: number) {
-    this.data.push(v & 0xff);
-    this.data.push((v >> 8) & 0xff);
+    this.ensure(2);
+    this.buf[this.len++] = v & 0xff;
+    this.buf[this.len++] = (v >> 8) & 0xff;
   }
 
   getUint8Array(): Uint8Array {
-    return new Uint8Array(this.data);
+    return this.buf.slice(0, this.len);
   }
 }
 
@@ -35,15 +55,13 @@ function compressLZW(pixels: Uint8Array, colorDepth: number): Uint8Array {
   let codeSize = initCodeSize + 1;
   let nextCode = eoiCode + 1;
 
-  const dict = new Map<string, number>();
-  const resetDict = () => {
-    dict.clear();
-    for (let i = 0; i < clearCode; i++) {
-      dict.set(String.fromCharCode(i), i);
-    }
-  };
-
-  resetDict();
+  // Dictionary keyed numerically as (prefixCode << 8) | nextByte. The previous
+  // implementation built a JavaScript STRING per pixel (`currentStr + c`) and
+  // used it as a Map key — for a 1080p frame that is two million string
+  // allocations and hashes per frame, and it dominated the whole encode. The
+  // root single-byte codes 0..clearCode-1 are implicit (code === byte), so the
+  // map only ever holds multi-byte sequences.
+  const dict = new Map<number, number>();
 
   const out = new Uint8Array(pixels.length * 2);
   let outPtr = 0;
@@ -63,29 +81,34 @@ function compressLZW(pixels: Uint8Array, colorDepth: number): Uint8Array {
 
   writeCode(clearCode);
 
-  let currentStr = '';
-  for (let i = 0; i < pixels.length; i++) {
-    const c = String.fromCharCode(pixels[i]!);
-    const nextStr = currentStr + c;
-    if (dict.has(nextStr)) {
-      currentStr = nextStr;
+  if (pixels.length === 0) {
+    writeCode(eoiCode);
+    if (bits > 0) out[outPtr++] = accum & 0xff;
+    return out.slice(0, outPtr);
+  }
+
+  let current = pixels[0]!; // a root code — the first pixel's own value
+  for (let i = 1; i < pixels.length; i++) {
+    const c = pixels[i]!;
+    const key = (current << 8) | c;
+    const found = dict.get(key);
+    if (found !== undefined) {
+      current = found;
     } else {
-      writeCode(dict.get(currentStr)!);
-      dict.set(nextStr, nextCode++);
+      writeCode(current);
+      dict.set(key, nextCode++);
       if (nextCode === (1 << codeSize) + 1) {
         codeSize++;
       } else if (nextCode > 4095) {
         writeCode(clearCode);
-        resetDict();
+        dict.clear();
         codeSize = initCodeSize + 1;
         nextCode = eoiCode + 1;
       }
-      currentStr = c;
+      current = c;
     }
   }
-  if (currentStr !== '') {
-    writeCode(dict.get(currentStr)!);
-  }
+  writeCode(current);
   writeCode(eoiCode);
 
   if (bits > 0) {
@@ -218,10 +241,16 @@ export function createAnimatedGIFBytes(frames: GifFrame[], fps: number): Uint8Ar
   stream.writeUint16(0); // Loop count (0 = infinite)
   stream.write(0x00); // Sub-block Terminator
 
-  // Frame delay in 1/100ths of a second
-  const delay = Math.max(2, Math.round(100 / fps));
+  // Frame delays in 1/100ths of a second, with the ROUNDING ERROR CARRIED
+  // FORWARD frame to frame (what ffmpeg and AE do). A single rounded delay
+  // for every frame made 30fps GIFs play at 33.3fps (a 10s clip in 9s) and
+  // 24fps at 25 — the accumulator keeps total duration exact by alternating
+  // e.g. 3/3/4 centiseconds. GIF's 2cs hardware floor still caps >50fps.
+  const delayFor = (i: number): number =>
+    Math.max(2, Math.round(((i + 1) * 100) / fps) - Math.round((i * 100) / fps));
 
   // 4. Frames
+  let frameIndex = 0;
   for (const frame of frames) {
     const { palette, indexMap, hasTransparency } = generatePalette(frame.pixels);
 
@@ -232,7 +261,8 @@ export function createAnimatedGIFBytes(frames: GifFrame[], fps: number): Uint8Ar
     // Packed: Disposal method 2 (restore to background), transparency flag
     const packedGce = (2 << 2) | (hasTransparency ? 1 : 0);
     stream.write(packedGce);
-    stream.writeUint16(delay);
+    stream.writeUint16(delayFor(frameIndex));
+    frameIndex += 1;
     stream.write(hasTransparency ? 255 : 0); // Transparent Color Index (255)
     stream.write(0x00); // Block Terminator
 
@@ -273,9 +303,7 @@ export function createAnimatedGIFBytes(frames: GifFrame[], fps: number): Uint8Ar
     while (ptr < compressed.length) {
       const blockSize = Math.min(255, compressed.length - ptr);
       stream.write(blockSize);
-      for (let i = 0; i < blockSize; i++) {
-        stream.write(compressed[ptr + i]!);
-      }
+      stream.writeBytes(compressed.subarray(ptr, ptr + blockSize));
       ptr += blockSize;
     }
     stream.write(0); // Block Terminator
@@ -295,5 +323,5 @@ export function createAnimatedGIF(frames: GifFrame[], fps: number): Blob {
   if (bytes.length === 0) {
     return new Blob([], { type: 'image/gif' });
   }
-  return new Blob([bytes as any], { type: 'image/gif' });
+  return new Blob([bytes as BlobPart], { type: 'image/gif' });
 }

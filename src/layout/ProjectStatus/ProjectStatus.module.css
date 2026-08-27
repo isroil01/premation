@@ -36,7 +36,7 @@
 /* No project open yet: Ctrl+S will ask where to put it, so say so quietly
    rather than showing a name that does not exist. */
 .unnamed {
-  color: var(--color-text-tertiary, var(--color-text-secondary));
+  color: var(--color-text-tertiary);
   font-style: italic;
 }
 

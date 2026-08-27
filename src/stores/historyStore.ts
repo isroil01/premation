@@ -78,7 +78,7 @@ function statesEqual(
 /** Debounce window for coalescing a burst of edits into one history entry. */
 const RECORD_DEBOUNCE_MS = 700;
 
-interface HistoryStore {
+export interface HistoryStore {
   restoring: boolean;
   record: (label?: string, named?: boolean) => void;
   /**

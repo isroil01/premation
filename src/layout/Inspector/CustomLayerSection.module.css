@@ -17,7 +17,7 @@
   gap: var(--space-2);
   margin-bottom: var(--space-2);
   padding: var(--space-2);
-  border-radius: var(--radius-md, 4px);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-warning);
   color: var(--color-warning);
   font-size: var(--font-size-label);
@@ -48,7 +48,7 @@
 .textInput {
   height: 24px;
   padding: 0 6px;
-  border-radius: var(--radius-md, 4px);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-field-border);
   background: var(--color-surface-0);
   color: var(--color-text-primary);
@@ -70,7 +70,7 @@
   margin-left: auto;
   flex: 0 0 auto;
   padding: 2px 8px;
-  border-radius: var(--radius-md, 4px);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-warning);
   background: transparent;
   color: var(--color-warning);

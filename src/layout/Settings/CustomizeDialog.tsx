@@ -46,6 +46,7 @@ import type { KeyChord } from '@app-types/common';
 // a commit: the dashboard is a server-edition route, so that arrangement left
 // the OSS build with nowhere to enter a key at all.
 import { AiSettingsSection } from './AiSettingsSection';
+import { UpdatesControl } from './UpdatesControl';
 import { aiEnabled } from '@core/config/edition';
 import styles from './CustomizeDialog.module.css';
 
@@ -467,6 +468,9 @@ function AppearanceTab(): JSX.Element {
           <PreviewCacheControl />
         </div>
       </div>
+
+      {/* Renders nothing in a browser build — there is no shell to update. */}
+      <UpdatesControl />
 
       <p className={styles.hint}>
         The accent tints buttons, selection and the playhead. Empty follows the theme.

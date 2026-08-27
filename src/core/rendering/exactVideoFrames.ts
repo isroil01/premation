@@ -229,6 +229,11 @@ export class ExactVideoFrameCache {
     /** Injectable so jsdom tests can exercise streaming without WebCodecs. */
     private readonly makeReader: (demuxed: DemuxedVideo, from: number, to: number) => SequentialReaderLike =
       (demuxed, from, to) => new SequentialFrameReader(demuxed, from, to),
+    /** Private (per-backend) instances skip the AnimationChanged emit: an
+     *  export's landed decodes must not repaint the viewport — each decode
+     *  used to trigger a parked-playhead render whose request then killed
+     *  the export's own stream. Local onChange listeners still fire. */
+    private readonly opts: { emitEvents?: boolean } = {},
   ) {}
 
   onChange(fn: () => void): () => void {
@@ -240,8 +245,11 @@ export class ExactVideoFrameCache {
     for (const fn of this.listeners) fn();
     // Same repaint contract as the legacy cache: the render loop already
     // re-renders on AnimationChanged, so a landed decode reaches the screen
-    // without a new asynchrony mechanism.
-    getEventBus().emit('AnimationChanged', { nodeId: src });
+    // without a new asynchrony mechanism. Private instances skip it — their
+    // consumer (export/preview convergence) re-renders explicitly.
+    if (this.opts.emitEvents !== false) {
+      getEventBus().emit('AnimationChanged', { nodeId: src });
+    }
   }
 
   /**

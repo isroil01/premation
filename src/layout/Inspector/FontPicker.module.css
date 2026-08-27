@@ -76,7 +76,7 @@
 .filterChipOn {
   background: var(--color-primary);
   border-color: var(--color-primary);
-  color: var(--color-primary-contrast, #fff);
+  color: var(--color-primary-foreground);
 }
 
 .variableBadge {

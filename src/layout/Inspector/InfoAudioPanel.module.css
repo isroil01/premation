@@ -3,10 +3,10 @@
   flex-direction: column;
   gap: 12px;
   padding: 10px;
-  background: var(--color-panel, #232323);
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-panel);
+  color: var(--color-text-primary);
   font-family: inherit;
-  font-size: var(--font-size-xs, 12px);
+  font-size: var(--font-size-xs);
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
@@ -18,9 +18,9 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 8px 10px;
   box-sizing: border-box;
   width: 100%;
@@ -32,7 +32,7 @@
   justify-content: space-between;
   font-size: var(--font-size-micro);
   font-weight: 700;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -54,13 +54,13 @@
 }
 
 .statKey {
-  color: var(--color-text-tertiary, #8c8c8c);
+  color: var(--color-text-tertiary);
   font-weight: 600;
   flex-shrink: 0;
 }
 
 .statVal {
-  color: var(--color-text-primary, #e1e1e1);
+  color: var(--color-text-primary);
   font-family: monospace;
   font-weight: 500;
   min-width: 0;
@@ -73,7 +73,7 @@
   width: 14px;
   height: 14px;
   border-radius: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--color-border);
   display: inline-block;
   vertical-align: middle;
   margin-right: 4px;
@@ -100,7 +100,7 @@
 .channelLabel {
   font-size: var(--font-size-micro);
   font-weight: 700;
-  color: var(--color-text-muted, #5a5a5a);
+  color: var(--color-text-muted);
   width: 12px;
   flex-shrink: 0;
 }
@@ -109,11 +109,11 @@
   flex: 1;
   min-width: 0;
   height: 10px;
-  background: #111111;
+  background: var(--color-surface-0);
   border-radius: 2px;
   overflow: hidden;
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-border);
 }
 
 .meterFill {
@@ -126,7 +126,7 @@
   display: flex;
   justify-content: space-between;
   font-size: var(--font-size-micro);
-  color: var(--color-text-muted, #5a5a5a);
+  color: var(--color-text-muted);
   font-family: monospace;
   padding: 0 16px 0 18px;
   box-sizing: border-box;
@@ -146,6 +146,6 @@
   flex: 1;
   min-width: 0;
   height: 4px;
-  accent-color: var(--color-selection, #2988ff);
+  accent-color: var(--color-selection);
   cursor: pointer;
 }

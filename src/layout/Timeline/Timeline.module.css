@@ -12,7 +12,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: #1e1e1e;
+  background: var(--color-timeline-bg);
   overflow: hidden;
   user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -53,8 +53,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: #232323;
-  border-right: 4px solid #000000;
+  background: var(--color-panel);
+  border-right: 4px solid var(--color-border);
   box-shadow: none;
   flex: none;
   z-index: 10;
@@ -64,18 +64,21 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: thin;
-  scrollbar-color: #383838 #1c1c1c;
-  padding-bottom: var(--timeline-hscroll, 10px);
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
+  /* Room for the horizontal scrollbar so the last row is not clipped by it.
+     Was `var(--timeline-hscroll, 10px)`, but nothing has ever set that
+     property — the fallback was the only value it could ever have. */
+  padding-bottom: 10px;
 }
 
 .trackHeaderScroller::-webkit-scrollbar {
   height: 4px;
 }
 .trackHeaderScroller::-webkit-scrollbar-track {
-  background: #1c1c1c;
+  background: var(--color-scrollbar-track);
 }
 .trackHeaderScroller::-webkit-scrollbar-thumb {
-  background: #383838;
+  background: var(--color-scrollbar-thumb);
   border-radius: 2px;
 }
 
@@ -83,10 +86,10 @@
   position: relative;
   min-height: 0;
   overflow: auto;
-  background: #1e1e1e;
+  background: var(--color-timeline-bg);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
-  scrollbar-color: #383838 #1c1c1c;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
 
 /* Flat AE-style scrollbars in the timeline lanes */
@@ -95,17 +98,17 @@
   height: 5px;
 }
 .lanes::-webkit-scrollbar-track {
-  background: #181818;
+  background: var(--color-scrollbar-track);
 }
 .lanes::-webkit-scrollbar-thumb {
-  background: #383838;
+  background: var(--color-scrollbar-thumb);
   border-radius: 0;
 }
 .lanes::-webkit-scrollbar-thumb:hover {
-  background: #555555;
+  background: var(--color-scrollbar-thumb-hover);
 }
 .lanes::-webkit-scrollbar-corner {
-  background: #181818;
+  background: var(--color-scrollbar-track);
 }
 
 .lanesInner {
@@ -114,10 +117,29 @@
 }
 
 /* ── Ruler ─────────────────────────────────────────────────────── */
+
+/*
+ * The whole time header — ruler, cache bars, work area, playhead grabber —
+ * pinned to the top of the lanes scrollport. `top: 0` only pins the VERTICAL
+ * axis, which is what we want: the ruler must still travel horizontally with
+ * the clips it measures.
+ *
+ * z-index 20 lifts it over `.lanesInner` (positioned, z-index auto, later in
+ * DOM order) while staying under `.durationHandle` at 25, which spans ruler
+ * AND lanes and therefore cannot live inside a sticky box.
+ */
+.rulerStack {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  /* Not `overflow: hidden` — the cache bars deliberately overhang the ruler's
+     bottom edge by 2-4px so they read as a strip attached to it. */
+}
+
 .ruler {
   position: relative;
-  border-bottom: 1px solid #141414;
-  background: var(--color-ruler-bg, #141414);
+  border-bottom: 1px solid var(--color-timeline-ruler-border);
+  background: var(--color-timeline-ruler-bg);
   flex: none;
   overflow: hidden;
 }
@@ -133,14 +155,14 @@
   bottom: 0;
   height: 6px;
   width: 1px;
-  background: #383838;
+  background: var(--color-timeline-tick);
   pointer-events: none;
 }
 
 .tickMajor {
   top: 0;
   height: auto;
-  background: #484848;
+  background: var(--color-timeline-tick-major);
 }
 
 .tickLabel {
@@ -160,13 +182,13 @@
 /* Exactly one hairline per row lives on the background lane; the content
    rows (.laneRow) are transparent so lines never double up. */
 .lane {
-  border-bottom: 1px solid #161616;
+  border-bottom: 1px solid var(--color-timeline-grid);
   background: transparent;
   pointer-events: none;
 }
 
 .laneAlt {
-  background: #191919;
+  background: var(--color-timeline-row-alt);
 }
 
 .laneRow {
@@ -205,6 +227,28 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
 
+/*
+ * Selected bar. Clicking a bar now selects its layer, so the lanes have to
+ * SHOW the selection — otherwise the click looks like it did nothing and you
+ * still end up checking the name column to be sure.
+ *
+ * An outline rather than a fill change: clip colour is meaningful (layer kind,
+ * user-assigned label) and must survive selection intact.
+ */
+.clipSelected {
+  outline: 1.5px solid var(--color-selection);
+  outline-offset: -1.5px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+}
+
+.clipSelected::before {
+  background: var(--color-selection);
+  opacity: 1;
+}
+
+/* White on purpose, in BOTH themes: the label sits on the clip's own
+   saturated fill (layer-category hue or a user label colour), which does not
+   change with the theme — so neither can the text on top of it. */
 .clipLabel {
   font-size: var(--font-size-xs);
   font-weight: 600;
@@ -495,7 +539,7 @@
   position: absolute;
   top: 0;
   width: 1px;
-  background: #3ea0ff;
+  background: var(--color-timeline-playhead);
   pointer-events: auto;
   cursor: ew-resize;
   z-index: 3;
@@ -514,6 +558,33 @@
   transform: translateX(-50%);
 }
 
+/*
+ * Playhead grabber inside the sticky ruler stack. The 1px line itself still
+ * lives in `.lanesInner` (it has to be as tall as the rows); this is the
+ * hit target, so it is pinned to the ruler and stays grabbable however far
+ * down the row list you have scrolled.
+ */
+.stickyPlayhead {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  background: var(--color-timeline-playhead);
+  cursor: ew-resize;
+  pointer-events: auto;
+  z-index: 2;
+  will-change: transform;
+}
+
+.stickyPlayhead::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 11px;
+  transform: translateX(-50%);
+}
+
 /* Rounded diamond-grabber playhead head */
 .playheadHead {
   position: absolute;
@@ -521,7 +592,7 @@
   left: 50%;
   width: 10px;
   height: 10px;
-  background: #3ea0ff;
+  background: var(--color-timeline-playhead);
   border: 1.5px solid rgba(255, 255, 255, 0.4);
   border-radius: 2px;
   transform: translate(-50%, -5px) rotate(45deg);
@@ -545,20 +616,20 @@
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--color-border-subtle);
   cursor: pointer;
-  background: #202020;
+  background: var(--color-timeline-header);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   min-width: max-content;
   box-sizing: border-box;
 }
 
 .trackHeader:hover {
-  background: #272727;
+  background: var(--color-timeline-header-hover);
 }
 
 .trackHeaderSelected {
-  background: #233244;
+  background: color-mix(in srgb, var(--color-selection) 22%, var(--color-timeline-header));
 }
 
 .trackHeaderSelected::after {
@@ -568,7 +639,7 @@
   top: 0;
   bottom: 0;
   width: 3px;
-  background: var(--color-primary, #3ea0ff);
+  background: var(--color-primary);
 }
 
 /* Fixed width, matching `.colHeadLayer` — the pair is what keeps every column
@@ -662,11 +733,11 @@
 }
 
 .timelineSelectTrigger {
-  background: #141414;
+  background: var(--color-timeline-well);
   border: 1px solid var(--color-border);
   font-family: var(--font-family-sans);
   font-size: var(--font-size-xs);
-  color: #a0a0a0;
+  color: var(--color-text-secondary);
   cursor: pointer;
   padding: 0 6px;
   height: 22px;
@@ -702,9 +773,9 @@
 }
 
 .timelineSelectTrigger:hover {
-  background: #222222;
-  border-color: #3e3e3e;
-  color: #ffffff;
+  background: var(--color-timeline-well-hover);
+  border-color: var(--color-timeline-well-border-hover);
+  color: var(--color-text-primary);
 }
 
 .timelineSelectTrigger:active {
@@ -740,7 +811,7 @@
   align-items: center;
   justify-content: flex-start;
   gap: 3px;
-  color: #a0a0a0;
+  color: var(--color-text-secondary);
   height: 22px;
   margin-right: 8px;
   padding-right: 8px;
@@ -797,7 +868,7 @@
 
 .colHeadIndex {
   flex: none;
-  color: #888888;
+  color: var(--color-text-tertiary);
   font-size: var(--font-size-md);
   line-height: var(--icon-size-sm);
 }
@@ -813,7 +884,7 @@
 .colHeadPopOut {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--color-text-secondary);
   cursor: pointer;
   padding: 0;
   margin: 0;
@@ -827,7 +898,7 @@
 }
 
 .colHeadPopOut:hover {
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .colHeadAeSwitches {
@@ -839,7 +910,7 @@
   gap: 4px;
   height: 22px;
   font-size: var(--font-size-md);
-  color: #a0a0a0;
+  color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
 }
 
@@ -852,7 +923,7 @@
   align-items: center;
   height: 22px;
   font-size: var(--font-size-md);
-  color: #a0a0a0;
+  color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   margin-left: var(--tl-col-divider-space);
   padding-left: var(--tl-col-divider-space);
@@ -868,7 +939,7 @@
   align-items: center;
   height: 22px;
   font-size: var(--font-size-md);
-  color: #a0a0a0;
+  color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   line-height: var(--icon-size-sm);
 }
@@ -880,7 +951,7 @@
   align-items: center;
   height: 22px;
   font-size: var(--font-size-md);
-  color: #a0a0a0;
+  color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   line-height: var(--icon-size-sm);
   white-space: nowrap;
@@ -997,9 +1068,9 @@
   align-items: center;
   justify-content: center;
   border-radius: 0;
-  color: #888888;
+  color: var(--color-text-tertiary);
   cursor: pointer;
-  background: #141414;
+  background: var(--color-timeline-well);
   border: 1px solid var(--color-border);
   opacity: 0.85;
   transition: background-color 0.1s ease, border-color 0.1s ease, color 0.1s ease, opacity 0.1s ease;
@@ -1019,9 +1090,9 @@
 
 .trackAction:hover {
   opacity: 1;
-  background: #252525;
-  border-color: #3e3e3e;
-  color: #ffffff;
+  background: var(--color-timeline-well-hover);
+  border-color: var(--color-timeline-well-border-hover);
+  color: var(--color-text-primary);
 }
 
 .trackAction:active {
@@ -1030,9 +1101,9 @@
 
 .trackAction[data-on] {
   opacity: 1;
-  background: #192b3c;
-  border-color: #28557a;
-  color: #3ea0ff;
+  background: color-mix(in srgb, var(--color-primary) 18%, var(--color-timeline-well));
+  border-color: color-mix(in srgb, var(--color-primary) 45%, var(--color-timeline-well));
+  color: var(--color-primary);
 }
 
 /* Semantic active-state colors, keyed off data-kind — robust against label
@@ -1155,7 +1226,7 @@
   align-items: center;
   gap: var(--space-2);
   padding-right: var(--space-2);
-  padding-left: 32px;
+  padding-left: 88px;
   border-bottom: 1px solid var(--color-border-subtle);
   background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
   min-width: max-content;
@@ -1168,7 +1239,7 @@
 .categoryHeader::before {
   content: "";
   position: absolute;
-  left: 18px;
+  left: 54px;
   top: 0;
   bottom: 0;
   width: 1px;
@@ -1212,8 +1283,8 @@
   align-items: center;
   gap: var(--space-2);
   padding-right: var(--space-2);
-  /* Indent inside its parent category accordion. */
-  padding-left: 56px;
+  /* Indent inside its parent category accordion so property names start ~10-14px after parent category name. */
+  padding-left: 124px;
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-surface-0);
   min-width: max-content;
@@ -1223,7 +1294,7 @@
 .propHeader::before {
   content: "";
   position: absolute;
-  left: 42px;
+  left: 96px;
   top: 0;
   bottom: 0;
   width: 1px;
@@ -1266,11 +1337,11 @@
   min-width: 44px;
   max-width: 80px;
   padding: 1px 4px;
-  border: 1px solid #253344;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 28%, var(--color-timeline-well));
   border-radius: 2px;
-  background: #17212e;
-  color: #3ea0ff;
-  font-family: var(--font-family-mono, monospace);
+  background: color-mix(in srgb, var(--color-primary) 12%, var(--color-timeline-well));
+  color: var(--color-primary);
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
   cursor: ew-resize;
@@ -1278,14 +1349,14 @@
 }
 
 .propValues > *:hover {
-  border-color: #3ea0ff;
-  background: #1d2a3d;
-  color: #5bb0ff;
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 20%, var(--color-timeline-well));
+  color: var(--color-primary-hover);
 }
 
 .propValues > *:focus-within {
-  border-color: #3ea0ff;
-  background: #1c2636;
+  border-color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 16%, var(--color-timeline-well));
 }
 
 /* ── Header column resizer ─────────────────────────────────────── */
@@ -1445,8 +1516,8 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--color-primary, #3ea0ff);
-  box-shadow: 0 0 6px var(--color-primary, #3ea0ff);
+  background: var(--color-primary);
+  box-shadow: 0 0 6px var(--color-primary);
   z-index: 10;
   pointer-events: none;
 }
@@ -1504,7 +1575,7 @@
 /* Selected = AE's inverted property name: the name lights, not the row. */
 .propNameSelected,
 .propHeaderStatic .propNameSelected {
-  color: var(--color-primary-contrast, #fff);
+  color: var(--color-primary-foreground);
   background: var(--color-primary);
 }
 .propHeaderSelected {

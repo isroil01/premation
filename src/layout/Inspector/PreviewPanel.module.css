@@ -3,10 +3,10 @@
   flex-direction: column;
   gap: 12px;
   padding: 10px;
-  background: var(--color-panel, #232323);
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-panel);
+  color: var(--color-text-primary);
   font-family: inherit;
-  font-size: var(--font-size-xs, 12px);
+  font-size: var(--font-size-xs);
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
@@ -19,9 +19,9 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 4px;
   box-sizing: border-box;
   width: 100%;
@@ -33,8 +33,8 @@
   height: 28px;
   border: none;
   background: transparent;
-  color: var(--color-text-secondary, #a6a6a6);
-  border-radius: var(--radius-control, 4px);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-control);
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -43,27 +43,27 @@
 }
 
 .transportBtn:hover {
-  background: var(--color-surface-3, #333333);
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .transportBtnPrimary {
-  background: var(--color-selection, #2988ff);
-  color: #ffffff;
+  background: var(--color-selection);
+  color: var(--color-text-primary);
 }
 
 .transportBtnPrimary:hover {
-  background: var(--color-selection-hover, #4097ff);
-  color: #ffffff;
+  background: var(--color-selection-hover);
+  color: var(--color-text-primary);
 }
 
 .settingsCard {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  background: var(--color-surface-2, #161616);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 8px 10px;
   box-sizing: border-box;
   width: 100%;
@@ -80,17 +80,17 @@
 
 .label {
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary, #8c8c8c);
+  color: var(--color-text-tertiary);
   font-weight: 600;
   flex-shrink: 0;
 }
 
 .select {
   height: 24px;
-  background: var(--color-surface-1, #232323);
-  color: var(--color-text-primary, #e1e1e1);
-  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-control, 4px);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
   padding: 0 6px;
   font-size: var(--font-size-xs);
   outline: none;
@@ -99,5 +99,5 @@
 }
 
 .select:focus {
-  border-color: var(--color-selection, #2988ff);
+  border-color: var(--color-selection);
 }

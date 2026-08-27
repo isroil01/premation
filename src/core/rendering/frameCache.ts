@@ -19,19 +19,45 @@
  * started on a miss would always land too late to be drawn. Instead every `get`
  * asks the tier to pull the NEXT few frames in, so the playhead finds them
  * already here. See that file's header for why the tier is session-scoped.
+ *
+ * ## LRU and the byte budget
+ *
+ * Recency is the Map's own insertion order — a touch deletes and re-inserts, so
+ * `frames.keys().next()` is always the least recently used. The parallel
+ * `order: number[]` this replaced cost an O(n) `indexOf` + `splice` on every
+ * single `get`, i.e. on every frame of smooth playback.
+ *
+ * The budget is charged against each entry's REAL byte size rather than a
+ * single `bytesPerFrame` reading of the current canvas. Adaptive resolution
+ * flips the canvas density mid-playback and cached frames deliberately keep
+ * whatever resolution they were rendered at (see {@link setKey}), so a cache
+ * holding a mix of Full and Quarter frames was being sized as if every frame
+ * matched the newest one — overshooting the budget by up to 16× after a
+ * degrade, and evicting valid frames early after a restore.
  */
 
 import type { FrameDiskCache } from './frameDiskCache';
 
+interface CachedFrame {
+  canvas: HTMLCanvasElement;
+  bytes: number;
+}
+
 export class FrameCache {
-  private frames = new Map<number, HTMLCanvasElement>();
-  private order: number[] = [];
+  /** Insertion order IS the LRU order: least-recently-used first. */
+  private frames = new Map<number, CachedFrame>();
+  private totalBytes = 0;
   private key = '';
-  private bytesPerFrame = 0;
   private version = 0;
   private readonly maxBytes: number;
   private readonly listeners = new Set<() => void>();
   private disk: FrameDiskCache | null = null;
+  /** Last frame the disk look-ahead was asked about — the pump's skip scan and
+   *  repeated reads of one frame must not re-scan the same window every call. */
+  private lastPrefetchFrom = -1;
+  /** `ranges()` memo: the sort is O(n log n) and the bars re-read it on a
+   *  timer, so recomputing an unchanged answer is pure waste. */
+  private rangesMemo: { version: number; fps: number; out: Array<{ start: number; end: number }> } | null = null;
 
   constructor(maxBytes = 512 * 1024 * 1024) {
     this.maxBytes = maxBytes;
@@ -44,8 +70,10 @@ export class FrameCache {
     if (disk && this.key) disk.setGeneration(this.key);
   }
 
-  /** Spans held on disk but not in RAM, in seconds — for the cache bar's
-   *  second tier. Empty when there is no disk cache. */
+  /** Spans the disk tier holds for the live generation, in seconds — the cache
+   *  bar's second (blue) lane. This is a SUPERSET of RAM residency, not the
+   *  difference: a frame in both tiers appears in both lists, and the bar draws
+   *  the green RAM lane over the blue one. Empty when there is no disk cache. */
   diskRanges(fps: number): Array<{ start: number; end: number }> {
     return this.disk?.ranges(fps) ?? [];
   }
@@ -79,8 +107,12 @@ export class FrameCache {
    * keep the resolution they were rendered at). Framing-affecting facts (the
    * view transform, the comp, the CSS viewport size) belong in `key`, which
    * the caller assembles.
+   *
+   * `width`/`height` are now advisory only — eviction charges each entry its
+   * own real size — but they stay in the signature because the caller has them
+   * and a future budget heuristic would want the current frame's cost.
    */
-  setKey(key: string, width: number, height: number): void {
+  setKey(key: string, _width: number, _height: number): void {
     if (key !== this.key) {
       this.key = key;
       this.clearFrames();
@@ -88,7 +120,41 @@ export class FrameCache {
       // generation that outlived its key would serve pre-edit pixels.
       this.disk?.setGeneration(key);
     }
-    this.bytesPerFrame = Math.max(1, width * height * 4);
+  }
+
+  /**
+   * Ask the disk tier to start promoting the frames at and after `frame` into
+   * RAM. No read, no LRU touch, no return value.
+   *
+   * `get` normally carries the look-ahead, which is fine for the render loop —
+   * it reads every frame it needs. The idle pre-render pump does not: it probes
+   * with {@link has} precisely to avoid disturbing recency, and that would
+   * otherwise leave it with no way to reach the disk tier at all, so it would
+   * re-render from scratch every frame that had been evicted from RAM but is
+   * still sitting on disk — the most expensive possible answer to a question
+   * the disk already knows.
+   */
+  prefetchFrom(frame: number): void {
+    if (!this.disk) return;
+    this.lastPrefetchFrom = frame;
+    this.disk.prefetch(
+      frame,
+      (f) => this.frames.has(f),
+      (f, image) => this.insert(f, image, image.width, image.height),
+    );
+  }
+
+  /**
+   * Is this frame in RAM? A pure probe: it does NOT touch LRU recency and does
+   * NOT trigger a disk look-ahead.
+   *
+   * The idle pre-render pump scans forward for the first uncached frame, and
+   * doing that with `get` both re-ordered the whole cached run into "most
+   * recently used" (so eviction then dropped the frames nearest the playhead)
+   * and fired a prefetch per probe.
+   */
+  has(frame: number): boolean {
+    return this.frames.has(frame);
   }
 
   /**
@@ -106,8 +172,9 @@ export class FrameCache {
     return this.frames.size;
   }
 
-  private get maxFrames(): number {
-    return Math.max(2, Math.floor(this.maxBytes / this.bytesPerFrame));
+  /** Bytes currently held (for diagnostics and tests). */
+  get bytes(): number {
+    return this.totalBytes;
   }
 
   /** The cached frame's canvas, or null. Touches LRU order.
@@ -117,17 +184,20 @@ export class FrameCache {
    *  frame is a hit and that is exactly when the look-ahead has to keep
    *  running. */
   get(frame: number): HTMLCanvasElement | null {
-    this.disk?.prefetch(
-      frame,
-      (f) => this.frames.has(f),
-      (f, image) => this.insert(f, image, image.width, image.height),
-    );
-    const c = this.frames.get(frame);
-    if (!c) return null;
-    const i = this.order.indexOf(frame);
-    if (i !== -1) this.order.splice(i, 1);
-    this.order.push(frame);
-    return c;
+    if (this.disk && frame !== this.lastPrefetchFrom) {
+      this.lastPrefetchFrom = frame;
+      this.disk.prefetch(
+        frame,
+        (f) => this.frames.has(f),
+        (f, image) => this.insert(f, image, image.width, image.height),
+      );
+    }
+    const e = this.frames.get(frame);
+    if (!e) return null;
+    // Re-insert to move this entry to the most-recently-used end. O(1).
+    this.frames.delete(frame);
+    this.frames.set(frame, e);
+    return e.canvas;
   }
 
   /** Copy `source` in as the render of `frame` (evicting LRU past budget), and
@@ -135,7 +205,16 @@ export class FrameCache {
   put(frame: number, source: HTMLCanvasElement): void {
     if (source.width < 1 || source.height < 1) return;
     this.insert(frame, source, source.width, source.height);
-    this.disk?.write(frame, source);
+    // Hand the disk tier OUR copy, not the caller's canvas.
+    //
+    // The caller's canvas is the live WebGL content canvas, and the tier
+    // encodes with `toBlob`, which snapshots at call time — so writing through
+    // from here forced a second full GPU readback inside the render tick, on
+    // top of the one `insert` just did, for every uncached frame of playback.
+    // The copy is a plain 2D canvas that nothing else draws to, so it reads
+    // back cheaply and stays valid if the tier ever defers its encode.
+    const stored = this.frames.get(frame);
+    this.disk?.write(frame, stored ? stored.canvas : source);
   }
 
   /**
@@ -148,20 +227,23 @@ export class FrameCache {
    */
   private insert(frame: number, source: CanvasImageSource, width: number, height: number): void {
     if (width < 1 || height < 1) return;
-    let c = this.frames.get(frame);
-    if (!c) {
-      c = document.createElement('canvas');
-      this.frames.set(frame, c);
-      this.order.push(frame);
+    const bytes = width * height * 4;
+    let e = this.frames.get(frame);
+    if (e) {
+      // Re-insert so the refreshed entry counts as most-recently-used.
+      this.frames.delete(frame);
+      this.totalBytes -= e.bytes;
+      e.bytes = bytes;
     } else {
-      const i = this.order.indexOf(frame);
-      if (i !== -1) this.order.splice(i, 1);
-      this.order.push(frame);
+      e = { canvas: document.createElement('canvas'), bytes };
     }
+    const c = e.canvas;
     if (c.width !== width || c.height !== height) {
       c.width = width;
       c.height = height;
     }
+    this.frames.set(frame, e);
+    this.totalBytes += bytes;
     // The pixel copy is guarded (jsdom has no 2D context), but the LRU
     // bookkeeping + notification must run regardless so eviction and the
     // cache bar stay correct.
@@ -170,10 +252,14 @@ export class FrameCache {
       ctx.clearRect(0, 0, c.width, c.height);
       ctx.drawImage(source, 0, 0);
     }
-    while (this.frames.size > this.maxFrames) {
-      const evict = this.order.shift();
-      if (evict === undefined) break;
-      this.frames.delete(evict);
+    // Never evict down to nothing: one frame larger than the whole budget is a
+    // misconfiguration, not a reason to hold zero frames and re-render forever.
+    while (this.totalBytes > this.maxBytes && this.frames.size > 1) {
+      const oldest = this.frames.keys().next();
+      if (oldest.done) break;
+      const victim = this.frames.get(oldest.value);
+      this.frames.delete(oldest.value);
+      if (victim) this.totalBytes -= victim.bytes;
     }
     this.notify();
   }
@@ -181,6 +267,8 @@ export class FrameCache {
   /** Merged spans of cached frames, in SECONDS, for the timeline's cache bar. */
   ranges(fps: number): Array<{ start: number; end: number }> {
     if (fps <= 0 || this.frames.size === 0) return [];
+    const memo = this.rangesMemo;
+    if (memo && memo.version === this.version && memo.fps === fps) return memo.out;
     const sorted = [...this.frames.keys()].sort((a, b) => a - b);
     const out: Array<{ start: number; end: number }> = [];
     let s = sorted[0]!;
@@ -196,6 +284,7 @@ export class FrameCache {
       prev = f;
     }
     out.push({ start: s / fps, end: (prev + 1) / fps });
+    this.rangesMemo = { version: this.version, fps, out };
     return out;
   }
 
@@ -206,7 +295,8 @@ export class FrameCache {
   private clearFrames(): void {
     if (this.frames.size === 0) return;
     this.frames.clear();
-    this.order = [];
+    this.totalBytes = 0;
+    this.lastPrefetchFrom = -1;
     this.notify();
   }
 }

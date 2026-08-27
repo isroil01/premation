@@ -180,7 +180,7 @@
 }
 
 .iconBtn:hover {
-  background: var(--color-surface-hover, rgba(255, 255, 255, 0.08));
+  background: var(--color-hover);
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
 }
@@ -226,7 +226,7 @@
   stroke-width: 1;
 }
 .snapPlayhead {
-  stroke: var(--color-timeline-playhead, #ff453a);
+  stroke: var(--color-timeline-playhead);
 }
 .snapKeyframe {
   stroke: var(--color-primary);

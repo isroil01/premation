@@ -5,7 +5,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-panel, #232323);
+  background: var(--color-panel);
   position: relative;
   overflow: hidden;
 }
@@ -15,8 +15,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--color-panel-header, #1d1d1d);
-  border-bottom: 1px solid var(--color-border, #161616);
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-border);
   flex: none;
   height: var(--bar-height-panel);
   min-height: var(--bar-height-panel);
@@ -48,8 +48,8 @@
   padding: 0 10px;
   font-size: var(--font-size-xs);
   font-weight: 500;
-  color: var(--color-text-tertiary, #8c8c8c);
-  background: var(--color-panel-header, #1d1d1d);
+  color: var(--color-text-tertiary);
+  background: var(--color-panel-header);
   border: none;
   border-bottom: 2px solid transparent;
   cursor: pointer;
@@ -64,21 +64,21 @@
 
 .tabItem:hover {
   background: rgba(255, 255, 255, 0.04);
-  color: var(--color-text-primary, #e1e1e1);
+  color: var(--color-text-primary);
 }
 
 /* The tab is a role="tab" div (a <button> can't contain the close <button>),
    so it needs its focus ring spelled out rather than inherited from the UA. */
 .tabItem:focus-visible {
-  outline: 1px solid var(--color-selection, #2988ff);
+  outline: 1px solid var(--color-selection);
   outline-offset: -1px;
 }
 
 .tabItemActive {
-  background: var(--color-panel, #232323) !important;
-  color: #ffffff !important;
+  background: var(--color-panel) !important;
+  color: var(--color-text-primary) !important;
   font-weight: 600;
-  border-bottom: 2px solid var(--color-selection, #2988ff) !important;
+  border-bottom: 2px solid var(--color-selection) !important;
 }
 
 .tabLabel {
@@ -96,7 +96,7 @@
   border-radius: 2px;
   border: none;
   background: transparent;
-  color: var(--color-text-muted, #5a5a5a);
+  color: var(--color-text-muted);
   cursor: pointer;
   padding: 0;
   margin-left: 2px;
@@ -112,7 +112,7 @@
 
 .tabCloseBtn:hover {
   background: rgba(255, 255, 255, 0.1);
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 /* Tab actions right header */
@@ -131,28 +131,28 @@
   height: var(--control-height-sm);
   border: none;
   background: transparent;
-  color: var(--color-text-tertiary, #8c8c8c);
-  border-radius: var(--radius-control, 4px);
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-control);
   cursor: pointer;
   padding: 0 4px;
   transition: background-color 100ms ease, color 100ms ease;
 }
 
 .actionBtn:hover {
-  background: var(--color-surface-3, #333333);
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .actionBtnActive {
-  background: var(--color-surface-3, #333333) !important;
-  color: var(--color-selection, #2988ff) !important;
+  background: var(--color-surface-3) !important;
+  color: var(--color-selection) !important;
 }
 
 .overflowBadge {
   font-size: var(--font-size-micro);
   font-weight: 600;
   background: rgba(255, 255, 255, 0.08);
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   padding: 1px 4px;
   border-radius: 8px;
 }
@@ -167,7 +167,7 @@
   overflow-x: hidden;
   position: relative;
   scrollbar-width: thin;
-  scrollbar-color: var(--color-border-strong, #333333) var(--color-surface-0, #161616);
+  scrollbar-color: var(--color-border-strong) var(--color-surface-0);
 }
 
 .content::-webkit-scrollbar {
@@ -176,16 +176,16 @@
 }
 
 .content::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong, #333333);
+  background: var(--color-border-strong);
   border-radius: 0;
 }
 
 .content::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted, #5a5a5a);
+  background: var(--color-text-muted);
 }
 
 .content::-webkit-scrollbar-track {
-  background: var(--color-surface-0, #161616);
+  background: var(--color-surface-0);
 }
 
 /* ── Panel Hamburger Popup Menu ───────────────────────────────────── */
@@ -193,14 +193,14 @@
   position: absolute;
   right: 6px;
   top: 34px;
-  z-index: var(--z-index-popover, 1000);
+  z-index: var(--z-index-popover);
   min-width: 250px;
-  background: var(--color-surface-raised, #2a2a2a);
+  background: var(--color-surface-raised);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid var(--color-border-strong, #333333);
+  border: 1px solid var(--color-border-strong);
   border-top: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-md, 6px);
+  border-radius: var(--radius-md);
   padding: 5px;
   list-style: none;
   margin: 0;
@@ -213,7 +213,7 @@
 .moveMenuLabel {
   font-size: var(--font-size-micro);
   font-weight: 600;
-  color: var(--color-text-tertiary, #8c8c8c);
+  color: var(--color-text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   padding: 6px 12px 4px;
@@ -222,7 +222,7 @@
 
 .menuSectionDivider {
   height: 1px;
-  background: var(--color-border, rgba(255, 255, 255, 0.08));
+  background: var(--color-border);
   margin: 4px 4px;
   pointer-events: none;
 }
@@ -235,12 +235,12 @@
   text-align: left;
   border: none;
   background: transparent;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   font: inherit;
   font-size: var(--font-size-sm);
   min-height: var(--control-height-lg);
   padding: 0 12px;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
               color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -248,19 +248,19 @@
 }
 
 .moveMenuItem:hover {
-  background: var(--color-surface-3, rgba(255, 255, 255, 0.08));
-  color: var(--color-text-primary, #ffffff);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .moveMenuItemActive {
   background: color-mix(in srgb, var(--color-primary) 14%, transparent);
-  color: var(--color-text-primary, #ffffff);
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
 .moveMenuItemActive:hover {
   background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-  color: var(--color-text-primary, #ffffff);
+  color: var(--color-text-primary);
 }
 
 .menuItemLeft {
@@ -270,7 +270,7 @@
 }
 
 .activeCheck {
-  color: var(--color-primary, #2988ff);
+  color: var(--color-primary);
   font-weight: bold;
   font-size: var(--font-size-md);
 }

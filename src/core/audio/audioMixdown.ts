@@ -128,7 +128,7 @@ export interface AudioMixdown {
  * all muted) or Web Audio is unavailable — the caller then keeps the video
  * silent, exactly as before, rather than failing. Deterministic: no wall-clock.
  */
-async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuffer | null> {
+async function mixdownBuffer(startSec: number, endSec: number, scopeRootId?: string): Promise<AudioBuffer | null> {
   const Ctor = offlineCtor();
   const duration = Math.max(0, endSec - startSec);
   if (!Ctor || duration <= 0) return null;
@@ -137,7 +137,7 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
   // animated level that starts at silence and rises is entirely legitimate, and
   // dropping it on its opening value would remove exactly the fade-in case
   // keyframable levels exist for.
-  const layers = readAudioLayers().filter((l) => !l.muted);
+  const layers = readAudioLayers(scopeRootId).filter((l) => !l.muted);
   if (layers.length === 0) return null;
 
   // Decode anything not already in the AudioEngine's cache.
@@ -230,9 +230,16 @@ async function mixdownBuffer(startSec: number, endSec: number): Promise<AudioBuf
   return ctx.startRendering();
 }
 
-/** As {@link mixdownBuffer}, encoded to a 16-bit stereo WAV for ffmpeg. */
-export async function mixdownAudio(startSec: number, endSec: number): Promise<AudioMixdown | null> {
-  const rendered = await mixdownBuffer(startSec, endSec);
+/** As {@link mixdownBuffer}, encoded to a 16-bit stereo WAV for ffmpeg.
+ *  `scopeRootId` restricts the mix to ONE composition's layers — exports pass
+ *  their comp, so a multi-comp project no longer ships every comp's audio
+ *  under whichever comp's picture was rendered. */
+export async function mixdownAudio(
+  startSec: number,
+  endSec: number,
+  scopeRootId?: string,
+): Promise<AudioMixdown | null> {
+  const rendered = await mixdownBuffer(startSec, endSec, scopeRootId);
   if (!rendered) return null;
   return { wav: bufferToWav(rendered), sampleRate: EXPORT_SAMPLE_RATE, durationSec: rendered.duration };
 }

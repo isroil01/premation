@@ -40,6 +40,17 @@ download only the changed chunks of the installer instead of all 90 MB; `latest.
 is the file every installed copy fetches to learn whether a newer version exists.
 Publish them alongside the installer or auto-update cannot work.
 
+> **How updates reach users.** The app checks on a timer (not just at launch),
+> downloads in the background without asking, and installs on quit. The only
+> thing a user sees is a dismissible "update ready — Restart now" toast. A
+> `Download updates automatically` toggle in Customize ▸ Appearance turns the
+> background download off for anyone on a metered connection; an update they
+> fetch by hand still installs on quit. See `electron/updater.ts`.
+>
+> Because installs happen on quit and a draft release is invisible until you
+> press Publish, "Publish" in the GitHub UI is the moment every installed app
+> starts rolling forward. Treat it as the deploy step it is.
+
 ### Two local-build gotchas on this machine
 
 Both are environmental, and neither affects CI:
@@ -270,7 +281,7 @@ without one retroactively invalidates every build the day the cert lapses.
 
 | Platform | Consequence |
 | --- | --- |
-| **macOS** | Gatekeeper **blocks** the app. Squirrel.Mac also refuses updates it cannot verify, which is why `electron/updater.ts` keeps macOS auto-update behind `MOTION_ENABLE_MAC_UPDATES=1`. |
+| **macOS** | Gatekeeper **blocks** the app. Squirrel.Mac also refuses updates it cannot verify, so `electron/updater.ts` checks the bundle's signature with `codesign` at launch and leaves auto-update OFF when it is unsigned — otherwise the app would download every release and then refuse it, once per launch, forever. A signed and notarized build updates itself normally. |
 | **Windows** | SmartScreen warns. Installs via "Run anyway"; auto-update works. |
 
 ---

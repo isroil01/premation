@@ -174,7 +174,7 @@
   align-self: flex-end;
   max-width: 92%;
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-on-accent);
   padding: 6px 10px;
   border-radius: var(--radius-dialog);
   white-space: pre-wrap;
@@ -214,7 +214,7 @@
 }
 
 .errorMsg {
-  color: #f87171;
+  color: var(--color-danger);
 }
 
 .msgThumb {
@@ -265,7 +265,7 @@
 }
 
 .planRow[data-status='error'] {
-  color: #f87171;
+  color: var(--color-danger);
 }
 
 .planMark {
@@ -330,6 +330,7 @@
   color: var(--color-text-tertiary);
 }
 
+/* Black in both themes: this is a video frame's letterbox, not chrome. */
 .previewFrame {
   position: relative;
   background: #000;
@@ -366,7 +367,7 @@
   border: none;
   border-radius: var(--radius-full);
   background: rgba(0, 0, 0, 0.6);
-  color: #fff;
+  color: var(--color-slate-0);
   cursor: pointer;
 }
 
@@ -401,7 +402,7 @@
 
 .applyButton {
   background: var(--color-accent);
-  color: #fff;
+  color: var(--color-text-on-accent);
 }
 
 .applyButton:hover {
@@ -484,7 +485,7 @@
   resize: none;
   border: none;
   background: transparent;
-  color: #ffffff;
+  color: var(--color-text-primary);
   font-family: inherit;
   font-size: var(--font-size-md);
   line-height: 1.5;
@@ -495,7 +496,7 @@
 }
 
 .textarea::placeholder {
-  color: #7b7f8e;
+  color: var(--color-text-tertiary);
 }
 
 .composerControls {
@@ -519,8 +520,8 @@
   height: 26px;
   border-radius: 50%;
   border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: #a0a5b5;
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -530,8 +531,8 @@
 }
 
 .plusBtn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #ffffff;
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
 }
 
 .modelPickerWrap {
@@ -541,9 +542,9 @@
   gap: 5px;
   padding: 4px 8px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #e2e8f0;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-primary);
   font-size: var(--font-size-xs);
   font-weight: 500;
   cursor: pointer;
@@ -554,9 +555,9 @@
 }
 
 .modelPickerWrap:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 .modelPickerLabel {
@@ -568,19 +569,19 @@
 }
 
 .chevron {
-  color: #94a3b8;
+  color: var(--color-text-secondary);
   flex: none;
   transition: transform 150ms ease;
 }
 
 .modelPickerWrap:hover .chevron,
 .modePickerWrap:hover .chevron {
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .chevronOpen {
   transform: rotate(180deg);
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .customPopoverMenu,
@@ -595,7 +596,7 @@
   border: 1px solid var(--color-border-strong);
   border-radius: 12px;
   padding: 6px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--color-border-subtle);
   z-index: 100;
   display: flex;
   flex-direction: column;
@@ -625,7 +626,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #64748b;
+  color: var(--color-text-tertiary);
   padding: 4px 8px 2px 8px;
 }
 
@@ -634,14 +635,14 @@
   flex-direction: column;
   gap: 2px;
   margin-top: 4px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--color-border-subtle);
   padding-top: 4px;
 }
 
 .groupLabel {
   font-size: var(--font-size-micro);
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--color-text-secondary);
   padding: 2px 8px;
   display: flex;
   align-items: center;
@@ -650,7 +651,7 @@
 
 .noKeyTag {
   font-size: var(--font-size-micro);
-  color: #ef4444;
+  color: var(--color-danger);
   background: rgba(239, 68, 68, 0.12);
   padding: 1px 4px;
   border-radius: 4px;
@@ -666,7 +667,7 @@
   border-radius: 8px;
   border: none;
   background: transparent;
-  color: #cbd5e1;
+  color: var(--color-text-primary);
   font-family: inherit;
   font-size: var(--font-size-xs);
   font-weight: 500;
@@ -681,8 +682,8 @@
 }
 
 .popoverOption:not(:disabled):hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
 }
 
 .popoverOptionActive {
@@ -707,7 +708,7 @@
 
 .optionSub {
   font-size: var(--font-size-micro);
-  color: #64748b;
+  color: var(--color-text-tertiary);
   margin-top: 1px;
 }
 
@@ -730,21 +731,21 @@
   gap: 4px;
   font-size: var(--font-size-xs);
   font-weight: 500;
-  color: #94a3b8;
+  color: var(--color-text-secondary);
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
   transition: var(--motion-hover-transition);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   flex: none;
 }
 
 .modePickerWrap:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
 }
 
 .modePickerLabel {
@@ -757,7 +758,7 @@
   border-radius: 50%;
   border: none;
   background: var(--color-accent);
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -767,8 +768,8 @@
 }
 
 .neonSendBtn:disabled {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.3);
+  background: var(--color-surface-3);
+  color: var(--color-text-disabled);
   cursor: default;
 }
 
@@ -853,21 +854,21 @@
   gap: 4px;
   font-size: var(--font-size-xs);
   font-weight: 500;
-  color: #94a3b8;
+  color: var(--color-text-secondary);
   cursor: pointer;
   padding: 3px 8px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
   transition: var(--motion-hover-transition);
   flex: none;
   white-space: nowrap;
 }
 
 .directionChip:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
 }
 
 /* A pinned value has to look different from an unset one at a glance, or the

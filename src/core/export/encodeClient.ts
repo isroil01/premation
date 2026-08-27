@@ -2,10 +2,13 @@
  * Client for the export encode worker (encode.worker.ts).
  *
  * Runs GIF / ZIP encoding off the main thread so a long export doesn't freeze
- * the UI. Structured-clone (no transfer on the way IN) keeps the caller's data
- * intact, so if the worker is unavailable or errors we transparently fall back
- * to the SAME pure encoder synchronously — correctness never depends on the
- * worker actually being there.
+ * the UI. Buffers are TRANSFERRED to the worker, not structured-cloned — a
+ * multi-gigabyte sequence zip used to exist twice at the postMessage boundary,
+ * which is exactly the peak that pushed big exports into OOM. The sync
+ * fallback still exists for the worker being unavailable (nothing was posted,
+ * data intact); after a transfer the caller's buffers are detached, so a
+ * worker that dies mid-encode fails the export with a real error instead of
+ * silently re-encoding zeroed pixels.
  */
 
 import { createAnimatedGIFBytes, type GifFrame } from './gifEncoder';
@@ -64,22 +67,50 @@ async function getWorker(): Promise<Worker | null> {
   return workerPromise;
 }
 
-function post(w: Worker, payload: Record<string, unknown>): Promise<Uint8Array> {
+function post(w: Worker, payload: Record<string, unknown>, transfer: Transferable[]): Promise<Uint8Array> {
   return new Promise<Uint8Array>((resolve, reject) => {
     const id = ++seq;
     pending.set(id, { resolve, reject });
-    w.postMessage({ id, ...payload });
+    try {
+      w.postMessage({ id, ...payload }, transfer);
+    } catch (err) {
+      pending.delete(id);
+      reject(err);
+    }
   });
+}
+
+/**
+ * The distinct underlying ArrayBuffers of `views`, for a postMessage transfer
+ * list. Deduplicated: two views on one buffer would make postMessage throw a
+ * DataCloneError, and a SharedArrayBuffer cannot be transferred at all.
+ */
+function transferListOf(views: ReadonlyArray<{ buffer: ArrayBufferLike }>): ArrayBuffer[] {
+  const seen = new Set<ArrayBufferLike>();
+  const out: ArrayBuffer[] = [];
+  for (const v of views) {
+    const buf = v.buffer;
+    if (seen.has(buf)) continue;
+    seen.add(buf);
+    if (typeof SharedArrayBuffer !== 'undefined' && buf instanceof SharedArrayBuffer) continue;
+    out.push(buf as ArrayBuffer);
+  }
+  return out;
 }
 
 /** Encode an animated GIF, off-thread when possible. */
 export async function encodeGifBytes(frames: GifFrame[], fps: number): Promise<Uint8Array> {
   const w = await getWorker();
   if (!w) return createAnimatedGIFBytes(frames, fps);
+  const sizes = frames.map((f) => f.pixels.byteLength);
   try {
-    return await post(w, { kind: 'gif', frames, fps });
-  } catch {
-    // Worker died mid-flight — the caller's frames are untouched (no transfer in).
+    return await post(w, { kind: 'gif', frames, fps }, transferListOf(frames.map((f) => f.pixels)));
+  } catch (err) {
+    // Fall back to the sync encoder ONLY if the buffers survived (postMessage
+    // itself failed before transferring). Detached frames read as all-zero
+    // pixels — encoding those would ship a blank GIF under a success toast.
+    const intact = frames.every((f, i) => f.pixels.byteLength === sizes[i]);
+    if (!intact) throw err instanceof Error ? err : new Error('The encode worker failed mid-encode.');
     return createAnimatedGIFBytes(frames, fps);
   }
 }
@@ -88,9 +119,12 @@ export async function encodeGifBytes(frames: GifFrame[], fps: number): Promise<U
 export async function encodeZipBytes(entries: ZipEntry[]): Promise<Uint8Array> {
   const w = await getWorker();
   if (!w) return zipBytes(entries);
+  const sizes = entries.map((e) => e.data.byteLength);
   try {
-    return await post(w, { kind: 'zip', entries });
-  } catch {
+    return await post(w, { kind: 'zip', entries }, transferListOf(entries.map((e) => e.data)));
+  } catch (err) {
+    const intact = entries.every((e, i) => e.data.byteLength === sizes[i]);
+    if (!intact) throw err instanceof Error ? err : new Error('The encode worker failed mid-encode.');
     return zipBytes(entries);
   }
 }

@@ -9,8 +9,8 @@
 
 /* Outer Shell / Double Bezel Card */
 .cardShell {
-  background: var(--color-surface-1, #1e1e24);
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 16px;
   padding: 24px;
   display: flex;
@@ -53,10 +53,11 @@
   width: 44px;
   height: 44px;
   border-radius: 10px;
+  /* Publisher identity mark — a fixed brand gradient, not themed chrome. */
   background: linear-gradient(135deg, #2988ff 0%, #7c3aed 100%);
   display: grid;
   place-items: center;
-  color: #ffffff;
+  color: var(--color-text-primary);
   font-size: 1.1rem;
   font-weight: 700;
   flex-shrink: 0;
@@ -77,14 +78,14 @@
 .publisherNamespace {
   font-size: 1.05rem;
   font-weight: 750;
-  color: #ffffff;
+  color: var(--color-text-primary);
   letter-spacing: -0.01em;
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
 }
 
 .publisherDisplayName {
   font-size: 0.82rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .verifiedBadge {
@@ -95,7 +96,7 @@
   border-radius: 999px;
   background: rgba(16, 185, 129, 0.12);
   border: 1px solid rgba(16, 185, 129, 0.3);
-  color: #10b981;
+  color: var(--color-success);
   font-size: 0.7rem;
   font-weight: 600;
 }
@@ -115,31 +116,31 @@
   align-items: center;
   justify-content: space-between;
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--color-divider, rgba(255, 255, 255, 0.06));
+  border-bottom: 1px solid var(--color-divider);
   margin-top: 4px;
 }
 
 .sectionTitle {
   font-size: 0.95rem;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--color-text-primary);
   letter-spacing: -0.01em;
 }
 
 .countBadge {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--color-text-secondary, #a6a6a6);
-  background: var(--color-surface-2, rgba(255, 255, 255, 0.05));
+  color: var(--color-text-secondary);
+  background: var(--color-surface-2);
   padding: 3px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-border-subtle);
 }
 
 /* Published Plugin Item Card */
 .pluginCard {
-  background: var(--color-surface-2, #16161c);
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 12px;
   padding: 18px;
   display: flex;
@@ -149,7 +150,7 @@
 }
 
 .pluginCard:hover {
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: var(--color-border-strong);
 }
 
 .pluginCardHeader {
@@ -174,17 +175,17 @@
 .pluginName {
   font-size: 1rem;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .pluginVersion {
   font-size: 0.72rem;
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
   padding: 2px 6px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--color-text-secondary, #a6a6a6);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
 }
 
 .pluginBadgesRow {
@@ -208,19 +209,19 @@
 .badgeInstalls {
   background: rgba(41, 136, 255, 0.1);
   border: 1px solid rgba(41, 136, 255, 0.25);
-  color: #4097ff;
+  color: var(--color-primary-hover);
 }
 
 .badgePublic {
   background: rgba(16, 185, 129, 0.1);
   border: 1px solid rgba(16, 185, 129, 0.25);
-  color: #10b981;
+  color: var(--color-success);
 }
 
 .badgePrivate {
   background: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.25);
-  color: #f59e0b;
+  color: var(--color-warning);
 }
 
 .actionRow {
@@ -256,8 +257,12 @@
 }
 
 .btnPrimary {
-  background: linear-gradient(135deg, var(--color-primary, #2988ff) 0%, #1d75e0 100%);
-  color: #ffffff;
+  background: linear-gradient(
+    135deg,
+    var(--color-primary) 0%,
+    var(--color-primary-active) 100%
+  );
+  color: var(--color-primary-foreground);
   border: none;
 }
 
@@ -266,43 +271,43 @@
 }
 
 .btnSecondary {
-  background: var(--color-surface-2, rgba(255, 255, 255, 0.05));
-  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
-  color: var(--color-text-primary, #e1e1e1);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 .btnSecondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.25);
-  color: #ffffff;
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 .btnDanger {
   background: rgba(244, 63, 94, 0.1);
   border: 1px solid rgba(244, 63, 94, 0.25);
-  color: #f43f5e;
+  color: var(--color-danger);
 }
 
 .btnDanger:hover:not(:disabled) {
   background: rgba(244, 63, 94, 0.2);
-  border-color: #f43f5e;
+  border-color: var(--color-danger);
 }
 
 .btnGhost {
   background: transparent;
   border: 1px solid transparent;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .btnGhost:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.06);
-  color: #ffffff;
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
 }
 
 /* Expanded Listing Editor Panel */
 .editorDrawer {
-  background: var(--color-surface-0, #0f0f13);
-  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.1));
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-strong);
   border-radius: 10px;
   padding: 18px;
   display: flex;
@@ -319,9 +324,9 @@
 
 .infoNote {
   font-size: 0.76rem;
-  color: var(--color-text-secondary, #a6a6a6);
-  background: rgba(255, 255, 255, 0.03);
-  border-left: 3px solid var(--color-primary, #2988ff);
+  color: var(--color-text-secondary);
+  background: var(--color-surface-2);
+  border-left: 3px solid var(--color-primary);
   padding: 8px 12px;
   border-radius: 0 6px 6px 0;
   line-height: 1.4;
@@ -336,15 +341,15 @@
 .fieldLabel {
   font-size: 0.76rem;
   font-weight: 600;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .input {
-  background: var(--color-surface-1, #18181f);
-  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   padding: 9px 12px;
-  color: #ffffff;
+  color: var(--color-text-primary);
   font-size: 0.85rem;
   outline: none;
   transition: border-color 140ms ease;
@@ -352,16 +357,16 @@
 }
 
 .input:focus {
-  border-color: var(--color-primary, #2988ff);
+  border-color: var(--color-primary);
 }
 
 .textarea {
-  background: var(--color-surface-1, #18181f);
-  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
   border-radius: 8px;
   padding: 10px 12px;
-  color: #ffffff;
-  font-family: var(--font-family-mono, monospace);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-mono);
   font-size: 0.82rem;
   outline: none;
   transition: border-color 140ms ease;
@@ -371,7 +376,7 @@
 }
 
 .textarea:focus {
-  border-color: var(--color-primary, #2988ff);
+  border-color: var(--color-primary);
 }
 
 /* Category Chips Grid */
@@ -385,9 +390,9 @@
 .chip {
   padding: 5px 12px;
   border-radius: 999px;
-  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--color-text-secondary, #a6a6a6);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
   font-size: 0.76rem;
   font-weight: 500;
   cursor: pointer;
@@ -395,15 +400,15 @@
 }
 
 .chip:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.25);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
 }
 
 .chipActive {
   background: rgba(41, 136, 255, 0.15);
-  border-color: var(--color-primary, #2988ff);
-  color: #ffffff;
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
@@ -426,7 +431,7 @@
 .withdrawTitle {
   font-size: 0.88rem;
   font-weight: 700;
-  color: #f43f5e;
+  color: var(--color-danger);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -434,7 +439,7 @@
 
 .withdrawDesc {
   font-size: 0.78rem;
-  color: var(--color-text-secondary, #c6cdd9);
+  color: var(--color-text-secondary);
   line-height: 1.45;
 }
 
@@ -470,7 +475,7 @@
 
 .dropzone:hover,
 .dropzoneActive {
-  border-color: var(--color-primary, #2988ff);
+  border-color: var(--color-primary);
   background: rgba(41, 136, 255, 0.05);
 }
 
@@ -479,7 +484,7 @@
   height: 48px;
   border-radius: 50%;
   background: rgba(41, 136, 255, 0.1);
-  color: var(--color-primary, #2988ff);
+  color: var(--color-primary);
   display: grid;
   place-items: center;
   margin-bottom: 2px;
@@ -488,12 +493,12 @@
 .dropzoneText {
   font-size: 0.88rem;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .dropzoneHint {
   font-size: 0.76rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .fileBadge {
@@ -504,7 +509,7 @@
   border-radius: 8px;
   background: rgba(41, 136, 255, 0.12);
   border: 1px solid rgba(41, 136, 255, 0.3);
-  color: #ffffff;
+  color: var(--color-text-primary);
   font-size: 0.82rem;
   font-weight: 600;
 }
@@ -532,8 +537,8 @@
 }
 
 .radioCard {
-  border: 1px solid var(--color-border-strong, rgba(255, 255, 255, 0.12));
-  background: var(--color-surface-2, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-2);
   border-radius: 10px;
   padding: 14px;
   display: flex;
@@ -545,19 +550,19 @@
 }
 
 .radioCard:hover {
-  border-color: rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-2);
 }
 
 .radioCardActive {
-  border-color: var(--color-primary, #2988ff);
+  border-color: var(--color-primary);
   background: rgba(41, 136, 255, 0.08);
 }
 
 .radioInput {
   margin-top: 3px;
   cursor: pointer;
-  accent-color: var(--color-primary, #2988ff);
+  accent-color: var(--color-primary);
 }
 
 .radioContent {
@@ -569,12 +574,12 @@
 .radioTitle {
   font-size: 0.85rem;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .radioDesc {
   font-size: 0.75rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
   line-height: 1.35;
 }
 
@@ -585,21 +590,21 @@
   gap: 10px;
   padding: 10px 14px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
   font-size: 0.76rem;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .securityIcon {
-  color: var(--color-primary, #2988ff);
+  color: var(--color-primary);
   flex-shrink: 0;
 }
 
 /* Terminal / Code Box for CLI fallback */
 .terminalBox {
-  background: #0b0b0e;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 10px;
   overflow: hidden;
   display: flex;
@@ -607,7 +612,7 @@
 }
 
 .terminalHeader {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--color-surface-2);
   padding: 8px 12px;
   display: flex;
   align-items: center;
@@ -621,22 +626,23 @@
   gap: 6px;
 }
 
+/* Traffic lights — a deliberate macOS-window quotation; fixed in both themes. */
 .dotRed { width: 10px; height: 10px; border-radius: 50%; background: #ff5f56; }
 .dotYellow { width: 10px; height: 10px; border-radius: 50%; background: #ffbd2e; }
 .dotGreen { width: 10px; height: 10px; border-radius: 50%; background: #27c93f; }
 
 .terminalTitle {
   font-size: 0.72rem;
-  font-family: var(--font-family-mono, monospace);
-  color: var(--color-text-tertiary, #777);
+  font-family: var(--font-family-mono);
+  color: var(--color-text-tertiary);
 }
 
 .codeContent {
   padding: 14px;
   margin: 0;
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
   font-size: 0.78rem;
-  color: #38bdf8;
+  color: var(--color-info);
   line-height: 1.6;
   white-space: pre-wrap;
   user-select: all;
@@ -656,9 +662,9 @@
 }
 
 .previewBadge {
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-mono);
   font-size: 0.8rem;
-  color: var(--color-primary, #2988ff);
+  color: var(--color-primary);
   background: rgba(41, 136, 255, 0.1);
   padding: 4px 8px;
   border-radius: 4px;
@@ -674,19 +680,19 @@
   padding: 32px 16px;
   text-align: center;
   gap: 10px;
-  color: var(--color-text-secondary, #a6a6a6);
+  color: var(--color-text-secondary);
 }
 
 .stateTitle {
   font-size: 0.95rem;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--color-text-primary);
 }
 
 .errorBanner {
   background: rgba(244, 63, 94, 0.1);
   border: 1px solid rgba(244, 63, 94, 0.3);
-  color: #f43f5e;
+  color: var(--color-danger);
   border-radius: 8px;
   padding: 10px 14px;
   font-size: 0.82rem;

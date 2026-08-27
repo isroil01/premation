@@ -67,7 +67,7 @@
 
 .keys dd {
   margin: 0;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-primary);
   word-break: break-all;

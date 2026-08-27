@@ -38,7 +38,7 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: #161616;
+  background: var(--color-surface-2);
   border-radius: 0;
 }
 

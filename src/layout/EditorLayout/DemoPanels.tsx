@@ -7,7 +7,7 @@
  * panel/dock architecture is wired correctly.
  */
 
-import { useMemo, useState, useRef, useEffect, type ReactNode } from 'react';
+import { useMemo, useState, useRef, useEffect, useCallback, type ReactNode } from 'react';
 import { Panel } from '@components/Panel';
 import { Button } from '@components/Button';
 import { HistoryPanel } from '@layout/History/HistoryPanel';
@@ -19,6 +19,7 @@ import { PluginsDockPanel, pluginPanelRenderers } from '@layout/Plugins/PluginPa
 import { PluginsMarketplacePanel } from '@layout/Plugins/PluginsMarketplacePanel';
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Accordion, type AccordionItem } from '@components/Accordion';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { EmptyState } from '@components/EmptyState';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
@@ -1517,11 +1518,28 @@ function filterInspectorItems(items: AccordionItem[], query: string): AccordionI
       const title = typeof it.title === 'string' ? it.title.toLowerCase() : '';
       return title.includes(q) || (SECTION_KEYWORDS[it.id] ?? '').includes(q);
     })
-    .map((it) => ({ ...it, defaultOpen: true }));
+    // `forceOpen`, not `defaultOpen`: a remembered "closed" for this section
+    // outranks defaultOpen, and would otherwise hide the hit you searched for.
+    .map((it) => ({ ...it, forceOpen: true }));
 }
 
-/** Shared accordion render for every node-kind branch, applying the search filter. */
-function renderInspector(items: AccordionItem[], query: string): JSX.Element {
+/**
+ * Shared accordion render for every node-kind branch, applying the search
+ * filter and the user's remembered open/closed sections.
+ */
+function InspectorAccordion({ items, query }: { items: AccordionItem[]; query: string }): JSX.Element {
+  // Remembered per section id and persisted, so the Inspector reopens the way
+  // you left it. Local `useState` could not do this: the panel unmounts on
+  // every tab switch and whenever the selection is cleared, which is why
+  // Transform sprang back open however often you collapsed it.
+  const sections = usePreferenceStore((s) => s.inspectorSections);
+  const setPref = usePreferenceStore((s) => s.set);
+  const onToggle = useCallback(
+    (id: string, open: boolean) => {
+      setPref('inspectorSections', { ...usePreferenceStore.getState().inspectorSections, [id]: open });
+    },
+    [setPref],
+  );
   const filtered = filterInspectorItems(items, query);
   if (query.trim() && filtered.length === 0) {
     return (
@@ -1532,15 +1550,20 @@ function renderInspector(items: AccordionItem[], query: string): JSX.Element {
       />
     );
   }
-  // Remount on query change so filtered items re-apply their defaultOpen state.
-  // No `key={query}`: keying on the search text REMOUNTED the whole Accordion on
-  // every keystroke, and its open/closed state lives in its own useState — so
-  // every group you expanded snapped shut as soon as you typed a character.
+  // No `key={query}`: keying on the search text REMOUNTED the whole Accordion
+  // on every keystroke. That is harmless now that the open state is persisted
+  // outside the component, but it still throws away every section's DOM (and
+  // any in-flight edit inside one) on each character typed.
   //
   // No wrapper padding: a 4px inset stopped the section hairlines short of the
   // panel edge and pushed each section's gutter to 16px, while the search box
   // above sat at 8px — three different left edges down one narrow column.
-  return <Accordion items={filtered} />;
+  return <Accordion items={filtered} openOverrides={sections} onToggle={onToggle} />;
+}
+
+/** Shared accordion render for every node-kind branch. */
+function renderInspector(items: AccordionItem[], query: string): JSX.Element {
+  return <InspectorAccordion items={items} query={query} />;
 }
 
 /**

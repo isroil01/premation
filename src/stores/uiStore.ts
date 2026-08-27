@@ -83,6 +83,20 @@ export interface Notification {
   /** Auto-dismiss after this many ms. 0 means manual dismiss only. */
   durationMs: number;
   createdAt: number;
+  /**
+   * One optional inline action.
+   *
+   * For the small class of notice that a user should be able to ACT on without
+   * hunting for where — "Update ready ▸ Restart now" being the reason this
+   * exists. A modal would interrupt; a toast with no action is a dead end.
+   *
+   * One action, not a list: a toast with a row of buttons is a dialog wearing a
+   * disguise, and the whole point is not to block.
+   */
+  action?: {
+    label: string;
+    onSelect(): void;
+  };
 }
 
 interface UIActions {
