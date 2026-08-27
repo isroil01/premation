@@ -188,16 +188,7 @@ function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): 
             }}
             aria-label={`${effect.type} effect mask`}
             title="Restrict this effect to a mask path. Prefer a path with mode None so it scopes the effect without also cutting the layer."
-            style={{
-              flex: 1,
-              minWidth: 0,
-              height: 20,
-              fontSize: 'var(--font-size-xs)',
-              background: 'var(--color-surface-0)',
-              color: 'var(--color-text-primary)',
-              border: '1px solid var(--color-border-subtle)',
-              borderRadius: 4,
-            }}
+            className={panel.paramSelect}
           >
             <option value="">None</option>
             {stale && <option value={current}>Missing mask ({current})</option>}
@@ -336,16 +327,7 @@ function EffectParamRow({
           value={current}
           onChange={(e) => updateEffectParam(nodeId, effect.id, param.key, e.currentTarget.value)}
           aria-label={label}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            height: 20,
-            fontSize: 'var(--font-size-xs)',
-            background: 'var(--color-surface-0)',
-            color: 'var(--color-text-primary)',
-            border: '1px solid var(--color-border-subtle)',
-            borderRadius: 4,
-          }}
+          className={panel.paramSelect}
         >
           <option value="">None (self)</option>
           {stale && <option value={current}>Missing layer ({current})</option>}
@@ -383,16 +365,7 @@ function EffectParamRow({
             value={known ? String(current) : String(param.default)}
             onChange={(ev) => updateEffectParam(nodeId, effect.id, param.key, Number(ev.currentTarget.value))}
             aria-label={label}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              height: 20,
-              fontSize: 'var(--font-size-xs)',
-              background: 'var(--color-surface-0)',
-              color: 'var(--color-text-primary)',
-              border: '1px solid var(--color-border-subtle)',
-              borderRadius: 4,
-            }}
+            className={panel.paramSelect}
           >
             {opts.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>

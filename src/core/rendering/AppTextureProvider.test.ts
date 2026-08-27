@@ -13,6 +13,7 @@
 
 import { ResourceManager, NullBackend } from '@motion/renderer';
 import { AppTextureProvider, textCssFont, spotConeFactor, type ImageLoader, type VideoFactory } from './AppTextureProvider';
+import { videoDiag } from './videoPlaybackDiag';
 import type { RenderLayer } from './RenderBackend';
 
 /** A fake decoded bitmap (only width/height matter to the provider). */
@@ -559,6 +560,84 @@ describe('AppTextureProvider', () => {
       const real = provider.get('asset:v')!.texture.id;
       provider.retain(new Set());
       expect(provider.get('asset:v')!.texture.id).not.toBe(real);
+    });
+  });
+
+  describe('the load-stall watchdog', () => {
+    // The watchdog exists to name ONE failure: an element that NEVER becomes
+    // ready (the wedged-media-pipeline signature). Its first version measured
+    // from element CREATION instead of from entering the not-ready state, so a
+    // routine buffer dip minutes into playback (readyState drops during a
+    // heavy mid-GOP seek) instantly "stalled": it force-reload()ed the element
+    // mid-playback (rewinding it to 0 — a real freeze) and painted "restart
+    // the app" over a healthy session.
+    let now = 0;
+    let nowSpy: jest.SpyInstance<number, []>;
+    beforeEach(() => {
+      now = 0;
+      nowSpy = jest.spyOn(performance, 'now').mockImplementation(() => now);
+      videoDiag.stalledSources.clear();
+      videoDiag.samples.clear();
+    });
+    afterEach(() => {
+      nowSpy.mockRestore();
+      videoDiag.stalledSources.clear();
+      videoDiag.samples.clear();
+    });
+
+    /** fakeVideo plus the playback-path members and a load() spy. */
+    function playbackVideo(readyState: number): { video: HTMLVideoElement; load: jest.Mock } {
+      const load = jest.fn();
+      const video = fakeVideo({
+        readyState,
+        load,
+        play: () => Promise.resolve(),
+        pause: () => {},
+        playbackRate: 1,
+        seeking: false,
+        paused: false,
+        ended: false,
+      } as unknown as Partial<HTMLVideoElement>);
+      return { video, load };
+    }
+
+    it('never reloads or flags an element that has been ready before (buffer dip)', () => {
+      const { video, load } = playbackVideo(2);
+      const { provider } = setup(undefined, () => video);
+      provider.setVideoPlayback('asset:v', 'blob:clip', 0);
+
+      // Minutes later, a heavy seek dips readyState below HAVE_CURRENT_DATA.
+      now = 600_000;
+      (video as { readyState: number }).readyState = 1;
+      for (let i = 0; i < 5; i++) {
+        now += 10_000; // every poll far beyond the stall window
+        provider.setVideoPlayback('asset:v', 'blob:clip', now / 1000);
+      }
+
+      expect(load).not.toHaveBeenCalled();
+      expect(videoDiag.stalledSources.size).toBe(0);
+    });
+
+    it('retries a never-ready element once, then flags the source; recovery clears it', () => {
+      const { video, load } = playbackVideo(0);
+      const { provider } = setup(undefined, () => video);
+      provider.setVideoPlayback('asset:v', 'blob:clip', 0);
+      expect(load).not.toHaveBeenCalled(); // inside the stall window
+
+      now = 7_000;
+      provider.setVideoPlayback('asset:v', 'blob:clip', 0);
+      expect(load).toHaveBeenCalledTimes(1); // one reload retry
+      expect(videoDiag.stalledSources.size).toBe(0); // not flagged yet
+
+      now = 14_000;
+      provider.setVideoPlayback('asset:v', 'blob:clip', 0);
+      expect(load).toHaveBeenCalledTimes(1); // never a reload storm
+      expect(videoDiag.stalledSources.has('blob:clip')).toBe(true);
+
+      // The decoder came back: the flag must clear, not stick.
+      (video as { readyState: number }).readyState = 2;
+      provider.setVideoPlayback('asset:v', 'blob:clip', 0);
+      expect(videoDiag.stalledSources.size).toBe(0);
     });
   });
 

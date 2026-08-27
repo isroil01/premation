@@ -67,8 +67,10 @@ import { TIMELINE_GROUP_ORDER, type TimelineGroupKey } from '@core/timeline/prop
 import { useUIStore } from '@stores/uiStore';
 
 const RULER_HEIGHT_DEFAULT = 36;
-const TRACK_HEIGHT_DEFAULT = 30;
-const TRACK_HEADER_WIDTH_DEFAULT = 490;
+const TRACK_HEIGHT_DEFAULT = 36;
+const TRACK_HEADER_WIDTH_DEFAULT = 560;
+const TIMELINE_TOP_PADDING = 6;
+const TIMELINE_BOTTOM_PADDING = 12;
 
 /** A virtualized row is either a track summary row, a category accordion row, or a property sub-row. */
 type Row =
@@ -461,12 +463,12 @@ function Timeline({
     return max;
   }, [model.tracks, totalSeconds]);
   const laneWidth = TIMELINE_LEFT_OFFSET + (contentSeconds + 1) * pps;
-  const totalLanesHeight = rows.length * trackHeight;
+  const totalLanesHeight = TIMELINE_TOP_PADDING + rows.length * trackHeight + TIMELINE_BOTTOM_PADDING;
   const effectiveLanesHeight = Math.max(totalLanesHeight, Math.max(0, size.height - rulerHeight));
 
   // ── Vertical virtualization (rows) ─────────────────────────────
   const visibleRowCount = Math.ceil(size.height / trackHeight) + 8;
-  const startRow = Math.max(0, Math.floor(scrollTop / trackHeight) - 4);
+  const startRow = Math.max(0, Math.floor(Math.max(0, scrollTop - TIMELINE_TOP_PADDING) / trackHeight) - 4);
   const endRow = Math.min(rows.length, startRow + visibleRowCount);
   const visibleRows = useMemo(() => rows.slice(startRow, endRow), [rows, startRow, endRow]);
 
@@ -793,7 +795,7 @@ function Timeline({
       if (!d || !headerRef.current) return;
       const rect = headerRef.current.getBoundingClientRect();
       const relY = e.clientY - rect.top + (headerRef.current.scrollTop ?? 0);
-      const idx = Math.max(0, Math.min(rows.length, Math.round(relY / trackHeight)));
+      const idx = Math.max(0, Math.min(rows.length, Math.round(Math.max(0, relY - TIMELINE_TOP_PADDING) / trackHeight)));
       setRowDragOver(idx);
     };
     const onUp = (): void => {
@@ -929,7 +931,10 @@ function Timeline({
       const { delta, target } = snapKeyframeGroup(moved, {
         pixelsPerSecond: pps,
         frameDuration: frameDur,
-        playheadTime: model.currentTime,
+        // The RESOLVED playhead (separate prop first): model.currentTime is a
+        // non-reactive snapshot when the host splits the playhead out, and
+        // snapping to a stale snapshot missed the real playhead position.
+        playheadTime: currentTime,
         keyframeTimes: others,
         disabled: e.altKey,
       });
@@ -999,7 +1004,7 @@ function Timeline({
       const rect = lanes.getBoundingClientRect();
       return {
         x: Math.max(0, clientX - rect.left + lanes.scrollLeft - TIMELINE_LEFT_OFFSET),
-        y: clamp(clientY - rect.top + lanes.scrollTop - rulerHeight, 0, effectiveLanesHeight),
+        y: clamp(clientY - rect.top + lanes.scrollTop - rulerHeight - TIMELINE_TOP_PADDING, 0, effectiveLanesHeight),
       };
     },
     [rulerHeight, effectiveLanesHeight, TIMELINE_LEFT_OFFSET],
@@ -1139,11 +1144,6 @@ function Timeline({
         <div className={styles.ruler} style={{ height: rulerHeight }}>
           {/* Column heads for the switches and modes (AE layout). */}
           <div className={styles.colHeads}>
-            <div className={styles.colHeadPreInfo} aria-hidden>
-              <span className={styles.colHeadItem}><Icon name="eye" size="sm" title="Video Visibility" /></span>
-              <span className={styles.colHeadItem}><Icon name="circle" size="sm" title="Solo" /></span>
-              <span className={styles.colHeadItem}><Icon name="lock" size="sm" title="Lock" /></span>
-            </div>
             <span className={styles.colHeadLayer}>
               <span className={styles.colHeadIndex} aria-hidden>#</span>
               <span className={styles.colHeadLayerLabel}>Source Name</span>
@@ -1160,6 +1160,11 @@ function Timeline({
                 <Icon name="export" size="sm" />
               </button>
             </span>
+            <div className={styles.colHeadPreInfo} aria-hidden>
+              <span className={styles.colHeadItem}><Icon name="eye" size="sm" title="Video Visibility" /></span>
+              <span className={styles.colHeadItem}><Icon name="circle" size="sm" title="Solo" /></span>
+              <span className={styles.colHeadItem}><Icon name="lock" size="sm" title="Lock" /></span>
+            </div>
             {/* Legend for the per-layer switch column below — one glyph per
                 switch that actually exists on the rows, in ROW ORDER. The
                 guide-layer glyph is not optional: `data-kind="guide"` ships on
@@ -1189,7 +1194,7 @@ function Timeline({
               const realIndex = startRow + i;
               const rowStyle: CSSProperties = {
                 position: 'absolute',
-                top: realIndex * trackHeight,
+                top: TIMELINE_TOP_PADDING + realIndex * trackHeight,
                 left: 0,
                 right: 0,
                 height: trackHeight,
@@ -1305,7 +1310,7 @@ function Timeline({
             {rowDragOver !== null && (
               <div
                 className={styles.dropIndicator}
-                style={{ top: rowDragOver * trackHeight }}
+                style={{ top: TIMELINE_TOP_PADDING + rowDragOver * trackHeight }}
                 aria-hidden
               />
             )}
@@ -1468,7 +1473,7 @@ function Timeline({
                     row.type === 'prop' && styles.lanePropBg,
                     realIndex % 2 === 0 && styles.laneAlt,
                   )}
-                  style={{ position: 'absolute', top: realIndex * trackHeight, left: 0, right: 0, height: trackHeight }}
+                  style={{ position: 'absolute', top: TIMELINE_TOP_PADDING + realIndex * trackHeight, left: 0, right: 0, height: trackHeight }}
                 />
               );
             })}
@@ -1476,7 +1481,7 @@ function Timeline({
             {/* Row content: animation block + keyframes */}
             {visibleRows.map((row, i) => {
               const realIndex = startRow + i;
-              const top = realIndex * trackHeight;
+              const top = TIMELINE_TOP_PADDING + realIndex * trackHeight;
               if (row.type === 'track') {
                 return (
                   <TrackContent
@@ -1677,7 +1682,7 @@ function Minimap({
           key={i}
           className={styles.minimapRow}
           style={{
-            top: i * trackHeight * scale,
+            top: (TIMELINE_TOP_PADDING + i * trackHeight) * scale,
             height: Math.max(1, trackHeight * scale - 1),
             background: row.type === 'track' ? (row.track.color ?? 'var(--color-text-muted)') : 'var(--color-border-strong)',
             opacity: row.type === 'track' ? 0.7 : 0.4,
@@ -1838,42 +1843,6 @@ const TrackHeader = memo(function TrackHeader({
       aria-label={track.name}
       title="Enter to select · F2 to focus"
     >
-      <div className={styles.preInfoCol}>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="visible"
-          data-on={!hidden || undefined}
-          aria-label={hidden ? 'Show track' : 'Hide track'}
-          title={hidden ? 'Hide' : 'Show (Video)'}
-          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
-        >
-          <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="solo"
-          data-on={solo || undefined}
-          aria-label={solo ? 'Unsolo track' : 'Solo track'}
-          title={solo ? 'Unsolo' : 'Solo'}
-          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
-        >
-          <Icon name="circle" size="sm" />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="lock"
-          data-on={locked || undefined}
-          aria-label={locked ? 'Unlock track' : 'Lock track'}
-          title={locked ? 'Unlock' : 'Lock'}
-          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
-        >
-          <Icon name="lock" size="sm" />
-        </button>
-      </div>
-
       <div className={styles.layerInfoCol} style={{ paddingLeft: track.depth ? track.depth * 14 : undefined }}>
         <div
           className={styles.dragHandle}
@@ -1937,6 +1906,42 @@ const TrackHeader = memo(function TrackHeader({
             {track.name}
           </span>
         )}
+      </div>
+
+      <div className={styles.preInfoCol}>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="visible"
+          data-on={!hidden || undefined}
+          aria-label={hidden ? 'Show track' : 'Hide track'}
+          title={hidden ? 'Hide' : 'Show (Video)'}
+          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
+        >
+          <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="solo"
+          data-on={solo || undefined}
+          aria-label={solo ? 'Unsolo track' : 'Solo track'}
+          title={solo ? 'Unsolo' : 'Solo'}
+          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
+        >
+          <Icon name="circle" size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="lock"
+          data-on={locked || undefined}
+          aria-label={locked ? 'Unlock track' : 'Lock track'}
+          title={locked ? 'Unlock' : 'Lock'}
+          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
+        >
+          <Icon name="lock" size="sm" />
+        </button>
       </div>
 
       <div className={styles.aeSwitchesCol}>

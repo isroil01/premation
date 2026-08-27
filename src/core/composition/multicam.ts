@@ -45,12 +45,15 @@ export async function createMulticamComposition(
   const primary = videos[0]!;
   const meta = primary.metadata ?? {};
   const defaults = DEFAULT_COMPOSITION;
-  const width = meta.width && meta.width > 0 ? meta.width : defaults.width;
+  // Same derivation rules as createCompositionFromFootage: PAR multiplies the
+  // stored width (an anamorphic multicam must not letterbox its own footage),
+  // and the default duration is only the fallback when NO angle reports one —
+  // flooring at 10s shipped seconds of trailing background under short takes.
+  const par = primary.interpret?.par && primary.interpret.par > 0 ? primary.interpret.par : 1;
+  const width = meta.width && meta.width > 0 ? Math.round(meta.width * par) : defaults.width;
   const height = meta.height && meta.height > 0 ? meta.height : defaults.height;
-  const durationSeconds = Math.max(
-    defaults.durationSeconds,
-    ...videos.map((a) => a.metadata?.duration ?? 0),
-  );
+  const longest = Math.max(0, ...videos.map((a) => a.metadata?.duration ?? 0));
+  const durationSeconds = longest > 0 ? longest : defaults.durationSeconds;
   const fps = meta.fps && meta.fps > 0 ? meta.fps : defaults.fps;
 
   const compId = createOrAdoptComposition({

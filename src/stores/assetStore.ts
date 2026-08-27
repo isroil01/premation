@@ -504,6 +504,42 @@ function triggerAutoProxy(asset: ImportedAsset): void {
     .catch(() => {});
 }
 
+/** Extensions the drop targets admit that carry an empty or unhelpful MIME
+ *  type in the browser (no ffmpeg edition, OS without a registered type).
+ *  MIME wins when present; the extension is the fallback so an MXF/MTS drop
+ *  is not silently filed as an IMAGE — which skipped the probe, produced an
+ *  unbounded clip, and gave comp-from-footage nothing to derive from. */
+const VIDEO_EXTS = /\.(mp4|m4v|mov|webm|mkv|avi|wmv|flv|mts|m2ts|mpg|mpeg|mpe|vob|ts|mxf|r3d|braw|ari|3gp|ogv)$/i;
+const AUDIO_EXTS = /\.(mp3|wav|aac|m4a|ogg|oga|flac|opus|wma|aif|aiff)$/i;
+
+function mediaTypeOf(file: File): 'image' | 'video' | 'audio' {
+  if (file.type.startsWith('video/')) return 'video';
+  if (file.type.startsWith('audio/')) return 'audio';
+  if (file.type.startsWith('image/')) return 'image';
+  if (VIDEO_EXTS.test(file.name)) return 'video';
+  if (AUDIO_EXTS.test(file.name)) return 'audio';
+  return 'image';
+}
+
+/** A media-element metadata probe that cannot hang the import: some
+ *  containers open but never fire `loadedmetadata` OR `error` (truncated
+ *  MP4s, odd MKVs), and an unsettled promise here froze every
+ *  `await addAsset(...)` caller — including comp-from-footage — with no
+ *  error and no UI feedback. */
+function probeWithTimeout(run: (done: () => void) => void, timeoutMs = 10_000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    run(finish);
+  });
+}
+
 export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
   immer((set, get) => ({
     assets: [],
@@ -633,10 +669,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
 
       const id = `asset_${shortId()}`;
       const src = URL.createObjectURL(file);
-      let type: 'image' | 'video' | 'audio' = 'image';
-
-      if (file.type.startsWith('video/')) type = 'video';
-      else if (file.type.startsWith('audio/')) type = 'audio';
+      const type = mediaTypeOf(file);
 
       const asset: ImportedAsset = {
         id,
@@ -659,28 +692,28 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         if (svgSize) {
           asset.metadata = svgSize;
         } else {
-          await new Promise<void>((resolve) => {
+          await probeWithTimeout((done) => {
             const img = new Image();
             img.onload = () => {
               asset.metadata = { width: img.width, height: img.height };
-              resolve();
+              done();
             };
-            img.onerror = () => resolve();
+            img.onerror = () => done();
             img.src = src;
           });
         }
       } else if (type === 'audio') {
-        await new Promise<void>((resolve) => {
+        await probeWithTimeout((done) => {
           const audio = new Audio();
           audio.onloadedmetadata = () => {
             asset.metadata = { duration: audio.duration };
-            resolve();
+            done();
           };
-          audio.onerror = () => resolve();
+          audio.onerror = () => done();
           audio.src = src;
         });
       } else if (type === 'video') {
-        await new Promise<void>((resolve) => {
+        await probeWithTimeout((done) => {
           const video = document.createElement('video');
           video.onloadedmetadata = () => {
             asset.metadata = {
@@ -688,9 +721,9 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
               height: video.videoHeight,
               duration: video.duration,
             };
-            resolve();
+            done();
           };
-          video.onerror = () => resolve();
+          video.onerror = () => done();
           video.src = src;
         });
       }
@@ -739,6 +772,12 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       const createdAssets: ImportedAsset[] = [];
       // Thumbnail blobs, index-aligned with createdAssets (null = keep original).
       const thumbs: Array<Blob | null> = [];
+      // The files actually imported, index-aligned with createdAssets. NOT the
+      // caller's `items` files: ingest may have TRANSCODED (ProRes→mp4 etc.),
+      // and persisting the original bytes meant the asset rendered fine all
+      // session and went black after every reload — the re-minted blob URL
+      // pointed at bytes the browser cannot decode.
+      const files: File[] = [];
 
       // Process metadata + thumbnails in parallel chunks of 10 for max speed
       const CHUNK = 10;
@@ -752,10 +791,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
               useUIStore.getState().notify({ level: 'info', message: msg, durationMs: 4000 }))) ?? file;
             const id = `asset_${shortId()}`;
             const src = URL.createObjectURL(file);
-            let type: 'image' | 'video' | 'audio' = 'image';
-
-            if (file.type.startsWith('video/')) type = 'video';
-            else if (file.type.startsWith('audio/')) type = 'audio';
+            const type = mediaTypeOf(file);
 
             const asset: ImportedAsset = {
               id,
@@ -774,16 +810,16 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
               if (svgSize) {
                 asset.metadata = svgSize;
               } else {
-                await new Promise<void>((resolve) => {
+                await probeWithTimeout((done) => {
                   const img = new Image();
                   img.onload = () => {
                     asset.metadata = {
                       width: img.naturalWidth || img.width,
                       height: img.naturalHeight || img.height,
                     };
-                    resolve();
+                    done();
                   };
-                  img.onerror = () => resolve();
+                  img.onerror = () => done();
                   img.src = src;
                 });
               }
@@ -797,7 +833,7 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
               // sizing fell back, and everything downstream that asks "how big
               // is this source" quietly degraded. Parallel within the chunk,
               // so the batch stays fast.
-              await new Promise<void>((resolve) => {
+              await probeWithTimeout((done) => {
                 const video = document.createElement('video');
                 video.onloadedmetadata = () => {
                   asset.metadata = {
@@ -805,38 +841,39 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
                     height: video.videoHeight,
                     duration: video.duration,
                   };
-                  resolve();
+                  done();
                 };
-                video.onerror = () => resolve();
+                video.onerror = () => done();
                 video.src = src;
               });
             } else if (type === 'audio') {
-              await new Promise<void>((resolve) => {
+              await probeWithTimeout((done) => {
                 const audio = new Audio();
                 audio.onloadedmetadata = () => {
                   asset.metadata = { duration: audio.duration };
-                  resolve();
+                  done();
                 };
-                audio.onerror = () => resolve();
+                audio.onerror = () => done();
                 audio.src = src;
               });
             }
             // Real stream facts where a demuxer exists (desktop + ffprobe) —
             // corrects duration, adds fps/PAR/audio facts. No-op on web.
             await applyProbe(file, asset);
-            return { asset, thumb };
+            return { asset, thumb, file };
           })
         );
         for (const r of chunkResults) {
           createdAssets.push(r.asset);
           thumbs.push(r.thumb);
+          files.push(r.file);
         }
       }
 
       // Save to IndexedDB in parallel
       await Promise.all(
         createdAssets.map((asset, index) => {
-          const file = items[index]?.file;
+          const file = files[index];
           if (!file) return Promise.resolve();
           return AssetDatabase.saveAsset({
             id: asset.id,
@@ -855,6 +892,10 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
         s.assets.push(...createdAssets);
       });
       saveAssignments(get().assets);
+      saveSources(get().assets);
+      // Same import-time proxy kick the single-file path does — batch-imported
+      // video (the panel picker and OS drops) never got one.
+      for (const asset of createdAssets) triggerAutoProxy(asset);
 
       return createdAssets;
     },

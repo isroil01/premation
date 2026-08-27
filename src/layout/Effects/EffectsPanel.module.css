@@ -207,9 +207,9 @@
 
 .itemLabel,
 .itemLabelOff {
-  flex: 1;
+  flex: 1 1 0%;
   min-width: 0;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   letter-spacing: 0;
   color: var(--color-text-primary);
@@ -230,6 +230,7 @@
   align-items: center;
   gap: 2px;
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .eyeBtn {
@@ -403,7 +404,7 @@
 .effectCardItem {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--color-border, #000000);
+  border-bottom: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
 }
 
 .effectCardHead {
@@ -411,12 +412,12 @@
   align-items: center;
   gap: 4px;
   min-height: 26px;
-  padding: 2px 8px 2px 4px;
+  padding: 2px 6px 2px 4px;
   user-select: none;
   font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
   font-size: var(--font-size-xs, 12px);
   font-weight: var(--font-weight-semibold, 600);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  min-width: 0;
 }
 
 .effectCardHead:hover {
@@ -454,6 +455,7 @@
    control undiscoverable next to five glyphs. */
 .resetLink {
   flex: none;
+  flex-shrink: 0;
   padding: 0 4px;
   background: transparent;
   border: none;
@@ -479,12 +481,7 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  border-bottom: 1px solid var(--color-border, #000000);
   padding: 1px 0;
-}
-
-.paramLine:last-child {
-  border-bottom: none;
 }
 
 .paramLineHead {
@@ -565,13 +562,14 @@
 .effectParamsBody {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 2px 8px 8px 20px;
+  gap: 2px;
+  padding: 2px 6px 6px 12px;
   background: transparent;
+  min-width: 0;
 
   --prop-nav-col: 0px;
-  --prop-value-col: 92px;
-  --prop-field-width: 60px;
+  --prop-value-col: clamp(70px, 32%, 92px);
+  --prop-field-width: clamp(48px, 22%, 60px);
 }
 
 .paramSelect {
@@ -587,6 +585,8 @@
   border-radius: var(--radius-xs, 3px);
   cursor: pointer;
   box-sizing: border-box;
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 .paramSelect:hover {
@@ -610,7 +610,7 @@
 .paramGroup {
   display: flex;
   flex-direction: column;
-  border-bottom: 1px solid var(--color-border, #000000);
+  margin-top: 2px;
 }
 
 .paramGroupHead {
@@ -618,20 +618,23 @@
   align-items: center;
   gap: 4px;
   width: 100%;
-  padding: 4px 0;
+  padding: 3px 0;
   background: none;
   border: 0;
-  border-bottom: 1px solid var(--color-border, #000000);
+  border-radius: var(--radius-xs, 3px);
   cursor: pointer;
   color: var(--color-text-secondary);
   font-family: var(--font-family-sans, system-ui, -apple-system, sans-serif);
   font-size: 11.5px;
   font-weight: var(--font-weight-semibold, 600);
   text-align: left;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .paramGroupHead:hover {
   color: var(--color-text-primary);
+  background: var(--color-hover);
 }
 
 /* Indented to the same left edge the group's own params would have had, so
@@ -689,6 +692,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -696,15 +700,16 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-height: 28px;
-  padding: 6px 10px;
+  padding: 6px 8px;
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-panel-header, transparent);
+  min-width: 0;
 }
 
 .layerName {
-  flex: 1;
+  flex: 1 1 0%;
   min-width: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
@@ -723,5 +728,7 @@
 .controlsBody {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
+  overflow-x: hidden;
 }

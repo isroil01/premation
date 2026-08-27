@@ -50,6 +50,13 @@ export interface DemuxedVideo {
   description: Uint8Array | null;
   /** Decode order. */
   samples: DemuxedSample[];
+  /**
+   * Display rotation from the container (tkhd matrix), clockwise degrees.
+   * `VideoDecoder` output is UNROTATED — `HTMLVideoElement` applies this
+   * automatically, so consumers of decoded frames must apply it themselves or
+   * phone-shot portrait footage renders sideways on the exact tier only.
+   */
+  rotation?: 0 | 90 | 180 | 270;
 }
 
 /** A box that can serialize itself — the shape shared by avcC/hvcC/vpcC. */
@@ -64,6 +71,21 @@ interface ConfigCarryingEntry {
   hvcC?: WritableBox;
   vpcC?: WritableBox;
   av1C?: WritableBox;
+}
+
+/**
+ * Display rotation from a tkhd/track matrix (9 values, 16.16 fixed-point for
+ * the 2×2 part). Only the four axis-aligned rotations exist in practice —
+ * anything else (skew, flip) is treated as unrotated rather than guessed at.
+ */
+function rotationOf(matrix: unknown): 0 | 90 | 180 | 270 {
+  const m = matrix as ArrayLike<number> | null | undefined;
+  if (!m || typeof m.length !== 'number' || m.length < 5) return 0;
+  const a = (m[0] ?? 0) / 65536;
+  const b = (m[1] ?? 0) / 65536;
+  const deg = Math.round((Math.atan2(b, a) * 180) / Math.PI);
+  const norm = ((deg % 360) + 360) % 360;
+  return norm === 90 || norm === 180 || norm === 270 ? norm : 0;
 }
 
 /** Serialize a codec-config box and strip its 8-byte header: configure()
@@ -110,12 +132,16 @@ export function demuxMp4(data: ArrayBuffer): Promise<DemuxedVideo> {
       expected = track.nb_samples;
       const trak = file.getTrackById(track.id);
       const entry = (trak?.mdia?.minf?.stbl?.stsd?.entries?.[0] ?? {}) as ConfigCarryingEntry;
+      const matrix =
+        (track as unknown as { matrix?: ArrayLike<number> }).matrix
+        ?? (trak as unknown as { tkhd?: { matrix?: ArrayLike<number> } } | null)?.tkhd?.matrix;
       result = {
         codec: track.codec,
         codedWidth: track.video?.width ?? track.track_width,
         codedHeight: track.video?.height ?? track.track_height,
         timescale: track.timescale,
         description: descriptionOf(entry),
+        rotation: rotationOf(matrix),
       };
       file.setExtractionOptions(track.id, undefined, { nbSamples: Math.max(1, expected) });
       file.start();
@@ -156,6 +182,7 @@ export function demuxMp4(data: ArrayBuffer): Promise<DemuxedVideo> {
       codedHeight: header.codedHeight,
       timescale: header.timescale,
       description: header.description,
+      ...(header.rotation ? { rotation: header.rotation } : {}),
       samples: collected.map((s) => ({
         data: s.data ?? new Uint8Array(0),
         dts: s.dts,

@@ -132,6 +132,54 @@ export class MotionRendererBackend implements RenderBackend {
   private exactMediaTiming = false;
   /** Timeline is playing — plain video layers use hardware decode, not WebCodecs. */
   private playbackMode = false;
+  /** True when every media feed of the last rendered frame was settled/exact.
+   *  False frames must not enter the RAM preview cache — they would replay
+   *  their stale pixels on the next loop pass. */
+  private frameMediaExact = true;
+
+  /** Whether the last renderFrame's media was settled — see frameMediaExact. */
+  lastFrameMediaExact(): boolean {
+    return this.frameMediaExact;
+  }
+
+  /** Comp time of the frame currently being rendered (anchor for playbackFeeds). */
+  private frameCompT = 0;
+  /** Hardware-playback video feeds of the last LIVE-rendered frame. While the
+   *  viewport serves frames from the RAM preview cache no renderFrame runs,
+   *  so nothing would drive the hidden elements — they drifted through every
+   *  blitted span and the next cache miss paid a mid-GOP hard seek (a
+   *  seconds-long frozen picture on long-GOP footage). The blit path calls
+   *  syncPlaybackVideo instead, extrapolating each element's source time. */
+  private readonly playbackFeeds = new Map<string, {
+    src: string;
+    compT: number;
+    sourceT: number;
+    fields?: 'upper' | 'lower';
+    bucket: number;
+  }>();
+
+  /**
+   * Keep playback video elements in sync while frames are served from the RAM
+   * cache. Linear extrapolation from the last live feed — exact for plain and
+   * constant-stretch clips, and it degrades to a corrective seek (inside
+   * setVideoPlayback) for anything wilder. No texture uploads: the blitted
+   * canvas is what is on screen.
+   */
+  syncPlaybackVideo(compT: number, cachedUntilCompT?: number): void {
+    if (!this.playbackMode || !this.textures) return;
+    for (const [key, f] of this.playbackFeeds) {
+      const sourceT = Math.max(0, f.sourceT + (compT - f.compT));
+      // Where this element's frames will next be needed: the end of the
+      // cached span, in the element's own source time. Lets the provider
+      // PARK the element there instead of making a starving decoder chase a
+      // playhead whose frames are already cached.
+      const prepareAt =
+        cachedUntilCompT !== undefined && cachedUntilCompT > compT
+          ? Math.max(0, f.sourceT + (cachedUntilCompT - f.compT))
+          : undefined;
+      this.textures.setVideoPlayback(key, f.src, sourceT, f.fields, f.bucket, /* syncOnly */ true, prepareAt);
+    }
+  }
 
   /** Layer ids whose texture feed already failed — warn once, not every frame. */
   private readonly warnedTextureLayers = new Set<string>();
@@ -555,6 +603,16 @@ export class MotionRendererBackend implements RenderBackend {
     // Feed image asset sources for this frame (keyed to match snapshotToFrameScene's
     // `asset:<id>` or `path:<id>` textureKey), and forget layers that left the scene.
     if (this.textures) {
+      // Assume media-exact until a feed proves otherwise (a video element
+      // mid-seek, an inexact nearest-neighbour frame, a decode still warming).
+      // The RAM preview cache reads this to decide whether the frame it just
+      // rendered is safe to keep — replacing the old wipe-the-whole-cache-on-
+      // every-loop hammer.
+      this.frameMediaExact = true;
+      this.frameCompT = snapshot.time ?? 0;
+      // Rebuilt from this frame's live feeds; syncPlaybackVideo extrapolates
+      // from them while blits keep renderFrame from running.
+      this.playbackFeeds.clear();
       const activeKeys = new Set<string>();
       // Target device scale for vector rasterization this frame: comp→canvas
       // scale × dpr. Drives the resolution tier so a 4K export re-rasters vectors
@@ -1077,13 +1135,29 @@ export class MotionRendererBackend implements RenderBackend {
     // During playback the browser's media pipeline decodes forward in hardware;
     // per-frame WebCodecs + canvas upload cannot keep real-time at 1080p/4K.
     // Scrub, export and frame-blending still use the exact path below.
+    if (plain && pulldown === undefined) {
+      // Anchor recorded in EVERY mode, not just playback: pressing play with
+      // the playhead inside a fully-cached span serves blits immediately, and
+      // without an anchor from the last paused render nothing supervised the
+      // element — the first cache miss then paid a cold mid-GOP hard seek
+      // (a seconds-long freeze exactly where the green bar ended).
+      this.playbackFeeds.set(key, {
+        src,
+        compT: this.frameCompT,
+        sourceT: timeSec,
+        ...(legacyFields ? { fields: legacyFields } : {}),
+        bucket: this.feedBucket(),
+      });
+    }
     if (this.playbackMode && plain && pulldown === undefined) {
       this.textures!.releaseFrame?.(key);
-      this.textures!.setVideoPlayback(key, src, timeSec, legacyFields, this.feedBucket());
+      const settled = this.textures!.setVideoPlayback(key, src, timeSec, legacyFields, this.feedBucket());
+      if (!settled) this.frameMediaExact = false;
       return;
     }
     const exact = exactVideoFrames.get(src, timeSec, pulldown);
     if (exact.state === 'frame') {
+      if (!exact.exact) this.frameMediaExact = false;
       // Signature is the presentation index: a repeated render of the same
       // frame skips the re-upload, a landed decode (new index) re-uploads.
       // Fields joins the signature so toggling Interpret Footage re-uploads
@@ -1093,6 +1167,11 @@ export class MotionRendererBackend implements RenderBackend {
       this.feedScaledFrame(key, exact.canvas, `xv:${exact.presIndex}:f${fields ?? ''}`, fields);
       return;
     }
+    // The exact tier is still warming — whatever shows now is a stand-in.
+    // (Sticky `unavailable` is NOT flagged: the element path is that source's
+    // only truth, and flagging it would keep its frames out of the RAM
+    // preview forever.)
+    if (exact.state === 'pending') this.frameMediaExact = false;
     // The legacy paths cannot weave a film frame back together, so while the
     // exact decoder warms (or when the source can never decode exactly) a
     // pulldown source is BOBBED instead — telecine carriers are lower-field-
@@ -1169,8 +1248,16 @@ export class MotionRendererBackend implements RenderBackend {
     // hidden <video> and frame canvases alive for the whole page lifetime.
     this.textures?.dispose();
     this.scaledFeed.clear();
-    viewportVideoFrames.clear();
-    exactVideoFrames.clear();
+    this.pixelMotionOut.clear();
+    // The decoded-frame caches are MODULE SINGLETONS shared by every backend.
+    // Only the main viewport's teardown may clear them: an auxiliary backend
+    // (2-up pane, presentation mode, export, thumbnail render) disposing used
+    // to wipe the viewport's decoded frames and close every open decoder
+    // mid-playback — closing a preview pane visibly stalled the main view.
+    if (this.role === 'viewport') {
+      viewportVideoFrames.clear();
+      exactVideoFrames.clear();
+    }
     // Before the renderer goes. The subscription outlives this object
     // otherwise — the effect registry is module state, so a stale listener
     // would keep compiling shaders into a registry attached to a disposed

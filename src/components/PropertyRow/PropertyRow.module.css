@@ -63,6 +63,7 @@
   gap: 4px;
   justify-content: flex-end;
   min-width: 0;
+  width: 100%;
 }
 
 /* Every numeric field is the same width, so the NUMBERS line up — not merely
@@ -71,6 +72,7 @@
    edge where every other row's is. */
 .values > [data-numeric] {
   flex: 0 0 var(--prop-field-width, 58px);
+  max-width: 100%;
   min-width: 0;
 }
 

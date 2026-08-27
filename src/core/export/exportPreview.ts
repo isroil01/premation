@@ -184,7 +184,12 @@ export function createExportPreviewRenderer(): ExportPreviewRenderer {
       for (let pass = 0; pass < 4; pass++) {
         const waits = backend.takeMediaWaits?.();
         if (!waits || waits.length === 0) break;
-        await Promise.all(waits);
+        // Time-capped like the offline renderer: a wedged decode degrades the
+        // preview frame instead of hanging it forever.
+        await Promise.race([
+          Promise.all(waits),
+          new Promise<void>((resolve) => setTimeout(resolve, 15_000)),
+        ]);
         if (disposed || gen !== currentGen) return { coverage: 0, blank: true };
         backend.renderFrame(snapshot);
       }

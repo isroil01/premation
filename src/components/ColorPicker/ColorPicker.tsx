@@ -112,7 +112,11 @@ export function ColorPicker({
   compact = false,
   alpha = true,
 }: ColorPickerProps): JSX.Element {
-  const color = value && /^#/.test(value) ? value : `#${value || '000000'}`;
+  const color = value && /^#[0-9a-fA-F]{3,8}$/.test(value)
+    ? value
+    : value && /^[0-9a-fA-F]{3,8}$/.test(value)
+      ? `#${value}`
+      : '#5282b8';
   const [recent, setRecent] = useState<string[]>(readRecent);
   const rgba = useMemo(() => hexToRgba(color), [color]);
 

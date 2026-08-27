@@ -287,4 +287,26 @@ describe('SequentialFrameReader', () => {
     }
     reader.close();
   });
+
+  it('close() wakes a parked frameAt — it rejects instead of pending forever', async () => {
+    // A wedged decoder: swallows every chunk, never emits, never flushes.
+    // frameAt parks on its notify promise; close() must release it. Without
+    // the wake, the caller's promise never settled — every loop wrap leaked
+    // one into the export wait set, which then deadlocked `Promise.all`.
+    const io: DecoderIO = {
+      createDecoder: () => ({
+        decode() { /* swallowed */ },
+        flush: () => new Promise<void>(() => { /* never resolves */ }),
+        close() { /* nothing */ },
+      }),
+      createChunk: (init) => init,
+    };
+    const reader = new SequentialFrameReader(demuxed(), 0, 23, io);
+    const outcome = reader.frameAt(0).then(() => 'resolved', () => 'rejected');
+    reader.close();
+    await expect(Promise.race([
+      outcome,
+      new Promise((r) => setTimeout(() => r('still pending'), 100)),
+    ])).resolves.toBe('rejected');
+  });
 });

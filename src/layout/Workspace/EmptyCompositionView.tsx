@@ -159,6 +159,12 @@ export function EmptyCompositionView(): JSX.Element {
     setFootageHover(false);
   };
 
+  /** The same families the picker's `accept` admits — a dropped .txt used to
+   *  sail through, producing a broken "image" asset and a default comp. */
+  const isFootageFile = (file: File): boolean =>
+    /^(video|image|audio)\//.test(file.type)
+    || /\.(mp4|mov|webm|m4v|mkv|avi|wmv|flv|mts|m2ts|mpg|mpeg|vob|ts|mxf|r3d|braw|ari|3gp|ogv|png|jpe?g|gif|svg|webp|bmp|tiff?|exr|dpx|psd|dng|cr2|cr3|nef|arw|orf|rw2|raf|pef|srw|raw|mp3|wav|aac|m4a|ogg|oga|flac|opus|wma|aif|aiff)$/i.test(file.name);
+
   const onDropFootage = async (e: DragEvent<HTMLButtonElement>): Promise<void> => {
     e.preventDefault();
     e.stopPropagation();
@@ -166,6 +172,14 @@ export function EmptyCompositionView(): JSX.Element {
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
     const file = files[0];
+    if (file && !isFootageFile(file)) {
+      useUIStore.getState().notify({
+        level: 'error',
+        message: `“${file.name}” is not a media file this editor can use as footage.`,
+        durationMs: 4000,
+      });
+      return;
+    }
     if (file) {
       try {
         const asset = await useAssetStore.getState().addAsset(file);

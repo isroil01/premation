@@ -165,6 +165,34 @@ export function maybeAutoGenerateProxy(assetId: string): void {
 }
 
 /**
+ * Generate proxies for every video asset that should have one but doesn't —
+ * assets imported before auto-generation existed (or while Use Proxies was
+ * off). The AE "creating optimized media in the background" move: called once
+ * shortly after the editor settles, strictly SEQUENTIAL so a library of 4K
+ * clips encodes one at a time in the background instead of saturating every
+ * core while the user edits.
+ *
+ * Every gate is re-checked per asset at its turn (`proxyRefusal`), and the
+ * whole run stops the moment the user turns Use Proxies off — their toggle
+ * always wins over a background job.
+ */
+let backfillRan = false;
+export async function backfillMissingProxies(): Promise<void> {
+  if (backfillRan) return;
+  backfillRan = true;
+  if (!canGenerateProxy()) return;
+  const ids = useAssetStore
+    .getState()
+    .assets.filter((a) => a.type === 'video' && !a.proxy)
+    .map((a) => a.id);
+  for (const id of ids) {
+    if (!usePreferenceStore.getState().useProxies) return;
+    if (proxyRefusal(current(id)) !== null) continue;
+    await startProxy(id);
+  }
+}
+
+/**
  * Cancel a running generation and drop the record.
  *
  * Clearing rather than marking failed is deliberate: the user asked for it to

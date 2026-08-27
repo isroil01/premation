@@ -8,7 +8,7 @@
  * engine can replace it via the `transport` prop.
  */
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
 import { Dropdown } from '@components/Dropdown';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -91,9 +91,9 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const zoomPct = Math.round((pps / ZOOM_DEFAULT) * 100);
   const clampZoom = (v: number): number => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v));
   const prefHeaderWidth = usePreferenceStore((s) => s.timelineHeaderWidth);
-  const headerWidth = props.model.trackHeaderWidth ?? prefHeaderWidth ?? 490;
+  const headerWidth = props.model.trackHeaderWidth ?? prefHeaderWidth ?? 560;
 
-  const [rowTrackHeight, setRowTrackHeight] = useState(24);
+  const [rowTrackHeight, setRowTrackHeight] = useState(36);
 
   const playheadTime = ws?.time ?? timelineProps.model.currentTime;
   const model = useMemo<TimelineProps['model']>(
@@ -115,6 +115,11 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const setAdaptive = useRenderQualityStore((s) => s.setAdaptive);
   const [looping, setLoopingState] = useState(() => getTimelineController().isLooping());
   const [searchQuery, setSearchQuery] = useState('');
+  // Looping is PER COMP; a state seeded once showed the previous tab's value
+  // after switching comps.
+  useEffect(() => {
+    setLoopingState(getTimelineController().isLooping());
+  }, [activeTabId]);
 
   return (
     <section className={cn(styles.root, className)}>
@@ -371,11 +376,11 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
 
                 <button
                   type="button"
-                  className={rowTrackHeight > 24 ? styles.toggleIconActive : styles.toggleIcon}
-                  title={`Timeline Row Height: ${rowTrackHeight}px (Click to toggle Compact / Normal / Tall)`}
+                  className={rowTrackHeight > 28 ? styles.toggleIconActive : styles.toggleIcon}
+                  title={`Timeline Row Height: ${rowTrackHeight === 28 ? 'Compact (28px)' : rowTrackHeight === 36 ? 'Normal (36px)' : 'Tall (46px)'} (Click to toggle)`}
                   aria-label="Change timeline row height"
                   onClick={() => {
-                    setRowTrackHeight((h) => (h === 22 ? 26 : h === 26 ? 30 : 22));
+                    setRowTrackHeight((h) => (h === 28 ? 36 : h === 36 ? 46 : 28));
                   }}
                 >
                   <Icon name="expand" size="sm" />
@@ -563,7 +568,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         {graphEditorOpen && (
           <GraphEditor
             selectedNodeIds={selectedIds}
-            currentTime={props.model.currentTime}
+            currentTime={playheadTime}
             duration={props.model.duration}
             pixelsPerSecond={pps}
             scrollLeft={scrollLeft}

@@ -803,9 +803,32 @@ export function buildSnapshot(
       : baseMap;
 
     // Per-layer time (E6): stretch / reverse / freeze on the node itself.
+    //
+    // The remap anchor: the keyframe span when the layer has one; otherwise
+    // the CLIP's source range (footage layers rarely carry keyframes), then
+    // the footage duration. The old `{start: 0, end: 1}` fallback anchored a
+    // plain video's reverse/stretch on a fictitious one-second span — Reverse
+    // played one second backwards and froze on frame 0 for the rest of the
+    // bar, and Stretch on a trimmed clip silently moved its in-point.
     const cfg = n ? readNodeLayerTime(n) : undefined;
+    let remapSpan: { start: number; end: number } | undefined;
+    if (cfg) {
+      remapSpan = anim.timeSpan(id) ?? undefined;
+      if (!remapSpan) {
+        const active = clips[0];
+        const source = n ? footageSourceOf(n) : null;
+        if (active && active.clip.duration > 0) {
+          const inSec = active.clip.sourceIn / fps;
+          remapSpan = { start: inSec, end: inSec + active.clip.duration / fps };
+        } else if (source?.durationSec) {
+          remapSpan = { start: 0, end: source.durationSec };
+        } else {
+          remapSpan = { start: 0, end: 1 };
+        }
+      }
+    }
     const own: (tt: number) => number = cfg
-      ? (tt) => remapTime(posterized(tt), cfg, anim.timeSpan(id) ?? { start: 0, end: 1 })
+      ? (tt) => remapTime(posterized(tt), cfg, remapSpan!)
       : (tt) => posterized(tt);
     // Precomp time remap: a layer inside a precomp whose group has a
     // keyframed `precompTime` is sampled at that remapped internal time. The

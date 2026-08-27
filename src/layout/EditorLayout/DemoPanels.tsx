@@ -738,7 +738,10 @@ export function AssetsPanel(): JSX.Element {
       if (file) items.push({ file, folderId: currentFolderId });
     }
     const created = await addAssetsBatch(items);
-    for (const a of created) insertMedia(a);
+    // Sequential, awaited: insertMedia ends by selecting what it created and
+    // bumping the scene, so N un-awaited inserts raced — the final selection
+    // depended on decode order and failures were unhandled rejections.
+    for (const a of created) await insertMedia(a);
     e.target.value = '';
   };
 
@@ -891,14 +894,18 @@ export function AssetsPanel(): JSX.Element {
         id: 'add',
         label: many ? `Add ${count} to Composition` : 'Add to Composition',
         onSelect: () => {
-          if (!many) { insertMedia(asset); return; }
+          if (!many) { void insertMedia(asset); return; }
           // In the panel's own row order, so what lands in the comp matches
           // what the user sees rather than the order they happened to click.
-          for (const id of orderedAssetIds) {
-            if (!selectedAssetIds.has(id)) continue;
-            const a = assets.find((x) => x.id === id);
-            if (a) insertMedia(a);
-          }
+          // Awaited sequentially inside one async task: concurrent inserts
+          // raced the selection and scrambled stacking order.
+          void (async () => {
+            for (const id of orderedAssetIds) {
+              if (!selectedAssetIds.has(id)) continue;
+              const a = assets.find((x) => x.id === id);
+              if (a) await insertMedia(a);
+            }
+          })();
         },
       },
       {

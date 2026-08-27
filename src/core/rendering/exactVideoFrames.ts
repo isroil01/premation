@@ -91,6 +91,10 @@ export interface LoadedExactSource {
   demuxed?: DemuxedVideo;
   /** Last presentation index — bounds streaming; prefer over sample count. */
   lastPresIndex?: number;
+  /** Container display rotation, applied when frames are captured. The
+   *  element tier rotates automatically; without this the exact tier showed
+   *  phone footage sideways and the picture flipped on every tier switch. */
+  rotation?: 0 | 90 | 180 | 270;
 }
 
 /** The slice of SequentialFrameReader the streaming pump uses — structural,
@@ -150,6 +154,13 @@ interface ReadyEntry {
   /** Last presentation index in the indexed frame table. */
   lastPresIndex?: number;
   stream?: StreamState;
+  /** Destination of the last detected loop wrap. Work-area loops land on the
+   *  same index every pass, so a repeat wrap is recognized wherever it sits
+   *  in the clip — not only near index 0. */
+  lastWrapTo: number;
+  /** performance.now() of the last get() — idle sources are fully released. */
+  lastUsed: number;
+  rotation: 0 | 90 | 180 | 270;
 }
 
 type Entry =
@@ -167,6 +178,13 @@ async function defaultLoader(src: string): Promise<LoadedExactSource> {
   // WebM / Matroska → dedicated demuxer (VP8/VP9). ISO-BMFF → mp4box.
   const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
   const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  if ((demuxed as { hasAlpha?: boolean }).hasAlpha) {
+    // The exact path decodes only the primary bitstream; the alpha plane
+    // rides in BlockAdditional side data it never feeds. The element tier
+    // composites alpha correctly, so alpha WebM stays there — opaque frames
+    // here would LOSE the transparency the ingest transcode exists to keep.
+    throw new Error('alpha WebM — element path preserves transparency');
+  }
   const source = new ExactVideoSource(demuxed);
   return {
     source,
@@ -174,6 +192,7 @@ async function defaultLoader(src: string): Promise<LoadedExactSource> {
     height: demuxed.codedHeight,
     demuxed,
     lastPresIndex: source.frameCount - 1,
+    ...(demuxed.rotation ? { rotation: demuxed.rotation } : {}),
   };
 }
 
@@ -183,6 +202,25 @@ export class ExactVideoFrameCache {
   /** Inflight loads + decodes. Each promise removes ITSELF on settle, so the
    *  list only ever holds live work — nothing drains it, nothing leaks. */
   private readonly inflight = new Set<Promise<void>>();
+  /** get() calls since the last idle sweep. */
+  private sweepCounter = 0;
+
+  /** Sources untouched for this long are fully released: decoder, decoded
+   *  frames, and the demuxed file bytes. Deleted layers and closed comps
+   *  otherwise pinned up to 512MB of frames plus the whole file per source
+   *  for the rest of the session. */
+  private static readonly IDLE_EVICT_MS = 90_000;
+
+  private sweepIdle(now: number): void {
+    for (const [src, e] of this.sources) {
+      if (e.state !== 'ready') continue;
+      if (now - e.lastUsed > ExactVideoFrameCache.IDLE_EVICT_MS) {
+        this.killStream(e);
+        e.source.close();
+        this.sources.delete(src);
+      }
+    }
+  }
 
   constructor(
     private readonly maxBytesPerSource = DEFAULT_BUDGET_BYTES,
@@ -226,6 +264,11 @@ export class ExactVideoFrameCache {
     const entry = this.ensure(src);
     if (entry.state === 'unavailable') return { state: 'unavailable' };
     if (entry.state === 'loading') return { state: 'pending' };
+    entry.lastUsed = performance.now();
+    if (++this.sweepCounter >= 240) {
+      this.sweepCounter = 0;
+      this.sweepIdle(entry.lastUsed);
+    }
 
     // +1µs: frame boundaries in the index are FRACTIONAL microseconds
     // (cts/timescale × 1e6 — e.g. 33333.33µs for frame 1 at 30fps), while the
@@ -247,6 +290,9 @@ export class ExactVideoFrameCache {
       if (woven) {
         this.touch(entry, target.index);
         entry.lastReq = presIdx;
+        // Keep an active stream decoding ahead of the pulldown playhead —
+        // woven hits are the steady state of pulldown playback.
+        this.advanceStream(src, entry, target.bottom);
         return { state: 'frame', canvas: woven.canvas, presIndex: target.index, exact: true };
       }
       // Both source frames must be decoded before the weave exists. Request
@@ -256,10 +302,17 @@ export class ExactVideoFrameCache {
       if (top && bottom) {
         const canvas = this.weaveCanvas(top.canvas, bottom.canvas);
         this.store(entry, target.index, canvas, canvas.width * canvas.height * 4);
+        entry.lastReq = presIdx;
         return { state: 'frame', canvas, presIndex: target.index, exact: true };
       }
-      if (!top) this.requestDecode(src, entry, target.top);
-      if (!bottom) this.requestDecode(src, entry, target.bottom);
+      // Route the miss through the same run/loop detection plain frames use —
+      // pulldown sources previously never advanced lastReq/seqRun here, so
+      // they could NEVER enter streaming mode and played through per-frame
+      // GOP random access (the exact freeze streaming was built to fix). A
+      // stream started at `top` also covers `bottom` (top + 1) via lookahead.
+      const absorbed = this.noteMiss(src, entry, target.top, prevReq);
+      if (!top && !absorbed) this.requestDecode(src, entry, target.top);
+      if (!bottom && !absorbed) this.requestDecode(src, entry, target.bottom);
       return this.nearest(entry, target.index);
     }
 
@@ -268,7 +321,8 @@ export class ExactVideoFrameCache {
       this.touch(entry, target.index);
       entry.lastReq = target.index;
       const end = this.lastPresIndex(entry);
-      if (this.isLoopWrap(target.index, prevReq, end)) {
+      if (this.isLoopWrap(entry, target.index, prevReq, end)) {
+        entry.lastWrapTo = target.index;
         this.startStream(src, entry, target.index);
       } else {
         // Keep an active stream ahead of a playhead that is riding cache hits —
@@ -305,9 +359,16 @@ export class ExactVideoFrameCache {
     return 0;
   }
 
-  /** Backward jump from near the end to near the start — comp/footage loop. */
-  private isLoopWrap(presIdx: number, lastReq: number, end: number): boolean {
+  /** Backward jump that reads as a loop restart rather than a scrub. */
+  private isLoopWrap(entry: ReadyEntry, presIdx: number, lastReq: number, end: number): boolean {
     if (lastReq < 0 || presIdx >= lastReq) return false;
+    // A repeat of the last wrap destination is a loop wherever it sits in the
+    // clip — a work-area loop over a clip trimmed deep into the file lands on
+    // the same mid-clip index every pass, which the near-zero window below
+    // could never see.
+    if (entry.lastWrapTo >= 0 && Math.abs(presIdx - entry.lastWrapTo) <= 2 && lastReq >= presIdx + 15) {
+      return true;
+    }
     const window = Math.max(STREAM_AHEAD * 3, 15);
     // Either a full clip loop (near clip end back to near clip start),
     // or a composition/work-area loop (any backward jump from >=15 frames back to near start).
@@ -352,7 +413,8 @@ export class ExactVideoFrameCache {
       }
       // Loop wrap — restart streaming at the new index instead of falling
       // back to per-frame GOP random access (which cannot keep up at 30fps).
-      if (this.isLoopWrap(presIdx, prevReq, end)) {
+      if (this.isLoopWrap(entry, presIdx, prevReq, end)) {
+        entry.lastWrapTo = presIdx;
         return this.startStream(src, entry, presIdx);
       }
       // A seek — forwards past the window or backwards scrub. Kill the stream.
@@ -362,7 +424,8 @@ export class ExactVideoFrameCache {
     }
 
     // No active stream — a loop boundary jumps straight into streaming.
-    if (this.isLoopWrap(presIdx, prevReq, end)) {
+    if (this.isLoopWrap(entry, presIdx, prevReq, end)) {
+      entry.lastWrapTo = presIdx;
       return this.startStream(src, entry, presIdx);
     }
 
@@ -546,6 +609,9 @@ export class ExactVideoFrameCache {
             ...(loaded.lastPresIndex !== undefined ? { lastPresIndex: loaded.lastPresIndex } : {}),
             lastReq: -1,
             seqRun: 0,
+            lastWrapTo: -1,
+            lastUsed: performance.now(),
+            rotation: loaded.rotation ?? 0,
           });
           this.notify(src);
         },
@@ -597,15 +663,49 @@ export class ExactVideoFrameCache {
     const w = f.displayWidth || entry.width;
     const h = f.displayHeight || entry.height;
     if (!w || !h) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
+    // Container rotation: decoder output is unrotated; the element tier
+    // rotates automatically, so this is where the tiers are made to agree.
+    const rot = entry.rotation;
+    const swap = rot === 90 || rot === 270;
+    const cw = swap ? h : w;
+    const ch = swap ? w : h;
+    const canvas = this.canvasFor(cw, ch);
     const ctx = canvas.getContext('2d');
     // jsdom has no 2D context; bookkeeping still runs so the LRU is testable.
     // Cache owns the frame — draw, never close (see ExactVideoSource header).
-    if (ctx) ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
+    if (ctx) {
+      if (rot !== 0) {
+        ctx.save();
+        ctx.translate(cw / 2, ch / 2);
+        ctx.rotate((rot * Math.PI) / 180);
+        ctx.drawImage(frame as unknown as CanvasImageSource, -w / 2, -h / 2, w, h);
+        ctx.restore();
+      } else {
+        ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
+      }
+    }
 
-    this.store(entry, presIdx, canvas, w * h * 4);
+    this.store(entry, presIdx, canvas, cw * ch * 4);
+  }
+
+  /** Recycled canvases from evicted frames. Streaming playback and export
+   *  otherwise allocate (and abandon to GC) one full-resolution canvas per
+   *  decoded frame — pure allocator churn at 30–60 canvases a second. */
+  private readonly canvasPool: HTMLCanvasElement[] = [];
+  private static readonly CANVAS_POOL_MAX = 8;
+
+  private canvasFor(w: number, h: number): HTMLCanvasElement {
+    for (let i = 0; i < this.canvasPool.length; i++) {
+      const c = this.canvasPool[i]!;
+      if (c.width === w && c.height === h) {
+        this.canvasPool.splice(i, 1);
+        return c;
+      }
+    }
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    return c;
   }
 
   /** LRU insert shared by decoded and woven frames. */
@@ -621,6 +721,9 @@ export class ExactVideoFrameCache {
       if (old) {
         entry.bytes -= old.bytes;
         entry.frames.delete(oldest);
+        if (this.canvasPool.length < ExactVideoFrameCache.CANVAS_POOL_MAX) {
+          this.canvasPool.push(old.canvas);
+        }
       }
     }
   }

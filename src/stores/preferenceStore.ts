@@ -64,8 +64,14 @@ export interface Preferences {
    * here it persists across sessions for the person who turned it on and means
    * nothing to anyone else.
    *
-   * Off by default. Export and offline renders ignore it entirely; see
-   * `@core/assets/proxy` for why that is enforced by polarity.
+   * ON by default (the optimized-media default every mature editor ships):
+   * heavy camera footage — 4K long-GOP phone video above all — cannot be
+   * frame-accurately previewed at realtime on typical hardware, and the cost
+   * of NOT proxying is broken-feeling playback, which users blame on the app.
+   * Generation still only happens where ffmpeg exists (desktop) and only for
+   * footage large enough to need it; export and offline renders ignore the
+   * flag entirely — see `@core/assets/proxy` for why that is enforced by
+   * polarity.
    */
   useProxies: boolean;
   /**
@@ -105,7 +111,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   timelineHeaderWidth: 460,
   retainOriginalSvg: true,
   showLayerBounds: true,
-  useProxies: false,
+  useProxies: true,
   libraryFavorites: [],
   effectFavorites: [],
 };
@@ -122,7 +128,19 @@ export const localStorageBackend: PreferenceBackend = {
     try {
       const raw = window.localStorage.getItem('motion-editor.preferences');
       if (!raw) return null;
-      return JSON.parse(raw) as Partial<Preferences>;
+      const parsed = JSON.parse(raw) as Partial<Preferences>;
+      // ONE-TIME migration to the proxies-on default. `write` persists the
+      // whole object, so every pre-existing profile carries useProxies:false
+      // whether or not the user ever touched the toggle — flipping only the
+      // default would strand exactly the users the change is for. The marker
+      // makes it run once; anyone who turns proxies off afterwards keeps
+      // their choice.
+      const MARKER = 'motion-editor.proxyDefaultMigrated';
+      if (parsed.useProxies === false && !window.localStorage.getItem(MARKER)) {
+        window.localStorage.setItem(MARKER, '1');
+        delete parsed.useProxies; // fall back to the (new) default: true
+      }
+      return parsed;
     } catch {
       return null;
     }

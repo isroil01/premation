@@ -337,9 +337,6 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // AnimationChanged but must NOT bump this — doing so cleared the RAM
     // preview cache on every decoded frame and playback could never warm up.
     let animRev = 0;
-    /** Bumped when the playhead loops backward so stale inexact video pixels
-     *  cached on the first pass are not blitted on the second. */
-    let playbackLoopRev = 0;
     let lastPlaybackFrame = -1;
     /** Last frame written into the RAM preview this play-through. Used to fill
      *  skipped frames when the playhead outruns rendering (the green cache bar
@@ -350,6 +347,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // sample of steady-state render speed (see renderAt).
     let lastLiveSetSig = '';
     let liveSetChangedThisRender = false;
+    /** CSS viewport size — part of the cache key (framing), set by sizeAll. */
+    let lastCssSize = '';
     const cacheVisibleClass = workspaceStyles.cacheCanvasVisible ?? 'cacheCanvasVisible';
 
     const isMediaDecodeRepaint = (nodeId?: string): boolean => {
@@ -380,9 +379,161 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       paintFaceSelection(overlay, controller, dprRef.current);
     };
 
+    /**
+     * Render one comp frame to the content canvas. `ghost` renders the same
+     * scene with a TRANSPARENT background, the same way a precomp does, so
+     * onion skins layer over each other and over the live frame instead of
+     * each one painting an opaque plate over the last.
+     *
+     * Effect-scoped (not inside render()) because the idle-caching pump also
+     * renders frames — with the identical snapshot construction, which is the
+     * whole correctness argument for caching what it renders.
+     */
+    const renderFrameAt = (t: number, ghost = false): void => {
+      const snap = {
+        ...buildSnapshot(
+          defaultSceneGraph,
+          defaultAnimation,
+          t,
+          focusRef.current,
+          overlaysRef.current,
+          controller.getView(),
+          motionBlurRef.current,
+          // rootId scopes the render to the ACTIVE composition's subtree. Without
+          // it, buildSnapshot flattens every root and draws all comps stacked on
+          // top of each other — and the preview (which DOES pass rootId) then
+          // showed a different picture than the editor. Both scope the same now.
+          {
+            ...compRef.current,
+            rootId: compRef.current.id,
+            compSizeOf,
+            // Custom views resolve to a pre-built override camera; ortho /
+            // active pass straight through (resolveViewCameraInput reads the
+            // live store, so the closure never freezes a stale view).
+            ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
+            draft3d: draft3dRef.current,
+            useProxies: useProxiesRef.current,
+            ...(ghost ? { transparent: true, backgroundPaint: undefined } : {}),
+          },
+        ),
+        // The only producer of `snapshot.roi`. Read live from the store so the
+        // region takes effect on the very next frame after the menu toggles it.
+        roi: useGuidesStore.getState().roi ?? undefined,
+        // Ortho / custom views must not be cropped to the comp rect.
+        viewIsActiveCamera: camera3dModeRef.current === 'active',
+      };
+      // Detect a live-set change (a layer crossed its in/out point this
+      // frame). That frame pays one-off costs — rasterize the new layer's
+      // texture, upload it, spin up its decoder — that say nothing about the
+      // comp's steady-state render cost, so the playback auto-quality
+      // sampler skips it (see the reportPlaybackFrame call below). Without
+      // this, a layer starting at 2s spiked the frame budget exactly at 2s,
+      // slowPlayback tripped, and the WHOLE viewport dropped to Half and
+      // stayed blurry for the 45-frame restore run — the "everything
+      // flashes and goes soft when my layer appears" report.
+      if (!ghost) {
+        const sig = snap.layers.map((l) => l.id).join('\n');
+        if (sig !== lastLiveSetSig) {
+          lastLiveSetSig = sig;
+          liveSetChangedThisRender = true;
+        }
+      }
+      backend.renderFrame(snap);
+    };
+
+    // ── Idle caching (the After Effects idle pump) ─────────────────────
+    //
+    // While the editor is PAUSED and quiet, quietly render the frames just
+    // ahead of the playhead into the RAM preview — one frame per timer slice,
+    // masked behind the cache overlay so nothing flashes on screen. Pressing
+    // play then starts on green instead of paying the first pass live. Any
+    // real render (scrub, edit, play, decode landing) bumps `renderSeq` and
+    // the pass silently stands down; a media decode still in flight ends the
+    // pass early and the decode's own repaint re-arms it.
+    const IDLE_CACHE_DELAY_MS = 1500;
+    const IDLE_CACHE_AHEAD_SEC = 5;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    let idleSliceTimer: ReturnType<typeof setTimeout> | null = null;
+    let renderSeq = 0;
+
+    const isPlayingNow = (): boolean => {
+      const s = useWorkspaceStore.getState();
+      const t = s.activeTabId ? s.tabs[s.activeTabId] : null;
+      return t?.playing === true;
+    };
+
+    const cancelIdleCache = (): void => {
+      if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
+      }
+      if (idleSliceTimer !== null) {
+        clearTimeout(idleSliceTimer);
+        idleSliceTimer = null;
+      }
+    };
+
+    const startIdlePass = (): void => {
+      idleTimer = null;
+      const b = backendRef.current;
+      if (!b || b !== backend || isPlayingNow()) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const fps = compRef.current.fps || 60;
+      const lastCompFrame = Math.max(0, Math.round((compRef.current.durationSeconds || 0) * fps) - 1);
+      let f = Math.min(Math.round(timeRef.current * fps) + 1, lastCompFrame);
+      const endFrame = Math.min(f + Math.round(fps * IDLE_CACHE_AHEAD_SEC), lastCompFrame);
+      if (f > endFrame) return;
+      const cacheCanvas = cacheCanvasRef?.current;
+      if (!cacheCanvas) return;
+      // Mask: hold the CURRENT picture on the overlay while future frames
+      // render invisibly beneath it.
+      if (cacheCanvas.width !== content.width || cacheCanvas.height !== content.height) {
+        cacheCanvas.width = content.width;
+        cacheCanvas.height = content.height;
+      }
+      const mctx = cacheCanvas.getContext('2d');
+      if (!mctx) return;
+      mctx.clearRect(0, 0, cacheCanvas.width, cacheCanvas.height);
+      mctx.drawImage(content, 0, 0);
+      cacheCanvas.classList.add(cacheVisibleClass);
+
+      const seqAtStart = renderSeq;
+      const finish = (): void => {
+        idleSliceTimer = null;
+        // Restore the live picture unless something else already rendered
+        // (a real render unmasks and repaints on its own).
+        if (renderSeq === seqAtStart && !isPlayingNow()) render();
+      };
+      const slice = (): void => {
+        idleSliceTimer = null;
+        if (renderSeq !== seqAtStart || isPlayingNow() || backendRef.current !== backend) return;
+        while (f <= endFrame && viewportFrameCache.get(f)) f += 1;
+        if (f > endFrame) {
+          finish();
+          return;
+        }
+        renderFrameAt(f / fps);
+        if (b.lastFrameMediaExact?.() !== false) {
+          viewportFrameCache.put(f, content);
+          f += 1;
+          idleSliceTimer = setTimeout(slice, 0);
+        } else {
+          // Media still decoding — its landing repaints, which re-arms the pump.
+          finish();
+        }
+      };
+      idleSliceTimer = setTimeout(slice, 0);
+    };
+
+    const armIdleCache = (): void => {
+      cancelIdleCache();
+      idleTimer = setTimeout(startIdlePass, IDLE_CACHE_DELAY_MS);
+    };
+
     const render = (): void => {
       const b = backendRef.current;
       if (!b) return;
+      renderSeq += 1;
 
       // ── RAM preview ────────────────────────────────────────────────
       //
@@ -403,8 +554,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const fps = compRef.current.fps || 60;
       const frame = Math.round(timeRef.current * fps);
       if (playing) {
+        // Loop wrap: only reset the catch-up cursor. The RAM/disk caches
+        // SURVIVE the wrap — that is their entire purpose ("the second pass
+        // over a heavy comp plays at full rate"). Stale-video poisoning, the
+        // reason a wrap used to wipe everything, is prevented at the source:
+        // frames rendered with unsettled media never enter the cache at all
+        // (see the lastFrameMediaExact gate below).
         if (lastPlaybackFrame >= 0 && frame < lastPlaybackFrame) {
-          playbackLoopRev += 1;
           lastPlaybackPutFrame = -1;
         }
         lastPlaybackFrame = frame;
@@ -435,12 +591,17 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const contentKey = memoizedSceneContentHash(
         defaultSceneGraph, defaultAnimation, sceneRevRef.current, animRev,
       );
+      // NOTE: adaptive/preview RESOLUTION is deliberately absent — it changes
+      // quality, not content, and including it wiped the whole RAM+disk
+      // preview twice per adaptive flip (degrade AND restore), so the green
+      // bar could never complete on exactly the comps that need the cache
+      // most. Cached frames keep whatever resolution they were rendered at,
+      // like After Effects. CSS size IS included: it changes framing.
       const invalidationKey = [
         contentKey, focusKeyRef.current,
         compRef.current.id, compRef.current.width, compRef.current.height, fps,
-        playbackLoopRev,
         camera3dModeRef.current, draft3dRef.current ? 1 : 0,
-        useRenderQualityStore.getState().effectiveResolution(),
+        lastCssSize,
         view.scale, view.offsetX, view.offsetY,
         ov.rulers ? 1 : 0, ov.grid ? 1 : 0, ov.gridSpacing, ov.gridSubdivisions, ov.gridStyle, ov.gridColor, ov.proportionalGrid ? 1 : 0, ov.proportionalColumns, ov.proportionalRows, ov.safeArea ? 1 : 0,
         mb.enabled ? 1 : 0, mb.shutterAngle, mb.shutterPhase, mb.samples, mb.adaptiveSampleLimit,
@@ -465,6 +626,14 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             ctx.drawImage(hit, 0, 0);
             cacheCanvas.classList.add(cacheVisibleClass);
             lastPlaybackPutFrame = frame;
+            // Blits bypass renderFrame, so nothing else drives the playback
+            // video elements — keep them tracking the playhead or the next
+            // cache miss pays a hard mid-GOP seek (a visibly frozen picture).
+            // The second argument tells the provider where this green span
+            // ENDS, so a decoder that can't sustain realtime is parked there,
+            // decoded and ready, instead of chasing a playhead whose frames
+            // are already cached.
+            b.syncPlaybackVideo?.(frame / fps, viewportFrameCache.contiguousEnd(frame) / fps);
             renderCache.mark(timeRef.current);
             paintChrome();
             return;
@@ -474,60 +643,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Anything that renders for real must reveal the live canvas again.
       cacheCanvasRef?.current?.classList.remove(cacheVisibleClass);
 
-      // `ghost` renders the same scene with a TRANSPARENT background, the same
-      // way a precomp does, so onion skins layer over each other and over the
-      // live frame instead of each one painting an opaque plate over the last.
-      const renderAt = (t: number, ghost = false): void => {
-        const snap = {
-          ...buildSnapshot(
-            defaultSceneGraph,
-            defaultAnimation,
-            t,
-            focusRef.current,
-            overlaysRef.current,
-            controller.getView(),
-            motionBlurRef.current,
-            // rootId scopes the render to the ACTIVE composition's subtree. Without
-            // it, buildSnapshot flattens every root and draws all comps stacked on
-            // top of each other — and the preview (which DOES pass rootId) then
-            // showed a different picture than the editor. Both scope the same now.
-            {
-              ...compRef.current,
-              rootId: compRef.current.id,
-              compSizeOf,
-              // Custom views resolve to a pre-built override camera; ortho /
-              // active pass straight through (resolveViewCameraInput reads the
-              // live store, so the closure never freezes a stale view).
-              ...resolveViewCameraInput(compRef.current.width, compRef.current.height, camera3dModeRef.current),
-              draft3d: draft3dRef.current,
-              useProxies: useProxiesRef.current,
-              ...(ghost ? { transparent: true, backgroundPaint: undefined } : {}),
-            },
-          ),
-          // The only producer of `snapshot.roi`. Read live from the store so the
-          // region takes effect on the very next frame after the menu toggles it.
-          roi: useGuidesStore.getState().roi ?? undefined,
-          // Ortho / custom views must not be cropped to the comp rect.
-          viewIsActiveCamera: camera3dModeRef.current === 'active',
-        };
-        // Detect a live-set change (a layer crossed its in/out point this
-        // frame). That frame pays one-off costs — rasterize the new layer's
-        // texture, upload it, spin up its decoder — that say nothing about the
-        // comp's steady-state render cost, so the playback auto-quality
-        // sampler skips it (see the reportPlaybackFrame call below). Without
-        // this, a layer starting at 2s spiked the frame budget exactly at 2s,
-        // slowPlayback tripped, and the WHOLE viewport dropped to Half and
-        // stayed blurry for the 45-frame restore run — the "everything
-        // flashes and goes soft when my layer appears" report.
-        if (!ghost) {
-          const sig = snap.layers.map((l) => l.id).join('\n');
-          if (sig !== lastLiveSetSig) {
-            lastLiveSetSig = sig;
-            liveSetChangedThisRender = true;
-          }
-        }
-        b.renderFrame(snap);
-      };
+      // Renders one frame of the comp — hoisted to `renderFrameAt` at effect
+      // scope so the idle-caching pump can render ahead with the exact same
+      // snapshot construction. This local alias keeps the onion painter's
+      // (t, ghost) callback signature.
+      const renderAt = (t: number, ghost = false): void => renderFrameAt(t, ghost);
 
       // ── Onion skins ────────────────────────────────────────────────
       //
@@ -542,19 +662,27 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       onionPainter.paint(renderAt, frame, fps, playing, invalidationKey);
 
       if (playing) {
-        // Catch up any frames the playhead skipped while the last render was
-        // still in flight — otherwise the cache bar shows one green dot per
-        // cached frame with gaps between them.
+        // Catch up SMALL gaps the playhead skipped while the last render was
+        // in flight, so the cache bar stays contiguous. Large gaps mean the
+        // comp is behind realtime — rendering every missed frame then made a
+        // stall WORSE (up to 15 full comp renders in one tick, only the last
+        // ever displayed) and, divided out below, hid the overload from the
+        // adaptive-quality sampler exactly when it was needed. Behind by more
+        // than the small gap: render only the current frame and let the next
+        // loop pass fill the cache.
         const catchFrom = lastPlaybackPutFrame >= 0 ? lastPlaybackPutFrame + 1 : frame;
-        const maxCatchUp = 15;
+        const maxCatchUp = 3;
         const from = catchFrom <= frame && frame - catchFrom + 1 > maxCatchUp
-          ? frame - maxCatchUp + 1
+          ? frame
           : catchFrom;
         const renderStart = performance.now();
         liveSetChangedThisRender = false;
         for (let f = from; f <= frame; f++) {
           renderAt(f / fps);
-          viewportFrameCache.put(f, content);
+          // Frames holding stand-in video pixels (element mid-seek at a loop
+          // wrap, a decode still warming) must not be cached — they would
+          // replay their stale pixels on every later pass.
+          if (b.lastFrameMediaExact?.() !== false) viewportFrameCache.put(f, content);
         }
         lastPlaybackPutFrame = frame;
         // Adaptive Resolution for PLAYBACK: a heavy comp's first pass renders
@@ -597,6 +725,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
       renderCache.mark(timeRef.current);
       paintChrome();
+      // Idle pump: paused and settled → start extending the green bar; any
+      // state where frames stream (playback) keeps it cancelled.
+      if (playing) cancelIdleCache();
+      else armIdleCache();
     };
     const disposeRender = controller.onRender(render);
 
@@ -609,6 +741,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // Skip degenerate layouts (0×0 during mount/transition) so we never poison
       // the engine viewport to 1×1 or waste the one-shot fit-to-composition.
       if (rect.width < 1 || rect.height < 1) return;
+      // CSS viewport size, for the frame-cache invalidation key: a changed
+      // CSS size changes FRAMING (cached frames would be wrong), while a
+      // changed device-pixel density (adaptive resolution) only changes
+      // QUALITY and must NOT wipe the cache.
+      lastCssSize = `${Math.round(rect.width)}x${Math.round(rect.height)}`;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       dprRef.current = dpr;
       // Preview resolution (Full/Half/Third/Quarter) scales only the CONTENT
@@ -751,6 +888,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
     return () => {
       readyCancelled = true;
+      cancelIdleCache();
       cancelAnimationFrame(raf);
       clearTimeout(settleTimer);
       window.removeEventListener('resize', sizeAll);
