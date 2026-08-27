@@ -40,6 +40,11 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   const animated = hasPositionAnimation(nodeId);
   // "Towards Camera" only means anything for a layer that lives in 3D space.
   const canFaceCamera = canBe3D(node) && is3DEnabled(node);
+  // Along Path is applied only for 2D layers today (buildSnapshot gates on
+  // !is3D). Offering it on 3D looked live and changed nothing — same class of
+  // bug as cameras/nulls. Keep the option visible if already set so the user
+  // can switch Off / Towards Camera.
+  const showAlongPath = !is3DEnabled(node) || autoOrient === 'path';
   // ...and Auto-Orient as a whole only means anything for a kind the drawn-layer
   // loop actually reaches. On a camera, light, null, group or audio layer both
   // readers are skipped before they run, so the dropdown wrote a value nothing
@@ -67,7 +72,11 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             aria-label="Auto-orient"
           >
             <option value="off">Off</option>
-            <option value="path">Along Path</option>
+            {showAlongPath && (
+              <option value="path" title={is3DEnabled(node) ? 'Along Path currently affects 2D layers only' : undefined}>
+                Along Path{is3DEnabled(node) ? ' (2D only)' : ''}
+              </option>
+            )}
             {/* AE's per-layer, opt-in billboard. Hidden for 2D layers because
                 facing a camera is meaningless outside 3D space. */}
             {canFaceCamera && <option value="camera">Towards Camera</option>}

@@ -157,7 +157,6 @@ function IconInner({
     maxWidth: computedSize,
     maxHeight: computedSize,
     flexShrink: 0,
-    color: 'currentColor',
     lineHeight: 1,
     verticalAlign: 'middle',
     overflow: 'hidden',

@@ -16,6 +16,7 @@ import {
   effectDisplayNames,
   effectParam,
   resetEffectParams,
+  setEffectLabelColor,
   updateEffectParam,
   primaryParamKey,
   type Effect,
@@ -124,5 +125,35 @@ describe('resetEffectParams', () => {
     updateEffectParam(nodeId, first.id, key, 77);
     resetEffectParams(nodeId, 'not-an-effect');
     expect(effectParam(getNodeEffects(nodeId)[0]!, key)).toBe(77);
+  });
+
+  it('keeps the effect label colour across a Reset', () => {
+    const { nodeId, first, key } = setup();
+    setEffectLabelColor(nodeId, first.id, '#5282b8');
+    updateEffectParam(nodeId, first.id, key, 88);
+    resetEffectParams(nodeId, first.id);
+    expect(getNodeEffects(nodeId)[0]!.labelColor).toBe('#5282b8');
+    expect(effectParam(getNodeEffects(nodeId)[0]!, key)).toBe(defOf('glow').params.find((p) => p.key === key)!.default);
+  });
+});
+
+describe('setEffectLabelColor', () => {
+  it('sets and clears labelColor on one effect', () => {
+    addEffect('L', 'blur');
+    const id = getNodeEffects('L')[0]!.id;
+    setEffectLabelColor('L', id, '#4ea885');
+    expect(getNodeEffects('L')[0]!.labelColor).toBe('#4ea885');
+    setEffectLabelColor('L', id, undefined);
+    expect(getNodeEffects('L')[0]!.labelColor).toBeUndefined();
+  });
+
+  it('does not touch sibling effects', () => {
+    addEffect('L', 'blur');
+    addEffect('L', 'glow');
+    const [a, b] = getNodeEffects('L');
+    setEffectLabelColor('L', a!.id, '#d0705a');
+    expect(getNodeEffects('L')[0]!.labelColor).toBe('#d0705a');
+    expect(getNodeEffects('L')[1]!.labelColor).toBeUndefined();
+    expect(b!.id).toBe(getNodeEffects('L')[1]!.id);
   });
 });

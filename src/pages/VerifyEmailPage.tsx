@@ -106,12 +106,12 @@ export function VerifyEmailPage(): JSX.Element {
             <input
               ref={inputRef}
               id="code"
-              className={styles.input}
+              className={`${styles.input} ${styles.codeInput}`}
               inputMode="numeric"
               autoComplete="one-time-code"
               pattern="[0-9]*"
               maxLength={6}
-              placeholder="123456"
+              placeholder="000000"
               value={code}
               onChange={(e) => {
                 // Digits only, capped at 6 — the field can never hold a non-code.
@@ -142,7 +142,6 @@ export function VerifyEmailPage(): JSX.Element {
           >
             {cooldown > 0 ? `Resend code in ${cooldown}s` : 'Resend code'}
           </button>
-          {' · '}
           <button type="button" className={styles.link} onClick={() => logout()}>
             Sign out
           </button>

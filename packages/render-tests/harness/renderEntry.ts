@@ -108,7 +108,23 @@ function readCanvasRGBA(canvas: HTMLCanvasElement, kind: 'webgl2' | 'webgpu' | '
     const sctx = scratch.getContext('2d')!;
     sctx.drawImage(canvas, 0, 0);
     const img = sctx.getImageData(0, 0, w, h);
-    return { width: w, height: h, data: new Uint8Array(img.data.buffer.slice(0)) };
+    const data = new Uint8Array(img.data.buffer.slice(0));
+    // RE-PREMULTIPLY (alpha untouched): getImageData is STRAIGHT alpha by
+    // spec, while the WebGL2 branch's readPixels returns PREMULTIPLIED bytes
+    // — the convention every reference was blessed in. On any FRACTIONAL-
+    // alpha pixel the two backends' PNGs therefore disagreed by exactly the
+    // un-premultiply; the whole stencil-luma / silhouette-luma /
+    // alpha-add-seam "divergence" was this readback mismatch, not the
+    // renderer (probed: the blend's inputs and outputs match bit-for-bit).
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3]!;
+      if (a < 255) {
+        data[i] = Math.round((data[i]! * a) / 255);
+        data[i + 1] = Math.round((data[i + 1]! * a) / 255);
+        data[i + 2] = Math.round((data[i + 2]! * a) / 255);
+      }
+    }
+    return { width: w, height: h, data };
   }
   if (kind === 'webgl2') {
     // GPU backends: read the drawing buffer directly (no preserveDrawingBuffer
@@ -123,6 +139,9 @@ function readCanvasRGBA(canvas: HTMLCanvasElement, kind: 'webgl2' | 'webgpu' | '
       const src = (h - 1 - y) * rowBytes;
       flipped.set(raw.subarray(src, src + rowBytes), y * rowBytes);
     }
+    // Bytes are PREMULTIPLIED with true alpha — the convention every
+    // reference is blessed in; the WebGPU branch converts its straight-alpha
+    // getImageData read to match this form.
     return { width: w, height: h, data: flipped };
   }
   // 'null' and anything else: NullBackend produces no pixels, so there is no
@@ -231,6 +250,23 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
     announcedBackend = true;
 
     console.log(`[harness] backend resolved: asked ${backend}, running ${be.resolvedKind}`);
+    // One-time capability report: whether THIS environment can allocate float
+    // render targets decides whether compositing runs linear (the product
+    // contract) or falls back to display-referred 8-bit — which is the root of
+    // the additive-family webgpu-vs-webgl2 divergences. Saying it out loud in
+    // the log turns "80 scenes diverge, cause unknown" into a one-line fact.
+    if (!(globalThis as Record<string, unknown>).__capsReported) {
+      (globalThis as Record<string, unknown>).__capsReported = true;
+      try {
+        const probe = document.createElement('canvas');
+        const gl = probe.getContext('webgl2');
+        console.log(
+          `[harness] webgl2 EXT_color_buffer_float: ${gl ? !!gl.getExtension('EXT_color_buffer_float') : 'no-context'}`,
+        );
+      } catch {
+        console.log('[harness] webgl2 EXT_color_buffer_float: probe failed');
+      }
+    }
   }
 
   try {

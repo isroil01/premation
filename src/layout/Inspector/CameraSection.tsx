@@ -49,6 +49,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
   const [focusRaw, setFocusDistance] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'focusDistance');
   const [apertureRaw, setAperture] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'dofAperture');
   const [fStopRaw, setFStop] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'fStop');
+  const [irisBladesRaw, setIrisBlades] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'irisBlades');
+  const [irisRoundnessRaw, setIrisRoundness] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'irisRoundness');
+  const [highlightGainRaw, setHighlightGain] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'highlightGain');
   const [poiXRaw, setPoiX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiX');
   const [poiYRaw, setPoiY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiY');
   const [poiZRaw, setPoiZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiZ');
@@ -247,6 +250,45 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                 ? 'Thin-lens defocus: the foreground blurs harder than the background, distant layers stop getting blurrier, and focal length now affects depth of field.'
                 : 'Leave at 0 for the classic ramp — symmetric, and it ignores focal length. Set an f-number for physical lens defocus.'}
             </p>
+            <KeyframeRow
+              nodeId={nodeId}
+              prop="irisBlades"
+              label="Iris blades"
+              value={typeof irisBladesRaw === 'number' ? irisBladesRaw : 0}
+              min={0}
+              max={11}
+              onStatic={(v) => setIrisBlades(v < 3 ? undefined : Math.round(v))}
+            />
+            {typeof irisBladesRaw === 'number' && irisBladesRaw >= 3 && (
+              <>
+                <KeyframeRow
+                  nodeId={nodeId}
+                  prop="irisRoundness"
+                  label="Iris roundness"
+                  value={typeof irisRoundnessRaw === 'number' ? irisRoundnessRaw : 0.65}
+                  min={0}
+                  max={1}
+                  onStatic={(v) => setIrisRoundness(v)}
+                />
+                <KeyframeRow
+                  nodeId={nodeId}
+                  prop="highlightGain"
+                  label="Highlight gain"
+                  value={typeof highlightGainRaw === 'number' ? highlightGainRaw : 0}
+                  min={0}
+                  max={4}
+                  onStatic={(v) => setHighlightGain(v <= 0 ? undefined : v)}
+                />
+                <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                  Polygonal bokeh (5–11 blades). Roundness 1 ≈ circle; highlight gain blooms speculars in the defocus.
+                </p>
+              </>
+            )}
+            {!(typeof irisBladesRaw === 'number' && irisBladesRaw >= 3) && (
+              <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                Leave blades at 0 for a Gaussian blur. Set 5–11 for an iris-shaped bokeh.
+              </p>
+            )}
           </>
         )}
 

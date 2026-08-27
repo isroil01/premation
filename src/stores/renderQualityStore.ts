@@ -38,9 +38,17 @@ export const RESOLUTION_PERCENT: Record<PreviewResolution, string> = {
  * While the user is DRAGGING (a gizmo, the playhead, a value field) the
  * picture is a moving target nobody inspects closely; when they let go it is
  * the thing they look at. So the viewport renders at `adaptiveFloor` during a
- * drag and snaps back to `resolution` on release. A manual Half/Quarter still
- * wins when it is already coarser than the floor — the user asked for less,
- * and adapting must never give them more than they chose.
+ * drag — but ONLY when interactive rendering is actually over budget
+ * (`slowInteract`, measured the same way `slowPlayback` is). Degrading
+ * unconditionally traded away quality nobody needed to lose: on a comp that
+ * renders in 4ms, every drag still blurred the whole stage and thinned the
+ * grid to nothing, which read as a rendering bug rather than as help. Now a
+ * light comp drags at full quality and a heavy one degrades within a few
+ * frames — the AE behaviour this feature was named after.
+ *
+ * A manual Half/Quarter still wins when it is already coarser than the floor —
+ * the user asked for less, and adapting must never give them more than they
+ * chose.
  *
  * `interacting` is set by the UI store's drag flag (see `bindAdaptiveResolution`)
  * rather than by every pointer handler individually, because the drag flag is
@@ -57,6 +65,13 @@ interface RenderQualityStore {
   adaptiveFloor: AdaptiveFloor;
   /** True while a drag is in flight. Driven, not user-set. */
   interacting: boolean;
+  /**
+   * True while INTERACTIVE rendering cannot keep up — same hysteresis as
+   * `slowPlayback`, fed by `reportInteractFrame` from the viewport's render
+   * loop during drags. Sticky across drags (a heavy comp stays heavy between
+   * grabs); restored by a run of cheap interactive frames. Driven, not user-set.
+   */
+  slowInteract: boolean;
   /**
    * True while PLAYBACK cannot keep up — the viewport's render loop reports
    * each frame's cost, and a run of frames over budget flips this on; a run
@@ -80,6 +95,12 @@ interface RenderQualityStore {
    */
   reportPlaybackFrame: (ms: number, budgetMs: number) => void;
   /**
+   * Report one rendered frame's cost during a DRAG (not playing). Flips
+   * `slowInteract` by the same hysteresis `reportPlaybackFrame` uses, so a
+   * single hitch neither drops quality nor restores it.
+   */
+  reportInteractFrame: (ms: number, budgetMs: number) => void;
+  /**
    * What the viewport should render at RIGHT NOW — the one value renderers
    * read. `resolution` is what the user chose; this is that, degraded while a
    * drag is in flight.
@@ -90,9 +111,11 @@ interface RenderQualityStore {
 }
 
 export function effectiveResolutionOf(s: {
-  resolution: PreviewResolution; adaptive: boolean; adaptiveFloor: AdaptiveFloor; interacting: boolean; slowPlayback?: boolean;
+  resolution: PreviewResolution; adaptive: boolean; adaptiveFloor: AdaptiveFloor; interacting: boolean; slowPlayback?: boolean; slowInteract?: boolean;
 }): PreviewResolution {
-  if (!s.adaptive || !(s.interacting || s.slowPlayback)) return s.resolution;
+  // A drag degrades only when interactive rendering is measured slow — a drag
+  // on a comp that renders inside budget keeps full quality.
+  if (!s.adaptive || !((s.interacting && s.slowInteract) || s.slowPlayback)) return s.resolution;
   return Math.max(s.resolution, s.adaptiveFloor) as PreviewResolution;
 }
 
@@ -101,6 +124,12 @@ const SLOW_FRAMES_TO_DEGRADE = 3;
 const FAST_FRAMES_TO_RESTORE = 45;
 let overBudget = 0;
 let underBudget = 0;
+/** Separate counters for the interact path — a slow drag frame must not be
+ *  cancelled out by a fast playback frame or vice versa. */
+const INTERACT_SLOW_TO_DEGRADE = 2;
+const INTERACT_FAST_TO_RESTORE = 30;
+let interactOver = 0;
+let interactUnder = 0;
 
 export const useRenderQualityStore = create<RenderQualityStore>((set, get) => ({
   draft: false,
@@ -108,6 +137,7 @@ export const useRenderQualityStore = create<RenderQualityStore>((set, get) => ({
   adaptive: true,
   adaptiveFloor: 2,
   interacting: false,
+  slowInteract: false,
   slowPlayback: false,
   setDraft: (v) => set({ draft: v }),
   toggle: () => set((s) => ({ draft: !s.draft })),
@@ -138,6 +168,23 @@ export const useRenderQualityStore = create<RenderQualityStore>((set, get) => ({
       // whatever the comp can actually sustain.
       underBudget = 0;
       set({ slowPlayback: false });
+    }
+  },
+  reportInteractFrame: (ms, budgetMs) => {
+    const s = get();
+    if (!s.adaptive) return;
+    if (ms > budgetMs) { interactOver++; interactUnder = 0; }
+    else { interactUnder++; interactOver = 0; }
+    if (!s.slowInteract && interactOver >= INTERACT_SLOW_TO_DEGRADE) {
+      interactOver = 0;
+      set({ slowInteract: true });
+    } else if (s.slowInteract && interactUnder >= INTERACT_FAST_TO_RESTORE) {
+      // Restore cautiously for the same reason as playback: at the degraded
+      // size interactive frames are cheap, so a long run is the only real
+      // evidence the comp got lighter. Sticky across drags on purpose — a
+      // heavy comp should not pay two janky frames at the start of every grab.
+      interactUnder = 0;
+      set({ slowInteract: false });
     }
   },
   effectiveResolution: () => effectiveResolutionOf(get()),

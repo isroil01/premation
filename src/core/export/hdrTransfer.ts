@@ -175,3 +175,57 @@ export function x265HdrParams(transfer: HdrTransfer, stats: HdrMasteringStats): 
     `:master-display=${md}:max-cll=${stats.maxCll},${stats.maxFall}`
   );
 }
+
+/**
+ * Pre-export copy for HDR10/HLG: what the host ffmpeg can actually deliver.
+ * `libx265 === null` means the probe is still in flight (or unavailable in web).
+ */
+export function formatHdrCapabilityNote(libx265: boolean | null): string {
+  if (libx265 === null) {
+    return 'Checking host ffmpeg for HEVC (libx265)…';
+  }
+  if (libx265) {
+    return 'Will encode HEVC 10-bit (libx265) with MaxCLL / MaxFALL mastering metadata.';
+  }
+  return (
+    'Host ffmpeg has no libx265. Will encode H.264 High 10 with BT.2020 colour tags — '
+    + 'MaxCLL / MaxFALL SEI requires HEVC. Install an ffmpeg build with libx265 for full HDR10.'
+  );
+}
+
+/** Post-export toast fragment: codec + measured light levels when present. */
+export function formatHdrExportDoneNote(
+  videoCodec: string | undefined,
+  mastering?: Pick<HdrMasteringStats, 'maxCll' | 'maxFall'> | null,
+): string {
+  const codec =
+    videoCodec === 'libx265' ? 'HEVC / libx265'
+      : videoCodec === 'libx264' ? 'H.264 10-bit (no libx265)'
+        : videoCodec ?? '';
+  const levels = mastering
+    ? ` · MaxCLL ${mastering.maxCll} · MaxFALL ${mastering.maxFall}`
+    : '';
+  if (!codec && !levels) return '';
+  return codec ? ` (${codec}${levels})` : ` (${levels.trim()})`;
+}
+
+/**
+ * HDR10/HLG export bakes PQ/HLG in {@link canvasWithHdrTransfer}. The viewport
+ * ODT must not already be PQ/HLG or the signal is double-encoded. Callers wrap
+ * the offline render in this helper so Comp Settings preview ODT stays for
+ * interactive work only.
+ */
+export async function withNeutralDisplayForHdrEncode<T>(
+  run: () => Promise<T>,
+  setDisplay: (v: 'srgb' | 'aces' | 'pq' | 'hlg') => void,
+  getDisplay: () => 'srgb' | 'aces' | 'pq' | 'hlg',
+): Promise<T> {
+  const prev = getDisplay();
+  if (prev !== 'pq' && prev !== 'hlg') return run();
+  setDisplay('srgb');
+  try {
+    return await run();
+  } finally {
+    setDisplay(prev);
+  }
+}

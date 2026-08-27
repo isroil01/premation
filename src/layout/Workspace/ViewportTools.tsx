@@ -187,7 +187,9 @@ export function ViewportTools(): JSX.Element {
       {hasAnyAnim && !hasPositionAnim && (
         <div className={styles.group}>
           <span className={styles.animatedChip} title="This layer has keyframes (twirl it open in the timeline)">
-            <Icon name="stopwatch" size="sm" />
+            {/* `keyframe`, not `stopwatch` — Auto-Keyframe beside this already
+                owns the stopwatch glyph in the same tool row. */}
+            <Icon name="keyframe" size="sm" />
             Animated
           </span>
           <span className={styles.sep} />

@@ -37,7 +37,7 @@
    * unable to disagree.
    */
   --tl-col-gap: var(--space-2);
-  --tl-col-name: 134px;
+  --tl-col-name: 190px;
   /* 7 switches × 22px + 6 gaps × 4px — shy, fx, motion blur, adjustment,
      guide, preserve-underlying-transparency, 3D. It was 126px back when there
      were six, so the switches OVERFLOWED their own column by 26px and, being
@@ -117,7 +117,7 @@
 .ruler {
   position: relative;
   border-bottom: 1px solid #141414;
-  background: #282828;
+  background: var(--color-ruler-bg, #141414);
   flex: none;
   overflow: hidden;
 }
@@ -177,15 +177,15 @@
 .clip {
   position: absolute;
   top: 3px;
-  border-radius: 2px;
+  border-radius: 4px;
   border: none;
   overflow: hidden;
   cursor: pointer;
   display: flex;
   align-items: center;
   padding: 0 var(--space-2) 0 calc(var(--space-2) + 3px);
-  transition: filter var(--motion-duration-fast) var(--motion-ease-standard);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: filter var(--motion-duration-fast) var(--motion-ease-standard), box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
 /* AE-style left-edge label strip on every clip */
@@ -195,20 +195,21 @@
   left: 0;
   top: 0;
   bottom: 0;
-  width: 3px;
-  background: rgba(255, 255, 255, 0.4);
-  opacity: 0.9;
+  width: 3.5px;
+  background: rgba(255, 255, 255, 0.45);
+  opacity: 0.95;
 }
 
 .clip:hover {
-  filter: brightness(1.12);
+  filter: brightness(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
 
 .clipLabel {
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -254,35 +255,35 @@
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 10px;
   cursor: ew-resize;
   z-index: 3;
   transition: background-color 100ms ease, opacity 100ms ease;
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
 .clipHandle[data-edge='start'] {
   left: 0;
-  border-left: 2px solid rgba(255, 255, 255, 0.6);
-  border-top-left-radius: 2px;
-  border-bottom-left-radius: 2px;
+  border-left: 2.5px solid rgba(255, 255, 255, 0.7);
+  border-top-left-radius: 3px;
+  border-bottom-left-radius: 3px;
 }
 
 .clipHandle[data-edge='end'] {
   right: 0;
-  border-right: 2px solid rgba(255, 255, 255, 0.6);
-  border-top-right-radius: 2px;
-  border-bottom-right-radius: 2px;
+  border-right: 2.5px solid rgba(255, 255, 255, 0.7);
+  border-top-right-radius: 3px;
+  border-bottom-right-radius: 3px;
 }
 
 .clip:hover .clipHandle {
   opacity: 1;
-  background-color: rgba(255, 255, 255, 0.15);
+  background-color: rgba(255, 255, 255, 0.18);
 }
 
 .clipHandle:hover {
   opacity: 1;
-  background-color: rgba(255, 255, 255, 0.35) !important;
+  background-color: rgba(255, 255, 255, 0.38) !important;
 }
 
 /* Animation duration bar — AE uses a flat tinted bar, no border. */
@@ -406,14 +407,14 @@
 .keyframe::before {
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: -8px;
   cursor: grab;
 }
 
 .keyframe:hover {
-  transform: translate(-50%, -50%) scale(1.3);
+  transform: translate(-50%, -50%) scale(1.25);
   cursor: grab;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--color-primary) 65%, transparent));
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 70%, transparent));
 }
 
 .keyframe:hover .keyframeGlyph path {
@@ -544,20 +545,20 @@
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-  border-bottom: 1px solid #161616;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   cursor: pointer;
-  background: #212121;
+  background: #202020;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   min-width: max-content;
   box-sizing: border-box;
 }
 
 .trackHeader:hover {
-  background: #2a2a2a;
+  background: #272727;
 }
 
 .trackHeaderSelected {
-  background: #2b3949;
+  background: #233244;
 }
 
 .trackHeaderSelected::after {
@@ -567,7 +568,7 @@
   top: 0;
   bottom: 0;
   width: 3px;
-  background: #3ea0ff;
+  background: var(--color-primary, #3ea0ff);
 }
 
 /* Fixed width, matching `.colHeadLayer` — the pair is what keeps every column
@@ -640,15 +641,24 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
+  height: 22px;
 }
 
+/**
+ * Letter switches (fx, T) share the same 22px cell as the icon switches.
+ * Sized off `--icon-size-sm` (~72%) so they sit in the same optical band as
+ * the 15px row glyphs — not `--font-size-sm`, which made "fx" / "T" look
+ * larger than every icon beside them.
+ */
 .fxText {
-  font-size: var(--font-size-xs);
+  font-size: calc(var(--icon-size-sm) * 0.72);
   font-weight: var(--font-weight-bold);
   font-style: italic;
   font-family: var(--font-family-sans);
   line-height: 1;
   letter-spacing: -0.02em;
+  display: block;
+  text-align: center;
 }
 
 .timelineSelectTrigger {
@@ -724,15 +734,24 @@
 }
 
 .colHeadPreInfo {
-  width: 72px;
+  width: 76px;
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   gap: 3px;
   color: #a0a0a0;
+  height: 22px;
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--color-border);
 }
 
+/**
+ * One switch legend cell — same 22×22 slot as `.trackAction` on the rows.
+ * Icons and letter glyphs (fx / T) both centre in this box so the legend
+ * and the switches below share one visual grid.
+ */
 .colHeadItem {
   width: 22px;
   height: 22px;
@@ -740,20 +759,75 @@
   align-items: center;
   justify-content: center;
   flex: none;
+  line-height: 0;
+  color: inherit;
+}
+
+.colHeadItem > * {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 /* Fixed, not `flex: 1` — see the column model on `.root`. Flex resolved this to
    99px here against 134px on the row, because the two containers' intrinsic
-   widths differ under `min-width: max-content`. */
+   widths differ under `min-width: max-content`.
+ *
+ * Label size (`--font-size-md`, 13px), not tiny (`xs` 11px): this title sits
+ * in the same 22px strip as the 15px eye / lock / pop-out glyphs, and 11px
+ * next to those reads as a caption glued to oversized chrome. Line-height
+ * matches `--icon-size-sm` so the text box and the icon box share a centre. */
 .colHeadLayer {
   width: var(--tl-col-name);
   flex: none;
-  text-align: left;
-  font-size: var(--font-size-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  font-size: var(--font-size-md);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   padding-left: 0;
   overflow: hidden;
+  line-height: var(--icon-size-sm);
+  white-space: nowrap;
+}
+
+.colHeadIndex {
+  flex: none;
+  color: #888888;
+  font-size: var(--font-size-md);
+  line-height: var(--icon-size-sm);
+}
+
+.colHeadLayerLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.colHeadPopOut {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  line-height: 0;
+}
+
+.colHeadPopOut:hover {
+  color: #ffffff;
 }
 
 .colHeadAeSwitches {
@@ -763,40 +837,53 @@
   align-items: center;
   justify-content: center;
   gap: 4px;
-  font-size: var(--font-size-xs);
+  height: 22px;
+  font-size: var(--font-size-md);
   color: #a0a0a0;
   font-weight: var(--font-weight-medium);
 }
 
-/* Matches `.modeCol` exactly — same width, same divider, same spacing. */
+/* Matches `.modeCol` exactly — same width, same divider, same spacing.
+   Same type size as Source Name so the whole legend strip is one scale. */
 .colHeadMode {
   width: 76px;
   flex: none;
-  text-align: left;
-  font-size: var(--font-size-xs);
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  font-size: var(--font-size-md);
   color: #a0a0a0;
   font-weight: var(--font-weight-medium);
   margin-left: var(--tl-col-divider-space);
   padding-left: var(--tl-col-divider-space);
   border-left: 1px solid var(--color-border);
+  line-height: var(--icon-size-sm);
+  white-space: nowrap;
 }
 
 .colHeadMatte {
   width: 60px;
   flex: none;
-  text-align: left;
-  font-size: var(--font-size-xs);
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  font-size: var(--font-size-md);
   color: #a0a0a0;
   font-weight: var(--font-weight-medium);
+  line-height: var(--icon-size-sm);
 }
 
 .colHeadParent {
   width: 110px;
   flex: none;
-  text-align: left;
-  font-size: var(--font-size-xs);
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  font-size: var(--font-size-md);
   color: #a0a0a0;
   font-weight: var(--font-weight-medium);
+  line-height: var(--icon-size-sm);
+  white-space: nowrap;
 }
 
 .colHeadSwitches {
@@ -846,7 +933,7 @@
 
 .trackName {
   flex: 1;
-  min-width: 0;
+  min-width: 80px;
   font-family: var(--font-family-sans);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
@@ -861,7 +948,7 @@
 /* Inline rename input — appears on double-click, styled to look like the span */
 .trackNameInput {
   flex: 1;
-  min-width: 0;
+  min-width: 80px;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   font-family: var(--font-family-sans);
@@ -888,15 +975,21 @@
 }
 
 .preInfoCol {
-  width: 72px;
+  width: 76px;
   flex: none;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 3px;
+  height: 22px;
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid var(--color-border);
 }
 
-/* Switch columns — AE-style square checkboxes */
+/* Switch columns — AE-style square checkboxes.
+   Glyphs (SVG icons and .fxText letters) are centred in the same 22×22
+   box so eye / shy / fx / 3D read as one control size, not mixed scales. */
 .trackAction {
   width: 22px;
   height: 22px;
@@ -909,10 +1002,19 @@
   background: #141414;
   border: 1px solid var(--color-border);
   opacity: 0.85;
-  transition: all 0.1s ease;
+  transition: background-color 0.1s ease, border-color 0.1s ease, color 0.1s ease, opacity 0.1s ease;
   box-sizing: border-box;
   padding: 0;
   flex: none;
+  line-height: 0;
+}
+
+.trackAction > * {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
 }
 
 .trackAction:hover {
@@ -1343,7 +1445,8 @@
   left: 0;
   right: 0;
   height: 2px;
-  background: var(--color-primary);
+  background: var(--color-primary, #3ea0ff);
+  box-shadow: 0 0 6px var(--color-primary, #3ea0ff);
   z-index: 10;
   pointer-events: none;
 }

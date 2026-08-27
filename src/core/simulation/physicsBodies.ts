@@ -22,6 +22,14 @@ import {
   type PhysicsState,
   type PhysicsWorld,
 } from './rigidBody';
+export {
+  createRigidBodySim,
+  DEFAULT_PHYSICS_BODY,
+  type BodySeed,
+  type PhysicsBodyConfig,
+  type PhysicsState,
+  type PhysicsWorld,
+};
 import { renderComponentsOf } from '@core/scene/SceneGraph';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';

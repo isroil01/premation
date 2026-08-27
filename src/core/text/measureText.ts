@@ -153,6 +153,10 @@ export interface MeasuredTextStyle {
   fontFamily: string;
   fontWeight: string;
   fontStyle: string;
+  /** Variable-font wdth axis (%). Applied via fontVariationSettings when set. */
+  fontWidth?: number;
+  /** Variable-font slnt axis (degrees). Applied via fontVariationSettings when set. */
+  fontSlant?: number;
   letterSpacing: number;
   lineHeight: number;
   paragraphSpacing: number;
@@ -169,6 +173,8 @@ export function readMeasuredTextStyle(node: SceneNode, overrideProps?: Record<st
   let lineHeight = DEFAULT_LINE_HEIGHT;
   let paragraphSpacing = 0;
   let boxWidth: number | undefined;
+  let fontWidth: number | undefined;
+  let fontSlant: number | undefined;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
     if (typeof p.content === 'string') content = p.content;
@@ -177,6 +183,8 @@ export function readMeasuredTextStyle(node: SceneNode, overrideProps?: Record<st
     if (typeof p.fontWeight === 'string') fontWeight = p.fontWeight;
     else if (typeof p.fontWeight === 'number') fontWeight = String(p.fontWeight);
     if (typeof p.fontStyle === 'string') fontStyle = p.fontStyle;
+    if (typeof p.fontWidth === 'number') fontWidth = p.fontWidth;
+    if (typeof p.fontSlant === 'number') fontSlant = p.fontSlant;
     if (typeof p.letterSpacing === 'number') letterSpacing = p.letterSpacing;
     if (typeof p.lineHeight === 'number') lineHeight = p.lineHeight;
     if (typeof p.paragraphSpacing === 'number') paragraphSpacing = p.paragraphSpacing;
@@ -189,6 +197,8 @@ export function readMeasuredTextStyle(node: SceneNode, overrideProps?: Record<st
     if (typeof overrideProps.fontWeight === 'string') fontWeight = overrideProps.fontWeight;
     else if (typeof overrideProps.fontWeight === 'number') fontWeight = String(overrideProps.fontWeight);
     if (typeof overrideProps.fontStyle === 'string') fontStyle = overrideProps.fontStyle;
+    if (typeof overrideProps.fontWidth === 'number') fontWidth = overrideProps.fontWidth;
+    if (typeof overrideProps.fontSlant === 'number') fontSlant = overrideProps.fontSlant;
     if (typeof overrideProps.letterSpacing === 'number') letterSpacing = overrideProps.letterSpacing;
     if (typeof overrideProps.lineHeight === 'number') lineHeight = overrideProps.lineHeight;
     if (typeof overrideProps.paragraphSpacing === 'number') paragraphSpacing = overrideProps.paragraphSpacing;
@@ -197,6 +207,8 @@ export function readMeasuredTextStyle(node: SceneNode, overrideProps?: Record<st
   if (content === undefined) return null;
   const style: MeasuredTextStyle = {
     content, fontSize, fontFamily, fontWeight, fontStyle, letterSpacing, lineHeight, paragraphSpacing,
+    ...(typeof fontWidth === 'number' ? { fontWidth } : {}),
+    ...(typeof fontSlant === 'number' ? { fontSlant } : {}),
     ...(typeof boxWidth === 'number' && boxWidth > 0 ? { boxWidth } : {}),
   };
   // Wrapping happens HERE, once, so measurement and rendering cannot disagree
@@ -219,6 +231,7 @@ export function wrapText(s: MeasuredTextStyle): string {
   const width = s.boxWidth;
   if (!g || !width || width <= 0) return s.content;
   g.font = cssFont(s);
+  applyFontVariations(g, s);
 
   const advance = (text: string): number => {
     const chars = [...text].length;
@@ -252,8 +265,18 @@ function cssFont(s: MeasuredTextStyle): string {
   return `${style}${s.fontWeight} ${s.fontSize}px "${s.fontFamily}", Inter, system-ui, sans-serif`;
 }
 
+/** Match the rasterizer's font-variation-settings so measure agrees with paint. */
+export function applyFontVariations(g: CanvasRenderingContext2D, s: MeasuredTextStyle): void {
+  const parts: string[] = [];
+  const w = Number(s.fontWeight);
+  if (Number.isFinite(w)) parts.push(`'wght' ${w}`);
+  if (s.fontWidth !== undefined && Number.isFinite(s.fontWidth)) parts.push(`'wdth' ${s.fontWidth}`);
+  if (s.fontSlant !== undefined && Number.isFinite(s.fontSlant)) parts.push(`'slnt' ${s.fontSlant}`);
+  (g as CanvasRenderingContext2D & { fontVariationSettings?: string }).fontVariationSettings = parts.length ? parts.join(', ') : 'normal';
+}
+
 function keyOf(s: MeasuredTextStyle, strokeWidth: number): string {
-  return `${s.content}|${s.fontSize}|${s.fontFamily}|${s.fontWeight}|${s.fontStyle}|${s.letterSpacing}|${s.lineHeight}|${s.paragraphSpacing}|${strokeWidth}|${s.boxWidth ?? ''}`;
+  return `${s.content}|${s.fontSize}|${s.fontFamily}|${s.fontWeight}|${s.fontStyle}|${s.fontWidth ?? ''}|${s.fontSlant ?? ''}|${s.letterSpacing}|${s.lineHeight}|${s.paragraphSpacing}|${strokeWidth}|${s.boxWidth ?? ''}`;
 }
 
 function box(top: number, bottom: number, halfWidth: number): TextBox {
@@ -291,6 +314,7 @@ export function measureTextBoxes(input: MeasuredTextStyle, strokeWidth = 0): Mea
   if (hit) return hit;
 
   g.font = cssFont(s);
+  applyFontVariations(g, s);
   // Belt and braces: some engines reset this with the font shorthand.
   g.textBaseline = 'middle';
 

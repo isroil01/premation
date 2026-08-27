@@ -28,6 +28,9 @@
 import { ICON_NAMES } from '@components/Icon/iconNames';
 import { parseLayerKinds, type LayerKindContribution } from './layerKindSchema';
 import { parseEffects, type EffectContribution } from './effectSchema';
+import { parseExporters, type ExporterContribution } from './exporterSchema';
+import { parseImporters, type ImporterContribution } from './importerSchema';
+import { parsePresets, type PresetContribution } from './presetSchema';
 import { parseNet, type NetContribution } from './netSchema';
 import { RUNTIME_TIERS, DEFAULT_RUNTIME_TIER, type RuntimeTier } from './runtimeTier';
 
@@ -45,6 +48,19 @@ import { RUNTIME_TIERS, DEFAULT_RUNTIME_TIER, type RuntimeTier } from './runtime
  *     same reason 3 was — a document using a plugin effect references the
  *     plugin that provides it — and because `render: "shader"` on a layer kind
  *     stops being a reserved value and starts meaning something.
+ *
+ * 6 — `contributes.exporters`, `contributes.importers` and `contributes.presets`. A plugin can read
+ *     and write file formats the editor does not know. Both landed in the same
+ *     grammar because they are one idea in two directions, and splitting them
+ *     across 6 and 7 would make an author bump a version for the half they did
+ *     not use.
+ *
+ *     `contributes.exporters`. A plugin can write a file format the editor does
+ *     not know: the host renders and hands over frames, the plugin returns
+ *     bytes, the host writes the file. A GRAMMAR bump only — it adds a
+ *     `contributes` key — so `HOST_API_VERSION` does not move with it. The
+ *     ability to CALL the new surface is a capability (`exporters`), which is
+ *     the axis a plugin actually needs to ask about.
  *
  * 5 — The split. Up to here this number meant four things at once: the manifest
  *     grammar, the shape of `contributes`, the host method surface, and effect
@@ -69,7 +85,7 @@ export const HOST_API_VERSION = 5;
  * changed — reading a document with keys whose meaning is unknown is how a
  * validator silently accepts something it does not understand.
  */
-export const MANIFEST_VERSION = 5;
+export const MANIFEST_VERSION = 6;
 
 /** Everything a plugin may ask for. Nothing outside this list is grantable. */
 export const PERMISSIONS = {
@@ -134,6 +150,61 @@ export const PERMISSIONS = {
   timeline: {
     label: 'Control the playhead',
     detail: 'Read the current time and move the playhead.',
+  },
+  /*
+    Separate from `scene:write`, and last, because it is the widest thing here.
+
+    "Modify your layers" is a statement about the composition the user is
+    looking at. Adding and removing COMPOSITIONS restructures the project
+    around them — a plugin holding this can put work somewhere they were not
+    looking, and deleting one takes every layer in it. Folding that into
+    `scene:write` would have made an existing grant silently mean more than it
+    did when the user gave it, which is the one thing a permission may never do.
+  */
+  /*
+    Reading AUDIO CONTENT, not audio settings.
+
+    Level, pan and fades are ordinary animatable properties — a plugin already
+    reads and writes them through `animation:read` / `animation:write`, and
+    nothing here changes that. What this grants is the decoded WAVEFORM: how
+    loud the audio actually is, moment to moment. That is the user's media
+    content rather than their document structure, which is the same distinction
+    `assets:read` draws for images, and it gets its own line for the same reason
+    — widening `assets:read`'s wording to cover audio would make a grant a user
+    already gave silently mean more than it did.
+  */
+  /*
+    The rendered pixels of the composition, handed to a plugin frame by frame.
+
+    Strictly more than `assets:read` (the images already in the project) and
+    more than `scene:read` (its structure): this is the finished picture. Held
+    together with `net:fetch` it is the whole video leaving the machine, so the
+    detail says that rather than describing the feature.
+  */
+  /*
+    The bytes of a file the USER opened with this plugin's format.
+
+    Narrow by construction — a plugin never picks the file, and never sees one
+    it did not claim an extension for — but still its own line, because "read a
+    file off my machine" is not something any other permission here implies.
+  */
+  'import:files': {
+    label: 'Read files you open with it',
+    detail: 'Read the contents of files you import whose format this plugin provides. It cannot browse your machine or open anything you did not choose.',
+  },
+  'export:frames': {
+    label: 'Receive your rendered frames',
+    detail: 'See every rendered frame of a composition you export with this plugin’s format, in order. Combined with permission to contact websites, a plugin could send your finished video to them.',
+  },
+  'audio:read': {
+    label: 'Analyse audio in your project',
+    detail: 'Read the loudness of audio layers over time, to drive animation from sound. It cannot play, export or copy the audio.',
+  },
+  'composition:write': {
+    label: 'Add and remove compositions',
+    detail:
+      'Create, rename, open and delete compositions in your project. '
+      + 'Deleting one removes every layer it contains. Every change is undoable.',
   },
 } as const;
 
@@ -266,6 +337,9 @@ export interface PluginContributes {
    * rather than a runtime choice, and why only some property types animate.
    */
   layerKinds: LayerKindContribution[];
+  exporters: ExporterContribution[];
+  importers: ImporterContribution[];
+  presets: PresetContribution[];
   /**
    * Effects this plugin draws. Requires `apiVersion: 4`.
    *
@@ -307,7 +381,17 @@ export type ActivationEvent =
   // Fired when a document containing this kind is opened. Declaring a kind
   // implies it (see `activatesOnLayerKind`); the spelling exists so an
   // author can be explicit, and so the set is readable from the manifest.
-  | `onLayerKind:${string}`;
+  | `onLayerKind:${string}`
+  /*
+    Fired when a render leaves the queue — finished, failed, or skipped.
+
+    A post-render action is the reason this exists (AE has had them since
+    forever): tell a webhook the deliverable is ready, write a log line, put a
+    badge in a panel. Those plugins have nothing to do until a render ends, so
+    waking them at startup would be forty workers idling for an event most
+    sessions never fire.
+  */
+  | 'onRenderFinished';
 
 export interface PluginManifest {
   /** Reverse-DNS, e.g. `studio.acme.easing-lab`. Namespaced so two vendors
@@ -423,7 +507,7 @@ export interface ManifestResult {
 
 /** An empty, fully-normalised contribution block. */
 function emptyContributes(): PluginContributes {
-  return { commands: [], panels: [], layerKinds: [], effects: [], net: null };
+  return { commands: [], panels: [], layerKinds: [], effects: [], exporters: [], importers: [], presets: [], net: null };
 }
 
 /**
@@ -537,6 +621,38 @@ function parseContributes(
       errors.push(`"contributes.${key}" must be an array.`);
     } else if (v.length > 0) {
       errors.push(`"contributes.${key}" is not supported in this version.`);
+    }
+  }
+
+  if (c.presets !== undefined) {
+    if (apiVersion >= 6) {
+      out.presets = parsePresets(c.presets, 'contributes.presets', errors);
+    } else if (!Array.isArray(c.presets)) {
+      errors.push('"contributes.presets" must be an array.');
+    } else if (c.presets.length > 0) {
+      errors.push('"contributes.presets" requires "apiVersion": 6.');
+    }
+  }
+
+  if (c.importers !== undefined) {
+    if (apiVersion >= 6) {
+      out.importers = parseImporters(c.importers, 'contributes.importers', errors);
+    } else if (!Array.isArray(c.importers)) {
+      errors.push('"contributes.importers" must be an array.');
+    } else if (c.importers.length > 0) {
+      errors.push('"contributes.importers" requires "apiVersion": 6.');
+    }
+  }
+
+  if (c.exporters !== undefined) {
+    if (apiVersion >= 6) {
+      out.exporters = parseExporters(c.exporters, 'contributes.exporters', errors);
+    } else if (!Array.isArray(c.exporters)) {
+      errors.push('"contributes.exporters" must be an array.');
+    } else if (c.exporters.length > 0) {
+      // Same back-compat rule as `layerKinds` and `effects`: an empty block
+      // declares nothing and stays valid on an older grammar.
+      errors.push('"contributes.exporters" requires "apiVersion": 6.');
     }
   }
 
@@ -737,6 +853,12 @@ function parseActivationEvents(
     }
     if (ev === 'onStartup') {
       if (!out.includes('onStartup')) out.push('onStartup');
+      continue;
+    }
+    // No target to check: unlike a command or a panel, this one names nothing
+    // the manifest has to also declare.
+    if (ev === 'onRenderFinished') {
+      if (!out.includes('onRenderFinished')) out.push('onRenderFinished');
       continue;
     }
     const command = /^onCommand:(.*)$/.exec(ev);

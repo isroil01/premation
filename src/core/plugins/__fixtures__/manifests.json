@@ -341,6 +341,130 @@
       }
     },
     {
+      "name": "activation on a finished render",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 2,
+        "main": "main.js",
+        "contributes": {
+          "commands": [
+            {
+              "id": "bounce",
+              "label": "Bounce selection",
+              "icon": "zap",
+              "needsSelection": true
+            }
+          ],
+          "panels": [
+            {
+              "id": "main",
+              "title": "Easing Lab",
+              "entry": "panel.html"
+            }
+          ]
+        },
+        "activationEvents": [
+          "onRenderFinished"
+        ]
+      }
+    },
+    {
+      "name": "activation on a declared layer kind",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.kinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        },
+        "activationEvents": [
+          "onLayerKind:depthImage"
+        ]
+      }
+    },
+    {
+      "name": "activation names a layer kind that does not exist",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.kinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "focal": {
+                  "type": "number",
+                  "default": 50,
+                  "min": 0,
+                  "max": 100,
+                  "animatable": true
+                },
+                "source": {
+                  "type": "asset",
+                  "assetKind": "image"
+                },
+                "mode": {
+                  "type": "enum",
+                  "values": [
+                    "parallax",
+                    "displace"
+                  ],
+                  "default": "parallax"
+                }
+              }
+            }
+          ]
+        },
+        "activationEvents": [
+          "onLayerKind:nosuchkind"
+        ]
+      }
+    },
+    {
       "name": "unknown activation event",
       "valid": false,
       "manifest": {
@@ -1776,23 +1900,48 @@
               "passes": [
                 {
                   "name": "a",
-                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
                 },
                 {
                   "name": "b",
-                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
                 },
                 {
                   "name": "c",
-                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
                 },
                 {
                   "name": "d",
-                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
                 },
                 {
                   "name": "e",
-                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "f",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "g",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "h",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "i",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
                 }
               ]
             }
@@ -1831,6 +1980,126 @@
                 {
                   "name": "d",
                   "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "e",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "f",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "g",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain exactly at the cost budget",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "c",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "d",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "e",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                },
+                {
+                  "name": "f",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-5 chain exactly at the pass count limit",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.fx",
+        "name": "FX",
+        "version": "1.0.0",
+        "description": "A multi-pass effect case.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "effects": [
+            {
+              "id": "fx",
+              "label": "FX",
+              "passes": [
+                {
+                  "name": "a",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "b",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "c",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "d",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "e",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "f",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "g",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
+                },
+                {
+                  "name": "h",
+                  "wgsl": "@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  return textureSample(src, samp, uv);\n}",
+                  "scale": 0.25
                 }
               ]
             }
@@ -2283,6 +2552,383 @@
                 "amount": {
                   "type": "number",
                   "default": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 exporter",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "exporters": [
+            {
+              "id": "webp",
+              "label": "Animated WebP",
+              "extension": "webp"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 exporter on the older grammar",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "exporters": [
+            {
+              "id": "webp",
+              "label": "Animated WebP",
+              "extension": "webp"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 exporter claiming a reserved extension",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "exporters": [
+            {
+              "id": "x",
+              "label": "X",
+              "extension": "mp4"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 exporter id containing a dot",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "exporters": [
+            {
+              "id": "my.fmt",
+              "label": "X",
+              "extension": "zzz"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 importer",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "importers": [
+            {
+              "id": "tga",
+              "label": "Truevision TGA",
+              "extensions": [
+                "tga"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 importer on the older grammar",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "importers": [
+            {
+              "id": "tga",
+              "label": "Truevision TGA",
+              "extensions": [
+                "tga"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 importer shadowing a format the editor reads",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "importers": [
+            {
+              "id": "x",
+              "label": "X",
+              "extensions": [
+                "png"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 importer with no extensions",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "importers": [
+            {
+              "id": "x",
+              "label": "X",
+              "extensions": []
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 preset with a behaviour expression",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "presets": [
+            {
+              "name": "Drift",
+              "tracks": [],
+              "expressions": [
+                {
+                  "prop": "transform.y",
+                  "expr": "wiggle(2, 30)"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 preset on the older grammar",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 5,
+        "main": "main.js",
+        "contributes": {
+          "presets": [
+            {
+              "name": "Drift",
+              "tracks": [],
+              "expressions": [
+                {
+                  "prop": "transform.y",
+                  "expr": "wiggle(2, 30)"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 preset smuggling applyFn",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "presets": [
+            {
+              "name": "X",
+              "tracks": [],
+              "applyFn": "function(){}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "api-6 preset claiming builtin",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.two",
+        "name": "Two",
+        "version": "1.0.0",
+        "description": "Declares commands and panels.",
+        "apiVersion": 6,
+        "main": "main.js",
+        "contributes": {
+          "presets": [
+            {
+              "name": "X",
+              "tracks": [],
+              "builtin": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "a layer kind using the widget vocabulary",
+      "valid": true,
+      "manifest": {
+        "id": "com.example.kinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "spin": {
+                  "type": "angle",
+                  "default": 0,
+                  "animatable": true
+                },
+                "soft": {
+                  "type": "boolean",
+                  "default": false,
+                  "group": "Edges"
+                },
+                "feather": {
+                  "type": "number",
+                  "default": 0,
+                  "group": "Edges",
+                  "showIf": {
+                    "prop": "soft",
+                    "equals": true
+                  }
+                },
+                "notes": {
+                  "type": "string",
+                  "default": "",
+                  "multiline": true
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "showIf naming a property the kind does not declare",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.kinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "feather": {
+                  "type": "number",
+                  "default": 0,
+                  "showIf": {
+                    "prop": "nosuch",
+                    "equals": true
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "multiline on a non-string property",
+      "valid": false,
+      "manifest": {
+        "id": "com.example.kinds",
+        "name": "Kinds",
+        "version": "1.0.0",
+        "description": "Declares a layer kind.",
+        "apiVersion": 3,
+        "main": "main.js",
+        "contributes": {
+          "layerKinds": [
+            {
+              "id": "depthImage",
+              "label": "Depth Image",
+              "render": "proxy",
+              "schemaVersion": 1,
+              "props": {
+                "n": {
+                  "type": "number",
+                  "default": 0,
+                  "multiline": true
                 }
               }
             }

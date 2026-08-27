@@ -134,14 +134,31 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
         prev.scale === v.scale && prev.offsetX === v.offsetX && prev.offsetY === v.offsetY ? prev : v,
       );
     };
+    // Coalesced to one sync per animation frame. Wheel and pointermove fire
+    // far above frame rate (120+ Hz on trackpads), and each changed view used
+    // to setState → re-render the whole SVG overlay (every frustum, light
+    // cone and layer box re-projected through React) per EVENT — several full
+    // reconciliations per painted frame during a zoom, which is exactly the
+    // "the 3D wireframes lag and stutter while zooming" feel. One rAF behind
+    // the engine's own rAF-coalesced render keeps the overlay at most a frame
+    // behind the canvas, at a fraction of the work.
+    let rafId: number | null = null;
+    const queueSync = (): void => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        sync();
+      });
+    };
     sync();
-    window.addEventListener('wheel', sync, { passive: true, capture: true });
-    window.addEventListener('pointermove', sync, { capture: true });
-    window.addEventListener('pointerup', sync, { capture: true });
+    window.addEventListener('wheel', queueSync, { passive: true, capture: true });
+    window.addEventListener('pointermove', queueSync, { capture: true });
+    window.addEventListener('pointerup', queueSync, { capture: true });
     return () => {
-      window.removeEventListener('wheel', sync, { capture: true } as EventListenerOptions);
-      window.removeEventListener('pointermove', sync, { capture: true } as EventListenerOptions);
-      window.removeEventListener('pointerup', sync, { capture: true } as EventListenerOptions);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      window.removeEventListener('wheel', queueSync, { capture: true } as EventListenerOptions);
+      window.removeEventListener('pointermove', queueSync, { capture: true } as EventListenerOptions);
+      window.removeEventListener('pointerup', queueSync, { capture: true } as EventListenerOptions);
     };
   }, []);
 

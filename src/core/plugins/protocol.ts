@@ -31,6 +31,34 @@ import type {
 export type PluginCommandSpec = PluginCommandContribution;
 
 /** Host → worker. */
+/**
+ * What a plugin is told when a render leaves the queue.
+ *
+ * Metadata ONLY — never the encoded bytes and never a directory. `fileName` is
+ * the basename, because a plugin that learns where a user keeps their renders
+ * has learned something about their machine it has no use for, and a plugin
+ * holding `net:fetch` could send it. The deliverable itself stays on the user's
+ * disk: handing a plugin the file would make "post-render action" mean
+ * "exfiltrate the render", which is a different feature with a different
+ * consent screen.
+ */
+export interface RenderFinishedInfo {
+  /** `done` wrote a file; `skipped` rendered but the user dismissed the save
+   *  dialog; `failed` did not finish. */
+  status: 'done' | 'skipped' | 'failed';
+  compositionName: string;
+  /** Basename with extension, or null when nothing was written. */
+  fileName: string | null;
+  format: string;
+  width: number;
+  height: number;
+  fps: number;
+  durationSec: number;
+  elapsedMs: number;
+  /** Present only for `failed`. */
+  error?: string;
+}
+
 export type HostMessage =
   /**
    * `capabilities` is what this host has RIGHT NOW, including the ones that
@@ -59,6 +87,39 @@ export type HostMessage =
    * pointer event.
    */
   | { k: 'layerChanged'; layerId: string; kindId: string; props: string[] }
+  | { k: 'renderFinished'; render: RenderFinishedInfo }
+  /**
+   * One step of an export a plugin's format is driving.
+   *
+   * Request/response, which host→worker otherwise is not — `invoke` and
+   * `layerChanged` are told-not-asked. It carries an `id` for the same reason
+   * `ping` does: the host has to know which reply belongs to which step, and an
+   * encoder that silently dropped a frame would produce a file that is wrong
+   * rather than one that failed.
+   *
+   * `pixels` is RGBA8, `width * height * 4` bytes, TRANSFERRED rather than
+   * copied — a 4K frame is 33 MB and copying one per frame would cost more than
+   * the encode. The host does not touch the buffer after sending.
+   */
+  | {
+      k: 'export';
+      id: number;
+      exporterId: string;
+      phase: 'begin';
+      info: { width: number; height: number; fps: number; durationSec: number; compositionName: string };
+    }
+  | { k: 'export'; id: number; exporterId: string; phase: 'frame'; index: number; width: number; height: number; pixels: ArrayBuffer }
+  | { k: 'export'; id: number; exporterId: string; phase: 'finish' }
+  | { k: 'export'; id: number; exporterId: string; phase: 'dispose' }
+  /**
+   * Decode one file a plugin's importer claimed.
+   *
+   * A single request rather than the four-phase shape `export` uses: a decode
+   * takes a whole file and produces a whole image, so there is no stream to
+   * stage. `bytes` is transferred, like an export frame and for the same
+   * reason — a raw camera file is not small.
+   */
+  | { k: 'import'; id: number; importerId: string; fileName: string; bytes: ArrayBuffer }
   | { k: 'ping'; id: number };
 
 /** A line in a plugin's log, as shown in the manager. */
@@ -72,6 +133,12 @@ export type WorkerMessage =
   | { k: 'pong'; id: number }
   | { k: 'toPanel'; panelId: string; data: unknown }
   | { k: 'log'; level: PluginLogLevel; text: string }
+  /** The reply to one `export` step. `bytes` only ever accompanies `finish`. */
+  | { k: 'exportResult'; id: number; ok: true; bytes?: ArrayBuffer }
+  | { k: 'exportResult'; id: number; ok: false; error: string }
+  /** RGBA8, `width * height * 4` bytes. */
+  | { k: 'importResult'; id: number; ok: true; width: number; height: number; pixels: ArrayBuffer }
+  | { k: 'importResult'; id: number; ok: false; error: string }
   | { k: 'fatal'; error: string };
 
 /** Every RPC method the host implements, with the permission it requires.
@@ -109,6 +176,19 @@ export const METHOD_PERMISSIONS: Record<string, PluginPermission | null> = {
   'scene.setProxyChildren': 'scene:proxy',
   // Observing an authored edit on a layer means reading its properties.
   'scene.onLayerChanged': 'scene:read',
+  /*
+    Compositions. Reading the list is `scene:read` (comp names are project data
+    of the same kind as layer names); everything that changes the SET of
+    compositions is its own permission — see PERMISSIONS in `manifest.ts` for
+    why it is not folded into `scene:write`.
+  */
+  'audio.getPeaks': 'audio:read',
+  'audio.getAmplitude': 'audio:read',
+  'composition.list': 'scene:read',
+  'composition.create': 'composition:write',
+  'composition.open': 'composition:write',
+  'composition.rename': 'composition:write',
+  'composition.delete': 'composition:write',
   'scene.setProperty': 'scene:write',
   'scene.renameLayer': 'scene:write',
   'scene.deleteLayer': 'scene:write',
@@ -232,6 +312,13 @@ export function collectTransferables(msg: HostMessage | WorkerMessage): Transfer
 
   if (msg.k === 'call') for (const a of msg.args) scan(a);
   else if (msg.k === 'result' && msg.ok) scan(msg.value);
+  // An export frame is the largest payload in the protocol by two orders of
+  // magnitude — 33 MB for 4K — and the one place copying instead of
+  // transferring would show up as the export taking twice as long.
+  else if (msg.k === 'export' && msg.phase === 'frame') take(msg.pixels);
+  else if (msg.k === 'exportResult' && msg.ok && msg.bytes) take(msg.bytes);
+  else if (msg.k === 'import') take(msg.bytes);
+  else if (msg.k === 'importResult' && msg.ok) take(msg.pixels);
 
   return out;
 }

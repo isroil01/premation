@@ -158,6 +158,36 @@
   display: none;
 }
 
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: max-content;
+  justify-content: flex-start;
+  flex-shrink: 0;
+}
+
+.headerCenter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  justify-content: center;
+  margin: 0 16px;
+  flex-shrink: 0;
+}
+
+.headerRight {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: max-content;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
 .transportCluster {
   display: flex;
   align-items: center;
@@ -251,41 +281,60 @@
 /* ── Timecode ──────────────────────────────────────────────────────── */
 .timecode {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 10px;
-  background: var(--color-primary-subtle, rgba(41, 136, 255, 0.15));
-  border: 1px solid color-mix(in srgb, var(--color-primary, #2988ff) 30%, transparent);
-  border-radius: var(--radius-md, 6px);
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  align-items: baseline;
+  gap: 5px;
+  padding: 0 4px;
+  background: transparent;
+  border: none;
+  font-family: var(--font-family-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold, 700);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.01em;
   color: var(--color-primary, #2988ff);
   cursor: pointer;
   white-space: nowrap;
-  height: 26px;
   box-sizing: border-box;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
   flex-shrink: 0;
 }
 
 .timecode:hover {
-  background: color-mix(in srgb, var(--color-primary, #2988ff) 25%, transparent);
-  border-color: color-mix(in srgb, var(--color-primary, #2988ff) 50%, transparent);
   color: var(--color-primary-hover, #4097ff);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary, #2988ff) 20%, transparent);
 }
 
 .timecodeTotal {
   font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono, monospace);
+  font-family: var(--font-family-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   color: var(--color-text-tertiary, #8c8c8c);
-  font-weight: 400;
+  font-weight: var(--font-weight-medium, 500);
 }
 
-/* ── Timeline Search/Filter Bar ────────────────────────────────────── */
+/* ── Timeline Search Bar Row (Under Comp Tabs, Spanning Left Header) ── */
+.searchBarRow {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  background: var(--color-panel-header, #1d1d1d);
+  border-bottom: 1px solid var(--color-border, #000000);
+  flex: none;
+  width: 100%;
+}
+
+.searchBarCol {
+  display: flex;
+  align-items: center;
+  padding: 2px 8px;
+  flex: none;
+  box-sizing: border-box;
+  border-right: 2px solid var(--color-border, #000000);
+}
+
+.searchBarRightGap {
+  flex: 1 1 auto;
+  background: var(--color-panel-header, #1d1d1d);
+}
+
 .searchContainer {
   position: relative;
   display: flex;
@@ -293,21 +342,12 @@
   gap: 6px;
   background: var(--color-surface-1, #232323);
   border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
-  border-radius: var(--radius-md, 6px);
+  border-radius: var(--radius-control, 4px);
   padding: 0 8px;
-  height: 26px;
-  flex: 1 1 160px;
-  min-width: 92px;
-  max-width: 220px;
+  height: 22px;
+  width: 100%;
+  box-sizing: border-box;
   transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* Nothing else in the row can shrink without losing a button, so the filter
-   gives up its space first and then itself. */
-@container tl-toolbar (max-width: 980px) {
-  .searchContainer {
-    display: none;
-  }
 }
 
 .searchContainer:hover {
@@ -316,9 +356,9 @@
 }
 
 .searchContainer:focus-within {
-  border-color: var(--color-primary, #2988ff);
+  border-color: var(--color-selection, #2988ff);
   background: var(--color-surface-1, #232323);
-  box-shadow: 0 0 0 1px var(--color-primary, #2988ff);
+  box-shadow: 0 0 0 1px var(--color-selection, #2988ff);
 }
 
 .searchIcon {
@@ -332,7 +372,7 @@
   border: none;
   outline: none;
   color: var(--color-text-primary, #ffffff);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-xs, 12px);
   padding: 0;
   width: 100%;
 }
@@ -455,10 +495,10 @@ button.play:hover {
 }
 
 .aeHeaderTools {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-shrink: 0;
 }
 
 /* ── Zoom cluster ─────────────────────────────────────────────────── */

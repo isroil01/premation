@@ -61,6 +61,7 @@ describe('buildSnapshot — DOF blur / cast shadow as GPU effect entries', () =>
     // depth 1600 vs focus 1000 → defocus 0.6 → min(24, 0.6·40) = 24
     expect(blurFx!.params?.amount).toBe(24);
     expect(layer.filter).toContain('blur(24.0px)');
+    expect(blurFx!.params?.blades).toBeUndefined();
     // And it reaches the GPU scene: hasEffects flips on and the renderable
     // carries a blur spatial effect for CompositionPass.
     const scene = snapshotToFrameScene(snap);
@@ -70,6 +71,68 @@ describe('buildSnapshot — DOF blur / cast shadow as GPU effect entries', () =>
     // Determinism: a second identical build emits an identical entry.
     const snap2 = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, comp);
     expect(snap2.layers.find((l) => l.id === 'far')!.effects).toEqual(layer.effects);
+  });
+
+  test('iris blades ride the DOF blur entry into the GPU scene', () => {
+    const graph = new SceneGraph();
+    graph.addNode(bareShape('far', { z: 600 }));
+    graph.addNode({
+      id: 'cam', name: 'cam', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 240, y: 180 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        {
+          id: 'cam_t',
+          type: 'Transform',
+          props: {
+            [SCENE_KIND_PROP]: 'camera',
+            x: 240, y: 180, z: -1000, focalLength: 1000,
+            dofStrength: 24, focusDistance: 1000, dofAperture: 40,
+            irisBlades: 6, irisRoundness: 0.4, highlightGain: 1.5,
+          },
+        },
+      ],
+    } as unknown as SceneNode);
+    const snap = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, comp);
+    const blurFx = snap.layers.find((l) => l.id === 'far')!.effects?.find((e) => e.id === 'dof');
+    expect(blurFx?.params).toMatchObject({ amount: 24, blades: 6, roundness: 0.4, highlightGain: 1.5 });
+    const scene = snapshotToFrameScene(snap);
+    const r = scene.renderables.find((x) => x.id === 'far')!;
+    const gpu = r.effects?.find((e) => e.type === 'blur');
+    expect(gpu).toMatchObject({ type: 'blur', radiusPx: 24, blades: 6, roundness: 0.4, highlightGain: 1.5 });
+  });
+
+  test('tilted 3D quads get planar CoC corner radii instead of strip layers', () => {
+    const graph = new SceneGraph();
+    // Large rotationX so corner depths differ enough for planDofCocCorners.
+    graph.addNode(bareShape('card', { z: 400, rotationX: 55 }));
+    graph.addNode({
+      id: 'cam', name: 'cam', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 240, y: 180 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        {
+          id: 'cam_t',
+          type: 'Transform',
+          props: {
+            [SCENE_KIND_PROP]: 'camera',
+            x: 240, y: 180, z: -1000, focalLength: 1000,
+            dofStrength: 40, focusDistance: 1000, dofAperture: 50,
+          },
+        },
+      ],
+    } as unknown as SceneNode);
+    const snap = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, comp);
+    const cardLayers = snap.layers.filter((l) => l.id === 'card' || l.id.startsWith('card::dof-'));
+    expect(cardLayers).toHaveLength(1);
+    const dofFx = cardLayers[0]!.effects?.find((e) => e.id === 'dof');
+    expect(dofFx?.params).toMatchObject({
+      coc0: expect.any(Number),
+      coc1: expect.any(Number),
+      coc2: expect.any(Number),
+      coc3: expect.any(Number),
+    });
+    const scene = snapshotToFrameScene(snap);
+    const gpu = scene.renderables.find((x) => x.id === 'card')?.effects?.find((e) => e.type === 'blur');
+    expect(gpu && 'cocCorners' in gpu && gpu.cocCorners).toBeTruthy();
   });
 
   test('a shadow-casting light appends a drop-shadow effect pointing away from it', () => {

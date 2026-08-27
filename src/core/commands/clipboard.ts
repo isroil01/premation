@@ -27,10 +27,59 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { bumpScene } from '@stores/sceneStore';
 import { snapshotNodeAnimation, applyNodeAnimation, type NodeAnimationSnapshot } from '@core/animation/cloneNodeAnimation';
+import { insertSvgShapeGroup } from '@core/scene/sceneInsert';
 import type { SceneNode } from '@core/types';
 
 /** Float times never compare exactly; match the engine's own tolerance. */
 const T_EPSILON = 1e-6;
+
+/**
+ * Pull an `<svg>…</svg>` fragment out of clipboard text / HTML.
+ * Figma and browsers often put `image/svg+xml` or wrap SVG in HTML; Illustrator
+ * sometimes pastes plain SVG markup as `text/plain`.
+ */
+export function extractSvgMarkup(raw: string): string | null {
+  const text = raw.trim();
+  if (!text) return null;
+  if (/^<\?xml/i.test(text) || /^<!DOCTYPE\s+svg/i.test(text) || /^<svg[\s>]/i.test(text)) {
+    const m = text.match(/<svg\b[\s\S]*?<\/svg>/i);
+    return m ? m[0] : null;
+  }
+  const embedded = text.match(/<svg\b[\s\S]*?<\/svg>/i);
+  return embedded ? embedded[0] : null;
+}
+
+/** Read SVG markup from the OS clipboard, if any. */
+export async function readOsClipboardSvg(): Promise<string | null> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard) return null;
+
+  // Prefer typed clipboard items (Figma / Chrome often expose image/svg+xml).
+  try {
+    const read = navigator.clipboard.read?.bind(navigator.clipboard);
+    if (read) {
+      const items = await read();
+      for (const item of items) {
+        const svgType = item.types.find(
+          (t) => t === 'image/svg+xml' || t === 'text/html' || t === 'text/plain',
+        );
+        if (!svgType) continue;
+        const blob = await item.getType(svgType);
+        const text = await blob.text();
+        const svg = extractSvgMarkup(text);
+        if (svg) return svg;
+      }
+    }
+  } catch {
+    // Permission denied or unsupported — fall through to readText.
+  }
+
+  try {
+    const text = await navigator.clipboard.readText();
+    return extractSvgMarkup(text);
+  } catch {
+    return null;
+  }
+}
 
 interface ClipboardState {
   copiedKeyframes: Array<{
@@ -42,6 +91,8 @@ interface ClipboardState {
     /** Spatial motion-path tangents (value-space offsets). */
     si?: number;
     so?: number;
+    continuous?: boolean;
+    roving?: boolean;
   }> | null;
   copiedLayers: Array<{
     node: SceneNode;
@@ -84,6 +135,8 @@ export function copySelection(): void {
           bezier: kf.bezier,
           si: kf.si,
           so: kf.so,
+          continuous: kf.continuous,
+          roving: kf.roving,
         });
       }
 
@@ -113,7 +166,7 @@ export function copySelection(): void {
   }
 }
 
-/** Is there anything to paste? Drives the Paste menu item's enabled state. */
+/** Is there anything in the *internal* clipboard? (OS SVG is checked async on paste.) */
 export function hasClipboardContent(): boolean {
   return (
     (clipboardState.copiedKeyframes?.length ?? 0) > 0 || (clipboardState.copiedLayers?.length ?? 0) > 0
@@ -148,7 +201,13 @@ export function cutSelection(): void {
   bumpScene();
 }
 
-export function pasteSelection(): void {
+export type PasteResult = 'keyframes' | 'layers' | 'svg' | null;
+
+/**
+ * Paste internal clipboard first (keyframes → layers). If empty, try OS
+ * clipboard SVG → editable shape group (AE 26.3 paste Illustrator/SVG).
+ */
+export async function pasteSelection(): Promise<PasteResult> {
   if (clipboardState.copiedKeyframes && clipboardState.copiedKeyframes.length > 0) {
     const keyframes = clipboardState.copiedKeyframes;
     const controller = getTimelineController();
@@ -157,7 +216,7 @@ export function pasteSelection(): void {
     const newSelectionIds = new Set<string>();
 
     // AE logic: paste on selected layers if available
-    if (selectedLayerIds.length === 0) return;
+    if (selectedLayerIds.length === 0) return null;
 
     runAnimEdit('Paste keyframes', () => {
       for (const layerId of selectedLayerIds) {
@@ -176,6 +235,12 @@ export function pasteSelection(): void {
           if (kf.si !== undefined || kf.so !== undefined) {
             defaultAnimation.setSpatialTangent(layerId, kf.prop, layerT, { si: kf.si, so: kf.so });
           }
+          if (kf.continuous !== undefined || kf.roving !== undefined) {
+            defaultAnimation.updateKeyframe(layerId, kf.prop, layerT, {
+              continuous: kf.continuous,
+              roving: kf.roving,
+            });
+          }
           newSelectionIds.add(makeKeyframeId(layerId, kf.prop, layerT));
         }
       }
@@ -184,7 +249,10 @@ export function pasteSelection(): void {
     if (newSelectionIds.size > 0) {
       useKeyframeSelectionStore.getState().set(newSelectionIds);
     }
-  } else if (clipboardState.copiedLayers && clipboardState.copiedLayers.length > 0) {
+    return 'keyframes';
+  }
+
+  if (clipboardState.copiedLayers && clipboardState.copiedLayers.length > 0) {
     const newIds: string[] = [];
     const rootId = activeCompRootId();
     
@@ -240,5 +308,14 @@ export function pasteSelection(): void {
       useSelectionStore.getState().set(newIds);
     }
     bumpScene();
+    return 'layers';
   }
+
+  // AE 26.3: paste SVG / Illustrator markup from the OS as editable shapes.
+  const svg = await readOsClipboardSvg();
+  if (!svg) return null;
+  const id = insertSvgShapeGroup(svg, 'Pasted SVG');
+  if (!id) return null;
+  useSelectionStore.getState().set([id]);
+  return 'svg';
 }

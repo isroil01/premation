@@ -73,11 +73,16 @@ export function SceneControls(): JSX.Element {
           className={`${styles.button} ${cameraTool === id ? styles.buttonActive : ''}`}
           onClick={() => setCameraTool(cameraTool === id ? 'none' : id)}
           aria-pressed={cameraTool === id}
-          title={`${label} — hold Alt to use temporarily, C to cycle`}
+          title={`${label}${cameraTool === id ? ' (active)' : ''} — hold Alt to use temporarily, C to cycle`}
         >
           <Icon name={icon} size="md" />
         </button>
       ))}
+      {cameraTool !== 'none' ? (
+        <span className={styles.cameraToolLabel} aria-live="polite">
+          {CAMERA_TOOLS.find((t) => t.id === cameraTool)?.label}
+        </span>
+      ) : null}
 
       <div className={styles.divider} />
 
@@ -120,11 +125,11 @@ export function SceneControls(): JSX.Element {
         aria-pressed={draft3d}
         title={
           draft3d
-            ? 'Draft 3D ON — lights, shadows and depth-of-field skipped for speed'
-            : 'Draft 3D OFF — full 3D shading. Click to preview faster.'
+            ? 'Draft 3D ON — Fast viewport preview (skips heavy lights & shadows)'
+            : 'Draft 3D OFF — Full 3D shading. Click to enable fast preview.'
         }
       >
-        <Icon name="zap" size="md" />
+        <Icon name="draft-3d" size="md" />
       </button>
 
       <button

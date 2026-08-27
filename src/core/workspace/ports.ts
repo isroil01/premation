@@ -309,6 +309,10 @@ function toWorkspaceNode(
     // Lets the selection layer hide the 2D scale/rotate handles for a 3D layer —
     // the 3D gizmo owns that transform (see WorkspaceNode.is3D).
     is3D: is3D && kind !== 'camera' && kind !== 'light',
+    // Cameras and lights are devices: draggable, but with no meaningful scale
+    // or rotation (the renderer hardcodes both), so the grips are suppressed —
+    // see WorkspaceNode.device for the full reasoning.
+    device: kind === 'camera' || kind === 'light',
     hitTestLocal: hitTestLocalVal,
     pathPoints: node.components.find((c) => c.type === 'Geometry')?.props.points as import('@motion/workspace').BezierPoint[] | undefined,
     // Masks are editable outlines too — without these the Direct Selection tool

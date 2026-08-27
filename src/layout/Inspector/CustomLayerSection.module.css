@@ -79,3 +79,14 @@
 }
 .bannerAction:hover { background: var(--color-hover); }
 .bannerAction:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 1px; }
+
+/* Section heading for a `group`ed run of properties. Flat by design — see
+   `groupsOf`. */
+.groupHeading {
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 8px 0 2px;
+}

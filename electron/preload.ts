@@ -59,6 +59,8 @@ const bridge = {
       ipcRenderer.invoke('render:stageFrame', jobId, index, bytes, ext),
     stageAudio: (jobId: string, bytes: Uint8Array) => ipcRenderer.invoke('render:stageAudio', jobId, bytes),
     encode: (jobId: string, opts: unknown) => ipcRenderer.invoke('render:encode', jobId, opts),
+    /** Whether host ffmpeg can encode HEVC (libx265) for HDR10/HLG delivery. */
+    probeHdr: () => ipcRenderer.invoke('render:probeHdr') as Promise<{ libx265: boolean }>,
     cancel: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),
     save: (jobId: string, defaultName: string) => ipcRenderer.invoke('render:save', jobId, defaultName),
     saveTo: (jobId: string, dir: string, filename: string) =>

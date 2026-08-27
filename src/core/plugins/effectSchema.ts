@@ -199,23 +199,51 @@ export interface EffectContribution {
  *      `scale²`.
  *
  *   2. **The number.** Under either exponent, four full-scale passes cost 4,
- *      which is ≤ 6 — so a budget of 6 does not refuse the chain the brief says
- *      it must. The acceptance criterion is the concrete, testable half of the
- *      pair, so it wins: the budget is **3**.
+ *      which is ≤ 6 — so a budget of 6 does not refuse the chain the original
+ *      brief said it must.
  *
- * What 3 admits, which is the check that matters more than the number:
+ * ── ★ The acceptance criterion was RETIRED, deliberately ─────────────────────
+ *
+ * The budget was 3 (and the count 4) because that pair is the only one that
+ * satisfies "must refuse a four-pass full-scale chain". That criterion has been
+ * dropped: the product goal is now plugins that can express genuinely complex
+ * effects, and a rule whose entire purpose was to refuse the four-pass chain is
+ * the rule standing in the way of it. Recorded here rather than quietly edited,
+ * because the old numbers were REASONED to, not guessed — a reader who finds 6
+ * where the argument above concludes 3 deserves to know which premise moved.
+ *
+ * What did NOT move is why the budget is denominated in pixels rather than in
+ * passes. That half was never about the ceiling; it is about counting the right
+ * thing, and it is still counting it.
+ *
+ * ── Why this ceiling cannot adapt to the machine ─────────────────────────────
+ *
+ * The obvious "let a strong GPU allow more" is wrong AT THIS LAYER, and the
+ * reason is worth stating so it stops being re-proposed. This runs inside
+ * `parseEffects` — MANIFEST VALIDATION — which the registry runs too, on a
+ * server with no GPU. A machine-dependent budget would mean a plugin that
+ * validates on publish and is refused at install, with nothing telling the
+ * author which machine drew the line. A limit checked where a manifest is
+ * checked has to be a constant. Adapting to the hardware is a RENDER-time
+ * decision (drop `scale`, skip a pass) and belongs beside Adaptive Resolution,
+ * not here.
+ *
+ * What 6 admits:
  *
  *   separable blur, two full-scale passes          1 + 1                 = 2    ✓
  *   bloom: bright-pass, blur ×2 at ¼, composite    1 + 0.0625×2 + 1      ≈ 2.13 ✓
- *   four quarter-scale passes                      0.0625 × 4            = 0.25 ✓
- *   four full-scale passes                         1 × 4                 = 4    ✗
+ *   four full-scale passes                         1 × 4                 = 4    ✓  ← was refused
+ *   six full-scale passes                          1 × 6                 = 6    ✓
+ *   eight quarter-scale passes                     0.0625 × 8            = 0.5  ✓
+ *   eight full-scale passes                        1 × 8                 = 8    ✗
  *
- * A user who wanted the last one still gets three full-scale passes, and the
- * shapes a fourth is usually reached for — the cheap tail of a bloom — are the
- * ones that fit easily.
+ * The count rises with it (4 → 8) because a budget of 6 with a cap of 4 would
+ * make the cap the real limit for every cheap chain — eight quarter-scale
+ * passes cost half of one full pass and were refused on a count that no longer
+ * had a cost argument behind it.
  */
-export const MAX_PASSES_PER_EFFECT = 4;
-export const MAX_PASS_COST = 3;
+export const MAX_PASSES_PER_EFFECT = 8;
+export const MAX_PASS_COST = 6;
 
 /**
  * A pass's cost, in units of one full-scale pass: its share of the pixels.

@@ -46,11 +46,12 @@ export const ICON_NAMES = [
   'brush', '3d-focus',
   'loop', 'motion-blur', 'trim-in', 'trim-out', 'solid',
   'graph-value', 'graph-speed', 'export', 'history', 'share', 'link', 'puppet-pin', 'push-pin', 'bone',
+  'direct-select', 'pan-behind', 'draft-3d', 'layer-plus', 'puppet-starch', 'puppet-bend', 'puppet-advanced', 'puppet-overlap',
   'home', 'app', 'voice', 'sound', 'mic', 'ai', 'brain', 'tv', 'tour', 'text-left', 'text-center', 'text-right',
   // 3D viewport vocabulary — each of these exists because the glyph it replaced
   // was already spoken for by a DIFFERENT action in the same toolbar (orbit was
-  // `refresh` = undo-ish, pan-camera was `hand` = the Hand tool, dolly was
-  // `zoom-in` = the Zoom tool, the ground plane was `grid` = the 2D grid
+  // refresh = undo-ish, pan-camera was hand = the Hand tool, dolly was
+  // zoom-in = the Zoom tool, the ground plane was grid = the 2D grid
   // overlay, and the 3D primitives borrowed the shape/text tool glyphs).
   'orbit', 'hand-grab', 'pan-camera', 'perspective', 'axis-3d', 'ground-grid',
   'sphere', 'cylinder', 'text-3d', 'pop-out', 'gpu',

@@ -10,27 +10,31 @@
 
 /* ── 1. Left Sidebar ─────────────────────────────────────────────────────── */
 .sidebar {
-  width: 240px;
+  width: 248px;
   background: var(--color-surface-1);
   border-right: 1px solid var(--color-border-subtle);
   display: flex;
   flex-direction: column;
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-3) var(--space-4);
   flex-shrink: 0;
+  min-height: 0;
 }
 
 .sidebarBrand {
   display: flex;
   align-items: center;
-  padding: 4px 8px 18px;
+  padding: 8px 10px 16px;
   flex-shrink: 0;
 }
 
 .sidebarNav {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-inline: 2px;
 }
 
 .navLink {
@@ -42,7 +46,7 @@
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   font-size: var(--font-size-xs);
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1), color 150ms cubic-bezier(0.16, 1, 0.3, 1);
   text-align: left;
   border: none;
   background: transparent;
@@ -52,7 +56,12 @@
 
 .navLink:hover {
   color: var(--color-text-primary);
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}
+
+.navLink:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 1px;
 }
 
 /**
@@ -63,6 +72,7 @@
   height: 1px;
   margin: 10px 12px;
   background: var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
 }
 
 .navLinkActive {
@@ -82,68 +92,110 @@
 
 .sidebarFooter {
   border-top: 1px solid var(--color-divider);
-  padding-top: 14px;
+  padding-top: 12px;
+  margin-top: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.upgradeCardBox {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-surface);
-  padding: 14px;
+.accountChip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.accountChip:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}
+
+.accountChip:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 1px;
+}
+
+.accountAvatar {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-control);
+  background: var(--color-primary);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  flex-shrink: 0;
+}
+
+.accountMeta {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  position: relative;
-  overflow: hidden;
+  min-width: 0;
+  gap: 1px;
 }
 
-.upgradeCardHeader {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.upgradeCardBadge {
-  color: var(--color-warning);
-  display: flex;
-  align-items: center;
-}
-
-.upgradeCardTitle {
+.accountName {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.upgradeCardDesc {
-  font-size: var(--font-size-xs);
+.accountEmail {
+  font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
-  line-height: 1.35;
-  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.upgradeCardActionBtn {
-  width: 100%;
+.planLink {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 12px;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
   border-radius: var(--radius-control);
-  background: var(--color-primary);
-  border: none;
-  color: #ffffff;
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background-color 120ms ease;
+  transition: border-color 150ms ease, color 150ms ease, background-color 150ms ease;
 }
 
-.upgradeCardActionBtn:hover {
-  background: var(--color-primary-hover);
+.planLink:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+  background: var(--color-surface-0);
+}
+
+.planLink:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 1px;
+}
+
+/* Kept for any leftover references; upgrade promo card replaced by planLink. */
+.upgradeCardBox,
+.upgradeCardHeader,
+.upgradeCardBadge,
+.upgradeCardTitle,
+.upgradeCardDesc,
+.upgradeCardActionBtn {
+  display: none;
 }
 
 .logoutSidebarBtn {
@@ -159,12 +211,17 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
+  transition: background-color 150ms ease, color 150ms ease;
 }
 
 .logoutSidebarBtn:hover {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
   color: var(--color-danger);
+}
+
+.logoutSidebarBtn:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 1px;
 }
 
 .logoutIcon {
@@ -185,27 +242,39 @@
 /* Main Workspace */
 .mainContent {
   flex: 1;
-  padding: 24px;
-  max-width: 1200px;
+  padding: 28px 32px 40px;
+  max-width: 1120px;
   width: 100%;
   margin: 0 auto;
 }
 
 .pageTitleRow {
-  margin-bottom: 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.pageTitleBlock {
+  min-width: 0;
 }
 
 .pageTitle {
   font-size: var(--font-size-lg);
   font-weight: var(--font-weight-semibold);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
   color: var(--color-text-primary);
-  margin-bottom: 2px;
+  margin: 0 0 4px;
+  text-wrap: balance;
 }
 
 .pageSubtitle {
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
+  margin: 0;
+  line-height: 1.45;
+  max-width: 52ch;
 }
 
 /* Action Bar (Filters + Create buttons) */
@@ -347,8 +416,19 @@
   background: color-mix(in srgb, var(--color-danger) 20%, transparent);
 }
 
-.btnDanger:active:not(:disabled) {
-  transform: scale(0.98);
+.btnPrimary:focus-visible,
+.btnSecondary:focus-visible,
+.btnDanger:focus-visible,
+.actionBtn:focus-visible,
+.heroBtnPrimary:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.btnPrimary:disabled,
+.btnSecondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 /* Datatable Card */
@@ -501,6 +581,12 @@
   color: var(--color-warning);
 }
 
+.badgeDanger {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+}
+
 .pulseDot {
   width: 5px;
   height: 5px;
@@ -513,6 +599,28 @@
   0% { transform: scale(0.9); opacity: 0.6; }
   50% { transform: scale(1.2); opacity: 1; }
   100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulseDot {
+    animation: none;
+  }
+
+  .navLink,
+  .btnPrimary,
+  .btnSecondary,
+  .btnDanger,
+  .statCard,
+  .projectSearchInput {
+    transition: none;
+  }
+
+  .navLink:active,
+  .btnPrimary:active:not(:disabled),
+  .btnSecondary:active:not(:disabled),
+  .btnDanger:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 .actionBtn {
@@ -561,8 +669,19 @@
 
 .emptyState p {
   font-size: var(--font-size-xs);
-  max-width: 280px;
+  max-width: 320px;
   margin-bottom: 4px;
+  line-height: 1.45;
+}
+
+.emptyHint {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, transparent);
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
@@ -576,19 +695,23 @@
 .statsGrid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  margin-bottom: 24px;
+  gap: 12px;
+  margin-bottom: 28px;
 }
 
 .statCard {
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-surface);
-  padding: 16px 18px;
+  padding: 14px 16px;
   display: flex;
   align-items: center;
-  gap: 14px;
-  transition: border-color 140ms ease, background-color 140ms ease;
+  gap: 12px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 150ms cubic-bezier(0.16, 1, 0.3, 1), background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .statCard:hover {
@@ -596,18 +719,39 @@
   background: var(--color-surface-2);
 }
 
+.statCard:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
 .statIcon {
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   border-radius: var(--radius-control);
   display: grid;
   place-items: center;
   flex-shrink: 0;
 }
 
+.statIconProjects {
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  color: var(--color-primary);
+}
+
+.statIconRenders {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+}
+
+.statIconStorage {
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+}
+
 .statMeta {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .statValue {
@@ -615,7 +759,8 @@
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
   line-height: 1.1;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
 .statLabel {
@@ -626,6 +771,10 @@
 }
 
 .sectionHeaderRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
@@ -633,6 +782,21 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
+  margin: 0;
+}
+
+.sectionLink {
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  padding: 0;
+}
+
+.sectionLink:hover {
+  text-decoration: underline;
 }
 
 /* Template Grid View */
@@ -692,6 +856,68 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.assetToolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.fileLabel {
+  cursor: pointer;
+}
+
+.fileLabelBusy {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.hiddenFileInput {
+  display: none;
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  padding: 2px 0;
+}
+
+.breadcrumbSeg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.breadcrumbSep {
+  color: var(--color-text-tertiary);
+  opacity: 0.7;
+}
+
+.breadcrumbBtn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.breadcrumbBtn:hover {
+  color: var(--color-text-primary);
+  background: color-mix(in srgb, var(--color-text-primary) 6%, transparent);
+}
+
+.breadcrumbBtnActive {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .assetTabs {
@@ -882,8 +1108,8 @@
 }
 
 .profileAvatarLarge {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   border-radius: var(--radius-control);
   background: var(--color-primary);
   color: #ffffff;
@@ -1129,48 +1355,89 @@
   border-top: 1px solid var(--color-border);
 }
 
-/* ── Continue Editing Hero Banner & Quick Launchpad ── */
+/* ── Continue Editing Hero Banner ── */
 .heroBanner {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-surface);
-  padding: 18px 20px;
-  margin-bottom: 24px;
-  position: relative;
+  padding: 16px;
+  margin-bottom: 20px;
 }
 
-.heroBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
+.heroThumb {
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-control);
-  background: var(--color-primary-subtle);
-  border: 1px solid var(--color-primary);
+  background: var(--color-surface-0);
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  min-height: 92px;
+  display: grid;
+  place-items: center;
   color: var(--color-primary);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  margin-bottom: 8px;
+  transition: border-color 150ms ease;
+}
+
+.heroThumb:hover {
+  border-color: var(--color-primary);
+}
+
+.heroThumb:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+
+.heroThumbImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.heroThumbIcon {
+  opacity: 0.7;
+}
+
+.heroBody {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.heroEyeline {
+  margin: 0 0 6px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
 }
 
 .heroTitle {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-  margin: 0 0 4px 0;
+  margin: 0 0 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .heroSubtitle {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-  margin: 0 0 14px 0;
+  margin: 0 0 14px;
   line-height: 1.4;
 }
 
 .heroActions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .heroBtnPrimary {
@@ -1185,11 +1452,105 @@
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background-color 120ms ease;
+  transition: background-color 150ms ease;
 }
 
 .heroBtnPrimary:hover {
   background: var(--color-primary-hover);
+}
+
+.selectionBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--color-surface-2);
+  border-bottom: 1px solid var(--color-border-strong);
+  flex-wrap: wrap;
+}
+
+.selectionCount {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.trashActions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.purgeSoon {
+  color: var(--color-warning);
+  font-weight: var(--font-weight-semibold);
+}
+
+.pluginsPanelHost {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-surface);
+  overflow: hidden;
+  min-height: 420px;
+}
+
+.modalPublishContainer {
+  max-height: min(70vh, 640px);
+  overflow: auto;
+}
+
+.colorRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.colorSwatchBtn {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+  padding: 0;
+}
+
+.colorSwatchBtnActive {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.colorHexInput {
+  width: 88px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  padding: 6px 8px;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+}
+
+.colorHexInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.startFromGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.transparentToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  margin-left: auto;
 }
 
 .launchpadSection {
@@ -1280,7 +1641,11 @@
 /* Responsive Breakpoints */
 @media (max-width: 1024px) {
   .mainContent {
-    padding: 20px 16px;
+    padding: 20px 16px 32px;
+  }
+
+  .heroBanner {
+    grid-template-columns: 120px minmax(0, 1fr);
   }
 }
 
@@ -1293,39 +1658,77 @@
     height: auto;
     border-right: none;
     border-bottom: 1px solid var(--color-border-subtle);
-    padding: 10px 16px;
+    padding: 10px 12px;
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
+    gap: 10px;
     overflow-x: auto;
+  }
+  .sidebarBrand {
+    padding: 0 4px 0 0;
   }
   .sidebarNav {
     flex-direction: row;
-    gap: 6px;
-    flex: initial;
+    gap: 4px;
+    flex: 1;
+    overflow-x: auto;
+    overflow-y: hidden;
   }
-  /* The sidebar is a horizontal strip here, so the rule turns on its side. */
   .navDivider {
     width: 1px;
     height: auto;
-    margin: 6px 4px;
+    margin: 4px;
     align-self: stretch;
     flex: 0 0 auto;
   }
   .sidebarFooter {
     border-top: none;
     padding-top: 0;
+    margin-top: 0;
     flex-direction: row;
+    align-items: center;
   }
-  .upgradeCardBox {
+  .accountChip,
+  .planLink {
     display: none;
   }
   .container {
     height: calc(100% - 54px);
   }
+  .pageTitleRow {
+    flex-direction: column;
+    align-items: stretch;
+  }
   .actionBar {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
+  }
+  .statsGrid {
+    grid-template-columns: 1fr;
+  }
+  .heroBanner {
+    grid-template-columns: 1fr;
+  }
+  .heroThumb {
+    min-height: 140px;
+  }
+  .startFromGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .projectSearchInput,
+  .projectSearchInput:focus {
+    width: 100%;
+  }
+  .filterGroup {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .searchWrapper {
+    width: 100%;
   }
 }

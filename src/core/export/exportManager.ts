@@ -38,6 +38,7 @@ import {
   type VideoFormat,
   type VideoSinkResult,
 } from './videoSink';
+import { isPluginFormat, pluginExporters } from './pluginExporters';
 
 import { useUIStore } from '@stores/uiStore';
 import { exportEdlText } from './exportEdl';
@@ -456,25 +457,40 @@ export async function renderVideo(
   });
   if (!sink) throw new Error(unsupportedFormatMessage(format));
 
-  try {
-    await renderOffline(
-      offlineParams(opts),
-      async (canvas, frame, count) => {
-        await sink.addFrame(canvas, frame);
-        // Encoding is the bulk of the work for a video, so hold the reported
-        // progress just short of done until the encode itself finishes.
-        onProgress?.(((frame + 1) / count) * 0.95);
-      },
-      signal,
+  const { withNeutralDisplayForHdrEncode } = await import('./hdrTransfer');
+  const { useColorManagementStore } = await import('@stores/colorManagementStore');
+  const runEncode = async (): Promise<VideoSinkResult> => {
+    try {
+      await renderOffline(
+        offlineParams(opts),
+        async (canvas, frame, count) => {
+          await sink.addFrame(canvas, frame);
+          // Encoding is the bulk of the work for a video, so hold the reported
+          // progress just short of done until the encode itself finishes.
+          onProgress?.(((frame + 1) / count) * 0.95);
+        },
+        signal,
+      );
+      throwIfAborted(signal);
+      const result = await sink.finish();
+      onProgress?.(1);
+      return result;
+    } catch (err) {
+      await sink.dispose();
+      throw err;
+    }
+  };
+
+  // HDR delivery bakes PQ/HLG once in the sink — neutralize viewport ODT first.
+  if (format === 'hdr10' || format === 'hlg') {
+    const cm = useColorManagementStore.getState();
+    return withNeutralDisplayForHdrEncode(
+      runEncode,
+      (v) => cm.setDisplayTransform(v),
+      () => cm.displayTransform,
     );
-    throwIfAborted(signal);
-    const result = await sink.finish();
-    onProgress?.(1);
-    return result;
-  } catch (err) {
-    await sink.dispose();
-    throw err;
   }
+  return runEncode();
 }
 
 /**
@@ -544,32 +560,44 @@ export async function createResumableVideoRender(
   const params = offlineParams(opts);
   const { start, end } = resolveRange(params);
   const totalFrames = end - start + 1;
+  const isHdr = format === 'hdr10' || format === 'hlg';
 
   return {
     totalFrames,
     async run(fromOffset, onProgress, signal) {
       let staged = fromOffset;
-      try {
-        await renderOffline(
-          // The loop's own range does the skipping: nothing before the resume
-          // point is rendered, let alone re-staged.
-          { ...params, startFrame: start + fromOffset, endFrame: end },
-          async (canvas, frame) => {
-            // `frame` is 0-based within THIS run; the sink needs the offset
-            // within the whole export range, or a resume would restage over
-            // frame_0000 and the encode would begin mid-composition.
-            await sink.addFrame(canvas, fromOffset + frame);
-            staged = fromOffset + frame + 1;
-            onProgress?.((staged / totalFrames) * 0.95);
-          },
-          signal,
-        );
-        return { done: true };
-      } catch (err) {
-        if (isAbortError(err)) return { done: false, nextOffset: staged };
-        await sink.dispose();
-        throw err;
-      }
+      const body = async (): Promise<{ done: true } | { done: false; nextOffset: number }> => {
+        try {
+          await renderOffline(
+            // The loop's own range does the skipping: nothing before the resume
+            // point is rendered, let alone re-staged.
+            { ...params, startFrame: start + fromOffset, endFrame: end },
+            async (canvas, frame) => {
+              // `frame` is 0-based within THIS run; the sink needs the offset
+              // within the whole export range, or a resume would restage over
+              // frame_0000 and the encode would begin mid-composition.
+              await sink.addFrame(canvas, fromOffset + frame);
+              staged = fromOffset + frame + 1;
+              onProgress?.((staged / totalFrames) * 0.95);
+            },
+            signal,
+          );
+          return { done: true };
+        } catch (err) {
+          if (isAbortError(err)) return { done: false, nextOffset: staged };
+          await sink.dispose();
+          throw err;
+        }
+      };
+      if (!isHdr) return body();
+      const { withNeutralDisplayForHdrEncode } = await import('./hdrTransfer');
+      const { useColorManagementStore } = await import('@stores/colorManagementStore');
+      const cm = useColorManagementStore.getState();
+      return withNeutralDisplayForHdrEncode(
+        body,
+        (v) => cm.setDisplayTransform(v),
+        () => cm.displayTransform,
+      );
     },
     async finish() {
       const result = await sink.finish();
@@ -610,7 +638,10 @@ function defaultBaseName(): string {
   return `motion-export-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
 }
 
-async function exportVideoFormat(opts: ExportOptions, format: VideoFormat): Promise<{ videoCodec?: string }> {
+async function exportVideoFormat(
+  opts: ExportOptions,
+  format: VideoFormat,
+): Promise<{ videoCodec?: string; hdrMastering?: { maxCll: number; maxFall: number } }> {
   // GIF has a dedicated encoder in the browser (no browser will mux one), so it
   // only routes through the video sink where ffmpeg is available.
   if (format === 'gif' && !canEncodeLocally()) {
@@ -624,7 +655,13 @@ async function exportVideoFormat(opts: ExportOptions, format: VideoFormat): Prom
     if (result.kind === 'file') await result.discard();
     throw new DOMException('The user cancelled the save dialog.', 'AbortError');
   }
-  return { videoCodec: result.kind === 'file' ? result.videoCodec : undefined };
+  const mastering = result.hdrMastering;
+  return {
+    videoCodec: result.kind === 'file' ? result.videoCodec : result.videoCodec,
+    ...(mastering
+      ? { hdrMastering: { maxCll: mastering.maxCll, maxFall: mastering.maxFall } }
+      : {}),
+  };
 }
 
 /**
@@ -961,7 +998,9 @@ export async function exportAudioEntries(opts: ExportOptions): Promise<ZipEntry[
   return bytes ? [{ name: 'audio.wav', data: bytes }] : [];
 }
 
-export async function runExport(opts: ExportOptions): Promise<{ videoCodec?: string }> {
+export async function runExport(
+  opts: ExportOptions,
+): Promise<{ videoCodec?: string; hdrMastering?: { maxCll: number; maxFall: number } }> {
   switch (opts.format) {
     case 'png': await exportPNG(opts); return {};
     case 'png-sequence': await exportSequence(opts, 'png'); return {};
@@ -981,6 +1020,16 @@ export async function runExport(opts: ExportOptions): Promise<{ videoCodec?: str
     case 'hdr10':
     case 'hlg':
       return exportVideoFormat(opts, opts.format);
+    default:
+      /*
+        A plugin format takes the SAME video path — render every frame, feed a
+        sink, take a result. Only the sink differs, and `createVideoSink` picks
+        it. Routing it here rather than giving plugin exports their own pipeline
+        is what keeps them honest: they get the identical frames, the identical
+        colour handling and the identical save flow as a built-in format.
+      */
+      if (isPluginFormat(opts.format)) return exportVideoFormat(opts, opts.format);
+      throw new Error(`Unsupported export format "${String(opts.format)}".`);
   }
 }
 
@@ -1002,8 +1051,8 @@ export interface ExportPreset {
  */
 export const EXPORT_PRESETS: ExportPreset[] = [
   { format: 'mp4', label: 'MP4 · H.264', ext: 'mp4', hint: 'Plays everywhere. Best default for sharing.', desktopOnly: true },
-  { format: 'hdr10', label: 'MP4 · HDR10 (PQ)', ext: 'mp4', hint: 'ST.2084 PQ + BT.2020. HEVC 10-bit when ffmpeg has libx265; else tagged H.264 10-bit.', desktopOnly: true },
-  { format: 'hlg', label: 'MP4 · HLG', ext: 'mp4', hint: 'Hybrid Log-Gamma + BT.2020 for broadcast HDR. Same encode path as HDR10.', desktopOnly: true },
+  { format: 'hdr10', label: 'MP4 · HDR10 (PQ)', ext: 'mp4', hint: 'ST.2084 PQ + BT.2020. Probes host ffmpeg: HEVC 10-bit + MaxCLL/MaxFALL when libx265 is present; otherwise tagged H.264 High 10 (no MaxCLL SEI).', desktopOnly: true },
+  { format: 'hlg', label: 'MP4 · HLG', ext: 'mp4', hint: 'Hybrid Log-Gamma + BT.2020. Same encode path as HDR10 — HEVC preferred, H.264 High 10 fallback.', desktopOnly: true },
   { format: 'webm', label: 'WebM · VP9', ext: 'webm', hint: 'Smaller than MP4, keeps transparency, ideal for the web.' },
   { format: 'mov', label: 'MOV · ProRes 4444', ext: 'mov', hint: 'Lossless with alpha, for editing in another app. Large files.', desktopOnly: true },
   { format: 'gif', label: 'Animated GIF', ext: 'gif', hint: 'No audio, 256 colours. Keep it short and small.' },
@@ -1023,7 +1072,29 @@ export const EXPORT_PRESETS: ExportPreset[] = [
 /** Presets this build can actually produce. */
 export function availableExportPresets(): ExportPreset[] {
   const local = canEncodeLocally();
-  return EXPORT_PRESETS.filter((p) => local || !p.desktopOnly);
+  const builtin = EXPORT_PRESETS.filter((p) => local || !p.desktopOnly);
+
+  /*
+    Plugin formats, appended AFTER the built-ins and never interleaved.
+
+    Order is the whole point: a user scanning the list should reach everything
+    the editor guarantees before anything a third party added, and a plugin
+    should not be able to place its format above MP4 by naming it "AAA". The
+    hint carries the plugin's own name, so a format that behaves oddly is
+    attributable without opening the plugin manager.
+
+    Never marked `desktopOnly` — a plugin encoder is JavaScript in a worker and
+    runs wherever the editor does.
+  */
+  return [
+    ...builtin,
+    ...pluginExporters().map((e) => ({
+      format: e.format as ExportFormat,
+      label: e.label,
+      ext: e.extension,
+      hint: `Provided by ${e.pluginName}`,
+    })),
+  ];
 }
 
 export const DEFAULT_COMP = { width: COMP_WIDTH, height: COMP_HEIGHT };

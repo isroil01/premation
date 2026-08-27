@@ -1,7 +1,8 @@
 /**
  * keyframeClipboard — in-memory copy/paste for keyframes (AE-style).
  *
- * Copy: captures (nodeId, prop, t, value, easing, bezier) tuples.
+ * Copy: captures value + temporal easing + spatial tangents (`si`/`so`) +
+ *       continuous / roving flags so motion-path shape survives Ctrl+C/V.
  * Paste: re-applies them to any selected layer at the playhead, offsetting
  *        times so the earliest copied keyframe lands at the playhead.
  *        Works across layers — paste applies to each currently-selected node.
@@ -22,6 +23,11 @@ export interface ClipboardEntry {
   value: number;
   easing?: EasingKind;
   bezier?: BezierHandles;
+  /** Spatial in/out tangents (value-space offsets) — motion-path shape. */
+  si?: number;
+  so?: number;
+  continuous?: boolean;
+  roving?: boolean;
 }
 
 let _clipboard: ClipboardEntry[] = [];
@@ -29,6 +35,11 @@ let _clipboard: ClipboardEntry[] = [];
 /** True when the clipboard holds at least one keyframe. */
 export function hasClipboard(): boolean {
   return _clipboard.length > 0;
+}
+
+/** Test helper — wipe the module clipboard between cases. */
+export function clearClipboard(): void {
+  _clipboard = [];
 }
 
 /**
@@ -46,18 +57,22 @@ export function copyKeyframes(ids: ReadonlySet<string>): void {
     if (!ref) continue;
     // A selected "Position" row stands for the underlying x/y/z tracks.
     for (const prop of expandKeyframeProp(ref.prop)) {
-    const { nodeId, t } = ref;
-    const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
-    const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
-    if (!kf) continue;
-    entries.push({
-      nodeId,
-      prop,
-      t: kf.t,
-      value: kf.value,
-      easing: kf.easing,
-      bezier: kf.bezier ? [...kf.bezier] as BezierHandles : undefined,
-    });
+      const { nodeId, t } = ref;
+      const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
+      const kf = kfs?.find((k) => Math.abs(k.t - t) < 1e-6);
+      if (!kf) continue;
+      entries.push({
+        nodeId,
+        prop,
+        t: kf.t,
+        value: kf.value,
+        easing: kf.easing,
+        bezier: kf.bezier ? [...kf.bezier] as BezierHandles : undefined,
+        si: kf.si,
+        so: kf.so,
+        continuous: kf.continuous,
+        roving: kf.roving,
+      });
     }
   }
   if (entries.length > 0) _clipboard = entries;
@@ -82,6 +97,18 @@ export function pasteKeyframes(targetNodeIds: readonly string[], atCompTime: num
         const layerT = base + (entry.t - minT);
         defaultAnimation.setKeyframe(nodeId, entry.prop, layerT, entry.value, entry.easing);
         if (entry.bezier) defaultAnimation.setBezier(nodeId, entry.prop, layerT, entry.bezier);
+        if (entry.si !== undefined || entry.so !== undefined) {
+          defaultAnimation.setSpatialTangent(nodeId, entry.prop, layerT, {
+            si: entry.si,
+            so: entry.so,
+          });
+        }
+        if (entry.continuous !== undefined || entry.roving !== undefined) {
+          defaultAnimation.updateKeyframe(nodeId, entry.prop, layerT, {
+            continuous: entry.continuous,
+            roving: entry.roving,
+          });
+        }
       }
     }
   });

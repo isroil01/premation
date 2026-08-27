@@ -6,7 +6,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-surface-0);
+  background: var(--color-panel, #232323);
   overflow: hidden;
 }
 
@@ -16,7 +16,7 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  background: var(--color-workspace);
+  background: var(--color-panel, #232323);
   outline: none;
   overflow: hidden;
 }
@@ -38,7 +38,7 @@
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  background: var(--color-pasteboard);
+  background: var(--color-panel, #232323);
 }
 
 .loadingSpinner {
@@ -83,15 +83,13 @@
 
 /*
  * Composition stage — the infinite-canvas viewport.
- * Uses a refined dot-grid on the dark void; the canvas engine paints the
- * composition as a white-framed floating page with a soft shadow below.
+ * Uses the exact same background color as the sidebars (var(--color-panel, #232323)).
  */
 .stage {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  /* Premium radial gradient void centered on the composition, fading to true slate-950 */
-  background: radial-gradient(circle at center, #242426 0%, var(--color-slate-950) 100%);
+  background: var(--color-panel, #232323);
 }
 
 /* Transparency checkerboard, CLIPPED TO THE COMP RECT.

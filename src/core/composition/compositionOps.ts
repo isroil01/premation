@@ -101,7 +101,18 @@ export function createOrAdoptComposition(init: Partial<CompositionSettings> = {}
   const root = defaultSceneGraph.getNode(adoptId);
   if (root) root.name = name;
   actions.openTab(adoptId, [adoptId], name);
-  getTimelineController().syncFromScene(adoptId);
+  const controller = getTimelineController();
+  controller.syncFromScene(adoptId);
+  // The adopted comp's TIMELINE was already lazily initialized at the default
+  // 30fps / 10s (any mount effect touching `.timeline` builds it), and
+  // `syncFromScene` mirrors layers only — it never re-times. Without these
+  // explicit calls, the very first "New Comp from Footage" in a fresh project
+  // showed a ruler, work area and loop range that disagreed with the comp
+  // settings written two lines up.
+  if (init.fps !== undefined && init.fps > 0) controller.setFrameRate(init.fps);
+  if (init.durationSeconds !== undefined && init.durationSeconds > 0) {
+    controller.setDurationSeconds(init.durationSeconds);
+  }
   useSelectionStore.getState().clear();
   bumpScene();
   return adoptId;

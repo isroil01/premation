@@ -36,7 +36,7 @@ describe('linear working space', () => {
     expect(SRGB_TRANSFER_WGSL).toContain('storageToWorking');
   });
 
-  it.each(['textured', 'textured-linear', 'masked-textured', 'deformed-mesh', 'blend-combine', 'blur', 'scene-blit'])(
+  it.each(['textured', 'textured-linear', 'masked-textured', 'deformed-mesh', 'blend-combine', 'blur', 'scene-blit', 'scene-blit-lut'])(
     '%s carries srgb↔linear helpers in both dialects',
     (name) => {
       const s = byName(name)!;
@@ -66,6 +66,9 @@ describe('linear working space', () => {
   it('scene-blit encodes linear working-space to sRGB for the canvas', () => {
     expect(byName('scene-blit')).toBeDefined();
     expect(byName('scene-blit')!.wgsl).toContain('workingToDisplay');
+    expect(byName('scene-blit-lut')).toBeDefined();
+    expect(byName('scene-blit-lut')!.wgsl).toContain('workingToDisplay');
+    expect(byName('scene-blit-lut')!.wgsl).toContain('viewerSlice');
   });
 
   it('toWorkingColor linearizes mid-grey and leaves 0/1 alone', () => {

@@ -181,12 +181,17 @@ export async function renderOffline(
       );
       backend.renderFrame(snap);
       // Converge media: while a render started async media work (video seeks,
-      // first decode, blend-cache fills), await it and re-render. Every wait is
-      // internally time-capped, and the pass cap bounds a pathological source.
+      // first decode, blend-cache fills), await it and re-render. The element
+      // waits are internally time-capped; the exact-decoder waits are not, so
+      // each pass carries its own ceiling — a wedged decode must degrade the
+      // frame, never hang the export forever with no error and no progress.
       for (let pass = 0; pass < 4; pass++) {
         const waits = backend.takeMediaWaits?.();
         if (!waits || waits.length === 0) break;
-        await Promise.all(waits);
+        await Promise.race([
+          Promise.all(waits),
+          new Promise<void>((resolve) => setTimeout(resolve, 15_000)),
+        ]);
         if (signal?.aborted) throw new DOMException('Render cancelled', 'AbortError');
         backend.renderFrame(snap);
       }

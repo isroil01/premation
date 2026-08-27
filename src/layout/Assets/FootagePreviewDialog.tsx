@@ -28,6 +28,7 @@ import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } 
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { demuxMp4 } from '@core/video/mp4Demuxer';
+import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
 import { ExactVideoSource, webCodecsAvailable } from '@core/video/exactVideoSource';
 import type { ImportedAsset } from '@stores/assetStore';
 import styles from './FootagePreviewDialog.module.css';
@@ -70,11 +71,32 @@ function useExactStepper(asset: ImportedAsset): {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const sourceRef = useRef<ExactVideoSource | null>(null);
+  /** Container rotation of the current source (decoder output is unrotated). */
+  const rotationRef = useRef<0 | 90 | 180 | 270>(0);
+  /** In-flight guard: a second click while the first fetch+demux is still
+   *  resolving must not start a second one — the loser's decoder leaked. */
+  const enteringRef = useRef(false);
 
   useEffect(() => () => {
     sourceRef.current?.close();
     sourceRef.current = null;
   }, []);
+
+  // The modal REPLACES its body when a second asset is previewed under the
+  // same modal id — the stepper must not keep serving the previous asset's
+  // frames from its cached source.
+  useEffect(() => {
+    if (!sourceRef.current && mode === 'player') return;
+    sourceRef.current?.close();
+    sourceRef.current = null;
+    enteringRef.current = false;
+    setMode('player');
+    setNote(null);
+    setFrameIdx(0);
+    setFrameCount(0);
+    setTimeUs(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset.src]);
 
   const show = (src: ExactVideoSource, idx: number): void => {
     const clamped = Math.max(0, Math.min(src.frameCount - 1, idx));
@@ -84,7 +106,19 @@ function useExactStepper(asset: ImportedAsset): {
       const ctx = canvas?.getContext('2d');
       if (canvas && ctx) {
         // Cache owns the frame — draw, never close.
-        ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, canvas.width, canvas.height);
+        const rot = rotationRef.current;
+        if (rot !== 0) {
+          const swap = rot === 90 || rot === 270;
+          const dw = swap ? canvas.height : canvas.width;
+          const dh = swap ? canvas.width : canvas.height;
+          ctx.save();
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          ctx.rotate((rot * Math.PI) / 180);
+          ctx.drawImage(frame as unknown as CanvasImageSource, -dw / 2, -dh / 2, dw, dh);
+          ctx.restore();
+        } else {
+          ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, canvas.width, canvas.height);
+        }
       }
       setFrameIdx(clamped);
       setTimeUs(src.timeUsOf(clamped));
@@ -95,12 +129,16 @@ function useExactStepper(asset: ImportedAsset): {
   };
 
   const enter = (): void => {
+    // The player keeps running (with audio) behind the stepper otherwise.
+    videoRef.current?.pause();
     const existing = sourceRef.current;
     if (existing) {
       setMode('frames');
       show(existing, frameIdx);
       return;
     }
+    if (enteringRef.current) return;
+    enteringRef.current = true;
     setNote(null);
     // Promise.resolve first: a platform with no fetch (or one that throws
     // synchronously on an unsupported scheme) must land in the SAME catch as
@@ -111,19 +149,34 @@ function useExactStepper(asset: ImportedAsset): {
         if (!r.ok) throw new Error(`source unreadable (${r.status})`);
         return r.arrayBuffer();
       })
-      .then(demuxMp4)
+      .then((buf) => {
+        // Same whole-file-in-memory contract as the render path's loader —
+        // and the same ceiling, so a multi-GB clip cannot double into the
+        // JS heap from a preview click.
+        if (buf.byteLength > 1536 * 1024 * 1024) {
+          throw new Error('file too large for frame-by-frame — generate a proxy');
+        }
+        // WebM and MP4, like the timeline: this dialog was MP4-only, so WebM
+        // clips offered the button and always failed even though the renderer
+        // decodes them exactly.
+        const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+        return isWebmMagic(head) ? demuxWebm(buf) : demuxMp4(buf);
+      })
       .then((demuxed) => {
         const src = new ExactVideoSource(demuxed);
         sourceRef.current = src;
+        enteringRef.current = false;
+        rotationRef.current = demuxed.rotation ?? 0;
         setFrameCount(src.frameCount);
         const canvas = canvasRef.current;
         if (canvas) {
-          canvas.width = demuxed.codedWidth;
-          canvas.height = demuxed.codedHeight;
+          const swap = rotationRef.current === 90 || rotationRef.current === 270;
+          canvas.width = swap ? demuxed.codedHeight : demuxed.codedWidth;
+          canvas.height = swap ? demuxed.codedWidth : demuxed.codedHeight;
           // Anamorphic footage: the canvas holds coded (unstretched) pixels,
           // so the PAR correction is display-side, like the facts row does.
           const par = asset.interpret?.par ?? 1;
-          if (par !== 1) canvas.style.aspectRatio = `${demuxed.codedWidth * par} / ${demuxed.codedHeight}`;
+          if (par !== 1) canvas.style.aspectRatio = `${canvas.width * par} / ${canvas.height}`;
         }
         setMode('frames');
         // Land where the player was paused, not back at 0 — stepping exists
@@ -135,6 +188,7 @@ function useExactStepper(asset: ImportedAsset): {
         show(src, src.frameIndexAt(Math.round(t * 1e6) + 1));
       })
       .catch((e: unknown) => {
+        enteringRef.current = false;
         setNote(`Frame-by-frame unavailable: ${e instanceof Error ? e.message : String(e)}`);
         setMode('player');
       });

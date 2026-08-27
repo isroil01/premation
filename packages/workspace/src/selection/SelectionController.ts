@@ -183,7 +183,9 @@ export class SelectionController {
     const ids = this.selection.get();
     if (ids.length === 1) {
       const only = this.scene.getNode(ids[0]!);
-      if (only?.is3D) return [];
+      // 3D layers: the gizmo owns the transform. Devices (cameras/lights):
+      // there is nothing to resize or rotate — the renderer ignores both.
+      if (only?.is3D || only?.device) return [];
       // ONE layer: put the grips on its own ORIENTED box.
       //
       // They used to come from the axis-aligned bounds even here, so rotating a

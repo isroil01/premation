@@ -66,11 +66,20 @@ function clampInt(v: number, min: number, max: number, fallback: number): number
   return Number.isFinite(v) ? Math.max(min, Math.min(max, Math.round(v))) : fallback;
 }
 
-function sanitize(patch: Partial<CompositionSettings>): Partial<CompositionSettings> {
+/** Exported for its tests — every store write passes through it. */
+export function sanitize(patch: Partial<CompositionSettings>): Partial<CompositionSettings> {
   const out: Partial<CompositionSettings> = { ...patch };
   if (patch.width !== undefined) out.width = clampInt(patch.width, 1, 16384, DEFAULT_COMPOSITION.width);
   if (patch.height !== undefined) out.height = clampInt(patch.height, 1, 16384, DEFAULT_COMPOSITION.height);
-  if (patch.fps !== undefined) out.fps = clampInt(patch.fps, 1, 240, DEFAULT_COMPOSITION.fps);
+  // fps is clamped but NEVER rounded: 23.976 and 29.97 are real broadcast
+  // rates (see presets.ts — "rounding them to 24/30 is a real sync bug").
+  // clampInt here silently turned the NTSC presets into 24/30, so the comp
+  // record and the timeline disagreed and footage drifted against audio.
+  if (patch.fps !== undefined) {
+    out.fps = Number.isFinite(patch.fps)
+      ? Math.max(1, Math.min(240, patch.fps))
+      : DEFAULT_COMPOSITION.fps;
+  }
   if (patch.durationSeconds !== undefined) {
     out.durationSeconds = Number.isFinite(patch.durationSeconds)
       ? Math.max(0.1, patch.durationSeconds)

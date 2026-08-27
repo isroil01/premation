@@ -61,14 +61,34 @@
   color: var(--color-text-secondary);
 }
 
-.legendItem {
-  display: flex;
+.legendItem,
+.legendItemDim {
+  display: inline-flex;
   align-items: center;
   gap: 4px;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   padding: 0 6px;
+  margin: 0;
+  border: none;
   border-left: 1px solid var(--color-border-strong);
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.legendItem:hover {
+  color: var(--color-text-primary);
+}
+
+.legendItemDim {
+  color: var(--color-text-muted);
+  opacity: 0.45;
+}
+
+.legendItemDim:hover {
+  opacity: 0.75;
 }
 
 .legendDot {
@@ -186,6 +206,44 @@
 
 .svgScrubbing {
   cursor: ew-resize;
+}
+
+.svgBoxZoom {
+  cursor: crosshair;
+}
+
+.boxZoomRect {
+  fill: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  stroke: var(--color-primary);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+
+/* Snap guides — only while a diamond drag is latched onto a target. */
+.snapLine {
+  pointer-events: none;
+  stroke-width: 1;
+}
+.snapPlayhead {
+  stroke: var(--color-timeline-playhead, #ff453a);
+}
+.snapKeyframe {
+  stroke: var(--color-primary);
+}
+.snapValue {
+  stroke: var(--color-primary);
+  stroke-dasharray: 3 3;
+  opacity: 0.85;
+}
+
+.kfLabel {
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+  paint-order: stroke fill;
+  stroke: var(--color-surface-0);
+  stroke-width: 3px;
+  stroke-linejoin: round;
 }
 
 .curve {

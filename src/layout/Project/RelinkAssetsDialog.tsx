@@ -50,7 +50,8 @@ function RelinkBody({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)', lineHeight: 1.5 }}>
         This project references files that are not in the package. Relink them
-        to keep the animation; skipping leaves those layers empty.
+        to keep the animation; skipping leaves those layers as Media Offline
+        (colour bars). Export will refuse until they are relinked or removed.
       </p>
       {left.map((m) => (
         <div

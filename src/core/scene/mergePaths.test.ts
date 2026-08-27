@@ -120,6 +120,10 @@ describe('booleanPolygons', () => {
 });
 
 describe('mergeSelectedPaths', () => {
+  beforeAll(() => {
+    setCommandSystem(new CommandSystem({ services: {} as never, getState: () => ({}) }));
+  });
+
   it('unions two rect layers into one merged layer with the base style', () => {
     const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
     defaultSceneGraph.addChild(rootId, rect('mp_a', 100, 100, 40, 40));
@@ -136,6 +140,24 @@ describe('mergeSelectedPaths', () => {
     expect(style?.props.fill).toBe('#ff0000');
     const geom = merged.components.find((c) => c.type === 'Geometry');
     expect(Array.isArray(geom?.props.points)).toBe(true);
+    defaultSceneGraph.removeNode(ids[0]!);
+    useSelectionStore.getState().clear();
+  });
+
+  it('subtracts a contained rect as a hole (one layer, two subpaths), not two fills', () => {
+    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+    defaultSceneGraph.addChild(rootId, rect('mp_outer', 100, 100, 80, 80));
+    defaultSceneGraph.addChild(rootId, rect('mp_inner', 100, 100, 30, 30));
+    useSelectionStore.getState().set(['mp_outer', 'mp_inner']);
+
+    const ids = mergeSelectedPaths('subtract');
+    expect(ids).toHaveLength(1);
+    const merged = defaultSceneGraph.getNode(ids[0]!)!;
+    const geom = merged.components.find((c) => c.type === 'Geometry');
+    const runs = geom?.props.subpaths as Array<{ points: unknown[]; open?: boolean }> | undefined;
+    expect(runs).toHaveLength(2);
+    expect(runs![0]!.open).toBe(false);
+    expect(runs![1]!.open).toBe(false);
     defaultSceneGraph.removeNode(ids[0]!);
     useSelectionStore.getState().clear();
   });
@@ -190,6 +212,26 @@ describe('liveMergeSelectedPaths', () => {
     defaultSceneGraph.removeNode(ids[0]!);
     defaultSceneGraph.removeNode('lm_a');
     defaultSceneGraph.removeNode('lm_b');
+    useSelectionStore.getState().clear();
+  });
+
+  it('keeps a subtract hole as a second closed subpath', () => {
+    const rootId = defaultSceneGraph.getRoots()[0]?.id ?? 'comp_root';
+    defaultSceneGraph.addChild(rootId, rect('lm_outer', 100, 100, 80, 80));
+    defaultSceneGraph.addChild(rootId, rect('lm_inner', 100, 100, 24, 24));
+    useSelectionStore.getState().set(['lm_outer', 'lm_inner']);
+    const [id] = liveMergeSelectedPaths('subtract');
+    const result = defaultSceneGraph.getNode(id!)!;
+    const ev = evaluateLiveBoolean(
+      result,
+      (nid) => defaultSceneGraph.getNode(nid),
+      () => undefined,
+      () => undefined,
+    );
+    expect(ev?.subpaths).toHaveLength(2);
+    defaultSceneGraph.removeNode(id!);
+    defaultSceneGraph.removeNode('lm_outer');
+    defaultSceneGraph.removeNode('lm_inner');
     useSelectionStore.getState().clear();
   });
 

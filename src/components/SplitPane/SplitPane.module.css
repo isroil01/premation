@@ -35,19 +35,20 @@
 
 .splitter {
   flex: none;
-  background: var(--color-splitter);
+  background: #000000;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
   position: relative;
+  z-index: 5;
 }
 
 .splitterH {
-  width: 1px;
+  width: 2px;
   cursor: col-resize;
   margin: 0;
 }
 
 .splitterV {
-  height: 1px;
+  height: 2px;
   cursor: row-resize;
   margin: 0;
 }
@@ -76,10 +77,10 @@
 
 .splitter:hover,
 .splitter:focus-visible {
-  background: var(--color-splitter-hover);
+  background: var(--color-selection, #2988ff);
   outline: none;
 }
 
-/* When collapsed, the splitter becomes a thin visible line. */
-.root[data-collapsed] .splitterH { width: 1px; }
-.root[data-collapsed] .splitterV { height: 1px; }
+/* When collapsed, the splitter stays a thin visible line. */
+.root[data-collapsed] .splitterH { width: 2px; }
+.root[data-collapsed] .splitterV { height: 2px; }

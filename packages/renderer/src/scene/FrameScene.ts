@@ -66,9 +66,25 @@ export interface RenderableColorMatrix {
 }
 
 export type RenderableEffect = 
-  | { type: 'blur'; radiusPx: number }
-  | { type: 'glow'; radiusPx: number; color?: Color }
-  | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number }
+  | {
+      type: 'blur';
+      radiusPx: number;
+      /** Iris blade count (≥3) selects polygonal bokeh instead of Gaussian. */
+      blades?: number;
+      /** 0 = sharp n-gon, 1 = circle. */
+      roundness?: number;
+      /** Extra weight on bright samples. */
+      highlightGain?: number;
+      /**
+       * Planar per-pixel CoC: blur radii (px) at UV corners
+       * (0,0), (1,0), (1,1), (0,1). When set, CompositionPass runs `coc-blur`
+       * instead of a uniform separable / bokeh pass. `radiusPx` should be the
+       * max corner (effect spread / skip gates).
+       */
+      cocCorners?: readonly [number, number, number, number];
+    }
+  | { type: 'glow'; radiusPx: number; color?: Color; /** Comp-px alpha dilate before blur (Spread). */ spreadPx?: number }
+  | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number; spreadPx?: number }
   | {
       type: 'gradient-ramp';
       blend: number;
@@ -251,7 +267,13 @@ export type RenderableEffect =
       lw: number; lh: number;
     }
   | { type: 'fill'; color: Color }
-  | { type: 'stroke'; widthPx: number; color: Color }
+  | {
+      type: 'stroke';
+      widthPx: number;
+      color: Color;
+      /** 0 = Outside (default), 1 = Inside, 2 = Center. */
+      position?: 0 | 1 | 2;
+    }
   | { type: 'sharpen'; amount: number }
   /**
    * Beam. Endpoints are fractions of the LAYER's box (0..1), matching the
@@ -623,6 +645,10 @@ export interface Renderable {
       /** Light this surface from one side — see `Shade3D.oneSided`. Set by an
        *  extrusion's walls and back cap, which bound a volume. */
       oneSided?: boolean;
+      /** Material Ambient % (AE). Scales ambient lights on the GPU path. */
+      ambient?: number;
+      /** Material Diffuse % (AE). Scales Lambert on the GPU path. */
+      diffuse?: number;
     };
   };
 }

@@ -6,8 +6,8 @@ import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle, SamplerHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D } from './passUtils';
-import { BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
-import { packBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, BOKEH_MATERIAL, COC_BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
+import { packBlur, packBokeh, packCocBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -169,10 +169,18 @@ function effectSpreadPx(effects: readonly RenderableEffect[]): number {
   let max = 0;
   for (const e of effects) {
     let s = 0;
-    if (e.type === 'blur') s = e.radiusPx * BLUR_TAIL;
-    else if (e.type === 'glow') s = e.radiusPx * BLUR_TAIL;
-    else if (e.type === 'drop-shadow') s = Math.hypot(e.offsetX, e.offsetY) + e.radiusPx * BLUR_TAIL;
-    else if (e.type === 'stroke') s = e.widthPx;
+    if (e.type === 'blur') s = (e.cocCorners
+      ? Math.max(e.radiusPx, ...e.cocCorners)
+      : e.radiusPx) * BLUR_TAIL;
+    else if (e.type === 'glow') s = (e.radiusPx + (e.spreadPx ?? 0)) * BLUR_TAIL;
+    else if (e.type === 'drop-shadow') {
+      s = Math.hypot(e.offsetX, e.offsetY) + (e.radiusPx + (e.spreadPx ?? 0)) * BLUR_TAIL;
+    }
+    else if (e.type === 'stroke') {
+      // Inside stays within the silhouette; Outside grows by width; Center by half.
+      const pos = e.position ?? 0;
+      s = pos === 1 ? 0 : pos === 2 ? e.widthPx * 0.5 : e.widthPx;
+    }
     else if (e.type === 'displacement-map') s = e.amount;
     // The MAX, because the margin has to hold wherever the map happens to be
     // bright. Reserving the average would clip exactly the pixels the effect
@@ -510,8 +518,10 @@ export class CompositionPass extends RenderPass {
       // viewport ping-pong, and stacks of five-plus effects amplify that.
       if (
         (effect.type === 'blur' || effect.type === 'glow') && effect.radiusPx <= 0
+        && (effect.type !== 'glow' || (effect.spreadPx ?? 0) <= 0)
       ) continue;
       if (effect.type === 'drop-shadow' && effect.radiusPx <= 0
+        && (effect.spreadPx ?? 0) <= 0
         && Math.abs(effect.offsetX) < 0.01 && Math.abs(effect.offsetY) < 0.01) continue;
       if (effect.type === 'sharpen' && Math.abs(effect.amount) < 0.0001) continue;
       if (effect.type === 'noise' && Math.abs(effect.amount) < 0.0001) continue;
@@ -571,17 +581,102 @@ export class CompositionPass extends RenderPass {
         // Glow gets a slightly wider mid kernel; the wide lobe (below) is a
         // separate pass into BLUR_TARGET3 so optical bloom has real falloff.
         const rPx = effect.type === 'glow' ? effect.radiusPx * 1.15 : effect.radiusPx;
+        const spreadPx = (effect.type === 'glow' || effect.type === 'drop-shadow')
+          ? (effect.spreadPx ?? 0)
+          : 0;
         // Zero radius/softness: the un-blurred layer IS the source (a hard glow
         // ring / hard-edged shadow) — never skip the composite.
         let blurredTex = curTex;
         let wideTex: TextureHandle | null = null;
-        if (rPx > 0) {
-          // Horizontal (cur → f1)
+        const irisBlades = effect.type === 'blur' ? (effect.blades ?? 0) : 0;
+        const cocCorners = effect.type === 'blur' ? effect.cocCorners : undefined;
+
+        // Layer-style Spread: dilate alpha before the soft blur (Photoshop).
+        // Prefer the third pool slot so separable blur can keep its f1→f0 dance;
+        // otherwise dilate into f0 and route gather blurs to f1.
+        let blurSrc = curTex;
+        let dilatedIntoF0 = false;
+        if (spreadPx > 0 && (effect.type === 'glow' || effect.type === 'drop-shadow')) {
+          const dilateDest = (free[2] as string | undefined) ?? f0;
+          dilatedIntoF0 = dilateDest === f0;
+          const dilateCmds = new CommandBuffer();
+          dilateCmds.add({
+            batchKey: 'stroke', material: STROKE_MATERIAL, blend: 'normal',
+            uniforms: packStroke(
+              mvp, targetUv, Color.white(),
+              spreadPx * ((kx + ky) * 0.5),
+              kx / viewport.pixelSize.width,
+              ky / viewport.pixelSize.height,
+              3, // alpha-dilate mode
+            ),
+            texture: curTex, sampler: clampSampler(),
+          });
+          const encD = beginViewportPass(ctx, 'fx-dilate', writeAttachment(ctx, dilateDest, Color.transparent()));
+          services.quad.execute(encD, dilateCmds);
+          encD.end();
+          const dTex = texOf(dilateDest);
+          if (dTex) blurSrc = dTex;
+        }
+
+        if (cocCorners && rPx > 0) {
+          // Planar per-pixel CoC — one gather; radius from corner bilinear.
+          const scale = (kx + ky) * 0.5;
+          const cornersTex: [number, number, number, number] = [
+            cocCorners[0] * scale,
+            cocCorners[1] * scale,
+            cocCorners[2] * scale,
+            cocCorners[3] * scale,
+          ];
+          const cocOut = dilatedIntoF0 ? f1 : f0;
+          const cocCmds = new CommandBuffer();
+          cocCmds.add({
+            batchKey: 'coc-blur|normal', material: COC_BLUR_MATERIAL, blend: 'normal',
+            uniforms: packCocBlur(
+              mvp, targetUv, fxBox,
+              1.0 / viewport.pixelSize.width,
+              1.0 / viewport.pixelSize.height,
+              cornersTex,
+              irisBlades,
+              effect.type === 'blur' ? (effect.roundness ?? 0.65) : 0.65,
+              effect.type === 'blur' ? (effect.highlightGain ?? 0) : 0,
+            ),
+            texture: blurSrc, sampler: clampSampler(),
+          });
+          const encC = beginViewportPass(ctx, 'coc-blur', writeAttachment(ctx, cocOut, Color.transparent()));
+          services.quad.execute(encC, cocCmds);
+          encC.end();
+          const cTex = texOf(cocOut);
+          if (cTex) blurredTex = cTex;
+        } else if (rPx > 0 && irisBlades >= 3) {
+          // Polygonal bokeh gather — one pass, not separable.
+          const rTex = rPx * ((kx + ky) * 0.5);
+          const bokehOut = dilatedIntoF0 ? f1 : f0;
+          const bokehCmds = new CommandBuffer();
+          bokehCmds.add({
+            batchKey: 'bokeh|normal', material: BOKEH_MATERIAL, blend: 'normal',
+            uniforms: packBokeh(
+              mvp, targetUv,
+              1.0 / viewport.pixelSize.width,
+              1.0 / viewport.pixelSize.height,
+              rTex,
+              irisBlades,
+              effect.type === 'blur' ? (effect.roundness ?? 0.65) : 0.65,
+              effect.type === 'blur' ? (effect.highlightGain ?? 0) : 0,
+            ),
+            texture: blurSrc, sampler: clampSampler(),
+          });
+          const encB = beginViewportPass(ctx, 'bokeh', writeAttachment(ctx, bokehOut, Color.transparent()));
+          services.quad.execute(encB, bokehCmds);
+          encB.end();
+          const bTex = texOf(bokehOut);
+          if (bTex) blurredTex = bTex;
+        } else if (rPx > 0) {
+          // Horizontal (blurSrc → f1)
           const blur1Cmds = new CommandBuffer();
           blur1Cmds.add({
             batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
             uniforms: packBlur(mvp, targetUv, 1.0 / viewport.pixelSize.width, 0, rPx * kx),
-            texture: curTex, sampler: clampSampler(),
+            texture: blurSrc, sampler: clampSampler(),
           });
           const encH = beginViewportPass(ctx, 'blurH', writeAttachment(ctx, f1, Color.transparent()));
           services.quad.execute(encH, blur1Cmds);
@@ -614,7 +709,7 @@ export class CompositionPass extends RenderPass {
             wH.add({
               batchKey: 'blur|normal', material: BLUR_MATERIAL, blend: 'normal',
               uniforms: packBlur(mvp, targetUv, 1.0 / viewport.pixelSize.width, 0, wideR * kx),
-              texture: curTex, sampler: clampSampler(),
+              texture: blurSrc, sampler: clampSampler(),
             });
             const encWH = beginViewportPass(ctx, 'glowWideH', writeAttachment(ctx, f1, Color.transparent()));
             services.quad.execute(encWH, wH);
@@ -633,6 +728,9 @@ export class CompositionPass extends RenderPass {
               wideTex = texOf(f2);
             }
           }
+        } else if (spreadPx > 0) {
+          // Hard edge at 100% Spread — dilated silhouette, no soft blur.
+          blurredTex = blurSrc;
         }
         // Composite into f1 (distinct from the blurred result in f0 and — for
         // rPx = 0 — from the original in curName, since f1 ≠ curName).
@@ -1067,7 +1165,11 @@ export class CompositionPass extends RenderPass {
       } else if (effect.type === 'stroke') {
         cmds.add({
           batchKey: 'stroke', material: STROKE_MATERIAL, blend: 'normal',
-          uniforms: packStroke(mvp, targetUv, effect.color, effect.widthPx, kx / viewport.pixelSize.width, ky / viewport.pixelSize.height),
+          uniforms: packStroke(
+            mvp, targetUv, effect.color, effect.widthPx,
+            kx / viewport.pixelSize.width, ky / viewport.pixelSize.height,
+            effect.position ?? 0,
+          ),
           texture: curTex, sampler: clampSampler(),
         });
       } else if (effect.type === 'sharpen') {
@@ -1192,7 +1294,10 @@ export class CompositionPass extends RenderPass {
       } else if (effect.type === 'noise') {
         cmds.add({
           batchKey: 'noise', material: NOISE_MATERIAL, blend: 'normal',
-          uniforms: packNoise(mvp, targetUv, effect.amount, effect.evolution, effect.monochrome),
+          uniforms: packNoise(
+            mvp, targetUv, effect.amount, effect.evolution, effect.monochrome,
+            viewport.pixelSize.width, viewport.pixelSize.height,
+          ),
           texture: curTex, sampler: clampSampler(),
         });
       } else if (effect.type === 'plugin') {
@@ -1663,6 +1768,17 @@ export class CompositionPass extends RenderPass {
     const shadeFor = (r: Renderable): Shade3D | undefined => {
       const s = r.threeD?.shade;
       if (!s || !lights || lights.length === 0) return undefined;
+      // Material Ambient/Diffuse (AE %) — same factors as `shadeLayer`. Without
+      // this the GPU path ignored the Material Options sliders while the CPU
+      // quadGain fallback honored them.
+      const kAmbient = (s.ambient ?? 100) / 100;
+      const kDiffuse = (s.diffuse ?? 50) / 50;
+      const scaledLights = (kAmbient === 1 && kDiffuse === 1)
+        ? lights
+        : lights.map((l) => ({
+          ...l,
+          gain: l.gain * (l.type === 'ambient' ? kAmbient : kDiffuse),
+        }));
       return {
         model: r.threeD!.model,
         eye: camera3d.eye ?? [0, 0, -1e6],
@@ -1679,7 +1795,7 @@ export class CompositionPass extends RenderPass {
         // `oneSided` came to be plumbed end-to-end, asserted at the snapshot,
         // and visible in no pixel.
         ...(s.oneSided ? { oneSided: true } : {}),
-        lights,
+        lights: scaledLights,
       };
     };
     const litColor = (r: Renderable, c: Color, shaded: Shade3D | undefined): Color => {

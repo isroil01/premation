@@ -19,6 +19,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { framesToTimecode } from '@core/time/timecode';
+import { videoDiag, VIDEO_DIAG_LIVE_MS } from '@core/rendering/videoPlaybackDiag';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToKeyframes } from '@core/animation/keyframeAssistants';
 import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
@@ -131,7 +132,31 @@ function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
 const KEYFRAME_EPSILON = 1e-4;
 
 function getNodeColor(node: any): string | undefined {
-  return node.color ?? KIND_COLOR[readNodeKind(node)];
+  if (!node) return '#5282b8';
+  // 1. Explicit user-assigned layer color
+  if (typeof node.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(node.color)) {
+    return node.color;
+  }
+  // 2. Solid layer / shape fill color
+  const fillComp = node.components?.find((c: any) => c.type === 'fill');
+  if (fillComp?.props?.color && typeof fillComp.props.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(fillComp.props.color)) {
+    return fillComp.props.color;
+  }
+  // 3. Text color
+  const textComp = node.components?.find((c: any) => c.type === 'text');
+  if (textComp?.props?.fill && typeof textComp.props.fill === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(textComp.props.fill)) {
+    return textComp.props.fill;
+  }
+  // 4. Background / fill property directly on node
+  if (typeof node.fill === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(node.fill)) {
+    return node.fill;
+  }
+  if (typeof node.background === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(node.background)) {
+    return node.background;
+  }
+  // 5. Default category color literal from KIND_FILL (hex literal)
+  const kind = readNodeKind(node);
+  return KIND_FILL[kind] ?? '#5282b8';
 }
 
 function setNodeColor(nodeId: string, color: string): void {
@@ -150,6 +175,98 @@ export function EditorShell(): JSX.Element {
     <AiChatProvider>
       <EditorShellInner />
     </AiChatProvider>
+  );
+}
+
+/** The playhead time RIGHT NOW, read non-reactively. For event handlers: they
+ *  fire at event time, so a render-captured value buys them nothing — while a
+ *  reactive subscription in the shell re-rendered the whole editor tree every
+ *  playback frame just to keep that captured value fresh. */
+function playheadNow(): number {
+  const s = useProjectStore.getState();
+  return s.activeTabId ? (s.tabs[s.activeTabId]?.time ?? 0) : 0;
+}
+
+/** Self-subscribing status-bar timecode — the ONE render-time consumer of the
+ *  playhead in the shell. Isolated (same pattern as FpsMeter/VUMeter beside
+ *  it) so only this span re-renders per comp frame, not EditorShellInner. */
+function StatusBarTimecode({ fps, startFrame }: { fps: number; startFrame: number }): JSX.Element {
+  const time = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
+  return (
+    <span style={{ fontFamily: 'var(--font-family-mono)', fontVariantNumeric: 'tabular-nums' }}>
+      {framesToTimecode(time, fps, startFrame)}
+    </span>
+  );
+}
+
+/**
+ * Live video decoder health in the status bar. Two jobs: show dropped-frame
+ * pressure during playback (decode overload reads as "broken video" with no
+ * other symptom), and — the important one — say OUT LOUD when the browser's
+ * media pipeline has wedged (every new <video> stalls at readyState 0 with no
+ * error; only a full app/browser restart clears it). That failure mode used
+ * to be indistinguishable from editor bugs.
+ */
+function VideoHealth(): JSX.Element | null {
+  const [state, setState] = useState<{ label: string; bad: boolean } | null>(null);
+  const warnedRef = useRef(false);
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (videoDiag.stalledSources.size > 0) {
+        setState({ label: 'video decoder not responding — restart the app', bad: true });
+        if (!warnedRef.current) {
+          warnedRef.current = true;
+          useUIStore.getState().notify({
+            level: 'error',
+            message:
+              'Video decoding is not responding (the system media pipeline appears wedged). '
+              + 'Fully restart the app — or your browser — to restore video playback.',
+            durationMs: 12000,
+          });
+        }
+        return;
+      }
+      const now = performance.now();
+      let live = 0;
+      let dropped = 0;
+      let seeking = false;
+      let worstLagMs = 0;
+      for (const s of videoDiag.samples.values()) {
+        if (now - s.updatedAt > VIDEO_DIAG_LIVE_MS) continue;
+        live += 1;
+        dropped += s.droppedFrames;
+        seeking = seeking || s.seeking;
+        if (s.driftMs < worstLagMs) worstLagMs = s.driftMs;
+      }
+      if (live === 0) {
+        setState(null);
+        return;
+      }
+      // "behind" = the decoder cannot sustain realtime on this machine; the
+      // timeline is pacing down to meet it. The cure is a preview proxy
+      // (Media Settings ▸ Proxy), not a code path.
+      const lag = worstLagMs < -150 ? ` · behind ${(-worstLagMs / 1000).toFixed(1)}s` : '';
+      setState({
+        label: `video ×${live} · drop ${dropped}${seeking ? ' · seeking' : ''}${lag}`,
+        bad: dropped > 120 || worstLagMs < -400,
+      });
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
+  if (!state) return null;
+  return (
+    <>
+      <span style={{ opacity: 0.4 }}>·</span>
+      <span
+        style={{
+          fontVariantNumeric: 'tabular-nums',
+          ...(state.bad ? { color: 'var(--color-danger, #e06055)', fontWeight: 600 } : {}),
+        }}
+        title="Video decoder health: live elements, cumulative dropped frames"
+      >
+        {state.label}
+      </span>
+    </>
   );
 }
 
@@ -179,7 +296,14 @@ function EditorShellInner(): JSX.Element {
   const activeCompId = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.compositionId : undefined));
   const activeDirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty ?? false : false));
   const activeTitle = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.title : undefined));
-  const activeTime = useProjectStore((s) => s.activeTabId ? (s.tabs[s.activeTabId]?.time ?? 0) : 0);
+  // NO reactive playhead subscription here. `time` changes once per comp frame
+  // during playback, and a subscription re-rendered this ~1355-line shell (and
+  // reconciled its entire unmemoized return tree — TopNav, dock, timeline) on
+  // every single frame, starving the main thread the renderer and the <video>
+  // pipeline needed. The only render-time reader was the status-bar timecode
+  // (now the self-subscribing <StatusBarTimecode/>); everything else that
+  // needs the playhead is an EVENT HANDLER, which reads `playheadNow()` at
+  // event time — non-reactive and always current.
 
   const compFps = useCompositionStore((s) => s.fps);
   const compWidth = useCompositionStore((s) => s.width);
@@ -717,21 +841,33 @@ function EditorShellInner(): JSX.Element {
     duration: compDuration,
     frameRate: compFps,
     startFrame: compStartFrame,
-    // Keep currentTime in the model as a fallback for consumers that read it
-    // directly (GraphEditor, timecode display in BottomTimeline header). Its
-    // identity doesn't affect the timeline row tree because BottomTimeline
-    // prefers the separate playheadTime prop.
-    currentTime: activeTime,
+    // A SNAPSHOT, deliberately not reactive: every live consumer reads the
+    // separate playheadTime path (BottomTimeline/Timeline/GraphEditor), so
+    // this field only serves the no-active-tab fallback. Making it reactive
+    // rebuilt this model object every playback frame — exactly what the
+    // header comment above forbids.
+    currentTime: playheadNow(),
     pixelsPerSecond: pps,
     markers,
     tracks: focusTracks,
     cachedRanges,
     diskCachedRanges,
     ...(workArea ? { workArea } : {}),
-  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges, diskCachedRanges, activeTime]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- currentTime is a deliberate snapshot (see comment above)
+  }), [focusTracks, pps, markers, workArea, compDuration, compFps, compStartFrame, cachedRanges, diskCachedRanges]);
 
   // Real-time playback clock: pumps the Timeline Engine while `playing` is set.
   usePlaybackClock();
+
+  // Background "optimized media": once the editor settles, generate proxies
+  // for video assets that predate import-time auto-generation. Sequential and
+  // cancellable via the Use Proxies toggle; a no-op on builds without ffmpeg.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      void import('@core/assets/proxyManager').then((m) => m.backfillMissingProxies()).catch(() => {});
+    }, 5000);
+    return () => clearTimeout(t);
+  }, []);
   // Frame-accurate transport shortcuts (Home/End, Page Up/Down, Shift = markers).
   useTimelineKeys();
   // Space: tap to play/pause, hold + drag to pan (After Effects).
@@ -894,9 +1030,9 @@ function EditorShellInner(): JSX.Element {
    * keyframe, so every later one would need a value change to exist.
    */
   const handlePropertyKeyframeToggle = (trackId: string, prop: string): void => {
-    // Same source as the model's currentTime, so what the navigator draws and
-    // what this writes can't disagree.
-    const layerT = getRemappedTime(trackId, activeTime);
+    // Read the playhead at event time — same store field the navigator draws
+    // from, so what it shows and what this writes can't disagree.
+    const layerT = getRemappedTime(trackId, playheadNow());
     const at = (p: string) =>
       (defaultAnimation.getTrackKeyframes(trackId, p) ?? []).find(
         (k) => Math.abs(k.t - layerT) < KEYFRAME_EPSILON,
@@ -941,7 +1077,7 @@ function EditorShellInner(): JSX.Element {
       const animated = readNodeMaskAnim(node).length > 0;
       runAnimEdit(animated ? 'Disable mask animation' : 'Enable mask animation', () => {
         if (animated) clearMaskAnim(trackId);
-        else keyframeMask(trackId, getRemappedTime(trackId, activeTime));
+        else keyframeMask(trackId, getRemappedTime(trackId, playheadNow()));
       });
       return;
     }
@@ -954,7 +1090,7 @@ function EditorShellInner(): JSX.Element {
       });
       return;
     }
-    const layerT = getRemappedTime(trackId, activeTime);
+    const layerT = getRemappedTime(trackId, playheadNow());
     runAnimEdit('Enable animation', () => {
       for (const p of props) defaultAnimation.setKeyframe(trackId, p, layerT, propertyValueAt(trackId, p, layerT));
     });
@@ -970,7 +1106,7 @@ function EditorShellInner(): JSX.Element {
    * keyframe at 1s.
    */
   const handlePropertyValue = (trackId: string, prop: string): number =>
-    propertyValueAt(trackId, prop, getRemappedTime(trackId, activeTime));
+    propertyValueAt(trackId, prop, getRemappedTime(trackId, playheadNow()));
 
   /**
    * Proportional Scrubbing (AE 26.2).
@@ -995,7 +1131,7 @@ function EditorShellInner(): JSX.Element {
       scrubRef.current = null;
       return;
     }
-    const layerT = (id: string) => getRemappedTime(id, activeTime);
+    const layerT = (id: string) => getRemappedTime(id, playheadNow());
     const starts = new Map<string, number>();
     for (const e of sel.entries) starts.set(propertyKey(e), propertyValueAt(e.nodeId, e.prop, layerT(e.nodeId)));
     scrubRef.current = { trackId, prop, entries: sel.entries, starts };
@@ -1008,7 +1144,7 @@ function EditorShellInner(): JSX.Element {
   const writePropertyValue = (trackId: string, prop: string, value: number): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node || node.locked) return;
-    const layerT = getRemappedTime(trackId, activeTime);
+    const layerT = getRemappedTime(trackId, playheadNow());
     // Same contract as the inspector: an animated property keyframes at the
     // playhead; an un-animated one edits its static base.
     if (defaultAnimation.isAnimated(trackId, prop) || usePreferenceStore.getState().timelineAutoKeyframe) {
@@ -1365,9 +1501,8 @@ function EditorShellInner(): JSX.Element {
                   <VUMeter />
                   <FpsMeter />
                   <span style={{ opacity: 0.4 }}>·</span>
-                  <span style={{ fontFamily: 'var(--font-family-mono)', fontVariantNumeric: 'tabular-nums' }}>
-                    {framesToTimecode(activeTime, compFps, compStartFrame)}
-                  </span>
+                  <StatusBarTimecode fps={compFps} startFrame={compStartFrame} />
+                  <VideoHealth />
                   <span style={{ opacity: 0.4 }}>·</span>
                   <button
                     type="button"

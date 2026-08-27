@@ -67,10 +67,20 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
   return o;
 }
 
+// Per-PIXEL integer hash (the Dissolve construction). The float form —
+// fract(q.x·q.y) at ~4e6 magnitude — kept almost no fractional bits and
+// amplified varying-interpolation ULPs into a different grain per backend
+// (the webgl2-vs-webgpu glass-grain divergence). The input is the BUFFER
+// pixel index (field uv ÷ texel size): pixel centres sit half a texel from
+// any cell boundary, so interpolation jitter can never flip a cell, and u32
+// maths is bit-exact on every driver.
 fn hash21(p : vec2<f32>) -> f32 {
-  var q = fract(p * vec2<f32>(123.34, 456.21));
-  q = q + vec2<f32>(dot(q, q + vec2<f32>(45.32, 45.32)));
-  return fract(q.x * q.y);
+  let px = u32(clamp(floor(p.x), 0.0, 16777215.0));
+  let py = u32(clamp(floor(p.y), 0.0, 16777215.0));
+  var h : u32 = (px + 1u) * 374761393u + (py + 1u) * 668265263u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h = h ^ (h >> 16u);
+  return f32(h) / 4294967296.0;
 }
 
 @fragment
@@ -108,16 +118,27 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   col = mix(col, obj.p1.rgb, obj.p1.w);
 
   let rimBand = smoothstep(0.0, 1.0, gmag * max(0.01, obj.p3.x));
+  // The rim and specular ANGLES are authored top-down (comp space), but gdir
+  // was measured in SAMPLE space — whose V flips per backend on FBO
+  // round-trips (targetSampleUv). Convert the gradient to field space for the
+  // angle comparisons or the highlight sits on the wrong vertical side on
+  // WebGL2. The refraction offsets above stay in sample space on purpose:
+  // gradient and sampling agree there by construction.
+  let gfield = gdir * sign(obj.uvRect.zw);
   let rimDir = vec2<f32>(cos(obj.p3.y), sin(obj.p3.y));
-  let rimFace = 0.5 + 0.5 * dot(gdir, rimDir);
+  let rimFace = 0.5 + 0.5 * dot(gfield, rimDir);
   col = col + obj.p2.rgb * (rimBand * rimFace * obj.p2.w);
 
   let specDir = vec2<f32>(cos(obj.p4.x), sin(obj.p4.x));
-  let facing = max(0.0, dot(gdir, specDir));
+  let facing = max(0.0, dot(gfield, specDir));
   let spec = pow(facing, max(0.1, obj.p3.w)) * rimBand * obj.p3.z;
   col = col + vec3<f32>(spec, spec, spec);
 
-  let n = hash21(uv * vec2<f32>(1024.0, 1024.0)) - 0.5;
+  // Field coordinate: uv's V runs opposite per backend on FBO round-trips
+  // (targetSampleUv) — normalize by uvRect so the grain field is identical on
+  // both engines. See the hash21 note above.
+  let gq = (uv - obj.uvRect.xy) / obj.uvRect.zw;
+  let n = hash21(gq / obj.p4.zw) - 0.5;
   col = clamp(col + vec3<f32>(n * obj.p4.y), vec3<f32>(0.0), vec3<f32>(1.0));
 
   return vec4<f32>(col * alpha, alpha);
@@ -142,10 +163,14 @@ uniform sampler2D uMaskTex;
 in vec2 vUv;
 out vec4 frag;
 
+// Per-pixel integer hash — must match the WGSL branch above exactly.
 float hash21(vec2 p) {
-  vec2 q = fract(p * vec2(123.34, 456.21));
-  q += vec2(dot(q, q + vec2(45.32)));
-  return fract(q.x * q.y);
+  uint px = uint(clamp(floor(p.x), 0.0, 16777215.0));
+  uint py = uint(clamp(floor(p.y), 0.0, 16777215.0));
+  uint h = (px + 1u) * 374761393u + (py + 1u) * 668265263u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h = h ^ (h >> 16u);
+  return float(h) / 4294967296.0;
 }
 
 void main() {
@@ -175,16 +200,20 @@ void main() {
   col = mix(col, p1.rgb, p1.w);
 
   float rimBand = smoothstep(0.0, 1.0, gmag * max(0.01, p3.x));
+  // Field-space gradient for the angle comparisons - matches the WGSL above.
+  vec2 gfield = gdir * sign(uvRect.zw);
   vec2 rimDir = vec2(cos(p3.y), sin(p3.y));
-  float rimFace = 0.5 + 0.5 * dot(gdir, rimDir);
+  float rimFace = 0.5 + 0.5 * dot(gfield, rimDir);
   col += p2.rgb * (rimBand * rimFace * p2.w);
 
   vec2 specDir = vec2(cos(p4.x), sin(p4.x));
-  float facing = max(0.0, dot(gdir, specDir));
+  float facing = max(0.0, dot(gfield, specDir));
   float spec = pow(facing, max(0.1, p3.w)) * rimBand * p3.z;
   col += vec3(spec);
 
-  float n = hash21(vUv * vec2(1024.0)) - 0.5;
+  // Field coordinate — must match the WGSL branch above.
+  vec2 gq = (vUv - uvRect.xy) / uvRect.zw;
+  float n = hash21(gq / p4.zw) - 0.5;
   col = clamp(col + vec3(n * p4.y), 0.0, 1.0);
 
   frag = vec4(col * alpha, alpha);

@@ -82,7 +82,18 @@ interface SourceEntry {
   /** The time currently being decoded, or null. */
   inflight: number | null;
   ready: boolean;
+  /** performance.now() of the last get() — idle sources are released. */
+  lastUsed: number;
 }
+
+/** A hidden element decodes ONE seek at a time; queueing more than this many
+ *  behind it only records where the playhead used to be. Old requests are
+ *  dropped — the renderer re-asks for anything it still wants on the next
+ *  repaint, so the queue tracks the present instead of lagging into the past. */
+const MAX_QUEUED_SEEKS = 8;
+
+/** Sources untouched for this long are released (element + frames). */
+const IDLE_EVICT_MS = 90_000;
 
 export type VideoFactory = (src: string) => HTMLVideoElement;
 
@@ -128,6 +139,16 @@ export class VideoFrameCache {
    */
   get(src: string, time: number): HTMLCanvasElement | null {
     const entry = this.ensure(src);
+    entry.lastUsed = performance.now();
+    if (++this.sweepCounter >= 240) {
+      this.sweepCounter = 0;
+      for (const [s, e] of this.sources) {
+        if (e !== entry && entry.lastUsed - e.lastUsed > IDLE_EVICT_MS) {
+          e.video.src = '';
+          this.sources.delete(s);
+        }
+      }
+    }
     const hit = entry.frames.get(keyOf(time));
     if (hit) {
       this.touch(entry, keyOf(time));
@@ -136,6 +157,8 @@ export class VideoFrameCache {
     this.request(entry, time);
     return null;
   }
+
+  private sweepCounter = 0;
 
   private ensure(src: string): SourceEntry {
     let entry = this.sources.get(src);
@@ -150,6 +173,7 @@ export class VideoFrameCache {
       queue: [],
       inflight: null,
       ready: false,
+      lastUsed: performance.now(),
     };
     this.sources.set(src, entry);
 
@@ -171,6 +195,7 @@ export class VideoFrameCache {
   private request(entry: SourceEntry, time: number): void {
     const k = keyOf(time);
     if (entry.inflight === k || entry.queue.includes(k)) return;
+    while (entry.queue.length >= MAX_QUEUED_SEEKS) entry.queue.shift();
     entry.queue.push(k);
     this.pump(entry);
   }

@@ -28,22 +28,22 @@
   gap: var(--space-3);
   height: var(--control-height-md);
   padding: 0 var(--space-3);
-  /* recessed style */
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
+  /* recessed style — slightly darker than the panel background */
+  background: var(--color-surface-2, #161616);
+  border: 1px solid var(--color-field-border, rgba(255, 255, 255, 0.08));
   border-radius: var(--radius-control);
   color: var(--color-text-primary);
   transition: var(--motion-hover-transition);
 }
 
 .field:hover:not(.disabled):not(:focus-within) {
-  border-color: var(--color-field-border-hover);
-  background: var(--color-surface-2);
+  border-color: var(--color-field-border-hover, rgba(255, 255, 255, 0.18));
+  background: #1c1c1c;
 }
 
 .field:focus-within {
   border-color: var(--color-primary);
-  background: var(--color-slate-950);
+  background: #121212;
 }
 
 /**

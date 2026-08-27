@@ -131,13 +131,14 @@ describe('the sub-quantum threshold, which is why the divide is safe', () => {
     expect(s.glsl.fragment).toContain('0.00392156862745098');
   });
 
-  it.each(FAMILIES)('%s clamps the quotient, repairing invalid premultiplied data', (name) => {
-    // In valid premultiplied colour every channel is ≤ alpha, so a quotient above
-    // 1 means the source was not really premultiplied. Clamping stops one bad
-    // texel entering the colour matrix as a wild value and leaving as a speck.
+  it.each(FAMILIES)('%s does not clamp unpremul to 1 (32-bpc HDR)', (name) => {
+    // Linear intermediates may hold scene-referred values > 1. Clamping the
+    // quotient made bitDepth:32 a no-op through every textured draw.
     const s = byName(name)!;
-    expect(s.wgsl).toContain('min(t.rgb / t.a, vec3<f32>(1.0))');
-    expect(s.glsl.fragment).toContain('min(t.rgb / t.a, vec3(1.0))');
+    expect(s.wgsl).toContain('t.rgb / t.a');
+    expect(s.wgsl).not.toContain('min(t.rgb / t.a, vec3<f32>(1.0))');
+    expect(s.glsl.fragment).toContain('t.rgb / t.a');
+    expect(s.glsl.fragment).not.toContain('min(t.rgb / t.a, vec3(1.0))');
   });
 });
 

@@ -8,6 +8,7 @@ import {
   motionPathFrameSamples,
   motionPathTangents,
   setPathTangent,
+  isPathTangentContinuous,
   smoothMotionPath,
   straightenMotionPath,
   hasPathTangents,
@@ -151,6 +152,7 @@ describe('spatial motion-path tangents', () => {
     expect(kx.si).toBe(-30); // mirrored
     expect(ky.so).toBe(40);
     expect(ky.si).toBe(-40);
+    expect(kx.continuous).toBe(true);
     // …then a broken drag of 'in' only moves 'in'.
     setPathTangent('n1', 1, 'in', { x: 80, y: 0 }, false, engine);
     kx = engine.getTrackKeyframes('n1', 'x')!.find((k) => k.t === 1)!;
@@ -159,6 +161,23 @@ describe('spatial motion-path tangents', () => {
     expect(kx.so).toBe(30); // untouched
     expect(ky.si).toBe(0);
     expect(ky.so).toBe(40);
+    expect(kx.continuous).toBe(false);
+    expect(isPathTangentContinuous('n1', 1, engine)).toBe(false);
+  });
+
+  it('broken continuous sticks — a later non-mirror drag does not remirror', () => {
+    const engine = makeEngine();
+    engine.setKeyframe('n1', 'x', 2, 200);
+    engine.setKeyframe('n1', 'y', 2, 0);
+    setPathTangent('n1', 1, 'out', { x: 130, y: 40 }, true, engine);
+    setPathTangent('n1', 1, 'out', { x: 140, y: 50 }, false, engine); // Alt-break
+    const soBefore = engine.getTrackKeyframes('n1', 'x')!.find((k) => k.t === 1)!.si;
+    // Simulate canvas: continuous is false → mirror=false even without Alt.
+    expect(isPathTangentContinuous('n1', 1, engine)).toBe(false);
+    setPathTangent('n1', 1, 'out', { x: 150, y: 60 }, false, engine);
+    const kx = engine.getTrackKeyframes('n1', 'x')!.find((k) => k.t === 1)!;
+    expect(kx.so).toBe(50); // 150 - 100
+    expect(kx.si).toBe(soBefore); // in-handle unchanged
   });
 
   it('smoothMotionPath curves the path; straightenMotionPath restores lines', () => {

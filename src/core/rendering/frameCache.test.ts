@@ -32,12 +32,35 @@ describe('FrameCache', () => {
     expect(cache.get(0)).toBeNull();
   });
 
-  it('a size change also invalidates (same logical key)', () => {
+  it('a size (density) change does NOT invalidate — resolution is quality, not content', () => {
+    // Adaptive resolution flips the canvas density mid-playback (degrade
+    // after 3 slow frames, restore after 45 fast ones). Folding size into the
+    // invalidation wiped the whole preview on BOTH edges of every flip — the
+    // green bar could never complete on exactly the comps that need it. A
+    // frame cached at Half is still the right pixels, just softer; framing
+    // facts (CSS size, view transform) invalidate via the KEY the caller
+    // assembles.
     const cache = new FrameCache();
     cache.setKey('k1', 4, 4);
     cache.put(0, src());
     cache.setKey('k1', 8, 8);
+    expect(cache.size).toBe(1);
+    // A real key change still clears.
+    cache.setKey('k2', 8, 8);
     expect(cache.size).toBe(0);
+  });
+
+  it('reports the contiguous cached run end for the gap-parking path', () => {
+    const cache = new FrameCache();
+    cache.setKey('k', 4, 4);
+    cache.put(3, src());
+    cache.put(4, src());
+    cache.put(5, src());
+    cache.put(9, src());
+    expect(cache.contiguousEnd(3)).toBe(5);
+    expect(cache.contiguousEnd(5)).toBe(5);
+    expect(cache.contiguousEnd(7)).toBe(7); // uncached → itself
+    expect(cache.contiguousEnd(9)).toBe(9);
   });
 
   it('evicts least-recently-used frames past the byte budget', () => {

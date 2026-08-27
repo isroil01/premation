@@ -25,6 +25,7 @@ import { openModal } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
 import { useColorManagementStore, type IntermediateBitDepth } from '@stores/colorManagementStore';
+import { useViewerLutStore } from '@stores/viewerLutStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { FPS_PRESETS, MAX_DURATION } from '@core/composition/presets';
 import styles from './CompositionSettingsDialog.module.css';
@@ -60,6 +61,9 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   const setWorkingSpace = useColorManagementStore((c) => c.setWorkingSpace);
   const setDisplayTransform = useColorManagementStore((c) => c.setDisplayTransform);
   const setBitDepth = useColorManagementStore((c) => c.setBitDepth);
+  const viewerLutName = useViewerLutStore((v) => v.name);
+  const loadViewerLut = useViewerLutStore((v) => v.loadFromText);
+  const clearViewerLut = useViewerLutStore((v) => v.clear);
 
   const setName = (name: string): void => s.update({ name });
   const setFps = (fps: number): void => {
@@ -520,9 +524,53 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                 </Button>
               </div>
               <p className={styles.hint}>
-                PQ / HLG are display ODTs on the SDR canvas. Use EXR sequence export for float delivery;
-                float EXR imports keep linear planes in the working cache.
+                Display transform maps the working buffer to the viewport only.
+                Export ▸ HDR10 / HLG bakes its own PQ / HLG once (preview ODT is
+                neutralized during that encode so the signal is not double-encoded).
+                EXR sequence keeps float planes.
               </p>
+            </div>
+            <div className={styles.section}>
+              <div className={styles.label}>Viewer LUT</div>
+              <p className={styles.hint}>
+                Optional monitor look (.cube) after the display transform.
+                Session-only — not saved with the project and never baked into export.
+              </p>
+              <div className={styles.row}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = '.cube,text/plain';
+                    input.onchange = () => {
+                      const file = input.files?.[0];
+                      if (!file) return;
+                      void file.text().then((text) => {
+                        if (!loadViewerLut(text, file.name)) {
+                          // Malformed .cube — leave previous LUT (if any) in place.
+                          console.warn('[Viewer LUT] could not parse', file.name);
+                        }
+                      });
+                    };
+                    input.click();
+                  }}
+                >
+                  Load…
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!viewerLutName}
+                  onClick={() => clearViewerLut()}
+                >
+                  Clear
+                </Button>
+                {viewerLutName ? (
+                  <span className={styles.hint} title={viewerLutName}>{viewerLutName}</span>
+                ) : null}
+              </div>
             </div>
             <div className={styles.section}>
               <div className={styles.label}>Intermediate bit depth</div>

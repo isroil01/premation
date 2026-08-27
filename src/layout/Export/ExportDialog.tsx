@@ -23,6 +23,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { runExport, isAbortError, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
 import type { ExportQuality } from '@core/export/videoSink';
+import { formatHdrCapabilityNote, formatHdrExportDoneNote } from '@core/export/hdrTransfer';
 import { ExportPreview } from './ExportPreview';
 import styles from './ExportDialog.module.css';
 import { compSizeOf } from '@core/composition/compSizes';
@@ -116,6 +117,26 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  /** null = probing / unknown; true/false = host ffmpeg has libx265. */
+  const [hdrLibx265, setHdrLibx265] = useState<boolean | null>(null);
+  const isHdrFormat = format === 'hdr10' || format === 'hlg';
+  useEffect(() => {
+    if (!isHdrFormat) return;
+    let cancelled = false;
+    setHdrLibx265(null);
+    const probe = window.motionEditor?.render?.probeHdr;
+    if (!probe) {
+      setHdrLibx265(false);
+      return;
+    }
+    void probe().then((r) => {
+      if (!cancelled) setHdrLibx265(!!r?.libx265);
+    }).catch(() => {
+      if (!cancelled) setHdrLibx265(false);
+    });
+    return () => { cancelled = true; };
+  }, [isHdrFormat]);
+
   const doExport = useCallback(async (): Promise<void> => {
     const controller = new AbortController();
     abortRef.current = controller;
@@ -134,13 +155,8 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
         onProgress: setProgress,
         signal: controller.signal,
       });
-      const hdrNote =
-        done.videoCodec === 'libx265'
-          ? ' (HEVC / libx265)'
-          : done.videoCodec === 'libx264'
-            ? ' (H.264 10-bit — host ffmpeg has no libx265)'
-            : '';
-      notify({ level: 'success', message: `Export complete${hdrNote}`, durationMs: 3200 });
+      const hdrNote = formatHdrExportDoneNote(done.videoCodec, done.hdrMastering);
+      notify({ level: 'success', message: `Export complete${hdrNote}`, durationMs: 4200 });
     } catch (err) {
       if (isAbortError(err)) {
         notify({ level: 'info', message: 'Export cancelled', durationMs: 2600 });
@@ -264,6 +280,18 @@ function ExportDialog({ duration, fps }: { duration: number; fps: number }): JSX
             );
           })}
           {activePreset ? <p className={styles.formatHint}>{activePreset.hint}</p> : null}
+          {isHdrFormat ? (
+            <p
+              className={cn(
+                styles.hdrNote,
+                hdrLibx265 === false && styles.hdrNoteWarn,
+                hdrLibx265 === true && styles.hdrNoteOk,
+              )}
+              role="status"
+            >
+              {formatHdrCapabilityNote(hdrLibx265)}
+            </p>
+          ) : null}
 
           {showRange ? (
             <div className={styles.section}>

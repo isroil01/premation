@@ -196,15 +196,18 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'anim.interpLinear', label: 'Keyframe Interpolation: Linear' },
       { commandId: 'anim.interpHold', label: 'Keyframe Interpolation: Hold' },
       { separator: true },
-      // AE files this under Animation → Keyframe Assistant, which is where
-      // anyone who knows the command by name will look for it. Its neighbours
-      // (Exponential Scale, Motion Sketch, Convert Audio to Keyframes) are
-      // registered commands that reached the palette and never this menu — see
-      // the note in COMPOSITING_PLAN §2b-septiesdecies. Adding them is their
-      // features' change, not this one's.
+      // AE Animation ▸ Keyframe Assistant — engines lived in the palette / TopNav
+      // only; this menu is where AE muscle memory looks first.
+      { commandId: 'animation.easyEaseAll', label: 'Keyframe Assistant: Easy Ease All' },
+      { commandId: 'animation.timeReverseKeyframes', label: 'Time-Reverse Keyframes' },
+      { commandId: 'animation.exponentialScale', label: 'Exponential Scale' },
+      { commandId: 'animation.sequenceLayerBars', label: 'Sequence Layers…' },
+      { commandId: 'animation.sequenceLayers', label: 'Stagger Animations (0.3s)' },
+      { commandId: 'animation.motionSketch', label: 'Motion Sketch' },
+      { commandId: 'animation.convertAudioToKeyframes', label: 'Convert Audio to Keyframes' },
       {
         commandId: 'animation.convertExpressionToKeyframes',
-        label: 'Keyframe Assistant: Convert Expression to Keyframes',
+        label: 'Convert Expression to Keyframes',
       },
     ],
   },

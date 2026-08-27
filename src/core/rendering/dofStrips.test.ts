@@ -1,5 +1,5 @@
 import { dofBlurPx, type DofConfig } from '@core/scene/camera3d';
-import { planDofStrips, layerCornerDepths } from './dofStrips';
+import { planDofStrips, planDofCocCorners, layerCornerDepths } from './dofStrips';
 
 describe('dofStrips', () => {
   const dof: DofConfig = { strength: 40, focus: 1000, aperture: 50 };
@@ -25,6 +25,16 @@ describe('dofStrips', () => {
     expect(Math.max(...blurs) - Math.min(...blurs)).toBeGreaterThan(1);
   });
 
+  it('uses a 2D CoC grid when both axes span meaningful blur', () => {
+    const m = [200, 0, 0, 200, 0, 0] as const;
+    // Depth ramps in U and V (tilted card).
+    const plan = planDofStrips(m, [400, 1800, 2200, 900], dof, 8);
+    expect(plan).not.toBeNull();
+    expect(plan!.length).toBeGreaterThanOrEqual(4);
+    const tall = plan!.filter((p) => p.uvRect.height < 1 && p.uvRect.width < 1);
+    expect(tall.length).toBe(plan!.length);
+  });
+
   it('dofBlurPx still drives strip radii', () => {
     const near = dofBlurPx(500, dof);
     const far = dofBlurPx(2000, dof);
@@ -42,5 +52,21 @@ describe('dofStrips', () => {
     const depths = layerCornerDepths(I, 100, 50, (p) => ({ depth: 1000 + p.z + p.x * 0.01 }));
     expect(depths).not.toBeNull();
     expect(depths!).toHaveLength(4);
+  });
+});
+
+describe('planDofCocCorners', () => {
+  const dof: DofConfig = { strength: 40, focus: 1000, aperture: 50 };
+
+  it('returns null when blur is uniform', () => {
+    expect(planDofCocCorners([1000, 1000, 1000, 1000], dof)).toBeNull();
+  });
+
+  it('exposes four corner radii and a max for a depth-spanning plane', () => {
+    const plan = planDofCocCorners([500, 2000, 2000, 500], dof);
+    expect(plan).not.toBeNull();
+    expect(plan!.corners).toHaveLength(4);
+    expect(plan!.maxPx).toBe(Math.max(...plan!.corners));
+    expect(plan!.maxPx - Math.min(...plan!.corners)).toBeGreaterThanOrEqual(1.25);
   });
 });

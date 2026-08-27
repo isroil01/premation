@@ -1,8 +1,10 @@
 import { Color } from '../../core/math/Color';
 import { RenderPass, SURFACE, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, emitSceneBlit, writeAttachment, screenMvp, targetSampleUv } from './passUtils';
+import { getActiveViewerLut } from '../../shaders/colorPipeline';
 
 export const SCENE_COLOR_TARGET = 'scene-color';
+export const VIEWER_LUT_TEXTURE_KEY = 'viewer-lut';
 
 /**
  * Post-process effect pass. Reads an offscreen scene-color target and composites
@@ -81,6 +83,12 @@ export class EffectPass extends RenderPass {
     // Dedicated scene blit: encodes linear→sRGB when LINEAR_INTERMEDIATE_STORAGE
     // is on. Uploads tagged `rgba8unorm-srgb` decode at sample; RT copies use
     // the `*-linear` shader variant (see linearWorkingSpace.ts).
+    // Viewer LUT (monitor look) is applied AFTER ODT when the app set meta +
+    // uploaded the strip — auxiliary/export frames leave both unset.
+    const viewerMeta = getActiveViewerLut();
+    const viewerStrip = viewerMeta
+      ? services.textures.get(VIEWER_LUT_TEXTURE_KEY)
+      : null;
     emitSceneBlit(
       services.commands,
       screenMvp(),
@@ -96,7 +104,8 @@ export class EffectPass extends RenderPass {
         addressU: 'clamp',
         addressV: 'clamp',
       }),
-      targetSampleUv(ctx)
+      targetSampleUv(ctx),
+      viewerStrip?.ready ? viewerStrip.texture : undefined,
     );
 
     const enc = beginViewportPass(ctx, this.name, writeAttachment(ctx, SURFACE));

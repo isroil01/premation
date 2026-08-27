@@ -35,6 +35,31 @@ export function getActiveColorPipeline(): Readonly<ColorPipelineConfig> {
   return active;
 }
 
+/**
+ * Optional viewer/monitor LUT applied AFTER `workingToDisplay` on the final
+ * scene blit. Session-only — the app sets this for viewport frames and clears
+ * it for auxiliary (export) frames.
+ */
+export interface ViewerLutMeta {
+  /** Edge length (3D) or entry count (1D). */
+  size: number;
+  is1d: boolean;
+  /** 0..1 blend of graded vs display-referred source. */
+  intensity: number;
+  domainMin: number;
+  domainMax: number;
+}
+
+let viewerLut: ViewerLutMeta | null = null;
+
+export function setActiveViewerLut(meta: ViewerLutMeta | null): void {
+  viewerLut = meta;
+}
+
+export function getActiveViewerLut(): ViewerLutMeta | null {
+  return viewerLut;
+}
+
 /** Float RT format for scene-color and effect intermediates. */
 export function intermediateFloatFormat(caps: {
   float16Textures: boolean;
@@ -78,12 +103,14 @@ fn acesOdtSrgb(c : vec3<f32>) -> vec3<f32> {
 }
 
 fn hlgOetfChannel(E : f32) -> f32 {
-  let a = 0.17864055;
+  // ARIB STD-B67 — same curve as hdrTransfer.ts (HDR export). Preview ODT
+  // must match delivery or Comp Settings “HLG” and Export ▸ HLG diverge.
+  let a = 0.17883277;
   let b = 0.28466892;
   let c = 0.55991073;
   let e = max(E, 0.0);
-  if (e <= 1.0) { return a * sqrt(e); }
-  return a * log(e - b) + c;
+  if (e <= 1.0 / 12.0) { return sqrt(3.0 * e); }
+  return a * log(12.0 * e - b) + c;
 }
 
 fn workingToDisplay(rgb : vec3<f32>, srcSpace : vec4<f32>) -> vec3<f32> {
@@ -159,13 +186,13 @@ vec3 workingToDisplay(vec3 rgb, vec4 srcSpace) {
       );
       v = max(v, vec3(0.0));
     }
-    float a = 0.17864055;
+    float a = 0.17883277;
     float b = 0.28466892;
     float c = 0.55991073;
     vec3 outc;
     for (int i = 0; i < 3; i++) {
-      float E = v[i];
-      outc[i] = E <= 1.0 ? a * sqrt(E) : a * log(E - b) + c;
+      float E = max(v[i], 0.0);
+      outc[i] = E <= 1.0 / 12.0 ? sqrt(3.0 * E) : a * log(12.0 * E - b) + c;
     }
     return clamp(outc, 0.0, 1.0);
   }

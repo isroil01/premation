@@ -9,10 +9,11 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, SCENE_BLIT_LUT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL } from '../../shaders/Material';
 import { TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
-import { packSolid, packTextured, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
+import { packSolid, packTextured, packSceneBlitLut, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
 import { HARDWARE_SRGB_UPLOADS, LINEAR_INTERMEDIATE_STORAGE } from '../../shaders/linearWorkingSpace';
+import { getActiveViewerLut } from '../../shaders/colorPipeline';
 
 // There is no `PremulFlag` any more, and no per-draw choice for it to make.
 //
@@ -292,7 +293,9 @@ export function emitTextured(
   });
 }
 
-/** Final scene-color → SURFACE blit (optional linear→sRGB encode). */
+/** Final scene-color → SURFACE blit (optional linear→sRGB encode).
+ *  When a viewer LUT strip is supplied AND `getActiveViewerLut()` is set,
+ *  uses the post-ODT LUT material so export (which clears the meta) stays clean. */
 export function emitSceneBlit(
   cmds: CommandBuffer,
   mvp: Mat3,
@@ -302,7 +305,21 @@ export function emitSceneBlit(
   texture: TextureHandle,
   sampler: SamplerHandle,
   uvRect: Rect = FULL_UV,
+  viewerLutTexture?: TextureHandle,
 ): void {
+  const meta = getActiveViewerLut();
+  if (viewerLutTexture && meta) {
+    cmds.add({
+      batchKey: `scene-blit-lut|${texture.id}|${viewerLutTexture.id}|${blend}`,
+      material: SCENE_BLIT_LUT_MATERIAL,
+      blend,
+      uniforms: packSceneBlitLut(mvp, uvRect, tint, opacity, meta),
+      texture,
+      sampler,
+      maskTexture: viewerLutTexture,
+    });
+    return;
+  }
   cmds.add({
     batchKey: `scene-blit|${texture.id}|${blend}`,
     material: SCENE_BLIT_MATERIAL,

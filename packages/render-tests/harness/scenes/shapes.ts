@@ -1,6 +1,8 @@
 /**
  * Shape family: primitive kinds (rect/ellipse/bezier path), rounded corners,
- * and geometry operators (trim path, repeater, path-op). One feature per scene.
+ * and geometry operators (trim path, repeater, path-op). Usually one feature
+ * per scene; stacked-operator scenes exist where order is the feature (Trim ↔
+ * Zig-Zag, Trim → Repeater, Repeater → Wiggle Transform).
  */
 
 import { defineScene, node, shapeNode, type Scene } from '../sceneKit';
@@ -182,11 +184,52 @@ export const shapeScenes: Scene[] = [
     // displacement collapsing back to one dimension.
     graph.setPathOps('w', [{ id: 'w1', type: 'roughen', amount: 14, detail: 4, seed: 7, correlation: 40 }]);
   }),
-  // Was marked `known-divergent` against a Canvas2D oracle. Two things ended
-  // that: the references were re-blessed from WebGL2 (the documented
-  // `wouldMatchWhen`, already met), and the scene's `setPathOps` call was
-  // repaired — from schema 1.3.0 until 2026-08-04 it called the older
-  // `setPathOp`, threw during setup, and rendered NOTHING, so the "accepted
-  // coverage gap" was really a missing image. It matches exactly now, so it
-  // gates like any other scene. See F15.
+
+  // ── Stacked AE motion-design chains (Phase A shapes → 100%) ────────────
+  //
+  // Single-op scenes prove each operator's geometry. These prove ORDER hits
+  // pixels: trim-then-repeater is draw-on → swarm; repeater-then-wiggle is the
+  // swarm-with-independent-copies case unit tests already assert. Without
+  // stacked goldens a reorder regression stays green.
+
+  scene('shape-trim-then-repeater', 'Trim BEFORE Repeater: cut outline, then swarm the arc.', (graph) => {
+    graph.addNode(shapeNode('tr', { x: 100, y: 140, size: 0, fill: '#1a2438' }));
+    graph.setStroke('tr', {
+      enabled: true, color: '#66e0ff', width: 10, opacity: 1,
+      align: 'center', dash: [], cap: 'round', join: 'round',
+    });
+    graph.setPathOps('tr', [
+      { id: 'tr_t', type: 'trim', amount: 0, detail: 0, start: 0, end: 45, offset: 0 },
+      {
+        id: 'tr_r', type: 'repeater', amount: 0, detail: 0,
+        copies: 4, offsetX: 55, offsetY: 8, offsetRotation: 8,
+        offsetScale: 0.92, offsetOpacity: 0.85, offset: 0,
+        anchorX: 0, anchorY: 0, composite: 'above',
+      },
+    ]);
+  }),
+
+  scene('shape-repeater-then-wiggle-transform', 'Repeater BEFORE Wiggle Transform: each copy gets its own offset.', (graph) => {
+    graph.addNode(node('rw', {
+      kind: 'shape',
+      position: { x: 90, y: 140 },
+      transform: { width: 56, height: 56, shapeType: 'rect' },
+      style: { fill: '#8a7bff' },
+    }));
+    // wigglesPerSecond: 0 — same determinism rule as shape-path-op-wiggle.
+    // Correlation 0 so copies diverge (the swarm story); seed fixed for goldens.
+    graph.setPathOps('rw', [
+      {
+        id: 'rw_r', type: 'repeater', amount: 0, detail: 0,
+        copies: 4, offsetX: 58, offsetY: 0, offsetRotation: 0,
+        offsetScale: 1, offsetOpacity: 0.9, offset: 0,
+        anchorX: 0, anchorY: 0, composite: 'above',
+      },
+      {
+        id: 'rw_w', type: 'wiggleTransform', amount: 14, detail: 0,
+        wigglesPerSecond: 0, seed: 11, correlation: 0,
+        wiggleRotation: 0, wiggleScale: 0, anchorX: 0, anchorY: 0,
+      },
+    ]);
+  }),
 ];

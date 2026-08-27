@@ -28,7 +28,7 @@ export const MAX_WIGGLE_OCTAVES = 8;
 
 /** Loop mode for `loopOut`/`loopIn` (AE semantics). Unknown modes fall back
  *  to `'cycle'` so a typo degrades gracefully instead of erroring. */
-export type LoopMode = 'cycle' | 'pingpong' | 'offset';
+export type LoopMode = 'cycle' | 'pingpong' | 'offset' | 'continue';
 
 export interface ExprContext {
   /** Playhead time in seconds. */
@@ -677,6 +677,12 @@ export function compileExpression(src: string): CompiledExpression {
           const delta = selfAt(end) - selfAt(start);
           return selfAt(start + (rel - n * dur)) + n * delta;
         }
+        if (mode === 'continue') {
+          // AE: keep the last segment's speed. Sample just inside the span —
+          // at `end` a hold-clamped selfAt has zero finite-difference velocity.
+          const tip = end - Math.min(0.001, dur / 2);
+          return selfAt(end) + velocityAtTime(tip) * (time - end);
+        }
         return selfAt(start + (rel % dur));
       };
       const loopIn = (mode: LoopMode | string = 'cycle'): number => {
@@ -693,6 +699,10 @@ export function compileExpression(src: string): CompiledExpression {
           const n = Math.floor(rel / dur);
           const delta = selfAt(end) - selfAt(start);
           return selfAt(start + (rel - n * dur)) + n * delta;
+        }
+        if (mode === 'continue') {
+          const tip = start + Math.min(0.001, dur / 2);
+          return selfAt(start) + velocityAtTime(tip) * (time - start);
         }
         return selfAt(start + (((rel % dur) + dur) % dur));
       };
@@ -805,10 +815,24 @@ export function suggestExpression(intent: string): string {
   const s = intent.toLowerCase();
   if (/wiggle|shake|jitter|random|noise/.test(s)) return 'wiggle(2, 30)';
   if (/spin|rotate|rotation/.test(s)) return 'time * 90';
-  if (/oscillate|sine|sin|wave|pulse|bounce/.test(s)) return 'value + Math.sin(time * 3) * 40';
+  // Bounce before generic sine — "bounce" used to map to Math.sin and train
+  // the wrong muscle memory for the AE post-key decay idiom. One expression
+  // (no statements): the language is expression-only, not AE ExtendScript.
+  if (/bounce/.test(s)) {
+    return 'time <= key(numKeys).time ? value : value + velocityAtTime(key(numKeys).time - 0.001) * 0.05 * Math.sin((time - key(numKeys).time) * 12) / Math.exp((time - key(numKeys).time) * 4)';
+  }
+  // Inertia / coast — exponential velocity decay after the last key (no sine).
+  // Distinct from bounce so "add inertia" does not ship an oscillating tip.
+  if (/inertia|coast|overshoot/.test(s)) {
+    return 'time <= key(numKeys).time ? value : value + velocityAtTime(key(numKeys).time - 0.001) * Math.exp(-(time - key(numKeys).time) * 5)';
+  }
+  if (/oscillate|sine|sin|wave|pulse/.test(s)) return 'value + Math.sin(time * 3) * 40';
   if (/fade|ramp|grow|rise/.test(s)) return 'linear(time, 0, 2, 0, 100)';
   if (/clamp|limit|cap/.test(s)) return 'clamp(value, 0, 100)';
-  if (/loop|repeat|cycle/.test(s)) return 'value + Math.sin(time * 6.283) * 50';
+  // Pingpong before generic loop — otherwise "pingpong loop" matched cycle.
+  if (/pingpong|ping.?pong/.test(s)) return "loopOut('pingpong')";
+  if (/loop|repeat|cycle/.test(s)) return "loopOut('cycle')";
+  if (/follow|delay|lag/.test(s)) return "layerAt('Leader', 'x', time - 0.2)";
   return 'value';
 }
 
@@ -939,8 +963,8 @@ export const EXPRESSION_API: { insert: string; label: string; hint: string }[] =
   { insert: 'valueAtTime(time - 0.5)', label: 'valueAtTime()', hint: 'own keyframed value at any time' },
   { insert: "layer('Layer 1', 'x')", label: 'layer()', hint: "another layer's value (keyframed/base)" },
   { insert: "layerAt('Layer 1', 'x', time - 0.5)", label: 'layerAt()', hint: "another layer's value at a time" },
-  { insert: "loopOut('cycle')", label: 'loopOut()', hint: 'repeat keyframes after the last (cycle · pingpong · offset)' },
-  { insert: "loopIn('cycle')", label: 'loopIn()', hint: 'repeat keyframes before the first (cycle · pingpong · offset)' },
+  { insert: "loopOut('cycle')", label: 'loopOut()', hint: 'repeat keyframes after the last (cycle · pingpong · offset · continue)' },
+  { insert: "loopIn('cycle')", label: 'loopIn()', hint: 'repeat keyframes before the first (cycle · pingpong · offset · continue)' },
   // ── Round two ──
   { insert: 'sourceRectAtTime().width', label: 'sourceRectAtTime()', hint: 'content bounds {top,left,width,height} — auto-sizing plates' },
   // Coordinate spaces. The hints name the DIRECTION, because that is the only

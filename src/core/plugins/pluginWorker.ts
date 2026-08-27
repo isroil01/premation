@@ -22,7 +22,7 @@
  * checks each call against the permissions the user granted at install time.
  */
 
-import { collectTransferables, type HostMessage, type WorkerMessage, type PluginCommandSpec } from './protocol';
+import { collectTransferables, type HostMessage, type WorkerMessage, type PluginCommandSpec, type RenderFinishedInfo } from './protocol';
 import type { PluginManifest, PluginPermission } from './manifest';
 
 declare const self: DedicatedWorkerGlobalScope;
@@ -178,6 +178,51 @@ export interface PluginImage {
 
 /** `kindId` → the plugin's authored-edit callback. One per kind. */
 const layerChangeListeners = new Map<string, (e: { layerId: string; props: string[] }) => void>();
+/**
+ * Render-finished listeners.
+ *
+ * A LIST, not the single-slot Map `layerChangeListeners` is: that one is keyed
+ * by layer kind, so one listener per kind is the whole vocabulary. This event
+ * has no key, and a plugin that both logs a render and updates its panel wants
+ * two — silently replacing the first would be the kind of bug an author debugs
+ * by deleting code until it works.
+ */
+const renderFinishedListeners: Array<(e: RenderFinishedInfo) => void> = [];
+
+/** One frame as an exporter receives it. `pixels` is RGBA8, row-major. */
+export interface ExportFrame {
+  index: number;
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray;
+}
+
+export interface ExporterHandlers {
+  /** Called once before the first frame. */
+  begin?(info: { width: number; height: number; fps: number; durationSec: number; compositionName: string }): void | Promise<void>;
+  /** Called once per frame, in order. */
+  addFrame(frame: ExportFrame): void | Promise<void>;
+  /** Return the finished file's bytes. The HOST writes them — see the manifest. */
+  finish(): ArrayBuffer | Uint8Array | Promise<ArrayBuffer | Uint8Array>;
+  /** Called instead of `finish` when the export is cancelled or fails. */
+  dispose?(): void | Promise<void>;
+}
+
+const exporters = new Map<string, ExporterHandlers>();
+
+/** What a decoder returns: one decoded image, and nothing about where it goes. */
+export interface DecodedImage {
+  width: number;
+  height: number;
+  pixels: Uint8ClampedArray | ArrayBuffer;
+}
+
+export interface ImporterHandlers {
+  /** Turn a file's bytes into pixels. Throwing fails the import by name. */
+  decode(file: { name: string; bytes: Uint8Array }): DecodedImage | Promise<DecodedImage>;
+}
+
+const importers = new Map<string, ImporterHandlers>();
 
 function buildApi(
   manifest: PluginManifest,
@@ -279,10 +324,73 @@ function buildApi(
       },
     },
 
+    /**
+     * Called when a render leaves the queue — a post-render action.
+     *
+     * Returns an unsubscribe. Declare `onRenderFinished` in
+     * `activationEvents` to be STARTED by one: a plugin that only reacts to
+     * renders has nothing to do until one happens.
+     */
+    onRenderFinished: (fn: (e: RenderFinishedInfo) => void) => {
+      renderFinishedListeners.push(fn);
+      return () => {
+        const i = renderFinishedListeners.indexOf(fn);
+        if (i >= 0) renderFinishedListeners.splice(i, 1);
+      };
+    },
+    importers: {
+      /**
+       * Claim an importer declared in `contributes.importers`.
+       *
+       * A declared importer with no handler fails the import with a message
+       * naming the id, rather than falling through to "unsupported file" —
+       * which would send the user looking at their file instead of the plugin.
+       */
+      register: (importerId: string, handlers: ImporterHandlers) => {
+        if (typeof handlers?.decode !== 'function') {
+          throw new Error(`importers.register("${importerId}") needs a decode function.`);
+        }
+        importers.set(importerId, handlers);
+        return () => importers.delete(importerId);
+      },
+    },
+    exporters: {
+      /**
+       * Claim an exporter declared in `contributes.exporters`.
+       *
+       * The manifest is what makes the format APPEAR; this is what makes it
+       * work. A declared exporter with no handler is refused at export time
+       * with a message naming the id, rather than producing an empty file.
+       */
+      register: (exporterId: string, handlers: ExporterHandlers) => {
+        if (typeof handlers?.addFrame !== 'function' || typeof handlers?.finish !== 'function') {
+          throw new Error(`exporters.register("${exporterId}") needs addFrame and finish.`);
+        }
+        exporters.set(exporterId, handlers);
+        return () => exporters.delete(exporterId);
+      },
+    },
+    audio: {
+      getPeaks: (layerId: string) => call('audio.getPeaks', layerId) as Promise<
+        { buckets: number; duration: number; peaks: number[] } | null
+      >,
+      getAmplitude: (layerId: string, seconds: number) =>
+        call('audio.getAmplitude', layerId, seconds) as Promise<number | null>,
+    },
     composition: {
       get: () => call('composition.get') as Promise<{
         width: number; height: number; fps: number; durationSeconds: number; name: string;
       }>,
+      list: () => call('composition.list') as Promise<Array<{
+        id: string; name: string; width: number; height: number;
+        fps: number; durationSeconds: number; active: boolean;
+      }>>,
+      create: (settings?: {
+        name?: string; width?: number; height?: number; fps?: number; durationSeconds?: number;
+      }) => call('composition.create', settings) as Promise<string>,
+      open: (id: string) => call('composition.open', id) as Promise<boolean>,
+      rename: (id: string, name: string) => call('composition.rename', id, name) as Promise<boolean>,
+      delete: (id: string) => call('composition.delete', id) as Promise<boolean>,
     },
 
     scene: {
@@ -485,6 +593,116 @@ export type PluginApi = ReturnType<typeof buildApi>;
 // ── Boot ─────────────────────────────────────────────────────────────────
 let booted = false;
 
+/**
+ * Run one step of an export and reply.
+ *
+ * ALWAYS replies, including when the plugin throws — the host is blocked on
+ * this id, and a step that answers nothing would stall the render queue behind
+ * an encoder that failed. The error travels back as text and the host turns it
+ * into a failed export naming the plugin, which is what the user needs to see.
+ *
+ * `pixels` is wrapped in a `Uint8ClampedArray` rather than handed over as a raw
+ * `ArrayBuffer`: it is image data, and every canvas API an author will reach for
+ * to encode it takes that view.
+ */
+async function runExportStep(msg: Extract<HostMessage, { k: 'export' }>): Promise<void> {
+  const handlers = exporters.get(msg.exporterId);
+  if (!handlers) {
+    post({
+      k: 'exportResult',
+      id: msg.id,
+      ok: false,
+      error:
+        `This plugin declares the exporter "${msg.exporterId}" but never called `
+        + `motion.exporters.register("${msg.exporterId}", ...).`,
+    });
+    return;
+  }
+  try {
+    switch (msg.phase) {
+      case 'begin':
+        await handlers.begin?.(msg.info);
+        break;
+      case 'frame':
+        await handlers.addFrame({
+          index: msg.index,
+          width: msg.width,
+          height: msg.height,
+          pixels: new Uint8ClampedArray(msg.pixels),
+        });
+        break;
+      case 'dispose':
+        await handlers.dispose?.();
+        break;
+      case 'finish': {
+        const bytes = await handlers.finish();
+        const buf = bytes instanceof Uint8Array
+          ? (bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer)
+          : bytes;
+        if (!(buf instanceof ArrayBuffer) || buf.byteLength === 0) {
+          post({ k: 'exportResult', id: msg.id, ok: false, error: 'finish() returned no bytes.' });
+          return;
+        }
+        post({ k: 'exportResult', id: msg.id, ok: true, bytes: buf });
+        return;
+      }
+    }
+    post({ k: 'exportResult', id: msg.id, ok: true });
+  } catch (err) {
+    post({ k: 'exportResult', id: msg.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+/**
+ * Decode one file and reply.
+ *
+ * Always replies, for the same reason `runExportStep` does: the host is blocked
+ * on this id, and an import that answers nothing would hang the drop the user
+ * just made.
+ *
+ * The returned pixel buffer is VALIDATED here rather than trusted: a decoder
+ * that reports a size its buffer does not match would make the host read past
+ * the end of an array, and the error belongs to the plugin that produced it
+ * rather than to whatever crashes downstream.
+ */
+async function runImport(msg: Extract<HostMessage, { k: 'import' }>): Promise<void> {
+  const handlers = importers.get(msg.importerId);
+  if (!handlers) {
+    post({
+      k: 'importResult',
+      id: msg.id,
+      ok: false,
+      error:
+        `This plugin declares the importer "${msg.importerId}" but never called `
+        + `motion.importers.register("${msg.importerId}", ...).`,
+    });
+    return;
+  }
+  try {
+    const out = await handlers.decode({ name: msg.fileName, bytes: new Uint8Array(msg.bytes) });
+    const w = Math.trunc(out?.width ?? 0);
+    const h = Math.trunc(out?.height ?? 0);
+    if (!(w > 0) || !(h > 0)) {
+      post({ k: 'importResult', id: msg.id, ok: false, error: 'decode() returned no dimensions.' });
+      return;
+    }
+    const view = out.pixels instanceof ArrayBuffer ? new Uint8ClampedArray(out.pixels) : out.pixels;
+    if (view.byteLength !== w * h * 4) {
+      post({
+        k: 'importResult',
+        id: msg.id,
+        ok: false,
+        error: `decode() returned ${view.byteLength} bytes for a ${w}x${h} image; RGBA needs ${w * h * 4}.`,
+      });
+      return;
+    }
+    const buf = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength) as ArrayBuffer;
+    post({ k: 'importResult', id: msg.id, ok: true, width: w, height: h, pixels: buf });
+  } catch (err) {
+    post({ k: 'importResult', id: msg.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 async function boot(msg: Extract<HostMessage, { k: 'boot' }>): Promise<void> {
   if (booted) return;
   booted = true;
@@ -548,6 +766,23 @@ self.onmessage = (ev: MessageEvent<HostMessage>): void => {
         post({ k: 'fatal', error: `command "${msg.commandId}" failed: ${String(err)}` });
       }
       break;
+    }
+    case 'export': {
+      void runExportStep(msg);
+      return;
+    }
+    case 'import': {
+      void runImport(msg);
+      return;
+    }
+    case 'renderFinished': {
+      // Every listener runs even if an earlier one throws: one plugin's broken
+      // handler must not silence its own other handler.
+      for (const fn of [...renderFinishedListeners]) {
+        try { fn(msg.render); }
+        catch (err) { post({ k: 'log', level: 'error', text: `onRenderFinished threw: ${String(err)}` }); }
+      }
+      return;
     }
     case 'layerChanged': {
       const fn = layerChangeListeners.get(msg.kindId);

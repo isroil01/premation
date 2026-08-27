@@ -79,12 +79,21 @@ describe('declaring a chain', () => {
     expect(errors.join(' ')).toMatch(/is empty/);
   });
 
-  it('refuses more than four passes', () => {
-    const { effect, errors } = parseOne({
-      passes: [pass('a'), pass('b'), pass('c'), pass('d'), pass('e')],
-    });
+  it('refuses more than eight passes', () => {
+    const nine = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map((n) => pass(n, { scale: 0.25 }));
+    const { effect, errors } = parseOne({ passes: nine });
     expect(effect).toBeUndefined();
-    expect(errors.join(' ')).toMatch(/declares 5 passes; the limit is 4/);
+    expect(errors.join(' ')).toMatch(/declares 9 passes; the limit is 8/);
+  });
+
+  it('★ admits eight cheap passes, which the old count refused on no cost argument', () => {
+    // Eight quarter-scale passes cost 0.5 of one full pass. The cap of 4 was
+    // set to make the four-full-scale chain impossible, and caught these as
+    // collateral — a cheap chain refused by a number with no cost behind it.
+    const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((n) => pass(n, { scale: 0.25 }));
+    const { effect, errors } = parseOne({ passes: eight });
+    expect(errors).toEqual([]);
+    expect(chainCost(effect!.passes!)).toBeCloseTo(0.5);
   });
 
   it('refuses two passes with the same name', () => {
@@ -146,9 +155,17 @@ describe('the cost budget', () => {
     a full one, and puts a single one of them over the whole budget. That would
     refuse every downsampled blur, which is the entire reason `scale` exists.
 
-    The budget is 3 rather than the brief's 6, because 6 does not satisfy the
-    brief's own acceptance criterion: four full-scale passes cost 4 under either
-    exponent, and 4 ≤ 6. The concrete, testable half of the pair wins.
+    The budget is 6, and was 3. It was 3 because that is the only number
+    satisfying the original brief's acceptance criterion — "must refuse a
+    four-pass full-scale chain" — and that criterion has been RETIRED in favour
+    of plugins that can express complex effects. The exponent above did not
+    move: that half was never about the ceiling, it is about counting the right
+    thing.
+
+    The ceiling cannot adapt to the machine, and it is worth knowing why before
+    proposing it: this runs in manifest validation, which the registry runs too,
+    on a server with no GPU. A hardware-dependent limit would publish and then
+    refuse at install with nothing naming the machine that drew the line.
   */
 
   it('costs a pass by its share of the pixels', () => {
@@ -157,12 +174,25 @@ describe('the cost budget', () => {
     expect(chainCost([{ name: 'a', wgsl: FS, scale: 0.25 }])).toBeCloseTo(0.0625);
   });
 
-  it('★ refuses four full-scale passes', () => {
+  it('★ ADMITS four full-scale passes — the criterion this used to pin was retired', () => {
+    // This assertion is inverted from what it was. The budget of 3 existed to
+    // make exactly this chain impossible; the product goal is now plugins that
+    // can express complex effects, so the rule whose only job was to refuse it
+    // went with it. See the header of `effectSchema.ts` for which premise moved.
     const { effect, errors } = parseOne({
       passes: [pass('a'), pass('b'), pass('c'), pass('d')],
     });
+    expect(errors).toEqual([]);
+    expect(chainCost(effect!.passes!)).toBeCloseTo(4);
+  });
+
+  it('still refuses a chain past the new budget', () => {
+    // The budget did not stop meaning something — it moved. Eight full-scale
+    // passes cost 8, which is still more fill than one layer may spend.
+    const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((n) => pass(n));
+    const { effect, errors } = parseOne({ passes: eight });
     expect(effect).toBeUndefined();
-    expect(errors.join(' ')).toMatch(/costs 4.00 full-scale passes; the budget is 3/);
+    expect(errors.join(' ')).toMatch(/costs 8.00 full-scale passes; the budget is 6/);
   });
 
   it('admits a separable blur — two full-scale passes', () => {

@@ -7,7 +7,7 @@
  */
 
 import { zipSync, strToU8 } from 'fflate';
-import { parseManifest, HOST_API_VERSION } from './manifest';
+import { parseManifest, HOST_API_VERSION, MANIFEST_VERSION } from './manifest';
 import { readPluginFiles, readPluginZip, MAX_FILE_BYTES } from './pluginPackage';
 
 const GOOD = {
@@ -46,7 +46,11 @@ describe('manifest validation', () => {
   });
 
   it('refuses a plugin built for a NEWER host, and says to update', () => {
-    const { errors } = parseManifest({ ...GOOD, apiVersion: HOST_API_VERSION + 1 });
+    // MANIFEST_VERSION, not HOST_API_VERSION: `apiVersion` in a manifest is the
+    // GRAMMAR it is written in. The two were equal until `contributes.exporters`
+    // moved the grammar alone, and this assertion only ever passed because of
+    // that coincidence.
+    const { errors } = parseManifest({ ...GOOD, apiVersion: MANIFEST_VERSION + 1 });
     expect(errors.join(' ')).toMatch(/Update the app/);
   });
 

@@ -187,12 +187,18 @@ export class NullBackend implements RenderBackend {
   }
 
   private readonly rtTexture = new Map<number, TextureHandle>();
-  createRenderTarget(_desc: RenderTargetDescriptor): RenderTargetHandle {
+  private readonly rtDepth = new Map<number, TextureHandle>();
+  createRenderTarget(desc: RenderTargetDescriptor): RenderTargetHandle {
     const h = handle('render-target');
     this.live['render-target'].add(h.id);
     const tex = handle('texture');
     this.live.texture.add(tex.id);
     this.rtTexture.set(h.id, tex);
+    if (desc.depth && (desc.samples ?? 1) <= 1) {
+      const dtex = handle('texture');
+      this.live.texture.add(dtex.id);
+      this.rtDepth.set(h.id, dtex);
+    }
     return h;
   }
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
@@ -200,11 +206,17 @@ export class NullBackend implements RenderBackend {
     if (!tex) throw new Error(`Unknown render target ${target.id}`);
     return tex;
   }
+  renderTargetDepthTexture(target: RenderTargetHandle): TextureHandle | null {
+    return this.rtDepth.get(target.id) ?? null;
+  }
   destroyRenderTarget(target: RenderTargetHandle): void {
     this.live['render-target'].delete(target.id);
     const tex = this.rtTexture.get(target.id);
     if (tex) this.live.texture.delete(tex.id);
     this.rtTexture.delete(target.id);
+    const dtex = this.rtDepth.get(target.id);
+    if (dtex) this.live.texture.delete(dtex.id);
+    this.rtDepth.delete(target.id);
   }
 
   beginFrame(): void {
@@ -224,6 +236,7 @@ export class NullBackend implements RenderBackend {
   dispose(): void {
     for (const set of Object.values(this.live)) set.clear();
     this.rtTexture.clear();
+    this.rtDepth.clear();
   }
 
   // ── Test/introspection helpers ──────────────────────────────────

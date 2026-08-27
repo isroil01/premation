@@ -6,16 +6,21 @@
  * mechanism the audit's Tier-4 colour work needed: brightness/contrast/etc. are
  * affine (matrix / CSS), but Levels (black/white points + gamma) and Curves
  * (spline) are non-linear per-channel remaps.
+ *
+ * Tables are Float32 (0..255) so 32-bpc / HDR CPU paths can sample with linear
+ * interpolation instead of quantising every tap through Uint8. The GPU upload
+ * still packs an 8-bit strip — float textures for LUT sampling are a later
+ * backend change.
  */
 
 import type { Effect, EffectType } from './effects';
 import { effectNumber } from './effects';
 
-/** 256-entry output tables, one per channel. */
+/** 256-entry output tables (0..255 float), one per channel. */
 export interface ChannelLut {
-  r: Uint8Array;
-  g: Uint8Array;
-  b: Uint8Array;
+  r: Float32Array;
+  g: Float32Array;
+  b: Float32Array;
 }
 
 /**
@@ -91,8 +96,8 @@ function clamp255(v: number): number {
 }
 
 /** Identity table (input === output). */
-function identityTable(): Uint8Array {
-  const t = new Uint8Array(256);
+function identityTable(): Float32Array {
+  const t = new Float32Array(256);
   for (let i = 0; i < 256; i++) t[i] = i;
   return t;
 }
@@ -104,8 +109,8 @@ function identityTable(): Uint8Array {
  *
  * All points are 0–255; gamma is the midtone control (>1 brightens midtones).
  */
-function levelsTable(inBlack: number, inWhite: number, gamma: number, outBlack: number, outWhite: number): Uint8Array {
-  const t = new Uint8Array(256);
+function levelsTable(inBlack: number, inWhite: number, gamma: number, outBlack: number, outWhite: number): Float32Array {
+  const t = new Float32Array(256);
   const span = Math.max(1e-6, inWhite - inBlack);
   const g = 1 / Math.max(1e-3, gamma);
   for (let i = 0; i < 256; i++) {
@@ -127,10 +132,10 @@ function levelsTable(inBlack: number, inWhite: number, gamma: number, outBlack: 
  * Output is clamped 0–255; tangents are scaled so a monotone control polygon
  * stays nearly monotone in practice.
  */
-function curvesTable(points: ReadonlyArray<[number, number]>): Uint8Array {
+function curvesTable(points: ReadonlyArray<[number, number]>): Float32Array {
   const pts = [...points].sort((a, b) => a[0] - b[0]);
   if (pts.length < 2) return identityTable();
-  const t = new Uint8Array(256);
+  const t = new Float32Array(256);
   const n = pts.length;
   const tangents: number[] = new Array(n);
   for (let i = 0; i < n; i++) {
@@ -164,9 +169,9 @@ function curvesTable(points: ReadonlyArray<[number, number]>): Uint8Array {
  * (n≥2). in → nearest of n bands, expanded back across 0–255. n=2 → hard
  * two-tone per channel; large n → near-identity.
  */
-function posterizeTable(levels: number): Uint8Array {
+function posterizeTable(levels: number): Float32Array {
   const n = Math.max(2, Math.min(255, Math.round(levels)));
-  const t = new Uint8Array(256);
+  const t = new Float32Array(256);
   for (let i = 0; i < 256; i++) {
     const band = Math.round((i / 255) * (n - 1));
     t[i] = clamp255(Math.round((band / (n - 1)) * 255));
@@ -214,12 +219,12 @@ function curvePoints(effect: Effect, key: string): [number, number][] | null {
 function curvesTables(effect: Effect): ChannelLut {
   const composite = curvePoints(effect, 'points');
   const base = composite ? curvesTable(composite) : identityTable();
-  const perChannel = (key: string): Uint8Array => {
+  const perChannel = (key: string): Float32Array => {
     const pts = curvePoints(effect, key);
     if (!pts) return base;
     const own = curvesTable(pts);
-    const out = new Uint8Array(256);
-    for (let i = 0; i < 256; i++) out[i] = own[base[i]!]!;
+    const out = new Float32Array(256);
+    for (let i = 0; i < 256; i++) out[i] = own[clamp255(Math.round(base[i]!))]!;
     return out;
   };
   return {
@@ -230,7 +235,7 @@ function curvesTables(effect: Effect): ChannelLut {
 }
 
 /** The same table on all three channels — the shape most LUT effects have. */
-function uniform(t: Uint8Array): ChannelLut {
+function uniform(t: Float32Array): ChannelLut {
   return { r: t, g: t, b: t };
 }
 
@@ -296,8 +301,8 @@ function lumetriTables(effect: Effect): ChannelLut {
     1 - 0.3 * temperature,
   ];
 
-  const build = (channelGain: number): Uint8Array => {
-    const t = new Uint8Array(256);
+  const build = (channelGain: number): Float32Array => {
+    const t = new Float32Array(256);
     for (let i = 0; i < 256; i++) {
       let x = (i / 255) * channelGain * gain;
       x = x < 0 ? 0 : x > 1 ? 1 : x;
@@ -340,8 +345,8 @@ function lumetriTables(effect: Effect): ChannelLut {
  * Order matters and is not interchangeable: offset before the gain would be
  * multiplied by it, and a gamma applied first would be undone by the gain.
  */
-function exposureTable(stops: number, offset: number, gamma: number): Uint8Array {
-  const t = new Uint8Array(256);
+function exposureTable(stops: number, offset: number, gamma: number): Float32Array {
+  const t = new Float32Array(256);
   const gain = Math.pow(2, stops);
   // Guard the reciprocal: gamma 0 is reachable from the inspector and would
   // otherwise produce Infinity and a table of NaN, which clamps to a black frame.
@@ -398,11 +403,11 @@ function midWeight(x: number, width: number): number {
  * `aeColor.ts` beside Photo Filter, which pays that cost knowingly.
  */
 function colorBalanceTables(effect: Effect): ChannelLut {
-  const build = (shadow: number, mid: number, high: number): Uint8Array => {
+  const build = (shadow: number, mid: number, high: number): Float32Array => {
     const s = shadow / 100;
     const m = mid / 100;
     const hi = high / 100;
-    const t = new Uint8Array(256);
+    const t = new Float32Array(256);
     for (let i = 0; i < 256; i++) {
       const x0 = i / 255;
       let x = x0 + 0.5 * (
@@ -469,13 +474,13 @@ function gammaPedestalGainTables(effect: Effect): ChannelLut {
     effectNumber(effect, 'gain'),
   );
 
-  const build = (gammaKey: string, pedestalKey: string, gainKey: string): Uint8Array => {
+  const build = (gammaKey: string, pedestalKey: string, gainKey: string): Float32Array => {
     const own = transfer(
       effectNumber(effect, gammaKey),
       effectNumber(effect, pedestalKey),
       effectNumber(effect, gainKey),
     );
-    const t = new Uint8Array(256);
+    const t = new Float32Array(256);
     for (let i = 0; i < 256; i++) {
       const x = master(own(i / 255));
       t[i] = clamp255(Math.round((x < 0 ? 0 : x > 1 ? 1 : x) * 255));
@@ -508,9 +513,9 @@ export function buildChannelLut(effects: ReadonlyArray<Effect>): ChannelLut | nu
   for (const tables of active) {
     // Compose: later effects look up the previous effect's output, per channel.
     for (let i = 0; i < 256; i++) {
-      lut.r[i] = tables.r[lut.r[i]!]!;
-      lut.g[i] = tables.g[lut.g[i]!]!;
-      lut.b[i] = tables.b[lut.b[i]!]!;
+      lut.r[i] = tables.r[clamp255(Math.round(lut.r[i]!))]!;
+      lut.g[i] = tables.g[clamp255(Math.round(lut.g[i]!))]!;
+      lut.b[i] = tables.b[clamp255(Math.round(lut.b[i]!))]!;
     }
   }
   return lut;
@@ -519,8 +524,29 @@ export function buildChannelLut(effects: ReadonlyArray<Effect>): ChannelLut | nu
 /** Apply a channel LUT to RGBA pixel data in place (alpha untouched). */
 export function applyChannelLut(data: Uint8ClampedArray, lut: ChannelLut): void {
   for (let i = 0; i < data.length; i += 4) {
-    data[i] = lut.r[data[i]!]!;
-    data[i + 1] = lut.g[data[i + 1]!]!;
-    data[i + 2] = lut.b[data[i + 2]!]!;
+    data[i] = clamp255(Math.round(lut.r[data[i]!]!));
+    data[i + 1] = clamp255(Math.round(lut.g[data[i + 1]!]!));
+    data[i + 2] = clamp255(Math.round(lut.b[data[i + 2]!]!));
+  }
+}
+
+/** Sample a 256-entry 0..255 table at a continuous 0..1 channel (linear interp). */
+function sampleLut01(table: Float32Array, v01: number): number {
+  const x = Math.max(0, Math.min(255, v01 * 255));
+  const i0 = Math.floor(x);
+  const i1 = Math.min(255, i0 + 1);
+  const f = x - i0;
+  return (table[i0]! * (1 - f) + table[i1]! * f) / 255;
+}
+
+/**
+ * Apply a channel LUT to float RGBA (0..1 linear) in place — 32-bpc / HDR CPU path.
+ * Lookup clamps to 0..1; alpha is untouched.
+ */
+export function applyChannelLutFloat(data: Float32Array, lut: ChannelLut): void {
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = sampleLut01(lut.r, data[i]!);
+    data[i + 1] = sampleLut01(lut.g, data[i + 1]!);
+    data[i + 2] = sampleLut01(lut.b, data[i + 2]!);
   }
 }

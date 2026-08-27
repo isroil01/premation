@@ -291,6 +291,11 @@ export interface Effect {
   /** When false the effect stays in the stack but contributes nothing. */
   enabled?: boolean;
   /**
+   * Optional AE-style label colour on this effect instance (Effect Controls
+   * header swatch). Hex from `LABEL_COLORS`; absent = default chrome.
+   */
+  labelColor?: string;
+  /**
    * Scope this effect to one of the layer's mask paths (M6).
    *
    * The mask's FEATHER drives the effect's edge falloff and its OPACITY drives
@@ -594,11 +599,16 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'Glow',
     params: [
       { key: 'radius', label: 'Radius', type: 'number', unit: 'px', min: 0, max: 60, default: 16 },
+      { key: 'spread', label: 'Spread', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
       { key: 'color', label: 'Color', type: 'color', default: '#78b4ff' },
       { key: 'intensity', label: 'Intensity', type: 'number', unit: '%', min: 0, max: 100, default: 90 },
     ],
-    css: (p) =>
-      `drop-shadow(0 0 ${num(p, 'radius', 16)}px ${withAlpha(str(p, 'color', '#78b4ff'), num(p, 'intensity', 90) / 100)})`,
+    css: (p) => {
+      // CSS cannot dilate; remap radius so Spread still hardens the halo.
+      const s = Math.max(0, Math.min(100, num(p, 'spread', 0))) / 100;
+      const r = Math.max(0, num(p, 'radius', 16) * (1 - s));
+      return `drop-shadow(0 0 ${r}px ${withAlpha(str(p, 'color', '#78b4ff'), num(p, 'intensity', 90) / 100)})`;
+    },
   },
 
   // Drop Shadow: a cast shadow. Distance and angle used to be derived from the
@@ -610,6 +620,7 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'distance', label: 'Distance', type: 'number', unit: 'px', min: 0, max: 200, default: 6 },
       { key: 'angle', label: 'Angle', type: 'number', unit: '°', min: 0, max: 360, default: 135 },
       { key: 'softness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 100, default: 12 },
+      { key: 'spread', label: 'Spread', type: 'number', unit: '%', min: 0, max: 100, default: 0 },
       { key: 'color', label: 'Color', type: 'color', default: '#000000' },
       { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 55 },
     ],
@@ -619,7 +630,10 @@ export const EFFECT_DEFS: EffectDef[] = [
       const dx = (Math.cos(rad) * d).toFixed(1);
       const dy = (Math.sin(rad) * d).toFixed(1);
       const color = withAlpha(str(p, 'color', '#000000'), num(p, 'opacity', 55) / 100);
-      return `drop-shadow(${dx}px ${dy}px ${num(p, 'softness', 12)}px ${color})`;
+      // CSS drop-shadow has no Spread; harden by shrinking the blur radius.
+      const s = Math.max(0, Math.min(100, num(p, 'spread', 0))) / 100;
+      const soft = Math.max(0, num(p, 'softness', 12) * (1 - s));
+      return `drop-shadow(${dx}px ${dy}px ${soft}px ${color})`;
     },
   },
 
@@ -1909,6 +1923,17 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'width', label: 'Width', type: 'number', unit: 'px', min: 0, max: 50, default: 3 },
       { key: 'color', label: 'Color', type: 'color', default: '#ffffff' },
       { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      {
+        key: 'position',
+        label: 'Position',
+        type: 'enum',
+        default: 0,
+        options: [
+          { value: 0, label: 'Outside' },
+          { value: 1, label: 'Inside' },
+          { value: 2, label: 'Center' },
+        ],
+      },
     ],
     css: () => '',
   },
@@ -3887,7 +3912,30 @@ export function resetEffectParams(nodeId: string, effectId: string): void {
     nodeId,
     // `amount` goes too: it is the legacy scalar `paramsOf` folds in ahead of
     // the defaults, so leaving it would make a reset effect keep its old look.
-    effects.map((e) => (e.id === effectId ? { ...e, params: defaultParams(def), amount: undefined } : e)),
+    effects.map((e) =>
+      e.id === effectId
+        ? { id: e.id, type: e.type, params: defaultParams(def), enabled: e.enabled, maskId: e.maskId, labelColor: e.labelColor }
+        : e,
+    ),
+  );
+}
+
+/** Set or clear the Effect Controls label colour on one applied effect. */
+export function setEffectLabelColor(
+  nodeId: string,
+  effectId: string,
+  color: string | undefined,
+): void {
+  writeNodeEffects(
+    nodeId,
+    getNodeEffects(nodeId).map((e) => {
+      if (e.id !== effectId) return e;
+      if (color === undefined) {
+        const { labelColor: _drop, ...rest } = e;
+        return rest;
+      }
+      return { ...e, labelColor: color };
+    }),
   );
 }
 
@@ -3931,6 +3979,33 @@ export function toggleEffect(nodeId: string, effectId: string): void {
   writeNodeEffects(
     nodeId,
     getNodeEffects(nodeId).map((e) => (e.id === effectId ? { ...e, enabled: e.enabled === false } : e)),
+  );
+}
+
+/**
+ * AE Compositing Options → Effect Mask: scope where this effect applies.
+ *
+ * `maskId` undefined / omitted = whole layer. Empty string is treated as unset
+ * so a half-written edit cannot force a CPU bake for nothing (see
+ * effectScopedMask.test.ts). The referenced path should usually be mode
+ * `'none'` so it is geometry without also cutting the layer.
+ */
+export function setEffectMaskId(
+  nodeId: string,
+  effectId: string,
+  maskId: string | undefined,
+): void {
+  const nextId = maskId && maskId.length > 0 ? maskId : undefined;
+  writeNodeEffects(
+    nodeId,
+    getNodeEffects(nodeId).map((e) => {
+      if (e.id !== effectId) return e;
+      if (nextId === undefined) {
+        const { maskId: _drop, ...rest } = e;
+        return rest;
+      }
+      return { ...e, maskId: nextId };
+    }),
   );
 }
 

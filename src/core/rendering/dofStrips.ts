@@ -1,14 +1,12 @@
 /**
- * Depth-of-field strip subdivision.
+ * Depth-of-field for flat 3D quads that span depth (tilted cards, ground planes).
  *
- * A single 3D quad that spans depth (tilted card, ground plane) used to get one
- * uniform Gaussian from `dofEffectOf(originDepth)`. Extrusion faces already
- * carry per-face CoC; this module does the same for flat quads by splitting
- * them into UV strips along the dominant depth gradient, each with its own
- * blur radius from `dofBlurPx`.
+ * Preferred path: {@link planDofCocCorners} — four corner CoC radii for a
+ * per-pixel variable-radius gather in the renderer (`coc-blur`). Fallback:
+ * {@link planDofStrips} subdivides into UV strips/grids with uniform blur each
+ * (used only when the GPU path cannot take corners).
  *
- * Not per-pixel CoC (that needs a sampleable depth buffer). Visibly better for
- * depth-spanning planes without a new renderer pass.
+ * Extrusion faces already carry per-face CoC in buildSnapshot.
  */
 
 import { dofBlurPx, type DofConfig } from '@core/scene/camera3d';
@@ -27,9 +25,33 @@ export interface DofStripPlan {
   blurPx: number;
 }
 
-const MAX_STRIPS = 8;
+const MAX_STRIPS = 12;
 /** Minimum CoC delta (px) across the quad before we bother splitting. */
 const MIN_BLUR_SPAN = 1.25;
+/** Per-axis cap for the 2D CoC grid (5×5 = 25 tiles max). */
+const MAX_GRID = 5;
+
+/**
+ * Per-pixel planar CoC: blur radii (px) at UV corners (0,0), (1,0), (1,1), (0,1).
+ * Null when the span is too small — caller keeps a single uniform `dof` blur.
+ */
+export function planDofCocCorners(
+  cornerDepths: readonly [number, number, number, number],
+  dof: DofConfig,
+): { corners: [number, number, number, number]; maxPx: number } | null {
+  const blur = (d: number) => dofBlurPx(d, dof);
+  const corners: [number, number, number, number] = [
+    Number(blur(cornerDepths[0]).toFixed(2)),
+    Number(blur(cornerDepths[1]).toFixed(2)),
+    Number(blur(cornerDepths[2]).toFixed(2)),
+    Number(blur(cornerDepths[3]).toFixed(2)),
+  ];
+  const maxPx = Math.max(...corners);
+  const minPx = Math.min(...corners);
+  if (maxPx - minPx < MIN_BLUR_SPAN) return null;
+  if (maxPx < 0.3) return null;
+  return { corners, maxPx: Number(maxPx.toFixed(1)) };
+}
 
 /**
  * Plan DOF strips for a depth-spanning quad.
@@ -73,36 +95,51 @@ export function planDofStrips(
   const tx = matrix[4]!;
   const ty = matrix[5]!;
 
+  const lerpDepth = (u: number, v: number): number => {
+    const top = d00 + (d10 - d00) * u;
+    const bot = d01 + (d11 - d01) * u;
+    return top + (bot - top) * v;
+  };
+
+  const tile = (u0: number, u1: number, v0: number, v1: number): DofStripPlan => {
+    const du = u1 - u0;
+    const dv = v1 - v0;
+    const uMid = (u0 + u1) / 2;
+    const vMid = (v0 + v1) / 2;
+    const depth = lerpDepth(uMid, vMid);
+    return {
+      uvRect: { x: u0, y: v0, width: du, height: dv },
+      matrix: [a * du, b * du, c * dv, d * dv, a * u0 + c * v0 + tx, b * u0 + d * v0 + ty],
+      depth,
+      blurPx: Number(blur(depth).toFixed(1)),
+    };
+  };
+
+  // Both axes span meaningful CoC → 2D grid (tilted cards). One-axis strips
+  // stay for ground planes / simple ramps so we don't explode layer count.
+  const blurSpanU = Math.abs(blur(midR) - blur(midL));
+  const blurSpanV = Math.abs(blur(midB) - blur(midT));
+  if (blurSpanU >= MIN_BLUR_SPAN && blurSpanV >= MIN_BLUR_SPAN) {
+    const nu = Math.max(2, Math.min(MAX_GRID, Math.ceil(blurSpanU / 2)));
+    const nv = Math.max(2, Math.min(MAX_GRID, Math.ceil(blurSpanV / 2)));
+    const plans: DofStripPlan[] = [];
+    for (let i = 0; i < nu; i++) {
+      for (let j = 0; j < nv; j++) {
+        const p = tile(i / nu, (i + 1) / nu, j / nv, (j + 1) / nv);
+        if (p.blurPx < 0.3 && blurMax < 0.3) continue;
+        plans.push(p);
+      }
+    }
+    return plans.length >= 4 ? plans : null;
+  }
+
   const plans: DofStripPlan[] = [];
   for (let i = 0; i < n; i++) {
     const t0 = i / n;
     const t1 = (i + 1) / n;
-    const tMid = (t0 + t1) / 2;
-
-    let uvRect: DofStripPlan['uvRect'];
-    let m: [number, number, number, number, number, number];
-    let depth: number;
-
-    if (axis === 'u') {
-      // u in [t0,t1], v in [0,1]
-      uvRect = { x: t0, y: 0, width: t1 - t0, height: 1 };
-      // u = t0 + s*(t1-t0), v = t  →  screen = M · (u,v,1)
-      m = [a * (t1 - t0), b * (t1 - t0), c, d, a * t0 + tx, b * t0 + ty];
-      // Depth along left-right edges, lerped by tMid.
-      const dTop = d00 + (d10 - d00) * tMid;
-      const dBot = d01 + (d11 - d01) * tMid;
-      depth = (dTop + dBot) / 2;
-    } else {
-      uvRect = { x: 0, y: t0, width: 1, height: t1 - t0 };
-      m = [a, b, c * (t1 - t0), d * (t1 - t0), c * t0 + tx, d * t0 + ty];
-      const dLeft = d00 + (d01 - d00) * tMid;
-      const dRight = d10 + (d11 - d10) * tMid;
-      depth = (dLeft + dRight) / 2;
-    }
-
-    const blurPx = Number(blur(depth).toFixed(1));
-    if (blurPx < 0.3 && blurMax < 0.3) continue;
-    plans.push({ uvRect, matrix: m, depth, blurPx });
+    const p = axis === 'u' ? tile(t0, t1, 0, 1) : tile(0, 1, t0, t1);
+    if (p.blurPx < 0.3 && blurMax < 0.3) continue;
+    plans.push(p);
   }
 
   return plans.length >= 2 ? plans : null;

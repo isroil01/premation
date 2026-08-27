@@ -192,6 +192,12 @@ export class TimelineController {
         // you watch the frame you get — and it re-couples `seconds` with the
         // `frame` beside it, which was already rounded.
         const snapped = Math.round(frame);
+        // Deduplicate on the snapped frame: the fractional clock ticks at
+        // display rate (60Hz for a 30fps comp = two identical mirrors per comp
+        // frame), and the store set() re-rendered the whole viewport each
+        // time. Rounding already erased the difference — emitting it twice
+        // only paid the render twice.
+        if (tab.frame === snapped && tab.playing) return;
         ws.actions.setTime(framesToSeconds(snapped, timeline.getFrameRate()), snapped);
       }
     });

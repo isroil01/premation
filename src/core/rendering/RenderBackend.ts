@@ -225,6 +225,12 @@ export interface RenderLayer {
     /** Light this surface from one side. Set only by an extrusion's walls and
      *  back cap, which bound a volume — see `lightShading.ndotl`. */
     oneSided?: boolean;
+    /** Material Options → Ambient (AE %). Scales ambient-light response on the
+     *  per-fragment path; omit ⇒ 100 (identity). */
+    ambient?: number;
+    /** Material Options → Diffuse (AE %). Scales Lambert response; omit ⇒ 50
+     *  (AE default, identity vs the pre-material gain). */
+    diffuse?: number;
   };
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */
@@ -610,6 +616,18 @@ export interface RenderBackend {
   setExactMediaTiming?(on: boolean): void;
   /** Timeline playback — plain video uses hardware decode instead of WebCodecs. */
   setPlaybackMode?(on: boolean): void;
+  /** True when every media feed of the last rendered frame was settled/exact.
+   *  A false frame holds stand-in video pixels (element mid-seek, decode
+   *  warming) and must not enter the RAM preview cache. */
+  lastFrameMediaExact?(): boolean;
+  /** Keep playback video elements tracking `compT` while the viewport serves
+   *  frames from the RAM cache (no renderFrame runs then). Without it the
+   *  elements drift through blitted spans and every cache miss pays a hard
+   *  mid-GOP seek — a frozen picture for the length of the decode.
+   *  `cachedUntilCompT` marks where the current green span ends, so elements
+   *  can be PARKED there (paused, pre-decoded) rather than chasing a playhead
+   *  whose frames are already cached. */
+  syncPlaybackVideo?(compT: number, cachedUntilCompT?: number): void;
   /** Drain the media waits started by renders since the last call. Empty when
    *  every media layer drew its exact frame — the settle signal. */
   takeMediaWaits?(): Promise<void>[];

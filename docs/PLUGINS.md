@@ -296,17 +296,42 @@ tracker — not speed on the message boundary, which dominates anything small.
 |---|---|
 | `scene:read` | See layer names, structure and scalar properties |
 | `scene:proxy` | Write **only inside its own layer kind's proxy subtree** |
-| `scene:write` | Create, change and delete layers anywhere |
+| `scene:write` | Create, change and delete layers anywhere — including paths, gradients and strokes |
 | `animation:read` | Read keyframes and sample animated values |
 | `animation:write` | Create and change keyframes and expressions |
 | `assets:read` | Read the pixels of images already in the composition |
 | `assets:write` | Create images and place them as layers |
 | `net:fetch` | Contact the hosts listed in `contributes.net` — **and only those** |
 | `timeline` | Read the current time and move the playhead |
+| `composition:write` | Create, rename, open and delete **compositions** |
+| `audio:read` | Read the loudness of audio layers over time |
+| `export:frames` | Receive every rendered frame of a composition it exports |
+| `import:files` | Read the contents of files you open with its format |
+
+`audio:read` is the decoded WAVEFORM, not audio settings. Level, pan and fades
+are ordinary animatable properties (`audioLevelDb` and friends) that
+`animation:read`/`animation:write` already reach — this is how *loud* the audio
+actually is, which is what "convert audio to keyframes" needs. Peaks only: raw
+samples are not offered, because a plugin that could read PCM could reconstruct
+the recording, and with `net:fetch` take it away. Both verbs return `null` when
+there is no audio or it has not finished decoding, so polling is the right
+shape rather than catching.
+
+`composition:write` is deliberately NOT part of `scene:write`. "Modify your
+layers" is a statement about the composition the user is looking at; adding and
+removing compositions restructures the project around them, and deleting one
+takes every layer in it. Folding the two together would have made an existing
+grant silently mean more than it did when the user gave it. Listing the
+project's compositions is `scene:read` — comp names are project data of the same
+kind as layer names.
+
+Deleting the LAST composition does not fail: the host mints a fresh empty one,
+because a project with nothing open has nowhere to draw. The call still returns
+`true`, because the composition it named really is gone.
 
 Registering commands, showing notifications, opening the plugin's own panel,
-reading composition settings and using **your own storage** need **no
-permission** — they neither read project data nor change it.
+reading the ACTIVE composition's settings and using **your own storage** need
+**no permission** — they neither read project data nor change it.
 
 **If you are writing a generator, ask for `scene:read + scene:proxy`, not
 `scene:write`.** A plugin that builds a subtree under its own layer only ever
@@ -390,11 +415,14 @@ motion.ui.sendToPanel(data) / onPanelMessage(fn)
 
 motion.commands.register(spec, handler)    // spec: { id, label, icon?, needsSelection? }
 motion.composition.get()                   // { name, width, height, fps, durationSeconds }
+motion.composition.list()                  // [{ id, name, width, height, fps, durationSeconds, active }]
+motion.composition.create({ name, width, height, fps, durationSeconds })  // → id, and opens it
+motion.composition.open(id) / rename(id, name) / delete(id)
 
 motion.scene.getSelection() / setSelection(ids)
 motion.scene.getLayers() / getLayer(id)
 motion.scene.createLayer({ kind, name, x, y })   // shape | text | group | null | image
-motion.scene.setProperty(id, prop, value)
+motion.scene.setProperty(id, prop, value)         // scalar, or a structured value (below)
 motion.scene.renameLayer(id, name) / deleteLayer(id)
 motion.scene.setParent(id, parentId | null)      // null → composition root
 motion.scene.setVisible(id, bool) / setLocked(id, bool)
@@ -412,6 +440,13 @@ motion.animation.setExpression(id, prop, source)
 
 motion.timeline.getTime() / setTime(seconds)
 
+motion.audio.getPeaks(layerId)             // { buckets, duration, peaks[] } | null
+motion.audio.getAmplitude(layerId, sec)    // 0..1 | null  — drive animation from sound
+
+motion.onRenderFinished(fn)                // post-render action; returns unsubscribe
+motion.exporters.register(id, handlers)    // provide an output format (API 6)
+motion.importers.register(id, handlers)    // read an input format (API 6)
+
 motion.scene.apply(ops)                          // many mutations, ONE undo entry
 motion.storage.get(key, scope) / set(key, value, scope)
 motion.storage.delete(key, scope) / list(scope)  // scope: 'global' | 'project'
@@ -420,6 +455,248 @@ motion.storage.delete(key, scope) / list(scope)  // scope: 'global' | 'project'
 Prefer `setKeyframes` over a loop of `setKeyframe`: the bulk API sorts once and
 notifies once. Writing a generated track a keyframe at a time is quadratic and
 is what used to freeze the app on imports.
+
+### The widget vocabulary — richer UI without plugin markup
+
+A layer kind declares typed properties and the host draws them. The vocabulary
+is wider than it was:
+
+```json
+"props": {
+  "spin":    { "type": "angle",   "default": 0, "animatable": true },
+  "soft":    { "type": "boolean", "default": false, "group": "Edges" },
+  "feather": { "type": "number",  "default": 0, "group": "Edges",
+               "showIf": { "prop": "soft", "equals": true } },
+  "notes":   { "type": "string",  "default": "", "multiline": true }
+}
+```
+
+| | |
+|---|---|
+| `angle` | A dial. Degrees, **unbounded** — a revolution is a legitimate value, and clamping to 0–360 would make a spin stop at the wrap. Animatable. |
+| `group` | A flat section heading. Ungrouped props stay in one unlabelled run at the top, so every plugin written before this reads exactly as it did. |
+| `multiline` | A textarea. `string` only — **refused** on anything else rather than ignored. |
+| `showIf` | Show this property only when a **sibling** has a value. The sibling must exist and cannot be the property itself; both are install errors. |
+
+Groups are flat by design and there is no nesting: a plugin that could nest
+groups could hide a property inside a collapsed one the user never opens, which
+is a different thing from organising a panel. A `showIf`-hidden row is removed
+rather than greyed — a control the plugin says does not apply is not one the
+user should be left wondering how to enable.
+
+**There is still no way to render your own markup, and there will not be.** A
+plugin that could draw into the inspector could draw a convincing permission
+prompt, and every plugin's panel would age differently from the app around it.
+If the vocabulary is missing something your control genuinely needs, that is a
+request for another entry in the table above — the answer is a wider
+vocabulary, never an escape hatch. Your own **panel** is where free-form UI
+lives, in its own sandboxed frame.
+
+### Importers — reading a format the editor cannot (API 6)
+
+```json
+"contributes": { "importers": [
+  { "id": "tga", "label": "Truevision TGA", "extensions": ["tga", "vda"] }
+] }
+```
+
+```js
+motion.importers.register('tga', {
+  decode({ name, bytes }) { return { width, height, pixels } },  // RGBA8
+})
+```
+
+Return pixels and nothing else — not a name, not a folder, not a layer.
+Everything after the decode is the path every other import already takes, which
+is what makes a plugin format a first-class import rather than a parallel one.
+
+**A plugin never opens a file.** It is handed the bytes of one the user chose,
+and only for an extension it declared — that is what `import:files` grants, and
+its consent line says so. Formats the editor already reads are refused: a plugin
+shadowing `.png` turns a working import into a plugin bug the user has no reason
+to suspect.
+
+The host validates what you return against the size you reported, so a decoder
+whose buffer does not match its dimensions fails by name rather than making the
+host read past the end of an array.
+
+### Presets and behaviours (API 6)
+
+```json
+"contributes": { "presets": [
+  { "name": "Drift", "tracks": [],
+    "expressions": [{ "prop": "transform.y", "expr": "wiggle(2, 30)" }] }
+] }
+```
+
+They appear in the Presets panel foldered under your plugin's name, and apply
+whether or not your worker is running — a preset is data.
+
+**You cannot register an expression FUNCTION**, and it is worth knowing why,
+because it is two walls rather than one:
+
+1. An expression is evaluated inside the render, per property per frame, and
+   plugin code lives in a Worker. Same wall that makes effects WGSL-only.
+2. The interpreter is a **closed vocabulary on purpose**. Expressions are parsed
+   and interpreted, never `eval`'d — `new Function` is refused by the app's CSP,
+   and relaxing that would let any shared project run code in a renderer holding
+   your auth token. A plugin-supplied name would mean either running plugin code
+   (wall 1) or re-opening that hole.
+
+So you ship expression **source**, which goes through the same interpreter a
+user-typed expression does and reaches nothing extra. It is **not** syntax-
+checked at publish: the registry has no expression engine, and checking on one
+side only would produce a preset that publishes and then refuses to install. A
+broken one surfaces inline and editable, like your own.
+
+`applyFn` and `builtin` are refused by name. A manifest cannot carry a function,
+but a *string* under `applyFn` would arrive truthy and non-callable and the
+apply path would call it.
+
+### Exporters — writing a format the editor does not know (API 6)
+
+Declare it, then claim it:
+
+```json
+"contributes": { "exporters": [
+  { "id": "webp", "label": "Animated WebP", "extension": "webp" }
+] }
+```
+
+```js
+motion.exporters.register('webp', {
+  begin(info) { this.enc = new MyEncoder(info.width, info.height, info.fps) },
+  addFrame(f) { this.enc.push(f.pixels) },   // RGBA8, Uint8ClampedArray
+  finish() { return this.enc.bytes() },      // ArrayBuffer | Uint8Array
+  dispose() { this.enc?.free() },            // cancel / failure path
+})
+```
+
+Your format appears in the export dropdown **after** the built-ins, hinted with
+your plugin's name. Choosing it starts your plugin — the user naming your format
+is a stronger signal than any activation event.
+
+**The host writes the file.** You return bytes; the save dialog, output
+directory and overwrite prompt stay where they already are. An exporter that
+could write its own file would be an exporter that could write somewhere else.
+
+**This is the one place plugin JS runs per frame**, and the reason effects
+cannot is instructive: an effect runs inside a synchronous render sixty times a
+second, so a Worker hop is fatal. An export is already a frame-at-a-time loop
+that takes minutes and blocks nothing interactive. Frames are *transferred*, not
+copied — a 4K frame is 33 MB — so the buffer is yours and gone from the host.
+
+**Frames are `export:frames`, and it is an alarming permission on purpose.** To
+encode a composition you see every rendered pixel of it: more than `assets:read`
+(the images already in the project) and more than `scene:read` (its structure).
+Held with `net:fetch` it is the finished video leaving the machine, and the
+consent line says so.
+
+**Extensions the editor writes itself are refused** — `mp4`, `png`, `wav` and
+the rest. Not collision (the host's formats are matched first, so a duplicate
+would never be reached) but honesty: a `.mp4` a plugin produced is a file whose
+contents its name does not predict, and the failure lands wherever the user
+takes it next. Four exporters per plugin; ids may not contain a dot, because the
+host addresses yours as `plugin:<pluginId>.<exporterId>` and splits on the last
+one.
+
+A step that overruns 60 s, or a plugin that stops answering, fails the export
+with a message naming the plugin rather than stalling the render queue.
+
+### Post-render actions
+
+`motion.onRenderFinished(fn)` fires when a render leaves the queue. Declare
+`onRenderFinished` in `activationEvents` to be *started* by one — a plugin that
+only reacts to renders has nothing to do until a render happens, and waking it
+at startup is a worker idling for an event most sessions never fire.
+
+```js
+motion.onRenderFinished((r) => {
+  if (r.status !== 'done') return
+  motion.net.fetch('https://hooks.example.com/render', {
+    method: 'POST',
+    body: JSON.stringify({ comp: r.compositionName, file: r.fileName, ms: r.elapsedMs }),
+  })
+})
+```
+
+`status` is `done` (a file was written), `skipped` (it rendered, but you
+dismissed the save dialog — **there is no file**, so a plugin that uploads on
+completion must not fire here), or `failed` (with `error`). The rest is
+`compositionName`, `fileName`, `format`, `width`, `height`, `fps`,
+`durationSec`, `elapsedMs`.
+
+**You get metadata, never the render.** No encoded bytes and no directory —
+`fileName` is the basename only. Handing a plugin the file would make
+"post-render action" mean "exfiltrate the render", which is a different feature
+needing a different consent screen; handing it the path would tell it where you
+keep your work, which it has no use for and — holding `net:fetch` — could send.
+
+Gated on `scene:read`, with no permission of its own: everything in the payload
+is either the composition's own name and size, which `scene:read` already
+covers, or the fact that a render happened.
+
+Listeners are a list, so registering two is two — and a handler that throws is
+logged to your plugin's row without silencing the others.
+
+### Structured values — paths, gradients and strokes
+
+`setProperty` takes a number, a string or a boolean for any property. Four
+properties additionally take a **structured** value, which is how a plugin gives
+a layer an actual shape rather than only moving one around.
+
+```js
+// An outline. Tangents are optional — omit them for a polyline.
+motion.scene.setProperty(id, 'points', [
+  { x: -50, y: -50 },
+  { x:  50, y: -50 },
+  { x:   0, y:  50, inX: -10, inY: 0, outX: 10, outY: 0 },
+])
+
+// Several outlines on one layer — a donut, a letter with a counter.
+motion.scene.setProperty(id, 'subpaths', [
+  { points: outer },
+  { points: inner, open: false },
+])
+
+// Solid or gradient fill.
+motion.scene.setProperty(id, 'fillPaint', {
+  type: 'linear', angle: 45,
+  stops: [{ offset: 0, color: '#ff0055' }, { offset: 1, color: '#0055ff' }],
+})
+
+// A stroke. PATCHED onto the layer's existing one, so setting the width
+// does not reset the cap, the join or the dash pattern.
+motion.scene.setProperty(id, 'stroke', { width: 4, color: '#000000', dash: [6, 3] })
+```
+
+Declare `scene.structured` in `requires` if your plugin cannot work without it —
+it is a capability, not a version, so an older host says so at install rather
+than at the call.
+
+**No new permission.** A structured write is still "change a property of a
+layer", so it rides on `scene:write` (or `scene:proxy` inside your own subtree).
+Splitting it out would add a line to the consent screen for a distinction the
+user cannot act on.
+
+**Geometry is created if the layer has none.** A shape layer made with
+`scene.createLayer` carries no outline — the primitives that ship with one get
+it from the insert path, which you do not go through. Writing `points` gives it
+one.
+
+**The value is parsed, not stored.** Every field is rebuilt: non-finite numbers
+are refused (a `NaN` in a path becomes a layer that cannot be drawn, measured or
+clicked, and nothing points back at you), colours must be `#rgb` / `#rrggbb` /
+`#rrggbbaa`, and gradient stop `id`s you supply are **ignored** — the host mints
+them. Errors name the exact index, so `"points[41].y" must be a finite number`
+is what you get rather than a silent bad path.
+
+**Bounds are refusals, not clamps**: 10 000 points per path, 256 subpaths, 64
+gradient stops, 32 dash segments. Clamping would hand you a path that is not the
+one you built with no way to notice.
+
+Validation completes before anything is written, so a refused call has changed
+nothing — including inside a `scene.apply` batch.
 
 ### `scene.apply` — many mutations, one undo entry
 
@@ -933,8 +1210,11 @@ author hits without it.
    running. Choosing it creates the layer at your declared defaults and THEN
    activates you, exactly as opening a document does. You keep pure lazy
    activation; declare `onLayerKind:<id>` and nothing else.
-2. **No asset picker.** An `asset` prop renders read-only in the inspector; a
-   plugin can set it, but a user cannot choose one.
+~~2. **No asset picker.**~~ **Fixed.** An `asset` prop renders a picker listing
+   the project's images. Only images, because `assetKind` can only be `image`;
+   an id whose asset has gone stays selected and is marked *(missing)* rather
+   than silently clearing, so a lost reference is something the user can fix
+   instead of something they have to notice.
 3. **`render: 'none'` has a gizmo but no dedicated overlay.** It is selectable
    and draggable; it draws as a plain container.
 
@@ -1426,8 +1706,18 @@ expressed as native layers.
 - **The statement ceiling is a proxy for cost, not a cost model.** A real one
   would mean writing a WGSL front end, and a hand-written parser fed hostile
   input is a worse liability than the thing it would protect.
-- **Four passes, and a cost budget of 3.** Enough for a separable blur (2); not
-  enough for four full-scale passes (4).
+- **Eight passes, and a cost budget of 6.** A pass costs `scale²` — its share of
+  the layer's pixels — so eight quarter-scale passes cost 0.5 and eight
+  full-scale ones cost 8 and are refused. Four full-scale passes (cost 4) now
+  fit; they did not under the old budget of 3, which existed specifically to
+  refuse them.
+
+  The ceiling is a **constant and cannot adapt to the machine**, which is worth
+  knowing before asking for it: it is checked during manifest validation, and
+  the registry validates the same manifest on a server with no GPU. A
+  hardware-dependent budget would let a plugin publish and then be refused at
+  install with nothing naming the machine that drew the line. Adapting to the
+  hardware is a render-time decision, not a manifest one.
 - **A chain gets one `origin`, not one per pass.** It is the image entering the
   whole chain, captured before pass 0 — not "the pass before the previous one".
 - **One `layer` parameter per effect**, and it is shared by every pass rather

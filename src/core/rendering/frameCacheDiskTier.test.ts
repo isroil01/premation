@@ -55,7 +55,7 @@ describe('write-through', () => {
     const { store, ram } = setup();
     ram.put(1, sourceCanvas());
     await flush();
-    expect([...store.map.keys()]).toEqual(['k1|4x4#1']);
+    expect([...store.map.keys()]).toEqual(['k1#1']);
   });
 
   it('the RAM cache still works with no disk attached', () => {
@@ -140,11 +140,16 @@ describe('invalidation', () => {
     expect(ram.diskRanges(30)).toEqual([{ start: 1 / 30, end: 2 / 30 }]);
   });
 
-  it('a resize is an invalidation, because the key carries the size', async () => {
+  it('a density-only resize keeps the disk generation; a key change turns it over', async () => {
+    // Size no longer joins the invalidation (adaptive-resolution flips must
+    // not wipe the preview — see frameCache.setKey); the KEY still does.
     const { ram } = setup();
     ram.put(1, sourceCanvas());
     await flush();
     ram.setKey('k1', 8, 8);
+    await flush();
+    expect(ram.diskRanges(30)).not.toEqual([]);
+    ram.setKey('k2', 8, 8);
     await flush();
     expect(ram.diskRanges(30)).toEqual([]);
   });
@@ -160,7 +165,7 @@ describe('invalidation', () => {
     ram.attachDisk(disk);
     ram.put(1, sourceCanvas());
     await flush();
-    expect([...store.map.keys()]).toEqual(['k1|4x4#1']);
+    expect([...store.map.keys()]).toEqual(['k1#1']);
   });
 });
 

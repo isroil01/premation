@@ -22,6 +22,11 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { useProjectStore } from '@stores/projectStore';
+import { audioComponent } from '@core/audio/audioScene';
+import { amplitudeAt, type WaveformPeaks } from '@core/audio/waveform';
+import { audioEngine } from '@core/audio/AudioEngine';
+import { createComposition, renameComposition, deleteComposition } from '@core/composition/compositionOps';
 import { useUIStore } from '@stores/uiStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { runDocumentEdit } from '@core/commands/documentEdit';
@@ -32,6 +37,7 @@ import { insertImageNode } from '@core/scene/sceneInsert';
 import type { SceneKind } from '@core/scene/seedDefaultScene';
 import { checkOwnership } from './layerKindRegistry';
 import { buildCustomLayerNode, isReservedPropPath, readCustomLayer } from './customLayers';
+import { planStructuredWrite, STRUCTURED_PROP_NAMES } from './structuredProps';
 import { regenerateProxyChildren } from './proxySubtree';
 import { onLayerChanged } from './layerChangeNotifier';
 import type { PluginManifest, PluginPermission } from './manifest';
@@ -91,6 +97,24 @@ const str = (v: unknown, what: string): string => {
 const finite = (v: unknown, what: string): number => {
   if (typeof v !== 'number' || !Number.isFinite(v)) return fail(`${what} must be a finite number.`);
   return v;
+};
+
+/**
+ * The decoded waveform behind an audio layer, or null.
+ *
+ * Null rather than an error for every "not available" case, because they are
+ * not the plugin's mistake and they are not distinguishable to it either: the
+ * layer may be a shape (no audio), or audio whose file has not finished
+ * decoding yet. A plugin polling until it gets peaks is the correct shape for
+ * both, and an exception would make the ordinary case look like a failure.
+ */
+const waveformFor = (layerId: string): WaveformPeaks | null => {
+  const n = defaultSceneGraph.getNode(layerId);
+  if (!n) return null;
+  const comp = audioComponent(n);
+  const assetId = comp && typeof comp.props.__assetId === 'string' ? comp.props.__assetId : '';
+  if (!assetId) return null;
+  return audioEngine.getWaveform(assetId) ?? null;
 };
 
 const node = (id: unknown) => {
@@ -225,6 +249,111 @@ export function createHostApi(
     'composition.get': () => {
       const c = useCompositionStore.getState();
       return { name: c.name, width: c.width, height: c.height, fps: c.fps, durationSeconds: c.durationSeconds };
+    },
+    /*
+      The project's other compositions.
+
+      `composition.get` answers "what am I drawing into"; this answers "what
+      else is here", which is what a plugin that builds a sequence, or copies a
+      title into every scene, actually needs. Reading it is `scene:read` — comp
+      names are project data of exactly the same kind as layer names, and the
+      permission that covers one should cover the other.
+
+      `active` is included rather than left to be inferred by comparing against
+      `composition.get().name`, because names are not unique.
+    */
+    /*
+      ── Audio analysis ────────────────────────────────────────────────────
+
+      The decoded waveform, so a plugin can drive animation from sound — the
+      "convert audio to keyframes" shape, which is one of the oldest reasons
+      anybody writes a motion-graphics plugin at all.
+
+      READ ONLY, and deliberately narrow: peaks and an amplitude, never the
+      samples. A plugin that could read PCM could reconstruct the audio, and
+      combined with `net:fetch` that is exfiltration of the user's media rather
+      than analysis of it. Peaks are a lossy envelope — enough to animate from,
+      not enough to rebuild a recording.
+
+      Level, pan and fades are NOT here: they are ordinary animatable
+      properties, already reachable through `animation.*`. Adding a second way
+      to read them would be a parallel path that can disagree with the first.
+    */
+    'audio.getPeaks': (id) => {
+      const wave = waveformFor(str(id, 'layer id'));
+      if (!wave) return null;
+      // A plain array, not the Float32Array: the structured clone would carry
+      // the buffer across intact, but a plugin author reaching for `.map` on
+      // what looks like an array should get an array.
+      return { buckets: wave.buckets, duration: wave.duration, peaks: Array.from(wave.peaks) };
+    },
+    'audio.getAmplitude': (id, seconds) => {
+      const wave = waveformFor(str(id, 'layer id'));
+      if (!wave) return null;
+      const t = seconds;
+      if (typeof t !== 'number' || !Number.isFinite(t)) return fail('Time must be a finite number of seconds.');
+      return amplitudeAt(wave, t);
+    },
+    'composition.list': () => {
+      const p = useProjectStore.getState();
+      return Object.values(p.comps).map((c) => ({
+        id: c.id,
+        name: c.name,
+        width: c.width,
+        height: c.height,
+        fps: c.fps,
+        durationSeconds: c.durationSeconds,
+        active: p.activeTabId ? p.tabs[p.activeTabId]?.compositionId === c.id : false,
+      }));
+    },
+    'composition.create': (settings) => {
+      const o = (settings ?? {}) as Record<string, unknown>;
+      const init: Record<string, unknown> = {};
+      if (o.name !== undefined) init.name = str(o.name, 'composition name').trim().slice(0, 120);
+      // Bounded because these become a render target. A comp 900 000 px wide is
+      // not a composition, it is an allocation failure with a plugin's name on
+      // it — and the numbers crossed `postMessage`, so "the dialog would never
+      // send that" is not an argument that applies here.
+      for (const [key, lo, hi] of [['width', 1, 16384], ['height', 1, 16384], ['fps', 1, 240], ['durationSeconds', 0.1, 36000]] as const) {
+        if (o[key] === undefined) continue;
+        const v = o[key];
+        if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) {
+          return fail(`"${key}" must be a number between ${lo} and ${hi}.`);
+        }
+        init[key] = v;
+      }
+      return edit('create composition', () => createComposition(init));
+    },
+    'composition.open': (id) => {
+      const cid = str(id, 'composition id');
+      const p = useProjectStore.getState();
+      if (!p.comps[cid]) return fail(`No composition "${cid}".`);
+      // An already-open comp has a tab; a closed one needs one. `openTab` is
+      // idempotent on the id, so this is the single call for both.
+      p.actions.openTab(cid, [cid], p.comps[cid]!.name);
+      return true;
+    },
+    'composition.rename': (id, name) => {
+      const cid = str(id, 'composition id');
+      if (!useProjectStore.getState().comps[cid]) return fail(`No composition "${cid}".`);
+      const next = str(name, 'composition name').trim().slice(0, 120);
+      if (!next) return fail('A composition name cannot be empty.');
+      return edit('rename composition', () => { renameComposition(cid, next); return true; });
+    },
+    'composition.delete': (id) => {
+      const cid = str(id, 'composition id');
+      if (!useProjectStore.getState().comps[cid]) return fail(`No composition "${cid}".`);
+      /*
+        Deleting the LAST composition does not fail — it mints a fresh pristine
+        one to replace it, because a project with no composition has nowhere to
+        draw. So a plugin can empty a project this way, and `true` is the honest
+        answer: the comp it named is gone.
+
+        That is why this is not `scene:write`. The consent line for
+        `composition:write` says deleting one removes every layer it contains,
+        which is exactly the power being granted.
+      */
+      return edit('delete composition', () => deleteComposition(cid));
     },
 
     // ── Scene, read ──────────────────────────────────────────────────────
@@ -409,8 +538,28 @@ export function createHostApi(
       if (isReservedPropPath(p)) {
         return fail(`"${p}" is reserved. Set a layer kind's own property by its declared name.`);
       }
+      /*
+        Structured values — a path, a gradient, a stroke.
+
+        Routed by the VALUE's shape rather than by the prop name, so a scalar
+        written to a structured prop still takes the ordinary path and fails the
+        way it always did. `planStructuredWrite` validates completely before it
+        returns the applier, so a refusal here has changed nothing.
+      */
+      if (value !== null && typeof value === 'object') {
+        const plan = planStructuredWrite(p, value, n.id);
+        if (!plan.ok) return fail(plan.message);
+        return edit(`set ${p}`, () => {
+          plan.apply();
+          notifyScene();
+          return true;
+        });
+      }
       if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') {
-        return fail('Property values must be a number, string or boolean.');
+        return fail(
+          'Property values must be a number, string or boolean — or a structured value for: '
+          + `${STRUCTURED_PROP_NAMES.join(', ')}.`,
+        );
       }
       const target = n.components.find((c) => p in (c.props as Record<string, unknown>))
         ?? n.components.find((c) => c.type === 'Transform');

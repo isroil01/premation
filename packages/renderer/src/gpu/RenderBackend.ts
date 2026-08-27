@@ -139,6 +139,13 @@ export interface RenderBackend {
   createRenderTarget(desc: RenderTargetDescriptor): RenderTargetHandle;
   /** The color texture of a render target, for sampling in a later pass. */
   renderTargetTexture(target: RenderTargetHandle): TextureHandle;
+  /**
+   * Sampleable depth texture when the target was created with `depth: true` and
+   * without MSAA (or MSAA fell back to 1×). Multisampled depth is not sampleable
+   * on either backend — returns null in that case. Used by future scene-wide
+   * DOF; planar CoC does not require it.
+   */
+  renderTargetDepthTexture?(target: RenderTargetHandle): TextureHandle | null;
   destroyRenderTarget(target: RenderTargetHandle): void;
 
   // ── Frame lifecycle ─────────────────────────────────────────────

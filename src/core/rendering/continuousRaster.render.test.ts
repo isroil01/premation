@@ -7,9 +7,18 @@
  * texture dimensions instead of diffing pixels — and it asserts them decomposed:
  * scale alone, then the switch alone, then each bound alone.
  *
- * The regression guard that matters most is `CR OFF is unchanged`. Every
- * existing project has no `continuousRasterize` prop, so it must take exactly
- * the code path it took before this feature existed.
+ * The regression guard that matters most is `CR OFF is unchanged BELOW THE
+ * CEILING`. Every existing project has no `continuousRasterize` prop, and for
+ * the scales almost every layer actually lives at it must take exactly the code
+ * path it took before this feature existed.
+ *
+ * ABOVE 4x that guarantee was deliberately given up. The clamped ladder stopped
+ * climbing there and magnified instead, which is the softening reported on
+ * titles and logos scaled past 400% — in exports as much as in the preview.
+ * `tierFor` now escalates onto the bounded extended ladder regardless of the
+ * switch, so those layers render sharp by default. An existing project holding
+ * a layer past 4x DOES render differently than before: sharper, and costing
+ * more VRAM. That was the accepted trade.
  */
 
 import { ResourceManager, NullBackend } from '@motion/renderer';
@@ -69,16 +78,20 @@ function lastPx(h: { sizes: () => number[] }): number {
 }
 
 describe('CR ON: the raster resolution follows the scale', () => {
-  it('RE-RASTERS when the scale crosses a tier — the defect CR exists to fix', () => {
-    // OFF: scale 6 and scale 12 share one cache key (both clamp to tier 4), so
-    // the second is a hit and reuses the FIRST texture. Zooming in stops
-    // sharpening. Measured in rasterResolution.probe.test.ts.
+  it('RE-RASTERS when the scale crosses a tier — with or without the switch', () => {
+    // OFF used to go STALE here: scale 6 and scale 12 both clamped to tier 4,
+    // shared one cache key, and the second came back a hit reusing the first
+    // texture — so zooming in stopped sharpening and stayed soft. Past the 4x
+    // ceiling the tier now escalates for OFF too, so each scale gets its own
+    // key and its own texture. This assertion is inverted from what it was,
+    // deliberately: the staleness it used to pin is the bug that was fixed.
     const off = provider();
     off.p.setRasterScale(1);
     off.p.setPath('path:a', pathLayer({ scaleX: 6, scaleY: 6, contentHash: 'stale' }));
     const offFirst = lastPx(off);
     off.p.setPath('path:a', pathLayer({ scaleX: 12, scaleY: 12, contentHash: 'stale' }));
-    expect(lastPx(off)).toBe(offFirst); // stale: no bigger texture allocated
+    expect(lastPx(off)).toBeGreaterThan(offFirst);
+    expect(lastPx(off) / offFirst).toBeCloseTo(2, 1);
 
     // ON: tier 8 then tier 16 are different keys, so the zoom re-rasters.
     const on = provider();
@@ -146,12 +159,11 @@ describe('CR OFF: bounded and deterministic, drawn at the tier it is keyed on', 
     // past the ceiling, so whichever rasterized first was reused for all of
     // them, and below the ceiling a scale animation stretched one texture
     // across a whole tier and snapped at each boundary. Drawing at the tier
-    // makes the two agree: bounded and deterministic, and never magnified below
-    // the ceiling (the tier rounds UP). Past it, CR is the way to stay sharp.
+    // makes the two agree: bounded, deterministic and never magnified.
     const h = provider();
     h.p.setRasterScale(1);
     h.p.setPath('path:a', pathLayer({ scaleX: 16, scaleY: 16, contentHash: 'raw' }));
-    expect(lastPx(h)).toBe(100 * 4 * 2); // tier 4 (clamped) x2 supersample
+    expect(lastPx(h)).toBe(100 * 16 * 2); // tier 16 (escalated) x2 supersample
   });
 
   it('below the ceiling the tier rounds UP, so the raster is never magnified', () => {
@@ -161,27 +173,42 @@ describe('CR OFF: bounded and deterministic, drawn at the tier it is keyed on', 
     expect(lastPx(h)).toBe(100 * 4 * 2); // tier 4 for a requested 3
   });
 
-  it('is unaffected by the max-dimension report', () => {
-    const sizes = [4096, 16384].map((dim) => {
-      const h = provider();
-      const p = h.p;
-      p.setRasterScale(1);
-      p.setMaxRasterDimension(dim);
-      p.setPath('path:a', pathLayer({ scaleX: 16, scaleY: 16, contentHash: 'd' }));
-      return lastPx(h);
-    });
-    expect(sizes[0]).toBe(sizes[1]);
+  it('below the ceiling it takes the CLAMPED ladder verbatim, box bounds and all', () => {
+    // The escalation must not leak downwards. The extended ladder also applies
+    // the pixel budget, which rounds a very large box DOWN — so a box the old
+    // path happily rasterized at tier 4 must still get tier 4, or the fix for
+    // big scales becomes a regression for big boxes. 2048 at tier 4 is 8192px,
+    // past the 16M pixel budget; the clamped path does not consult it.
+    //
+    // Asserted as a floor rather than an equality because the supersample
+    // factor is itself size-dependent (it drops to 1 on a box this large), and
+    // the claim under test is about the TIER, not about supersampling.
+    const h = provider();
+    h.p.setRasterScale(1);
+    h.p.setPath('path:a', pathLayer({ width: 2048, height: 2048, scaleX: 4, scaleY: 4, contentHash: 'wide' }));
+    expect(lastPx(h)).toBeGreaterThanOrEqual(2048 * 4);
+  });
+
+  it('past the ceiling it IS bounded by the max-dimension report', () => {
+    // The mirror of the test above: once escalated, the bounds that keep CR
+    // from allocating past the GPU's limit apply to the default path too. That
+    // is precisely what makes escalating safe to do without a switch.
+    const h = provider();
+    h.p.setRasterScale(1);
+    h.p.setMaxRasterDimension(2048);
+    h.p.setPath('path:a', pathLayer({ width: 500, height: 500, scaleX: 16, scaleY: 16, contentHash: 'd' }));
+    expect(lastPx(h)).toBeLessThanOrEqual(2048 * 2);
   });
 });
 
 describe('CR ON stays inside its bounds', () => {
-  it('past the OFF ceiling, ON is SHARPER — which is the whole point of it', () => {
-    // This used to assert the two AGREE, because OFF drew at the raw scale and
-    // so was already sharp at any zoom. It also meant CR could only ever match
-    // OFF or, with a draft cap, come out worse — the anomaly that got a draft
-    // cap built and deleted. Now that OFF is bounded by its 4x ceiling, the
-    // extended ladder is a real upgrade rather than a lateral move, and CR is
-    // never softer than OFF at any scale.
+  it('past the old ceiling the SWITCH no longer changes the result — both are sharp', () => {
+    // The switch used to be the only way past 4x, which meant the DEFAULT
+    // experience was the soft one and a user had to know the switch existed to
+    // get a sharp title. Escalation applies to both paths now, so ON and OFF
+    // land on the same rung. The switch is kept — it is the AE-parity control,
+    // and below the ceiling it still opts into the extended ladder's box
+    // bounds — but it is no longer what rescues a scaled-up layer.
     const on = provider();
     on.p.setRasterScale(1);
     on.p.setPath('path:a', pathLayer({ scaleX: 16, scaleY: 16, continuousRaster: true, contentHash: 'q' }));
@@ -191,8 +218,7 @@ describe('CR ON stays inside its bounds', () => {
     off.p.setPath('path:a', pathLayer({ scaleX: 16, scaleY: 16, contentHash: 'q' }));
 
     expect(lastPx(on)).toBe(100 * 16 * 2); // the ladder keeps up
-    expect(lastPx(off)).toBe(100 * 4 * 2); // the clamp does not
-    expect(lastPx(on)).toBeGreaterThan(lastPx(off));
+    expect(lastPx(off)).toBe(100 * 16 * 2); // and now so does the default
   });
 
   it('between tiers, ON rounds UP — never softer than OFF', () => {

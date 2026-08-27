@@ -298,6 +298,30 @@ export function packTextured(
   return out;
 }
 
+/**
+ * Scene-blit uniforms with viewer-LUT params in the unused colour-transform
+ * first row (cr0): x=±size (neg=1D), y=intensity, z=domainMin, w=domainMax.
+ */
+export function packSceneBlitLut(
+  mvp: Mat3,
+  uvRect: Rect,
+  tint: Color,
+  opacity: number,
+  lut: { size: number; is1d: boolean; intensity: number; domainMin: number; domainMax: number },
+): Float32Array {
+  const color: ColorTransform = {
+    m: [
+      lut.is1d ? -lut.size : lut.size,
+      lut.intensity,
+      lut.domainMin,
+      0, 1, 0,
+      0, 0, 1,
+    ],
+    offset: [lut.domainMax, 0, 0],
+  };
+  return packTextured(mvp, uvRect, tint, opacity, color, false);
+}
+
 /** textured3d / masked-textured3d / lut-textured3d uniform: mat4 mvp + same
  *  tail as packTextured + the shade tail (zeros when unlit). */
 export function packTextured3D(
@@ -363,6 +387,71 @@ export function packBlur(
   out[o + 1] = dirY;
   out[o + 2] = radiusPx;
   out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * Polygonal bokeh gather: mat3 + uvRect + params(texelX, texelY, radius, blades)
+ * + params2(roundness, highlightGain, 0, 0).
+ */
+export function packBokeh(
+  mvp: Mat3,
+  uvRect: Rect,
+  texelX: number,
+  texelY: number,
+  radiusPx: number,
+  blades: number,
+  roundness: number,
+  highlightGain: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = texelX;
+  out[o + 1] = texelY;
+  out[o + 2] = radiusPx;
+  out[o + 3] = blades;
+  out[o + 4] = roundness;
+  out[o + 5] = highlightGain;
+  out[o + 6] = 0;
+  out[o + 7] = 0;
+  return out;
+}
+
+/**
+ * Planar per-pixel CoC: bilinear corner radii (already in texels) + optional iris.
+ * `fxBox` is the layer's extent in the effect buffer (same as gradient ramp).
+ */
+export function packCocBlur(
+  mvp: Mat3,
+  uvRect: Rect,
+  fxBox: Rect,
+  texelX: number,
+  texelY: number,
+  cornersTexels: readonly [number, number, number, number],
+  blades: number,
+  roundness: number,
+  highlightGain: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = texelX;
+  out[o + 1] = texelY;
+  out[o + 2] = blades;
+  out[o + 3] = 0;
+  o += 4;
+  out[o + 0] = roundness;
+  out[o + 1] = highlightGain;
+  out[o + 2] = 0;
+  out[o + 3] = 0;
+  o += 4;
+  out[o + 0] = cornersTexels[0];
+  out[o + 1] = cornersTexels[1];
+  out[o + 2] = cornersTexels[2];
+  out[o + 3] = cornersTexels[3];
+  o += 4;
+  packRect(fxBox, out, o);
   return out;
 }
 
@@ -622,12 +711,17 @@ export function packFill(mvp: Mat3, uvRect: Rect, color: Color): Float32Array {
   return out;
 }
 
-export function packStroke(mvp: Mat3, uvRect: Rect, color: Color, width: number, texelWidth: number, texelHeight: number): Float32Array {
+export function packStroke(
+  mvp: Mat3, uvRect: Rect, color: Color,
+  width: number, texelWidth: number, texelHeight: number,
+  /** 0 Outside, 1 Inside, 2 Center, 3 Alpha-dilate. */
+  position = 0,
+): Float32Array {
   const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
   writeWorkingRgba(color, out, o); o += 4;
-  out[o + 0] = width; out[o + 1] = texelWidth; out[o + 2] = texelHeight; out[o + 3] = 0;
+  out[o + 0] = width; out[o + 1] = texelWidth; out[o + 2] = texelHeight; out[o + 3] = position;
   return out;
 }
 
@@ -820,11 +914,23 @@ export function packFxBlock(
   return out;
 }
 
-export function packNoise(mvp: Mat3, uvRect: Rect, amount: number, evolution: number, monochrome: boolean): Float32Array {
-  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+export function packNoise(
+  mvp: Mat3,
+  uvRect: Rect,
+  amount: number,
+  evolution: number,
+  monochrome: boolean,
+  /** Chain-buffer size in texels — keys the per-PIXEL grain hash (see the
+   *  shader: pixel centres can never straddle a hash cell, which is what makes
+   *  the grain bit-identical across backends). */
+  bufW = 1,
+  bufH = 1,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4);
   let o = packMat3(mvp, out, 0);
   o = packRect(uvRect, out, o);
   out[o + 0] = amount; out[o + 1] = evolution; out[o + 2] = monochrome ? 1 : 0; out[o + 3] = 0;
+  out[o + 4] = Math.max(1, bufW); out[o + 5] = Math.max(1, bufH); out[o + 6] = 0; out[o + 7] = 0;
   return out;
 }
 

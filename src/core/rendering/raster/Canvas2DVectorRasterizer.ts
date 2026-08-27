@@ -5,6 +5,7 @@ import {
   RasterResult,
   rasterCacheKey,
   displayReferredUploadFormat,
+  DEFAULT_MAX_RASTER_DIMENSION,
 } from '@motion/renderer';
 import { layoutText } from '@core/text/textLayout';
 import { applyTextPath } from '@core/text/textPath';
@@ -72,11 +73,33 @@ const MAX_RASTER_DIM = 4096;
  *
  * The clamp IS new: a large box at a high tier could ask for a canvas nothing
  * can allocate. It only engages where the request would have failed outright.
+ *
+ * The clamp is a HARD cap, allowed to go below the tier — even below 1. The
+ * previous form `max(min(tier, want), min(want, MAX/longest))` could never
+ * return less than `tier` (want ≥ tier always), so a text box longer than
+ * MAX_RASTER_DIM/tier px sailed past the cap: the canvas allocated (Chrome
+ * allows far larger) but the GPU texture upload exceeded the device limit and
+ * failed, and the layer VANISHED. That is the "text disappears as it gets
+ * bigger" report — a big font size, a wide box, or zooming in pushed the
+ * request over the cap and the whole layer dropped instead of going soft. A
+ * softer raster stretched up is the correct degradation; a missing layer is
+ * not a degradation at all.
  */
-function supersampleFor(tier: number, boxW: number, boxH: number, bake: boolean): number {
+function supersampleFor(
+  tier: number,
+  boxW: number,
+  boxH: number,
+  bake: boolean,
+  /** Device texture cap for the plain path; the bake path stays on
+   *  MAX_RASTER_DIM because it allocates several same-size scratches. */
+  deviceMax: number = DEFAULT_MAX_RASTER_DIMENSION,
+): number {
   const want = bake ? tier : tier * SUPERSAMPLE;
   const longest = Math.max(1, boxW, boxH);
-  return Math.max(Math.min(tier, want), Math.min(want, MAX_RASTER_DIM / longest));
+  // The device cap always binds (a texture past it fails outright). The bake
+  // path additionally stays under MAX_RASTER_DIM for its scratch canvases.
+  const cap = bake ? Math.min(MAX_RASTER_DIM, deviceMax) : deviceMax;
+  return Math.min(want, cap / longest);
 }
 
 export class Canvas2DVectorRasterizer implements VectorRasterizer {
@@ -87,6 +110,15 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
   private misses = 0;
 
   constructor(private readonly resources: ResourceManager) {}
+
+  /** The attached GPU's real max texture dimension (see setMaxDimension). */
+  private deviceMax = DEFAULT_MAX_RASTER_DIMENSION;
+
+  /** Adopt the backend's real texture cap so the raster clamp matches the
+   *  device instead of the conservative default. */
+  setMaxDimension(px: number): void {
+    this.deviceMax = px > 0 && Number.isFinite(px) ? px : DEFAULT_MAX_RASTER_DIMENSION;
+  }
 
   stats(): RasterStats {
     return {
@@ -212,7 +244,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     // stack the GPU handles natively, which is the overwhelming majority.
     const bw = spec.width + 2 * pad;
     const bh = spec.height + 2 * pad;
-    const ss = supersampleFor(tier, bw, bh, bake);
+    const ss = supersampleFor(tier, bw, bh, bake, this.deviceMax);
     const w = Math.max(1, Math.round(bw * ss));
     const h = Math.max(1, Math.round(bh * ss));
     const canvas = document.createElement('canvas');
@@ -437,7 +469,7 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
     const bake = layerIsBaked(layer);
     const bw = layer.width + 2 * pad;
     const bh = layer.height + 2 * pad;
-    const ss = supersampleFor(tier, bw, bh, bake);
+    const ss = supersampleFor(tier, bw, bh, bake, this.deviceMax);
     const w = Math.max(1, Math.round(bw * ss));
     const h = Math.max(1, Math.round(bh * ss));
     const canvas = document.createElement('canvas');
@@ -660,7 +692,9 @@ export class Canvas2DVectorRasterizer implements VectorRasterizer {
   }
 
   private drawMask(layer: any, _tier: number): HTMLCanvasElement {
-    const ss = 2; // TEXT_SUPERSAMPLE = 2
+    // Same hard cap as supersampleFor: a comp-sized mask at 2× must not ask
+    // for a texture the GPU rejects (which drops the matte entirely).
+    const ss = Math.min(2, MAX_RASTER_DIM / Math.max(1, layer.width, layer.height));
     const w = Math.max(1, Math.round(layer.width * ss));
     const h = Math.max(1, Math.round(layer.height * ss));
     const canvas = document.createElement('canvas');

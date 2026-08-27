@@ -10,14 +10,18 @@ describe('layoutStore — reorderPanel', () => {
       },
       panelOrder: {
         leftSidebar: ['a', 'b', 'c'],
+        leftSidebar_bottom: [],
         rightInspector: [],
+        rightInspector_bottom: [],
         centerWorkspace: [],
         bottomTimeline: [],
       },
       activePanelByRegion: { leftSidebar: 'a' },
       regions: {
         leftSidebar: { collapsed: false, size: 280, minSize: 200, maxSize: 480 },
+        leftSidebar_bottom: { collapsed: false, size: 280, minSize: 200, maxSize: 480 },
         rightInspector: { collapsed: false, size: 320, minSize: 240, maxSize: 520 },
+        rightInspector_bottom: { collapsed: false, size: 320, minSize: 240, maxSize: 520 },
         centerWorkspace: { collapsed: false, size: 0, minSize: 0, maxSize: 0 },
         bottomTimeline: { collapsed: false, size: 260, minSize: 120, maxSize: 600 },
       },

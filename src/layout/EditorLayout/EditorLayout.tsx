@@ -129,61 +129,59 @@ export function EditorLayout({
     </div>
   );
 
-  // Viewport and inspector, in whichever order the inspector is docked.
-  // Typed as a tuple because SplitPane takes exactly two children — a plain
-  // array would widen to ReactNode[] and stop being checked.
-  const inspectorRow: [ReactNode, ReactNode] = inspectorLast
-    ? [viewportPane, rightInspectorEl]
-    : [rightInspectorEl, viewportPane];
+  // Top row: Left Sidebar and Viewport Canvas
+  const topRowChildren: [ReactNode, ReactNode] = sidebarFirst
+    ? [leftSidebarEl, viewportPane]
+    : [viewportPane, leftSidebarEl];
 
-  const topContent = (
+  const topRow = (
     <SplitPane
-      key="viewport-row"
+      key="top-row"
       className={styles.split}
       direction="horizontal"
-      primary={inspectorLast ? 'last' : 'first'}
-      defaultSize={right.size}
-      minSize={right.collapsed ? 44 : right.minSize}
-      maxSize={Math.min(right.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : right.maxSize)}
-      size={right.collapsed ? 44 : right.size}
-      collapsed={right.collapsed}
-      storageKey="rightInspector"
-      onResize={(s) => setRightSize('rightInspector', s)}
-      onResizeEnd={(s) => setRightSize('rightInspector', s)}
+      primary={sidebarFirst ? 'first' : 'last'}
+      defaultSize={left.size}
+      minSize={left.collapsed ? 44 : left.minSize}
+      maxSize={Math.min(left.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : left.maxSize)}
+      size={left.collapsed ? 44 : left.size}
+      collapsed={left.collapsed}
+      storageKey="leftSidebar"
+      onResize={(s) => setLeftSize('leftSidebar', s)}
+      onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
     >
-      {inspectorRow}
+      {topRowChildren}
     </SplitPane>
   );
 
   const timelinePane = (
     <div className={styles.timelinePane} key="timeline">
       {isTimelineExternal ? (
-          <div className={`${styles.detached} ${styles.detachedRow}`}>
-            <Icon name="export" size="md" />
-            <span className={styles.detachedLabel}>Timeline is open in an external window</span>
-            <button className={styles.detachedAction} onClick={() => dockPanel('timeline')}>
-              Re-dock timeline
-            </button>
-          </div>
-        ) : (
-          timeline
-        )}
+        <div className={`${styles.detached} ${styles.detachedRow}`}>
+          <Icon name="export" size="md" />
+          <span className={styles.detachedLabel}>Timeline is open in an external window</span>
+          <button className={styles.detachedAction} onClick={() => dockPanel('timeline')}>
+            Re-dock timeline
+          </button>
+        </div>
+      ) : (
+        timeline
+      )}
     </div>
   );
 
-  // Viewport row and timeline, in whichever order the timeline is docked.
-  const timelineColumn: [ReactNode, ReactNode] = timelineLast
-    ? [topContent, timelinePane]
-    : [timelinePane, topContent];
+  // Main area: Top Row (Sidebar + Viewport) and Bottom Timeline
+  const mainCenterChildren: [ReactNode, ReactNode] = timelineLast
+    ? [topRow, timelinePane]
+    : [timelinePane, topRow];
 
-  const mainContent = (
+  const mainCenterArea = (
     <SplitPane
-      key="main-column"
+      key="main-center-area"
       className={styles.split}
       direction="vertical"
       primary={timelineLast ? 'last' : 'first'}
       defaultSize={bottom.size}
-      minSize={44}
+      minSize={bottom.collapsed ? 44 : bottom.minSize}
       maxSize={bottom.maxSize}
       size={bottom.collapsed ? 44 : bottom.size}
       collapsed={bottom.collapsed}
@@ -191,33 +189,34 @@ export function EditorLayout({
       onResize={(s) => setBottomSize('bottomTimeline', s)}
       onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
     >
-      {timelineColumn}
+      {mainCenterChildren}
     </SplitPane>
   );
 
-  const bodyRow: [ReactNode, ReactNode] = sidebarFirst
-    ? [leftSidebarEl, mainContent]
-    : [mainContent, leftSidebarEl];
+  // Outermost body row: Main Center Area and full-height Right Inspector
+  const bodyRow: [ReactNode, ReactNode] = inspectorLast
+    ? [mainCenterArea, rightInspectorEl]
+    : [rightInspectorEl, mainCenterArea];
 
   return (
     <div className={styles.root}>
       {/* Full-width AE-style top chrome (menu bar + tool row). */}
       {topNav}
 
-      {/* Body row: the sidebar on whichever edge it is docked to. */}
+      {/* Body row: full-height right inspector with main center area beside it */}
       <div className={styles.body}>
         <SplitPane
           className={styles.split}
           direction="horizontal"
-          primary={sidebarFirst ? 'first' : 'last'}
-          defaultSize={left.size}
-          minSize={left.collapsed ? 44 : left.minSize}
-          maxSize={Math.min(left.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : left.maxSize)}
-          size={left.collapsed ? 44 : left.size}
-          collapsed={left.collapsed}
-          storageKey="leftSidebar"
-          onResize={(s) => setLeftSize('leftSidebar', s)}
-          onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
+          primary={inspectorLast ? 'last' : 'first'}
+          defaultSize={right.size}
+          minSize={right.collapsed ? 44 : right.minSize}
+          maxSize={Math.min(right.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : right.maxSize)}
+          size={right.collapsed ? 44 : right.size}
+          collapsed={right.collapsed}
+          storageKey="rightInspector"
+          onResize={(s) => setRightSize('rightInspector', s)}
+          onResizeEnd={(s) => setRightSize('rightInspector', s)}
         >
           {bodyRow}
         </SplitPane>

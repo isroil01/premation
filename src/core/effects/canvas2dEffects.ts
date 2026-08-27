@@ -1135,9 +1135,8 @@ function applySelectiveColor(oc: CanvasRenderingContext2D, w: number, h: number,
  * you grade frame 200 with frame 1's file. If this ever shows on a profile, key
  * it on the effect id AND the stored object's identity, not on the id alone.
  *
- * NOTE the pipeline caveat in `cubeLut.ts`: this samples in whatever space the
- * pixels arrive in, and the renderer is not linear-light, so a log-space LUT
- * will not match its author's intent until that work lands.
+ * NOTE: samples the active project working space (`srgb-linear` / `aces-cg`).
+ * See the working-space contract in `cubeLut.ts` — not full OCIO.
  */
 function applyColorLut(oc: CanvasRenderingContext2D, w: number, h: number, e: Effect): void {
   const intensity = effectNumber(e, 'intensity') / 100;
@@ -1458,6 +1457,11 @@ function applyStroke(oc: CanvasRenderingContext2D, w: number, h: number, e: Effe
   const opacity = clamp01(effectNumber(e, 'opacity') / 100);
   if (width <= 0 || opacity <= 0) return;
   const color = str(e, 'color', '#ffffff');
+  const posRaw = e.params?.position;
+  const position: 'outside' | 'inside' | 'center' =
+    posRaw === 'inside' || posRaw === 1 ? 'inside'
+      : posRaw === 'center' || posRaw === 2 ? 'center'
+        : 'outside';
 
   // Snapshot current content (the silhouette we outline).
   const snap = scratch('stroke-snap', w, h);
@@ -1468,9 +1472,7 @@ function applyStroke(oc: CanvasRenderingContext2D, w: number, h: number, e: Effe
   sc.clearRect(0, 0, w, h);
   sc.drawImage(silhouetteOf(oc), 0, 0);
 
-  // Dilate the silhouette by drawing the snapshot at ring offsets, then tint it
-  // the stroke colour via source-in, then subtract the original interior — what
-  // remains is a ring `width` px wide outside the content edge.
+  // Dilate / erode the silhouette by drawing the snapshot at ring offsets.
   const ring = scratch('stroke-ring', w, h);
   if (!ring) return;
   const rc = ring.getContext('2d');
@@ -1479,20 +1481,57 @@ function applyStroke(oc: CanvasRenderingContext2D, w: number, h: number, e: Effe
   rc.clearRect(0, 0, w, h);
   rc.globalCompositeOperation = 'source-over';
   const STEPS = 32;
+  const radius = position === 'center' ? width * 0.5 : width;
   for (let i = 0; i < STEPS; i++) {
     const a = (i / STEPS) * Math.PI * 2;
-    rc.drawImage(snap, Math.cos(a) * width, Math.sin(a) * width);
+    rc.drawImage(snap, Math.cos(a) * radius, Math.sin(a) * radius);
   }
   rc.globalCompositeOperation = 'source-in';
   rc.fillStyle = color;
   rc.fillRect(0, 0, w, h);
-  rc.globalCompositeOperation = 'destination-out';
-  rc.drawImage(snap, 0, 0);
 
-  // Composite the ring BEHIND the content so the content stays crisp on top.
+  if (position === 'outside' || position === 'center') {
+    // Outside ring = dilated − original.
+    rc.globalCompositeOperation = 'destination-out';
+    rc.drawImage(snap, 0, 0);
+  }
+  if (position === 'inside' || position === 'center') {
+    // Inside: keep only where the ORIGINAL covers (clip to content), then
+    // subtract a contracted core so a band remains inside the edge.
+    const inner = scratch('stroke-inner', w, h);
+    if (!inner) return;
+    const ic = inner.getContext('2d');
+    if (!ic) return;
+    ic.setTransform(1, 0, 0, 1, 0, 0);
+    ic.clearRect(0, 0, w, h);
+    // Start from full silhouette tinted, then punch a contracted hole.
+    ic.drawImage(snap, 0, 0);
+    ic.globalCompositeOperation = 'source-in';
+    ic.fillStyle = color;
+    ic.fillRect(0, 0, w, h);
+    ic.globalCompositeOperation = 'destination-out';
+    for (let i = 0; i < STEPS; i++) {
+      const a = (i / STEPS) * Math.PI * 2;
+      // Contract: destination-out with offset copies of the silhouette punches
+      // inward from the edge by `radius`.
+      ic.drawImage(snap, Math.cos(a) * radius, Math.sin(a) * radius);
+    }
+    if (position === 'inside') {
+      rc.clearRect(0, 0, w, h);
+      rc.globalCompositeOperation = 'source-over';
+      rc.drawImage(inner, 0, 0);
+    } else {
+      // Center = outside ring + inside band.
+      rc.globalCompositeOperation = 'source-over';
+      rc.drawImage(inner, 0, 0);
+    }
+  }
+
+  // Outside/center rings sit behind content; inside is drawn over (still under
+  // later effects). destination-over keeps the content crisp on top for outside.
   oc.save();
   oc.setTransform(1, 0, 0, 1, 0, 0);
-  oc.globalCompositeOperation = 'destination-over';
+  oc.globalCompositeOperation = position === 'inside' ? 'source-atop' : 'destination-over';
   oc.globalAlpha = opacity;
   oc.drawImage(ring, 0, 0);
   oc.restore();

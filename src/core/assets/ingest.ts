@@ -82,6 +82,7 @@ export function ingestEncodeArgs(hasAlpha: boolean): { args: string[]; outExt: s
       args: [
         '-i', '__IN__',
         '-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-crf', '20', '-b:v', '0', '-row-mt', '1',
+        '-g', '15',
         '-c:a', 'libopus',
         '__OUT__',
       ],
@@ -93,6 +94,11 @@ export function ingestEncodeArgs(hasAlpha: boolean): { args: string[]; outExt: s
     args: [
       '-i', '__IN__',
       '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p',
+      // Short, regular GOPs: this file exists to be SCRUBBED. x264's default
+      // keyint of 250 meant a random access could decode hundreds of frames
+      // to show one — the exact quadratic cost the editor's decode paths
+      // fight. ~0.5s GOPs cost a little size at CRF 16 and buy every seek.
+      '-g', '15', '-keyint_min', '15', '-sc_threshold', '0',
       '-c:a', 'aac', '-b:a', '192k',
       '-movflags', '+faststart',
       '__OUT__',

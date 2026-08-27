@@ -420,7 +420,8 @@ export class WebGPUBackend implements RenderBackend {
     }
     // Depth attachment for 3D group rendering (created only when asked for —
     // effect scratch targets stay colour-only). Its sample count must match the
-    // colour attachment's.
+    // colour attachment's. Single-sample depth also gets TEXTURE_BINDING so a
+    // later pass can read it (per-pixel DOF); MSAA depth cannot be sampled.
     let depthTexture: GPUTexture | undefined;
     let depthView: GPUTextureView | undefined;
     if (desc.depth) {
@@ -429,7 +430,9 @@ export class WebGPUBackend implements RenderBackend {
         size: { width: desc.width, height: desc.height },
         format: 'depth24plus',
         ...(sampleCount > 1 ? { sampleCount } : {}),
-        usage: TEX.RENDER_ATTACHMENT,
+        usage: sampleCount > 1
+          ? TEX.RENDER_ATTACHMENT
+          : TEX.RENDER_ATTACHMENT | TEX.TEXTURE_BINDING,
       });
       depthView = depthTexture.createView();
     }
@@ -442,6 +445,14 @@ export class WebGPUBackend implements RenderBackend {
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
     const { texture } = target.native as { texture: GPUTexture };
     return { kind: 'texture', id: target.id, native: texture };
+  }
+  renderTargetDepthTexture(target: RenderTargetHandle): TextureHandle | null {
+    const native = target.native as {
+      depthTexture?: GPUTexture;
+      sampleCount?: number;
+    };
+    if (!native.depthTexture || (native.sampleCount ?? 1) > 1) return null;
+    return { kind: 'texture', id: target.id + 0.5, native: native.depthTexture };
   }
   destroyRenderTarget(target: RenderTargetHandle): void {
     const native = target.native as { texture: GPUTexture; msaaTexture?: GPUTexture; depthTexture?: GPUTexture };

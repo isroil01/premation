@@ -66,17 +66,40 @@ export class FrameCache {
     for (const l of this.listeners) l();
   }
 
-  /** Set the invalidation key + frame dimensions. A changed key clears all. */
+  /**
+   * Set the invalidation key + frame dimensions. A changed KEY clears all.
+   *
+   * The dimensions deliberately do NOT join the invalidation: they change
+   * whenever adaptive resolution flips the canvas density mid-playback, and
+   * folding them in wiped the whole RAM+disk preview every time quality
+   * degraded (3 slow frames) and again every time it restored (45 fast
+   * frames) — the green bar could never complete on a heavy comp. Resolution
+   * is QUALITY, not content: a frame cached at Half is still the right
+   * pixels, just softer (exactly After Effects' behaviour — cached frames
+   * keep the resolution they were rendered at). Framing-affecting facts (the
+   * view transform, the comp, the CSS viewport size) belong in `key`, which
+   * the caller assembles.
+   */
   setKey(key: string, width: number, height: number): void {
-    const sized = `${key}|${width}x${height}`;
-    if (sized !== this.key) {
-      this.key = sized;
+    if (key !== this.key) {
+      this.key = key;
       this.clearFrames();
       // The disk tier turns over with RAM: it is the same invalidation, and a
       // generation that outlived its key would serve pre-edit pixels.
-      this.disk?.setGeneration(sized);
+      this.disk?.setGeneration(key);
     }
     this.bytesPerFrame = Math.max(1, width * height * 4);
+  }
+
+  /**
+   * Last frame of the CONTIGUOUS cached run containing `frame` (or `frame`
+   * itself when uncached). The playback path uses it to park video elements
+   * at the end of the green span they are riding.
+   */
+  contiguousEnd(frame: number): number {
+    let f = frame;
+    while (this.frames.has(f + 1)) f += 1;
+    return f;
   }
 
   get size(): number {

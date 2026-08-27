@@ -110,7 +110,6 @@ interface TrackInfo {
   codec: string;
   width: number;
   height: number;
-  description: Uint8Array | null;
   alphaMode: boolean;
 }
 
@@ -251,7 +250,6 @@ export async function demuxWebm(data: ArrayBuffer): Promise<DemuxedVideo & { has
           let codecId = '';
           let width = 0;
           let height = 0;
-          let priv: Uint8Array | null = null;
           let alphaMode = false;
           while (r.pos < contentEnd) {
             const tid = r.readId();
@@ -262,8 +260,6 @@ export async function demuxWebm(data: ArrayBuffer): Promise<DemuxedVideo & { has
             else if (tid === ID.TrackType) type = r.readUint(tsize);
             else if (tid === ID.CodecID) {
               codecId = new TextDecoder().decode(r.readBytes(tsize));
-            } else if (tid === ID.CodecPrivate) {
-              priv = r.readBytes(tsize).slice();
             } else if (tid === ID.Video) {
               const vEnd = tEnd;
               while (r.pos < vEnd) {
@@ -284,7 +280,7 @@ export async function demuxWebm(data: ArrayBuffer): Promise<DemuxedVideo & { has
           if (type === 1 && !track) {
             const codec = codecFromId(codecId.trim());
             if (codec && width > 0 && height > 0) {
-              track = { number: num, codec, width, height, description: priv, alphaMode };
+              track = { number: num, codec, width, height, alphaMode };
             }
           }
           r.pos = contentEnd;
@@ -311,10 +307,16 @@ export async function demuxWebm(data: ArrayBuffer): Promise<DemuxedVideo & { has
   if (!found) throw new Error('WebM: no VP8/VP9 video track found');
   if (samples.length === 0) throw new Error('WebM: no video samples');
 
-  for (let i = 0; i < samples.length; i++) {
-    const next = samples[i + 1];
-    const cur = samples[i]!;
-    cur.duration = next ? Math.max(1, next.cts - cur.cts) : Math.round(1_000_000 / 30);
+  for (let i = 0; i < samples.length - 1; i++) {
+    samples[i]!.duration = Math.max(1, samples[i + 1]!.cts - samples[i]!.cts);
+  }
+  if (samples.length > 0) {
+    // The container carries no duration for the final block. Use the median of
+    // what the stream actually ran at, not a hard-coded 30fps guess — a 24 or
+    // 60fps clip would otherwise report a wrong total duration.
+    const last = samples[samples.length - 1]!;
+    const prior = samples.slice(0, -1).map((s) => s.duration).sort((a, b) => a - b);
+    last.duration = prior.length > 0 ? prior[prior.length >> 1]! : Math.round(1_000_000 / 30);
   }
 
   const hasAlpha = found.alphaMode || samples.some((s) => !!s.alphaData);
@@ -324,7 +326,11 @@ export async function demuxWebm(data: ArrayBuffer): Promise<DemuxedVideo & { has
     codedWidth: found.width,
     codedHeight: found.height,
     timescale: 1_000_000,
-    description: found.description,
+    // VP8/VP9 carry their configuration in-band; WebCodecs' registry says the
+    // description must be ABSENT for them. Matroska CodecPrivate (when a muxer
+    // writes one at all) is not a decoder config record — passing it through
+    // made configure() reject on otherwise-decodable files.
+    description: null,
     samples,
     hasAlpha,
   };

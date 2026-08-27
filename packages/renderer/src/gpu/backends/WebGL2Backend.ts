@@ -73,8 +73,14 @@ interface NativeRenderTarget {
   texture: WebGLTexture;
   /** Colour format of this target, so a pass can tell its pipelines what it is. */
   format: TextureFormat;
-  /** Depth renderbuffer, present when the target was created with depth. */
+  /** Depth renderbuffer — used for MSAA depth (not sampleable). */
   depth?: WebGLRenderbuffer;
+  /**
+   * Single-sample depth TEXTURE when the target has depth and no MSAA.
+   * Sampleable via `renderTargetDepthTexture`. Mutually exclusive with `depth`
+   * as a renderbuffer on the resolve FBO.
+   */
+  depthTex?: WebGLTexture;
   /**
    * Multisample FBO that draws actually go into, when MSAA is active. Resolved
    * into `fbo` by a blit at pass end, so readers keep seeing a plain texture.
@@ -443,6 +449,7 @@ export class WebGL2Backend implements RenderBackend {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
 
     let depth: WebGLRenderbuffer | undefined;
+    let depthTex: WebGLTexture | undefined;
     let msaaFbo: WebGLFramebuffer | undefined;
     let msaaColor: WebGLRenderbuffer | undefined;
 
@@ -482,14 +489,22 @@ export class WebGL2Backend implements RenderBackend {
     }
 
     if (!msaaFbo && desc.depth) {
-      // Single-sample depth, attached to the resolve FBO that draws will use.
+      // Single-sample SAMPLEABLE depth texture on the resolve FBO.
       gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-      depth = gl.createRenderbuffer()!;
-      gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
-      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, desc.width, desc.height);
-      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
-      gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-      this.liveRenderbuffers.add(depth);
+      depthTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, depthTex);
+      gl.texImage2D(
+        gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24,
+        desc.width, desc.height, 0,
+        gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null,
+      );
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTex, 0);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      this.liveTextures.add(depthTex);
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -499,7 +514,7 @@ export class WebGL2Backend implements RenderBackend {
       kind: 'render-target',
       id: nextId(),
       native: {
-        fbo, texture, depth, msaaFbo, msaaColor,
+        fbo, texture, depth, depthTex, msaaFbo, msaaColor,
         width: desc.width, height: desc.height,
         format: desc.format,
       } satisfies NativeRenderTarget,
@@ -507,6 +522,11 @@ export class WebGL2Backend implements RenderBackend {
   }
   renderTargetTexture(target: RenderTargetHandle): TextureHandle {
     return { kind: 'texture', id: target.id, native: (target.native as NativeRenderTarget).texture };
+  }
+  renderTargetDepthTexture(target: RenderTargetHandle): TextureHandle | null {
+    const rt = target.native as NativeRenderTarget;
+    if (!rt.depthTex) return null;
+    return { kind: 'texture', id: target.id + 0.5, native: rt.depthTex };
   }
   destroyRenderTarget(target: RenderTargetHandle): void {
     const rt = target.native as NativeRenderTarget;
@@ -517,6 +537,11 @@ export class WebGL2Backend implements RenderBackend {
     if (rt.depth) {
       this.liveRenderbuffers.delete(rt.depth);
       this.gl.deleteRenderbuffer(rt.depth);
+    }
+    if (rt.depthTex) {
+      this.liveTextures.delete(rt.depthTex);
+      this.gl.deleteTexture(rt.depthTex);
+      rt.depthTex = undefined;
     }
     if (rt.msaaFbo) {
       this.liveFramebuffers.delete(rt.msaaFbo);
@@ -839,31 +864,37 @@ function applyBlend(gl: GL, blend: BlendMode): void {
     return;
   }
   gl.enable(gl.BLEND);
-  
-  // Default blend equation
-  gl.blendEquation(gl.FUNC_ADD);
 
+  // ALPHA IS COVERAGE, and coverage composites `over` no matter what the
+  // colour equation does. The plain blendFunc/blendEquation calls set BOTH
+  // channels, so the additive and min/max modes dragged alpha along with the
+  // colour: two opaque layers under 'add' wrote a = 2 into the float16 scene
+  // target (floats don't clamp), and the alpha-aware encode blit then doubled
+  // the composite — the root of the webgl2-vs-webgpu additive divergence
+  // family (blend-add, light-rays, light-sweep, lens-flare, …). WebGPU's
+  // table always blended alpha `over` (see WebGPUBackend.blendFor); this
+  // mirrors it exactly, per channel.
+  gl.blendEquationSeparate(
+    blend === 'subtract' ? gl.FUNC_REVERSE_SUBTRACT
+      : blend === 'darken' ? gl.MIN
+        : blend === 'lighten' ? gl.MAX
+          : gl.FUNC_ADD,
+    gl.FUNC_ADD,
+  );
+
+  const alphaOver = [gl.ONE, gl.ONE_MINUS_SRC_ALPHA] as const;
   switch (blend) {
     case 'add':
-      gl.blendFunc(gl.ONE, gl.ONE);
+    case 'subtract':
+    case 'darken':
+    case 'lighten':
+      gl.blendFuncSeparate(gl.ONE, gl.ONE, alphaOver[0], alphaOver[1]);
       break;
     case 'multiply':
-      gl.blendFunc(gl.DST_COLOR, gl.ZERO);
+      gl.blendFuncSeparate(gl.DST_COLOR, gl.ZERO, alphaOver[0], alphaOver[1]);
       break;
     case 'screen':
-      gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
-      break;
-    case 'subtract':
-      gl.blendEquation(gl.FUNC_REVERSE_SUBTRACT);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      break;
-    case 'darken':
-      gl.blendEquation(gl.MIN);
-      gl.blendFunc(gl.ONE, gl.ONE);
-      break;
-    case 'lighten':
-      gl.blendEquation(gl.MAX);
-      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_COLOR, alphaOver[0], alphaOver[1]);
       break;
     default:
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA); // premultiplied over

@@ -163,10 +163,41 @@ export const webCodecsIO: DecoderIO = {
  *  a long GOP would evict its own target before frameAt returns it. */
 const MIN_CACHE = 4;
 
+/** The timestamp-routing tables both session classes need, built once per
+ *  demux. A SequentialFrameReader used to rebuild the whole index — an
+ *  O(n log n) sort over every sample — on EVERY construction, i.e. every
+ *  loop wrap of every playing clip, although ExactVideoSource had already
+ *  built the identical structure. Keyed weakly so a dropped demux frees it. */
+interface DemuxRouting {
+  index: VideoFrameIndex;
+  /** decode index → presentation time µs (the chunk timestamp to feed). */
+  timeUsOfDecodeIndex: number[];
+  /** presentation time µs → presentation index (output frame routing). */
+  presIndexByTimeUs: Map<number, number>;
+}
+
+const routingCache = new WeakMap<DemuxedVideo, DemuxRouting>();
+
+function routingFor(demuxed: DemuxedVideo): DemuxRouting {
+  let r = routingCache.get(demuxed);
+  if (!r) {
+    const index = buildFrameIndex(demuxed.samples, demuxed.timescale);
+    const timeUsOfDecodeIndex = new Array<number>(demuxed.samples.length).fill(0);
+    const presIndexByTimeUs = new Map<number, number>();
+    index.frames.forEach((f, presIdx) => {
+      timeUsOfDecodeIndex[f.decodeIndex] = f.timeUs;
+      presIndexByTimeUs.set(f.timeUs, presIdx);
+    });
+    r = { index, timeUsOfDecodeIndex, presIndexByTimeUs };
+    routingCache.set(demuxed, r);
+  }
+  return r;
+}
+
 export class ExactVideoSource {
   readonly index: VideoFrameIndex;
   private readonly timeUsOfDecodeIndex: number[];
-  private readonly presIndexByTimeUs = new Map<number, number>();
+  private readonly presIndexByTimeUs: Map<number, number>;
   private cache = new Map<number, DecodedFrameLike>();
   private lru: number[] = [];
   private decoder: VideoDecoderLike | null = null;
@@ -185,12 +216,10 @@ export class ExactVideoSource {
     // (exactVideoFrames) is the real cache; this one only smooths stepping.
     private readonly maxCached = 12,
   ) {
-    this.index = buildFrameIndex(demuxed.samples, demuxed.timescale);
-    this.timeUsOfDecodeIndex = new Array<number>(demuxed.samples.length).fill(0);
-    this.index.frames.forEach((f, presIdx) => {
-      this.timeUsOfDecodeIndex[f.decodeIndex] = f.timeUs;
-      this.presIndexByTimeUs.set(f.timeUs, presIdx);
-    });
+    const routing = routingFor(demuxed);
+    this.index = routing.index;
+    this.timeUsOfDecodeIndex = routing.timeUsOfDecodeIndex;
+    this.presIndexByTimeUs = routing.presIndexByTimeUs;
   }
 
   get frameCount(): number {
@@ -383,7 +412,7 @@ const WALK_QUEUE_MAX = 4;
  */
 export class SequentialFrameReader {
   private readonly index: VideoFrameIndex;
-  private readonly presIndexByTimeUs = new Map<number, number>();
+  private readonly presIndexByTimeUs: Map<number, number>;
   private readonly timeUsOfDecodeIndex: number[];
   private readonly from: number;
   private readonly to: number;
@@ -407,15 +436,13 @@ export class SequentialFrameReader {
     private readonly io: DecoderIO = webCodecsIO,
     private readonly opts: { hardwareAcceleration?: DecoderConfig['hardwareAcceleration'] } = {},
   ) {
-    this.index = buildFrameIndex(demuxed.samples, demuxed.timescale);
+    const routing = routingFor(demuxed);
+    this.index = routing.index;
+    this.timeUsOfDecodeIndex = routing.timeUsOfDecodeIndex;
+    this.presIndexByTimeUs = routing.presIndexByTimeUs;
     const last = this.index.frames.length - 1;
     this.from = Math.max(0, Math.min(last, Math.floor(from)));
     this.to = Math.max(this.from, Math.min(last, Math.floor(to)));
-    this.timeUsOfDecodeIndex = new Array<number>(demuxed.samples.length).fill(0);
-    this.index.frames.forEach((f, presIdx) => {
-      this.timeUsOfDecodeIndex[f.decodeIndex] = f.timeUs;
-      this.presIndexByTimeUs.set(f.timeUs, presIdx);
-    });
     this.d = this.index.frames[this.from]!.keyDecodeIndex;
     this.feedEnd = this.index.frames[this.to]!.feedThroughDecodeIndex;
   }
@@ -434,6 +461,7 @@ export class SequentialFrameReader {
       throw new Error('SequentialFrameReader requests must be non-decreasing');
     }
     for (;;) {
+      if (this.closed) throw new Error('SequentialFrameReader is closed');
       this.pump();
       const item = this.queue.shift();
       if (item) {
@@ -464,6 +492,14 @@ export class SequentialFrameReader {
       // errored decoders are already closed
     }
     this.decoder = null;
+    // Release a frameAt() parked on `notify` — without this, a caller awaiting
+    // the next frame when the reader is killed (every loop wrap and every
+    // seek kills the active stream) waits FOREVER: pump() early-returns on
+    // `closed`, so no output/flush/error can ever wake it again. The leaked
+    // promise then sits in ExactVideoFrameCache.inflight, and the export
+    // convergence loop awaits it without a timeout — one prior loop or scrub
+    // deadlocked every later export.
+    this.wake();
   }
 
   private wake(): void {

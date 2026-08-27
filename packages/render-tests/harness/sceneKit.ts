@@ -19,6 +19,16 @@ export interface SceneComp {
   height: number;
   background: string;
   transparent?: boolean;
+  /**
+   * Render only this root's subtree. Needed by scenes that hold MORE than one
+   * root comp — a host plus a comp it places (see `precomp-collapse`). Without
+   * it buildSnapshot flattens every root and the referenced comp draws twice:
+   * once as itself, once through the instance.
+   */
+  rootId?: string;
+  /** Referenced-comp size resolver for placed compositions (COMP_REF_PROP) —
+   *  the same hook the editor passes (see compSizes.ts). */
+  compSizeOf?: (id: string) => { width: number; height: number } | undefined;
 }
 
 export interface SceneMeta {

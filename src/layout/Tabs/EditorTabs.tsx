@@ -204,6 +204,7 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
             ]);
           }}
         >
+          <Icon name="media" size="sm" />
           <span className={styles.tabLabel}>Footage {footageAsset ? `(${footageAsset.name})` : '(none)'}</span>
         </button>
 
@@ -228,6 +229,7 @@ export function EditorTabs({ scene, renderTab }: EditorTabsProps): JSX.Element {
             }
           }}
         >
+          <Icon name="layers" size="sm" />
           <span className={styles.tabLabel}>Layer {layerTabName ? `(${layerTabName})` : '(none)'}</span>
         </button>
 

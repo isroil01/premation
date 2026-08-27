@@ -90,10 +90,10 @@ export const RENDER_STRATEGIES = ['none', 'proxy', 'shader'] as const;
  * keeps together.
  */
 export type LayerPropType =
-  'number' | 'string' | 'boolean' | 'enum' | 'color' | 'asset' | 'layer' | 'point';
+  'number' | 'string' | 'boolean' | 'enum' | 'color' | 'asset' | 'layer' | 'point' | 'angle';
 
 export const LAYER_PROP_TYPES = [
-  'number', 'string', 'boolean', 'enum', 'color', 'asset', 'layer', 'point',
+  'number', 'string', 'boolean', 'enum', 'color', 'asset', 'layer', 'point', 'angle',
 ] as const;
 
 /**
@@ -102,7 +102,26 @@ export const LAYER_PROP_TYPES = [
  * `color` is here because the engine already animates colour channels; `string`
  * and `enum` are not, and `asset` is a reference rather than a value.
  */
-export const ANIMATABLE_PROP_TYPES = ['number', 'color', 'boolean'] as const;
+export const ANIMATABLE_PROP_TYPES = ['number', 'color', 'boolean', 'angle'] as const;
+
+/**
+ * How a property is DRAWN, where the type alone does not decide it.
+ *
+ * ── Why the vocabulary grows instead of opening up ─────────────────────────
+ *
+ * The recurring request is arbitrary plugin markup in the inspector, and it is
+ * refused for the reason `CustomLayerSection.tsx` opens with: a plugin that can
+ * render into the inspector can draw a convincing permission prompt, and every
+ * plugin's panel would age differently from the app around it. The answer is
+ * not "no richer UI" — it is a richer DECLARATIVE vocabulary, where the plugin
+ * states intent and the host still owns every pixel.
+ *
+ * `angle` is a type rather than a hint because it animates: a dial and a number
+ * field disagree about what the value MEANS at the wrap point, and the graph
+ * editor needs to know it is degrees. `multiline`, `group` and `showIf` are
+ * hints, because none of them change the value.
+ */
+export const MAX_GROUP_LENGTH = 40;
 
 export interface LayerPropSchema {
   type: LayerPropType;
@@ -119,6 +138,27 @@ export interface LayerPropSchema {
   animatable?: boolean;
   /** Only for `asset`: which kind of asset this slot takes. */
   assetKind?: 'image';
+  /**
+   * Section heading this property sits under. Absent = the ungrouped run at
+   * the top.
+   *
+   * Presentation only, and deliberately NOT nesting: a flat list of sections is
+   * something the inspector can render at any depth of plugin, and a tree is a
+   * layout a plugin could use to hide a property inside a collapsed group the
+   * user never opens.
+   */
+  group?: string;
+  /** Only `string`: draw a textarea rather than a single-line input. */
+  multiline?: boolean;
+  /**
+   * Show this property only when another one has a given value.
+   *
+   * The declarative half of what an author would otherwise want code for —
+   * "show Feather only when Soft Edges is on". Refers to a SIBLING prop by
+   * name, checked at parse time, so a typo is an install error rather than a
+   * property that never appears.
+   */
+  showIf?: { prop: string; equals: string | number | boolean };
 }
 
 export interface LayerKindContribution {
@@ -223,7 +263,7 @@ export function parseProp(
     return null;
   }
 
-  if (t === 'number') {
+  if (t === 'number' || t === 'angle') {
     for (const key of ['min', 'max', 'step'] as const) {
       const v = raw[key];
       if (v === undefined) continue;
@@ -256,6 +296,57 @@ export function parseProp(
   } else if (raw.assetKind !== undefined) {
     errors.push(`"${at}.assetKind" is only meaningful for an asset property.`);
     return null;
+  }
+
+  /*
+    Presentation hints. None of them changes the VALUE, which is why they are
+    hints rather than types — and why they are safe: the plugin states intent
+    and the host still chooses every pixel.
+  */
+  if (raw.group !== undefined) {
+    if (typeof raw.group !== 'string' || !raw.group.trim() || raw.group.length > MAX_GROUP_LENGTH) {
+      errors.push(`"${at}.group", when present, must be a string of 1–${MAX_GROUP_LENGTH} characters.`);
+      return null;
+    }
+    out.group = raw.group.trim();
+  }
+
+  if (raw.multiline !== undefined) {
+    if (typeof raw.multiline !== 'boolean') {
+      errors.push(`"${at}.multiline", when present, must be true or false.`);
+      return null;
+    }
+    if (raw.multiline && t !== 'string') {
+      // Silently ignoring it would leave an author staring at a single-line
+      // field wondering which of the two spellings they got wrong.
+      errors.push(`"${at}.multiline" is only meaningful for a string property, not "${t}".`);
+      return null;
+    }
+    if (raw.multiline) out.multiline = true;
+  }
+
+  if (raw.showIf !== undefined) {
+    if (!isPlainObject(raw.showIf)) {
+      errors.push(`"${at}.showIf", when present, must be an object like { "prop": "mode", "equals": "advanced" }.`);
+      return null;
+    }
+    const dep = raw.showIf.prop;
+    const equals = raw.showIf.equals;
+    if (typeof dep !== 'string' || !PROP_NAME_RE.test(dep)) {
+      errors.push(`"${at}.showIf.prop" must name a sibling property.`);
+      return null;
+    }
+    if (dep === name) {
+      // A property whose visibility depends on itself can never be shown or
+      // never hidden, and which one is not obvious from reading it.
+      errors.push(`"${at}.showIf.prop" cannot be the property itself.`);
+      return null;
+    }
+    if (typeof equals !== 'string' && typeof equals !== 'number' && typeof equals !== 'boolean') {
+      errors.push(`"${at}.showIf.equals" must be a string, number or boolean.`);
+      return null;
+    }
+    out.showIf = { prop: dep, equals };
   }
 
   if (animatable) out.animatable = true;
@@ -292,7 +383,11 @@ export function parseProp(
 /** Why a default is not a valid value of its own property, or null. */
 function defaultProblem(t: LayerPropType, value: unknown, schema: LayerPropSchema): string | null {
   switch (t) {
+    case 'angle':
     case 'number':
+      // An angle is a number in DEGREES and is deliberately unbounded — a
+      // revolution is a legitimate value, and clamping one to 0..360 would
+      // make a spin animation stop at the wrap.
       if (typeof value !== 'number' || !Number.isFinite(value)) return 'must be a finite number.';
       if (schema.min !== undefined && value < schema.min) return `is below "min" (${schema.min}).`;
       if (schema.max !== undefined && value > schema.max) return `is above "max" (${schema.max}).`;
@@ -447,6 +542,26 @@ export function parseLayerKinds(
         continue;
       }
       props[name] = parsed;
+    }
+    if (!ok) return;
+
+    /*
+      `showIf` names a SIBLING, and the sibling has to exist.
+
+      Checked here rather than in `parseProp`, which sees one property at a
+      time. A dangling reference is a control that never appears, and "my
+      property is missing" sends an author looking at the property rather than
+      at the typo one line above it.
+    */
+    for (const [name, schema] of Object.entries(props)) {
+      const dep = schema.showIf?.prop;
+      if (dep === undefined) continue;
+      if (!Object.prototype.hasOwnProperty.call(props, dep)) {
+        errors.push(
+          `"${at}.props.${name}.showIf.prop" names "${dep}", which this kind does not declare.`,
+        );
+        ok = false;
+      }
     }
     if (!ok) return;
 

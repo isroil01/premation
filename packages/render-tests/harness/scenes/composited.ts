@@ -1,7 +1,9 @@
 /**
  * Compositing family: track mattes, masks, adjustment layers, layer styles.
  * These exercise the multi-layer composite paths (matte pairing, mask geometry,
- * adjustment-below, CSS-filter layer styles).
+ * adjustment-below, GPU layer styles). Soft-edge scenes (`mask-feather`,
+ * `layer-styles`) gate against WebGL2 goldens after the CSS-sigma blur kernel
+ * exit — see `blur-hard-edge` and `cssBlurKernel.test.ts`.
  */
 
 import { defineScene, node, type Scene } from '../sceneKit';
@@ -115,22 +117,15 @@ export const compositedScenes: Scene[] = [
       ],
     });
   }),
+  /**
+   * Soft mask edge. Was `known-divergent` while the GPU blur kernel used
+   * σ = r/2 (tighter than CSS). Kernel reconciled to CSS semantics (σ = r,
+   * ±2.5σ) — see `cssBlurKernel.test.ts` + `blur-hard-edge`. Reference is
+   * GPU-blessed; gated as expect-pass.
+   */
   scene('mask-feather', 'Feathered ellipse mask.', (graph) => {
     gradientContent(graph, 'm');
     graph.setMask('m', { paths: [{ ...ellipseMask(200, 150), mode: 'add', feather: 28 }] });
-  }, [0], 'known-divergent', {
-    why:
-      'The reference is frozen output of the DELETED Canvas2D backend. Both of these are built '
-      + 'from soft alpha over a large area — a feathered mask edge, and layer styles whose shadows '
-      + 'and glows are broad gradients — so the two engines differ across the whole soft region '
-      + 'rather than along a contour, and analyze-gap.mjs classes the bulk as colour rather than '
-      + 'coverage. NOT YET ESTABLISHED: which blur kernel each side used. The GPU treats a blur '
-      + 'radius as a Gaussian sigma sampled to 2.5 sigma (shaders/builtin.ts) whereas Canvas2D '
-      + 'inherited the CSS filter kernel, and until those are compared directly it is unproven '
-      + 'whether the GPU result is merely different or actually wrong.',
-    wouldMatchWhen:
-      'The two blur kernels are compared on a single hard edge — one variable, no compositing — '
-      + 'and either reconciled or the GPU confirmed correct and the reference re-blessed.',
   }),
   scene('mask-animated', 'Animated mask, sampled mid-interpolation (t=0.5).', (graph) => {
     gradientContent(graph, 'm');
@@ -148,6 +143,113 @@ export const compositedScenes: Scene[] = [
     graph.setEffects('adj', [{ id: 'a1', type: 'hue-rotate', params: { amount: 140 } }]);
   }),
 
+  /**
+   * Adjustment ABOVE a track-matte pair.
+   *
+   * Paint order (back→front): matted gradient → ellipse matte source →
+   * hue-rotate adjustment. The grade must see the ALREADY-MATTED composite
+   * (ellipse-shaped gradient, hue-shifted). Regressions that this catches:
+   *   • adjustment samples before the matte combine → full-frame grade, no cut;
+   *   • matte source is graded as content → wrong silhouette colour;
+   *   • adjustment skips the matted layer → ellipse of ungraded gradient.
+   */
+  defineScene({
+    id: 'adjustment-over-matte',
+    description: 'Hue-rotate adjustment over an alpha-matted gradient (ellipse cut).',
+    size: SIZE,
+    comp: COMP,
+    fps: 30,
+    frames: [0],
+    oracle: 'gpu',
+    gpuParity: 'expect-pass',
+    build(graph) {
+      gradientContent(graph, 'matted');
+      graph.addNode(node('src', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 200, height: 160, shapeType: 'ellipse' },
+        style: { fill: '#ffffff' },
+      }));
+      graph.setMatte('matted', 'alpha');
+      graph.addNode(node('adj', { kind: 'shape', style: { opacity: 100 } }));
+      graph.setSolid('adj', true);
+      graph.setAdjustment('adj', true);
+      graph.setEffects('adj', [{ id: 'a1', type: 'hue-rotate', params: { amount: 140 } }]);
+    },
+  }),
+
+  /**
+   * Preserve Underlying Transparency (AE's "T" switch).
+   *
+   * Comp is TRANSPARENT so holes in the backdrop really have ad=0. An opaque
+   * clear makes Multiply look "clipped" without PUT (dark×source ≈ invisible),
+   * which is why this scene must not sit on a solid background plate.
+   *
+   * Magenta rect over a cyan ellipse: with PUT the rect is source-atop the
+   * ellipse's coverage — corners stay empty. Without PUT the rect paints them.
+   */
+  defineScene({
+    id: 'preserve-transparency',
+    description: 'Preserve Underlying Transparency: magenta rect clipped to cyan ellipse alpha.',
+    size: SIZE,
+    comp: { ...COMP, background: '#000000', transparent: true },
+    fps: 30,
+    frames: [0],
+    oracle: 'gpu',
+    gpuParity: 'expect-pass',
+    build(graph) {
+      graph.addNode(node('base', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 200, height: 160, shapeType: 'ellipse' },
+        style: { fill: '#1ec8ff' },
+      }));
+      graph.addNode(node('top', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 280, height: 180, shapeType: 'rect' },
+        style: { fill: '#ff2d55' },
+      }));
+      graph.setFxKey('top', 'preserveTransparency', true);
+    },
+  }),
+
+  /**
+   * Multiply AND Preserve Transparency — the composed state users want.
+   * Transparent comp so Multiply alone would leave BRIGHT blue in the corners
+   * (source over empty alpha); PUT must clear those corners.
+   */
+  defineScene({
+    id: 'preserve-transparency-multiply',
+    description: 'Multiply + Preserve Transparency: blend only inside underlying coverage.',
+    size: SIZE,
+    comp: { ...COMP, background: '#000000', transparent: true },
+    fps: 30,
+    frames: [0],
+    oracle: 'gpu',
+    gpuParity: 'expect-pass',
+    build(graph) {
+      graph.addNode(node('base', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 200, height: 160, shapeType: 'ellipse' },
+        style: { fill: '#ffffff' },
+      }));
+      graph.addNode(node('top', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 280, height: 180, shapeType: 'rect' },
+        style: { fill: '#4060ff' },
+      }));
+      graph.setBlendMode('top', 'multiply');
+      graph.setFxKey('top', 'preserveTransparency', true);
+    },
+  }),
+
+  /**
+   * Drop shadow + outer glow. Same blur-kernel exit as `mask-feather` —
+   * GPU CSS-sigma kernel proven; reference re-blessed from WebGL2.
+   */
   scene('layer-styles', 'Drop shadow + outer glow layer styles on a shape.', (graph) => {
     graph.addNode(node('s', {
       kind: 'shape',
@@ -159,18 +261,31 @@ export const compositedScenes: Scene[] = [
       dropShadow: { enabled: true, color: '#000000', opacity: 0.6, distance: 12, angle: 90, blur: 10 },
       outerGlow: { enabled: true, color: '#78b4ff', opacity: 0.9, size: 18 },
     });
-  }, [0], 'known-divergent', {
-    why:
-      'The reference is frozen output of the DELETED Canvas2D backend. Both of these are built '
-      + 'from soft alpha over a large area — a feathered mask edge, and layer styles whose shadows '
-      + 'and glows are broad gradients — so the two engines differ across the whole soft region '
-      + 'rather than along a contour, and analyze-gap.mjs classes the bulk as colour rather than '
-      + 'coverage. NOT YET ESTABLISHED: which blur kernel each side used. The GPU treats a blur '
-      + 'radius as a Gaussian sigma sampled to 2.5 sigma (shaders/builtin.ts) whereas Canvas2D '
-      + 'inherited the CSS filter kernel, and until those are compared directly it is unproven '
-      + 'whether the GPU result is merely different or actually wrong.',
-    wouldMatchWhen:
-      'The two blur kernels are compared on a single hard edge — one variable, no compositing — '
-      + 'and either reconciled or the GPU confirmed correct and the reference re-blessed.',
+  }),
+
+  /**
+   * Hard-edge blur isolation — the comparison `mask-feather` / `layer-styles`
+   * used to demand before exiting known-divergent. One opaque rect, one blur,
+   * no feathered sources or stacked styles. Soft ramp must come only from the
+   * CSS-sigma GPU kernel (`packages/renderer` cssBlurKernel.test.ts).
+   */
+  defineScene({
+    id: 'blur-hard-edge',
+    description: 'Gaussian blur on a hard-edged rect — kernel isolation, no soft source.',
+    size: SIZE,
+    comp: COMP,
+    fps: 30,
+    frames: [0],
+    oracle: 'gpu',
+    gpuParity: 'expect-pass',
+    build(graph) {
+      graph.addNode(node('s', {
+        kind: 'shape',
+        position: { x: 160, y: 110 },
+        transform: { width: 140, height: 100, shapeType: 'rect' },
+        style: { fill: '#ffffff' },
+      }));
+      graph.setEffects('s', [{ id: 'b', type: 'blur', params: { amount: 12 } }]);
+    },
   }),
 ];

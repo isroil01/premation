@@ -120,7 +120,7 @@ const CHANNEL_LABEL: Record<ViewChannel, string> = {
 const ZOOM_PRESETS = [12.5, 25, 50, 75, 100, 150, 200, 400, 800] as const;
 
 /** Live zoom % field — syncs with the workspace camera. */
-function ZoomField(): JSX.Element {
+export function ZoomField(): JSX.Element {
   const [zoom, setZoom] = useState(() => getWorkspaceController().zoomPercent());
 
   useEffect(() => {
@@ -233,22 +233,6 @@ export function ViewControls(): JSX.Element {
 
   return (
     <div className={styles.toolGroup}>
-      <span className={styles.toolDivider} aria-hidden />
-
-      {/*
-        Rulers, Safe Areas and the channel picker used to sit here as three
-        standalone controls, immediately to the LEFT of a dropdown that already
-        offers all three ("Rulers", "Safe Areas", "Show Channel: …"). They were
-        duplicates a centimetre apart — two controls for one piece of state,
-        which is how the two of them drift.
-
-        They came out when this cluster moved into the timeline's tool row,
-        where the 104px they cost is the difference between the row fitting and
-        the row hiding controls off its right edge. The dropdown is one extra
-        click for three settings nobody changes mid-drag; scrolling a toolbar to
-        find a button you cannot see is worse than that click.
-      */}
-
       {/* View Options & Overlays Dropdown */}
       <Dropdown
         placement="bottom-end"
@@ -386,11 +370,6 @@ export function ViewControls(): JSX.Element {
           },
         ]}
       />
-
-      <span className={styles.toolDivider} aria-hidden />
-
-      {/* Zoom */}
-      <ZoomField />
     </div>
   );
 }

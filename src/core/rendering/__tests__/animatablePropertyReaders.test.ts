@@ -97,6 +97,9 @@ const EXPLAINED: Record<string, string> = {
   metal: 'readNodeMaterial(node, a)',
   lightTransmission: 'readNodeMaterial(node, a)',
   roughness: 'readNodeMaterial(node, a)',
+  acceptsLights: 'readNodeMaterial(node, a)',
+  castsShadows: 'readNodeMaterial(node, a)',
+  acceptsShadows: 'readNodeMaterial(node, a)',
 };
 
 /**

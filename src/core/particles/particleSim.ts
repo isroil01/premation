@@ -157,7 +157,14 @@ export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
   emitterWidth: 40,
   emitterHeight: 40,
   birthRate: 80,
-  maxParticles: 1500,
+  // A CEILING, not a density: alive count is birthRate × lifetime (160 by
+  // default), so this only binds when the user pushes birth rate past
+  // ~2500/s. 5000 (was 1500) lets a Particular-style dense emitter actually
+  // get dense before silently plateauing — the old cap kicked in at exactly
+  // the settings people reach for in a snow/sparks comp, and read as
+  // "birth rate stopped working". The sim is O(alive) per frame and 5000
+  // simple sprites is well inside a frame budget on the Canvas2D path.
+  maxParticles: 5000,
   lifetime: 2,
   lifetimeRandom: 0.35,
   speed: 180,

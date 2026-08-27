@@ -10,7 +10,8 @@
  *      TRANSPARENT placeholder — an undecoded layer draws nothing rather than a
  *      box. It used to be opaque white, which made every layer whose clip starts
  *      partway into the timeline flash a white rectangle on its first frame
- *      (see `placeholder()`).
+ *      (see `placeholder()`). A decode that FAILS is different: colour bars are
+ *      installed (AE Media Offline) and export refuses via `media-unavailable`.
  *   3. When a decode completes we flip the entry to ready and fire `onChange`,
  *      which the app turns into a re-render so the real pixels appear next frame.
  *
@@ -36,17 +37,31 @@ import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/pain
 type LightWash = NonNullable<RenderLayer['light']>;
 import { rasterPadding } from './raster/vectorDraw';
 import { layerSubpaths } from './raster/subpaths';
-import { resolutionTier, paddingClass, continuousResolutionTier, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
+import { resolutionTier, paddingClass, continuousResolutionTier, RESOLUTION_TIERS, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
+
+/**
+ * Top rung of the clamped ladder — the scale past which `resolutionTier` stops
+ * climbing and would magnify instead. Read from the ladder rather than written
+ * as `4`, so the two cannot drift apart.
+ */
+const CLAMPED_TIER_CEILING = RESOLUTION_TIERS[RESOLUTION_TIERS.length - 1]!;
 import { Canvas2DVectorRasterizer } from './raster/Canvas2DVectorRasterizer';
 import { type RichRun } from '@core/text/textLayout';
 import { effectsNeedCpuBake, applyEffectChain } from '@core/effects/effectBake';
 import { scaleEffectLengths, type Effect } from '@core/effects/effects';
 import { deinterlaceData, deinterlaceInto, type FieldOrder } from './deinterlace';
+import { videoDiag } from './videoPlaybackDiag';
 import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
 import type { CubeLut } from '@core/effects/cubeLut';
 import { isLocalBlobRef, loadLocalBlobObjectUrl } from './localBlobSource';
+import {
+  offlineBarsRgba,
+  OFFLINE_BARS_W,
+  OFFLINE_BARS_H,
+  mediaUnavailableDetail,
+} from '@core/media/offlinePlaceholder';
 
 interface PathEntry {
   kind: 'path';
@@ -354,6 +369,14 @@ interface ImageEntry {
   ready: boolean;
   /** Linear float EXR (or similar) — sample without sRGB decode. */
   sampleLinear?: boolean;
+  /**
+   * Decode failed permanently for this source. The texture is AE-style colour
+   * bars (not the transparent loading placeholder). Export refuses via
+   * `media-unavailable`; preview keeps the bars so the layer stays visible.
+   */
+  offline?: boolean;
+  /** Original URL shown in the offline diagnostic (without bake suffixes). */
+  offlineSrc?: string;
 }
 
 /** What a text layer needs rasterized: string + full font + colour + box size.
@@ -470,8 +493,16 @@ interface LutEntry {
 }
 
 /** Fixed raster size for a light's radial-gradient texture — scale-invariant, so
- *  the renderable stretches this to the light's actual 2·radius box. */
-const LIGHT_TEX_SIZE = 128;
+ *  the renderable stretches this to the light's actual 2·radius box.
+ *
+ *  512, not 128: a default light's radius is ~45% of the comp's long edge, so
+ *  on a 1920 comp the quad is ~1700px across. A 128px gradient stretched 13×
+ *  showed visible banding and stair-stepping at the wash's soft edge — worst
+ *  along the top and bottom where the falloff crosses many rows slowly. At 512
+ *  the upscale is ≤4× on typical comps, under the same threshold that keeps
+ *  `GRADIENT_TEX_MAX = 512` backgrounds clean; the texture is 1MB and baked
+ *  once per light colour (per cone for spots), so the cost is negligible. */
+const LIGHT_TEX_SIZE = 512;
 
 /** Longest edge of a baked gradient-background texture. Gradients are smooth
  *  (low-frequency), so a modest raster upscales across the comp quad with no
@@ -485,7 +516,11 @@ const defaultVideoFactory: VideoFactory = (src) => {
   const v = document.createElement('video');
   v.muted = true;
   v.autoplay = false;
-  v.loop = true;
+  // NEVER loop: the timeline is the only wrap authority. A self-looping
+  // element wrapped on its own clock near the clip end, the drift detector
+  // read that as a quarter-second-plus error, seeked back, and the two fought
+  // a visible tug-of-war at every loop boundary.
+  v.loop = false;
   v.crossOrigin = 'anonymous';
   v.playsInline = true;
   v.preload = 'auto';
@@ -519,6 +554,34 @@ interface VideoEntry {
   requestedTime: number | null;
   /** Previous source time during hardware playback — detects loop wraps. */
   lastPlaybackTime?: number;
+  /** Wall-clock ms of the previous playback feed — the denominator of the
+   *  source-rate estimate that drives `playbackRate` matching. */
+  lastPlaybackWallMs?: number;
+  /** Smoothed source-time-per-wall-second — 1 for plain playback, ≠1 for
+   *  time-stretched layers and for a timeline running slower than realtime. */
+  rateEma?: number;
+  /** Signature of the last texture upload (media time + size + fields).
+   *  Skips re-uploading an unchanged frame — a parked playhead over a 4K clip
+   *  otherwise paid a ~33MB GPU upload on EVERY repaint. */
+  lastUploadSig?: string;
+  /** Wall-clock ms of the last hard seek — rate-limits drift re-seeks. */
+  lastSeekWallMs?: number;
+  /** When this element ENTERED the not-ready state — drives the stall
+   *  watchdog. Cleared the moment it reaches HAVE_CURRENT_DATA; measuring
+   *  from element creation instead made every later buffer dip (a heavy
+   *  mid-GOP seek drops readyState briefly) look like a minutes-long stall. */
+  notReadySince?: number;
+  /** This element reached HAVE_CURRENT_DATA at least once. A dip on a
+   *  previously-working element recovers by itself; only never-got-ready is
+   *  the wedged-pipeline signature. */
+  everReady?: boolean;
+  /** The watchdog's one reload() retry has been spent. */
+  reloadTried?: boolean;
+  /** Per-entry downscale scratch — two different-resolution bucketed videos
+   *  sharing one 'work' canvas reallocated it every single frame. */
+  bucketCanvas?: HTMLCanvasElement;
+  /** Element fired `error` — source is offline; colour bars are shown. */
+  offline?: boolean;
 }
 
 interface ParticleEntry {
@@ -550,6 +613,54 @@ const SEEK_EPSILON = 0.05;
  * decoded frame is still the correct one.
  */
 const FIRST_DECODE_NUDGE = 0.0005;
+/**
+ * Playback drift beyond this hard-seeks the element (seconds). Inside it,
+ * sync is corrected CONTINUOUSLY by nudging `playbackRate` — the standard A/V
+ * sync technique — so the picture never accumulates a visible offset and then
+ * snaps. The old behaviour (free-run at 1×, correct only past 0.25s) allowed
+ * ~7 frames of desync at 30fps and produced a rhythmic hitch on every
+ * time-stretched layer.
+ */
+const PLAYBACK_HARD_SEEK_SEC = 0.25;
+/** Max fractional playbackRate correction applied for drift inside the hard
+ *  seek window. ±10% is imperceptible; a hard cut to sync is not. */
+const PLAYBACK_RATE_TRIM = 0.1;
+/**
+ * Lowest playbackRate the sync will set (Chromium supports ~0.0625). The old
+ * 0.25 floor coincided exactly with the pacing clamp's worst-case timeline
+ * speed, so under heavy main-thread load the element could never run SLOWER
+ * than the timeline — accumulated drift had no way to recede and every 1.5s
+ * window ended in a hard seek with a frozen picture.
+ */
+const PLAYBACK_RATE_MIN = 0.0625;
+/**
+ * NEGATIVE drift (element BEHIND the playhead) tolerated before a forward
+ * hard seek. Falling behind while actively playing means the DECODER cannot
+ * keep realtime on this machine — and a forward seek is the worst response:
+ * it drops the decode buffer and lands mid-GOP, paying seconds of decode with
+ * a frozen picture, after which the element is behind again. The playback
+ * clock reads the lag from videoDiag and slows the TIMELINE to the decoder's
+ * real speed instead (the After Effects trade: slower, never broken), so this
+ * threshold only backstops a truly wedged element.
+ */
+const STARVED_HARD_SEEK_SEC = 1.5;
+/** How far ahead (source seconds) the end of a cached span must be before a
+ *  blit-span sync PARKS the element there rather than rolling it along. */
+const PLAYBACK_PREP_MIN_AHEAD_SEC = 0.75;
+/** Video entries parked (paused, source kept) after leaving the live set.
+ *  Releasing them immediately meant a clip that ends mid-loop rebuilt its
+ *  element — reload, re-seek, placeholder frames — on EVERY loop pass. */
+const MAX_PARKED_VIDEOS = 6;
+/**
+ * Wall-clock ms a fresh element may sit below HAVE_CURRENT_DATA with no
+ * `error` before the watchdog intervenes. A healthy local/blob source reads
+ * metadata in tens of ms; readyState 0 for this long with no error is the
+ * wedged-media-pipeline signature (exhausted browser decoder pool — every new
+ * <video> stalls, in every tab, silently). One reload() retry covers the
+ * transient case; a second stall flags the source in videoDiag so the status
+ * bar can say "restart the app" instead of the editor just looking broken.
+ */
+const VIDEO_LOAD_STALL_MS = 6000;
 
 export class AppTextureProvider implements TextureProvider {
   /** Shared scratch surface for field separation — sequential per-call use,
@@ -574,7 +685,16 @@ export class AppTextureProvider implements TextureProvider {
     if (!on) {
       for (const entry of this.videoEntries.values()) {
         entry.video.pause();
+        entry.video.playbackRate = 1;
         entry.lastPlaybackTime = undefined;
+        entry.lastPlaybackWallMs = undefined;
+        entry.rateEma = undefined;
+        // The element free-ran during playback, so wherever it drifted to is
+        // NOT the playhead. Clearing the last seek target forces the paused
+        // path to issue a corrective seek instead of accepting a frame up to
+        // the drift window off — the frame you inspect while parked must be
+        // the frame at the playhead.
+        entry.requestedTime = null;
       }
     }
   }
@@ -582,6 +702,34 @@ export class AppTextureProvider implements TextureProvider {
   takeMediaWaits(): Promise<void>[] {
     const out = this.mediaWaits;
     this.mediaWaits = [];
+    return out;
+  }
+
+  /**
+   * Image/video keys whose source failed to decode this session and are showing
+   * colour bars. Used by MotionRendererBackend to push `media-unavailable`
+   * diagnostics (preview warns; export refuses).
+   */
+  offlineMediaReports(): ReadonlyArray<{ key: string; layerId: string; detail: string }> {
+    const out: Array<{ key: string; layerId: string; detail: string }> = [];
+    for (const [key, entry] of this.entries) {
+      if (!entry.offline) continue;
+      const layerId = key.startsWith('asset:') ? key.slice('asset:'.length) : key;
+      out.push({
+        key,
+        layerId,
+        detail: mediaUnavailableDetail(layerId, entry.offlineSrc),
+      });
+    }
+    for (const [key, entry] of this.videoEntries) {
+      if (!entry.offline) continue;
+      const layerId = key.startsWith('asset:') ? key.slice('asset:'.length) : key;
+      out.push({
+        key,
+        layerId,
+        detail: mediaUnavailableDetail(layerId, entry.src),
+      });
+    }
     return out;
   }
 
@@ -621,6 +769,8 @@ export class AppTextureProvider implements TextureProvider {
   private bakeScratchToggle = 0;
   /** One-shot init for the transparent placeholder — see `placeholder()`. */
   private hasInitTransparent = false;
+  /** One-shot init for the shared offline colour-bars texture. */
+  private hasInitOfflineBars = false;
   /**
    * Decoded images that have fallen out of the visible set but are NOT yet
    * freed — see `retain`. Insertion-ordered, so the oldest is evicted first.
@@ -649,19 +799,43 @@ export class AppTextureProvider implements TextureProvider {
 
   setMaxRasterDimension(px: number): void {
     this.maxRasterDimension = px > 0 && Number.isFinite(px) ? px : DEFAULT_MAX_RASTER_DIMENSION;
+    // The rasterizer clamps its canvas sizes by the same device fact — its
+    // texture uploads fail past this exactly like the provider's own.
+    this.rasterizer.setMaxDimension(this.maxRasterDimension);
   }
 
   /**
-   * The tier to rasterize a drawable at: the clamped ladder by default, the
-   * extended one when the layer opted into Continuous Rasterization.
+   * The tier to rasterize a drawable at.
    *
    * One helper for both the text and path paths so they cannot diverge — they
    * did once already, over the `deviceScale` the text path silently dropped.
+   *
+   * ## Why the clamped ladder is no longer the end of the story
+   *
+   * `resolutionTier` tops out at 4x. Past that it stops climbing and the
+   * texture is simply magnified, so a title or logo pushed beyond 400% — by its
+   * own Scale, by a parent null, by viewport zoom or by a 3D camera moving in —
+   * went soft and STAYED soft, in the export as much as in the preview. That
+   * was the single most-reported quality complaint, and the per-layer
+   * Continuous Rasterization switch that fixes it was off by default, so the
+   * default experience was the broken one.
+   *
+   * Past the ceiling the tier now escalates onto the extended ladder whether or
+   * not the layer opted in. `continuousResolutionTier` is bounded by the GPU's
+   * real max texture dimension AND by a pixel budget, so this cannot ask for an
+   * allocation that fails or quietly exhaust VRAM — the escalation is bounded
+   * by construction, which is what makes it safe to do without a switch.
+   *
+   * Below the ceiling NOTHING changes: `resolutionTier` is returned verbatim
+   * rather than routing through the extended ladder, because the extended one
+   * also applies the box bounds and those can round a very large box DOWN.
+   * Taking the old path for the scales almost every layer actually lives at
+   * keeps their textures byte-identical instead of trading one regression for
+   * another.
    */
   private tierFor(scale: number, continuous: boolean | undefined, boxW: number, boxH: number): number {
-    return continuous
-      ? continuousResolutionTier(scale, boxW, boxH, undefined, this.maxRasterDimension)
-      : resolutionTier(scale);
+    if (!continuous && scale <= CLAMPED_TIER_CEILING) return resolutionTier(scale);
+    return continuousResolutionTier(scale, boxW, boxH, undefined, this.maxRasterDimension);
   }
 
   /**
@@ -675,15 +849,17 @@ export class AppTextureProvider implements TextureProvider {
    * sharp at each tier boundary, over and over; it also made the result
    * ORDER-DEPENDENT, since whichever scale rasterized first won the key.
    *
-   * The tier rounds UP, so below the ceiling it is >= the requested scale and
-   * the raster is never magnified — this is sharper than it was, not softer, as
-   * well as stable. Above the ceiling the tier clamps and the texture is
-   * magnified, which is the documented >4x limitation and exactly what
-   * CONTINUOUS RASTERIZATION exists to lift: it extends the ladder so the tier
-   * keeps up. Before, above 4x was sharp but arbitrary — the first scale
-   * rasterized was reused for every other, so the same project could render
-   * differently depending on which frame you visited first. Predictable and
-   * bounded beats sharp and arbitrary.
+   * The tier rounds UP, so it is >= the requested scale and the raster is never
+   * magnified — this is sharper than it was, not softer, as well as stable.
+   * Before, above 4x was sharp but arbitrary — the first scale rasterized was
+   * reused for every other, so the same project could render differently
+   * depending on which frame you visited first. Predictable and bounded beats
+   * sharp and arbitrary.
+   *
+   * The 4x ceiling that used to magnify past this point is gone: `tierFor` now
+   * escalates onto the bounded extended ladder instead of clamping, so "drawn
+   * at the tier" and "never magnified" hold at every scale the GPU can
+   * actually allocate, not just below 400%.
    */
   private drawScaleFor(scale: number, continuous: boolean | undefined, tier: number): number {
     void scale; void continuous;
@@ -1034,7 +1210,7 @@ export class AppTextureProvider implements TextureProvider {
    * shader samples it at U = channel value to remap that channel. Signature-keyed
    * on the table bytes so it only re-uploads when the effect actually changes.
    */
-  setLut(key: string, lut: { r: Uint8Array; g: Uint8Array; b: Uint8Array }, signature: string): void {
+  setLut(key: string, lut: { r: Float32Array | Uint8Array; g: Float32Array | Uint8Array; b: Float32Array | Uint8Array }, signature: string): void {
     const existing = this.lutEntries.get(key);
     if (existing && existing.signature === signature) return;
     if (existing) {
@@ -1047,9 +1223,9 @@ export class AppTextureProvider implements TextureProvider {
     if (!ctx) return;
     const img = ctx.createImageData(256, 1);
     for (let i = 0; i < 256; i++) {
-      img.data[i * 4] = lut.r[i]!;
-      img.data[i * 4 + 1] = lut.g[i]!;
-      img.data[i * 4 + 2] = lut.b[i]!;
+      img.data[i * 4] = Math.max(0, Math.min(255, Math.round(lut.r[i]!)));
+      img.data[i * 4 + 1] = Math.max(0, Math.min(255, Math.round(lut.g[i]!)));
+      img.data[i * 4 + 2] = Math.max(0, Math.min(255, Math.round(lut.b[i]!)));
       img.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(img, 0, 0);
@@ -1118,27 +1294,96 @@ export class AppTextureProvider implements TextureProvider {
    * every frame, so there is no signature cache). Returns the placeholder via
    * get until the element has decoded a frame.
    */
-  setVideo(key: string, src: string, timeSec: number, fields?: FieldOrder): void {
+  /** Videos parked after leaving the live set: paused, source and warm decoder
+   *  kept, GPU texture freed. Insertion-ordered LRU, like `parkedImages`. */
+  private readonly parkedVideos = new Map<string, VideoEntry>();
+
+  /**
+   * The one place a video entry is created or revived — both the seek path and
+   * the playback path go through it, so both get the `error` listener. The
+   * playback path used to skip it, which meant a source that died while
+   * playing was never flagged offline, never reached `offlineMediaReports`,
+   * and shipped as a silent black layer in exports.
+   */
+  private ensureVideoEntry(key: string, src: string): VideoEntry {
     let entry = this.videoEntries.get(key);
-    if (!entry || entry.src !== src) {
-      // Swapping the source must release the outgoing element and its texture —
-      // replacing the map entry alone left a decoding <video> and a pinned texture
-      // alive for the rest of the session.
-      if (entry) this.releaseVideoEntry(entry);
-      const video = this.videoFactory(src);
-      const onSeeked = (): void => this.onChange?.();
-      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null, hasSeeked: false };
-      this.videoEntries.set(key, entry);
-      video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
-      video.addEventListener('seeked', onSeeked);
+    if (entry && entry.src === src) return entry;
+    // Swapping the source must release the outgoing element and its texture —
+    // replacing the map entry alone left a decoding <video> and a pinned texture
+    // alive for the rest of the session.
+    if (entry) this.releaseVideoEntry(entry);
+    const parked = this.parkedVideos.get(key);
+    if (parked && parked.src === src) {
+      this.parkedVideos.delete(key);
+      this.videoEntries.set(key, parked);
+      return parked;
+    }
+    const video = this.videoFactory(src);
+    const onSeeked = (): void => this.onChange?.();
+    entry = {
+      kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked,
+      requestedTime: null, hasSeeked: false,
+    };
+    this.videoEntries.set(key, entry);
+    video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('error', () => {
+      const cur = this.videoEntries.get(key) ?? this.parkedVideos.get(key);
+      if (!cur || cur.src !== src) return;
+      this.installVideoOfflineBars(cur);
+      this.onChange?.();
+    }, { once: true });
+    return entry;
+  }
+
+  /**
+   * Watchdog for elements stuck loading. Called from the not-ready branches:
+   * a healthy source leaves them within milliseconds, so reaching the stall
+   * window means either a transient hiccup (the reload() retry fixes it) or
+   * the browser's media pipeline is wedged — which is flagged in videoDiag so
+   * the UI can tell the user to restart instead of silently showing broken
+   * video forever.
+   */
+  private checkLoadStall(entry: VideoEntry): void {
+    const now = performance.now();
+    if (entry.notReadySince === undefined) entry.notReadySince = now;
+    if (now - entry.notReadySince < VIDEO_LOAD_STALL_MS) return;
+    if (entry.offline) return;
+    // A buffer dip on an element that HAS worked recovers on its own — a
+    // reload() here would drop the buffer and rewind to 0 (a real freeze +
+    // jump), and flagging it painted "restart the app" over a healthy app.
+    // The wedged-pipeline signature is exclusively "never became ready".
+    if (entry.everReady) return;
+    if (!entry.reloadTried) {
+      entry.reloadTried = true;
+      entry.notReadySince = now;
+      try {
+        entry.video.load();
+      } catch {
+        /* element detached */
+      }
+      return;
+    }
+    videoDiag.stalledSources.add(entry.src);
+  }
+
+  setVideo(key: string, src: string, timeSec: number, fields?: FieldOrder, upload = true): void {
+    const entry = this.ensureVideoEntry(key, src);
+    if (entry.offline) {
+      if (!entry.texture) this.installVideoOfflineBars(entry);
+      return;
     }
     const v = entry.video;
     if (v.readyState < HAVE_CURRENT_DATA) {
+      this.checkLoadStall(entry);
       if (this.exactMediaTiming) {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'loadeddata', 8000));
       }
       return; // not decoded yet → placeholder
     }
+    entry.everReady = true;
+    entry.notReadySince = undefined;
+    videoDiag.stalledSources.delete(entry.src);
     const deadband = this.exactMediaTiming ? 1e-4 : SEEK_EPSILON;
     // Seek only when the TARGET changes, not whenever the element's currentTime is
     // off-target. `seeked` fires onChange → requestRender → setVideo, and on
@@ -1173,48 +1418,187 @@ export class AppTextureProvider implements TextureProvider {
         this.mediaWaits.push(AppTextureProvider.eventWait(v, 'seeked'));
       }
     }
-    this.uploadVideoTexture(entry, key, fields);
+    if (upload) this.uploadVideoTexture(entry, key, fields);
   }
 
   /**
    * Hardware playback path: keep the `<video>` element decoding forward and
-   * sample its current frame. Seeks only on start, loop wrap, or large drift —
-   * NOT every compositor frame (which cannot keep up on 1080p/4K footage).
+   * sample its current frame. Sync is held by CONTINUOUS rate matching — the
+   * element's `playbackRate` follows the measured source-time rate (1× for
+   * plain playback, ≠1 for time-stretched layers or a timeline running under
+   * realtime) with a small trim proportional to drift. Hard seeks are reserved
+   * for start, loop wrap, and genuine jumps; the old free-run-then-snap
+   * behaviour allowed ~7 frames of desync and a visible hitch per correction.
    */
-  setVideoPlayback(key: string, src: string, timeSec: number, fields?: FieldOrder, bucket = 1): void {
-    let entry = this.videoEntries.get(key);
-    if (!entry || entry.src !== src) {
-      if (entry) this.releaseVideoEntry(entry);
-      const video = this.videoFactory(src);
-      const onSeeked = (): void => this.onChange?.();
-      entry = { kind: 'video', src, video, texture: null, w: 1, h: 1, onSeeked, requestedTime: null, hasSeeked: false };
-      this.videoEntries.set(key, entry);
-      video.addEventListener('loadeddata', () => this.onChange?.(), { once: true });
-      video.addEventListener('seeked', onSeeked);
+  setVideoPlayback(
+    key: string,
+    src: string,
+    timeSec: number,
+    fields?: FieldOrder,
+    bucket = 1,
+    /** Keep the element in sync WITHOUT touching the GPU texture — used while
+     *  the viewport serves frames from the RAM preview cache. An unsupervised
+     *  element drifted through every blitted span, and the hard seek at the
+     *  next cache miss froze the picture for the length of a mid-GOP decode
+     *  (seconds, on long-GOP phone footage) — every span boundary, every
+     *  loop pass. */
+    syncOnly = false,
+    /** Where the current CACHED span ends, in source seconds. When it is
+     *  comfortably ahead, the element is PARKED there instead of chasing the
+     *  playhead: paused, pre-seeked to the exact frame the first cache miss
+     *  will need. A decoder that cannot sustain realtime then plays only
+     *  through the gaps — cached spans cost it nothing — instead of arriving
+     *  at every gap already behind and showing stale frames. */
+    prepareSourceSec?: number,
+  ): boolean {
+    timeSec = Math.max(0, timeSec);
+    const entry = this.ensureVideoEntry(key, src);
+    if (entry.offline) {
+      if (!entry.texture) this.installVideoOfflineBars(entry);
+      return true; // colour bars are stable pixels — safe to cache
     }
     const v = entry.video;
+    // Already parked at (or near) the gap: STAY parked while the playhead
+    // rides the cached span toward it — falling through to the drift logic
+    // would read the deliberate lead as an error and seek straight back.
+    const parkedAtGap =
+      prepareSourceSec !== undefined
+      && v.paused
+      && entry.requestedTime !== null
+      && Math.abs(entry.requestedTime - prepareSourceSec) <= 0.25;
+    if (
+      syncOnly
+      && prepareSourceSec !== undefined
+      && v.readyState >= HAVE_CURRENT_DATA
+      && (prepareSourceSec - timeSec > PLAYBACK_PREP_MIN_AHEAD_SEC || parkedAtGap)
+    ) {
+      // Park-at-the-gap mode: pause the element and pre-seek it to the frame
+      // the first cache miss will need. A decoder that cannot sustain
+      // realtime then plays only through the gaps — the cached span costs it
+      // nothing — instead of arriving at every gap already behind.
+      if (typeof v.pause === 'function' && !v.paused) v.pause();
+      if (
+        !v.seeking
+        && (entry.requestedTime === null || Math.abs(entry.requestedTime - prepareSourceSec) > 0.2)
+      ) {
+        entry.hasSeeked = true;
+        entry.requestedTime = prepareSourceSec;
+        v.currentTime = prepareSourceSec;
+      }
+      entry.lastPlaybackTime = timeSec;
+      entry.lastPlaybackWallMs = performance.now();
+      this.recordDiag(key, entry, 0, true);
+      return true;
+    }
     if (v.readyState < HAVE_CURRENT_DATA) {
+      this.checkLoadStall(entry);
       if (!entry.hasSeeked) {
         entry.hasSeeked = true;
         entry.requestedTime = timeSec;
         v.currentTime = timeSec;
       }
-      return;
+      return false;
     }
+    entry.everReady = true;
+    entry.notReadySince = undefined;
+    videoDiag.stalledSources.delete(entry.src);
     const prev = entry.lastPlaybackTime;
     entry.lastPlaybackTime = timeSec;
+    const nowMs = performance.now();
+    const wallDt = entry.lastPlaybackWallMs !== undefined ? (nowMs - entry.lastPlaybackWallMs) / 1000 : 0;
+    entry.lastPlaybackWallMs = nowMs;
     const loopWrap = prev !== undefined && timeSec + 0.05 < prev;
     const largeJump = prev !== undefined && Math.abs(timeSec - prev) > 0.35;
-    const drift = Math.abs(v.currentTime - timeSec);
-    if (!entry.hasSeeked || loopWrap || largeJump || (drift > 0.25 && !v.seeking)) {
+    const drift = v.currentTime - timeSec;
+    // Rate-limit drift-triggered hard seeks: on long-GOP sources one seek can
+    // cost seconds of decode, during which the timeline moves on and the
+    // landed position is instantly "out of drift" again — an unthrottled
+    // check re-seeked forever (picture frozen, decoder pinned). Inside the
+    // window the rate trim below catches up instead. Wraps and real jumps
+    // stay immediate — those are the user's intent, not drift.
+    const canDriftSeek = nowMs - (entry.lastSeekWallMs ?? -Infinity) > 1500;
+    // Asymmetric drift response: AHEAD (positive) means the element outran the
+    // playhead — a cheap backward seek fixes it. BEHIND (negative) while
+    // playing means the decoder is starving; the pacing clock slows the
+    // timeline to match, so only a truly wedged element earns a forward seek.
+    const driftSeekWanted = drift > PLAYBACK_HARD_SEEK_SEC || drift < -STARVED_HARD_SEEK_SEC;
+    if (
+      !entry.hasSeeked || loopWrap || largeJump
+      || (driftSeekWanted && !v.seeking && canDriftSeek)
+    ) {
       entry.hasSeeked = true;
       entry.requestedTime = timeSec;
+      entry.lastSeekWallMs = nowMs;
+      // KEEP the learned rate across the seek. A seek doesn't change how fast
+      // the timeline is running — resetting to 1× against a paced-slow
+      // timeline restarted the drift cycle every time (drift > 0.25s within
+      // ~0.4s at quarter speed) and produced a hard seek + frozen picture
+      // every 1.5s under heavy main-thread load.
+      v.playbackRate = Math.min(4, Math.max(PLAYBACK_RATE_MIN, entry.rateEma ?? 1));
       v.currentTime = timeSec;
       void v.play().catch(() => undefined);
-    } else if (v.paused && !v.seeking) {
-      void v.play().catch(() => undefined);
+    } else {
+      if (prev !== undefined && wallDt > 1e-3 && wallDt < 0.5) {
+        const instRate = Math.min(4, Math.max(PLAYBACK_RATE_MIN, (timeSec - prev) / wallDt));
+        const ema = entry.rateEma ?? 1;
+        entry.rateEma = ema + (instRate - ema) * 0.15;
+      }
+      const base = entry.rateEma ?? 1;
+      // While a drift seek is being suppressed, allow a stronger trim so the
+      // element actually converges instead of trailing at the cap.
+      const trimCap = Math.abs(drift) > PLAYBACK_HARD_SEEK_SEC ? 0.25 : PLAYBACK_RATE_TRIM;
+      // Never SPEED UP an element that is already behind past the seek
+      // window: falling behind while playing is decode starvation, and asking
+      // a starving decoder for a higher rate deepens the hole. The timeline
+      // slows to meet it instead (see the pacing clock).
+      const trimUpCap = drift < -PLAYBACK_HARD_SEEK_SEC ? 0 : trimCap;
+      const trim = Math.min(trimUpCap, Math.max(-trimCap, -drift * 0.5));
+      const rate = Math.min(4, Math.max(PLAYBACK_RATE_MIN, base * (1 + trim)));
+      if (Math.abs(v.playbackRate - rate) > 0.005) v.playbackRate = rate;
+      // NEVER play() an ENDED element: play-on-ended rewinds to 0, the drift
+      // check then yanked it back near the end — a mid-GOP seek storm during
+      // the final frames of every loop pass. An ended element simply holds
+      // its last frame, which is exactly what the tail of the layer shows.
+      if (v.paused && !v.ended && !v.seeking) void v.play().catch(() => undefined);
     }
+    this.recordDiag(key, entry, drift, syncOnly);
+    if (syncOnly) return !v.seeking;
+    // Mid-seek the element still presents the PRE-seek picture; uploading it
+    // showed stale end-of-clip pixels for several comp frames at every loop
+    // restart (and those wrong pixels then got cached as rendered frames).
+    // Keep the previous texture; `seeked` fires onChange and repaints.
+    if (v.seeking) return false;
     this.uploadVideoTexture(entry, key, fields, bucket);
+    return true;
+  }
+
+  /** Update this key's live diagnostics sample (mutated in place — one small
+   *  object per element for the whole session, no per-frame allocation). */
+  private recordDiag(key: string, entry: VideoEntry, driftSec: number, syncOnly = false): void {
+    const v = entry.video;
+    const q = (v as HTMLVideoElement & {
+      getVideoPlaybackQuality?: () => { droppedVideoFrames: number; totalVideoFrames: number };
+    }).getVideoPlaybackQuality?.();
+    let s = videoDiag.samples.get(key);
+    if (!s) {
+      s = {
+        key, src: entry.src, readyState: 0, seeking: false, ended: false,
+        driftMs: 0, playbackRate: 1, droppedFrames: 0, totalFrames: 0, syncOnly: false, updatedAt: 0,
+      };
+      videoDiag.samples.set(key, s);
+    }
+    s.syncOnly = syncOnly;
+    s.src = entry.src;
+    s.readyState = v.readyState;
+    s.seeking = v.seeking;
+    s.ended = v.ended;
+    s.driftMs = Math.round(driftSec * 1000);
+    s.playbackRate = v.playbackRate;
+    if (q) {
+      s.droppedFrames = q.droppedVideoFrames;
+      s.totalFrames = q.totalVideoFrames;
+    }
+    s.updatedAt = performance.now();
   }
 
   /** Create/resize the GPU texture and upload the element's current frame. */
@@ -1230,6 +1614,11 @@ export class AppTextureProvider implements TextureProvider {
       bw = Math.max(1, Math.round(bw * scale));
       bh = Math.max(1, Math.round(bh * scale));
     }
+    // Same decoded frame, same treatment, texture already live → nothing to
+    // upload. A parked playhead otherwise re-uploaded the full frame on every
+    // repaint (onChange storms, UI paints) — ~33MB per pass on 4K footage.
+    const sig = `${v.currentTime}:${bw}x${bh}:f${fields ?? ''}`;
+    if (entry.texture !== null && entry.lastUploadSig === sig && !v.seeking) return;
     const poolKey = `vid:${key}:${bw}x${bh}`;
     if (entry.texture === null || entry.w !== bw || entry.h !== bh) {
       if (entry.texture && entry.poolKey) this.resources.freeTexture(entry.poolKey);
@@ -1246,21 +1635,30 @@ export class AppTextureProvider implements TextureProvider {
       const clean = deinterlaceInto(this.fieldsWork, v, w, h, fields);
       if (clean) {
         this.resources.writeTexture(entry.texture, { type: 'canvas', canvas: clean });
+        entry.lastUploadSig = sig;
         return;
       }
     }
     if (bw !== w || bh !== h) {
-      const canvas = this.ensureCanvas('work', bw, bh);
+      let canvas = entry.bucketCanvas;
+      if (!canvas) {
+        canvas = document.createElement('canvas');
+        entry.bucketCanvas = canvas;
+      }
+      if (canvas.width !== bw) canvas.width = bw;
+      if (canvas.height !== bh) canvas.height = bh;
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(v, 0, 0, bw, bh);
         this.resources.writeTexture(entry.texture, { type: 'canvas', canvas });
+        entry.lastUploadSig = sig;
         return;
       }
     }
     this.resources.writeTexture(entry.texture, { type: 'video', video: v });
+    entry.lastUploadSig = sig;
   }
 
   /**
@@ -1271,10 +1669,11 @@ export class AppTextureProvider implements TextureProvider {
    * playback pays per unique frame only when styles need the bake.
    */
   setVideoBaked(key: string, src: string, timeSec: number, bake: ImageBakeSpec, fields?: FieldOrder): void {
-    // Ensure the element is seeked via the normal path (creates entry, seeks).
-    // Fields is NOT forwarded: the raw element upload is only the placeholder
-    // this bake replaces, and the deinterlace happens below, before effects.
-    this.setVideo(key, src, timeSec);
+    // Ensure the element is seeked via the normal path (creates entry, seeks)
+    // WITHOUT the raw upload: frame entries shadow video entries in get(), so
+    // a full-res upload here was paid on every baked frame and never sampled.
+    // The fallback upload happens explicitly in the catch below.
+    this.setVideo(key, src, timeSec, undefined, /* upload */ false);
     const entry = this.videoEntries.get(key);
     if (!entry || entry.video.readyState < HAVE_CURRENT_DATA || !entry.hasSeeked) return;
     const v = entry.video;
@@ -1345,7 +1744,9 @@ export class AppTextureProvider implements TextureProvider {
       oc.globalCompositeOperation = 'source-over';
       this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${w}x${h}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}:f${fields ?? ''}`);
     } catch {
-      /* leave the raw video upload from setVideo in place */
+      // Bake failed — fall back to the raw element frame so the layer still
+      // shows pixels (the bake path skipped the normal upload).
+      this.uploadVideoTexture(entry, key, fields);
     }
   }
 
@@ -1536,10 +1937,36 @@ export class AppTextureProvider implements TextureProvider {
     for (const key of this.textEntries.keys()) {
       if (!activeKeys.has(key)) this.textEntries.delete(key);
     }
+    // ── VIDEO entries get the same grace, for the same reason. Releasing on
+    // the first off-time frame meant a clip ending mid-loop rebuilt its
+    // element — reload, re-decode, placeholder frames — on every loop pass.
+    // Parking keeps the element (paused, decoder warm) and frees only the GPU
+    // texture; a bounded LRU still reclaims genuinely removed layers.
     for (const [key, entry] of [...this.videoEntries]) {
       if (activeKeys.has(key)) continue;
-      this.releaseVideoEntry(entry);
       this.videoEntries.delete(key);
+      // typeof-guarded: test stubs are plain objects without element methods.
+      if (typeof entry.video.pause === 'function') entry.video.pause();
+      entry.video.playbackRate = 1;
+      entry.lastPlaybackTime = undefined;
+      entry.lastPlaybackWallMs = undefined;
+      entry.rateEma = undefined;
+      if (entry.texture && entry.poolKey) {
+        this.resources.freeTexture(entry.poolKey);
+        entry.texture = null;
+        entry.poolKey = undefined;
+        entry.lastUploadSig = undefined;
+      }
+      this.parkedVideos.delete(key);
+      this.parkedVideos.set(key, entry);
+    }
+    const videoCeiling = opts.releaseParked ? 0 : MAX_PARKED_VIDEOS;
+    while (this.parkedVideos.size > videoCeiling) {
+      const oldest = this.parkedVideos.keys().next();
+      if (oldest.done) break;
+      const entry = this.parkedVideos.get(oldest.value)!;
+      this.parkedVideos.delete(oldest.value);
+      this.releaseVideoEntry(entry);
     }
     for (const key of this.pathEntries.keys()) {
       if (!activeKeys.has(key)) this.pathEntries.delete(key);
@@ -1758,7 +2185,12 @@ export class AppTextureProvider implements TextureProvider {
           bitmap = await this.loader(src, fillColor, entry.premultipliedFile);
         }
       } catch {
-        return; // broken source — leave the placeholder in place
+        // Broken source — AE-style colour bars + mark offline for export refuse.
+        if (this.entries.get(key) === entry) {
+          this.installOfflineBars(entry, src);
+          this.onChange?.();
+        }
+        return;
       }
       // A newer setImage for this key (different src) supersedes this decode.
       if (this.entries.get(key) !== entry) return;
@@ -1902,6 +2334,12 @@ export class AppTextureProvider implements TextureProvider {
    *
    * Transparent BLACK, not transparent white: this pipeline is premultiplied, so
    * zero coverage means all four channels zero.
+   *
+   * ── Offline (decode failed) is different ───────────────────────────────────
+   *
+   * A failed decode is permanent for this src. That path calls
+   * {@link installOfflineBars} so the layer shows colour bars (AE Media Offline)
+   * instead of staying transparent forever.
    */
   private placeholder(): ResolvedTexture {
     const texture = this.resources.texture(
@@ -1918,6 +2356,50 @@ export class AppTextureProvider implements TextureProvider {
     // reads this field today. Reporting `true` would make the flag a lie the
     // moment something starts to.
     return { texture, sampler: this.sampler(), ready: false };
+  }
+
+  /** Shared colour-bars GPU texture (pinned). Uploaded once. */
+  private offlineBarsTexture(): TextureHandle {
+    const texture = this.resources.texture(
+      'texture:offline-bars',
+      {
+        label: 'offline-bars',
+        width: OFFLINE_BARS_W,
+        height: OFFLINE_BARS_H,
+        format: 'rgba8unorm',
+      },
+      true,
+    );
+    if (!this.hasInitOfflineBars) {
+      this.resources.writeTexture(texture, {
+        type: 'buffer',
+        data: offlineBarsRgba(),
+        width: OFFLINE_BARS_W,
+        height: OFFLINE_BARS_H,
+      });
+      this.hasInitOfflineBars = true;
+    }
+    return texture;
+  }
+
+  /** Point an image entry at colour bars and flag it for export refusal. */
+  private installOfflineBars(entry: ImageEntry, src: string): void {
+    entry.texture = this.offlineBarsTexture();
+    entry.width = OFFLINE_BARS_W;
+    entry.height = OFFLINE_BARS_H;
+    entry.ready = true;
+    entry.offline = true;
+    entry.offlineSrc = src;
+    entry.bitmap = null;
+    entry.unbaked = null;
+  }
+
+  /** Point a video entry at colour bars after the element errors. */
+  private installVideoOfflineBars(entry: VideoEntry): void {
+    entry.texture = this.offlineBarsTexture();
+    entry.w = OFFLINE_BARS_W;
+    entry.h = OFFLINE_BARS_H;
+    entry.offline = true;
   }
 
   private sampler(): SamplerHandle {

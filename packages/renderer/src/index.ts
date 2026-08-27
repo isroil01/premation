@@ -56,9 +56,12 @@ export {
 export {
   setActiveColorPipeline,
   getActiveColorPipeline,
+  setActiveViewerLut,
+  getActiveViewerLut,
   DEFAULT_COLOR_PIPELINE,
   intermediateFloatFormat,
   type ColorPipelineConfig,
+  type ViewerLutMeta,
   type WorkingSpace,
   type DisplayTransform,
   type IntermediateBitDepth,

@@ -365,6 +365,19 @@ const STATIC: Record<string, MetaSpec> = {
   metal: { ...PCT('Metal', 'material', ORDER.material), defaultValue: 0 },
   lightTransmission: { ...PCT('Light Transmission', 'material', ORDER.material), defaultValue: 0 },
   roughness: { ...PCT('Roughness', 'material', ORDER.material), defaultValue: 50 },
+  // Hold tracks: 0/1 for Accepts Lights; 0=Off, 1=On, 2=Only for shadow switches.
+  acceptsLights: {
+    label: 'Accepts Lights', group: 'material', type: 'boolean', unit: '',
+    min: 0, max: 1, step: 1, precision: 0, defaultValue: 0, resettable: true, order: ORDER.material,
+  },
+  castsShadows: {
+    label: 'Casts Shadows', group: 'material', type: 'enum', unit: '',
+    min: 0, max: 2, step: 1, precision: 0, defaultValue: 1, resettable: true, order: ORDER.material,
+  },
+  acceptsShadows: {
+    label: 'Accepts Shadows', group: 'material', type: 'enum', unit: '',
+    min: 0, max: 2, step: 1, precision: 0, defaultValue: 1, resettable: true, order: ORDER.material,
+  },
 
   // Audio Levels, in decibels — the one audio property that keyframes today
   // (`audioParams.ts` samples it per frame and schedules the gain ramp).

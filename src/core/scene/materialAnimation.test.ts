@@ -18,13 +18,22 @@ it('reads the stored values with no animation map', () => {
   expect([m.ambient, m.diffuse, m.specular, m.shininess]).toEqual([100, 50, 20, 32]);
 });
 
-it('overrides exactly the options that have a track, leaving switches static', () => {
-  const av = new Map<string, number>([['ambient', 30], ['specular', 90], ['castsShadows', 1]]);
+it('overrides exactly the options that have a track, including switch holds', () => {
+  const av = new Map<string, number>([['ambient', 30], ['specular', 90], ['castsShadows', 1], ['acceptsLights', 1]]);
   const m = readNodeMaterial(node(), av);
   expect(m.ambient).toBe(30);
   expect(m.specular).toBe(90);
   expect(m.diffuse).toBe(50);        // no track → stored
-  expect(m.castsShadows).toBe(false); // switches are never driven by a number track
+  expect(m.castsShadows).toBe(true); // hold 1 beats stored false
+  expect(m.castsShadowsMode).toBe('on');
+  expect(m.acceptsLights).toBe(true);
+});
+
+it('decodes shadow switch holds 0 / 1 / 2 as off / on / only', () => {
+  expect(readNodeMaterial(node(), new Map([['castsShadows', 0]])).castsShadowsMode).toBe('off');
+  expect(readNodeMaterial(node(), new Map([['castsShadows', 1]])).castsShadowsMode).toBe('on');
+  expect(readNodeMaterial(node(), new Map([['castsShadows', 2]])).castsShadowsMode).toBe('only');
+  expect(readNodeMaterial(node(), new Map([['acceptsShadows', 2]])).acceptsShadowsMode).toBe('only');
 });
 
 it('clamps an animated value like a stored one', () => {

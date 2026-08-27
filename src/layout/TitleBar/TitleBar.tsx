@@ -3,8 +3,10 @@ import { useLocation } from 'react-router-dom';
 import { Icon } from '@components/Icon';
 import { Logo } from '@components/Logo';
 import { AppMenuBar } from '@layout/Menu';
-import { ProjectStatus } from '@layout/ProjectStatus/ProjectStatus';
 import { IconButton } from '@components/IconButton';
+import { Dropdown } from '@components/Dropdown';
+import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
+import { buildWorkspaceItems } from '@layout/Workspace/workspaceMenuItems';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -55,8 +57,6 @@ export function TitleBar(): JSX.Element | null {
           </>
         )}
       </div>
-      {/* The indicator this bar has always had styles for and never rendered. */}
-      {isEditor && <ProjectStatus />}
       <div className={styles.right}>
         {isEditor && (
           <div className={styles.editorControls}>
@@ -89,6 +89,30 @@ export function TitleBar(): JSX.Element | null {
               onClick={() => useLayoutStore.getState().toggleRegion('rightInspector')}
             >
               <Icon name="panel-right" size="md" />
+            </IconButton>
+            <span className={styles.menuDivider} aria-hidden />
+            <Dropdown
+              placement="bottom-end"
+              trigger={
+                <IconButton
+                  aria-label="Workspaces"
+                  size="sm"
+                  className={styles.layoutToggle}
+                  title="Workspaces & Layout Presets"
+                >
+                  <Icon name="layout" size="md" />
+                </IconButton>
+              }
+              items={buildWorkspaceItems()}
+            />
+            <IconButton
+              aria-label="Customize"
+              size="sm"
+              className={styles.layoutToggle}
+              title="Customize (Shortcuts, Workspaces, Appearance)"
+              onClick={() => openCustomizeDialog()}
+            >
+              <Icon name="settings" size="md" />
             </IconButton>
             <span className={styles.menuDivider} aria-hidden />
             <button

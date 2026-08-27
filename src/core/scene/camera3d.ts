@@ -297,6 +297,16 @@ export interface DofConfig {
    * never as a silent re-grade of work someone already approved.
    */
   fStop?: number;
+  /**
+   * Iris blade count for polygonal bokeh (AE's Iris Shape). Absent or below 3
+   * keeps the separable Gaussian so existing shots do not re-grade. 5–11 is
+   * the useful range.
+   */
+  irisBlades?: number;
+  /** 0 = sharp n-gon, 1 = circle. Only read when irisBlades ≥ 3. */
+  irisRoundness?: number;
+  /** Extra weight on bright taps (specular bloom in the bokeh). 0 = off. */
+  highlightGain?: number;
 }
 
 /**
@@ -331,10 +341,12 @@ export interface DofConfig {
  * `strength` stays the cap in both models (AE's Blur Level), so a physical
  * camera cannot melt a frame by accident.
  *
- * NOTE: still ONE value per layer — a layer spanning depth gets one uniform
- * blur, and there is no bokeh iris, because the per-pixel pass those need is
- * blocked on both backends (WebGL2 keeps depth in a RENDERBUFFER; WebGPU's
- * depth texture is created without `TEXTURE_BINDING`). Correct maths first.
+ * NOTE: a layer spanning depth is split into CoC tiles (`dofStrips`) so the
+ * blur radius can vary across the quad. Polygonal bokeh (iris blades) is an
+ * opt-in on the GPU blur pass — absent blades keep the Gaussian, so existing
+ * shots do not re-grade. A true sampleable depth-buffer gather remains a
+ * renderer-target change (WebGL2 depth is a renderbuffer; WebGPU depth is
+ * created without TEXTURE_BINDING).
  */
 export function dofBlurPx(depth: number, dof: DofConfig): number {
   if (dof.fStop === undefined) {
@@ -356,6 +368,21 @@ export function dofBlurPx(depth: number, dof: DofConfig): number {
   const coc = (A * f * Math.abs(depth - S)) / (depth * (S - f));
   if (!Number.isFinite(coc)) return dof.strength;
   return Math.min(dof.strength, coc);
+}
+
+/** GPU bokeh extras — empty when the camera has no iris, so Gaussian DOF stays. */
+export function dofIrisParams(dof: DofConfig): {
+  blades?: number;
+  roundness?: number;
+  highlightGain?: number;
+} {
+  const blades = dof.irisBlades;
+  if (blades === undefined || blades < 3) return {};
+  return {
+    blades: Math.max(3, Math.min(11, Math.round(blades))),
+    roundness: Math.max(0, Math.min(1, dof.irisRoundness ?? 0.65)),
+    highlightGain: Math.max(0, dof.highlightGain ?? 0),
+  };
 }
 
 /**
@@ -417,6 +444,9 @@ export function readSceneDof(
     let focal: number | undefined;
     let aperture: number | undefined;
     let fStop: number | undefined;
+    let irisBlades: number | undefined;
+    let irisRoundness: number | undefined;
+    let highlightGain: number | undefined;
     for (const c of node.components) {
       const p = c.props as Record<string, unknown>;
       strength = num(p.dofStrength) ?? strength;
@@ -424,11 +454,17 @@ export function readSceneDof(
       focal = num(p.focalLength) ?? focal;
       aperture = num(p.dofAperture) ?? aperture;
       fStop = num(p.fStop) ?? fStop;
+      irisBlades = num(p.irisBlades) ?? irisBlades;
+      irisRoundness = num(p.irisRoundness) ?? irisRoundness;
+      highlightGain = num(p.highlightGain) ?? highlightGain;
     }
     strength = sample?.(node.id, 'dofStrength') ?? strength;
     focus = sample?.(node.id, 'focusDistance') ?? focus;
     aperture = sample?.(node.id, 'dofAperture') ?? aperture;
     fStop = sample?.(node.id, 'fStop') ?? fStop;
+    irisBlades = sample?.(node.id, 'irisBlades') ?? irisBlades;
+    irisRoundness = sample?.(node.id, 'irisRoundness') ?? irisRoundness;
+    highlightGain = sample?.(node.id, 'highlightGain') ?? highlightGain;
     if (!strength || strength <= 0) return null;
     const lens = focal ?? Project3D.defaultCamera(width, height).focalLength;
     return {
@@ -441,6 +477,9 @@ export function readSceneDof(
       // the physical model on presence, so defaulting it here — to anything at
       // all — would silently re-grade every existing project's defocus.
       ...(fStop !== undefined && fStop > 0 ? { fStop } : {}),
+      ...(irisBlades !== undefined && irisBlades >= 3 ? { irisBlades } : {}),
+      ...(irisRoundness !== undefined ? { irisRoundness } : {}),
+      ...(highlightGain !== undefined && highlightGain > 0 ? { highlightGain } : {}),
     };
   }
   return null;

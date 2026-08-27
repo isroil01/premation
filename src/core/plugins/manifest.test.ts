@@ -16,7 +16,7 @@
  *     know either spelling ever existed.
  */
 
-import { parseManifest, describeContributions, activatesOnStartup, HOST_API_VERSION } from './manifest';
+import { parseManifest, describeContributions, activatesOnStartup, MANIFEST_VERSION } from './manifest';
 import corpus from './__fixtures__/manifests.json';
 
 interface Case {
@@ -63,7 +63,7 @@ describe('normalisation', () => {
     // nowhere" are different things, and the second is refused rather than
     // normalised into the first.
     expect(manifest?.contributes).toEqual({
-      commands: [], panels: [], layerKinds: [], effects: [], net: null,
+      commands: [], panels: [], layerKinds: [], effects: [], exporters: [], importers: [], presets: [], net: null,
     });
   });
 
@@ -102,9 +102,11 @@ describe('normalisation', () => {
     expect(activatesOnStartup(manifest!)).toBe(false);
   });
 
-  it('accepts the current host API version and refuses the next one', () => {
-    expect(parseManifest({ ...base, apiVersion: HOST_API_VERSION }).manifest).not.toBeNull();
-    expect(parseManifest({ ...base, apiVersion: HOST_API_VERSION + 1 }).manifest).toBeNull();
+  it('accepts the current manifest GRAMMAR and refuses the next one', () => {
+    // `apiVersion` is the grammar, so this is MANIFEST_VERSION's boundary, not
+    // the host method surface's. They were equal until `contributes.exporters`.
+    expect(parseManifest({ ...base, apiVersion: MANIFEST_VERSION }).manifest).not.toBeNull();
+    expect(parseManifest({ ...base, apiVersion: MANIFEST_VERSION + 1 }).manifest).toBeNull();
   });
 
   it('keeps declaration order for commands, so the menu is the author s order', () => {
