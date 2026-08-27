@@ -518,8 +518,17 @@ function EditorShellInner(): JSX.Element {
 
         result.push(track);
 
-        if (kind === 'group' && expandedIds.includes(node.id)) {
-          traverse(node.id, depth + 1);
+        if (kind === 'group') {
+          if (expandedIds.includes(node.id)) traverse(node.id, depth + 1);
+        } else {
+          // Parented layers: `parent` IS the tree in this graph, so a rect
+          // parented to a null lives UNDER it — but it is still an ordinary
+          // layer and keeps its own row (After Effects' rule; the Parent &
+          // Link column shows the relationship). Recursing only into expanded
+          // GROUPS made a freshly parented layer vanish from the timeline —
+          // row, keyframes and duration bar — while the viewport kept
+          // rendering it. Same depth on purpose: AE's stack is flat.
+          traverse(node.id, depth);
         }
       }
     };

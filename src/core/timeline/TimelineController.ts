@@ -1073,8 +1073,23 @@ export class TimelineController {
     const track = timeline.getTrack(trackId);
     if (!track) return;
 
-    // Only sync immediate children of the target composition group/root!
-    const nodes = defaultSceneGraph.getChildren(targetCompId);
+    // Every layer of the composition, walked THROUGH parented layers: in this
+    // graph `parent` IS the tree, so parenting a rect to a null physically
+    // nests it — and mirroring only the root's immediate children DELETED the
+    // rect's timeline clip the moment it was parented (row, keyframes and
+    // duration bar all vanished while the viewport kept rendering it — the
+    // renderer flattens the whole subtree). After Effects' rule: a layer
+    // keeps its place in the stack no matter who its parent is. GROUPS remain
+    // the one collapse mechanism — their members are not independent clips,
+    // so the walk does not descend into them.
+    const nodes: SceneNode[] = [];
+    const collect = (parentId: string): void => {
+      for (const n of defaultSceneGraph.getChildren(parentId)) {
+        nodes.push(n);
+        if (readNodeKind(n) !== 'group') collect(n.id as string);
+      }
+    };
+    collect(targetCompId);
     const wantIds = new Set(nodes.map((n) => n.id as string));
     // A node may back MULTIPLE clips (after a split), so group by sourceId.
     const bySource = new Map<string, Layer[]>();
