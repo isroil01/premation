@@ -258,3 +258,78 @@
   color: #ffffff !important;
 }
 
+
+/*
+ * The pending-update button. Filled primary, because the whole reason it
+ * replaced a toast is that the toast was not visible enough.
+ *
+ * `.exportBtn` is also primary-filled, so this deliberately differs in two
+ * ways that survive a glance: it carries a glyph, and it wears a soft
+ * attention ring that Export does not. It also sits at the opposite end of the
+ * right-hand cluster, so the two are never adjacent.
+ */
+.updateBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 11px;
+  margin-right: 8px;
+  border-radius: var(--radius-md);
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border: 1px solid transparent;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  /* The ring is what makes it read as NEW rather than as a second Export. */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25),
+              0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
+  -webkit-app-region: no-drag;
+}
+
+.updateBtn:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--color-primary) 45%, transparent),
+              0 0 0 3px color-mix(in srgb, var(--color-primary) 30%, transparent);
+  transform: translateY(-0.5px);
+}
+
+.updateBtn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.updateBtn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+/*
+ * A slow breath on the ring, so the button is findable in peripheral vision
+ * without ever being the thing you are looking at. 2.4s and a 22%..38% swing:
+ * fast or wide enough to nag would be the toast's problem in a new place.
+ *
+ * Dropped entirely under `prefers-reduced-motion` — the button is already the
+ * loudest thing in the bar without it.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .updateBtn:not(:disabled) {
+    animation: updatePulse 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes updatePulse {
+  0%, 100% {
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25),
+                0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
+  }
+  50% {
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25),
+                0 0 0 5px color-mix(in srgb, var(--color-primary) 38%, transparent);
+  }
+}

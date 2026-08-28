@@ -11,6 +11,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { usePresentationStore } from '@stores/presentationStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { openExportDialog } from '@layout/Export/ExportDialog';
+import { UpdateButton } from './UpdateButton';
 import styles from './TitleBar.module.css';
 
 export function TitleBar(): JSX.Element | null {
@@ -58,6 +59,10 @@ export function TitleBar(): JSX.Element | null {
         )}
       </div>
       <div className={styles.right}>
+        {/* First in the cluster, and far from Export: a pending update is the
+            one thing here the user has not already gone looking for. Renders
+            nothing when nothing is pending, which is almost always. */}
+        <UpdateButton />
         {isEditor && (
           <div className={styles.editorControls}>
             <IconButton

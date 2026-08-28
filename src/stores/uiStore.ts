@@ -87,8 +87,14 @@ export interface Notification {
    * One optional inline action.
    *
    * For the small class of notice that a user should be able to ACT on without
-   * hunting for where — "Update ready ▸ Restart now" being the reason this
-   * exists. A modal would interrupt; a toast with no action is a dead end.
+   * hunting for where. A modal would interrupt; a toast with no action is a
+   * dead end.
+   *
+   * "Update ready ▸ Restart now" was the case this was built for and is no
+   * longer one of them: a pending update outlives any toast, and a notice the
+   * user can dismiss while the fact stays true is a notice that lies. It is a
+   * persistent title-bar button now (`UpdateButton`). What belongs here is the
+   * genuinely transient — something that HAPPENED and has a follow-up.
    *
    * One action, not a list: a toast with a row of buttons is a dialog wearing a
    * disguise, and the whole point is not to block.

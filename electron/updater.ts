@@ -22,8 +22,11 @@
  *  • Applies the update on quit — the moment nothing is in progress and no
  *    unsaved work is at stake, because the app's own close handlers have
  *    already run by then.
- *  • Tells the RENDERER what is happening, so the notice is a dismissible toast
- *    with a Restart button rather than a modal that blocks the app.
+ *  • Tells the RENDERER what is happening, so the notice is a persistent
+ *    "Restart to update" button in the title bar rather than a modal that
+ *    blocks the app. It was a dismissible toast first, and users reported not
+ *    seeing it — a pending update outlives any transient, so it is now drawn as
+ *    the standing fact it is (`src/core/update/updateStore.ts`).
  *
  * ── What stayed ──────────────────────────────────────────────────────────────
  *  • Failures are logged, never shown, unless the user asked the question via
