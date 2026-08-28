@@ -14,20 +14,27 @@
 
 import type { RenderLayer, Subpath, SubpathPaint } from '../RenderBackend';
 import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
-import type { Stroke } from '@core/paint/stroke';
+import type { Stroke, StrokeCap } from '@core/paint/stroke';
 import type { Pt } from '@core/scene/trimPath';
 import { layerSubpaths, hasPathGeometry } from './subpaths';
-import { flattenOutline } from '@core/scene/mergePaths';
-import { offsetAlongNormals, closedRibbon } from '@motion/scene';
+import { flattenOutline, ADAPTIVE } from '@core/scene/mergePaths';
+import { offsetAlongNormals, closedRibbon, type OffsetSides } from '@motion/scene';
 import {
   taperWidthFactorAt, waveOffsetAt, isIdentityTaper, isIdentityWave,
   type StrokeWave,
 } from '@core/scene/strokeProfile';
 
-/** Bezier samples per segment when flattening for a profiled stroke. Matches
- *  the boolean-ops default; a tapered edge is a fill boundary, so it wants the
- *  same smoothness the outline ops already settled on. */
-const TAPER_FLATTEN_PER_SEG = 8;
+/**
+ * Bezier sampling for a profiled stroke: ADAPTIVE, sized per segment.
+ *
+ * It used to be a flat 8 — "the boolean-ops default", on the reasoning that a
+ * tapered edge is a fill boundary and wants the same smoothness. That reasoning
+ * held for the operands of a boolean (whole shapes, comparable sizes) and not
+ * here: eight samples is plenty across a 20px curve and is a visible chain of
+ * facets across a 400px one. A tapered stroke is the polyline, so its facets
+ * are the picture — which is what "path with taper looks choppy" was.
+ */
+const TAPER_FLATTEN_PER_SEG = ADAPTIVE;
 
 /**
  * Bezier samples per segment when a WAVE is active.
@@ -498,7 +505,7 @@ export function shapePath(ctx: CanvasRenderingContext2D, layer: RenderLayer): vo
     ctx.beginPath();
     for (const run of layerSubpaths(layer)) traceRun(ctx, run);
   } else {
-    roundRect(ctx, -w / 2, -h / 2, w, h, layer.cornerRadii ?? layer.cornerRadius ?? 0);
+    roundRect(ctx, -w / 2, -h / 2, w, h, layer.cornerRadii ?? layer.cornerRadius ?? 0, layer.cornerRadiusScale);
   }
 }
 
@@ -690,6 +697,80 @@ function subPolyline(
   return { pts: out, at };
 }
 
+/** Samples across a round cap's half-circle. 16 is smooth at any stroke width
+ *  a cap is visible at, and a cap is a handful of points next to the ribbon. */
+const CAP_ARC_STEPS = 16;
+
+/**
+ * The points that carry a ribbon's outline AROUND one end, honouring the cap.
+ *
+ * A filled ribbon has no `lineCap` to set: the outline simply stops, so the end
+ * is a butt whatever the Stroke says. That is the bug behind "cap was flat
+ * although in properties it was round" — the profiled path silently dropped a
+ * property the plain path honours.
+ *
+ * `leaving` is the side point the walk arrives at, `arriving` the one it
+ * continues from; `outward` is the unit tangent pointing OUT of the path at
+ * this end. The returned points sit strictly between the two, so the caller
+ * concatenates without duplicating either.
+ */
+function capPoints(
+  centre: Pt,
+  leaving: Pt,
+  arriving: Pt,
+  outward: Pt,
+  cap: StrokeCap,
+): Pt[] {
+  const r = Math.hypot(leaving.x - centre.x, leaving.y - centre.y);
+  if (!(r > 0)) return [];
+  if (cap === 'square') {
+    return [
+      { x: leaving.x + outward.x * r, y: leaving.y + outward.y * r },
+      { x: arriving.x + outward.x * r, y: arriving.y + outward.y * r },
+    ];
+  }
+  // Round: half a circle about the end vertex. Both ends sweep by DECREASING
+  // angle — `offsetAlongNormals` puts `left` at +90° from the direction of
+  // travel, so leaving→outward→arriving is −90° then −90° at either end.
+  const a0 = Math.atan2(leaving.y - centre.y, leaving.x - centre.x);
+  const out: Pt[] = [];
+  for (let s = 1; s < CAP_ARC_STEPS; s++) {
+    const a = a0 - (Math.PI * s) / CAP_ARC_STEPS;
+    out.push({ x: centre.x + Math.cos(a) * r, y: centre.y + Math.sin(a) * r });
+  }
+  return out;
+}
+
+/** Unit vector a → b, or null when they coincide. */
+function unitFrom(a: Pt, b: Pt): Pt | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  return len > 0 ? { x: dx / len, y: dy / len } : null;
+}
+
+/**
+ * The ribbon's closed outline with `cap` applied at both free ends.
+ *
+ * Falls back to the plain ribbon for a butt cap (byte-identical to the old
+ * walk) and for degenerate input.
+ */
+function cappedRibbon(pts: readonly Pt[], sides: OffsetSides, cap: StrokeCap): Pt[] {
+  const n = sides.left.length;
+  if (cap === 'butt' || n < 2) return closedRibbon(sides);
+  const last = n - 1;
+  const outFar = unitFrom(pts[last - 1]!, pts[last]!);
+  const outNear = unitFrom(pts[1]!, pts[0]!);
+  if (!outFar || !outNear) return closedRibbon(sides);
+  const right = [...sides.right].reverse();
+  return [
+    ...sides.left,
+    ...capPoints(pts[last]!, sides.left[last]!, sides.right[last]!, outFar, cap),
+    ...right,
+    ...capPoints(pts[0]!, sides.right[0]!, sides.left[0]!, outNear, cap),
+  ];
+}
+
 export function strokeShapeProfiled(
   ctx: CanvasRenderingContext2D,
   stroke: Stroke,
@@ -709,6 +790,29 @@ export function strokeShapeProfiled(
 
   ctx.save();
   ctx.globalAlpha *= Math.max(0, Math.min(1, stroke.opacity));
+  /*
+   * ALIGNMENT, by the same clip `strokeShape` uses.
+   *
+   * This was the second property the profiled path silently dropped (the first
+   * was `cap`): a tapered stroke set to Inside or Outside drew centred, so
+   * switching Taper on moved a stroke that the panel said had not changed.
+   *
+   * The trick transfers unchanged — clip to (or out of) the fill and build the
+   * ribbon at DOUBLE width, so exactly the wanted half survives. Doubling the
+   * width scales the whole taper profile with it, which is what keeps the
+   * clipped half the profile the user authored rather than a flattened one.
+   */
+  const aligned = stroke.align !== 'center';
+  if (aligned) {
+    shapePath(ctx, layer);
+    if (stroke.align === 'inside') {
+      ctx.clip();
+    } else {
+      ctx.rect(-1e5, -1e5, 2e5, 2e5);
+      ctx.clip('evenodd');
+    }
+  }
+  const effectiveWidth = aligned ? stroke.width * 2 : stroke.width;
   // The ribbon is FILLED, so the stroke's paint becomes a fill style. A gradient
   // stroke gets easier here rather than harder: a filled outline takes a fill
   // gradient directly, instead of Canvas2D's stroke-gradient special case.
@@ -726,7 +830,14 @@ export function strokeShapeProfiled(
     // first golden came out faceted. Raise the bezier sampling instead, then
     // densify as a backstop for long straight runs.
     const perSeg = isIdentityWave(wave) ? TAPER_FLATTEN_PER_SEG : WAVE_FLATTEN_PER_SEG;
-    const poly = densifyForWave(flattenOutline(run.points, perSeg, open), wave);
+    const flat = flattenOutline(run.points, perSeg, open);
+    // A CLOSED run's flattening stops just before it reaches the first anchor
+    // again — the ring is one chord short, and the ribbon built from it opened a
+    // wedge at the seam. Closing it here (before densifying, so the closing
+    // chord is sampled like every other) is what makes a tapered closed shape
+    // meet itself.
+    if (!open && flat.length > 1) flat.push({ x: flat[0]!.x, y: flat[0]!.y });
+    const poly = densifyForWave(flat, wave);
     if (poly.length < 2) continue;
 
     // Cumulative arc length. Taper is a FRACTION of it; wave is measured in the
@@ -746,29 +857,33 @@ export function strokeShapeProfiled(
     // taper runs across the whole stroke and the dashes sample it, rather than
     // each dash tapering to itself. That is AE's behaviour and the only reading
     // under which "dash" and "taper" compose rather than fight.
-    const spans = stroke.dash.length > 0
+    const dashed = stroke.dash.length > 0;
+    const spans = dashed
       ? dashSpans(total, stroke.dash, stroke.dashOffset ?? 0)
       : [[0, total] as const];
+    // A closed run drawn whole has no ends to cap; every other piece does — a
+    // dash cuts real ends even out of a closed outline, which is what Canvas2D
+    // caps too.
+    const spanCap: StrokeCap = open || dashed ? stroke.cap : 'butt';
 
     const halfWidthAt = (i: number): number => {
       const factor = taper ? taperWidthFactorAt(taper, arc[i]! / total) : 1;
-      return (stroke.width * factor) / 2;
+      return (effectiveWidth * factor) / 2;
     };
 
     for (const [s0, s1] of spans) {
       const piece = subPolyline(centre, arc, s0, s1);
       if (piece.pts.length < 2) continue;
-      const ring = closedRibbon(
-        offsetAlongNormals(piece.pts, (i) => {
-          // `at` maps a piece vertex back onto the WHOLE path's arc, so the
-          // width comes from where the dash SITS, not from its own extent.
-          const a = piece.at[i]!;
-          const lo = Math.max(0, Math.min(arc.length - 1, Math.floor(a)));
-          const hi = Math.max(0, Math.min(arc.length - 1, Math.ceil(a)));
-          const f = a - lo;
-          return halfWidthAt(lo) * (1 - f) + halfWidthAt(hi) * f;
-        }),
-      );
+      const sides = offsetAlongNormals(piece.pts, (i) => {
+        // `at` maps a piece vertex back onto the WHOLE path's arc, so the
+        // width comes from where the dash SITS, not from its own extent.
+        const a = piece.at[i]!;
+        const lo = Math.max(0, Math.min(arc.length - 1, Math.floor(a)));
+        const hi = Math.max(0, Math.min(arc.length - 1, Math.ceil(a)));
+        const f = a - lo;
+        return halfWidthAt(lo) * (1 - f) + halfWidthAt(hi) * f;
+      });
+      const ring = cappedRibbon(piece.pts, sides, spanCap);
       if (ring.length < 3) continue;
       ctx.beginPath();
       ctx.moveTo(ring[0]!.x, ring[0]!.y);
@@ -782,6 +897,21 @@ export function strokeShapeProfiled(
   return drew;
 }
 
+/**
+ * Trace a rounded rectangle whose corners are the AUTHORED radius in
+ * COMPOSITION pixels, not in the layer's own stretched ones.
+ *
+ * `axisScale` is the |scaleX|,|scaleY| the compositor will draw this raster at
+ * (`RenderLayer.cornerRadiusScale`). Dividing by it makes the corner an ellipse
+ * HERE so that it comes out a circle THERE — which is the whole point: a
+ * "Corners: 50 px" field that reads 50 and draws 100 the moment the layer is
+ * scaled is a control that does not mean what it says, and under a non-uniform
+ * scale the corner stopped being round at all.
+ *
+ * Only the corners are compensated; the artwork still scales. The default
+ * [1, 1] is the identity path and still emits `arcTo`, so an unscaled layer's
+ * command stream is byte-identical to before this existed.
+ */
 export function roundRect(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -789,39 +919,61 @@ export function roundRect(
   w: number,
   h: number,
   r: number | readonly [number, number, number, number],
+  axisScale: readonly [number, number] = [1, 1],
 ): void {
   const raw = typeof r === 'number' ? [r, r, r, r] as const : r;
-  const scale = (a: number, b: number, limit: number): number => {
-    const sum = a + b;
+  // Comp px -> local px, per axis. A degenerate scale falls back to 1 rather
+  // than dividing by zero.
+  const kx = axisScale[0] > 1e-6 ? 1 / axisScale[0] : 1;
+  const ky = axisScale[1] > 1e-6 ? 1 / axisScale[1] : 1;
+  // The clamp is applied to the LOCAL extents, one axis at a time: with an
+  // anisotropic corner, "the two radii on this edge must fit it" is two
+  // different sums.
+  const scale = (a: number, b: number, k: number, limit: number): number => {
+    const sum = (a + b) * k;
     if (sum <= limit || sum <= 1e-6) return 1;
     return limit / sum;
   };
   let [tl, tr, br, bl] = raw.map((v) => Math.max(0, v)) as [number, number, number, number];
   const s = Math.min(
-    scale(tl, tr, w),
-    scale(tr, br, h),
-    scale(br, bl, w),
-    scale(bl, tl, h),
+    scale(tl, tr, kx, w),
+    scale(tr, br, ky, h),
+    scale(br, bl, kx, w),
+    scale(bl, tl, ky, h),
     1,
   );
   tl *= s; tr *= s; br *= s; bl *= s;
+  // Local half-axes per corner.
+  const ax = (v: number): number => v * kx;
+  const ay = (v: number): number => v * ky;
+  const visible = (v: number): boolean => ax(v) > 0.5 || ay(v) > 0.5;
   ctx.beginPath();
-  if (tl < 0.5 && tr < 0.5 && br < 0.5 && bl < 0.5) {
+  if (!visible(tl) && !visible(tr) && !visible(br) && !visible(bl)) {
     ctx.rect(x, y, w, h);
     return;
   }
-  ctx.moveTo(x + tl, y);
-  ctx.lineTo(x + w - tr, y);
-  if (tr > 0.5) ctx.arcTo(x + w, y, x + w, y + tr, tr);
+  const isotropic = Math.abs(kx - ky) < 1e-9;
+  /** One corner arc: `arcTo` while the corner is a circle, `ellipse` when not. */
+  const corner = (
+    v: number, cx: number, cy: number, a0: number,
+    cornerX: number, cornerY: number, toX: number, toY: number,
+  ): void => {
+    if (isotropic) ctx.arcTo(cornerX, cornerY, toX, toY, ax(v));
+    else ctx.ellipse(cx, cy, ax(v), ay(v), 0, a0, a0 + Math.PI / 2, false);
+  };
+  const HALF_PI = Math.PI / 2;
+  ctx.moveTo(x + ax(tl), y);
+  ctx.lineTo(x + w - ax(tr), y);
+  if (visible(tr)) corner(tr, x + w - ax(tr), y + ay(tr), -HALF_PI, x + w, y, x + w, y + ay(tr));
   else ctx.lineTo(x + w, y);
-  ctx.lineTo(x + w, y + h - br);
-  if (br > 0.5) ctx.arcTo(x + w, y + h, x + w - br, y + h, br);
+  ctx.lineTo(x + w, y + h - ay(br));
+  if (visible(br)) corner(br, x + w - ax(br), y + h - ay(br), 0, x + w, y + h, x + w - ax(br), y + h);
   else ctx.lineTo(x + w, y + h);
-  ctx.lineTo(x + bl, y + h);
-  if (bl > 0.5) ctx.arcTo(x, y + h, x, y + h - bl, bl);
+  ctx.lineTo(x + ax(bl), y + h);
+  if (visible(bl)) corner(bl, x + ax(bl), y + h - ay(bl), HALF_PI, x, y + h, x, y + h - ay(bl));
   else ctx.lineTo(x, y + h);
-  ctx.lineTo(x, y + tl);
-  if (tl > 0.5) ctx.arcTo(x, y, x + tl, y, tl);
+  ctx.lineTo(x, y + ay(tl));
+  if (visible(tl)) corner(tl, x + ax(tl), y + ay(tl), Math.PI, x, y, x + ax(tl), y);
   else ctx.lineTo(x, y);
   ctx.closePath();
 }

@@ -95,13 +95,30 @@ describe('advanceScrub', () => {
       expect(s.value).toBe(0);
     });
 
-    it('keeps travelling past a bound and comes back off it on reversal', () => {
+    /*
+     * A bound is a WALL, not a spring.
+     *
+     * This used to pin the opposite contract: travel spent past a bound stayed
+     * on the books and had to be paid back before the value moved again. On a
+     * field that STARTS at a bound — a corner radius at 0, an opacity at 100 —
+     * that reads as a control that simply does not respond to dragging, because
+     * the first half of the gesture only ever winds the debt up. Reported as
+     * "you cannot change the value by dragging it".
+     */
+    it('leaves a bound on the first pixel of travel back off it', () => {
       let s = beginScrub(90, none);
       s = advanceScrub(s, 30, 1, none, 0, 100);   // wants 120, pinned at 100
-      s = advanceScrub(s, -15, 1, none, 0, 100);  // wants 105, still pinned
       expect(s.value).toBe(100);
-      s = advanceScrub(s, -15, 1, none, 0, 100);  // wants 90 — released
-      expect(s.value).toBe(90);
+      s = advanceScrub(s, -15, 1, none, 0, 100);  // ...and straight back down
+      expect(s.value).toBe(85);
+    });
+
+    it('does not accumulate an unwind debt across many pixels past a bound', () => {
+      let s = beginScrub(0, none);
+      for (let i = 0; i < 40; i++) s = advanceScrub(s, -5, 1, none, 0, 100);
+      expect(s.value).toBe(0);
+      s = advanceScrub(s, 5, 1, none, 0, 100);
+      expect(s.value).toBe(5);
     });
   });
 });

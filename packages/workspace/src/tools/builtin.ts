@@ -371,7 +371,21 @@ export class SelectTool implements Tool {
     if (this.mode === 'move' && this.startBounds && this.moveIds.length) {
       let total = e.totalWorld;
       const movedBounds = R.translate(this.startBounds, total);
-      const snap = ctx.snapRect(movedBounds, this.excludeIds);
+      /*
+       * Ctrl/Cmd SUSPENDS snapping for as long as it is held.
+       *
+       * A snap is a teleport twice over: the layer lurches onto the target when
+       * the pointer comes within the threshold, sits still for the ~12px the
+       * pointer crosses that band, and lurches off again on the far side. That
+       * is what "a few drag movements resemble jumping" is — motion stopping
+       * and then catching up, not a dropped frame. It is also the correct
+       * behaviour for a magnet, so the fix is an escape hatch (the same one
+       * Figma and Illustrator bind) plus a tighter band, not a magnet that
+       * cannot hold.
+       */
+      const snap = e.modifiers.mod
+        ? { delta: { x: 0, y: 0 }, lines: [] }
+        : ctx.snapRect(movedBounds, this.excludeIds);
       total = { x: total.x + snap.delta.x, y: total.y + snap.delta.y };
       const inc = { x: total.x - this.appliedDelta.x, y: total.y - this.appliedDelta.y };
       if (inc.x !== 0 || inc.y !== 0) {

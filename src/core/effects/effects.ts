@@ -6,6 +6,7 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { bumpSceneRevision } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { pluginEffectDef } from './pluginEffectDefs';
 import type { SceneNode } from '@core/types';
@@ -3842,7 +3843,7 @@ export function getNodeEffects(nodeId: string): Effect[] {
 
 let seq = 0;
 
-/** Replace a layer's effect stack (bumps the scene + notifies). */
+/** Replace a layer's effect stack (bumps the scene revision + notifies). */
 export function writeNodeEffects(nodeId: string, effects: Effect[]): void {
   // The `fx` component is a computed view over the engine node; store the stack
   // on the engine (surfaced back as `readNodeEffects`' fx component).
@@ -3850,6 +3851,18 @@ export function writeNodeEffects(nodeId: string, effects: Effect[]): void {
   // Effects change the rendered frame → same signal as an animation edit
   // (invalidates the cache, marks dirty, records history, re-renders viewport).
   getEventBus().emit('AnimationChanged', { nodeId });
+  // ...and the scene REVISION, which is what wakes the views that rebuild by
+  // reading the scene during render. `AnimationChanged` reaches the viewport,
+  // the autosave and history — but nothing that draws the timeline, which lists
+  // one row per numeric effect parameter (`propertyTree.effectRows`) and reads
+  // each one's value at render time. Without this an effect scrub moved the
+  // picture while its own timeline row sat at the number it last drew: the same
+  // defect, and the same remedy, as the transform props in `InspectorAPI`.
+  //
+  // Revision only — an effect edit is not a structural scene change, and
+  // announcing one would split a single scrub into two undo steps (the
+  // AnimationChanged above already schedules this edit under the 'anim' key).
+  bumpSceneRevision();
 }
 
 /**

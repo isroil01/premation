@@ -24,6 +24,7 @@ import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { batchHistory } from '@stores/historyStore';
 import { groupSelectedNodes, ungroupSelectedNode } from '@core/scene/sceneInsert';
 import { useSelectionStore } from '@stores/selectionStore';
 
@@ -354,14 +355,21 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
     return cornerTL === cornerTR && cornerTR === cornerBR && cornerBR === cornerBL;
   })();
 
+  /**
+   * One drag of the linked corner field writes six props (the uniform radius,
+   * all four corners, the link flag) — and history keys an action by the prop
+   * it wrote, so without `batchHistory` that is six undo steps for one edit.
+   */
   const writeAllCorners = (v: number, link: boolean) => {
     const r = Math.max(0, v);
-    setCornerRadius(r);
-    setCornerTL(r);
-    setCornerTR(r);
-    setCornerBR(r);
-    setCornerBL(r);
-    if (link) setCornersLinked(true);
+    batchHistory(`corners:${nodeId}`, () => {
+      setCornerRadius(r);
+      setCornerTL(r);
+      setCornerTR(r);
+      setCornerBR(r);
+      setCornerBL(r);
+      if (link) setCornersLinked(true);
+    });
   };
 
   const writeCorner = (
@@ -374,25 +382,29 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
       writeAllCorners(r, true);
       return;
     }
-    setOne(r);
-    // Keep `cornerRadius` as the max so extrusion / legacy readers stay sensible.
-    const next = {
-      TL: which === 'TL' ? r : cornerTL,
-      TR: which === 'TR' ? r : cornerTR,
-      BR: which === 'BR' ? r : cornerBR,
-      BL: which === 'BL' ? r : cornerBL,
-    };
-    setCornerRadius(Math.max(next.TL, next.TR, next.BR, next.BL));
+    batchHistory(`corners:${nodeId}`, () => {
+      setOne(r);
+      // Keep `cornerRadius` as the max so extrusion / legacy readers stay sensible.
+      const next = {
+        TL: which === 'TL' ? r : cornerTL,
+        TR: which === 'TR' ? r : cornerTR,
+        BR: which === 'BR' ? r : cornerBR,
+        BL: which === 'BL' ? r : cornerBL,
+      };
+      setCornerRadius(Math.max(next.TL, next.TR, next.BR, next.BL));
+    });
   };
 
   const toggleCornersLinked = () => {
     if (cornersLinked) {
       // Unlink: seed each corner from the current values so fields don't jump.
-      setCornerTL(cornerTL);
-      setCornerTR(cornerTR);
-      setCornerBR(cornerBR);
-      setCornerBL(cornerBL);
-      setCornersLinked(false);
+      batchHistory(`corners:${nodeId}`, () => {
+        setCornerTL(cornerTL);
+        setCornerTR(cornerTR);
+        setCornerBR(cornerBR);
+        setCornerBL(cornerBL);
+        setCornersLinked(false);
+      });
     } else {
       writeAllCorners(cornerRadius, true);
     }
@@ -951,26 +963,28 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
               <ValueField
                 value={cornersLinked ? cornerRadius : Math.max(cornerTL, cornerTR, cornerBR, cornerBL)}
                 unit="px"
+                min={0}
                 onChange={(v) => writeAllCorners(v, cornersLinked)}
+                aria-label="Corner radius"
               />
             </div>
             {!cornersLinked && (
               <div className={styles.cornerGrid} role="group" aria-label="Individual corner radii">
                 <div className={styles.popoverRow}>
                   <span className={styles.popoverLabel}>TL</span>
-                  <ValueField value={cornerTL} unit="px" onChange={(v) => writeCorner('TL', setCornerTL, v)} />
+                  <ValueField value={cornerTL} unit="px" min={0} onChange={(v) => writeCorner('TL', setCornerTL, v)} aria-label="Corner radius TL" />
                 </div>
                 <div className={styles.popoverRow}>
                   <span className={styles.popoverLabel}>TR</span>
-                  <ValueField value={cornerTR} unit="px" onChange={(v) => writeCorner('TR', setCornerTR, v)} />
+                  <ValueField value={cornerTR} unit="px" min={0} onChange={(v) => writeCorner('TR', setCornerTR, v)} aria-label="Corner radius TR" />
                 </div>
                 <div className={styles.popoverRow}>
                   <span className={styles.popoverLabel}>BL</span>
-                  <ValueField value={cornerBL} unit="px" onChange={(v) => writeCorner('BL', setCornerBL, v)} />
+                  <ValueField value={cornerBL} unit="px" min={0} onChange={(v) => writeCorner('BL', setCornerBL, v)} aria-label="Corner radius BL" />
                 </div>
                 <div className={styles.popoverRow}>
                   <span className={styles.popoverLabel}>BR</span>
-                  <ValueField value={cornerBR} unit="px" onChange={(v) => writeCorner('BR', setCornerBR, v)} />
+                  <ValueField value={cornerBR} unit="px" min={0} onChange={(v) => writeCorner('BR', setCornerBR, v)} aria-label="Corner radius BR" />
                 </div>
               </div>
             )}

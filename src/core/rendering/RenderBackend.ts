@@ -276,6 +276,24 @@ export interface RenderLayer {
   /** Per-corner radii in TL → TR → BR → BL order (Appearance → Corners). */
   cornerRadii?: readonly [number, number, number, number];
   /**
+   * The layer's effective |scaleX|,|scaleY| — the factors the compositor will
+   * stretch this layer's raster by.
+   *
+   * Present so the shape path can DIVIDE the corner radii by them and have a
+   * corner come out at the radius the user typed, in composition pixels,
+   * whatever the layer's scale. Without it a corner radius meant "px in the
+   * layer's own space", so a 2x-scaled rect drew a 50px radius at 100px while
+   * the panel still said 50, and a non-uniform scale squashed the corner into
+   * an ellipse.
+   *
+   * Only the CORNERS are compensated. Scale still scales the artwork — this is
+   * a parametric corner on a parametric box, defined in the same units its
+   * control is labelled in.
+   *
+   * Omitted when it is [1, 1], so an unscaled layer's snapshot is unchanged.
+   */
+  cornerRadiusScale?: readonly [number, number];
+  /**
    * Draw as a bare quad with no SDF edge coverage.
    *
    * For a facet of a larger body — the strips an extruded object's wall ring is

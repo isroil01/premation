@@ -57,6 +57,10 @@ function recordingCtx(): CanvasRenderingContext2D & { ring: Pt[]; spans: Pt[][];
     },
     stroke() { (api as { strokes: number }).strokes += 1; },
     setLineDash() {}, ellipse() {}, rect() {}, clip() {}, arcTo() {},
+    // Tracing the fill outline (for an aligned stroke's clip) goes through
+    // these; they must exist, and must not be mistaken for the ribbon — the
+    // ribbon's own `beginPath` clears `ring` before anything is filled.
+    bezierCurveTo() {}, quadraticCurveTo() {}, arc() {}, save2() {},
     createLinearGradient() { return { addColorStop() {} }; },
     createRadialGradient() { return { addColorStop() {} }; },
   };
@@ -300,5 +304,148 @@ describe('dash composes with taper instead of cancelling it', () => {
     const again = recordingCtx();
     strokeShapeProfiled(again, stroke({ taper: TAPER, dash: [] }), layer());
     expect(again.spans[0]).toEqual(before.spans[0]);
+  });
+});
+
+/**
+ * THE CAP, which a filled ribbon has to draw for itself.
+ *
+ * `ctx.lineCap` governs `ctx.stroke()`, and this function never strokes — so
+ * the outline simply stopped at the last centreline vertex and every profiled
+ * stroke came out butt-ended however the Stroke was set. Reported as "cap was
+ * flatter although in properties it was round": the same layer changed cap when
+ * a taper was switched on, because that swapped which code drew it.
+ *
+ * Measured as REACH PAST THE END along the outward tangent, which is what a cap
+ * is: butt reaches nothing, round and square reach half the local width.
+ */
+describe('a profiled stroke honours the stroke cap', () => {
+  /**
+   * Outward unit tangent at one END of the fixture, from that anchor's own
+   * HANDLE. The anchor-to-anchor chord is a different direction, and a butt end
+   * measured against it reads a spurious half-width × sin(error) of reach.
+   */
+  const outward = (a: Pt, handle: Pt): Pt => {
+    const len = Math.hypot(a.x - handle.x, a.y - handle.y);
+    return { x: (a.x - handle.x) / len, y: (a.y - handle.y) / len };
+  };
+  const END_T = outward(CURVE[2]!, { x: CURVE[2]!.inX, y: CURVE[2]!.inY });
+  const START_T = outward(CURVE[0]!, { x: CURVE[0]!.outX, y: CURVE[0]!.outY });
+
+  /** Furthest the outline gets past `at`, along the outward tangent `t`. */
+  const reachPast = (ring: Pt[], at: Pt, t: Pt): number =>
+    Math.max(...ring.map((p) => (p.x - at.x) * t.x + (p.y - at.y) * t.y));
+
+  const reachPastEnd = (ring: Pt[]): number => reachPast(ring, CURVE[2]!, END_T);
+
+  const ringFor = (cap: Stroke['cap']): Pt[] => {
+    const ctx = recordingCtx();
+    strokeShapeProfiled(ctx, stroke({ taper: TAPER, cap }), layer());
+    return ctx.spans[0]!;
+  };
+
+  it('a butt cap stops at the end vertex', () => {
+    expect(reachPastEnd(ringFor('butt'))).toBeCloseTo(0, 1);
+  });
+
+  it('a round cap bulges half a stroke width past it', () => {
+    // TAPER ramps the START, so the END is at full width — half of it is 5.
+    expect(reachPastEnd(ringFor('round'))).toBeCloseTo(WIDTH / 2, 1);
+  });
+
+  it('a square cap reaches the same distance, with a corner rather than an arc', () => {
+    const square = ringFor('square');
+    expect(reachPastEnd(square)).toBeCloseTo(WIDTH / 2, 1);
+    // The tell: a round cap spends many vertices getting there, a square two.
+    const past = (ring: Pt[]): number =>
+      ring.filter((p) => (p.x - CURVE[2]!.x) * END_T.x + (p.y - CURVE[2]!.y) * END_T.y > 0.5).length;
+    expect(past(square)).toBe(2);
+    expect(past(ringFor('round'))).toBeGreaterThan(6);
+  });
+
+  it('caps BOTH ends, not just the one the walk finishes on', () => {
+    const reach = (ring: Pt[]): number => reachPast(ring, CURVE[0]!, START_T);
+    // The taper narrows the start to 20% of the width, and the cap follows the
+    // LOCAL half-width — a cap that ignored the profile would reach 5, not 1.
+    expect(reach(ringFor('round'))).toBeCloseTo((WIDTH * TAPER.startWidth) / 2, 1);
+    expect(reach(ringFor('butt'))).toBeCloseTo(0, 1);
+  });
+});
+
+/**
+ * SMOOTHNESS. The ribbon IS the picture — there is no curve left underneath it
+ * — so the flattening budget is a visible quality, not an implementation
+ * detail. A fixed 8 samples per segment put ~50px between vertices on this
+ * fixture, which is what "the taper looks choppy" was.
+ */
+describe('a profiled stroke is sampled finely enough to read as a curve', () => {
+  it('keeps every facet sub-pixel-ish, whatever the segment length', () => {
+    const ctx = recordingCtx();
+    strokeShapeProfiled(ctx, stroke({ taper: TAPER, cap: 'butt' }), layer());
+    const ring = ctx.spans[0]!;
+    // Only the LEFT half: the ring's two ends join across the stroke's width,
+    // which is a legitimate long chord and not a facet.
+    const half = ring.slice(0, Math.floor(ring.length / 2));
+    const longest = Math.max(
+      ...half.slice(1).map((p, i) => Math.hypot(p.x - half[i]!.x, p.y - half[i]!.y)),
+    );
+    // The budget is set on the CENTRELINE (2.5px); offsetting outward across a
+    // bend stretches those chords, so the ribbon's own facets land a little
+    // above it. The number that matters is the one it replaced: a fixed 8
+    // samples per segment left ~50px between vertices on this same fixture.
+    expect(longest).toBeLessThan(6);
+  });
+});
+
+/**
+ * ALIGNMENT — the other Stroke property a filled ribbon has to draw for itself.
+ *
+ * Found by asking what ELSE `strokeShapeProfiled` reads off the Stroke and what
+ * it ignores, after `cap` turned out to be ignored. `align` was the answer: a
+ * stroke set to Inside or Outside drew centred as soon as a taper was switched
+ * on, so a control the user had not touched changed what it did.
+ *
+ * The observable is the CLIP plus the width the ribbon is built at: the trick
+ * (shared with `strokeShape`) is to clip to one side of the fill and build at
+ * double width, so exactly the wanted half survives.
+ */
+describe('a profiled stroke honours stroke alignment', () => {
+  function clipRecorder(): CanvasRenderingContext2D & { ring: Pt[]; clips: string[]; spans: Pt[][] } {
+    const base = recordingCtx();
+    const clips: string[] = [];
+    (base as unknown as { clip: (rule?: string) => void }).clip = (rule?: string) => {
+      clips.push(rule ?? 'nonzero');
+    };
+    (base as unknown as { clips: string[] }).clips = clips;
+    return base as unknown as CanvasRenderingContext2D & { ring: Pt[]; clips: string[]; spans: Pt[][] };
+  }
+
+  const run = (align: Stroke['align']) => {
+    const ctx = clipRecorder();
+    strokeShapeProfiled(ctx, stroke({ taper: TAPER, align }), layer());
+    return ctx;
+  };
+
+  it('POSITIVE CONTROL: a centred stroke clips nothing', () => {
+    expect(run('center').clips).toEqual([]);
+  });
+
+  it('an INSIDE stroke clips to the fill', () => {
+    expect(run('inside').clips).toEqual(['nonzero']);
+  });
+
+  it('an OUTSIDE stroke clips to everything BUT the fill', () => {
+    expect(run('outside').clips).toEqual(['evenodd']);
+  });
+
+  it('builds the clipped ribbon at DOUBLE width, so the surviving half is full width', () => {
+    // Half of a double-width ribbon is the authored width — and the taper still
+    // rides it, so the clipped half is the profile the user authored.
+    const centred = run('center').spans[0]!;
+    const inside = run('inside').spans[0]!;
+    // Same vertex count, twice the separation at the untapered end.
+    expect(inside.length).toBe(centred.length);
+    expect(widthAtPair(inside, centred.length / 2 - 1))
+      .toBeCloseTo(widthAtPair(centred, centred.length / 2 - 1) * 2, 6);
   });
 });

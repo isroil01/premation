@@ -17,6 +17,7 @@ import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { batchHistory } from '@stores/historyStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { AngleDial } from '@components/AngleDial';
 
@@ -143,17 +144,33 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
           `set:${nodeId}:${propName}:${layerT}`
         );
       } else {
-        setVal(valNum);
-        if (linkedScale && (propName === 'scaleX' || propName === 'scaleY')) {
-          if (propName === 'scaleX') setScaleYVal(valNum);
-          else setScaleXVal(valNum);
-        }
-        if (propName === 'x' || propName === 'y' || propName === 'rotation') {
-          const currentX = propName === 'x' ? valNum : xVal;
-          const currentY = propName === 'y' ? valNum : yVal;
-          const currentRot = propName === 'rotation' ? valNum : rotVal;
-          defaultSceneGraph.setLocalTransform(nodeId, { x: currentX, y: currentY, rotation: currentRot });
-        }
+        /*
+         * ONE undo step, however many props this row writes.
+         *
+         * History keys an action by the property that was written, so a row
+         * that writes two of them alternates keys and commits a step on every
+         * alternation. Linked Scale does exactly that — scaleX, scaleY, scaleX,
+         * ... once per pointer-move — so a single 20px drag of the Scale field
+         * left 35 entries on the undo stack and took 35 Ctrl+Z to reverse.
+         * Rotation, which writes one prop, left 1.
+         *
+         * The keyframed branch above never had this: `runAnimEdit` already
+         * carries one merge key for the whole edit. This is the static branch
+         * catching up.
+         */
+        batchHistory(`transform:${nodeId}:${propName}`, () => {
+          setVal(valNum);
+          if (linkedScale && (propName === 'scaleX' || propName === 'scaleY')) {
+            if (propName === 'scaleX') setScaleYVal(valNum);
+            else setScaleXVal(valNum);
+          }
+          if (propName === 'x' || propName === 'y' || propName === 'rotation') {
+            const currentX = propName === 'x' ? valNum : xVal;
+            const currentY = propName === 'y' ? valNum : yVal;
+            const currentRot = propName === 'rotation' ? valNum : rotVal;
+            defaultSceneGraph.setLocalTransform(nodeId, { x: currentX, y: currentY, rotation: currentRot });
+          }
+        });
       }
     };
 

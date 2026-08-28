@@ -84,7 +84,10 @@ export function flattenOutline(
   open = false,
 ): Array<{ x: number; y: number }> {
   const n = pts.length;
-  if (n < 3) return pts.map((p) => ({ x: p.x, y: p.y }));
+  // Two anchors ARE a segment — one curve, or one straight line. Bailing at
+  // n < 3 returned the two anchors and silently threw the curve away, so a
+  // two-point pen stroke came out of every op that flattens as a chord.
+  if (n < 2) return pts.map((p) => ({ x: p.x, y: p.y }));
   const out: Array<{ x: number; y: number }> = [];
   const segments = open ? n - 1 : n;
   for (let i = 0; i < segments; i++) {
@@ -93,13 +96,49 @@ export function flattenOutline(
     out.push({ x: a.x, y: a.y });
     const curved = a.outX !== a.x || a.outY !== a.y || b.inX !== b.x || b.inY !== b.y;
     if (curved) {
-      for (let s = 1; s < perSeg; s++) out.push(cubicAt(a, b, s / perSeg));
+      const steps = perSeg === ADAPTIVE ? adaptiveSteps(a, b) : perSeg;
+      for (let s = 1; s < steps; s++) out.push(cubicAt(a, b, s / steps));
     }
   }
   // The closed loop emits every anchor as it goes; an open one never reaches
   // its last, because that anchor ends a segment rather than starting one.
   if (open) out.push({ x: pts[n - 1]!.x, y: pts[n - 1]!.y });
   return out;
+}
+
+/**
+ * Pass as `perSeg` to size the sampling from each segment's own length instead
+ * of spending the same budget on a 4px flick and a 900px sweep.
+ *
+ * A fixed count is the right default for the boolean ops, whose operands are
+ * whole shapes of comparable size. It is the wrong one for anything that turns
+ * a drawn path INTO a polyline it then draws — a tapered stroke, or the path-op
+ * chain — because there the polyline is the final geometry and its facets are
+ * visible: eight samples across a long curve is a chain of straight lines,
+ * which is exactly what "the path looks choppy" describes.
+ */
+export const ADAPTIVE = -1;
+
+/** Longest chord an adaptive sample is allowed to span, in layer px. */
+const ADAPTIVE_MAX_CHORD_PX = 2.5;
+/** Even a hairline curve gets a recognisable arc; even a huge one stays bounded. */
+const ADAPTIVE_MIN_STEPS = 8;
+const ADAPTIVE_MAX_STEPS = 160;
+
+/**
+ * Samples for one cubic, from the length of its CONTROL POLYGON.
+ *
+ * The control polygon is never shorter than the curve and never more than ~1.5×
+ * it, so it is a cheap upper bound on arc length — no need to integrate a curve
+ * only to decide how finely to sample it.
+ */
+function adaptiveSteps(a: BezierPt, b: BezierPt): number {
+  const len =
+    Math.hypot(a.outX - a.x, a.outY - a.y) +
+    Math.hypot(b.inX - a.outX, b.inY - a.outY) +
+    Math.hypot(b.x - b.inX, b.y - b.inY);
+  const steps = Math.ceil(len / ADAPTIVE_MAX_CHORD_PX);
+  return Math.max(ADAPTIVE_MIN_STEPS, Math.min(ADAPTIVE_MAX_STEPS, steps));
 }
 
 export type NodeSample = (prop: string) => number | undefined;

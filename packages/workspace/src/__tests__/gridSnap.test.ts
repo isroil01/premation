@@ -33,8 +33,8 @@ function ws(): Workspace {
 }
 
 describe('Snap to Grid — AE semantics', () => {
-  // 4 units from the gridline at zoom 1, inside the 6px default threshold.
-  const NEAR = R.rect(104, 0, 50, 50);
+  // 2 units from the gridline at zoom 1, inside the default threshold.
+  const NEAR = R.rect(102, 0, 50, 50);
 
   it('snaps while the grid is HIDDEN', () => {
     const w = ws();
@@ -47,7 +47,7 @@ describe('Snap to Grid — AE semantics', () => {
     const w = ws();
     w.setSnap({ enabled: true, toGrid: false });
     w.setGrid({ visible: true, snapSpacing: 100 });
-    expect(w.snapRect(NEAR).value.x).toBe(104);
+    expect(w.snapRect(NEAR).value.x).toBe(102);
   });
 
   it('visibility alone changes nothing — the two are independent', () => {
@@ -73,7 +73,7 @@ describe('Snap spacing follows the drawn grid, not the zoom', () => {
       // Offset by a fixed SCREEN distance, not a world one: the snap threshold
       // is in screen pixels, so a constant world offset drifts outside it as you
       // zoom in and the rect legitimately stops snapping.
-      const nudge = 2 / zoom;
+      const nudge = 1.5 / zoom;
       // Every zoom must agree on the same gridline, because the drawn lines do.
       expect(w.snapRect(R.rect(100 + nudge, 0, 20, 20)).value.x).toBe(100);
     }

@@ -408,6 +408,28 @@ function toRenderableGlass(
  *  ellipses (dimensions in the layer's local units, matching Canvas2DBackend:
  *  ellipse fills the box; a plain rect gets the same 12px rounded corners). Paths
  *  are deferred (rendered as a plain quad for now). */
+/**
+ * Corner radii are authored in COMPOSITION px, so the layer's scale has to be
+ * divided out of them — see `RenderLayer.cornerRadiusScale`. The solid SDF
+ * carries ONE radius, so it can only do that when the two axes agree;
+ * `needsShapeRaster` sends the anisotropic case to Canvas2D, which can draw the
+ * elliptical corner the compensation asks for.
+ */
+function uniformCornerScale(layer: RenderLayer): number | null {
+  const cs = layer.cornerRadiusScale;
+  if (!cs) return 1;
+  if (Math.abs(cs[0] - cs[1]) > 1e-6) return null;
+  return cs[0] > 1e-6 ? cs[0] : 1;
+}
+
+/** True when this layer's corners cannot be said with one radius. */
+export function cornerRadiusNeedsRaster(layer: RenderLayer): boolean {
+  if (uniformCornerScale(layer) !== null) return false;
+  const radii = layer.cornerRadii;
+  const biggest = radii ? Math.max(...radii) : (layer.cornerRadius ?? 0);
+  return biggest > 0;
+}
+
 function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   if (layer.kind !== 'shape') return undefined;
   // A facet of a larger body tiles against its neighbours; SDF edge coverage
@@ -419,15 +441,18 @@ function sdfFor(layer: RenderLayer): RenderableSdf | undefined {
   }
   // Independent corners cannot use the isotropic GPU SDF — those shapes rasterize
   // via needsShapeRaster. When all four match, keep the fast SDF path.
+  // Local px per comp px. Anisotropic layers never reach here (they rasterize),
+  // so this is a single factor by construction.
+  const k = 1 / (uniformCornerScale(layer) ?? 1);
   const radii = layer.cornerRadii;
   if (radii) {
     const [tl, tr, br, bl] = radii;
     if (tl === tr && tr === br && br === bl) {
-      return { shape: 'rounded', radiusPx: tl, width: layer.width, height: layer.height };
+      return { shape: 'rounded', radiusPx: tl * k, width: layer.width, height: layer.height };
     }
     return { shape: 'rounded', radiusPx: 0, width: layer.width, height: layer.height };
   }
-  return { shape: 'rounded', radiusPx: layer.cornerRadius ?? 0, width: layer.width, height: layer.height };
+  return { shape: 'rounded', radiusPx: (layer.cornerRadius ?? 0) * k, width: layer.width, height: layer.height };
 }
 
 // layerNeedsCpuBake is shared by needsShapeRaster and layerToRenderable, which
@@ -1193,6 +1218,9 @@ export function needsShapeRaster(layer: RenderLayer): boolean {
       && layer.cornerRadii[2] === layer.cornerRadii[3]
     )
   ) return true;
+  // A corner radius under a NON-UNIFORM scale is an ellipse in the layer's own
+  // space (see `cornerRadiusNeedsRaster`), and the solid SDF is isotropic.
+  if (cornerRadiusNeedsRaster(layer)) return true;
   // A shape carrying a Canvas2D-only effect is CPU-baked (content + mask +
   // full effect chain) into its `path:` texture — those effects have no GPU
   // shader form and otherwise silently no-op.

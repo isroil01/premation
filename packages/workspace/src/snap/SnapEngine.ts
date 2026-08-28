@@ -32,7 +32,17 @@ export const DEFAULT_SNAP_SETTINGS: SnapSettings = {
   toObjects: true,
   toEdges: true,
   toCenters: true,
-  thresholdPx: 6,
+  /*
+   * The magnet's reach, in SCREEN px.
+   *
+   * Every px of this is paid twice on a drag: once as a band the pointer
+   * crosses with the layer standing still, and once as the teleport that ends
+   * it. At 6 that was a 12px dead zone and two ~6px lurches per target — read
+   * by users as the drag "jumping". 3 keeps the assist (a deliberate approach
+   * still lands on the edge) and halves both costs; Ctrl/Cmd during the drag
+   * suspends it entirely — see SelectTool.onDrag.
+   */
+  thresholdPx: 3,
 };
 
 export type SnapSource = 'grid' | 'guide' | 'object-edge' | 'object-center' | 'object-corner';

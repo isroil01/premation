@@ -111,6 +111,8 @@ let lastState: { scene: ProjectFile; anim: AnimSnapshot } | null = null;
 let recordTimer: ReturnType<typeof setTimeout> | undefined;
 /** What the pending debounced entry is editing (see `schedule`). */
 let pendingKey: string | undefined;
+/** Key forced on every `schedule` inside a `batchHistory` (see below). */
+let groupKey: string | undefined;
 
 export const useHistoryStore = create<HistoryStore>((set, get) => ({
   restoring: false,
@@ -148,8 +150,11 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     lastState = currentState;
   },
 
-  schedule: (key) => {
+  schedule: (rawKey) => {
     if (get().restoring) return;
+    // Inside a `batchHistory` every write reports the SAME target, so the
+    // key-change rule below cannot split one edit into several.
+    const key = groupKey ?? rawKey;
     // A different target means a different action: commit the pending one so it
     // keeps its own undo step rather than being absorbed into this one.
     if (recordTimer !== undefined && key !== undefined && pendingKey !== undefined && key !== pendingKey) {
@@ -298,6 +303,29 @@ export function attachHistoryBaselineSync(): { dispose(): void } {
  * calls `setEventBus(new EventBus())` and discards whatever a module-scope
  * subscription attached to. Returns one disposer for all four.
  */
+/**
+ * Run `fn` as ONE undoable action, however many props it writes.
+ *
+ * `schedule` treats a change of target as a change of action, which is what
+ * keeps two consecutive edits to different properties out of each other's undo
+ * step. An edit that legitimately writes SEVERAL props at once trips over that:
+ * the linked corner radius writes `cornerRadius` plus all four corners plus the
+ * link flag, and came out as six undo steps for one drag of one field.
+ *
+ * Not the same tool as `batchScene`, which defers a NOTIFICATION. This renames
+ * the TARGET so the debounce can do its job. Nests; the outermost name wins,
+ * because an inner group is part of the outer action by construction.
+ */
+export function batchHistory<T>(key: string, fn: () => T): T {
+  const prev = groupKey;
+  groupKey = prev ?? key;
+  try {
+    return fn();
+  } finally {
+    groupKey = prev;
+  }
+}
+
 export function attachHistoryRecording(): { dispose(): void } {
   const h = (): HistoryStore => useHistoryStore.getState();
   const subs = [

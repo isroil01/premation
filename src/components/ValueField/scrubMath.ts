@@ -102,6 +102,21 @@ export function advanceScrub(
     ? { anchorVal: state.value, dx: 0, scale, value: state.value }
     : state;
   const dx = rebased.dx + sanitizeMovement(movementX);
-  const value = clamp(rebased.anchorVal + dx * step * scale, min, max);
+  const raw = rebased.anchorVal + dx * step * scale;
+  const value = clamp(raw, min, max);
+  /*
+   * AT A LIMIT, RE-ANCHOR — do not keep winding `dx` past it.
+   *
+   * `dx` accumulated forever, so travel spent beyond a limit had to be PAID
+   * BACK before the value moved again: drag a 0-floored field 200px left and
+   * the next 200px to the right did nothing at all. That is the whole of "you
+   * can't change the value by dragging it" — the field is not dead, it is
+   * unwinding, and the commonest fields to meet it on are the ones that START
+   * at a limit (a corner radius at 0, an opacity at 100).
+   *
+   * Re-anchoring at the clamped value makes a limit a WALL rather than a
+   * spring: the value leaves it on the first pixel of travel back.
+   */
+  if (value !== raw) return { anchorVal: value, dx: 0, scale, value };
   return { anchorVal: rebased.anchorVal, dx, scale, value };
 }

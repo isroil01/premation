@@ -77,7 +77,7 @@ import { expandCloners, cloneOffsetOf } from '@core/scene/clonerExpand';
 import { readNodePhysics, physicsPosesAt } from '@core/simulation/physicsBodies';
 import type { BodySeed } from '@core/simulation/rigidBody';
 import { usePhysicsStore } from '@stores/physicsStore';
-import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand, nodeWorldOutline } from '@core/scene/mergePaths';
+import { readLiveBoolean, evaluateLiveBoolean, isBooleanOperand, nodeWorldOutline, flattenOutline, ADAPTIVE } from '@core/scene/mergePaths';
 import { readContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
 import { readNodeCornerPin } from '@core/scene/cornerPin';
 import type { PropPath } from '@motion/animation';
@@ -2479,6 +2479,19 @@ export function buildSnapshot(
       ...(resolvedCornerRadius > 0 || hasIndependentCornerRadii(resolvedCornerRadii)
         ? { cornerRadii: resolvedCornerRadii }
         : {}),
+      // The scale the raster will be stretched by, so the shape path can undo
+      // it for the CORNERS alone — see `RenderLayer.cornerRadiusScale`. `sx`/
+      // `sy` are the effective (world / projected) scale at this point, which
+      // is the same pair the compositor places the quad with. Emitted only when
+      // it would change something.
+      ...((() => {
+        const csx = Math.abs(sx);
+        const csy = Math.abs(sy);
+        const rounded = resolvedCornerRadius > 0 || hasIndependentCornerRadii(resolvedCornerRadii);
+        return rounded && (csx !== 1 || csy !== 1) && csx > 1e-6 && csy > 1e-6
+          ? { cornerRadiusScale: [csx, csy] as const }
+          : {};
+      })()),
       // Keyframeable like any numeric prop: an animated track wins over the base,
       // so a panel can frost in over time.
       // Glass owns the backdrop blur when it is on — one control, not two that
@@ -2733,8 +2746,17 @@ export function buildSnapshot(
         // the first operator would starve it of geometry — the coarse outline
         // is generated once, before the chain runs, and cannot be re-densified.
         const dense = ops.some((o) => o.type === 'pucker' || o.type === 'twist') ? 8 : 0;
+        // FLATTEN the bezier, do not merely drop its handles.
+        //
+        // The chain's currency is a polyline, and what came out of it is what
+        // gets drawn — `corner(x, y)` points, with no handles left to carry
+        // curvature. Seeding it with the anchors alone therefore did not
+        // "approximate" the path, it REPLACED it with the polygon through its
+        // anchors: a drawn curve came back as straight chords the moment any
+        // operator was added. Trim was where it showed worst, because trimming
+        // is the operator you watch the whole outline while using.
         const base = pathPoints && pathPoints.length > 1
-          ? pathPoints.map((p) => ({ x: p.x, y: p.y }))
+          ? flattenOutline(pathPoints, ADAPTIVE, pathOpen === true)
           : shapeOutline(layer.primitive, layerW, layerH, 48, dense);
         // Roughen's wiggle rides the layer's OWN time — the same axis `a` was
         // sampled on (valuesOf → remapOf). Handing it comp `t` would leave the
@@ -2743,7 +2765,12 @@ export function buildSnapshot(
         // Every stored run enters the chain, not just the first: trimming a
         // donut has to trim both of its rings.
         const seed = layer.subpaths && layer.subpaths.length > 0
-          ? layer.subpaths.map((sp) => ({ pts: sp.points.map((p) => ({ x: p.x, y: p.y })), closed: sp.open !== true }))
+          ? layer.subpaths.map((sp) => ({
+              // Same flattening as `base` above — every run enters the chain as
+              // the curve it is, not as the polygon through its anchors.
+              pts: flattenOutline(sp.points, ADAPTIVE, sp.open === true),
+              closed: sp.open !== true,
+            }))
           : [{ pts: base, closed: pathOpen !== true }];
         const runs = applyPathOpChain(
           seed,
