@@ -12,6 +12,8 @@ import { bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { useSelectionStore } from '@stores/selectionStore';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
+import { isPrecomp } from './precomp';
+import { activeCompRootId } from './activeComp';
 import type { SceneNode } from '@core/types';
 import {
   type LocalTransform,
@@ -50,17 +52,57 @@ function isDescendant(ancestorId: string, nodeId: string): boolean {
   return false;
 }
 
-/** Whether `childId` may be parented to `newParentId` (null = comp root). */
+/**
+ * The COMPOSITION a node lives in — the nearest enclosing composition, not the
+ * document root.
+ *
+ * This is the distinction `compRootOf` does not make, and the reason the
+ * "same composition only" rule below was vacuous for the commonest case.
+ * `compRootOf` walks to the TOP-most ancestor, which is right when every
+ * composition is its own scene root — and wrong for a PRECOMP, which is a group
+ * living inside `comp_root`. Both a layer inside a precomp and a layer in the
+ * outer comp resolve to `comp_root` under `compRootOf`, so the guard compared
+ * two equal values and let the move through: the layer was physically relocated
+ * out of the precomp and vanished from the comp being edited. Reported as
+ * "parent the rectangle to a Null and the rectangle is missing".
+ *
+ * Walks from the node's PARENT: a precomp group is a layer OF its host comp, not
+ * a layer of itself.
+ */
+export function enclosingCompRootOf(nodeId: string): string | null {
+  const start = defaultSceneGraph.getNode(nodeId);
+  if (!start) return null;
+  let cur = start.parent ? defaultSceneGraph.getNode(start.parent) : null;
+  const seen = new Set<string>([start.id]);
+  while (cur) {
+    // A precomp composites its subtree as one unit — its children are layers of
+    // IT, not of whatever contains it. That boundary is the composition.
+    if (isPrecomp(cur) || !cur.parent) return cur.id;
+    if (seen.has(cur.id)) break; // dangling/cyclic parent must not hang the walk
+    seen.add(cur.id);
+    cur = defaultSceneGraph.getNode(cur.parent);
+  }
+  return start.parent ?? null;
+}
+
+/** Whether `childId` may be parented to `newParentId` (null = its own comp root). */
 export function canReparent(childId: string, newParentId: string | null): boolean {
   if (childId === COMP_ROOT) return false; // the root is never re-parented
-  if (newParentId === null || newParentId === COMP_ROOT) return true;
+  // "None" means this layer's OWN composition root, which is always legal.
+  if (newParentId === null) return true;
   if (newParentId === childId) return false; // no self-parent
   if (!defaultSceneGraph.getNode(newParentId)) return false;
   if (isDescendant(childId, newParentId)) return false; // no loops
+  const home = enclosingCompRootOf(childId);
+  // Parenting TO the composition root is the same thing as "None".
+  if (newParentId === home || newParentId === COMP_ROOT) return newParentId === home;
   // Same composition only. Enforced HERE and not just in the dropdown, because
   // the AI tools and any future scripting path call `reparentNode` directly —
   // a rule that lives only in the UI is a rule that gets bypassed.
-  return compRootOf(childId) === compRootOf(newParentId);
+  //
+  // `enclosingCompRootOf`, NOT `compRootOf`: see the note there for why the
+  // document root is the wrong unit and what it let through.
+  return home !== null && home === enclosingCompRootOf(newParentId);
 }
 
 /**
@@ -77,7 +119,11 @@ export function reparentNode(
   options: { preserveWorld?: boolean } = {},
 ): boolean {
   if (!canReparent(childId, newParentId)) return false;
-  const target = newParentId ?? COMP_ROOT;
+  // Un-parenting returns the layer to ITS OWN composition root. Defaulting to
+  // `COMP_ROOT` yanked a layer inside a precomp out to the top composition —
+  // the same disappearance as parenting across comps, reached by the dropdown's
+  // most-used entry.
+  const target = newParentId ?? enclosingCompRootOf(childId) ?? COMP_ROOT;
 
   defaultSceneGraph.setParent(childId, target, { preserveWorld: options.preserveWorld ?? true });
 
@@ -125,13 +171,21 @@ export function compRootOf(nodeId: string): string | null {
  */
 export function eligibleParents(childId: string): Array<{ id: string; name: string }> {
   const out: Array<{ id: string; name: string }> = [];
-  const root = compRootOf(childId);
+  const root = enclosingCompRootOf(childId);
   if (!root) return out;
+  // Walks CHILDREN, so the composition root is never offered as a parent — it
+  // is what "None" already means.
   const walk = (n: SceneNode): void => {
-    if (n.id !== root && n.id !== COMP_ROOT && n.id !== childId && !isDescendant(childId, n.id)) {
-      out.push({ id: n.id, name: n.name ?? n.id });
+    for (const c of defaultSceneGraph.getChildren(n.id)) {
+      if (c.id !== childId && !isDescendant(childId, c.id)) {
+        out.push({ id: c.id, name: c.name ?? c.id });
+      }
+      // Do not descend THROUGH a precomp: its children are layers of ANOTHER
+      // composition, and offering one is offering to relocate this layer into
+      // it. The precomp itself stays offerable (pushed just above) — it is an
+      // ordinary layer of this composition.
+      if (!isPrecomp(c)) walk(c);
     }
-    for (const c of defaultSceneGraph.getChildren(n.id)) walk(c);
   };
   const rootNode = defaultSceneGraph.getNode(root);
   if (rootNode) walk(rootNode);
@@ -143,11 +197,18 @@ let seq = 0;
 /** Insert a null-object controller: an invisible layer with a transform that
  *  drives its children. Handy as a rig control shared by several layers. */
 export function insertNull(): void {
+  // The composition the user is EDITING, like every other insert
+  // (`activeComp.ts` exists because hardcoding the first root was already this
+  // bug once). Hardcoding COMP_ROOT here put the Null in the outer comp while
+  // the user was inside a precomp — invisible where they made it, and a trap
+  // for the parenting dropdown, which then relocated whatever was parented to
+  // it out of the comp being edited.
+  const rootId = activeCompRootId();
   const id = `null_${(seq += 1)}_${Math.random().toString(36).slice(2, 6)}`;
   const node: SceneNode = {
     id,
     name: 'Null',
-    parent: COMP_ROOT,
+    parent: rootId,
     children: [],
     transform: { position: { x: 160, y: 120 }, rotation: 0, scale: { x: 1, y: 1 } },
     visible: true,
@@ -156,7 +217,7 @@ export function insertNull(): void {
       { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'null', x: 160, y: 120, rotation: 0 } },
     ],
   };
-  defaultSceneGraph.addChild(COMP_ROOT, node);
+  defaultSceneGraph.addChild(rootId, node);
   useSelectionStore.getState().set([id]);
   bumpScene();
 }

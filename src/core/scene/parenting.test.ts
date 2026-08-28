@@ -1,6 +1,7 @@
 import defaultSceneGraph from './DefaultSceneGraph';
-import { canReparent, reparentNode, eligibleParents, parentOfNode, insertNull } from './parenting';
+import { canReparent, reparentNode, eligibleParents, parentOfNode, insertNull, enclosingCompRootOf } from './parenting';
 import { readNodeKind } from './sceneDerive';
+import { readNodePrecomp } from './precomp';
 import type { SceneNode } from '@core/types';
 
 function transformNode(id: string, parent: string, x: number, y: number, rot = 0): SceneNode {
@@ -191,5 +192,84 @@ describe('parenting is scoped to the composition', () => {
     } finally {
       try { defaultSceneGraph.removeNode('pc-a2'); } catch { /* ignore */ }
     }
+  });
+});
+
+/**
+ * A PRECOMP is a composition too — and it is the one this rule kept missing.
+ *
+ * The scoping above is expressed with `compRootOf`, which walks to the TOP-most
+ * ancestor. That is right when every composition is its own scene root, which is
+ * the shape the tests above build. A precomp is not that shape: it is a group
+ * living inside `comp_root`, so a layer inside it and a layer in the outer comp
+ * BOTH resolve to `comp_root`, the guard compared two equal values, and the move
+ * went through — physically relocating the layer out of the precomp.
+ *
+ * Reported as: "I want to parent my rectangle to a Null, but the Rectangle is
+ * missing." It was not missing. It had been moved into the composition the Null
+ * was in, and the user was looking at a different one.
+ */
+describe('parenting is scoped to the enclosing composition, precomps included', () => {
+  /** comp_root ▸ [outer, PRE ▸ [inner, sibling]] */
+  function withPrecomp(): void {
+    defaultSceneGraph.addChild('comp_root', transformNode('outer', 'comp_root', 10, 10));
+    defaultSceneGraph.addChild('comp_root', transformNode('PRE', 'comp_root', 0, 0));
+    defaultSceneGraph.setPrecomp('PRE', true);
+    defaultSceneGraph.addChild('PRE', transformNode('inner', 'PRE', 20, 20));
+    defaultSceneGraph.addChild('PRE', transformNode('sibling', 'PRE', 30, 30));
+  }
+
+  beforeEach(() => {
+    reset();
+    withPrecomp();
+  });
+
+  it('POSITIVE CONTROL: the fixture really is a precomp, not a plain group', () => {
+    // Without this the whole describe would pass against an ordinary group and
+    // prove nothing about the case that broke.
+    expect(readNodePrecomp(defaultSceneGraph.getNode('PRE')!)).toBe(true);
+  });
+
+  it('resolves a layer to the precomp it lives in, not the document root', () => {
+    expect(enclosingCompRootOf('inner')).toBe('PRE');
+    expect(enclosingCompRootOf('outer')).toBe('comp_root');
+    // The precomp is a LAYER of the outer comp, not a layer of itself.
+    expect(enclosingCompRootOf('PRE')).toBe('comp_root');
+  });
+
+  it('offers a layer inside the precomp only its own siblings', () => {
+    const ids = eligibleParents('inner').map((o) => o.id);
+    expect(ids).toEqual(['sibling']);
+    // The ones that made the layer vanish.
+    expect(ids).not.toContain('outer');
+    expect(ids).not.toContain('PRE');
+  });
+
+  it('offers an OUTER layer the precomp itself, but nothing inside it', () => {
+    const ids = eligibleParents('outer').map((o) => o.id);
+    expect(ids).toContain('PRE');
+    expect(ids).not.toContain('inner');
+    expect(ids).not.toContain('sibling');
+  });
+
+  it('refuses the cross-composition reparent at the API', () => {
+    expect(canReparent('inner', 'outer')).toBe(false);
+    expect(canReparent('outer', 'inner')).toBe(false);
+    // Still allowed within one composition.
+    expect(canReparent('inner', 'sibling')).toBe(true);
+  });
+
+  it('THE REPORTED BUG: the layer does not leave its composition', () => {
+    expect(reparentNode('inner', 'outer')).toBe(false);
+    expect(defaultSceneGraph.getNode('inner')!.parent).toBe('PRE');
+  });
+
+  it('un-parenting returns the layer to ITS OWN comp root, not the outer one', () => {
+    // The dropdown's most-used entry. Defaulting to `comp_root` was the same
+    // disappearance reached by a shorter route.
+    reparentNode('inner', 'sibling');
+    expect(defaultSceneGraph.getNode('inner')!.parent).toBe('sibling');
+    expect(reparentNode('inner', null)).toBe(true);
+    expect(defaultSceneGraph.getNode('inner')!.parent).toBe('PRE');
   });
 });
