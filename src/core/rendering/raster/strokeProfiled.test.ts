@@ -449,3 +449,119 @@ describe('a profiled stroke honours stroke alignment', () => {
       .toBeCloseTo(widthAtPair(centred, centred.length / 2 - 1) * 2, 6);
   });
 });
+
+/**
+ * JOINS — the third Stroke property the filled ribbon had to learn to draw.
+ *
+ * Before this the ribbon took both boundaries straight from `offsetAlongNormals`,
+ * which puts ONE point per vertex on the bisector. On a curve that is right; on
+ * a corner it is none of the three joins the panel offers. The outer boundary
+ * has to reach `h / cos(theta/2)` to close a corner and only reached `h`, so the
+ * corner came out pinched — and looked the same whether you picked miter, round
+ * or bevel.
+ *
+ * Measured on the OUTER BISECTOR, which is the axis the three differ along:
+ * for a right angle, bevel reaches h·cos45 = 3.54, round reaches h = 5, miter
+ * reaches h/cos45 = 7.07. Three numbers, no overlap.
+ */
+describe('a profiled stroke honours the stroke join', () => {
+  /** An L: 80px right, then 80px down. All corner points — a real 90° corner. */
+  const CORNER = [
+    { x: -80, y: 0, inX: -80, inY: 0, outX: -80, outY: 0 },
+    { x: 0, y: 0, inX: 0, inY: 0, outX: 0, outY: 0 },
+    { x: 0, y: 80, inX: 0, inY: 80, outX: 0, outY: 80 },
+  ];
+  /** Ramps over the first 20%, so the corner at t = 0.5 is at FULL width. */
+  const CORNER_TAPER: StrokeTaper = { ...IDENTITY_TAPER, startLength: 0.2, startWidth: 0.2 };
+  const H = WIDTH / 2;
+  const CORNER_PT = { x: 0, y: 0 };
+  /** Outward bisector at the corner, on the outer (right-hand) side. */
+  const BISECTOR = { x: Math.SQRT1_2, y: -Math.SQRT1_2 };
+
+  const cornerLayer = (): RenderLayer => ({
+    id: 'L', kind: 'shape', primitive: 'path',
+    x: 0, y: 0, width: 200, height: 200, opacity: 1, visible: true,
+    pathPoints: CORNER, pathOpen: true,
+  } as unknown as RenderLayer);
+
+  const ringFor = (join: Stroke['join']): Pt[] => {
+    const ctx = recordingCtx();
+    strokeShapeProfiled(ctx, stroke({ taper: CORNER_TAPER, join, cap: 'butt' }), cornerLayer());
+    return ctx.spans[0]!;
+  };
+
+  /**
+   * Ring points belonging to the OUTER side of the corner.
+   *
+   * Both boundaries pass close to the corner — the inner one keeps its single
+   * bisector point, also at h — so proximity alone catches three points, not
+   * the join's two. The join lives strictly on the outer side, which is the
+   * positive half of the bisector.
+   */
+  const outerCorner = (ring: Pt[]): Pt[] =>
+    ring.filter(
+      (p) =>
+        Math.hypot(p.x - CORNER_PT.x, p.y - CORNER_PT.y) < H * 2 &&
+        p.x * BISECTOR.x + p.y * BISECTOR.y > 0,
+    );
+
+  const reach = (ring: Pt[]): number =>
+    Math.max(...outerCorner(ring).map((p) => p.x * BISECTOR.x + p.y * BISECTOR.y));
+
+  it('POSITIVE CONTROL: the fixture really does turn a right angle', () => {
+    const a = Math.atan2(CORNER[1]!.y - CORNER[0]!.y, CORNER[1]!.x - CORNER[0]!.x);
+    const b = Math.atan2(CORNER[2]!.y - CORNER[1]!.y, CORNER[2]!.x - CORNER[1]!.x);
+    expect(Math.abs(b - a)).toBeCloseTo(Math.PI / 2, 6);
+  });
+
+  it('a BEVEL cuts the corner straight across', () => {
+    expect(reach(ringFor('bevel'))).toBeCloseTo(H * Math.SQRT1_2, 4);
+    // Exactly the two segment-normal offsets — a bevel is the pair joined.
+    expect(outerCorner(ringFor('bevel'))).toHaveLength(2);
+  });
+
+  it('a ROUND join arcs at the stroke’s own radius', () => {
+    const pts = outerCorner(ringFor('round'));
+    expect(reach(ringFor('round'))).toBeCloseTo(H, 4);
+    // Every point of the arc is at exactly h from the corner.
+    for (const p of pts) expect(Math.hypot(p.x, p.y)).toBeCloseTo(H, 4);
+    expect(pts.length).toBeGreaterThan(6);
+  });
+
+  it('a MITER runs out to the tip, at h / cos(θ/2)', () => {
+    expect(reach(ringFor('miter'))).toBeCloseTo(H / Math.cos(Math.PI / 4), 4);
+  });
+
+  it('all three put the boundary at h where the segments leave the corner', () => {
+    // The pinch was exactly this: the old bisector point sat at h, but a and b
+    // did not exist at all, so the boundary cut the corner off short.
+    for (const j of ['bevel', 'round', 'miter'] as const) {
+      const d = outerCorner(ringFor(j)).map((p) => Math.hypot(p.x, p.y));
+      expect(Math.min(...d)).toBeCloseTo(H, 4);
+    }
+  });
+
+  it('the three are genuinely different pictures', () => {
+    const [b, r, m] = [reach(ringFor('bevel')), reach(ringFor('round')), reach(ringFor('miter'))];
+    expect(b).toBeLessThan(r);
+    expect(r).toBeLessThan(m);
+  });
+
+  /**
+   * THE SAFETY PROPERTY the whole join path rests on.
+   *
+   * Joins are applied only past a 40° turn, which a flattened curve never
+   * reaches at the sampler's ~2.5px chords. So a smooth path must come out
+   * byte-identical whatever the join is set to — otherwise this change would
+   * have quietly altered every tapered stroke already in every project.
+   */
+  it('leaves a SMOOTH path identical whatever the join says', () => {
+    const rings = (['miter', 'round', 'bevel'] as const).map((j) => {
+      const ctx = recordingCtx();
+      strokeShapeProfiled(ctx, stroke({ taper: TAPER, join: j }), layer());
+      return ctx.spans[0]!;
+    });
+    expect(rings[1]).toEqual(rings[0]);
+    expect(rings[2]).toEqual(rings[0]);
+  });
+});

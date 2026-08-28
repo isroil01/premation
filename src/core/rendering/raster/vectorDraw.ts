@@ -14,7 +14,7 @@
 
 import type { RenderLayer, Subpath, SubpathPaint } from '../RenderBackend';
 import { makeCanvasGradient, type FillPaint } from '@core/paint/fill';
-import type { Stroke, StrokeCap } from '@core/paint/stroke';
+import type { Stroke, StrokeCap, StrokeJoin } from '@core/paint/stroke';
 import type { Pt } from '@core/scene/trimPath';
 import { layerSubpaths, hasPathGeometry } from './subpaths';
 import { flattenOutline, ADAPTIVE } from '@core/scene/mergePaths';
@@ -382,49 +382,6 @@ export function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: Stroke, 
   ctx.lineDashOffset = stroke.dashOffset ?? 0;
 }
 
-/**
- * Sample the layer's fill outline into a polyline — the input Trim Paths cuts.
- *
- * Called from `buildSnapshot`, not from the draw loop: trim resolves to
- * geometry now, so the sampling happens once per frame when the snapshot is
- * built rather than once per stroke when it is drawn.
- *
- * Known gap: a rect's rounded corners are NOT sampled — the outline is the four
- * hard corners. That was already true when only the stroke was trimmed; the fill
- * now inherits it, so a trimmed rounded rect cuts along the square outline.
- */
-export function outlinePolyline(layer: RenderLayer): { pts: Pt[]; closed: boolean } {
-  const w = layer.width;
-  const h = layer.height;
-  if (layer.primitive === 'ellipse') {
-    const pts: Pt[] = [];
-    const N = 64;
-    for (let i = 0; i < N; i++) {
-      const a = (i / N) * Math.PI * 2;
-      pts.push({ x: Math.cos(a) * (w / 2), y: Math.sin(a) * (h / 2) });
-    }
-    return { pts, closed: true };
-  }
-  // The FIRST run only. This function samples an outline in order to trim it,
-  // and a layer that already carries multiple runs has already been cut — there
-  // is nothing left for it to sample. (Phase 2 removes the trim-time caller
-  // entirely; the text-on-a-path caller still wants one continuous outline.)
-  const runs = layerSubpaths(layer);
-  if (layer.primitive === 'path' && runs.length > 0 && runs[0]!.points.length > 1) {
-    const first = runs[0]!;
-    return { pts: first.points.map((p) => ({ x: p.x, y: p.y })), closed: first.open !== true };
-  }
-  return {
-    pts: [
-      { x: -w / 2, y: -h / 2 },
-      { x: w / 2, y: -h / 2 },
-      { x: w / 2, y: h / 2 },
-      { x: -w / 2, y: h / 2 },
-    ],
-    closed: true,
-  };
-}
-
 /** Trace one run into the CURRENT path (no `beginPath`). Extracted from
  *  `shapePath` so a batch can trace a subset with identical geometry. */
 function traceRun(ctx: CanvasRenderingContext2D, run: Subpath): void {
@@ -741,6 +698,132 @@ function capPoints(
   return out;
 }
 
+/**
+ * Turn angle past which a vertex is a CORNER rather than a step along a curve.
+ *
+ * 40 degrees. The number is chosen so a FLATTENED CURVE never trips it: the
+ * adaptive sampler keeps chords at ~2.5px, so reaching 40 degrees of turn in one
+ * chord takes a radius under ~3.7px — tighter than a stroke this wide can render
+ * anyway. That is the safety property this whole join path rests on: a smooth
+ * path takes the byte-identical route it took before joins existed, and only a
+ * real authored corner is treated as one.
+ */
+const JOIN_CORNER_ANGLE = (40 * Math.PI) / 180;
+
+/** Canvas2D's own default. Past this a miter degenerates into a long spike. */
+const MITER_LIMIT = 10;
+
+/** Samples across a round join's arc. Joins turn less than a cap's half-circle. */
+const JOIN_ARC_STEPS = 10;
+
+/**
+ * The two ribbon boundaries, with `join` applied at every genuine corner.
+ *
+ * ## What was wrong before
+ *
+ * The ribbon took both boundaries straight from `offsetAlongNormals`, which
+ * offsets each vertex along the CENTRED difference of its neighbours — one
+ * point per vertex, on the bisector. On a curve that is exactly right. On a
+ * corner it is none of the three joins the Stroke offers: the outer boundary
+ * needs to reach `h / cos(theta/2)` to close the corner and only reaches `h`,
+ * so the corner came out PINCHED — visibly short of even a bevel, and identical
+ * whether the user chose miter, round or bevel.
+ *
+ * ## What it does now
+ *
+ * Non-corner vertices keep the baseline point, untouched. At a corner the OUTER
+ * boundary gets the two per-segment offset points with the join between them
+ * (an arc, a miter tip, or nothing at all for a bevel); the INNER boundary keeps
+ * its single bisector point and is allowed to self-overlap, which a nonzero fill
+ * absorbs. Which side is outer follows the turn: turning left, the left side is
+ * the inside.
+ */
+function ribbonSidesWithJoins(
+  pts: readonly Pt[],
+  halfAt: (i: number) => number,
+  join: StrokeJoin,
+): OffsetSides {
+  const base = offsetAlongNormals(pts, halfAt);
+  const n = pts.length;
+  if (n < 3) return base;
+
+  const left: Pt[] = [];
+  const right: Pt[] = [];
+  /** Left-hand unit normal of the segment i → i+1, matching offsetAlongNormals. */
+  const segNormal = (i: number): Pt | null => {
+    const d = unitFrom(pts[i]!, pts[i + 1]!);
+    return d ? { x: -d.y, y: d.x } : null;
+  };
+
+  for (let i = 0; i < n; i++) {
+    const nPrev = i > 0 ? segNormal(i - 1) : null;
+    const nNext = i < n - 1 ? segNormal(i) : null;
+    // Ends have one segment and therefore no join; the cap owns them.
+    if (!nPrev || !nNext) {
+      left.push(base.left[i]!);
+      right.push(base.right[i]!);
+      continue;
+    }
+    // Signed turn from the incoming to the outgoing direction. The normals are
+    // both rotations of their segment direction, so their cross/dot give it
+    // directly.
+    const cross = nPrev.x * nNext.y - nPrev.y * nNext.x;
+    const dot = nPrev.x * nNext.x + nPrev.y * nNext.y;
+    const turn = Math.atan2(cross, dot);
+    if (Math.abs(turn) < JOIN_CORNER_ANGLE) {
+      left.push(base.left[i]!);
+      right.push(base.right[i]!);
+      continue;
+    }
+
+    const p = pts[i]!;
+    const h = halfAt(i);
+    // Turning left (turn > 0) puts the LEFT boundary on the inside.
+    const outerIsLeft = turn < 0;
+    const sign = outerIsLeft ? 1 : -1;
+    const a = { x: p.x + nPrev.x * h * sign, y: p.y + nPrev.y * h * sign };
+    const b = { x: p.x + nNext.x * h * sign, y: p.y + nNext.y * h * sign };
+
+    const outer: Pt[] = [a];
+    if (join === 'round') {
+      // Arc about the corner vertex, from a to b the short way — the sweep is
+      // the turn itself, so it cannot take the long way round.
+      const a0 = Math.atan2(a.y - p.y, a.x - p.x);
+      for (let s = 1; s < JOIN_ARC_STEPS; s++) {
+        const ang = a0 + (turn * s) / JOIN_ARC_STEPS;
+        outer.push({ x: p.x + Math.cos(ang) * h, y: p.y + Math.sin(ang) * h });
+      }
+    } else if (join === 'miter') {
+      // The tip sits on the bisector at h / cos(half-turn). `1/cos` IS the
+      // miter ratio, so the limit is a direct test on it — past it Canvas2D
+      // falls back to a bevel, and so does this.
+      const half = Math.abs(turn) / 2;
+      const ratio = 1 / Math.max(1e-6, Math.cos(half));
+      if (ratio <= MITER_LIMIT) {
+        const bx = a.x - p.x + (b.x - p.x);
+        const by = a.y - p.y + (b.y - p.y);
+        const bl = Math.hypot(bx, by);
+        if (bl > 1e-9) {
+          outer.push({ x: p.x + (bx / bl) * h * ratio, y: p.y + (by / bl) * h * ratio });
+        }
+      }
+    }
+    // 'bevel' adds nothing: a and b joined directly IS the bevel.
+    outer.push(b);
+
+    if (outerIsLeft) {
+      left.push(...outer);
+      right.push(base.right[i]!);
+    } else {
+      // `right` is walked in reverse when the ring closes, so the join's points
+      // go in forward order here and reverse correctly with everything else.
+      right.push(...outer);
+      left.push(base.left[i]!);
+    }
+  }
+  return { left, right };
+}
+
 /** Unit vector a → b, or null when they coincide. */
 function unitFrom(a: Pt, b: Pt): Pt | null {
   const dx = b.x - a.x;
@@ -874,7 +957,7 @@ export function strokeShapeProfiled(
     for (const [s0, s1] of spans) {
       const piece = subPolyline(centre, arc, s0, s1);
       if (piece.pts.length < 2) continue;
-      const sides = offsetAlongNormals(piece.pts, (i) => {
+      const widthOf = (i: number): number => {
         // `at` maps a piece vertex back onto the WHOLE path's arc, so the
         // width comes from where the dash SITS, not from its own extent.
         const a = piece.at[i]!;
@@ -882,7 +965,8 @@ export function strokeShapeProfiled(
         const hi = Math.max(0, Math.min(arc.length - 1, Math.ceil(a)));
         const f = a - lo;
         return halfWidthAt(lo) * (1 - f) + halfWidthAt(hi) * f;
-      });
+      };
+      const sides = ribbonSidesWithJoins(piece.pts, widthOf, stroke.join);
       const ring = cappedRibbon(piece.pts, sides, spanCap);
       if (ring.length < 3) continue;
       ctx.beginPath();

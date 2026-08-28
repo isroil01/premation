@@ -27,10 +27,10 @@ Per platform:
 | --- | --- | --- |
 | Windows | `npm run dist` (on Windows) | `Premation-Setup-Windows.exe` + `latest.yml` |
 | macOS | `npm run dist` (on macOS) | `Premation-macOS-arm64.dmg`, `Premation-macOS-x64.dmg` + `latest-mac.yml` |
-| Linux | `npm run dist` (on Linux) | `Premation.AppImage` + `latest-linux.yml` |
 
 Each platform must be built **on** that platform. That is what the release
-workflow's three-runner matrix is for.
+workflow's two-runner matrix is for. There is no Linux row on purpose — see
+"Platform support" below.
 
 `npm run pack` is the fast variant: it produces `win-unpacked/` only, with no
 installer — useful when you just want to run the packaged app.
@@ -42,7 +42,9 @@ Publish them alongside the installer or auto-update cannot work.
 
 > **How updates reach users.** The app checks on a timer (not just at launch),
 > downloads in the background without asking, and installs on quit. The only
-> thing a user sees is a dismissible "update ready — Restart now" toast. A
+> thing a user sees is a "Restart to update" button in the title bar, filled in
+> the primary colour and present until they click it — it replaced a dismissible
+> toast that users reported not noticing. A
 > `Download updates automatically` toggle in Customize ▸ Appearance turns the
 > background download off for anyone on a metered connection; an update they
 > fetch by hand still installs on quit. See `electron/updater.ts`.
@@ -93,8 +95,8 @@ one repeatedly.
 Pushing a `v*` tag runs `.github/workflows/release.yml`:
 
 1. **verify** — tag matches `package.json`, typecheck (renderer + electron), full test suite.
-2. **build** — three runners in parallel: Windows, macOS (both architectures in one
-   job), Linux. Each runs `electron-builder --publish always`.
+2. **build** — two runners in parallel: Windows and macOS (both architectures in
+   one job). Each runs `electron-builder --publish always`.
 3. Assets upload to a **draft** release.
 
 The result is exactly the layout you want:
@@ -107,8 +109,7 @@ GitHub Repository
         ├── Premation-Setup-Windows.exe
         ├── Premation-macOS-arm64.dmg
         ├── Premation-macOS-x64.dmg
-        ├── Premation.AppImage
-        ├── latest.yml / latest-mac.yml / latest-linux.yml
+        ├── latest.yml / latest-mac.yml
         └── *.blockmap
 ```
 
