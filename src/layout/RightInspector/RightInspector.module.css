@@ -6,7 +6,7 @@
   min-width: 0;
   min-height: 0;
   background: var(--color-panel);
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid var(--color-border-structural);
   overflow: hidden;
 }
 

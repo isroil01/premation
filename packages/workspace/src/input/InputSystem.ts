@@ -151,6 +151,18 @@ export class InputSystem {
     this.pressedKeys.clear();
   }
 
+  /** Cancel through the normal end path so tools can clear drag state. */
+  cancel(): void {
+    if (this.down) {
+      this.feedPointerCancel({
+        ...this.down,
+        position: this.last ?? this.down.position,
+        buttons: { left: false, middle: false, right: false },
+      });
+    }
+    this.pressedKeys.clear();
+  }
+
   private emitClick(e: PointerInput): void {
     const isDouble =
       this.lastClickPos !== null &&

@@ -86,19 +86,19 @@ export const KIND_COLOR: Record<SceneKind, string> = {
  * `fillStyle` cannot resolve CSS `var(...)`, so rendering must use literals.
  */
 export const KIND_FILL: Record<SceneKind, string> = {
-  group: '#94a3b8',
-  null: '#94a3b8',
-  shape: '#14b8a6',
-  text: '#60a5fa',
-  image: '#f59e0b',
-  video: '#f43f5e',
-  svg: '#14b8a6',
-  audio: '#22d3ee',
-  camera: '#38bdf8',
-  light: '#fbbf24',
-  adjustment: '#a78bfa',
-  particle: '#f472b6',
-  comp: '#f43f5e',
+  group: '#64748b',
+  null: '#64748b',
+  shape: '#3b8276',
+  text: '#4f7ea8',
+  image: '#b47836',
+  video: '#a84e62',
+  svg: '#3b8276',
+  audio: '#3a8b9e',
+  camera: '#4a7bb0',
+  light: '#ba8e3a',
+  adjustment: '#7965aa',
+  particle: '#9e5a82',
+  comp: '#a84e62',
 };
 
 /**

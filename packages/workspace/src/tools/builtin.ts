@@ -305,10 +305,30 @@ export class SelectTool implements Tool {
               from, this.downHandle, pointerLocal, pivotLocal, undefined, e.modifiers.shift,
             );
 
-        const scale = {
-          x: base.x * (local.width / from.width),
-          y: from.height > 0 ? base.y * (local.height / from.height) : base.y,
-        };
+        /*
+         * Ctrl (⌘ on macOS) switches the drag from SCALE to SIZE.
+         *
+         * Both make the layer bigger on screen; they differ in which property
+         * records it, and that difference is real — Size reflows a text box and
+         * re-cuts a solid, where Scale stretches whatever was already drawn.
+         * Scale stays the default because this editor's muscle memory is After
+         * Effects', where a corner handle is Scale and Scale is what you
+         * keyframe; Ctrl is for the Figma/Illustrator reflex of resizing the
+         * thing itself.
+         *
+         * The geometry is IDENTICAL either way — same pivot, same new box — so
+         * the gesture feels the same and only the numbers land elsewhere. In
+         * size mode Scale is left exactly as the drag found it, so one gesture
+         * never writes both and the two can never disagree about how big the
+         * layer is.
+         */
+        const resizesSize = e.modifiers.mod;
+        const scale = resizesSize
+          ? base
+          : {
+              x: base.x * (local.width / from.width),
+              y: from.height > 0 ? base.y * (local.height / from.height) : base.y,
+            };
 
         /*
          * Where the resized box's centre lands in the world.
@@ -341,7 +361,11 @@ export class SelectTool implements Tool {
         const w = Math.abs(local.width * scale.x);
         const h = Math.abs(local.height * scale.y);
         const bounds = R.rect(center.x - w / 2, center.y - h / 2, w, h);
-        ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center));
+        // The new box in the layer's OWN units — which is what its width/height
+        // are. Only sent in size mode; the handler falls back to scaling when
+        // the layer has no authored size to write (an image, a video, a precomp).
+        const size = resizesSize ? { x: local.width, y: local.height } : undefined;
+        ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center, size));
         ctx.requestRender();
         return;
       }
@@ -546,6 +570,12 @@ export class HandTool implements Tool {
   }
 
   onDragEnd(_e: ToolDragEvent, ctx: ToolContext): void {
+    this.popCursor?.();
+    this.popCursor = null;
+    ctx.requestRender();
+  }
+
+  deactivate(ctx: ToolContext): void {
     this.popCursor?.();
     this.popCursor = null;
     ctx.requestRender();

@@ -16,6 +16,7 @@ import defaultSceneGraph from './DefaultSceneGraph';
 import { SCENE_KIND_PROP, type SceneKind } from './seedDefaultScene';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { runDocumentEdit } from '@core/commands/documentEdit';
 import type { SceneNode } from '@core/types';
 import type { ImportedAsset } from '@stores/assetStore';
 import {
@@ -142,7 +143,7 @@ export function makeNode(kind: SceneKind, name: string): SceneNode {
                 height: 100,
               },
             },
-            { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#2b7eff' } },
+            { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#3b8276' } },
           ];
   return { id, name, parent: null, children: [], transform, visible: true, locked: false, components };
 }
@@ -1038,7 +1039,7 @@ export function insertText(name: string, fontSize = 32, fontWeight = 400, extraP
 /** Insert a full-frame solid colour layer (background / matte / adjustment base).
  *  Seeded at comp size and centre so selection handles match the fill; the
  *  layer remains a normal transformable shape flagged `solid`. */
-export function insertSolid(color = '#2b7eff'): void {
+export function insertSolid(color = '#4f7ea8'): void {
   const rootId = activeCompRootId();
   const node = makeNode('shape', 'Solid');
   const comp = useCompositionStore.getState();
@@ -1050,8 +1051,16 @@ export function insertSolid(color = '#2b7eff'): void {
     t.props.y = h / 2;
     t.props.width = w;
     t.props.height = h;
-    t.props.anchorX = w / 2;
-    t.props.anchorY = h / 2;
+    // CENTRED — not (w/2, h/2). That is After Effects' numbering, where a
+    // layer's anchor is measured from its top-left corner; this model stores
+    // the anchor as an offset FROM THE LAYER CENTRE (see `anchor.ts`, and the
+    // `ax !== 0` neutrality test in buildSnapshot). Seeding it with half the
+    // layer cancelled the position outright — the world matrix came out as the
+    // identity — parking a comp-sized solid with its centre on the comp's
+    // top-left corner, three quarters of it outside the frame. Every other
+    // insert in this file already writes 0.
+    t.props.anchorX = 0;
+    t.props.anchorY = 0;
     t.props.rotation = 0;
     t.props.scaleX = 1;
     t.props.scaleY = 1;
@@ -1678,12 +1687,14 @@ export function deleteSelectedLayers(): void {
   });
   if (toDelete.length === 0) return;
 
-  // One primitive, shared with the timeline's clip context menu — see
-  // `deleteLayerNode`. The two routes used to delete different things, which is
-  // why deleting from the timeline appeared not to work at all.
-  for (const id of toDelete) deleteLayerNode(id);
-  useSelectionStore.getState().clear();
-  bumpScene();
+  runDocumentEdit(toDelete.length === 1 ? 'Delete layer' : 'Delete layers', () => {
+    // One primitive, shared with the timeline's clip context menu — see
+    // `deleteLayerNode`. The two routes used to delete different things, which
+    // is why deleting from the timeline appeared not to work at all.
+    for (const id of toDelete) deleteLayerNode(id);
+    useSelectionStore.getState().clear();
+    bumpScene();
+  });
 }
 
 /**
@@ -1811,21 +1822,26 @@ function toggleSelectionFlag(flag: 'locked' | 'solo' | 'visible'): void {
   if (ids.length === 0) return;
   const first = defaultSceneGraph.getNode(ids[0]!);
   if (!first) return;
-  if (flag === 'visible') {
-    // hidden = visible:false; flip the whole selection to match !first.
-    const newVisible = first.visible === false;
-    for (const id of ids) {
-      const node = defaultSceneGraph.getNode(id);
-      if (node) node.visible = newVisible;
+  const next = flag === 'visible' ? first.visible === false : !first[flag];
+  const label = flag === 'visible'
+    ? (next ? 'Show layer' : 'Hide layer')
+    : flag === 'locked'
+      ? (next ? 'Lock layer' : 'Unlock layer')
+      : (next ? 'Solo layer' : 'Unsolo layer');
+  runDocumentEdit(label, () => {
+    if (flag === 'visible') {
+      for (const id of ids) {
+        const node = defaultSceneGraph.getNode(id);
+        if (node) node.visible = next;
+      }
+    } else {
+      for (const id of ids) {
+        const node = defaultSceneGraph.getNode(id);
+        if (node) node[flag] = next;
+      }
     }
-  } else {
-    const target = !first[flag];
-    for (const id of ids) {
-      const node = defaultSceneGraph.getNode(id);
-      if (node) node[flag] = target;
-    }
-  }
-  bumpScene();
+    bumpScene();
+  });
 }
 
 export const toggleSelectedLocked = (): void => toggleSelectionFlag('locked');

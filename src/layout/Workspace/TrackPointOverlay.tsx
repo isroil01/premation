@@ -70,7 +70,7 @@ export function TrackPointOverlay(): JSX.Element | null {
         (sx / src.width - 0.5) * geom.width,
         (sy / src.height - 0.5) * geom.height,
       );
-  }, [mapping, geom?.width, geom?.height, src?.width, src?.height]);
+  }, [mapping, geom, src]);
 
   const screenToSource = useMemo(() => {
     if (!mapping || !geom || !src) return null;
@@ -81,7 +81,7 @@ export function TrackPointOverlay(): JSX.Element | null {
         y: (l.y / geom.height + 0.5) * src.height,
       };
     };
-  }, [mapping, geom?.width, geom?.height, src?.width, src?.height]);
+  }, [mapping, geom, src]);
 
   useEffect(() => {
     const svg = svgRef.current;

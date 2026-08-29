@@ -7,7 +7,7 @@ import { PanelHeader } from '@layout/EditorLayout/PanelHeader';
 import { panelDef } from '@layout/EditorLayout/panelDefs';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
 import { WorkspaceViewport } from '@layout/Workspace';
-import { Timeline, type TimelineModel } from '@layout/Timeline';
+import { PopoutTimeline } from '@layout/BottomTimeline/PopoutTimeline';
 import { PresentationModeWindow } from '@layout/Presentation/PresentationModeWindow';
 
 import { Providers } from '../providers/Providers';
@@ -64,17 +64,9 @@ function PopoutContent(): JSX.Element {
   }
 
   if (panelId === 'timeline') {
-    const emptyModel: TimelineModel = {
-      tracks: [],
-      markers: [],
-      duration: 10,
-      currentTime: 0,
-      frameRate: 30,
-      pixelsPerSecond: 100,
-    };
     return (
       <div style={{ width: '100vw', height: '100vh', background: '#121213', overflow: 'hidden' }}>
-        <Timeline model={emptyModel} />
+        <PopoutTimeline />
       </div>
     );
   }

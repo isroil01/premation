@@ -14,6 +14,7 @@ import { FontPicker } from './FontPicker';
 import { Checkbox } from '@components/Checkbox';
 import { Icon } from '@components/Icon';
 import { useTextEditStore, hasRange } from '@stores/textEditStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { readTextPathConfig, updateTextPath, setTextPath, defaultTextPath } from '@core/text/textPath';
 import type { MaskPath } from '@core/effects/mask';
 import { readRuns, writeRuns, applyStyleToRange, styleOverRange, type RunStyleKey } from '@core/text/richText';
@@ -44,6 +45,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
   // rendered with after an edit.
   useAnimationRevision();
   const time = useActiveWorkspace()?.time ?? 0;
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   // The layer's own time axis — the one the renderer samples on. Reading on
   // one axis and writing on another is what made a value set at 5s appear to
   // overwrite the keyframe at 1s.
@@ -217,7 +219,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
     const handleChange = (v: number) => {
       if (rangedProp) {
         setCharProp(runKey, v, setVal as (x: unknown) => void);
-      } else if (animated) {
+      } else if (animated || autoKeyframe) {
         runAnimEdit(
           `Set ${propName}`,
           () => defaultAnimation.setKeyframe(nodeId, propName, layerT, v),

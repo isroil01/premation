@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -139,6 +139,12 @@ export function PuppetOverlay(): JSX.Element | null {
   // completed drag, or travel past the slop suppresses the click-add.
   const suppressClickAddRef = useRef(false);
 
+  const deletePin = useCallback((nodeId: string, pinId: string) => {
+    // One undoable command: removes the pin AND its animation tracks
+    // (position/rotation/stiffness); undo restores both.
+    deletePuppetPin(nodeId, pinId);
+    if (selectedPinId === pinId) setSelectedPinId(null);
+  }, [selectedPinId]);
 
   // Force re-render on render ticks / camera movements. `onRender` returns a
   // disposer now (it used to be a single-slot setter, so this subscription was
@@ -162,7 +168,7 @@ export function PuppetOverlay(): JSX.Element | null {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTool, selectedNodeId, selectedPinId]);
+  }, [activeTool, selectedNodeId, selectedPinId, deletePin]);
 
   if (activeTool !== 'puppet-pin' || !selectedNodeId) return null;
 
@@ -587,13 +593,6 @@ export function PuppetOverlay(): JSX.Element | null {
     );
     addPuppetPin(node.id, newPin);
     setSelectedPinId(pinId);
-  };
-
-  const deletePin = (nodeId: string, pinId: string) => {
-    // One undoable command: removes the pin AND its animation tracks
-    // (position/rotation/stiffness); undo restores both.
-    deletePuppetPin(nodeId, pinId);
-    if (selectedPinId === pinId) setSelectedPinId(null);
   };
 
   return (

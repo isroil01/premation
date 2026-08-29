@@ -89,13 +89,18 @@ export function ValueField({
      *  a locked pointer's clientX is frozen, which is the whole point. */
     lastX: number;
     moved: boolean;
+    /** Lock state as of the PREVIOUS move, so a change of state can be spotted
+     *  and that one frame's bogus delta thrown away. Never a source of truth —
+     *  `document.pointerLockElement` is. */
     locked: boolean;
+    active: boolean;
     state: ScrubState;
   }>({
     startX: 0,
     lastX: 0,
     moved: false,
     locked: false,
+    active: false,
     state: beginScrub(value, { shiftKey: false, altKey: false }),
   });
   const fieldRef = useRef<HTMLDivElement>(null);
@@ -185,10 +190,16 @@ export function ValueField({
   // click, and the browser would flash its "press Esc to show your cursor"
   // banner for a gesture the user never made.
   const releaseLock = useCallback(() => {
-    if (!scrub.current.locked) return;
+    scrub.current.active = false;
     scrub.current.locked = false;
     try {
-      if (typeof document !== 'undefined' && document.exitPointerLock) document.exitPointerLock();
+      if (
+        typeof document !== 'undefined' &&
+        document.pointerLockElement === fieldRef.current &&
+        document.exitPointerLock
+      ) {
+        document.exitPointerLock();
+      }
     } catch {
       /* lock already gone (Esc, tab switch) — nothing to release */
     }
@@ -239,29 +250,64 @@ export function ValueField({
             // Chromium returns a promise here; older engines return void. It
             // rejects when the user recently pressed Esc, or the document is
             // not focused. A scrub that stays cursor-bound is a fine fallback,
-            // so both paths simply leave `locked` false.
+            // so every path simply leaves the scrub unlocked.
+            //
+            // Nothing here records that the lock was GRANTED. `document`
+            // already knows, and it knows sooner: the cursor is locked before
+            // this promise resolves, so a flag set from the callback is stale
+            // for exactly the frames where being wrong hurts most.
             const req = el.requestPointerLock() as unknown as Promise<void> | undefined;
             if (req && typeof req.then === 'function') {
               req.then(
-                () => { scrub.current.locked = true; },
-                () => { scrub.current.locked = false; },
+                () => {
+                  // A request can resolve after its own scrub has ended (a
+                  // short flick releases before the browser answers). Whoever
+                  // is still dragging adopts the lock by reading `document`;
+                  // if nobody is, it must be handed back or the cursor stays
+                  // hidden with nothing listening.
+                  if (document.pointerLockElement !== el) return;
+                  if (!scrub.current.active) document.exitPointerLock?.();
+                },
+                () => { /* denied — the scrub stays cursor-bound */ },
               );
-            } else {
-              s.locked = document.pointerLockElement === el;
             }
           } catch {
-            s.locked = false;
+            /* pointer lock unavailable — cursor-bound scrubbing still works */
           }
         }
       }
-      // Locked: clientX is frozen, so movementX is the only signal.
-      // Unlocked: clientX deltas are exact and free of the platform's raw-input
-      // scaling, so prefer them. NaN guards the frame right after a lock is
-      // lost, where the previous clientX belongs to a frozen cursor.
-      const dx = s.lastX;
-      const delta = s.locked
-        ? e.movementX
-        : Number.isFinite(dx) ? e.clientX - dx : 0;
+      /*
+       * Lock state is re-read from the DOM on EVERY move, and the frame that
+       * CHANGES it contributes nothing.
+       *
+       * Acquiring: Chromium delivers one enormous `movementX` on the event that
+       * takes the lock — the jump from the real cursor to the locked origin,
+       * not a hand movement. It points from the cursor back towards the origin,
+       * so a drag to the RIGHT arrives as a large NEGATIVE spike. That is the
+       * whole of "I drag right and the value goes to minus", and it lands at
+       * the same instant the cursor vanishes, which is why the two were
+       * reported as one bug. Clamping the spike (`sanitizeMovement`) bounds the
+       * damage without fixing the direction — the event carries no travel at
+       * all, so the only correct delta for it is zero.
+       *
+       * Losing it (Esc, tab switch, window blur): `clientX` on that frame is
+       * the frozen coordinate the locked cursor was parked at, so measuring
+       * against it teleports the value by however far the cursor really moved.
+       *
+       * Dropping one frame per transition is imperceptible. Either spike is not.
+       */
+      const el = fieldRef.current;
+      const lockedNow =
+        typeof document !== 'undefined' && el !== null && document.pointerLockElement === el;
+      const delta = lockedNow !== s.locked
+        ? 0
+        : lockedNow
+          // Locked: clientX is frozen, so movementX is the only signal.
+          ? e.movementX
+          // Unlocked: clientX deltas are exact and free of the platform's
+          // raw-input scaling, so prefer them.
+          : Number.isFinite(s.lastX) ? e.clientX - s.lastX : 0;
+      s.locked = lockedNow;
       s.lastX = e.clientX;
       s.state = advanceScrub(s.state, delta, step, e, min, max);
       commitScrub(s.state.value);
@@ -301,6 +347,7 @@ export function ValueField({
       lastX: e.clientX,
       moved: false,
       locked: false,
+      active: true,
       state: beginScrub(value, e),
     };
     window.addEventListener('pointermove', windowHandlers.current.move);
@@ -308,19 +355,9 @@ export function ValueField({
   };
 
   // Esc, a tab switch or a window blur drops the lock out from under an
-  // in-flight scrub. Fall back to cursor-bound tracking rather than freezing:
-  // `lastX` is invalidated so the next move re-seeds it instead of measuring
-  // against a frozen coordinate and jumping.
-  useEffect(() => {
-    const onLockChange = (): void => {
-      if (scrub.current.locked && document.pointerLockElement !== fieldRef.current) {
-        scrub.current.locked = false;
-        scrub.current.lastX = Number.NaN;
-      }
-    };
-    document.addEventListener('pointerlockchange', onLockChange);
-    return () => document.removeEventListener('pointerlockchange', onLockChange);
-  }, []);
+  // in-flight scrub. No listener is needed to cope: `onPointerMove` re-reads
+  // `document.pointerLockElement` every frame, so it sees the loss on the next
+  // move, discards that frame's stale delta and resumes cursor-bound tracking.
 
   // Unmount only. Listing the handlers here (which is what this used to do) is
   // what killed a drag on its first re-render — see `windowHandlers` above.

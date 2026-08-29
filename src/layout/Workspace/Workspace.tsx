@@ -449,11 +449,14 @@ export function WorkspaceViewport({
               panel, as a REPLACEMENT: opaque over the stage, so no comp frame
               or grid implies a composition that doesn't meaningfully exist.
               The canvases stay mounted beneath it (GPU init is not free).
+              Shown as soon as the scene is the auto-minted empty project —
+              not gated on GPU ready — so a desktop window whose backend is
+              still probing does not look like a blank dark frame.
               It stays up during a file drag — its footage card and the root's
               drop handler are the drop targets — and steps aside the moment
               the user picks a creation tool, preserving the draw-the-first-
               shape-directly workflow the local edition promises. */}
-          {sceneIsEmpty && allCompsPristine && ready && !renderError && !creationToolActive && (
+          {sceneIsEmpty && allCompsPristine && !creationToolActive && (
             <EmptyCompositionView />
           )}
           {/* Scene loading indicator — until the backend paints its first frame. */}

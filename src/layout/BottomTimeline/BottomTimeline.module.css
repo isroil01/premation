@@ -6,7 +6,7 @@
   min-width: 0;
   min-height: 0;
   background: var(--color-surface-0);
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--color-border-structural);
   overflow: hidden;
   font-family: var(--font-family-sans);
 }
@@ -330,7 +330,7 @@
   padding: 2px 8px;
   flex: none;
   box-sizing: border-box;
-  border-right: 2px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
 }
 
 .searchBarRightGap {
@@ -845,7 +845,7 @@ button.play:hover {
   height: 22px;
   padding: 0 8px;
   background: var(--color-statusbar);
-  border-top: 1px solid var(--color-border);
+  border-top: 1px solid var(--color-border-structural);
   flex: none;
   user-select: none;
   font-size: var(--font-size-xs);

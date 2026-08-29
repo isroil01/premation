@@ -27,6 +27,7 @@ export {
   DEFAULT_MAX_RASTER_PIXELS,
   paddingClass,
   rasterCacheKey,
+  rasterKeyTier,
   RESOLUTION_TIERS,
   type VectorRasterizer,
   type RasterRequest,

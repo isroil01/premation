@@ -190,3 +190,138 @@ describe('ValueField click vs drag', () => {
     expect(screen.getByDisplayValue('42')).toBeTruthy();
   });
 });
+
+describe('ValueField pointer-lock lifecycle', () => {
+  it('releases a lock that resolves after the scrub already ended', async () => {
+    render(<Host initial={0} />);
+    const target = field();
+    let resolveLock: (() => void) | undefined;
+    Object.defineProperty(target, 'requestPointerLock', {
+      configurable: true,
+      value: () => new Promise<void>((resolve) => { resolveLock = resolve; }),
+    });
+    Object.defineProperty(document, 'pointerLockElement', {
+      configurable: true,
+      value: null,
+      writable: true,
+    });
+    const exitPointerLock = jest.fn(() => {
+      Object.defineProperty(document, 'pointerLockElement', {
+        configurable: true,
+        value: null,
+        writable: true,
+      });
+    });
+    Object.defineProperty(document, 'exitPointerLock', {
+      configurable: true,
+      value: exitPointerLock,
+    });
+
+    press(0);
+    move(10);
+    release(10);
+
+    Object.defineProperty(document, 'pointerLockElement', {
+      configurable: true,
+      value: target,
+      writable: true,
+    });
+    await act(async () => resolveLock?.());
+
+    expect(exitPointerLock).toHaveBeenCalledTimes(1);
+    expect(document.pointerLockElement).toBeNull();
+  });
+});
+
+/**
+ * Reported: "if I drag to the right the value should increase, but it goes to
+ * minus" — together with "the cursor disappears".
+ *
+ * Both are the same moment: the instant the drag gets long enough to acquire
+ * pointer lock. Chromium delivers ONE enormous `movementX` on that event —
+ * the jump from the real cursor to the locked origin, not a hand movement —
+ * and it points from the cursor back to the origin, so dragging RIGHT produces
+ * a large NEGATIVE spike. The value lurched hundreds of units the wrong way at
+ * exactly the moment the cursor vanished, which is why the two were reported
+ * as one bug.
+ *
+ * Clamping the spike (which is what `sanitizeMovement` does) only bounds the
+ * damage — a 300-unit jump in the wrong direction is still the reported bug.
+ * The acquisition event carries no real travel, so it must be DISCARDED.
+ */
+describe('ValueField pointer-lock acquisition spike', () => {
+  function lockTo(el: Element | null): void {
+    Object.defineProperty(document, 'pointerLockElement', {
+      configurable: true, value: el, writable: true,
+    });
+  }
+
+  /** A move carrying an explicit `movementX`, as a locked pointer does. */
+  function moveLocked(clientX: number, movementX: number): void {
+    act(() => {
+      const e = new PointerEvent('pointermove', {
+        bubbles: true, button: 0, buttons: 1,
+        clientX, clientY: 0, pointerId: 1, pointerType: 'mouse', isPrimary: true,
+      });
+      Object.defineProperty(e, 'movementX', { configurable: true, value: movementX });
+      window.dispatchEvent(e);
+    });
+  }
+
+  afterEach(() => { lockTo(null); });
+
+  it('discards the acquisition spike instead of scrubbing hundreds of units backwards', async () => {
+    render(<Host initial={0} />);
+    const target = field();
+    lockTo(null);
+    Object.defineProperty(target, 'requestPointerLock', {
+      configurable: true,
+      value: () => Promise.resolve(),
+    });
+
+    press(0);
+    move(10);                     // crosses the dead zone, requests the lock
+    expect(shown()).toBe(10);
+
+    // The browser grants the lock, then delivers the bogus jump. The user is
+    // still dragging RIGHT; the spike points left.
+    await act(async () => { lockTo(target); });
+    moveLocked(10, -500);
+    expect(shown()).toBe(10);     // was -290: clamped, but still backwards
+
+    // Real locked movement after the acquisition still counts, at full fidelity.
+    moveLocked(10, 20);
+    expect(shown()).toBe(30);
+    moveLocked(10, 20);
+    expect(shown()).toBe(50);
+  });
+
+  it('does not double-count the frame the lock is lost (Esc mid-drag)', async () => {
+    render(<Host initial={0} />);
+    const target = field();
+    lockTo(null);
+    Object.defineProperty(target, 'requestPointerLock', {
+      configurable: true,
+      value: () => Promise.resolve(),
+    });
+
+    press(0);
+    move(10);
+    await act(async () => { lockTo(target); });
+    moveLocked(10, 0);            // acquisition frame, discarded
+    moveLocked(10, 30);
+    expect(shown()).toBe(40);
+
+    // Esc drops the lock. `clientX` is meaningless on that frame — it is the
+    // frozen coordinate the locked cursor was parked at — so it must not be
+    // measured against.
+    lockTo(null);
+    move(900);
+    expect(shown()).toBe(40);
+
+    // Cursor-bound tracking resumes from the new position, no teleport.
+    move(910);
+    release(910);
+    expect(shown()).toBe(50);
+  });
+});

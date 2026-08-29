@@ -60,6 +60,13 @@ export const usePropertySelectionStore = create<PropertySelectionStore>((set, ge
   },
 }));
 
+export function prunePropertySelectionToNodes(nodeIds: ReadonlySet<string>): void {
+  usePropertySelectionStore.setState((s) => {
+    const entries = s.entries.filter((entry) => nodeIds.has(entry.nodeId));
+    return entries.length === s.entries.length ? s : { entries };
+  });
+}
+
 /**
  * The per-property weights of a multi-scrub.
  *

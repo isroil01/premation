@@ -44,35 +44,40 @@ export const useRenderBackendStore = create<RenderBackendStore>((set) => ({
   _setTier: (t) => set({ activeTier: t, isSoftwareFallback: t === 'software' }),
 }));
 
-// Automatic tier fallback on EngineError events emitted by MotionRendererBackend.
-// The backend itself now performs the ACTUAL recovery (disposing the failed
-// backend and re-initializing on the next tier, incl. a delayed WebGL2 retry);
-// this store just mirrors the state for the ViewportHeader badge.
-getEventBus().on('EngineError', (payload) => {
-  // Only the MAIN viewport may set this badge. `role` is optional in the event
-  // contract, so test it for the positive case — treating an omitted role as
-  // "viewport" is how thumbnails, exports and secondary panes flipped a global
-  // badge while the main viewport was happily on hardware WebGL2.
-  if (payload.role !== 'viewport') return;
-  const store = useRenderBackendStore.getState();
-  if (payload.engine === 'motion-webgpu') {
+/**
+ * Bind after Application.boot installs the process EventBus. Import-time
+ * subscriptions attach to the pre-boot bus and never observe renderer events.
+ */
+export function attachRenderBackendEvents(): () => void {
+  const bus = getEventBus();
+  const errorSub = bus.on('EngineError', (payload) => {
+    // Only the MAIN viewport may set this badge. `role` is optional in the event
+    // contract, so test it for the positive case — treating an omitted role as
+    // "viewport" is how thumbnails, exports and secondary panes flipped a global
+    // badge while the main viewport was happily on hardware WebGL2.
+    if (payload.role !== 'viewport') return;
+    const store = useRenderBackendStore.getState();
+    if (payload.engine === 'motion-webgpu') {
+      console.warn('[renderBackendStore] WebGPU init failed, noting WebGL2 tier.');
+      store._setTier('webgl2');
+    } else if (payload.engine === 'motion-webgl2') {
+      console.warn('[renderBackendStore] WebGL2 init failed, showing software badge.');
+      store._setTier('software');
+    }
+  });
 
-    console.warn('[renderBackendStore] WebGPU init failed, noting WebGL2 tier.');
-    store._setTier('webgl2');
-  } else if (payload.engine === 'motion-webgl2') {
+  // A successful init (including a fallback tier or delayed WebGL2 retry)
+  // reports the tier that actually rendered.
+  const readySub = bus.on('EngineReady', (payload) => {
+    if (payload.role !== 'viewport') return;
+    const store = useRenderBackendStore.getState();
+    if (payload.engine === 'motion-webgpu') store._setTier('webgpu');
+    else if (payload.engine === 'motion-webgl2') store._setTier('webgl2');
+    else if (payload.engine === 'motion-null') store._setTier('null');
+  });
 
-    console.warn('[renderBackendStore] WebGL2 init failed, showing software badge.');
-    store._setTier('software');
-  }
-});
-
-// A successful init (including a fallback tier or the delayed WebGL2 retry
-// coming up AFTER an EngineError already flipped the badge) reports the tier
-// that actually rendered — this un-sticks a premature 'software' badge.
-getEventBus().on('EngineReady', (payload) => {
-  if (payload.role !== 'viewport') return;
-  const store = useRenderBackendStore.getState();
-  if (payload.engine === 'motion-webgpu') store._setTier('webgpu');
-  else if (payload.engine === 'motion-webgl2') store._setTier('webgl2');
-  else if (payload.engine === 'motion-null') store._setTier('null');
-});
+  return () => {
+    errorSub.dispose();
+    readySub.dispose();
+  };
+}

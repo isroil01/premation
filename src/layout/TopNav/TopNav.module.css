@@ -5,7 +5,7 @@
   background: color-mix(in srgb, var(--color-toolbar) 85%, transparent);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 2px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-structural);
   user-select: none;
   position: relative;
   z-index: 100;

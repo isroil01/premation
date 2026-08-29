@@ -61,6 +61,7 @@ export function useSpaceTransport(): void {
 
     // Focus loss (alt-tab, a modal) strands `spaceDown` — key-up never arrives.
     const onBlur = (): void => {
+      getWorkspaceController().ws.cancelTransientInput();
       spaceDown = false;
       panned = false;
     };
@@ -70,6 +71,7 @@ export function useSpaceTransport(): void {
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('blur', onBlur);
     return () => {
+      getWorkspaceController().ws.cancelTransientInput();
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('pointermove', onPointerMove);

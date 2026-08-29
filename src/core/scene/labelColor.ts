@@ -88,5 +88,7 @@ export function setNodeLabelColor(nodeIds: string | ReadonlyArray<string>, color
     node.color = color;
     changed = true;
   }
-  if (changed) bumpScene();
+  if (changed) {
+    bumpScene();
+  }
 }

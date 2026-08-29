@@ -95,7 +95,7 @@ export function Popover({
       return () => window.removeEventListener('keydown', onKey, true);
     }
     return undefined;
-  }, [isOpen, closeOnEscape]);
+  }, [isOpen, closeOnEscape, setOpen]);
 
   useEffect(() => {
     if (!isOpen || !closeOnOutside) return;
@@ -113,7 +113,7 @@ export function Popover({
       window.clearTimeout(id);
       window.removeEventListener('pointerdown', onDown);
     };
-  }, [isOpen, closeOnOutside]);
+  }, [isOpen, closeOnOutside, setOpen]);
 
   if (!isValidElement(trigger)) return <></>;
 

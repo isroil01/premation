@@ -50,6 +50,18 @@ export interface TreeViewProps<T> {
   defaultExpandedIds?: ReadonlyArray<string>;
   expandedIds?: ReadonlyArray<string>;
   onToggleExpand?: (id: string, expanded: boolean) => void;
+  /**
+   * Branches to force open, so a row the host just made relevant is actually on
+   * screen. Merged INTO the expansion set rather than replacing it, and only
+   * when the array's identity changes — so it opens a branch once and never
+   * fights the user re-closing it.
+   *
+   * Exists because a collapsed branch hides its contents completely: parenting
+   * a layer under a Null that had no children until that moment moved the layer
+   * into a branch that renders shut, and the layer simply vanished from the
+   * panel. Pass the new parent's ancestor chain and it stays visible.
+   */
+  revealIds?: ReadonlyArray<string>;
   /** Render extra UI on the right of a row (badges, drag handles,...). */
   renderActions?: (node: TreeNode<T>) => ReactNode;
   /** Right-click a row. Receives the node id and the mouse event. */
@@ -106,6 +118,7 @@ export function TreeView<T = unknown>({
   defaultExpandedIds,
   expandedIds,
   onToggleExpand,
+  revealIds,
   renderActions,
   onNodeContextMenu,
   onReorder,
@@ -124,6 +137,20 @@ export function TreeView<T = unknown>({
     () => (expandedIds ? new Set(expandedIds) : internalExpanded),
     [expandedIds, internalExpanded],
   );
+
+  // Open whatever the host asked to reveal. Keyed on the array's identity, so a
+  // host that hands over the same request twice does not re-open a branch the
+  // user has since closed. No-ops while `expandedIds` drives the tree — a fully
+  // controlled caller owns its own reveal.
+  useEffect(() => {
+    if (expandedIds || !revealIds?.length) return;
+    setInternalExpanded((prev) => {
+      if (revealIds.every((id) => prev.has(id))) return prev;
+      const next = new Set(prev);
+      for (const id of revealIds) next.add(id);
+      return next;
+    });
+  }, [revealIds, expandedIds]);
   const [internalSelected, setInternalSelected] = useState<ReadonlyArray<string>>([]);
   const selected = selectedIds ?? internalSelected;
   const lastSelected = useRef<string | null>(null);

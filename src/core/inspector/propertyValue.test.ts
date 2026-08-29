@@ -85,9 +85,10 @@ describe('effect parameters', () => {
     const colorKey = effectDefFor(fx.type)!.params.find((p) => p.type === 'color')?.key;
     if (!colorKey) return; // effect has no colour param; nothing to assert
     updateEffectParam('a', fx.id, colorKey, '#ff8000');
-    expect(readStaticPropertyValue('a', `${effectPropPath(fx.id, colorKey)}_r`)).toBe(255);
-    expect(readStaticPropertyValue('a', `${effectPropPath(fx.id, colorKey)}_g`)).toBe(128);
+    expect(readStaticPropertyValue('a', `${effectPropPath(fx.id, colorKey)}_r`)).toBe(1);
+    expect(readStaticPropertyValue('a', `${effectPropPath(fx.id, colorKey)}_g`)).toBeCloseTo(128 / 255);
     expect(readStaticPropertyValue('a', `${effectPropPath(fx.id, colorKey)}_b`)).toBe(0);
+    expect(readStaticPropertyValue('a', `${effectPropPath(fx.id, colorKey)}_a`)).toBe(1);
     // A channel has no writable base — the stored value is one hex string, and
     // rewriting a channel through it would quietly rewrite the other three.
     expect(canWriteStaticPropertyValue('a', `${effectPropPath(fx.id, colorKey)}_r`)).toBe(false);

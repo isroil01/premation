@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '@utils/cn';
 import { clamp } from '@utils/lang';
+import { useUIStore } from '@stores/uiStore';
 import styles from './SplitPane.module.css';
 
 export type SplitDirection = 'horizontal' | 'vertical';
@@ -85,50 +86,104 @@ export function SplitPane({
   const dragging = useRef(false);
   const startPos = useRef(0);
   const startSize = useRef(0);
+  const latestPos = useRef(0);
+  const rafId = useRef<number | null>(null);
 
   const current = (size ?? internal);
   // When the fixed pane is the last one, dragging the splitter toward it
   // (increasing pointer coordinate) shrinks it, so invert the delta.
   const sign = primary === 'last' ? -1 : 1;
 
+  // Keep latest callbacks and options in a ref so event listeners don't rebind or abort during drag
+  const propsRef = useRef({ onResize, onResizeEnd, minSize, maxSize, sign, direction, storageKey });
+  propsRef.current = { onResize, onResizeEnd, minSize, maxSize, sign, direction, storageKey };
+
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    e.preventDefault();
+
     dragging.current = true;
     startPos.current = direction === 'horizontal' ? e.clientX : e.clientY;
+    latestPos.current = startPos.current;
     startSize.current = current;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // In synthetic test environments setPointerCapture may not be supported
+    }
+
+    useUIStore.getState().setDragging(true);
     document.body.style.cursor = direction === 'horizontal' ? 'col-resize' : 'row-resize';
     document.body.style.userSelect = 'none';
-  }, [current, direction]);
 
-  useEffect(() => {
-    const onMove = (e: PointerEvent): void => {
+    const handlePointerMove = (ev: PointerEvent): void => {
       if (!dragging.current) return;
-      const pos = direction === 'horizontal' ? e.clientX : e.clientY;
-      const delta = pos - startPos.current;
-      const next = clamp(startSize.current + sign * delta, minSize, maxSize);
-      setInternal(next);
-      onResize?.(next);
+      const { direction: dir } = propsRef.current;
+      latestPos.current = dir === 'horizontal' ? ev.clientX : ev.clientY;
+
+      if (rafId.current === null) {
+        const id = requestAnimationFrame(() => {
+          rafId.current = null;
+          if (!dragging.current) return;
+          const { minSize: min, maxSize: max, sign: s, onResize: resizeCb } = propsRef.current;
+          const delta = latestPos.current - startPos.current;
+          const next = clamp(startSize.current + s * delta, min, max);
+          setInternal(next);
+          resizeCb?.(next);
+        });
+        if (rafId.current !== null) {
+          rafId.current = id;
+        }
+      }
     };
-    const onUp = (e: PointerEvent): void => {
+
+    const handlePointerUp = (ev: PointerEvent): void => {
       if (!dragging.current) return;
       dragging.current = false;
+
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = null;
+      }
+
+      useUIStore.getState().setDragging(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      const pos = direction === 'horizontal' ? e.clientX : e.clientY;
+
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+
+      const { minSize: min, maxSize: max, sign: s, direction: dir, storageKey: key, onResizeEnd: endCb } = propsRef.current;
+      const pos = dir === 'horizontal' ? ev.clientX : ev.clientY;
       const delta = pos - startPos.current;
-      const next = clamp(startSize.current + sign * delta, minSize, maxSize);
-      writePersisted(storageKey, next);
-      onResizeEnd?.(next);
+      const next = clamp(startSize.current + s * delta, min, max);
+      setInternal(next);
+      writePersisted(key, next);
+      endCb?.(next);
     };
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-    window.addEventListener('pointercancel', onUp);
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+  }, [current, direction]);
+
+  // Clean up global cursor, drag flag, and rAF if component unmounts mid-drag
+  useEffect(() => {
     return () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', onUp);
-      window.removeEventListener('pointercancel', onUp);
+      if (rafId.current !== null) {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = null;
+      }
+      if (dragging.current) {
+        dragging.current = false;
+        useUIStore.getState().setDragging(false);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
     };
-  }, [direction, minSize, maxSize, onResize, onResizeEnd, storageKey, sign]);
+  }, []);
 
   const isH = direction === 'horizontal';
   const fixedStyle = isH
@@ -165,15 +220,15 @@ export function SplitPane({
             else if (e.key === 'ArrowRight') delta = small;
             else if (e.key === 'PageUp')    delta = -big;
             else if (e.key === 'PageDown')  delta = big;
-            else if (e.key === 'Home')      { setInternal(minSize); writePersisted(storageKey, minSize); e.preventDefault(); return; }
-            else if (e.key === 'End')       { setInternal(maxSize); writePersisted(storageKey, maxSize); e.preventDefault(); return; }
+            else if (e.key === 'Home')      { setInternal(minSize); writePersisted(storageKey, minSize); onResize?.(minSize); onResizeEnd?.(minSize); e.preventDefault(); return; }
+            else if (e.key === 'End')       { setInternal(maxSize); writePersisted(storageKey, maxSize); onResize?.(maxSize); onResizeEnd?.(maxSize); e.preventDefault(); return; }
           } else {
             if (e.key === 'ArrowUp')    delta = -small;
             else if (e.key === 'ArrowDown')  delta = small;
             else if (e.key === 'PageUp')     delta = -big;
             else if (e.key === 'PageDown')   delta = big;
-            else if (e.key === 'Home')       { setInternal(minSize); writePersisted(storageKey, minSize); e.preventDefault(); return; }
-            else if (e.key === 'End')        { setInternal(maxSize); writePersisted(storageKey, maxSize); e.preventDefault(); return; }
+            else if (e.key === 'Home')       { setInternal(minSize); writePersisted(storageKey, minSize); onResize?.(minSize); onResizeEnd?.(minSize); e.preventDefault(); return; }
+            else if (e.key === 'End')        { setInternal(maxSize); writePersisted(storageKey, maxSize); onResize?.(maxSize); onResizeEnd?.(maxSize); e.preventDefault(); return; }
           }
           if (delta !== 0) {
             e.preventDefault();

@@ -52,7 +52,7 @@ import {
 import { resolvePropertyMeta } from './propertyMeta';
 import { parseMaskPropPath, getNodeMask, updateMaskPath } from '@core/effects/mask';
 
-/** `#rrggbb` (or `#rgb`) → the 0..255 channel a `_r`/`_g`/`_b` track carries. */
+/** `#rrggbb` (or `#rgb`) → the normalized channel a colour track carries. */
 function channelOf(color: string, suffix: string): number | undefined {
   const hex = color.trim().replace('#', '');
   const full =
@@ -61,9 +61,9 @@ function channelOf(color: string, suffix: string): number | undefined {
   const i = suffix === '_r' ? 0 : suffix === '_g' ? 2 : suffix === '_b' ? 4 : -1;
   // Alpha is not carried in a `#rrggbb`, and every colour param that has one
   // stores it separately — 100 % is the honest answer, not 0.
-  if (i < 0) return 100;
+  if (i < 0) return 1;
   const v = Number.parseInt(full.slice(i, i + 2), 16);
-  return Number.isFinite(v) ? v : undefined;
+  return Number.isFinite(v) ? v / 255 : undefined;
 }
 
 /** Split a decomposed-colour path into its base and channel suffix. */

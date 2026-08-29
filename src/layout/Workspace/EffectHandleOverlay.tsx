@@ -113,7 +113,7 @@ export function EffectHandleOverlay(): JSX.Element | null {
       const local = effectToLayer(p, geom.width, geom.height);
       return mapping.localToScreen(local.x, local.y);
     };
-  }, [mapping, geom?.width, geom?.height]);
+  }, [mapping, geom]);
 
   /** The exact inverse of `toScreen`. */
   const fromScreen = useMemo(() => {
@@ -122,7 +122,7 @@ export function EffectHandleOverlay(): JSX.Element | null {
       const l = mapping.screenToLocal(p.x, p.y);
       return layerToEffect({ x: l.x, y: l.y }, geom.width, geom.height);
     };
-  }, [mapping, geom?.width, geom?.height]);
+  }, [mapping, geom]);
 
   // Pointer plumbing. A CAPTURE-phase listener on the stage would fight the
   // layer gizmo; instead the SVG sits above it and claims the event only when a

@@ -148,6 +148,11 @@ export function BoneOverlay(): JSX.Element | null {
   const paintMode: PaintMode | null =
     boneRigMode === 'weights' && boneWeightMode !== 'pick' ? boneWeightMode : null;
   const vertexPick = boneRigMode === 'weights' && boneWeightMode === 'pick';
+  const brushCursorRef = useRef<SVGCircleElement | null>(null);
+  const [brushVisible, setBrushVisible] = useState(false);
+  useEffect(() => {
+    setBrushVisible(false);
+  }, [paintMode]);
   // Reactive, and ABOVE the guards — the highlight has to redraw when the panel
   // or another pick changes the selection, and a hook below an early return is
   // the "Rendered fewer hooks than expected" crash.
@@ -667,6 +672,12 @@ export function BoneOverlay(): JSX.Element | null {
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    if (paintMode && svgRef.current && brushCursorRef.current) {
+      const rect = svgRef.current.getBoundingClientRect();
+      brushCursorRef.current.setAttribute('cx', String(e.clientX - rect.left));
+      brushCursorRef.current.setAttribute('cy', String(e.clientY - rect.top));
+      setBrushVisible(true);
+    }
     if (drawDraft) {
       const svg = svgRef.current;
       if (!svg) return;
@@ -859,7 +870,11 @@ export function BoneOverlay(): JSX.Element | null {
         height: '100%',
         pointerEvents: 'auto',
         zIndex: 10,
-        cursor: boneRigMode === 'draw' ? 'crosshair' : boneRigMode === 'weights' ? 'none' : 'default',
+        cursor: boneRigMode === 'draw' || vertexPick
+          ? 'crosshair'
+          : paintMode && brushVisible
+            ? 'none'
+            : 'default',
       }}
       onPointerDown={onPointerDownSvg}
       onPointerMove={onPointerMove}
@@ -929,17 +944,7 @@ export function BoneOverlay(): JSX.Element | null {
           stroke="#00e699"
           strokeWidth={1}
           pointerEvents="none"
-          ref={(el) => {
-            if (!el) return;
-            const svg = svgRef.current;
-            if (!svg) return;
-            const onMove = (ev: PointerEvent) => {
-              const rect = svg.getBoundingClientRect();
-              el.setAttribute('cx', String(ev.clientX - rect.left));
-              el.setAttribute('cy', String(ev.clientY - rect.top));
-            };
-            svg.addEventListener('pointermove', onMove);
-          }}
+          ref={brushCursorRef}
         />
       )}
 

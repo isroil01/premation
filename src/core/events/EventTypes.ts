@@ -38,6 +38,7 @@ export const APP_EVENTS = [
   // Scene graph
   'SceneGraphChanged',
   'NodeUpdated',
+  'LayerReparented',
 
   // Animation
   'AnimationChanged',
@@ -95,6 +96,19 @@ export interface AppEventPayloads {
   SelectionChanged: { ids: string[] };
   SceneGraphChanged: undefined;
   NodeUpdated: { nodeId: string; componentId: string; propName: string; value: unknown };
+
+  /**
+   * A layer changed parent. `parentId` is the node it now hangs under (a
+   * composition root when it was un-parented).
+   *
+   * `parent` IS the tree in this graph, so a reparent MOVES the layer into
+   * another branch — and a branch that renders collapsed hides it completely.
+   * Parenting to a Null, which has no children until that moment and so is
+   * never in the panel's expanded set, made the layer disappear from the Scene
+   * panel while it was still on canvas. Panels listen so they can open the
+   * destination and keep the layer in sight.
+   */
+  LayerReparented: { nodeId: string; parentId: string };
 
   AnimationChanged: { nodeId?: string };
 

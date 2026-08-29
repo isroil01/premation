@@ -24,6 +24,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { getCommandSystem } from '@core/commands/CommandSystem';
+import { performRedo, performUndo } from '@stores/historyStore';
 import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
 import { smoothMotionPath } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
@@ -49,8 +50,8 @@ export function useTimelineKeys(): void {
           const history = getCommandSystem().getHistory();
           if (redo ? history.canRedo() : history.canUndo()) {
             e.preventDefault();
-            if (redo) history.redo();
-            else history.undo();
+            if (redo) performRedo();
+            else performUndo();
           }
           return;
         }

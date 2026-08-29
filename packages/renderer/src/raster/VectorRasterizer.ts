@@ -199,7 +199,41 @@ export function paddingClass(padding: number): number {
   return PADDING_CLASSES[PADDING_CLASSES.length - 1]!;
 }
 
-/** The full cache key for a raster: content × tier × padding class. */
+/**
+ * Round a draw scale up onto the EXTENDED ladder, for cache-key purposes only.
+ *
+ * `resolutionTier` cannot be used here: it tops out at 4, and the scale that
+ * reaches a raster cache key has already been quantised by the provider's
+ * `tierFor`, which escalates onto the continuous ladder (8, 16, 32, 64) above
+ * that. Re-quantising with the clamped ladder rewrote every such key back down
+ * to `@4`, which is the whole of the "text vanishes past 4x" bug — see
+ * `rasterCacheKey`.
+ *
+ * Identical to `resolutionTier` at and below 4, so every key already in flight
+ * for an existing project is byte-for-byte unchanged.
+ */
+export function rasterKeyTier(scale: number): number {
+  if (!(scale > 0) || Number.isNaN(scale)) return 1;
+  for (const t of CONTINUOUS_RESOLUTION_TIERS) {
+    if (scale <= t) return t;
+  }
+  return CONTINUOUS_RESOLUTION_TIERS[CONTINUOUS_RESOLUTION_TIERS.length - 1]!;
+}
+
+/**
+ * The full cache key for a raster: content × tier × padding class.
+ *
+ * The tier MUST round-trip: the rasterizer writes its pixels into the resource
+ * pool under `poolKeyFor(this key)`, and `AppTextureProvider` then reads the
+ * texture back out under `raster:<sig>@<tier>~<pad>` built from its OWN tier.
+ * When the two spellings disagree the provider asks the pool for a key nothing
+ * ever wrote to, gets a freshly-minted EMPTY texture, and the layer renders as
+ * nothing at all — box, handles and selection intact, pixels gone.
+ *
+ * That is exactly what `resolutionTier` did here: it clamps at 4, so a layer at
+ * 5x or more was drawn into `@4` and read from `@8`. Reported as "text
+ * disappears when you scale it up"; shapes with a custom path did the same.
+ */
 export function rasterCacheKey(contentHash: string, scale: number, padding: number): string {
-  return `${contentHash}@${resolutionTier(scale)}~${paddingClass(padding)}`;
+  return `${contentHash}@${rasterKeyTier(scale)}~${paddingClass(padding)}`;
 }

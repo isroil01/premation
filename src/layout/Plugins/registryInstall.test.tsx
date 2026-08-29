@@ -142,14 +142,42 @@ describe('tab state is not document state', () => {
       ref: 'studio.acme.thing',
     });
 
-    const serialised = JSON.stringify(captureDocument());
+    const doc = captureDocument();
+    const serialised = JSON.stringify(doc);
 
     // Asserted on the SERIALISED document, not on its top-level keys: tab state
     // reaching a nested subsystem's snapshot would be just as wrong and would
     // pass a shallow check.
     expect(serialised).not.toContain('plugin:studio.acme.thing');
     expect(serialised).not.toContain('studio.acme.thing');
-    expect(serialised.toLowerCase()).not.toContain('activetabid');
+
+    /*
+     * EDITOR tab ids specifically — not the word "activeTabId".
+     *
+     * This used to assert the serialised document contained no "activetabid"
+     * at all, which held only while nothing else in the app had tabs. It does
+     * now: `openTabs` persists which COMPOSITIONS are open, with a playhead
+     * each, and that is genuinely document state (After Effects saves it too).
+     * The broad string match could not tell the two apart and failed on the
+     * feature rather than on a leak.
+     *
+     * The property being defended is narrower than the old assertion and is
+     * unchanged: nothing from `useEditorTabStore` — the panel tabs, which can
+     * name plugins the opener does not have installed — may reach the file.
+     */
+    const editorTabIds = [
+      useEditorTabStore.getState().activeId,
+      ...useEditorTabStore.getState().tabs.map((t) => t.id),
+    ].filter((id) => id !== SCENE_TAB_ID);
+    expect(editorTabIds.length).toBeGreaterThan(0); // the fixture really opened one
+    for (const id of editorTabIds) expect(serialised).not.toContain(id);
+
+    // Every tab the document DOES carry is a composition tab, resolved against
+    // a composition it also carries — so a restore cannot open a tab onto
+    // something that isn't in the file.
+    for (const tab of Object.values(doc.openTabs?.tabs ?? {})) {
+      expect(Object.keys(doc.comps ?? {})).toContain(tab.compositionId);
+    }
   });
 
   it('lives in workspace storage instead', () => {

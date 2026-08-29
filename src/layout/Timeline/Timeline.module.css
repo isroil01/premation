@@ -54,7 +54,7 @@
   flex-direction: column;
   min-height: 0;
   background: var(--color-panel);
-  border-right: 4px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
   box-shadow: none;
   flex: none;
   z-index: 10;

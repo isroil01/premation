@@ -33,14 +33,17 @@ function ScrubField({
   const [raw, setRaw] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const dragRef = useRef<{ startX: number; startV: number } | null>(null);
+  const stopDragRef = useRef<(() => void) | null>(null);
 
-  const commit = (v: number) => {
+  const commit = useCallback((v: number) => {
     let clamped = v;
     if (min !== undefined) clamped = Math.max(min, clamped);
     if (max !== undefined) clamped = Math.min(max, clamped);
     if (!Number.isFinite(clamped)) return;
     onChange(clamped);
-  };
+  }, [min, max, onChange]);
+
+  useEffect(() => () => stopDragRef.current?.(), []);
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -56,7 +59,9 @@ function ScrubField({
         dragRef.current = null;
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
+        stopDragRef.current = null;
       };
+      stopDragRef.current = onUp;
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
     },

@@ -61,8 +61,9 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const setActiveTab = useWorkspaceStore((s) => s.actions.setActiveTab);
   const closeTab = useWorkspaceStore((s) => s.actions.closeTab);
   // Read collapse state directly from the store so the header always knows.
-  const region = useLayoutStore((s) => s.regions.bottomTimeline);
-  const isCollapsed = region.collapsed || region.size <= 60;
+  const isCollapsed = useLayoutStore(
+    (s) => s.regions.bottomTimeline.collapsed || s.regions.bottomTimeline.size <= 60,
+  );
   const selectedIds = useSelectionStore((s) => s.ids);
   const focusPath = useFocusStore((s) => s.path);
   const jumpToFocus = useFocusStore((s) => s.jumpTo);

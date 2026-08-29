@@ -267,13 +267,13 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
   const [decoding, setDecoding] = useState(false);
 
   const preset = DETAIL_PRESETS.find((d) => d.id === detail) ?? DETAIL_PRESETS[1];
-  const options: AudioKeyframeOptions = {
+  const options: AudioKeyframeOptions = useMemo(() => ({
     ...DEFAULT_AUDIO_KEYFRAME_OPTIONS,
     frameStep: preset.frameStep,
     minDelta: preset.minDelta,
     smoothing,
     gain,
-  };
+  }), [preset.frameStep, preset.minDelta, smoothing, gain]);
 
   // Decode + sample the envelope once the popover opens, so the estimate is
   // real rather than a guess. Cancelled on close so a slow decode can't write
@@ -294,7 +294,7 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
     };
   }, [open, env, nodeId]);
 
-  const estimate = useMemo(() => (env ? planAudioKeyframes(env, options).length : null), [env, options.frameStep, options.minDelta, options.smoothing, options.gain]);
+  const estimate = useMemo(() => (env ? planAudioKeyframes(env, options).length : null), [env, options]);
 
   const apply = async (): Promise<void> => {
     setBusy(true);

@@ -178,6 +178,7 @@ export interface TimelineProps {
   onTrackRename?: (trackId: string, newName: string) => void;
   onKeyframeSeek?: (keyframeId: string) => void;
   onKeyframeMove?: (keyframeId: string, time: number) => void;
+  onKeyframesDelete?: (keyframeIds: ReadonlyArray<string>) => void;
   onKeyframeContextMenu?: (keyframeId: string, clientX: number, clientY: number) => void;
   /**
    * The keyframe navigator's diamond: add a keyframe at the playhead holding
@@ -254,6 +255,7 @@ function Timeline({
   onTrackRename,
   onKeyframeSeek,
   onKeyframeMove,
+  onKeyframesDelete,
   onKeyframeContextMenu,
   onPropertyKeyframeToggle,
   onPropertyStopwatch,
@@ -319,6 +321,12 @@ function Timeline({
   const onHeaderResizeUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     resizeRef.current = null;
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }, []);
+  useEffect(() => () => {
+    if (!resizeRef.current) return;
+    resizeRef.current = null;
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   }, []);
@@ -545,6 +553,12 @@ function Timeline({
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      if (draggingRef.current) {
+        draggingRef.current = false;
+        useUIStore.getState().setDragging(false);
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
     };
   }, [pps, scrollLeft, totalSeconds, onScrub, TIMELINE_LEFT_OFFSET]);
 
@@ -601,10 +615,16 @@ function Timeline({
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      if (waDrag.current) {
+        waDrag.current = null;
+        document.body.style.userSelect = '';
+      }
     };
   }, [pps, scrollLeft, totalSeconds, onWorkAreaChange, model.frameRate]);
 
   // ── Composition duration drag (extend / shorten video length) ────
+  const durationDragCleanupRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => durationDragCleanupRef.current?.(), []);
   const startDurationDrag = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!onDurationChange) return;
     e.preventDefault();
@@ -631,16 +651,22 @@ function Timeline({
       onDurationChange?.(snappedDuration);
     };
 
+    const cleanup = (): void => {
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      durationDragCleanupRef.current = null;
+    };
     const onPointerUp = (upEvent: PointerEvent) => {
       try {
         owner.releasePointerCapture(upEvent.pointerId);
       } catch {
         // best-effort
       }
-      window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('pointerup', onPointerUp);
+      cleanup();
     };
 
+    durationDragCleanupRef.current?.();
+    durationDragCleanupRef.current = cleanup;
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
   };
@@ -817,6 +843,11 @@ function Timeline({
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      if (clipDrag.current) {
+        clipDrag.current = null;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
     };
   }, [pps, totalSeconds, onClipMove, onClipTrim, onClipSlip, onClipSlide, onTrackSelect, model.frameRate]);
 
@@ -903,6 +934,7 @@ function Timeline({
     grabbedId: string;
   } | null>(null);
   const [kfPreview, setKfPreview] = useState<Map<string, number>>(new Map());
+  const kfPreviewRef = useRef<Map<string, number>>(new Map());
 
   // Build a lookup from keyframe id → time across all visible tracks
   const kfTimeById = useMemo<Map<string, number>>(() => {
@@ -915,6 +947,8 @@ function Timeline({
     }
     return m;
   }, [model.tracks]);
+  const kfDragLive = useRef({ currentTime, kfTimeById, frameRate: model.frameRate });
+  kfDragLive.current = { currentTime, kfTimeById, frameRate: model.frameRate };
 
   const onKeyframeDown = useCallback((kf: TimelineKeyframeRef, e: ReactPointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -936,8 +970,10 @@ function Timeline({
     }
     activeKf.current = { ids: [...nextSel], times, startX: e.clientX, moved: false, grabbedId: kf.id };
 
-    setKfPreview(new Map());
-  }, [selectedKfIds, kfTimeById]);
+    const emptyPreview = new Map<string, number>();
+    kfPreviewRef.current = emptyPreview;
+    setKfPreview(emptyPreview);
+  }, [selectedKfIds, kfTimeById, setSelectedKfIds]);
 
   /**
    * Which selected keyframes are an END of the selection, and so act as the
@@ -967,7 +1003,8 @@ function Timeline({
       if (!d.moved && Math.abs(dx) < 3) return;
       d.moved = true;
       const dtSec = dx / pps;
-      const frameDur = 1 / (model.frameRate || 30);
+      const live = kfDragLive.current;
+      const frameDur = 1 / (live.frameRate || 30);
 
       // Alt on an END of a multi-selection is AE's time-scale gesture: the
       // group stretches about its opposite end instead of sliding. Everywhere
@@ -978,6 +1015,7 @@ function Timeline({
         const scaled = scaleSelection(d.times, d.grabbedId, dtSec, frameDur);
         if (scaled) {
           setKfSnap(null);
+          kfPreviewRef.current = scaled;
           setKfPreview(scaled);
           return;
         }
@@ -988,7 +1026,7 @@ function Timeline({
       // target list — a keyframe must not snap to itself.
       const dragging = new Set(d.ids);
       const others: number[] = [];
-      for (const [id, t] of kfTimeById) if (!dragging.has(id)) others.push(t);
+      for (const [id, t] of live.kfTimeById) if (!dragging.has(id)) others.push(t);
 
       const moved = [...d.times.values()].map((t) => t + dtSec);
       const { delta, target } = snapKeyframeGroup(moved, {
@@ -997,7 +1035,7 @@ function Timeline({
         // The RESOLVED playhead (separate prop first): model.currentTime is a
         // non-reactive snapshot when the host splits the playhead out, and
         // snapping to a stale snapshot missed the real playhead position.
-        playheadTime: currentTime,
+        playheadTime: live.currentTime,
         keyframeTimes: others,
         disabled: e.altKey,
       });
@@ -1007,6 +1045,7 @@ function Timeline({
       for (const [id, origTime] of d.times) {
         newPreview.set(id, Math.max(0, origTime + dtSec + delta));
       }
+      kfPreviewRef.current = newPreview;
       setKfPreview(newPreview);
     };
     const onUp = (): void => {
@@ -1017,7 +1056,7 @@ function Timeline({
       if (d.moved) {
         // Commit moves for all dragged keyframes
         for (const [id, origTime] of d.times) {
-          const dtSec = (kfPreview.get(id) ?? origTime) - origTime;
+          const dtSec = (kfPreviewRef.current.get(id) ?? origTime) - origTime;
           onKeyframeMove?.(id, Math.max(0, origTime + dtSec));
         }
       } else {
@@ -1025,7 +1064,9 @@ function Timeline({
         const singleId = d.ids[0];
         if (singleId) onKeyframeSeek?.(singleId);
       }
-      setKfPreview(new Map());
+      const emptyPreview = new Map<string, number>();
+      kfPreviewRef.current = emptyPreview;
+      setKfPreview(emptyPreview);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -1033,7 +1074,7 @@ function Timeline({
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, [pps, scrollLeft, totalSeconds, onKeyframeMove, onKeyframeSeek, kfPreview]);
+  }, [pps, scrollLeft, totalSeconds, onKeyframeMove, onKeyframeSeek]);
 
   // ── Marquee (rubber-band) keyframe selection ──────────────────
   // Pointer-down on EMPTY lane space (not a keyframe, clip, playhead, marker
@@ -1134,8 +1175,12 @@ function Timeline({
     return () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
+      if (marqueeDrag.current) {
+        marqueeDrag.current = null;
+        document.body.style.userSelect = '';
+      }
     };
-  }, [lanesPoint, marqueeRows, pps, trackHeight]);
+  }, [lanesPoint, marqueeRows, pps, trackHeight, setSelectedKfIds]);
 
   // ── Keyframe selection keyboard shortcuts ──────────────────────
   useEffect(() => {
@@ -1150,20 +1195,30 @@ function Timeline({
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selectedKfIds.size > 0) {
-          selectedKfIds.forEach(id => onKeyframeMove?.(id, -1)); // -1 signals delete
+          e.preventDefault();
+          e.stopPropagation();
+          if (onKeyframesDelete) onKeyframesDelete([...selectedKfIds]);
+          else selectedKfIds.forEach(id => onKeyframeMove?.(id, -1));
           setSelectedKfIds(new Set());
         }
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault();
+        e.stopPropagation();
         // Select all keyframes across all tracks
         const allIds = new Set<string>();
-        model.tracks.forEach(t => t.keyframes?.forEach(kf => allIds.add(kf.id)));
+        model.tracks.forEach((track) => {
+          track.keyframes?.forEach((kf) => allIds.add(kf.id));
+          track.properties?.forEach((property) => {
+            property.keyframes.forEach((kf) => allIds.add(kf.id));
+          });
+        });
         setSelectedKfIds(allIds);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [selectedKfIds, model.tracks, onKeyframeMove]);
+  }, [selectedKfIds, model.tracks, onKeyframeMove, onKeyframesDelete, setSelectedKfIds]);
 
   // ── Ruler ticks ────────────────────────────────────────────────
   const ticks = useMemo(
@@ -1182,7 +1237,12 @@ function Timeline({
   const fps = model.frameRate || 30;
 
   return (
-    <div ref={containerRef} className={cn(styles.root, className)} onWheel={onWheel}>
+    <div
+      ref={containerRef}
+      className={cn(styles.root, className)}
+      onWheel={onWheel}
+      data-shortcut-claim="delete backspace Ctrl+a Meta+a"
+    >
       <div
         className={styles.headerCol}
         style={{ width: headerWidth, height: '100%' }}

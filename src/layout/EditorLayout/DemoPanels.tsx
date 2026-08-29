@@ -400,6 +400,36 @@ export function ScenePanel(): JSX.Element {
   const defaultExpandIds = useMemo(() => filtered.map((n) => n.id), [filtered]);
   const itemCount = defaultSceneGraph.size;
 
+  /*
+   * Keep a reparented layer on screen.
+   *
+   * `parent` IS the tree here, so parenting MOVES the layer into the parent's
+   * branch — and only composition roots are expanded by default. Parent a
+   * rectangle to a Null and it lands inside a branch that has never been
+   * expanded (a Null has no children until that moment), so it vanishes from
+   * this panel entirely while still rendering on canvas. Reported as
+   * "missing layer after parent to null".
+   *
+   * The whole ancestor chain, not just the parent: the destination can itself
+   * sit inside a shut group, and opening only the innermost branch would leave
+   * the layer just as hidden one level up.
+   */
+  const [revealIds, setRevealIds] = useState<ReadonlyArray<string>>([]);
+  useEffect(() => {
+    const sub = getEventBus().on('LayerReparented', ({ parentId }) => {
+      const chain: string[] = [];
+      const seen = new Set<string>();
+      let cur: string | null = parentId;
+      while (cur && !seen.has(cur)) {
+        seen.add(cur);
+        chain.push(cur);
+        cur = defaultSceneGraph.getNode(cur)?.parent ?? null;
+      }
+      setRevealIds(chain);
+    });
+    return () => sub.dispose();
+  }, []);
+
   const [renamingId, setRenamingId] = useState<string | null>(null);
 
   const toggleVisible = (id: string): void => {
@@ -601,6 +631,7 @@ export function ScenePanel(): JSX.Element {
             onSelect={setSelected}
             defaultExpandedIds={defaultExpandIds}
             expandedIds={q ? expandIds : undefined}
+            revealIds={revealIds}
             onNodeContextMenu={openNodeMenu}
             onReorder={handleReorder}
             renamingId={renamingId ?? undefined}

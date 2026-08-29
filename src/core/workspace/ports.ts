@@ -1113,10 +1113,33 @@ function resizeNode(payload: ResizeNodePayload): void {
   let baseW = (SIZE as Record<string, { w: number; h: number }>)[sizeKey]?.w ?? 100;
   let baseH = (SIZE as Record<string, { w: number; h: number }>)[sizeKey]?.h ?? 100;
   const transComp = node.components.find((c) => c.type === 'Transform');
+  let authoredSize = false;
   if (transComp && transComp.props) {
     if (typeof transComp.props.width === 'number') baseW = transComp.props.width;
     if (typeof transComp.props.height === 'number') baseH = transComp.props.height;
+    authoredSize =
+      typeof transComp.props.width === 'number' &&
+      typeof transComp.props.height === 'number' &&
+      // TEXT is sized by its glyphs, not by these props: `readGeometry` throws
+      // away a text layer's authored width/height and measures the type
+      // instead. Writing them would move the numbers in the inspector and
+      // change nothing on canvas — worse than the scale the drag would
+      // otherwise have applied, because it looks like the drag did nothing.
+      // (Reflowing a paragraph box is a `boxWidth` edit, which no resize path
+      // performs today.)
+      kind !== 'text';
   }
+  /*
+   * Ctrl on a handle asks for the layer's SIZE rather than its Scale, and the
+   * tool says so by sending `size` (the new box in the layer's own units).
+   *
+   * A layer that cannot express the drag as a size — text, or anything that
+   * somehow lost its dimensions — keeps scaling instead, which is what it did
+   * before the modifier existed. Falling back beats swallowing the gesture.
+   */
+  const sizing = payload.size !== undefined && authoredSize;
+  const nextW = payload.size ? Math.max(1, Math.abs(payload.size.x)) : baseW;
+  const nextH = payload.size ? Math.max(1, Math.abs(payload.size.y)) : baseH;
   const b = payload.bounds;
   // Prefer the scale the TOOL resolved. Inferring it here as
   // `worldAABB.width / localWidth` is wrong for anything rotated — rotation
@@ -1159,9 +1182,13 @@ function resizeNode(payload: ResizeNodePayload): void {
   // decide independently, so scaling an animated-scale layer keyframes scale
   // while its un-animated position stays a static write.
   const keyPos = autoKeyframe || hasAnyTrack(node.id, ['x', 'y']);
-  const keyScale = autoKeyframe || hasAnyTrack(node.id, ['scaleX', 'scaleY', 'scale']);
+  // Whichever property the gesture is actually writing is the one that gets a
+  // keyframe — keyframing Scale on a Size drag would record a value the drag
+  // never changed, and leave the real change un-keyframed.
+  const keySize = sizing && (autoKeyframe || hasAnyTrack(node.id, ['width', 'height']));
+  const keyScale = !sizing && (autoKeyframe || hasAnyTrack(node.id, ['scaleX', 'scaleY', 'scale']));
 
-  if (keyPos || keyScale) {
+  if (keyPos || keyScale || keySize) {
     runAnimEdit(
       'Keyframe Resize',
       () => {
@@ -1173,6 +1200,10 @@ function resizeNode(payload: ResizeNodePayload): void {
           defaultAnimation.setKeyframe(node.id, 'scaleX', lt, scaleX);
           defaultAnimation.setKeyframe(node.id, 'scaleY', lt, scaleY);
         }
+        if (keySize) {
+          defaultAnimation.setKeyframe(node.id, 'width', lt, nextW);
+          defaultAnimation.setKeyframe(node.id, 'height', lt, nextH);
+        }
       },
       `drag:resize:${rawTime}:${node.id}`,
     );
@@ -1182,8 +1213,18 @@ function resizeNode(payload: ResizeNodePayload): void {
   // animated reads win — and it keeps every consumer in agreement).
   defaultSceneGraph.writeProp(node.id, cid, 'x', centre.x);
   defaultSceneGraph.writeProp(node.id, cid, 'y', centre.y);
-  defaultSceneGraph.writeProp(node.id, cid, 'scaleX', scaleX);
-  defaultSceneGraph.writeProp(node.id, cid, 'scaleY', scaleY);
+  if (sizing) {
+    // Scale is deliberately left ALONE. The drag expressed itself entirely in
+    // width/height, and writing the (unchanged) scale back would push the
+    // WORLD scale the tool measured onto a node whose own scale is a different
+    // number the moment it has a parent.
+    const sizeCid = transComp?.id ?? cid;
+    defaultSceneGraph.writeProp(node.id, sizeCid, 'width', nextW);
+    defaultSceneGraph.writeProp(node.id, sizeCid, 'height', nextH);
+  } else {
+    defaultSceneGraph.writeProp(node.id, cid, 'scaleX', scaleX);
+    defaultSceneGraph.writeProp(node.id, cid, 'scaleY', scaleY);
+  }
   bumpScene();
 }
 

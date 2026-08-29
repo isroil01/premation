@@ -17,7 +17,8 @@ import { allLayerKinds } from '@core/plugins/layerKindRegistry';
 import { createCustomLayerFromMenu } from '@core/plugins/createCustomLayerFromMenu';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { cutSelection, copySelection, pasteSelection } from '@core/commands/clipboard';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -32,6 +33,7 @@ import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
+import { attachRenderBackendEvents } from '@stores/renderBackendStore';
 import { Button } from '@components/Button';
 import { Logo } from '@components/Logo';
 import { getAutosaveController } from '@core/persistence/AutosaveController';
@@ -69,7 +71,6 @@ import { renderStillFrame } from '@core/export/offlineRenderer';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
-import { hydrateComposition } from '@stores/compositionStore';
 import { useAssetStore } from '@stores/assetStore';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { openVersionHistory } from '@layout/History/VersionHistoryPanel';
@@ -1753,6 +1754,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         panels,
         workspace,
       });
+      track(attachRenderBackendEvents());
 
       // Core services are registered inside Application.boot; track the rest of
       // the boot sequence as a loading task so the UI can reflect it.
@@ -1783,10 +1785,6 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         const theme = getThemeManager();
         track(theme.subscribe((t) => usePreferenceStore.getState().set('theme', asThemeId(t))));
         theme.apply();
-
-        // Composition settings + pasteboard colour: load persisted values now
-        // that the SettingsManager is booted (defaults until the user edits).
-        hydrateComposition();
 
         // Project: bridge to the scene document and refresh scene UI on load.
         const project = getProjectManager();
@@ -2311,6 +2309,17 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // boot does rather than a re-typed copy of it.
           track(attachHistoryRecording());
         } catch { /* ignore */ }
+        track(getEventBus().on('SceneGraphChanged', () => {
+          const nodeIds = new Set<string>();
+          defaultSceneGraph.traverse((node) => nodeIds.add(node.id));
+          const layerSelection = useSelectionStore.getState().ids;
+          const survivingLayers = layerSelection.filter((id) => nodeIds.has(id));
+          if (survivingLayers.length !== layerSelection.length) {
+            useSelectionStore.getState().set(survivingLayers);
+          }
+          prunePropertySelectionToNodes(nodeIds);
+          pruneKeyframeSelectionToNodes(nodeIds);
+        }));
 
         // Dirty tracking + autosave (crash recovery). Edits mark the active
         // document dirty (amber dot); autosave persists a recovery snapshot

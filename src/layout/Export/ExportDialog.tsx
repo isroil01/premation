@@ -112,10 +112,10 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
   /** The export range, read at ACTION time (export/queue click) so it matches
    *  the timeline as it stands — the render-time live read and the
    *  dialog-open-time snapshot could disagree. End exclusive, seconds. */
-  const captureRange = (): { startSec: number; endSec: number } => {
+  const captureRange = useCallback((): { startSec: number; endSec: number } => {
     const wa = rangeMode === 'work' ? getTimelineController().getWorkArea() : null;
     return wa ? { startSec: wa.start, endSec: wa.end } : { startSec: 0, endSec: duration };
-  };
+  }, [rangeMode, duration]);
 
   const scale = RES[scaleIdx]!.scale;
   const width = Math.round(baseComp.width * scale);
@@ -208,7 +208,7 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
       abortRef.current = null;
       setProgress(null);
     }
-  }, [format, width, height, fps, duration, time, quality, proresProfile, rangeMode, compName, comp, notify]);
+  }, [format, width, height, fps, duration, time, quality, proresProfile, compName, comp, notify, captureRange]);
 
   const queueJob = (): void => {
     const ext = outputExtFor(format as OutputFormat);

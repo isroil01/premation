@@ -152,7 +152,19 @@ export interface ProjectStoreShape {
      * edit made through them.
      */
     resetTabs: () => void;
+    /**
+     * Restore composition tabs from a saved document (open tabs + playhead).
+     * Playing/dirty are session state and are not restored.
+     */
+    hydrateWorkspaceTabs: (snap: SerializedWorkspaceTabs) => void;
   };
+}
+
+/** What `captureDocument` persists for the composition tab strip. */
+export interface SerializedWorkspaceTabs {
+  tabOrder: string[];
+  activeTabId: string | null;
+  tabs: Record<string, Pick<TabInfo, 'id' | 'compositionId' | 'breadcrumbPath' | 'title' | 'time' | 'frame'>>;
 }
 
 export const DEFAULT_COMP_SETTINGS: Omit<CompositionSettings, 'id' | 'name'> = {
@@ -185,6 +197,10 @@ export const useProjectStore = create<ProjectStoreShape>()(
     const initialComp: CompositionSettings = {
       id: defaultCompId,
       name: 'Main Comp',
+      // Same flag `createEmpty` writes. Without it, Continue-without-a-project
+      // (and any boot that never goes through New Project) paints a dark empty
+      // composition frame with no start cards — the desktop "blank window" report.
+      pristine: true,
       ...DEFAULT_COMP_SETTINGS,
     };
 
@@ -386,6 +402,35 @@ export const useProjectStore = create<ProjectStoreShape>()(
             };
             s.tabOrder = [tabId];
             s.activeTabId = tabId;
+          });
+        },
+        hydrateWorkspaceTabs: (snap) => {
+          const tabs: Record<string, TabInfo> = {};
+          for (const id of snap.tabOrder) {
+            const t = snap.tabs[id];
+            if (!t) continue;
+            tabs[id] = {
+              id: t.id,
+              compositionId: t.compositionId,
+              breadcrumbPath: t.breadcrumbPath.length > 0 ? [...t.breadcrumbPath] : [t.compositionId],
+              title: t.title,
+              time: t.time,
+              frame: t.frame,
+              playing: false,
+              dirty: false,
+            };
+          }
+          if (Object.keys(tabs).length === 0) {
+            get().actions.resetTabs();
+            return;
+          }
+          const tabOrder = snap.tabOrder.filter((id) => tabs[id]);
+          const activeTabId =
+            (snap.activeTabId && tabs[snap.activeTabId] ? snap.activeTabId : tabOrder[0]) ?? null;
+          set((s) => {
+            s.tabs = tabs;
+            s.tabOrder = tabOrder;
+            s.activeTabId = activeTabId;
           });
         },
       },

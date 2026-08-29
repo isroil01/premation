@@ -164,12 +164,6 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
             if (propName === 'scaleX') setScaleYVal(valNum);
             else setScaleXVal(valNum);
           }
-          if (propName === 'x' || propName === 'y' || propName === 'rotation') {
-            const currentX = propName === 'x' ? valNum : xVal;
-            const currentY = propName === 'y' ? valNum : yVal;
-            const currentRot = propName === 'rotation' ? valNum : rotVal;
-            defaultSceneGraph.setLocalTransform(nodeId, { x: currentX, y: currentY, rotation: currentRot });
-          }
         });
       }
     };

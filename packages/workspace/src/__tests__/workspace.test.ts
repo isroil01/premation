@@ -187,6 +187,34 @@ describe('Workspace tool shortcuts & temporary hand', () => {
     ws.feedKeyUp(key('Space', ' '));
     expect(ws.getTool()).toBe('select');
   });
+
+  it('restores the temporary hand only after an active pan ends', () => {
+    const { ws } = makeWorkspace();
+    ws.feedKeyDown(key('Space', ' '));
+    ws.feedPointerDown(pointer(400, 300));
+    ws.feedPointerMove(pointer(420, 300));
+
+    ws.feedKeyUp(key('Space', ' '));
+    expect(ws.getTool()).toBe('hand');
+    expect(ws.cursor.css).toBe('grabbing');
+
+    ws.feedPointerUp(pointer(420, 300, { buttons: { left: false, middle: false, right: false } }));
+    expect(ws.getTool()).toBe('select');
+    expect(ws.cursor.css).not.toBe('grabbing');
+  });
+
+  it('clears the temporary hand and cursor on focus loss', () => {
+    const { ws } = makeWorkspace();
+    ws.feedKeyDown(key('Space', ' '));
+    ws.feedPointerDown(pointer(400, 300));
+    ws.feedPointerMove(pointer(420, 300));
+
+    ws.cancelTransientInput();
+
+    expect(ws.getTool()).toBe('select');
+    expect(ws.cursor.css).not.toBe('grabbing');
+    expect(ws.input.isDragging).toBe(false);
+  });
 });
 
 describe('Workspace overlay', () => {

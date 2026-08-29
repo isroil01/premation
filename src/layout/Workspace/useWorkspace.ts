@@ -64,6 +64,7 @@ import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { createOnionSkinPainter } from '@core/rendering/onionSkinPainter';
 import { memoizedSceneContentHash } from '@core/rendering/sceneContentHash';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { renameLayer } from '@core/scene/renameLayer';
 import { addPaintStroke, type PaintMode } from '@core/paint/paintStrokes';
 import { getNodeLayerTime, updateNodeLayerTime, type FrameBlend } from '@core/scene/layerTime';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
@@ -92,6 +93,7 @@ import {
   deleteSelectedLayers,
   toggleSelectedLocked,
   toggleSelectedSolo,
+  toggleSelectedVisible,
   groupSelectedLayers,
   ungroupSelected,
   precomposeSelected,
@@ -324,7 +326,19 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // switch / Suspense). A bare `return` left ready=false forever because the
     // effect deps (ref objects) never change.
     if (!content || !overlay || !stage) {
-      if (attachTick >= 30) return;
+      if (attachTick >= 30) {
+        setRenderError('The preview canvas could not be attached.');
+        return;
+      }
+      const retry = requestAnimationFrame(() => setAttachTick((t) => t + 1));
+      return () => cancelAnimationFrame(retry);
+    }
+    // Electron shows the window after first paint (`show: false` until
+    // ready-to-show). Attaching a GPU context to a 0×0 canvas is the classic
+    // "dark preview, chrome is fine" failure on a freshly launched desktop
+    // build: getContext can succeed, configure/resize then fail, and the
+    // element is burned for every other tier. Wait for a real layout box.
+    if ((stage.clientWidth < 2 || stage.clientHeight < 2) && attachTick < 60) {
       const retry = requestAnimationFrame(() => setAttachTick((t) => t + 1));
       return () => cancelAnimationFrame(retry);
     }
@@ -1206,6 +1220,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
     const cameraToolCursor = (mode: CameraNavMode): string =>
       mode === 'pan' ? 'grab' : mode === 'dolly' ? 'ns-resize' : 'move';
+    const restoreCursor = (): void => {
+      const tool = useGuidesStore.getState().cameraTool;
+      overlay.style.cursor = tool !== 'none' ? cameraToolCursor(tool) : controller.ws.cursor.css;
+    };
 
     const startCameraNav = (e: PointerEvent, mode: CameraNavMode): boolean => {
       const target = findNavTarget();
@@ -1251,8 +1269,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const endCameraNav = (): void => {
       camNav = null;
       useUIStore.getState().setDragging(false);
-      const tool = useGuidesStore.getState().cameraTool;
-      overlay.style.cursor = tool !== 'none' ? cameraToolCursor(tool) : controller.ws.cursor.css;
+      restoreCursor();
     };
 
     // Cursor hint while Alt is held over the canvas and camera nav is possible;
@@ -1270,7 +1287,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     const onAltUp = (e: KeyboardEvent): void => {
       if (e.key !== 'Alt' || !altHintCursor) return;
       altHintCursor = false;
-      if (!camNav) overlay.style.cursor = controller.ws.cursor.css;
+      if (!camNav) restoreCursor();
     };
 
     // The camera tool owns the viewport cursor while active; picking any
@@ -1654,7 +1671,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (roiDragRef.current && roiDragRef.current.pointerId === e.pointerId) {
         roiDragRef.current = null;
         useUIStore.getState().setDragging(false);
-        overlay.style.cursor = 'default';
+        restoreCursor();
         controller.requestRender();
         return;
       }
@@ -1716,7 +1733,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         } else if (!overRuler) {
           controller.ws.addGuide(gd.axis, pos);
         }
-        overlay.style.cursor = controller.ws.cursor.css;
+        restoreCursor();
         guideCursorRef.current = false;
         controller.requestRender();
         return;
@@ -1800,7 +1817,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     };
 
     // Info readout: clear the pixel/position when the cursor leaves the canvas.
-    const onLeave = (): void => useInfoStore.getState().clear();
+    const onLeave = (): void => {
+      useInfoStore.getState().clear();
+      if (!camNav && !roiDragRef.current && !guideDragRef.current && !altHintCursor) {
+        guideCursorRef.current = false;
+        restoreCursor();
+      }
+    };
 
     overlay.addEventListener('pointerdown', onDown);
     overlay.addEventListener('pointermove', onMove);
@@ -1827,6 +1850,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       guidesSub();
       toolSub();
       cancelSmoothDolly();
+      controller.ws.cancelTransientInput();
+      useUIStore.getState().setDragging(false);
+      overlay.style.cursor = '';
     };
   }, [overlayCanvasRef, stageRef]);
 
@@ -2016,12 +2042,6 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
   const solo = (node as { solo?: boolean } | undefined)?.solo === true;
   const isGroup = node ? readNodeKind(node) === 'group' : false;
   const isVideo = node ? readNodeKind(node) === 'video' : false;
-  const toggleVisible = (): void => {
-    const n = defaultSceneGraph.getNode(id);
-    if (!n) return;
-    n.visible = n.visible === false;
-    bumpScene();
-  };
   const renameNode = (): void => {
     const n = defaultSceneGraph.getNode(id);
     if (!n) return;
@@ -2032,10 +2052,24 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
       if (!newName?.trim()) return;
       // Re-read: the dialog is async now, so the node could have been deleted
       // while it was open. The old synchronous prompt could not have this gap.
-      const live = defaultSceneGraph.getNode(id);
-      if (!live) return;
-      live.name = newName.trim();
-      bumpScene();
+      if (!defaultSceneGraph.getNode(id)) return;
+      const result = renameLayer(id, newName);
+      if (!result.ok) return;
+      if (result.repaired.length > 0) {
+        const count = result.repaired.length;
+        useUIStore.getState().notify({
+          level: 'info',
+          message: `${count} expression${count === 1 ? '' : 's'} updated to follow the new name.`,
+          durationMs: 4000,
+        });
+      }
+      if (result.captured.length > 0 || result.nameAlreadyInUse) {
+        useUIStore.getState().notify({
+          level: 'warning',
+          message: `Another layer already uses “${newName.trim()}”; review expressions that reference that name.`,
+          durationMs: 8000,
+        });
+      }
     })();
   };
   return [
@@ -2058,7 +2092,7 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
     // Footage verbs on the footage itself — see videoContextMenuItems.
     ...(isVideo ? [videoContextMenuItems(id), { id: 'sep-vid', separator: true } as ContextMenuItem] : []),
     { id: 'sep1', separator: true },
-    { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleVisible },
+    { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: toggleSelectedVisible },
     { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked() },
     { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => toggleSelectedSolo() },
     {

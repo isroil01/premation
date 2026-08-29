@@ -127,6 +127,13 @@ export function reparentNode(
 
   defaultSceneGraph.setParent(childId, target, { preserveWorld: options.preserveWorld ?? true });
 
+  // The layer has MOVED IN THE TREE, and a collapsed destination hides it
+  // outright — parenting to a fresh Null (never expanded, because it had no
+  // children to expand) dropped the layer out of the Scene panel while it went
+  // on rendering. Panels listen for this to open the branch they just moved it
+  // into. Emitted for every route in and out of here, so the tree, the AI tools
+  // and the plugin host cannot each forget it separately.
+  getEventBus().emit('LayerReparented', { nodeId: childId, parentId: target });
   getEventBus().emit('AnimationChanged', { nodeId: childId });
   bumpScene();
   return true;

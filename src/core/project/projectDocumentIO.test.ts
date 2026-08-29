@@ -152,9 +152,9 @@ describe('createEmpty', () => {
     // `plugins`/`pluginStorage` are absent-when-empty by design, and absent IS
     // their default — a blank document depends on nothing and stores nothing.
     const mustReset = captured.filter((k) => k !== 'plugins' && k !== 'pluginStorage');
-    // `timelines` cannot be expressed as an empty document (an absent key means
-    // "keep"); `resetProjectWorkspace` drops those, guarded separately.
-    expect(empty).toEqual(expect.arrayContaining(mustReset.filter((k) => k !== 'timelines')));
+    // `timelines` and `openTabs` cannot be expressed as an empty document
+    // (an absent key means "keep"); `resetProjectWorkspace` drops those.
+    expect(empty).toEqual(expect.arrayContaining(mustReset.filter((k) => k !== 'timelines' && k !== 'openTabs')));
   });
 });
 

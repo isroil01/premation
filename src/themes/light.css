@@ -24,13 +24,14 @@
                                           user-customizable */
 
   /* ── Borders & dividers ────────────────────────────────────── */
+  --color-border-structural: var(--color-slate-300);
   --color-border:            var(--color-black-a08);
   --color-border-strong:     var(--color-black-a16);
   --color-border-subtle:     var(--color-black-a04);
   --color-divider:           var(--color-black-a08);
   --color-field-border:       var(--color-black-a05);
   --color-field-border-hover: var(--color-black-a15);
-  --color-splitter:          var(--color-slate-200);
+  --color-splitter:          var(--color-slate-300);
   --color-splitter-hover:    var(--color-selection);
 
   /* ── Text ──────────────────────────────────────────────────── */

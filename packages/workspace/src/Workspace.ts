@@ -107,6 +107,7 @@ export class Workspace implements InputSink {
   private snapLines: SnapLine[] = [];
   private prevCamera: CameraState;
   private initialized = false;
+  private restoreTemporaryAfterDrag = false;
 
   constructor(opts: WorkspaceOptions) {
     this.scene = opts.scene;
@@ -156,17 +157,17 @@ export class Workspace implements InputSink {
   }
 
   dispose(): void {
+    this.input.cancel();
     for (const d of this.disposers) d();
     this.disposers.length = 0;
     this.events.removeAll();
-    this.input.reset();
   }
 
   // ── Focus ────────────────────────────────────────────────────────
   setFocused(focused: boolean): void {
     if (this.focused === focused) return;
     this.focused = focused;
-    if (!focused) this.input.reset();
+    if (!focused) this.input.cancel();
     this.events.emit('WorkspaceFocused', { focused });
   }
 
@@ -380,6 +381,25 @@ export class Workspace implements InputSink {
     this.input.feedKeyUp(e);
   }
 
+  /** Release Space's temporary tool without changing tools mid-drag. */
+  releaseTemporaryTool(): void {
+    if (this.input.isDragging) {
+      this.restoreTemporaryAfterDrag = true;
+      return;
+    }
+    this.restoreTemporaryAfterDrag = false;
+    this.tools.popTemporary();
+    this.reconcile();
+  }
+
+  /** Drop transient input/tool state when the host window loses focus. */
+  cancelTransientInput(): void {
+    this.input.cancel();
+    this.restoreTemporaryAfterDrag = false;
+    this.tools.popTemporary();
+    this.reconcile();
+  }
+
   // ── InputSink: hover + tool routing + reconcile ──────────────────
   onPointerDown(e: PointerInput): void {
     this.tools.onPointerDown(e);
@@ -412,6 +432,10 @@ export class Workspace implements InputSink {
   }
   onDragEnd(c: DragContext): void {
     this.tools.onDragEnd(c);
+    if (this.restoreTemporaryAfterDrag) {
+      this.restoreTemporaryAfterDrag = false;
+      this.tools.popTemporary();
+    }
     this.reconcile();
   }
   onWheel(e: WheelInput): void {
@@ -429,7 +453,7 @@ export class Workspace implements InputSink {
     this.reconcile();
   }
   onKeyUp(e: KeyInput): void {
-    if (e.code === 'Space') this.tools.popTemporary();
+    if (e.code === 'Space') this.releaseTemporaryTool();
     this.tools.onKeyUp(e);
     this.reconcile();
   }

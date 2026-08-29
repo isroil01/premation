@@ -7,6 +7,7 @@
  */
 
 import { create } from 'zustand';
+import { parseKeyframeId } from '@motion/animation';
 
 interface KeyframeSelectionStore {
   ids: Set<string>;
@@ -19,3 +20,15 @@ export const useKeyframeSelectionStore = create<KeyframeSelectionStore>((set) =>
   set: (ids) => set({ ids: new Set(ids) }),
   clear: () => set({ ids: new Set<string>() }),
 }));
+
+export function pruneKeyframeSelectionToNodes(nodeIds: ReadonlySet<string>): void {
+  useKeyframeSelectionStore.setState((s) => {
+    const ids = new Set(
+      [...s.ids].filter((id) => {
+        const ref = parseKeyframeId(id);
+        return ref !== null && nodeIds.has(ref.nodeId);
+      }),
+    );
+    return ids.size === s.ids.size ? s : { ids };
+  });
+}

@@ -9,11 +9,11 @@ export function updateNodeComponentProp(
   componentId: ID,
   propName: string,
   value: unknown,
-): void {
+): boolean {
   // Data lives in the engine's typed components; route the write there. The
   // loose `components[].props` shape is a computed view, so writing it would be
   // dropped — `writeProp` maps the flat key onto the typed component.
-  if (!sceneGraph.writeProp(nodeId, componentId, propName, value)) return;
+  if (!sceneGraph.writeProp(nodeId, componentId, propName, value)) return false;
   // Emit node updated event
   getEventBus().emit('NodeUpdated', { nodeId, componentId, propName, value });
   // ...and advance the scene REVISION, which is what every reader that is not
@@ -32,6 +32,7 @@ export function updateNodeComponentProp(
   // see `bumpRevision` for why announcing one would both cost a full-scene
   // walk and split this single edit into two undo steps.
   bumpSceneRevision();
+  return true;
 }
 
 export default updateNodeComponentProp;

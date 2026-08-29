@@ -51,6 +51,21 @@ export interface ResizeNodePayload {
    */
   scale?: Vec2;
   center?: Vec2;
+  /**
+   * New LOCAL size (the layer's own width/height), when the drag should resize
+   * the layer's SIZE rather than its Scale — Ctrl held on a handle.
+   *
+   * The two are different properties with the same visual effect, and which one
+   * a corner drag should write is genuinely a matter of which tool you came
+   * from: After Effects scales layers, Figma resizes them. Scale stays the
+   * default (and stays untouched when this is set), so one gesture never writes
+   * both and they can never disagree about how big the layer is.
+   *
+   * Only meaningful for a layer that HAS an authored size. A layer sized by its
+   * source — an image, a video, a precomp — has no width/height to write, so
+   * the handler falls back to scaling it.
+   */
+  size?: Vec2;
 }
 
 export interface RotateNodePayload {
@@ -98,10 +113,16 @@ export const commands = {
   moveNodes(ids: readonly NodeId[], delta: Vec2): WorkspaceCommand {
     return { type: WorkspaceCommandType.MoveNodes, payload: { ids, delta } satisfies MoveNodesPayload };
   },
-  resizeNode(id: NodeId, bounds: Rect, scale?: Vec2, center?: Vec2): WorkspaceCommand {
+  resizeNode(id: NodeId, bounds: Rect, scale?: Vec2, center?: Vec2, size?: Vec2): WorkspaceCommand {
     return {
       type: WorkspaceCommandType.ResizeNode,
-      payload: { id, bounds, ...(scale ? { scale } : {}), ...(center ? { center } : {}) } satisfies ResizeNodePayload,
+      payload: {
+        id,
+        bounds,
+        ...(scale ? { scale } : {}),
+        ...(center ? { center } : {}),
+        ...(size ? { size } : {}),
+      } satisfies ResizeNodePayload,
     };
   },
   rotateNode(id: NodeId, rotation: number, pivot: Vec2): WorkspaceCommand {

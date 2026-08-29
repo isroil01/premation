@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
+import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { getNodeFill, setNodeFill, getNodeFills, setNodeFills, convertFill, makeStop, sortedStops, solidFill, type FillType, type FillPaint, type ColorStop,
@@ -51,7 +52,8 @@ function AnimatablePaintRow({
 }: {
   nodeId: string;
   prop:
-    | 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius' | 'strokeDashOffset'
+    | 'fillAngle' | 'fillCenterX' | 'fillCenterY' | 'fillRadius' | 'strokeWidth' | 'strokeDashOffset'
+    | 'cornerRadius' | 'cornerRadiusTL' | 'cornerRadiusTR' | 'cornerRadiusBR' | 'cornerRadiusBL'
     | 'strokeTaperStartWidth' | 'strokeTaperEndWidth'
     | 'strokeTaperStartLength' | 'strokeTaperEndLength'
     | 'strokeTaperStartEase' | 'strokeTaperEndEase'
@@ -74,17 +76,28 @@ function AnimatablePaintRow({
   const max = meta.max !== undefined ? meta.max * scale : undefined;
   const time = useActiveWorkspace()?.time ?? 0;
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
-  const animated = defaultAnimation.isAnimated(nodeId, prop);
+  const trackedProps = prop === 'cornerRadius'
+    ? ['cornerRadius', 'cornerRadiusTL', 'cornerRadiusTR', 'cornerRadiusBR', 'cornerRadiusBL'] as const
+    : [prop];
+  const animated = trackedProps.some((trackProp) => defaultAnimation.isAnimated(nodeId, trackProp));
   // The canonical keyframe axis — what the renderer samples for this node.
-  const layerT = compToKeyframeTime(nodeId, time);
-  const engineVal = animated ? defaultAnimation.sample(nodeId, prop, layerT) ?? value : value;
+  const layerT = compToKeyframeTime(nodeId, time, prop);
+  const engineVal = animated
+    ? trackedProps
+      .map((trackProp) => defaultAnimation.sample(nodeId, trackProp, layerT))
+      .find((sample): sample is number => typeof sample === 'number') ?? value
+    : value;
 
   const handleChange = (display: number) => {
     const engine = display / scale;
     if (animated || autoKeyframe) {
       runAnimEdit(
         `Set ${prop}`,
-        () => defaultAnimation.setKeyframe(nodeId, prop, layerT, engine),
+        () => {
+          for (const trackProp of trackedProps) {
+            defaultAnimation.setKeyframe(nodeId, trackProp, layerT, engine);
+          }
+        },
         `set:${nodeId}:${prop}:${layerT}`,
       );
     } else {
@@ -99,9 +112,15 @@ function AnimatablePaintRow({
           checked={animated}
           onChange={() => {
             if (animated) {
-              runAnimEdit(`Remove ${prop} animation`, () => defaultAnimation.removeTrack(nodeId, prop));
+              runAnimEdit(`Remove ${prop} animation`, () => {
+                for (const trackProp of trackedProps) defaultAnimation.removeTrack(nodeId, trackProp);
+              });
             } else {
-              runAnimEdit(`Animate ${prop}`, () => defaultAnimation.setKeyframe(nodeId, prop, layerT, value));
+              runAnimEdit(`Animate ${prop}`, () => {
+                for (const trackProp of trackedProps) {
+                  defaultAnimation.setKeyframe(nodeId, trackProp, layerT, value);
+                }
+              });
             }
           }}
           title="Toggle Keyframes"
@@ -326,7 +345,8 @@ function StopList({
 }
 
 export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element | null {
-  useSceneRevision((s: any) => s.rev);
+  useSceneRevision((s) => s.rev);
+  useAnimationRevision();
   const node = defaultSceneGraph.getNode(nodeId);
 
   // No early return above this line: every hook below has to run on every
@@ -704,10 +724,13 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
             {(stroke?.enabled ?? false) && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div className={styles.popoverRow}>
-                  <span className={styles.popoverLabel}>Width</span>
-                  <ValueField value={stroke?.width ?? 0} unit="px" onChange={handleStrokeWidthChange} />
-                </div>
+                <AnimatablePaintRow
+                  nodeId={nodeId}
+                  prop="strokeWidth"
+                  label="Width"
+                  value={stroke?.width ?? 0}
+                  onStatic={handleStrokeWidthChange}
+                />
 
                 <ColorKfRow
                   nodeId={nodeId}
@@ -958,35 +981,33 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
               </button>
               {isCornerAnimated && <span className={styles.animatedDot} />}
             </div>
-            <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>All</span>
-              <ValueField
-                value={cornersLinked ? cornerRadius : Math.max(cornerTL, cornerTR, cornerBR, cornerBL)}
-                unit="px"
-                min={0}
-                onChange={(v) => writeAllCorners(v, cornersLinked)}
-                aria-label="Corner radius"
+            {cornersLinked ? (
+              <AnimatablePaintRow
+                nodeId={nodeId}
+                prop="cornerRadius"
+                label="All"
+                value={cornerRadius}
+                onStatic={(v) => writeAllCorners(v, true)}
               />
-            </div>
-            {!cornersLinked && (
-              <div className={styles.cornerGrid} role="group" aria-label="Individual corner radii">
+            ) : (
+              <>
                 <div className={styles.popoverRow}>
-                  <span className={styles.popoverLabel}>TL</span>
-                  <ValueField value={cornerTL} unit="px" min={0} onChange={(v) => writeCorner('TL', setCornerTL, v)} aria-label="Corner radius TL" />
+                  <span className={styles.popoverLabel}>All</span>
+                  <ValueField
+                    value={Math.max(cornerTL, cornerTR, cornerBR, cornerBL)}
+                    unit="px"
+                    min={0}
+                    onChange={(v) => writeAllCorners(v, false)}
+                    aria-label="Corner radius"
+                  />
                 </div>
-                <div className={styles.popoverRow}>
-                  <span className={styles.popoverLabel}>TR</span>
-                  <ValueField value={cornerTR} unit="px" min={0} onChange={(v) => writeCorner('TR', setCornerTR, v)} aria-label="Corner radius TR" />
+                <div className={styles.cornerGrid} role="group" aria-label="Individual corner radii">
+                  <AnimatablePaintRow nodeId={nodeId} prop="cornerRadiusTL" label="TL" value={cornerTL} onStatic={(v) => writeCorner('TL', setCornerTL, v)} />
+                  <AnimatablePaintRow nodeId={nodeId} prop="cornerRadiusTR" label="TR" value={cornerTR} onStatic={(v) => writeCorner('TR', setCornerTR, v)} />
+                  <AnimatablePaintRow nodeId={nodeId} prop="cornerRadiusBL" label="BL" value={cornerBL} onStatic={(v) => writeCorner('BL', setCornerBL, v)} />
+                  <AnimatablePaintRow nodeId={nodeId} prop="cornerRadiusBR" label="BR" value={cornerBR} onStatic={(v) => writeCorner('BR', setCornerBR, v)} />
                 </div>
-                <div className={styles.popoverRow}>
-                  <span className={styles.popoverLabel}>BL</span>
-                  <ValueField value={cornerBL} unit="px" min={0} onChange={(v) => writeCorner('BL', setCornerBL, v)} aria-label="Corner radius BL" />
-                </div>
-                <div className={styles.popoverRow}>
-                  <span className={styles.popoverLabel}>BR</span>
-                  <ValueField value={cornerBR} unit="px" min={0} onChange={(v) => writeCorner('BR', setCornerBR, v)} aria-label="Corner radius BR" />
-                </div>
-              </div>
+              </>
             )}
           </>
         )}

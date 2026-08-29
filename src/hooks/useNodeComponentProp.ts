@@ -43,8 +43,9 @@ export function useNodeComponentProp(
 
   const setProp = useCallback((v: unknown) => {
     if (!nodeId || !componentId) return;
-    updateNodeComponentProp(sceneGraph, nodeId, componentId, propName, v);
-    setValue(v);
+    if (updateNodeComponentProp(sceneGraph, nodeId, componentId, propName, v)) {
+      setValue(v);
+    }
   }, [sceneGraph, nodeId, componentId, propName]);
 
   return [value, setProp];

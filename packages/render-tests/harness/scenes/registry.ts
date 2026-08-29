@@ -15,6 +15,7 @@ import { effectScenes } from './effects';
 import { compositedScenes } from './composited';
 import { interiorStyleScenes } from './interiorStyles';
 import { textScenes } from './text';
+import { textScaleVanishScenes, textScaleBisectScenes } from './textScaleVanish';
 import { threeDScenes } from './threeD';
 import { motionScenes } from './motion';
 import { precompScenes } from './precomp';
@@ -46,6 +47,8 @@ export const SCENES: Scene[] = [
   ...compositedScenes,
   ...interiorStyleScenes,
   ...textScenes,
+  ...textScaleVanishScenes,
+  ...textScaleBisectScenes,
   ...threeDScenes,
   // Extrusion. Separate from the 3D family because the subject is a real
   // multi-face SOLID rather than a plane in space, and the question these ask

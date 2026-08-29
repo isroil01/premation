@@ -255,6 +255,26 @@ describe('captureDocument → restoreDocument', () => {
     expect(defaultAnimation.sample('layer_b', 'rotation', 2)).toBeCloseTo(180);
   });
 
+  it('preserves which composition tabs were open', () => {
+    const actions = useProjectStore.getState().actions;
+    actions.openTab('comp_second', ['comp_root', 'comp_second'], 'Lower Third');
+    const before = useProjectStore.getState();
+    expect(before.tabOrder.length).toBeGreaterThan(1);
+    const opened = before.activeTabId;
+    expect(opened).toBeTruthy();
+    expect(before.tabs[opened!]?.compositionId).toBe('comp_second');
+
+    const doc = structuredClone(captureDocument());
+    actions.resetTabs();
+    expect(useProjectStore.getState().tabOrder).toHaveLength(1);
+
+    restoreDocument(doc);
+
+    const after = useProjectStore.getState();
+    expect(after.tabOrder.length).toBe(before.tabOrder.length);
+    expect(after.tabs[after.activeTabId ?? '']?.compositionId).toBe('comp_second');
+  });
+
   it('migrates a legacy gridDivisions onto the PROPORTIONAL grid', () => {
     // Projects saved before the absolute/proportional split stored one
     // `gridDivisions` (cells per axis). That only ever described a

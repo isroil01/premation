@@ -15,7 +15,7 @@
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import { defaultAnimation, type AnimSnapshot } from '@motion/animation';
 import { getTimelineController } from '@core/timeline/TimelineController';
-import { useProjectStore, type CompositionSettings } from '@stores/projectStore';
+import { useProjectStore, type CompositionSettings, type SerializedWorkspaceTabs } from '@stores/projectStore';
 import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurStore';
 import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
@@ -78,21 +78,46 @@ export interface EditorDocument {
    * Optional, so every document written before this reads back byte-identical.
    */
   pluginStorage?: Record<string, Record<string, string>>;
+  /**
+   * Open composition tabs (which precomps are open, which is active, playhead
+   * per tab). Optional: an absent key means "keep" on restore, same as
+   * `timelines`. New Project drops them via `resetProjectWorkspace`.
+   */
+  openTabs?: SerializedWorkspaceTabs;
   /** Legacy: single active comp. Read on restore, no longer written. */
   comp?: CompositionSettings;
 }
 
 /** Snapshot every authored subsystem into one self-contained document. */
 export function captureDocument(): EditorDocument {
+  const ws = useProjectStore.getState();
+  const openTabs: SerializedWorkspaceTabs = {
+    tabOrder: [...ws.tabOrder],
+    activeTabId: ws.activeTabId,
+    tabs: Object.fromEntries(
+      Object.values(ws.tabs).map((t) => [
+        t.id,
+        {
+          id: t.id,
+          compositionId: t.compositionId,
+          breadcrumbPath: [...t.breadcrumbPath],
+          title: t.title,
+          time: t.time,
+          frame: t.frame,
+        },
+      ]),
+    ),
+  };
   return {
     version: '1.1.0',
     scene: sceneProjectIO.capture(),
     animation: defaultAnimation.snapshot(),
-    comps: structuredClone(useProjectStore.getState().comps),
+    comps: structuredClone(ws.comps),
     timelines: getTimelineController().capture(),
     motionBlur: useMotionBlurStore.getState().settings(),
     guides: useGuidesStore.getState().settings(),
     colorManagement: useColorManagementStore.getState().settings(),
+    openTabs,
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
     // Absent when empty, so a document with no plugin state reads back
     // byte-identical — the same rule `plugins` follows above.
@@ -205,6 +230,7 @@ export function restoreDocument(doc: EditorDocument): void {
   }
 
   if (doc.timelines) getTimelineController().restore(doc.timelines);
+  if (doc.openTabs) useProjectStore.getState().actions.hydrateWorkspaceTabs(doc.openTabs);
   if (doc.motionBlur) useMotionBlurStore.getState().restore(doc.motionBlur);
   if (doc.guides) useGuidesStore.getState().restore(doc.guides);
   if (doc.colorManagement) useColorManagementStore.getState().restore(doc.colorManagement);

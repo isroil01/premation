@@ -422,6 +422,10 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         const r = s.regions[region];
         if (!r) return;
+        const collapsedThreshold = region === 'bottomTimeline' ? 60 : 44;
+        if (r.collapsed && size > collapsedThreshold) {
+          r.collapsed = false;
+        }
         r.size = clamp(size, r.minSize, r.maxSize);
         getEventBus().emit('PanelResized', { panelId: region, size: r.size });
       }),
@@ -630,6 +634,7 @@ useLayoutStore.subscribe((state) => {
 // Persist the full layout (regions, panelOrder, activePanelByRegion, split states) to
 // localStorage so the workspace survives page refresh / Electron restart.
 let _lastLayoutSig = '';
+let _saveLayoutTimer: ReturnType<typeof setTimeout> | null = null;
 useLayoutStore.subscribe((state) => {
   // Cheap signature: JSON of the parts we care about.
   const sig = JSON.stringify({
@@ -646,16 +651,20 @@ useLayoutStore.subscribe((state) => {
   });
   if (sig === _lastLayoutSig) return;
   _lastLayoutSig = sig;
-  saveLayout(
-    state.regions,
-    state.panelOrder,
-    state.activePanelByRegion,
-    state.leftSidebarPosition,
-    state.rightInspectorPosition,
-    state.timelinePosition,
-    state.leftSidebarSplit,
-    state.rightInspectorSplit,
-  );
+  if (_saveLayoutTimer !== null) clearTimeout(_saveLayoutTimer);
+  _saveLayoutTimer = setTimeout(() => {
+    _saveLayoutTimer = null;
+    saveLayout(
+      state.regions,
+      state.panelOrder,
+      state.activePanelByRegion,
+      state.leftSidebarPosition,
+      state.rightInspectorPosition,
+      state.timelinePosition,
+      state.leftSidebarSplit,
+      state.rightInspectorSplit,
+    );
+  }, 250);
 });
 
 export const usePanel = (panelId: string): PanelRegistration | undefined =>

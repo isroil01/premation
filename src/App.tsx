@@ -27,6 +27,7 @@ import { viewportFrameCache } from '@core/rendering/frameCache';
 import { createViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { VIDEO_AUDIO_MUTED_PROP } from '@core/audio/audioScene';
 import { useProjectStore } from '@stores/projectStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
@@ -35,7 +36,7 @@ import { useSpaceTransport } from '@hooks/useSpaceTransport';
 import { getTimelineController, getRemappedTime, compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { staticOrDefaultValue, writeStaticPropertyValue } from '@core/inspector/propertyValue';
 import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
-import { buildPropertyRows } from '@layout/Timeline/buildPropertyRows';
+import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
 import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
@@ -57,28 +58,27 @@ import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { getAllPanelRenderers } from '@layout/EditorLayout/DemoPanels';
 import { PluginConsentHost } from '@layout/Plugins/PluginConsentHost';
 import { PluginDeepLink } from '@layout/Plugins/PluginDeepLink';
+import { setNodeLabelColor } from '@core/scene/labelColor';
 import { usePluginPanelRegistration } from '@layout/Plugins/usePluginPanels';
 import { availablePanelDefs } from '@layout/EditorLayout/panelDefs';
-import type { TimelineModel, TimelineTrack, TimelinePropertyTrack, TimelineClip } from '@layout/Timeline';
-import type { TrackId } from '@app-types/common';
+import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import {
   defaultAnimation,
-  makeKeyframeId,
   parseKeyframeId,
   expandKeyframeProp,
   POSITION_PSEUDO_PROP,
 } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useCompositionStore } from '@stores/compositionStore';
-import { readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { readCompRef } from '@core/scene/compInstance';
-import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
-import { getNodeMatte, setNodeMatte } from '@core/effects/matte';
+import { setNodeBlend } from '@core/effects/blendMode';
+import { setNodeMatte } from '@core/effects/matte';
 import { readNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
 import { readNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { readNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
-import { readIsGuideLayer, toggleGuideLayer, isGuideLayer } from '@core/scene/guideLayer';
+import { toggleGuideLayer, isGuideLayer } from '@core/scene/guideLayer';
 import { readNodePreserveTransparency, setNodePreserveTransparency } from '@core/effects/preserveTransparency';
 import {
   enableLayerMotionBlurWithFeedback,
@@ -87,6 +87,7 @@ import {
   notifyGuideLayerChange,
 } from '@core/effects/layerSwitchFeedback';
 import { reparentNode, moveNodeAdjacent } from '@core/scene/parenting';
+import { renameLayer } from '@core/scene/renameLayer';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { openPalette } from '@stores/commandPaletteStore';
@@ -99,13 +100,12 @@ import { useFocusStore } from '@stores/focusStore';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { useResponsiveLayout } from '@hooks/useResponsiveLayout';
-import type { TimelineKeyframeRef } from '@layout/Timeline';
-import type { KeyId, NodeId } from '@app-types/common';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
 import { useAssetStore } from '@stores/assetStore';
 import { customPrompt } from '@components/Modal';
+import { runDocumentEdit } from '@core/commands/documentEdit';
 
 /**
  * The value a property HAS at `layerT`: the sampled keyframe when the property
@@ -131,39 +131,8 @@ function propertyValueAt(nodeId: string, prop: string, layerT: number): number {
 /** Times within this many seconds of each other are the same keyframe. */
 const KEYFRAME_EPSILON = 1e-4;
 
-function getNodeColor(node: any): string | undefined {
-  if (!node) return '#5282b8';
-  // 1. Explicit user-assigned layer color
-  if (typeof node.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(node.color)) {
-    return node.color;
-  }
-  // 2. Solid layer / shape fill color
-  const fillComp = node.components?.find((c: any) => c.type === 'fill');
-  if (fillComp?.props?.color && typeof fillComp.props.color === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(fillComp.props.color)) {
-    return fillComp.props.color;
-  }
-  // 3. Text color
-  const textComp = node.components?.find((c: any) => c.type === 'text');
-  if (textComp?.props?.fill && typeof textComp.props.fill === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(textComp.props.fill)) {
-    return textComp.props.fill;
-  }
-  // 4. Background / fill property directly on node
-  if (typeof node.fill === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(node.fill)) {
-    return node.fill;
-  }
-  if (typeof node.background === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(node.background)) {
-    return node.background;
-  }
-  // 5. Default category color literal from KIND_FILL (hex literal)
-  const kind = readNodeKind(node);
-  return KIND_FILL[kind] ?? '#5282b8';
-}
-
 function setNodeColor(nodeId: string, color: string): void {
-  const node = defaultSceneGraph.getNode(nodeId as any);
-  if (!node) return;
-  (node as any).color = color;
-  bumpScene();
+  setNodeLabelColor(nodeId, color);
 }
 
 /** The editor UI wrapped in the AI chat provider — chat state must sit above
@@ -378,164 +347,25 @@ function EditorShellInner(): JSX.Element {
   // layer markers, so it has to re-derive when one is added or removed.
   const [markerRev, setMarkerRev] = useState(0);
 
+  // Structural vs value-only: `sceneRev` ticks on inspector slider drags
+  // (`bumpSceneRevision`), which used to rebuild every timeline row 30–60×/s.
+  // Structure (add/remove/reparent) is `SceneGraphChanged`; keyframe diamonds
+  // are `AnimationChanged`. Expanded property *values* still need sceneRev.
+  const [graphRev, setGraphRev] = useState(0);
+  const [animRev, setAnimRev] = useState(0);
+
   // Timeline tracks derived from the scene graph — one track per node, in
   // layer order. Clip bars come from the Timeline Engine's layers for that node.
+  const valueRev = expandedIds.length > 0 ? sceneRev : 0;
   const tracks = useMemo<TimelineTrack[]>(() => {
-    void sceneRev;
+    void graphRev;
+    void animRev;
     void clipRev;
     void markerRev;
-    const controller = getTimelineController();
-    const compId = activeCompId || 'comp_root';
-
-    const result: TimelineTrack[] = [];
-
-    const traverse = (parentId: string, depth: number) => {
-      // AE stacking convention: the TOP timeline row is the FRONT-most layer.
-      // Children render in order (last child drawn last = front), so rows list
-      // them reversed. Before this, the top row was the BACK-most layer and a
-      // newly-inserted layer appeared at the bottom — inverted muscle memory.
-      const nodes = [...defaultSceneGraph.getChildren(parentId)].reverse();
-      for (const node of nodes) {
-        const kind = readNodeKind(node);
-        const isExpanded = expandedIds.includes(node.id);
-        // Collapsed rows only need a cheap keyframe summary for the layer
-        // diamond strip — the full property tree (every group AE shows, keyed
-        // or not) is built when the user twirls open. At 10k layers this is the
-        // difference between a usable timeline and one that freezes on every
-        // scene bump.
-        const properties: TimelinePropertyTrack[] = isExpanded ? buildPropertyRows(node.id) : [];
-
-        // Flat union of all keyframes (collapsed summary row). When collapsed we
-        // still want diamonds on the layer bar — build a minimal list without
-        // the property-row machinery.
-        const keyframes: TimelineKeyframeRef[] = isExpanded
-          ? properties.flatMap((p) => p.keyframes)
-          : (() => {
-              const out: TimelineKeyframeRef[] = [];
-              for (const track of defaultAnimation.tracksFor(node.id)) {
-                for (const kf of track.keyframes) {
-                  out.push({
-                    id: makeKeyframeId(node.id, track.prop, kf.t) as KeyId,
-                    nodeId: node.id as NodeId,
-                    time: keyframeToCompTime(node.id, kf.t, track.prop),
-                    roving: kf.roving,
-                    isHold: kf.easing === 'hold' || kf.easing === 'step',
-                    easeOut: kf.easing,
-                  });
-                }
-              }
-              for (const dt of defaultAnimation.dataTracksFor(node.id)) {
-                for (const kf of dt.keyframes) {
-                  out.push({
-                    id: makeKeyframeId(node.id, dt.prop, kf.t) as KeyId,
-                    nodeId: node.id as NodeId,
-                    time: keyframeToCompTime(node.id, kf.t, dt.prop),
-                    isHold: dt.kind === 'text' || kf.easing === 'hold' || kf.easing === 'step' || undefined,
-                    easeOut: kf.easing,
-                  });
-                }
-              }
-              return out;
-            })();
-        // The asset a clip's waveform is drawn from. Audio layers carry it on
-        // their Audio component; a VIDEO layer's own track hangs off the same
-        // asset as its picture, so the bar can show the sound it will actually
-        // play — cutting to a beat was otherwise guesswork.
-        const audioComp = node.components.find((c) => c.type === 'Audio');
-        const mediaAssetId =
-          (audioComp?.props?.__assetId as string | undefined) ??
-          (node.components.find((c) => typeof (c.props as Record<string, unknown>)?.assetId === 'string')
-            ?.props as Record<string, unknown> | undefined)?.assetId as string | undefined;
-        const waveAssetId = kind === 'audio' || kind === 'video' ? mediaAssetId : undefined;
-        // Clip bars for this node = its Timeline Engine layers (seconds).
-        const clips: TimelineClip[] = controller.getLayersForNode(node.id).map((l) => ({
-          id: l.id,
-          trackId: node.id as TrackId,
-          nodeId: node.id as NodeId,
-          start: l.start / compFps,
-          duration: l.duration / compFps,
-          label: node.name ?? node.id,
-          color: (node as any).color ?? KIND_FILL[kind],
-          ...(waveAssetId ? { assetId: waveAssetId } : {}),
-          // The window this bar shows onto its source, in SOURCE seconds. Trim
-          // moves the edges, slip slides both — the waveform reads these so it
-          // shows the audible region rather than the whole file squeezed to fit.
-          sourceInSec: l.clip.sourceIn / compFps,
-          sourceOutSec: (l.clip.sourceIn + l.clip.duration) / compFps,
-        }));
-        // Whether the chevron is live. Computed for COLLAPSED rows too (where
-        // `properties` is deliberately empty), because the static Transform tree
-        // exists for every transformable layer whether or not anything is keyed —
-        // that is exactly the layer you need to twirl open to key it in the first
-        // place. Cheap: a component scan plus the track lookups the summary strip
-        // already does.
-        const canExpand =
-          kind === 'group' ||
-          (kind !== 'audio' && node.components.some((c) => c.type === 'Transform')) ||
-          defaultAnimation.tracksFor(node.id).length > 0 ||
-          defaultAnimation.dataTracksFor(node.id).length > 0;
-        const track: TimelineTrack = {
-          id: node.id as TrackId,
-          name: node.name ?? node.id,
-          kind,
-          icon: KIND_ICON[kind],
-          color: (node as any).color ?? KIND_COLOR[kind],
-          muted: node.visible === false,
-          audioMuted: isLayerAudioMuted(node),
-          locked: node.locked === true,
-          solo: node.solo === true,
-          blendMode: getNodeBlend(node.id),
-          matteMode: getNodeMatte(node.id),
-          parent: node.parent ?? null,
-          nodeColor: getNodeColor(node),
-          threeD: is3DEnabled(node),
-          // Read from the same place the renderer does, so the icons reflect what
-          // is actually being drawn (and agree with the inspector's switches).
-          motionBlur: readNodeMotionBlur(node),
-          fxEnabled: readNodeFxEnabled(node),
-          adjustment: readNodeAdjustment(node),
-          // Guide layers are marked in the row so the exclusion is visible at a
-          // glance — a layer that silently vanishes from the export is exactly
-          // the thing a user needs told BEFORE they deliver, not after.
-          guide: readIsGuideLayer(node),
-          preserveTransparency: readNodePreserveTransparency(node),
-          shy: (node as any).shy === true,
-          keyframes,
-          properties,
-          clips,
-          // Layer markers, already on the comp axis (see getLayerMarkers).
-          markers: controller.getLayerMarkers(node.id).map((m) => ({
-            id: m.id,
-            time: m.time,
-            label: m.label,
-            ...(m.color ? { color: m.color } : {}),
-          })),
-          depth,
-          isGroup: kind === 'group',
-          canExpand,
-          expanded: expandedIds.includes(node.id),
-        };
-
-        result.push(track);
-
-        if (kind === 'group') {
-          if (expandedIds.includes(node.id)) traverse(node.id, depth + 1);
-        } else {
-          // Parented layers: `parent` IS the tree in this graph, so a rect
-          // parented to a null lives UNDER it — but it is still an ordinary
-          // layer and keeps its own row (After Effects' rule; the Parent &
-          // Link column shows the relationship). Recursing only into expanded
-          // GROUPS made a freshly parented layer vanish from the timeline —
-          // row, keyframes and duration bar — while the viewport kept
-          // rendering it. Same depth on purpose: AE's stack is flat.
-          traverse(node.id, depth);
-        }
-      }
-    };
-
-    traverse(compId, 0);
-    return result;
-  }, [sceneRev, clipRev, markerRev, compFps, expandedIds, activeCompId]);
+    void valueRev;
+    void sceneRev;
+    return deriveTimelineTracks({ activeCompId, compFps, expandedIds });
+  }, [graphRev, animRev, clipRev, markerRev, valueRev, sceneRev, compFps, expandedIds, activeCompId]);
 
   // Mirror the scene graph into the Timeline Engine's layers on STRUCTURAL
   // changes only (add/remove/reparent). Pure keyframe or property edits do not
@@ -543,8 +373,18 @@ function EditorShellInner(): JSX.Element {
   // Previously this was keyed on sceneRev, which fired on every drag tick and
   // caused a full syncFromScene walk 30-60 times/second during a slider drag.
   useEffect(() => {
-    const sub = getEventBus().on('SceneGraphChanged', () => getTimelineController().syncFromScene());
-    return () => sub.dispose();
+    const bus = getEventBus();
+    const graphSub = bus.on('SceneGraphChanged', () => {
+      getTimelineController().syncFromScene();
+      setGraphRev((v) => v + 1);
+    });
+    const animSub = bus.on('AnimationChanged', (payload) => {
+      if (!isMediaDecodeRepaint(payload?.nodeId)) setAnimRev((v) => v + 1);
+    });
+    return () => {
+      graphSub.dispose();
+      animSub.dispose();
+    };
   }, []);
 
   // Session hydration is owned by AppRouter (before any route renders), so the
@@ -577,20 +417,26 @@ function EditorShellInner(): JSX.Element {
   const toggleTrackVisible = (trackId: string): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node) return;
-    node.visible = node.visible === false;
-    bumpScene();
+    runDocumentEdit(node.visible === false ? 'Show layer' : 'Hide layer', () => {
+      node.visible = node.visible === false;
+      bumpScene();
+    });
   };
   const toggleTrackLock = (trackId: string): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node) return;
-    node.locked = !node.locked;
-    bumpScene();
+    runDocumentEdit(node.locked ? 'Unlock layer' : 'Lock layer', () => {
+      node.locked = !node.locked;
+      bumpScene();
+    });
   };
   const toggleTrackSolo = (trackId: string): void => {
     const node = defaultSceneGraph.getNode(trackId);
     if (!node) return;
-    node.solo = !node.solo;
-    bumpScene();
+    runDocumentEdit(node.solo ? 'Unsolo layer' : 'Solo layer', () => {
+      node.solo = !node.solo;
+      bumpScene();
+    });
   };
 
   // ── Timeline expansion (reveal animated properties) ──────────────
@@ -880,10 +726,30 @@ function EditorShellInner(): JSX.Element {
 
   // Rename a scene node — committed when user confirms via Enter or blur.
   const handleTrackRename = (trackId: string, newName: string): void => {
-    const node = defaultSceneGraph.getNode(trackId);
-    if (!node) return;
-    node.name = newName;
-    bumpScene();
+    const result = renameLayer(trackId, newName);
+    if (!result.ok) return;
+    if (result.repaired.length > 0) {
+      const n = result.repaired.length;
+      useUIStore.getState().notify({
+        level: 'info',
+        message: `${n} expression${n === 1 ? '' : 's'} updated to follow the new name.`,
+        durationMs: 4000,
+      });
+    }
+    if (result.captured.length > 0) {
+      const n = result.captured.length;
+      useUIStore.getState().notify({
+        level: 'warning',
+        message: `${n} expression${n === 1 ? '' : 's'} naming “${newName.trim()}” now read this layer instead of the previous layer.`,
+        durationMs: 10000,
+      });
+    } else if (result.nameAlreadyInUse) {
+      useUIStore.getState().notify({
+        level: 'warning',
+        message: `Another layer is already called “${newName.trim()}”; expressions can reach only one of them by name.`,
+        durationMs: 6000,
+      });
+    }
   };
 
   /**
@@ -898,18 +764,15 @@ function EditorShellInner(): JSX.Element {
     const node = defaultSceneGraph.getNode(nodeId);
     if (!node) return;
     const kind = readNodeKind(node);
-    if (kind === 'audio') {
-      const comp = node.components.find((c) => c.type === 'Audio');
-      if (!comp) return;
-      const next = comp.props?.__muted === true ? undefined : true;
-      defaultSceneGraph.writeProp(nodeId, comp.id, '__muted', next);
-    } else {
-      const comp = node.components.find((c) => c.type === 'Transform');
-      if (!comp) return;
-      const next = (comp.props as Record<string, unknown>)?.[VIDEO_AUDIO_MUTED_PROP] === true ? undefined : true;
-      defaultSceneGraph.writeProp(nodeId, comp.id, VIDEO_AUDIO_MUTED_PROP, next);
-    }
-    bumpScene();
+    const componentType = kind === 'audio' ? 'Audio' : 'Transform';
+    const prop = kind === 'audio' ? '__muted' : VIDEO_AUDIO_MUTED_PROP;
+    const comp = node.components.find((c) => c.type === componentType);
+    if (!comp) return;
+    const muted = (comp.props as Record<string, unknown>)?.[prop] === true;
+    runDocumentEdit(muted ? 'Unmute layer audio' : 'Mute layer audio', () => {
+      defaultSceneGraph.writeProp(nodeId, comp.id, prop, muted ? undefined : true);
+      bumpScene();
+    });
   };
 
   const handleTrackActivate = (trackId: string): void => {
@@ -1016,6 +879,25 @@ function EditorShellInner(): JSX.Element {
         });
       }
     }
+  };
+  const handleKeyframesDelete = (keyframeIds: ReadonlyArray<string>): void => {
+    const refs = keyframeIds
+      .map((id) => parseKeyframeId(id))
+      .filter((ref): ref is NonNullable<ReturnType<typeof parseKeyframeId>> => ref !== null);
+    if (refs.length === 0) return;
+    runAnimEdit(refs.length === 1 ? 'Delete keyframe' : 'Delete keyframes', () => {
+      for (const ref of refs) {
+        if (ref.prop === MASK_ANIM_PROP) {
+          removeMaskKeyframe(ref.nodeId, ref.t);
+        } else if (defaultAnimation.isDataAnimated(ref.nodeId, ref.prop)) {
+          defaultAnimation.removeDataKeyframe(ref.nodeId, ref.prop, ref.t);
+        } else {
+          for (const prop of expandKeyframeProp(ref.prop)) {
+            defaultAnimation.removeKeyframe(ref.nodeId, prop, ref.t);
+          }
+        }
+      }
+    });
   };
   /**
    * The keyframe navigator's diamond — the only affordance that creates a
@@ -1639,6 +1521,7 @@ function EditorShellInner(): JSX.Element {
               }}
               onKeyframeSeek={handleKeyframeSeek}
               onKeyframeMove={handleKeyframeMove}
+              onKeyframesDelete={handleKeyframesDelete}
               onKeyframeContextMenu={handleKeyframeContextMenu}
               onPropertyKeyframeToggle={handlePropertyKeyframeToggle}
               onPropertyStopwatch={handlePropertyStopwatch}
@@ -1670,25 +1553,6 @@ function EditorShellInner(): JSX.Element {
         <PluginDeepLink />
       </div>
     </div>
-  );
-}
-
-/**
- * Is this layer's AUDIO muted? (Separate from the visibility eye, which hides
- * the picture.) Module scope on purpose: it is called from the `tracks` memo,
- * which runs during render well before any `const` declared inside the
- * component body has initialised — as a component-scope const it threw
- * "Cannot access before initialization" and took the whole editor down.
- */
-function isLayerAudioMuted(node: ReturnType<typeof defaultSceneGraph.getNode>): boolean {
-  if (!node) return false;
-  const kind = readNodeKind(node);
-  if (kind === 'audio') {
-    return node.components.find((c: { type: string }) => c.type === 'Audio')?.props?.__muted === true;
-  }
-  if (kind !== 'video') return false;
-  return node.components.some(
-    (c: { props?: Record<string, unknown> }) => c.props?.[VIDEO_AUDIO_MUTED_PROP] === true,
   );
 }
 

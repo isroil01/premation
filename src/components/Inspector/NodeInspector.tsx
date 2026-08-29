@@ -5,8 +5,11 @@ import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { getRemappedTime } from '@core/timeline/TimelineController';
+import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import { useSceneRevision } from '@stores/sceneStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { useAnimationRevision } from '@hooks/useAnimationRevision';
+import { resolveChannelColor } from '@core/effects/effects';
 import { Color } from '@motion/renderer';
 
 
@@ -39,9 +42,11 @@ function PropertyRow({
   // Already layer-local: this is the axis the renderer samples on, and the
   // axis every write below must use. Calling toLayerTime on top of it
   // subtracted the clip start twice (the ghost-drag bug's root cause).
-  const time = getRemappedTime(nodeId, rawTime);
+  const time = compToKeyframeTime(nodeId, rawTime, propName);
   // Subscribe to the revision so the row re-renders on keyframe/scene changes.
   useSceneRevision((s) => s.rev);
+  useAnimationRevision();
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
 
   const Editor = propertyRegistry.get(componentType, propName);
   const numeric = typeof baseVal === 'number';
@@ -56,16 +61,14 @@ function PropertyRow({
   } else if (isColor) {
     animated = defaultAnimation.isAnimated(nodeId, `${propName}_r`);
     if (animated) {
-      const r = defaultAnimation.sample(nodeId, `${propName}_r`, time) ?? 0;
-      const g = defaultAnimation.sample(nodeId, `${propName}_g`, time) ?? 0;
-      const b = defaultAnimation.sample(nodeId, `${propName}_b`, time) ?? 0;
-      const a = defaultAnimation.sample(nodeId, `${propName}_a`, time) ?? 1;
-      displayVal = Color.toHex({ r, g, b, a });
+      displayVal = resolveChannelColor(String(baseVal), (suffix) =>
+        defaultAnimation.sample(nodeId, `${propName}${suffix}`, time),
+      );
     }
   }
 
   const onChange = (v: unknown): void => {
-    if (animated && typeof v === 'number') {
+    if ((animated || autoKeyframe) && typeof v === 'number') {
       // Reversible keyframe edit. A scrub fires onChange many times for the same
       // (node, prop, time); the merge key collapses them into one undo step.
       runAnimEdit(
@@ -73,7 +76,7 @@ function PropertyRow({
         () => defaultAnimation.setKeyframe(nodeId, propName, time, v),
         `set:${nodeId}:${propName}:${time}`,
       );
-    } else if (animated && isColor && typeof v === 'string') {
+    } else if ((animated || autoKeyframe) && isColor && typeof v === 'string') {
       const c = Color.fromHex(v);
       runAnimEdit(
         `Set ${propName}`,

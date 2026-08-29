@@ -9,34 +9,35 @@
 [data-theme="dark"],
 :root:not([data-theme]) {
   /* ── Surfaces (elevation by value, not borders) ───────────────── */
-  --color-background:        #232323;
-  --color-surface-0:         #232323;  /* app frame            */
-  --color-surface-1:         #232323;  /* panels               */
-  --color-surface-2:         #161616;  /* controls / raised    */
-  --color-surface-3:         #333333;  /* hover step           */
-  --color-surface-raised:    #2d2d2d;  /* popovers / overlays  */
+  --color-background:        #181818;
+  --color-surface-0:         #181818;  /* app frame / canvas base */
+  --color-surface-1:         #232323;  /* panels / cards / tables */
+  --color-surface-2:         #2c2c2c;  /* controls / buttons / table headers */
+  --color-surface-3:         #383838;  /* hover step           */
+  --color-surface-raised:    #2a2a2a;  /* popovers / overlays  */
   --color-panel:             #232323;
   --color-panel-header:      #1d1d1d;
   --color-toolbar:           #1d1d1d;
   --color-statusbar:         #1d1d1d;
-  --color-titlebar:          #161616;
-  --color-workspace:         #232323; /* canvas void          */
+  --color-titlebar:          #141414;
+  --color-workspace:         #181818; /* canvas void          */
   --color-pasteboard:        #232323; /* comp surround        */
 
   /* ── Borders & dividers ───────────────────────────────────────── */
-  /* Rule: `border` only where two REGIONS meet. Inside panels use
-     `border-subtle` hairlines sparingly — rows separate by hover/spacing. */
-  /* Alpha seams (decoupled from surface-3) so region edges actually read. */
-  --color-border:            #000000;
-  --color-border-strong:     #333333;
-  --color-border-subtle:     #1a1a1a;
-  --color-divider:           #000000;
+  /* Major structural boundaries (seams between main app regions) */
+  --color-border-structural: #000000;
+  --color-splitter:          #000000;
+  --color-splitter-hover:    var(--color-selection);
+
+  /* Secondary & inner chrome (tabs, cards, sections, subheaders, controls) */
+  --color-border:            #282828;
+  --color-border-strong:     #383838;
+  --color-border-subtle:     #1e1e1e;
+  --color-divider:           #222222;
   /* Recessed-field hairline (Input/Switch/ValueField/etc. inset wells) —
      one step lighter than border-subtle since these sit on the darkest well. */
   --color-field-border:       rgba(255, 255, 255, 0.08);
   --color-field-border-hover: rgba(255, 255, 255, 0.16);
-  --color-splitter:          #000000;
-  --color-splitter-hover:    var(--color-selection);
 
   /* ── Text ─────────────────────────────────────────────────────── */
   /*

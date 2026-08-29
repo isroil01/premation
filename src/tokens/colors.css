@@ -59,15 +59,15 @@
 
   /* ── Layer category hues (desaturated so chrome stays quiet;
         colorblind-safe; always paired w/ icon) ──────────────────── */
-  --color-layer-text:   #6aa9ff;
-  --color-layer-shape:  #3fbfae;
-  --color-layer-image:  #e8a33d;
-  --color-layer-video:  #e85d75;  /* rose — shifted off pure red */
-  --color-layer-audio:  #4bcb9e;  /* mint — avoids red/green collision */
-  --color-layer-camera: #e8935c;
-  --color-layer-light:  #e3c04c;
-  --color-layer-null:   #8e9aad;
-  --color-layer-3d:     #d47ae8;  /* magenta — purple stays AI-only */
+  --color-layer-text:   #4f7ea8;
+  --color-layer-shape:  #3b8276;
+  --color-layer-image:  #b47836;
+  --color-layer-video:  #a84e62;  /* rose — shifted off pure red */
+  --color-layer-audio:  #3a8b9e;
+  --color-layer-camera: #4a7bb0;
+  --color-layer-light:  #ba8e3a;
+  --color-layer-null:   #64748b;
+  --color-layer-3d:     #7965aa;  /* magenta/violet — purple stays AI-only */
 
   /* ── Transparent overlays ─────────────────────────────────────── */
   --color-black-a04: rgba(0, 0, 0, 0.04);

@@ -104,7 +104,7 @@ export interface CompositionStoreFn {
   <T>(selector: (state: CompositionStore) => T): T;
   (): CompositionStore;
   getState: () => CompositionStore;
-  setState: (patch: any) => void;
+  setState: (patch: Partial<CompositionSettings>) => void;
 }
 
 export const useCompositionStore = function <T>(selector?: (state: CompositionStore) => T): T | CompositionStore {
@@ -169,7 +169,3 @@ Object.assign(useCompositionStore, {
     useCompositionStore.getState().update(patch);
   }
 });
-
-export function hydrateComposition(): void {
-  // Persistence is now managed by project serialization
-}

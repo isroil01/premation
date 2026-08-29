@@ -5,6 +5,8 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { defaultAnimation } from '@motion/animation';
 import { useSceneRevision } from '@stores/sceneStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { essentialPropMenuItems } from '@core/inspector/propertyMenu';
 import { resolveChannelColor } from '@core/effects/effects';
@@ -32,6 +34,8 @@ export function ColorKfRow({
 }: ColorKfRowProps): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
   useSceneRevision((s) => s.rev);
+  useAnimationRevision();
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
 
   const rProp = `${propPrefix}_r`;
   const gProp = `${propPrefix}_g`;
@@ -41,7 +45,7 @@ export function ColorKfRow({
   const animated = defaultAnimation.isAnimated(nodeId, rProp);
   // ONE axis for reads and writes: the canonical keyframe time — sampling or
   // writing at the raw comp time collapses keyframes on any moved/trimmed clip.
-  const layerT = compToKeyframeTime(nodeId, time);
+  const layerT = compToKeyframeTime(nodeId, time, rProp);
 
   // An unanimated channel falls back to the STORED colour's channel — the same
   // rule the renderer uses. The old `?? 255` invented white for any channel
@@ -55,7 +59,7 @@ export function ColorKfRow({
   );
 
   const onChange = (hex: string): void => {
-    if (animated) {
+    if (animated || autoKeyframe) {
       const c = Color.fromHex(hex);
       runAnimEdit(
         `Set ${label}`,
