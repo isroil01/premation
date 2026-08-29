@@ -1657,11 +1657,21 @@ function texturedColorMatrix(layer: RenderLayer): { m: readonly number[]; offset
  *  Canvas2DBackend.drawLight uses (a real light model is out of scope for a 2D
  *  compositor). The gradient texture (`light:<id>`) is fed by AppTextureProvider;
  *  here we place a 2·radius quad at the light's centre, screen-blend it, and use
- *  intensity as the opacity. */
+ *  intensity as the opacity.
+ *
+ *  The quad ROTATES. A spot's cone is baked into the wash texture opening along
+ *  +X and aimed by turning the quad, so `buildSnapshot`'s resolved aim (the
+ *  light's Direction plus its world rotation) sweeps the beam without touching
+ *  the texture. This composed 0 before, which is why rotating a light moved
+ *  nothing on screen. */
 function lightToRenderable(layer: RenderLayer, parentMatrix: Mat3, parentOpacity: number): Renderable {
-  const radius = Math.max(1, layer.light!.radius);
-  const size = radius * 2;
-  const local = Mat3.multiply(Mat3.compose(layer.x, layer.y, 0, size, size), Mat3.translation(-0.5, -0.5));
+  // SCREEN radius: `buildSnapshot` has already put the light's reach (or, for a
+  // landed beam, its footprint on the lit plane) through the projection. Sizing
+  // from the world `radius` here is what made a light dollied deep into the
+  // scene throw the same glow as one on the comp plane.
+  const size = Math.max(1, layer.light!.screenRadius) * 2;
+  const aim = ((layer.rotation ?? 0) * Math.PI) / 180;
+  const local = Mat3.multiply(Mat3.compose(layer.x, layer.y, aim, size, size), Mat3.translation(-0.5, -0.5));
   const model = Mat3.multiply(parentMatrix, local);
   const intensity = Math.max(0, Math.min(1, layer.light!.intensity / 100));
   return {

@@ -129,7 +129,7 @@ describe('snapshotToFrameScene', () => {
 
   describe('lights (screen-blended radial-gradient quad)', () => {
     const lightLayer = (over: Partial<RenderLayer> = {}): RenderLayer =>
-      layer({ id: 'L', x: 300, y: 400, light: { color: '#ffffff', intensity: 80, radius: 100 }, ...over });
+      layer({ id: 'L', x: 300, y: 400, light: { color: '#ffffff', intensity: 80, radius: 100, screenRadius: 100 }, ...over });
 
     test('emits a light as a screen-blend textured quad (not dropped)', () => {
       const scene = snapshotToFrameScene(snapshot([lightLayer()]));
@@ -141,12 +141,12 @@ describe('snapshotToFrameScene', () => {
     });
 
     test('intensity drives opacity (80 → 0.8)', () => {
-      const r = snapshotToFrameScene(snapshot([lightLayer({ light: { color: '#fff', intensity: 80, radius: 100 } })])).renderables[0]!;
+      const r = snapshotToFrameScene(snapshot([lightLayer({ light: { color: '#fff', intensity: 80, radius: 100, screenRadius: 100 } })])).renderables[0]!;
       expect(r.opacity).toBeCloseTo(0.8, 5);
     });
 
-    test('the quad is a 2·radius box centred at the light position', () => {
-      const r = snapshotToFrameScene(snapshot([lightLayer({ x: 300, y: 400, light: { color: '#fff', intensity: 100, radius: 100 } })])).renderables[0]!;
+    test('the quad is a 2·screenRadius box centred at the light position', () => {
+      const r = snapshotToFrameScene(snapshot([lightLayer({ x: 300, y: 400, light: { color: '#fff', intensity: 100, radius: 100, screenRadius: 100 } })])).renderables[0]!;
       // 200×200 box centred at (300,400) → AABB origin (200,300), size 200².
       expect(r.bounds.width).toBeCloseTo(200, 5);
       expect(r.bounds.height).toBeCloseTo(200, 5);

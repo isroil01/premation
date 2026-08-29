@@ -1645,15 +1645,20 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  if (kind !== 'light') {
-    items.push({
-      id: 'parenting',
-      title: 'Parent & Link',
-      icon: 'layers',
-      defaultOpen: false,
-      content: <ParentControl nodeId={nodeId} />,
-    });
-  }
+  // Lights included. They were the one kind without this section, while the
+  // renderer has been explicitly parent-aware for them for a long time: a
+  // light's world position, its Point of Interest and its aim all lift through
+  // the parent chain, and buildSnapshot carries fixes written for exactly the
+  // "light parented to a null" rig. Nothing in `eligibleParents` excluded them
+  // either — the only way to build that rig was to skip the inspector, so this
+  // read as an oversight rather than a rule.
+  items.push({
+    id: 'parenting',
+    title: 'Parent & Link',
+    icon: 'layers',
+    defaultOpen: false,
+    content: <ParentControl nodeId={nodeId} />,
+  });
 
   if (isDrawable || kind === 'group') {
     items.push({

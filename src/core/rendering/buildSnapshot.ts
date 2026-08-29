@@ -41,7 +41,7 @@ import { autoOrientAngleDeg } from '@core/motion/motionPath';
 
 import { nearestPrecompRoot, precompAncestorChain } from '@core/scene/precomp';
 import { readNodeAnchor } from '@core/scene/anchor';
-import { readNodeLight } from '@core/scene/light';
+import { readNodeLight, lightAttenuationAt, lightReach } from '@core/scene/light';
 import { readNodeParticle, resolveParticleConfig } from '@core/particles/particleSim';
 import { measureTextNodeSize, readMeasuredTextStyle } from '@core/text/measureText';
 import { readGeometry } from '@core/workspace/geometry';
@@ -56,7 +56,7 @@ import { extrusionOutlineFor, extrusionMeshFor } from '@core/scene/extrusionMesh
 import { isColorEffect } from '@core/effects/effectColorMatrix';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { faceEffectsFor } from '@core/scene/faceEffects';
-import { shadeLayer, planeNormalOf, toShaderLights, type SceneLight } from '@core/scene/lightShading';
+import { shadeLayer, planeNormalOf, toShaderLights, lightAim3D, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
 import { contentAwareFillAt } from '@core/effects/contentAwareFillVideo';
 import { resolvePathOps, applyPathOpChain, shapeOutline, type PolyRun } from '@core/scene/pathOps';
@@ -1193,6 +1193,36 @@ export function buildSnapshot(
     });
   };
 
+  /**
+   * A light's effective comp-plane aim, in DEGREES.
+   *
+   * `lightAngle` (the inspector's "Direction") is the fixture's own aim; the
+   * layer's rotation turns the whole fixture, exactly as rotating any other
+   * layer turns it. The two sum.
+   *
+   * Rotating a light used to do nothing whatsoever. The inspector offers the
+   * full Transform section on a light — Rotation included — but the wash was
+   * emitted with `rotation: 0`, its cone was baked into the wash texture from
+   * `lightAngle` alone, and `sceneLights` read the same raw prop, so no render
+   * path consulted the control at all. A spot could only be swung from the
+   * Direction field, and the huge centre-weighted glow never moved, which reads
+   * as the light piling up on itself rather than sweeping.
+   *
+   * Summed HERE, once, because the glow, the per-quad Lambert shading, the
+   * per-fragment shader and the viewport cone gizmo must all aim at the same
+   * place — the "ONE light, ONE resolver" rule this file has had to re-learn at
+   * every other light call site.
+   *
+   * WORLD rotation, not local, so a spot parented to a spinning null sweeps
+   * with the rig — the same parent-awareness `nodeWorldPosition` gives the
+   * origin. A TARGETED light is unaffected: a POI is a real 3D aim and wins
+   * over `angle` outright (see `lightAim3D`), exactly as in AE.
+   */
+  const nodeLightAimDeg = (n: SceneNode, lt: { angle: number }): number => {
+    const base = valuesOf(n.id).get('lightAngle') ?? lt.angle;
+    return (base as number) + worldTransformOf(n.id, localOf, parentOf, worldCache).rotation;
+  };
+
   // 3D: the composition camera (a Camera layer if present, else the default)
   // projects each 3D layer's plane — +z dollies + parallaxes, and X/Y rotation
   // tilts it in real perspective. Pure-2D layers skip this entirely, so their
@@ -1342,11 +1372,28 @@ export function buildSnapshot(
    * place a layer's resolved world z is known.
    */
   const shadowReceivers: Array<{ z: number; depth: number }> = [];
+  /**
+   * Planes a BEAM can land on: 3D layers whose material accepts lights, recorded
+   * as {z, depth} by the same walk that records shadow receivers.
+   *
+   * A spot's wash used to be drawn at the fixture, so an aimed light read as a
+   * glow sitting on its own emitter rather than as light falling on the thing it
+   * was pointed at. A beam needs a surface for exactly the reason a shadow does.
+   */
+  const lightReceivers: Array<{ z: number; depth: number }> = [];
+  /**
+   * Emitted wash layers, held by reference so the post-walk pass can move one
+   * onto the plane it illuminates. Deliberately a MUTATION of the already-placed
+   * layer rather than a deferred emit: the wash screen-blends, so its stack
+   * position decides what it brightens, and re-emitting at the end would light
+   * layers that sit above it.
+   */
+  const washLights: Array<{ nodeId: string; layer: RenderLayer; reach: number }> = [];
   /** Casters captured during the walk, projected onto receivers afterwards.
    *  `transmission` is Material Options → Light Transmission as 0..1: how much
    *  of the caster's own colour bleeds into its shadow (0 = a black silhouette,
    *  1 = the caster's colour, which is how stained glass and gels read). */
-  const shadowCasters: Array<{ layer: RenderLayer; z: number; transmission: number }> = [];
+  const shadowCasters: Array<{ layer: RenderLayer; z: number; transmission: number; world3d: readonly number[] }> = [];
   /** The projected shadow quads, appended once the walk has placed everything. */
   const shadowLayers: RenderLayer[] = [];
   /**
@@ -1375,6 +1422,13 @@ export function buildSnapshot(
   // Draft 3D collects no lights ⇒ per-quad shading, per-fragment shade3d and
   // lights3d all fall away without touching the pipeline itself.
   const sceneLights: SceneLight[] = [];
+  /**
+   * The same lights, by node id. The beam projection needs a light's RESOLVED
+   * world position and its parent-lifted Point of Interest, and this is where
+   * both already exist — re-deriving them at the wash would be a fourth reader
+   * of a light's position, which is the bug this file has fixed three times.
+   */
+  const sceneLightById = new Map<string, SceneLight>();
   for (const n of comp.draft3d ? [] : nodes) {
     if (readNodeKind(n) !== 'light') continue;
     const lt = readNodeLight(n);
@@ -1384,7 +1438,7 @@ export function buildSnapshot(
       ...lt,
       intensity: av.get('intensity') ?? lt.intensity,
       radius: av.get('radius') ?? lt.radius,
-      angle: av.get('lightAngle') ?? lt.angle,
+      angle: nodeLightAimDeg(n, lt),
       cone: av.get('lightCone') ?? lt.cone,
       coneFeather: av.get('lightConeFeather') ?? lt.coneFeather,
       falloffDistance: av.get('falloffDistance') ?? lt.falloffDistance,
@@ -1412,6 +1466,7 @@ export function buildSnapshot(
       y: wp.y,
       z: wp.z,
     });
+    sceneLightById.set(n.id, sceneLights[sceneLights.length - 1]!);
   }
 
   const withShadow = (f: string | undefined, lx: number, ly: number): string | undefined => {
@@ -1641,25 +1696,57 @@ export function buildSnapshot(
       // remaining half of a bug already fixed at the other two call sites.
       const wp = nodeWorldPosition(node);
       const lp = lt.type === 'ambient'
-        ? { x: comp.width / 2, y: comp.height / 2 }
+        ? { x: comp.width / 2, y: comp.height / 2, scale: 1 }
         : project(wp);
-      emitLayer({
+      // The aim rides the QUAD, not the texture. The cone used to be baked into
+      // the 512² wash canvas from `angle`, so every degree of rotation threw the
+      // cached texture away and re-rasterized a quarter-million pixels on the
+      // CPU — a scrub of Direction, or any rotation keyframe, re-baked on every
+      // frame. Rotating the renderable instead makes the sweep a matrix change,
+      // and lets the texture be cached across the whole rotation.
+      const aimDeg = nodeLightAimDeg(node, lt);
+      const shape = {
+        falloff: lt.falloff,
+        radius: av?.get('radius') ?? lt.radius,
+        falloffDistance: av?.get('falloffDistance') ?? lt.falloffDistance,
+      };
+      // The texture spans the light's REACH, not its radius, so the glow ends
+      // exactly where `lightAttenuationAt` says the lighting does. Under a
+      // Smooth or Inverse Square falloff those are different distances — the
+      // curves deliberately carry past the radius — and the wash, which had no
+      // access to the falloff at all, kept drawing the same disc for all three.
+      const reach = lightReach(shape);
+      // An ambient wash has no position to project (see above), so it has no
+      // projected SIZE either; everything else takes the perspective scale at
+      // its own depth. Without this a light dollied deep into the scene threw
+      // exactly as large a glow as one sitting on the comp plane — the wash was
+      // the one thing in the frame that ignored the camera.
+      const washScale = lp.scale;
+      const washLayer: RenderLayer = {
         id: node.id, kind: 'shape',
-        x: lp.x, y: lp.y, rotation: 0, scaleX: 1, scaleY: 1, depth: 0,
+        x: lp.x, y: lp.y, rotation: aimDeg, scaleX: 1, scaleY: 1, depth: 0,
         opacity: 1, width: comp.width, height: comp.height,
         fill: '#000', visible: node.visible !== false,
         light: {
           color: lt.color,
           intensity: av?.get('intensity') ?? lt.intensity,
-          radius: av?.get('radius') ?? lt.radius,
+          radius: shape.radius,
+          screenRadius: reach * washScale,
           type: lt.type,
-          angle: av?.get('lightAngle') ?? lt.angle,
           cone: av?.get('lightCone') ?? lt.cone,
           // Without this the wash had no feather to apply and a spot's soft
           // edge was unreachable from the inspector — see rasterizeLight.
           coneFeather: av?.get('lightConeFeather') ?? lt.coneFeather,
+          falloff: shape.falloff,
+          falloffDistance: shape.falloffDistance,
         },
-      }, node);
+      };
+      emitLayer(washLayer, node);
+      // Aimed lights get a second look once the walk knows where the lit planes
+      // are — see the beam projection below.
+      if (lt.type === 'spot' || lt.type === 'parallel') {
+        washLights.push({ nodeId: node.id, layer: washLayer, reach });
+      }
       continue;
     }
 
@@ -2956,13 +3043,23 @@ export function buildSnapshot(
         // screen-space drop-shadow stays for 2D layers, where there is no depth
         // to project through and it is the only thing that reads as a shadow.
         if (is3D && shadowLight) {
-          shadowCasters.push({ layer, z: z3, transmission: mat.lightTransmission / 100 });
+          // The WORLD matrix rides along. The projection below used to build the
+          // shadow from `layer.x`/`layer.y`, which for a 3D layer are already
+          // PROJECTED screen coordinates, while the light's x/y/z are world —
+          // so the two were subtracted in different spaces and only agreed when
+          // the projection happened to be identity (default camera, comp plane).
+          // Orbit or dolly the camera and every shadow slid off its caster.
+          shadowCasters.push({ layer, z: z3, transmission: mat.lightTransmission / 100, world3d: world3d ?? Matrix4Math.identity() });
         } else {
           const castFx = shadowEffectOf(px, py);
           if (castFx) gpuFx.push(castFx);
         }
       }
       if (is3D && mat.acceptsShadows) shadowReceivers.push({ z: z3, depth });
+      // A lit plane is a plane a beam can land on. Same {z, depth} record, taken
+      // at the same moment, so the wash projection and the shadow projection
+      // measure the scene identically.
+      if (is3D && mat.acceptsLights) lightReceivers.push({ z: z3, depth });
       // AE's `Only` modes — how shadow-catcher setups are built. The layer stays
       // fully present as a caster and/or receiver (both lists are already
       // populated above), it just isn't drawn: `Casts Shadows: Only` throws a
@@ -3682,6 +3779,80 @@ export function buildSnapshot(
     for (const ghost of echoesInFront) emitLayer(ghost, node);
   }
 
+  // ── Beams that land: project an aimed light's pool onto the plane it lits ──
+  //
+  // A spot's wash was drawn at the FIXTURE — a glow centred on the emitter, the
+  // same shape whatever the light was pointed at. That is what makes an aimed
+  // light read as "light piling up on itself" rather than as a beam: in a real
+  // scene you do not see the lamp, you see the pool it throws on the wall.
+  //
+  // Same construction as the shadow projection below, and for the same reason:
+  // the light's axis is intersected with the nearest lit plane behind it, and
+  // the result is flattened onto that plane. A cone crossing a plane is a DISC
+  // (`pool`), not the wedge you see when the axis lies in the plane — so the
+  // wash swaps its cone-masked texture for a feathered one, and the distance the
+  // beam travelled moves out of the texture and into the intensity.
+  //
+  // Deliberately narrow. It applies only to a spot or parallel light with a real
+  // 3D aim (a Point of Interest) pointing INTO depth at a plane that accepts
+  // lights. An untargeted light aims within the comp plane by construction — it
+  // has no depth component to travel along — so it keeps the wedge at the
+  // fixture, which for an axis lying in the plane is the correct footprint
+  // anyway. A point light radiates in every direction and has no beam to land.
+  if (washLights.length > 0 && lightReceivers.length > 0) {
+    for (const w of washLights) {
+      const L = sceneLightById.get(w.nodeId);
+      if (!L) continue;
+      const aim = lightAim3D(L);
+      // No target ⇒ the comp-plane aim, which cannot point at another depth.
+      if (!aim || aim[2] <= 1e-3) continue;
+
+      // Nearest lit plane in front of the light, in the light's own sense of
+      // "in front": the direction its axis actually travels.
+      const behind = lightReceivers.filter((r) => r.z > L.z + 1);
+      if (behind.length === 0) continue;
+      const receiver = behind.reduce((a, b) => (b.z < a.z ? b : a));
+
+      // Distance along the AXIS to the plane — not the gap in z, which would
+      // under-measure every angled beam and land the pool short.
+      const travel = (receiver.z - L.z) / aim[2];
+      if (!Number.isFinite(travel) || travel <= 0) continue;
+      // The beam dies before it arrives: leave the fixture glow alone rather
+      // than painting a pool the light cannot actually throw.
+      const carried = lightAttenuationAt(travel, L);
+      if (carried <= 0.004) continue;
+
+      // Where the axis meets the plane, and how wide the cone has opened by
+      // then. A parallel light does not spread — that is what makes it
+      // parallel — so its pool stays the size of its radius.
+      const cx = L.x + aim[0] * travel;
+      const cy = L.y + aim[1] * travel;
+      const half = Math.max(1e-3, ((L.cone ?? 0) / 2) * (Math.PI / 180));
+      const footprint = L.type === 'parallel'
+        ? w.reach
+        : Math.max(1, travel * Math.tan(Math.min(half, 1.5)));
+
+      const cp = project({ x: cx, y: cy, z: receiver.z });
+      if (cp.clipped) continue;
+
+      const light = w.layer.light!;
+      w.layer.x = cp.x;
+      w.layer.y = cp.y;
+      // Sits on the surface it lands on, so depth readers (DOF) defocus the pool
+      // with the wall rather than with the lamp.
+      w.layer.depth = receiver.depth - 0.5;
+      // A disc is radially symmetric; carrying the fixture's aim would only spin
+      // the dither pattern.
+      w.layer.rotation = 0;
+      w.layer.light = {
+        ...light,
+        screenRadius: footprint * cp.scale,
+        intensity: light.intensity * carried,
+        pool: true,
+      };
+    }
+  }
+
   // ── Real cast shadows: project each caster onto the planes behind it ──────
   //
   // What was here before was a CSS drop-shadow attached to the caster itself:
@@ -3726,23 +3897,70 @@ export function buildSnapshot(
         const softness = Math.min(200, 4 + gap * 0.05 + L.diffusion);
         const opacity = src.opacity * strength * 0.55 * Math.max(0.25, 1 - gap / 4000);
 
+        // ── The shadow as real geometry, built in WORLD space ───────────────
+        //
+        // This used to scale the caster's SCREEN x/y about the light's WORLD
+        // x/y and emit a plain 2D quad. Two things were wrong with that. The
+        // arithmetic mixed spaces, so the shadow only landed correctly while
+        // the projection was identity — orbit or dolly and it slid off. And a
+        // quad with no matrix is not depth-eligible, so the shadow could not be
+        // occluded by anything: it painted at the end of the stack, over the
+        // objects standing in front of the wall it had supposedly landed on.
+        //
+        // Scaling about the light by `t` is exact for a caster parallel to the
+        // receiver, which is the same whole-quad approximation used everywhere
+        // here; a tilted caster gets the flattened silhouette it always got.
+        const cw = caster.world3d;
+        const cScaleX = Math.hypot(cw[0]!, cw[1]!, cw[2]!);
+        const cScaleY = Math.hypot(cw[4]!, cw[5]!, cw[6]!);
+        // Nudged toward the camera so it is not coplanar with the surface it
+        // lands on. Coplanar quads z-fight on the GPU depth path and sort
+        // arbitrarily on the painter path; one unit per light also keeps two
+        // lights' shadows from fighting each other.
+        const zBias = 1 + lightIndex * 0.5;
+        const M = Matrix4Math.compose({
+          position: {
+            x: L.x + (cw[12]! - L.x) * t,
+            y: L.y + (cw[13]! - L.y) * t,
+            z: receiver.z - zBias,
+          },
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: cScaleX * t, y: cScaleY * t, z: 1 },
+          anchor: { x: 0, y: 0, z: 0 },
+        });
+        const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+        // Behind the near plane — the same guard every other projected quad in
+        // this file applies, for the same reason (`projectPoint` clamps).
+        if (O.clipped) continue;
+        const FX = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+        const FY = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+        const sm = [FX.x - O.x, FX.y - O.y, FY.x - O.x, FY.y - O.y, O.x, O.y] as const;
+
         shadowLayers.push({
           ...src,
           id: lightIndex === 0 ? `${src.id}::shadow` : `${src.id}::shadow:${lightIndex}`,
           // The caster may be hidden (`Casts Shadows: Only`) — its SHADOW is
           // the whole point, so it must not inherit that invisibility.
           visible: true,
-          // Scale about the light, in world space.
-          x: L.x + (src.x - L.x) * t,
-          y: L.y + (src.y - L.y) * t,
-          scaleX: src.scaleX * t,
-          scaleY: src.scaleY * t,
-          // Flatten onto the receiver: no matrix/world3d, so it draws as a plain
-          // quad on that plane instead of re-projecting through its own 3D pose.
-          matrix: undefined,
-          world3d: undefined,
-          depth: receiver.depth - 0.5, // just in front of the surface it lands on
+          x: O.x,
+          y: O.y,
+          scaleX: Math.hypot(sm[0], sm[1]),
+          scaleY: Math.hypot(sm[2], sm[3]),
+          rotation: Math.atan2(sm[1], sm[0]) / DEG,
+          // Real 3D geometry on the receiver's plane: it depth-sorts with the
+          // scene and joins the GPU depth run, so an object standing in front of
+          // the wall now occludes the shadow on it.
+          matrix: sm,
+          world3d: M,
+          depth: O.depth,
           opacity,
+          // A shadow is a dark silhouette, not a copy of the caster's
+          // compositing. Inheriting `blend` through the spread meant a
+          // screen-blended caster threw an invisible shadow (black screened is a
+          // no-op) and a multiply-blended one threw a double-dark hole. Both
+          // also cost the shadow its depth eligibility.
+          blend: 'normal',
+          preserveTransparency: undefined,
           // Silhouette, tinted by Light Transmission. At 0 the shadow is the
           // usual black; as transmission rises the caster's own colour bleeds
           // through, which is what makes a coloured or translucent layer throw
@@ -3817,6 +4035,25 @@ export function buildSnapshot(
     }
 
     const sorted: RenderLayer[] = [];
+    /**
+     * Light washes, lifted out of the sort and put back afterwards.
+     *
+     * A wash is a screen-blended overlay: it occludes nothing and composites
+     * nothing, so it is not a barrier. But it has no `matrix` — there is no
+     * plane to project, a light is a point — so the `!l.matrix` rule above read
+     * it as a 2D wall and split the 3D layers around it into separately-sorted
+     * groups. Dropping a light anywhere in the middle of the timeline therefore
+     * broke depth sorting for everything around it: `[near, light, far]` kept
+     * list order, so the FAR layer painted OVER the near one. AE's lights do not
+     * break the 3D stack, and this one has no business doing it either.
+     *
+     * `at` is the slot the wash occupies once the sort is done — measured in the
+     * light-free array, because sorting reorders a run but never changes its
+     * length. Re-inserting there keeps the wash exactly where the timeline put
+     * it, so what it brightens is still what the user stacked it over; only the
+     * 3D layers on either side are now free to sort against each other.
+     */
+    const parkedWashes: Array<{ at: number; layer: RenderLayer }> = [];
     let run: RenderLayer[] = [];
     const flushRun = (): void => {
       run.sort((p, q) => (q.depth ?? 0) - (p.depth ?? 0));
@@ -3824,10 +4061,16 @@ export function buildSnapshot(
       run = [];
     };
     for (let i = 0; i < layers.length; i++) {
-      if (locked[i]) { flushRun(); sorted.push(layers[i]!); }
-      else run.push(layers[i]!);
+      const l = layers[i]!;
+      if (l.light) { parkedWashes.push({ at: sorted.length + run.length, layer: l }); continue; }
+      if (locked[i]) { flushRun(); sorted.push(l); }
+      else run.push(l);
     }
     flushRun();
+    // `at` rises monotonically (every non-wash layer advances it by one), so the
+    // k-th re-insertion has k earlier washes sitting in front of its recorded
+    // slot.
+    parkedWashes.forEach((w, k) => sorted.splice(Math.min(w.at + k, sorted.length), 0, w.layer));
     layers.splice(0, layers.length, ...sorted);
   }
 

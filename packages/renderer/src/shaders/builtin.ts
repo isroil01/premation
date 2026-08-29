@@ -4133,7 +4133,10 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
           let ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) { skip = true; }
           let feather = misc2.y;
-          if (!skip && feather > 1e-6 && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
+          // Smoothstep across the feather band — see shadeLayer and
+          // spotConeFactor; all three must apply the same curve. (No backticks
+          // in here: this shader source is itself a JS template literal.)
+          if (!skip && feather > 1e-6 && ang > halfCone - feather) { let u = (halfCone - ang) / feather; atten = atten * u * u * (3.0 - 2.0 * u); }
         }
       }
     }
@@ -4292,7 +4295,10 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
           float ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) continue;
           float feather = misc2.y;
-          if (feather > 1e-6 && ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+          // Smoothstep across the feather band — see shadeLayer and
+          // spotConeFactor; all three must apply the same curve. (No backticks
+          // in here: this shader source is itself a JS template literal.)
+          if (feather > 1e-6 && ang > halfCone - feather) { float u = (halfCone - ang) / feather; atten *= u * u * (3.0 - 2.0 * u); }
         }
       }
     }
@@ -4465,7 +4471,10 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
           let ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) { skip = true; }
           let feather = misc2.y;
-          if (!skip && feather > 1e-6 && ang > halfCone - feather) { atten = atten * (halfCone - ang) / feather; }
+          // Smoothstep across the feather band — see shadeLayer and
+          // spotConeFactor; all three must apply the same curve. (No backticks
+          // in here: this shader source is itself a JS template literal.)
+          if (!skip && feather > 1e-6 && ang > halfCone - feather) { let u = (halfCone - ang) / feather; atten = atten * u * u * (3.0 - 2.0 * u); }
         }
       }
     }
@@ -4583,7 +4592,10 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
           float ang = acos(clamp(cosA, -1.0, 1.0));
           if (ang > halfCone) continue;
           float feather = misc2.y;
-          if (feather > 1e-6 && ang > halfCone - feather) atten *= (halfCone - ang) / feather;
+          // Smoothstep across the feather band — see shadeLayer and
+          // spotConeFactor; all three must apply the same curve. (No backticks
+          // in here: this shader source is itself a JS template literal.)
+          if (feather > 1e-6 && ang > halfCone - feather) { float u = (halfCone - ang) / feather; atten *= u * u * (3.0 - 2.0 * u); }
         }
       }
     }

@@ -299,6 +299,22 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
 
   const is3D = is3DEnabled(node);
   const isCamera = readNodeKind(node) === 'camera';
+  /**
+   * A light has depth but cannot take the 3D switch.
+   *
+   * `canBe3D` lists only content kinds, so `is3DEnabled` is false for a light
+   * forever — and Z rendered only for `isCamera || is3D`, which left a light
+   * with no depth control anywhere in the UI. The renderer has always read it:
+   * `nodeWorldPosition` resolves a light's z, cast shadows are BUILT on it
+   * (`denom = caster.z - lightZ`, and a light sharing the caster's plane throws
+   * no shadow at all), and an aimed light needs depth to have a beam that
+   * travels. Every light was pinned to z = 0 by the inspector alone.
+   *
+   * Same exemption cameras already have, and for the same reason: these kinds
+   * are positioned in 3D by nature rather than by a switch.
+   */
+  const isLight = readNodeKind(node) === 'light';
+  const hasDepth = isCamera || isLight || is3D;
 
   // Check if any sub-property is animated for visual indicator dot
   const isAnchorAnimated = defaultAnimation.isAnimated(nodeId, 'anchorX') || defaultAnimation.isAnimated(nodeId, 'anchorY');
@@ -359,11 +375,11 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
         {subhead('Position', isPositionAnimated, renderStopwatchBtn([
           { prop: 'x', value: xVal },
           { prop: 'y', value: yVal },
-          ...(isCamera || is3D ? [{ prop: 'z', value: zVal }] : []),
+          ...(hasDepth ? [{ prop: 'z', value: zVal }] : []),
         ]))}
         {renderAnimPropInner('x', xVal, (v) => setXVal(v))}
         {renderAnimPropInner('y', yVal, (v) => setYVal(v))}
-        {(isCamera || is3D) && renderAnimPropInner('z', zVal, (v) => setZVal(v))}
+        {hasDepth && renderAnimPropInner('z', zVal, (v) => setZVal(v))}
 
         <div className={styles.subhead}>
           <span>Scale</span>

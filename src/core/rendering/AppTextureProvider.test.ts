@@ -12,7 +12,7 @@
  */
 
 import { ResourceManager, NullBackend } from '@motion/renderer';
-import { AppTextureProvider, textCssFont, spotConeFactor, type ImageLoader, type VideoFactory } from './AppTextureProvider';
+import { AppTextureProvider, textCssFont, spotConeFactor, washProfile, poolProfile, type ImageLoader, type VideoFactory } from './AppTextureProvider';
 import { videoDiag } from './videoPlaybackDiag';
 import type { RenderLayer } from './RenderBackend';
 
@@ -372,7 +372,7 @@ describe('AppTextureProvider', () => {
 
   describe('light textures', () => {
     const wash = (color: string, extra: Partial<NonNullable<RenderLayer['light']>> = {}) =>
-      ({ color, intensity: 100, radius: 200, type: 'point' as const, ...extra });
+      ({ color, intensity: 100, radius: 200, screenRadius: 200, type: 'point' as const, ...extra });
 
     it('rasterizes a light to a real (non-placeholder) texture', () => {
       const { provider } = setup();
@@ -403,20 +403,35 @@ describe('AppTextureProvider', () => {
     it('re-rasterizes when a spot cone changes, not just its colour', () => {
       const { provider } = setup();
       const spot = (extra: Partial<NonNullable<RenderLayer['light']>>) =>
-        wash('#ffffff', { type: 'spot', angle: 0, cone: 60, coneFeather: 50, ...extra });
+        wash('#ffffff', { type: 'spot', cone: 60, coneFeather: 50, ...extra });
 
       provider.setLight('light:s', spot({}));
       const base = provider.get('light:s')!.texture.id;
 
       provider.setLight('light:s', spot({ cone: 20 }));
-      expect(provider.get('light:s')!.texture.id).not.toBe(base);
+      const narrowed = provider.get('light:s')!.texture.id;
+      expect(narrowed).not.toBe(base);
 
-      provider.setLight('light:s', spot({ angle: 90 }));
-      const angled = provider.get('light:s')!.texture.id;
-      expect(angled).not.toBe(base);
+      provider.setLight('light:s', spot({ cone: 20, coneFeather: 0 }));
+      expect(provider.get('light:s')!.texture.id).not.toBe(narrowed);
+    });
 
-      provider.setLight('light:s', spot({ coneFeather: 0 }));
-      expect(provider.get('light:s')!.texture.id).not.toBe(angled);
+    /**
+     * The AIM is the one cone parameter that must NOT re-rasterize. It used to:
+     * the cone was baked from `light.angle`, so a rotating spot threw away a
+     * pinned 512² texture and re-rastered a quarter-million pixels on the CPU
+     * every frame, for an image differing from the cached one only by a
+     * rotation the GPU applies anyway. The cone is now baked opening along +X
+     * and `lightToRenderable` turns the quad.
+     */
+    it('does not re-rasterize a spot as it rotates — the quad carries the aim', () => {
+      const { provider } = setup();
+      const spot = wash('#ffffff', { type: 'spot', cone: 60, coneFeather: 50 });
+      provider.setLight('light:r', spot);
+      const base = provider.get('light:r')!.texture.id;
+      // Same wash, redelivered as the layer sweeps: one cached texture.
+      provider.setLight('light:r', spot);
+      expect(provider.get('light:r')!.texture.id).toBe(base);
     });
 
     it('ambient / point / parallel of one colour still share a texture', () => {
@@ -478,6 +493,63 @@ describe('AppTextureProvider', () => {
 
       it('the light centre is lit rather than undefined', () => {
         expect(spotConeFactor(0, 0, 0, half, feather)).toBe(1);
+      });
+    });
+
+    /**
+     * The wash used to draw one fixed curve for every light, so the three
+     * Falloff modes glowed identically while lighting three different
+     * distances. The profile is read from `lightAttenuationAt` now — the same
+     * function `shadeLayer` attenuates by — so "the glow ends where the light
+     * ends" is true by construction.
+     */
+    describe('wash profile', () => {
+      const none = { falloff: 'none' as const, radius: 200 };
+      const smooth = { falloff: 'smooth' as const, radius: 200, falloffDistance: 400 };
+
+      it('is brightest at the light and gone at the edge', () => {
+        expect(washProfile(0, 200, none)).toBeCloseTo(1, 6);
+        expect(washProfile(1, 200, none)).toBe(0);
+      });
+
+      it('falls monotonically — no rim, no plateau at the edge', () => {
+        let prev = washProfile(0, 200, none);
+        for (let t = 0.05; t <= 1; t += 0.05) {
+          const v = washProfile(t, 200, none);
+          expect(v).toBeLessThan(prev);
+          prev = v;
+        }
+        // Zero-sloped at the edge: the last step is smaller than an 8-bit level,
+        // which is what stops the glow reading as the rim of a disc.
+        expect(washProfile(0.98, 200, none)).toBeLessThan(1 / 255);
+      });
+
+      it('a Smooth falloff carries past the radius, where `none` has stopped', () => {
+        // reach = 200 + 400 = 600, so the radius sits at t = 1/3 and the curve
+        // is still bright there; `none` reaches zero at its own radius.
+        expect(washProfile(1 / 3, 600, smooth)).toBeGreaterThan(0.3);
+        expect(washProfile(1, 200, none)).toBe(0);
+      });
+    });
+
+    /**
+     * A cone crossing a plane is a disc, not a wedge, and its brightness across
+     * that disc is flat with a feathered rim — the distance the beam travelled
+     * is already in the pool's intensity, so applying a falloff here too would
+     * darken every pool toward its own centre.
+     */
+    describe('pool profile', () => {
+      it('is flat across the beam and feathers only at the rim', () => {
+        expect(poolProfile(0, 0.5)).toBe(1);
+        expect(poolProfile(0.4, 0.5)).toBe(1); // inside 1 - feather
+        expect(poolProfile(0.75, 0.5)).toBeGreaterThan(0);
+        expect(poolProfile(0.75, 0.5)).toBeLessThan(1);
+        expect(poolProfile(1, 0.5)).toBe(0);
+      });
+
+      it('a zero feather is a hard-edged disc', () => {
+        expect(poolProfile(0.99, 0)).toBe(1);
+        expect(poolProfile(1, 0)).toBe(0);
       });
     });
   });

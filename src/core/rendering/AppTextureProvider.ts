@@ -33,8 +33,12 @@ import { displayReferredUploadFormat } from '@motion/renderer';
 import type { RenderLayer } from './RenderBackend';
 import { makeCanvasGradient, type LinearFill, type RadialFill } from '@core/paint/fill';
 
+import { lightAttenuationAt, lightReach } from '@core/scene/light';
+
 /** A light layer's wash parameters — the shape `RenderLayer.light` carries. */
 type LightWash = NonNullable<RenderLayer['light']>;
+/** The three fields the distance rules read. Mirrors `light.ts`'s own shape. */
+type FalloffShape = Pick<LightWash, 'falloff' | 'radius' | 'falloffDistance'>;
 import { rasterPadding } from './raster/vectorDraw';
 import { layerSubpaths } from './raster/subpaths';
 import { resolutionTier, paddingClass, continuousResolutionTier, RESOLUTION_TIERS, DEFAULT_MAX_RASTER_DIMENSION } from '@motion/renderer';
@@ -1083,15 +1087,23 @@ export class AppTextureProvider implements TextureProvider {
    * silently rendered with the first's gradient — a correct rasterizer would
    * still have drawn the wrong cone.
    *
+   * The AIM is deliberately not in the key, and must not be added back: the
+   * cone is baked opening along +X and aimed by rotating the quad. Keying on it
+   * meant a rotating light re-rasterized 512² pixels on the CPU every frame and
+   * threw a pinned texture away each time — for an image that differs from the
+   * cached one only by a rotation the GPU was going to apply anyway.
+   *
    * Non-spot types keep the bare-colour key deliberately: their wash genuinely
    * depends on nothing else, so ambient/point/parallel of the same colour SHARE
    * one texture, as they always have. That is not a collision — it is the same
    * image.
    */
   setLight(key: string, light: LightWash): void {
-    const signature = light.type === 'spot'
-      ? `${light.color}|spot|${light.angle ?? 0}|${light.cone ?? 0}|${light.coneFeather ?? 'd'}`
-      : light.color;
+    const signature = light.pool
+      ? `${light.color}|pool|${light.coneFeather ?? 'd'}`
+      : light.type === 'spot'
+        ? `${light.color}|spot|${light.cone ?? 0}|${light.coneFeather ?? 'd'}|${light.falloff ?? 'none'}|${light.radius}|${light.falloffDistance ?? 'd'}`
+        : `${light.color}|${light.falloff ?? 'none'}|${light.radius}|${light.falloffDistance ?? 'd'}`;
     const existing = this.lightEntries.get(key);
     if (existing && existing.signature === signature) return;
     if (existing) {
@@ -2542,14 +2554,84 @@ export class AppTextureProvider implements TextureProvider {
  *
  * A SPOT is then masked down to its cone. Before this, every type rasterized to
  * the same isotropic circle and the texture was cached on colour alone, so a
- * spot light was pixel-identical to a point light: cone angle, cone feather and
- * light angle were three shipped inspector controls with no visual effect
- * whatsoever on a 2D layer.
+ * spot light was pixel-identical to a point light: cone angle and cone feather
+ * were shipped inspector controls with no visual effect whatsoever on a 2D
+ * layer.
  *
- * The cone MASKS the radial gradient rather than replacing it, so a pixel
- * inside the cone is bit-identical to what a point light would have drawn, and
- * only the shaping is new. Non-spot types take the original path untouched.
+ * The cone MASKS the radial profile rather than replacing it, so a pixel inside
+ * the cone is what a point light would have drawn and only the shaping is new.
+ *
+ * The wash is aim-agnostic: a spot's cone opens along +X and the renderable
+ * turns the quad. See `washProfile` for why the falloff is a curve rather than
+ * the two-stop linear gradient this drew for its first several versions.
  */
+/**
+ * The wash's radial profile: coverage at `t` = distance / reach, 0..1.
+ *
+ * Read from `lightAttenuationAt` — the SAME function that attenuates the light
+ * on every lit layer — so the glow ends exactly where the lighting ends and has
+ * the shape the user's Falloff choice asks for. It used to be a fixed curve that
+ * could not see the falloff at all, so all three modes glowed identically while
+ * lighting three different distances.
+ *
+ * Squared off at the very end. Every mode's curve leaves *some* step at the
+ * texture edge (`none` is a linear ramp cut at the radius; inverse-square is
+ * truncated at 1/256), and screen-blended over a dark comp a step reads as the
+ * rim of a disc rather than as light falling off. The `(1 - t²)²` shoulder is
+ * zero-sloped at t = 1, so it removes the rim without touching the shape of the
+ * curve anywhere it is bright.
+ *
+ * Exported and pure for the same reason `spotConeFactor` is: the rasterizer
+ * around it needs a real 2D canvas, which jsdom does not provide, so the shape
+ * of the light would otherwise be verifiable only through the GPU harness.
+ */
+export function washProfile(t: number, reach: number, shape: FalloffShape): number {
+  if (t >= 1) return 0;
+  const shoulder = 1 - t * t;
+  return lightAttenuationAt(t * reach, shape) * shoulder * shoulder;
+}
+
+/**
+ * A POOL's profile: the cone seen end-on, where its axis meets a lit plane.
+ *
+ * Flat across the beam and feathered at the rim by the same Cone Feather
+ * percentage the wedge uses, because that is what a cone's cross-section is. No
+ * distance term — how far the beam travelled is already folded into the pool's
+ * intensity by the projection in `buildSnapshot`, and applying it twice would
+ * darken every pool toward its own centre.
+ *
+ * Exported and pure, like `washProfile` and `spotConeFactor` above it.
+ */
+export function poolProfile(t: number, featherFrac: number): number {
+  if (t >= 1) return 0;
+  const f = Math.min(1, Math.max(1e-3, featherFrac));
+  if (t <= 1 - f) return 1;
+  const u = (1 - t) / f;
+  return u * u * (3 - 2 * u);
+}
+
+/**
+ * 4×4 Bayer thresholds, pre-centred to ±½ LSB.
+ *
+ * The wash uploads as `rgba8unorm` and is then magnified across a 2·radius quad,
+ * so a 600px-radius light stretches 512 texels over 1200 — and a SMOOTH ramp is
+ * the worst case for 8-bit quantization: neighbouring alphas round to the same
+ * byte and the gradient breaks into visible concentric rings. Dithering by less
+ * than one level costs nothing and removes them; without it, making the profile
+ * smoother would have traded a hard rim for banding.
+ */
+const WASH_DITHER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
+  .map((v) => (v + 0.5) / 16 - 0.5);
+
+/** `#rgb` / `#rrggbb` → 8-bit triple. Anything unparseable washes white. */
+function washRgb(color: string): [number, number, number] {
+  const hex = color.trim().replace(/^#/, '');
+  const full = hex.length === 3 ? hex.replace(/./g, (ch) => ch + ch) : hex;
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return [255, 255, 255];
+  const n = parseInt(full, 16);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+}
+
 function rasterizeLight(light: LightWash): HTMLCanvasElement {
   const s = LIGHT_TEX_SIZE;
   const canvas = document.createElement('canvas');
@@ -2558,29 +2640,49 @@ function rasterizeLight(light: LightWash): HTMLCanvasElement {
   const ctx = canvas.getContext('2d');
   if (!ctx) return canvas;
   const c = s / 2;
-  const g = ctx.createRadialGradient(c, c, 0, c, c, c);
-  g.addColorStop(0, light.color);
-  g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, s, s);
-  if (light.type !== 'spot') return canvas;
+  const [cr, cg, cb] = washRgb(light.color);
+  const featherFrac = light.coneFeather === undefined ? 0.2 : Math.max(0, light.coneFeather) / 100;
 
   // Same cone rule as `shadeLayer` and the per-fragment shader: hard cut at the
-  // half-cone, linear ramp across a feather expressed as a PERCENT of it.
-  // `angle` is 0 = →, 90 = ↓, which is exactly atan2's convention with y down.
-  const aim = ((light.angle ?? 0) * Math.PI) / 180;
+  // half-cone, feathered across a band expressed as a PERCENT of it.
+  //
+  // Baked around aim 0 (the cone opens along +X). The aim used to be baked in
+  // from `light.angle`, which made every degree of rotation a cache miss and a
+  // full CPU re-raster; `lightToRenderable` turns the quad instead, so this
+  // texture is now shared across the whole sweep.
+  //
+  // A POOL skips all of it: a cone crossing a plane is a disc, so the wedge mask
+  // and the distance falloff both belong to the fixture glow, not to the light
+  // landing on a surface.
+  const isPool = light.pool === true;
+  const isSpot = !isPool && light.type === 'spot';
   const half = Math.max(1e-3, (((light.cone ?? 0) / 2) * Math.PI) / 180);
-  const feather = half * (light.coneFeather === undefined ? 0.2 : Math.max(0, light.coneFeather) / 100);
+  const feather = half * featherFrac;
+  const shape = { falloff: light.falloff, radius: light.radius, falloffDistance: light.falloffDistance };
+  const reach = lightReach(shape);
 
-  const img = ctx.getImageData(0, 0, s, s);
+  // Built as one ImageData rather than a canvas gradient + a masking pass:
+  // `createRadialGradient` can only interpolate linearly between stops, which
+  // is precisely the profile being replaced, and a single pass is where the
+  // dither can see the final coverage. ImageData is STRAIGHT (un-premultiplied)
+  // alpha per spec, so coverage lives in A alone — folding it into RGB would
+  // fade the edge toward black instead of toward transparent.
+  const img = ctx.createImageData(s, s);
   const d = img.data;
   for (let y = 0; y < s; y++) {
+    const dy = y + 0.5 - c;
     for (let x = 0; x < s; x++) {
-      // getImageData is straight (un-premultiplied) alpha per spec, so scaling
-      // coverage means scaling A alone — touching RGB here would darken the
-      // cone edge toward black instead of fading it out.
-      const a = (y * s + x) * 4 + 3;
-      d[a] = d[a]! * spotConeFactor(x + 0.5 - c, y + 0.5 - c, aim, half, feather);
+      const dx = x + 0.5 - c;
+      const t = Math.sqrt(dx * dx + dy * dy) / c;
+      let a = isPool ? poolProfile(t, featherFrac) : washProfile(t, reach, shape);
+      if (a > 0 && isSpot) a *= spotConeFactor(dx, dy, 0, half, feather);
+      const o = (y * s + x) * 4;
+      d[o] = cr;
+      d[o + 1] = cg;
+      d[o + 2] = cb;
+      if (a <= 0) continue; // leaves A at 0; RGB there is never sampled
+      const q = a * 255 + WASH_DITHER[(y & 3) * 4 + (x & 3)]!;
+      d[o + 3] = q < 0 ? 0 : q > 255 ? 255 : Math.round(q);
     }
   }
   ctx.putImageData(img, 0, 0);
@@ -2611,7 +2713,14 @@ export function spotConeFactor(
   if (delta > Math.PI) delta = 2 * Math.PI - delta;
   if (delta > halfConeRad) return 0;
   if (featherRad > 1e-6 && delta > halfConeRad - featherRad) {
-    return (halfConeRad - delta) / featherRad;
+    // Smoothstep, not the bare ratio. A linear ramp reaches 1 and 0 with a
+    // corner at each end, so a feathered cone still showed two hard lines — one
+    // where the feather starts, one where it cuts off — and read as a stencil
+    // rather than as a soft edge. `shadeLayer` and both shader dialects apply
+    // the same curve; the three must agree or the same spot has one edge on a
+    // lit 3D layer and another in its wash.
+    const u = (halfConeRad - delta) / featherRad;
+    return u * u * (3 - 2 * u);
   }
   return 1;
 }

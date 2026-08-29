@@ -143,7 +143,40 @@ export interface RenderLayer {
    *  the layers beneath. A SPOT is shaped by `angle`/`cone`/`coneFeather`; every
    *  other type is a plain radial falloff. `coneFeather` is a PERCENT of the
    *  half-cone (AE's Cone Feather) — absent ⇒ 20 %, matching `shadeLayer`. */
-  light?: { color: string; intensity: number; radius: number; type?: 'point' | 'ambient' | 'spot' | 'parallel'; angle?: number; cone?: number; coneFeather?: number };
+  /**
+   * A light layer's wash. Deliberately carries NO aim: the wash texture is
+   * baked aim-agnostic (a spot's cone opens along +X) and the layer's own
+   * `rotation` turns it, so scrubbing a light's Direction is a matrix change
+   * rather than a re-bake of a quarter-million CPU pixels per frame.
+   */
+  light?: {
+    color: string;
+    intensity: number;
+    /** WORLD units. Shapes the wash profile (with `falloff`), never its size. */
+    radius: number;
+    /**
+     * COMP px — the wash quad's half-size, already through the projection.
+     *
+     * Separate from `radius` because the two answer different questions: how far
+     * the light carries (world) versus how big that reads on screen (view). The
+     * quad used to be sized from `radius` directly, so a light dollied far into
+     * depth threw exactly the same glow as one on the comp plane.
+     */
+    screenRadius: number;
+    type?: 'point' | 'ambient' | 'spot' | 'parallel';
+    cone?: number;
+    coneFeather?: number;
+    falloff?: 'none' | 'smooth' | 'inverse-square';
+    falloffDistance?: number;
+    /**
+     * This wash is a BEAM LANDING ON A SURFACE, not the fixture's own glow: an
+     * aimed light's cone cross-section, placed where its axis meets the nearest
+     * lit plane. Drawn as a feathered disc (the cone seen end-on) rather than a
+     * distance falloff, because the distance the beam travelled is already in
+     * `intensity`.
+     */
+    pool?: true;
+  };
   /** Particle emitter config. When present, the layer draws a particle system
    *  (simulated deterministically at the current time) instead of its content. */
   particles?: import('@core/particles/particleSim').ParticleConfig;

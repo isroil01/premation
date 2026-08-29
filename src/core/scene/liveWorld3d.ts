@@ -139,3 +139,21 @@ export function nodeWorldWithParents3d(node: SceneNode, time: number): Matrix4 |
   const parent = parentWorldMatrixAt(node.id, time);
   return parent ? Matrix4Math.multiply(parent, local) : local;
 }
+
+/**
+ * A node's world rotation about the view axis at `time`, in DEGREES.
+ *
+ * For lights: the aim the renderer resolves is `lightAngle + world rotation`
+ * (see `buildSnapshot`'s `nodeLightAimDeg`), so the viewport cone gizmo has to
+ * read the same sum or the overlay points somewhere the pixels do not — the
+ * exact drift the light gizmo's position already had to be fixed for.
+ *
+ * Taken as the Z spin of the composed world matrix, `atan2(m10, m00)`. A light
+ * tilted in X/Y has no comp-plane aim to read anyway: without a Point of
+ * Interest a light aims within the comp plane by construction.
+ */
+export function deviceWorldRotationDeg(node: SceneNode, time: number): number {
+  const m = nodeWorldWithParents3d(node, time);
+  if (!m) return 0;
+  return (Math.atan2(m[1]!, m[0]!) * 180) / Math.PI;
+}

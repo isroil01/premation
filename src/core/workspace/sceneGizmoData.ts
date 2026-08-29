@@ -24,6 +24,7 @@ import {
 } from '@core/scene/camera3d';
 import {
   deviceWorldPosition,
+  deviceWorldRotationDeg,
   nodeWorldWithParents3d,
   toWorldPointAt,
 } from '@core/scene/liveWorld3d';
@@ -131,7 +132,9 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
           radius: values.get('radius') ?? lt.radius,
           cone: values.get('lightCone') ?? lt.cone,
           coneFeatherPct: values.get('lightConeFeather') ?? lt.coneFeather,
-          angleDeg: values.get('lightAngle') ?? lt.angle,
+          // Direction PLUS the layer's world rotation — the same sum
+          // `buildSnapshot` aims the wash and the shading with.
+          angleDeg: (values.get('lightAngle') ?? lt.angle) + deviceWorldRotationDeg(node, time),
           poi,
           compWidth,
           selected,

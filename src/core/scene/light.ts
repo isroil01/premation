@@ -151,3 +151,49 @@ export function lightFalloffAt(
   }
   return (r * r) / (d * d);
 }
+
+/** The three fields every distance rule below needs. */
+type FalloffShape = { falloff?: LightFalloff; radius: number; falloffDistance?: number };
+
+/**
+ * A light's intensity multiplier at `distance` — the WHOLE rule, including the
+ * legacy no-falloff behaviour that `lightFalloffAt` deliberately omits.
+ *
+ * `lightFalloffAt` describes only the curves, and returns 1 for `none` because
+ * `none` has no curve. The hard radius cutoff and linear ramp that actually
+ * define a default light lived inline in `shadeLayer` — so the glow wash, which
+ * could not see them, invented its own profile instead. A light therefore lit
+ * layers out to one distance and glowed out to a different one, with a
+ * different shape, and no amount of tuning either side could make them agree.
+ *
+ * Both read this now, which is what makes "the glow ends where the light ends"
+ * true by construction rather than by coincidence.
+ */
+export function lightAttenuationAt(distance: number, light: FalloffShape): number {
+  const d = Math.max(0, distance);
+  if (!light.falloff || light.falloff === 'none') {
+    if (light.radius <= 0) return 1;
+    return d >= light.radius ? 0 : 1 - d / light.radius;
+  }
+  return lightFalloffAt(d, light);
+}
+
+/**
+ * How far a light carries, in world units: the distance past which
+ * `lightAttenuationAt` is effectively zero.
+ *
+ * The wash needs it to size a quad — the texture spans the reach, so the glow
+ * stops exactly where the lighting stops. `none` cuts hard at the radius.
+ * `smooth` ramps to zero across the falloff distance beyond it. Inverse-square
+ * never truly reaches zero, so it is cut where it falls below 1/256 — one step
+ * of an 8-bit channel, i.e. the first distance at which it cannot brighten a
+ * pixel it is screened over.
+ */
+export function lightReach(light: FalloffShape): number {
+  const r = Math.max(1, light.radius);
+  if (!light.falloff || light.falloff === 'none') return r;
+  if (light.falloff === 'smooth') {
+    return r + Math.max(1, light.falloffDistance ?? LIGHT_DEFAULTS.falloffDistance);
+  }
+  return r * 16; // (r/d)² = 1/256
+}

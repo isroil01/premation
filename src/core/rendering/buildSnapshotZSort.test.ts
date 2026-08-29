@@ -101,6 +101,79 @@ describe('3D depth sort', () => {
  * `depth` for flat layers too, so sorting on it made 2D layers reorder among
  * themselves under an orbited camera (in a Top view they sorted by their y).
  */
+/**
+ * A light is NOT a barrier — the one thing without a `matrix` that is allowed
+ * through.
+ *
+ * Its wash occludes nothing and composites nothing: it is a screen-blended
+ * overlay. But a light has no plane to project, so it carries no matrix, and the
+ * `!l.matrix` barrier rule read it as a 2D wall. Dropping a light anywhere in
+ * the middle of the timeline therefore broke depth sorting for the layers around
+ * it — `[near, light, far]` kept list order, so the far layer painted OVER the
+ * near one. AE's lights do not break the 3D stack.
+ */
+describe('a light is not a sort barrier', () => {
+  function lightAt(id: string): SceneNode {
+    return {
+      id, name: id, parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 400, y: 300 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'light', x: 400, y: 300, intensity: 80, radius: 250 } },
+        { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#fff' } },
+      ],
+    } as unknown as SceneNode;
+  }
+
+  it('3D layers sort across a light between them', () => {
+    // Listed near→far. A barrier would keep that order and paint `far` over
+    // `near`; sorting across the light gives painter's order.
+    const order = render([shape3D('near', -100), lightAt('L'), shape3D('far', 300)]);
+    expect(order).toEqual(['far', 'L', 'near']);
+  });
+
+  it('the wash keeps its own stacking slot', () => {
+    // Second of three before the sort, second of three after it: what the wash
+    // brightens is still what the timeline stacked it over. Only the layers
+    // either side moved.
+    const order = render([shape3D('near', -100), lightAt('L'), shape3D('far', 300)]);
+    expect(order.indexOf('L')).toBe(1);
+  });
+
+  it('several lights each keep their slot', () => {
+    const order = render([
+      lightAt('L1'),
+      shape3D('near', -100),
+      lightAt('L2'),
+      shape3D('far', 300),
+      lightAt('L3'),
+    ]);
+    expect(order).toEqual(['L1', 'far', 'L2', 'near', 'L3']);
+  });
+
+  it('a 2D layer next to a light is still a barrier', () => {
+    // The exemption is for lights alone — it must not soften the real rule.
+    const order = render([
+      shape3D('near', -100),
+      lightAt('L'),
+      shape2DBare('flat'),
+      shape3D('far', 300),
+    ]);
+    expect(order).toEqual(['near', 'L', 'flat', 'far']);
+  });
+});
+
+/** A flat 2D shape: no z / rotationX / rotationY ⇒ no matrix ⇒ a barrier. */
+function shape2DBare(id: string, x = 400, y = 300): SceneNode {
+  return {
+    id, name: id, parent: null, children: [], visible: true, locked: false,
+    transform: { position: { x, y }, rotation: 0, scale: { x: 1, y: 1 } },
+    components: [
+      { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x, y } },
+      { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#fff' } },
+    ],
+  } as unknown as SceneNode;
+}
+
 describe('2D layers are sort barriers (AE parity)', () => {
   /** A flat 2D shape: no z / rotationX / rotationY ⇒ no matrix ⇒ a barrier. */
   function shape2D(id: string, x = 400, y = 300): SceneNode {

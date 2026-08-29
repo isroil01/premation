@@ -18,7 +18,7 @@
  */
 
 import { Color } from '@motion/renderer';
-import { lightFalloffAt, LIGHT_DEFAULTS, type Light } from './light';
+import { lightAttenuationAt, LIGHT_DEFAULTS, type Light } from './light';
 
 /**
  * A light placed in the scene. The newer AE properties are OPTIONAL here even
@@ -249,14 +249,13 @@ export function shadeLayer(
       // `falloff: 'none'` (the default) keeps the legacy hard radius cutoff and
       // linear ramp. The curves extend reach past the radius, so the cutoff has
       // to move out with them or the curve would never be visible.
-      const curve = light.falloff && light.falloff !== 'none' ? lightFalloffAt(d, light) : null;
-      if (curve === null) {
-        if (d >= light.radius && light.radius > 0) continue;
-        atten = light.radius > 0 ? 1 - d / light.radius : 1;
-      } else {
-        if (curve <= 0.001) continue;
-        atten = curve;
-      }
+      //
+      // Both branches live in `lightAttenuationAt` now — the glow wash bakes its
+      // profile from the same function, so a light cannot light one distance and
+      // glow another.
+      const curve = lightAttenuationAt(d, light);
+      if (curve <= 0.001) continue;
+      atten = curve;
       const inv = d < 1e-9 ? 0 : 1 / d;
       lambert = d < 1e-9
         ? 1 // light exactly on the layer: full contribution
@@ -276,7 +275,15 @@ export function shadeLayer(
         // Feather is a PERCENT of the half-cone (AE's Cone Feather), not the
         // old hardcoded 20%. Absent ⇒ 20%, so untouched lights keep their edge.
         const feather = half * (light.coneFeather === undefined ? 0.2 : Math.max(0, light.coneFeather) / 100);
-        if (feather > 1e-6 && ang > half - feather) atten *= (half - ang) / feather;
+        // Smoothstep across the feather band, not the bare ratio: a linear ramp
+        // corners at both ends, so a feathered cone showed a hard line where the
+        // feather began and another where it cut off. Mirrored verbatim in both
+        // shader dialects and in `spotConeFactor` (the wash) — a spot whose lit
+        // pixels and whose glow disagree at the edge is worse than either.
+        if (feather > 1e-6 && ang > half - feather) {
+          const u = (half - ang) / feather;
+          atten *= u * u * (3 - 2 * u);
+        }
       }
     }
     const k = gain * lambert * atten * kDiffuse;
