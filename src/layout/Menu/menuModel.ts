@@ -227,6 +227,9 @@ export const APP_MENU: MenuGroupModel[] = [
       // Stagger Animations above, which only offsets keyframes that exist.
       { commandId: 'animation.animateIn', label: 'Animate In' },
       { commandId: 'animation.animateOut', label: 'Animate Out' },
+      { commandId: 'animation.motionFeel.snappy', label: 'Motion Feel: Snappy' },
+      { commandId: 'animation.motionFeel.smooth', label: 'Motion Feel: Smooth' },
+      { commandId: 'animation.motionFeel.bouncy', label: 'Motion Feel: Bouncy' },
       { commandId: 'animation.animateInOnBeats', label: 'Animate In on Beats' },
       { commandId: 'audio.markBeats', label: 'Markers on Beats' },
       { separator: true },

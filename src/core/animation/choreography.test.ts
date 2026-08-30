@@ -296,3 +296,44 @@ describe('animateLayers', () => {
     expect(snappy.durationSec).toBeLessThan(smooth.durationSec);
   });
 });
+
+describe('the motion feel is reachable', () => {
+  /**
+   * The regression this pins. `ChoreographyFeel` shipped with three values and
+   * every command hardcoded `smooth`, so `snappy` and `bouncy` were tested,
+   * documented, and unreachable — the same dead-option shape this codebase
+   * already had once in `pickFeatures`. A feel nobody can select is not a
+   * feature, so the commands that select it are checked here alongside the
+   * behaviour they change.
+   */
+  it('offers a command per feel, as a radio group', () => {
+    const { buildChoreographyCommands } = require('./choreographyCommands') as typeof import('./choreographyCommands');
+    const { usePreferenceStore } = require('@stores/preferenceStore') as typeof import('@stores/preferenceStore');
+    const feelCommands = buildChoreographyCommands().filter((c) => String(c.id).startsWith('animation.motionFeel.'));
+    expect(feelCommands.map((c) => String(c.id))).toEqual([
+      'animation.motionFeel.snappy',
+      'animation.motionFeel.smooth',
+      'animation.motionFeel.bouncy',
+    ]);
+
+    usePreferenceStore.getState().set('motionFeel', 'bouncy');
+    const checked = feelCommands.filter((c) => c.isChecked?.() === true).map((c) => String(c.id));
+    expect(checked).toEqual(['animation.motionFeel.bouncy']);
+    usePreferenceStore.getState().set('motionFeel', 'smooth');
+  });
+
+  it('changes the timing that gets written', () => {
+    const { currentFeel } = require('./choreographyCommands') as typeof import('./choreographyCommands');
+    const { usePreferenceStore } = require('@stores/preferenceStore') as typeof import('@stores/preferenceStore');
+
+    usePreferenceStore.getState().set('motionFeel', 'snappy');
+    const snappy = animateLayers({
+      nodeIds: LAYERS, atCompTime: 0, phase: 'in', engine: recorder().engine, feel: currentFeel(), fps: 30,
+    });
+    usePreferenceStore.getState().set('motionFeel', 'smooth');
+    const smooth = animateLayers({
+      nodeIds: LAYERS, atCompTime: 0, phase: 'in', engine: recorder().engine, feel: currentFeel(), fps: 30,
+    });
+    expect(snappy.durationSec).toBeLessThan(smooth.durationSec);
+  });
+});

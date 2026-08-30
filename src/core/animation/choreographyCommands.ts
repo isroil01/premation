@@ -19,10 +19,18 @@ import type { Command } from '@core/commands/Command';
 import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { animateLayers, CHOREOGRAPHY_ARCHETYPES } from './choreography';
+import { animateLayers, CHOREOGRAPHY_ARCHETYPES, type ChoreographyFeel } from './choreography';
 import { hash32, type EntranceArchetype } from './entranceArchetypes';
+
+/** The feels, named for people rather than by their timing numbers. */
+const FEELS: ReadonlyArray<{ value: ChoreographyFeel; label: string; hint: string }> = [
+  { value: 'snappy', label: 'Snappy', hint: 'Short, tight, close together.' },
+  { value: 'smooth', label: 'Smooth', hint: 'Longer travel with a soft landing.' },
+  { value: 'bouncy', label: 'Bouncy', hint: 'Overshoots and settles.' },
+];
 
 /** Human names for the archetypes — the palette shows these, not the ids. */
 const ARCHETYPE_LABELS: Record<(typeof CHOREOGRAPHY_ARCHETYPES)[number], string> = {
@@ -31,6 +39,14 @@ const ARCHETYPE_LABELS: Record<(typeof CHOREOGRAPHY_ARCHETYPES)[number], string>
   slide_settle: 'Slide',
   mask_wipe: 'Wipe',
 };
+
+/**
+ * The project's motion feel. Shared with the beat-synced commands so a single
+ * choice governs every generated entrance, however it was triggered.
+ */
+export function currentFeel(): ChoreographyFeel {
+  return usePreferenceStore.getState().motionFeel ?? 'smooth';
+}
 
 /** Layers the command would act on: the selection, minus anything gone. */
 function targets(): string[] {
@@ -52,6 +68,7 @@ function run(phase: 'in' | 'out', archetype?: EntranceArchetype): void {
     atCompTime: playhead(),
     phase,
     ...(archetype ? { archetype } : {}),
+    feel: currentFeel(),
     // The stagger rhythm is composed in frames, so it needs the real rate.
     fps: useCompositionStore.getState().fps || 30,
     // Selection-derived: stable for a selection, different between selections.
@@ -104,6 +121,27 @@ export function buildChoreographyCommands(): ReadonlyArray<Command> {
         execute: () => run(phase, archetype),
       });
     }
+  }
+
+  // Setting the feel is itself a command: it is one enum, which is exactly the
+  // case the auto-reframe commands make for a command per value over a dialog.
+  // `isChecked` makes the menu read as a radio group rather than three verbs.
+  for (const feel of FEELS) {
+    commands.push({
+      id: asCommandId(`animation.motionFeel.${feel.value}`),
+      label: `Motion Feel: ${feel.label}`,
+      description: `${feel.hint} Applies to Animate In/Out and the beat-synced commands.`,
+      icon: 'sparkles',
+      isChecked: () => currentFeel() === feel.value,
+      execute: () => {
+        usePreferenceStore.getState().set('motionFeel', feel.value);
+        useUIStore.getState().notify({
+          level: 'success',
+          message: `Motion feel: ${feel.label.toLowerCase()}.`,
+          durationMs: 2500,
+        });
+      },
+    });
   }
   return commands;
 }

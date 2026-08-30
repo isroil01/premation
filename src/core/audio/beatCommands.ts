@@ -23,6 +23,7 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { bumpScene } from '@stores/sceneStore';
 import { animateLayers } from '@core/animation/choreography';
 import { hash32 } from '@core/animation/entranceArchetypes';
+import { currentFeel } from '@core/animation/choreographyCommands';
 import { analyseLayerBeats, beatsForLayers, everyNthBeat, findAudioLayer, LOW_CONFIDENCE } from './beatGrid';
 
 /** How many markers one press may add — a 5-minute track at 174 BPM is 870. */
@@ -114,6 +115,9 @@ async function animateOnBeats(phase: 'in' | 'out', every: number): Promise<void>
     atCompTime: startTimes[0] ?? playhead(),
     phase,
     startTimes,
+    // The same project-wide feel the non-beat commands use — the music sets
+    // the RHYTHM, the feel still decides how each entrance moves.
+    feel: currentFeel(),
     fps: useCompositionStore.getState().fps || 30,
     seed: hash32(phase, ...nodeIds) || 1,
   });

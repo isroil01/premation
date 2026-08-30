@@ -20,6 +20,17 @@ export interface Preferences {
   iconSize: 'sm' | 'md' | 'lg';
   sidebarDensity: 'compact' | 'default' | 'comfortable';
   timelineAutoKeyframe: boolean;
+  /**
+   * How generated motion should feel: the duration, travel, stagger and easing
+   * that Animate In/Out and the beat-synced commands use together.
+   *
+   * A preference rather than a parameter on each command, for two reasons. The
+   * four values multiply against ten choreography commands and five beat ones,
+   * which is a palette nobody can read; and "how motion feels in this project"
+   * is a taste decision made once, not re-made per gesture. Per-property
+   * tuning still lives in the graph editor afterwards.
+   */
+  motionFeel: 'snappy' | 'smooth' | 'bouncy';
   /** Disables UI transitions/animations (accessibility / low-power). */
   editorReduceMotion: boolean;
   /** Ask before discarding unsaved changes on New/Open/Close. */
@@ -135,6 +146,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   iconSize: 'md',
   sidebarDensity: 'default',
   timelineAutoKeyframe: false,
+  motionFeel: 'smooth',
   editorReduceMotion: false,
   confirmOnClose: true,
   timelineHeaderWidth: 460,

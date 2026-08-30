@@ -40,6 +40,18 @@ independent: a long move over a short distance is sluggish, and a snappy curve
 stretched over a slow duration reads as a mistake. They move together, and the
 per-property tuning lives in the graph editor afterwards.
 
+Pick one with **Animation ▸ Motion Feel: Snappy / Smooth / Bouncy**. It is a
+preference, not a per-command argument: four values against ten choreography
+commands and five beat ones is a palette nobody can read, and "how motion feels
+in this project" is a taste decision made once rather than re-made per gesture.
+The beat-synced commands read the same setting — the music sets the rhythm, the
+feel still decides how each entrance moves.
+
+(This shipped a day late. The three feels existed, were tested and documented,
+and every command hardcoded `smooth`, so two of them were unreachable — the
+same dead-option shape this codebase already had in `pickFeatures`. A test now
+pins the commands that select them.)
+
 ## The frame-grid trap
 
 Worth knowing if you touch this code. Keyframe times go through
