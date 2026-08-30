@@ -159,8 +159,9 @@ export class ToolManager implements InputSink {
     this.ctx.requestRender();
   }
 
-  onKeyDown(e: KeyInput): void {
-    this.active?.onKeyDown?.(e, this.ctx);
+  /** True when the active tool consumed the key — see `Tool.onKeyDown`. */
+  onKeyDown(e: KeyInput): boolean {
+    return this.active?.onKeyDown?.(e, this.ctx) === true;
   }
 
   onKeyUp(e: KeyInput): void {

@@ -94,7 +94,7 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
 
       <div className={styles.footer}>
         <Button variant="ghost" size="md" onClick={close}>Cancel</Button>
-        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={create}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="sm" />} onClick={create}>
           Create camera
         </Button>
       </div>
@@ -102,23 +102,25 @@ function CameraDialog({ close }: { close: () => void }): JSX.Element {
   );
 }
 
-const LIGHT_TYPES: Array<{ value: LightType; label: string }> = [
-  { value: 'point', label: 'Point' },
-  { value: 'spot', label: 'Spot' },
-  { value: 'parallel', label: 'Parallel' },
-  { value: 'ambient', label: 'Ambient' },
-];
-
 function LightDialog({ close }: { close: () => void }): JSX.Element {
   const [name, setName] = useState('Light 1');
   const [type, setType] = useState<LightType>('point');
-  const [color, setColor] = useState('#fff3c0');
   const [intensity, setIntensity] = useState(100);
-  const [coneAngle, setConeAngle] = useState(45);
+  const [color, setColor] = useState('#ffffff');
+  const [coneAngleDeg, setConeAngleDeg] = useState(45);
+  const [coneFeather, setConeFeather] = useState(50);
   const [castShadows, setCastShadows] = useState(false);
 
   const create = (): void => {
-    insertLight({ name, type, color, intensity, coneAngle, castShadows });
+    insertLight({
+      name,
+      type,
+      intensity,
+      color,
+      coneAngle: type === 'spot' ? coneAngleDeg : undefined,
+      coneFeather: type === 'spot' ? coneFeather : undefined,
+      castShadows,
+    });
     close();
   };
 
@@ -141,42 +143,38 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
               onChange={(e) => setType(e.target.value as LightType)}
               aria-label="Light type"
             >
-              {LIGHT_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
+              <option value="point">Point (radiates everywhere)</option>
+              <option value="spot">Spot (directional cone)</option>
+              <option value="ambient">Ambient (uniform wash)</option>
             </select>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Intensity</span>
-            <ValueField
-              value={intensity}
-              onChange={(v) => setIntensity(Number(v))}
-              min={0}
-              max={400}
-              step={1}
-              unit="%"
-              aria-label="Light intensity"
-            />
+            <ValueField value={intensity} onChange={setIntensity} min={0} max={500} unit="%" aria-label="Intensity" />
           </label>
         </div>
+      </div>
+
+      <div className={styles.section}>
         <div className={styles.row}>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Color</span>
-            <ColorPicker value={color} onChange={setColor} aria-label="Light color" />
+            <div className={styles.colorRow}>
+              <ColorPicker value={color} onChange={setColor} aria-label="Light color" />
+              <span className={styles.hint}>{color}</span>
+            </div>
           </label>
           {type === 'spot' && (
-            <label className={styles.field}>
-              <span className={styles.fieldLabel}>Cone angle</span>
-              <ValueField
-                value={coneAngle}
-                onChange={(v) => setConeAngle(Number(v))}
-                min={1}
-                max={180}
-                step={1}
-                unit="°"
-                aria-label="Spot cone angle"
-              />
-            </label>
+            <>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Cone angle</span>
+                <ValueField value={coneAngleDeg} onChange={setConeAngleDeg} min={1} max={179} unit="°" aria-label="Cone angle" />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Cone feather</span>
+                <ValueField value={coneFeather} onChange={setConeFeather} min={0} max={100} unit="%" aria-label="Cone feather" />
+              </label>
+            </>
           )}
         </div>
       </div>
@@ -193,7 +191,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
 
       <div className={styles.footer}>
         <Button variant="ghost" size="md" onClick={close}>Cancel</Button>
-        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="md" />} onClick={create}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="sm" />} onClick={create}>
           Create light
         </Button>
       </div>

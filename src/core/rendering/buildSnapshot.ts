@@ -39,7 +39,7 @@ import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
 import { isAutoOrientedToCamera, readNodeAutoOrient } from '@core/scene/autoOrient';
 import { autoOrientAngleDeg } from '@core/motion/motionPath';
 
-import { nearestPrecompRoot, precompAncestorChain } from '@core/scene/precomp';
+import { nearestPrecompRoot, precompAncestorChain, isPrecomp } from '@core/scene/precomp';
 import { readNodeAnchor } from '@core/scene/anchor';
 import { readNodeLight, lightAttenuationAt, lightReach } from '@core/scene/light';
 import { readNodeParticle, resolveParticleConfig } from '@core/particles/particleSim';
@@ -719,6 +719,35 @@ export function buildSnapshot(
   const controller = {
     getLayersForNode: (id: string) => rawController.getLayersForNode(srcId(id)),
   };
+  /*
+    The clips that GOVERN a node's time: its own, or its enclosing GROUP's.
+
+    `TimelineController.governingClipsFor` answers the same question, and
+    deliberately is NOT used here: it walks `defaultSceneGraph`, which does not
+    contain this snapshot's EXPANDED comp-instance clones. `nodeById` does, and
+    it is the graph actually being rendered — asking the other one would return
+    no clips for every layer inside a comp instance and silently un-govern them.
+
+    Bounded rather than `while (true)`: a malformed parent cycle must not hang a
+    render. Nothing legitimate nests groups 32 deep.
+  */
+  const governingClipsOf = (id: string): ReturnType<typeof controller.getLayersForNode> => {
+    const own = controller.getLayersForNode(id);
+    if (own.length > 0) return own;
+    let node = nodeById.get(id);
+    for (let depth = 0; depth < 32; depth++) {
+      const parentId = node?.parent ?? null;
+      if (!parentId) return [];
+      const parent = nodeById.get(parentId as string);
+      // A precomp boundary, or anything that is not a plain group, ends the
+      // walk: only a group's members are clip-less by design.
+      if (!parent || isPrecomp(parent) || readNodeKind(parent) !== 'group') return [];
+      const clips = controller.getLayersForNode(parent.id as string);
+      if (clips.length > 0) return clips;
+      node = parent;
+    }
+    return [];
+  };
 
   // Per-layer time (E6): each layer maps comp time → its own source time
   // (stretch / reverse / freeze), so its animation is sampled at that time.
@@ -762,7 +791,28 @@ export function buildSnapshot(
     const n = nodeById.get(id);
 
     let baseMap = (tt: number) => tt;
-    const clips = controller.getLayersForNode(id);
+    /*
+      GOVERNING clips — the node's own, or its enclosing group's.
+
+      This asked for the node's OWN clips, and a group's members have none by
+      design (`syncFromScene` gives the group the bar). So `clips` came back
+      empty for every member, `baseMap` stayed the identity, and each member was
+      sampled at RAW COMP TIME while its bar said otherwise.
+
+      The visible failure is subtle enough to look like success: drag a 0.9s
+      library item from 0s to 5s and the gate moves correctly, so it appears at
+      5s — but comp time 5.2s is sampled as keyframe time 5.2s, which is long
+      past the end of a 0.87s choreography, so every frame of the bar shows the
+      SETTLED pose. The move looks like it worked and the animation is simply
+      gone. That is "the keyframes don't move with the template", from the one
+      side of it the gate fix did not cover.
+
+      Third and last of the matched set: `isLiveAt` decides WHETHER a layer
+      draws, `compToKeyframeTime` decides where its diamonds sit, and this
+      decides WHEN it is sampled. All three must ask the same question of the
+      same clips or they disagree about the same bar.
+    */
+    const clips = governingClipsOf(id);
     if (clips.length > 0) {
       baseMap = (tt: number) => {
         const frame = Math.round(tt * fps);
@@ -1240,7 +1290,21 @@ export function buildSnapshot(
    * another is the class of bug this file keeps re-learning.
    */
   const isLiveAt = (nodeId: string): boolean => {
-    const nodeClips = controller.getLayersForNode(nodeId);
+    // The GOVERNING clips, not merely this node's own.
+    //
+    // Groups are skipped in the layer walk below — the renderer draws their
+    // MEMBERS — and `syncFromScene` gives the group the clip and its members
+    // none. Asking a member for its own clips therefore returned nothing, this
+    // read "no clips, always live", and a group's in/out bar governed nothing
+    // it visibly contained. The time axis asks the identical question
+    // (`compToKeyframeTime`), which is the point: a layer judged live by one
+    // rule and retimed by another is the class of bug this file keeps
+    // re-learning.
+    // The LOCAL walk, not `TimelineController.governingClipsFor` — see its
+    // definition above. Both answer the same question; only this one can see
+    // this snapshot's expanded comp-instance clones, and the gate and the time
+    // remap have to agree on the same clips or they disagree about the bar.
+    const nodeClips = governingClipsOf(nodeId);
     if (nodeClips.length === 0) return true;
     const rawFrame = Math.round(t * fps);
     // Clip spans are end-EXCLUSIVE; clamp so a full-length layer doesn't blink

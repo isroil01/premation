@@ -84,9 +84,15 @@ export interface WorkspaceViewportProps {
 /** Divider line between cells of the 4-up grid (matches the app border token). */
 const QUAD_DIVIDER = '1px solid var(--color-border, rgba(255,255,255,0.12))';
 
-/** Keys the viewport handles directly. */
+/**
+ * Keys the viewport handles directly.
+ *
+ * `Enter`/`NumpadEnter` earn their place by being the pen's "finish this
+ * outline" — the viewport itself does nothing with them, but every key not in
+ * this set returns before the active tool is ever offered it.
+ */
 const VIEWPORT_KEYS = new Set([
-  'Space', 'Delete', 'Backspace', 'Escape',
+  'Space', 'Delete', 'Backspace', 'Escape', 'Enter', 'NumpadEnter',
   'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
 ]);
 
@@ -229,6 +235,37 @@ export function WorkspaceViewport({
     }
     if (!VIEWPORT_KEYS.has(e.code)) return;
     const controller = getWorkspaceController();
+    /*
+      The ACTIVE TOOL gets first refusal.
+
+      Tools have always had an `onKeyDown`, and nothing in the app ever called
+      it — so the pen's Enter (finish the outline) and Escape (abandon it) were
+      dead code. An outline could only be committed by double-clicking, and
+      could not be cancelled at all: Escape fell through to `clearSelection`
+      below, which deselects and leaves the half-drawn path on screen.
+
+      `onToolKey` is deliberately not the workspace's whole keyboard channel —
+      that one also treats any unmodified character as a tool shortcut, which
+      would fight the app's own shortcut system.
+
+      A tool only claims a key it actually acted on (the pen returns false with
+      no draft in progress), so Escape still clears the selection in every case
+      it used to.
+    */
+    if (controller.ws.onToolKey({
+      key: e.key,
+      code: e.code,
+      modifiers: {
+        shift: e.shiftKey, ctrl: e.ctrlKey, alt: e.altKey, meta: e.metaKey,
+        mod: e.metaKey || e.ctrlKey,
+      },
+      repeat: e.repeat,
+      time: e.timeStamp,
+    })) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     switch (e.code) {
       case 'Space':
         // Handled globally (tap = play, hold + drag = pan) — see useSpaceTransport.

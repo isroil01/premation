@@ -24,6 +24,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { bumpScene } from '@stores/sceneStore';
 import { getTimelineController, compToKeyframeTime } from '@core/timeline/TimelineController';
+import { setInsertedClipWindow } from './clipWindow';
 import { defaultAnimation } from '@motion/animation';
 import { setNodeMotionBlur } from '@core/effects/motionBlur';
 import { addRoot, addText, addGradientShape, radialFill, linearFill, liveKf, choreographyDuration, choreographyRestTime, type SetKf } from '@core/template/templates/builders';
@@ -990,6 +991,20 @@ export function insertMographItem(mgId: string, x?: number, y?: number): string 
 
   useSelectionStore.getState().set([baseId]);
   getTimelineController().syncFromScene();
+
+  /*
+    The bar says what the item IS: it starts where it was dropped and ends when
+    its choreography does.
+
+    `syncFromScene` has just seeded a full-comp bar starting at zero, which is
+    right for a layer the user drew and wrong for a finished 0.9-second lower
+    third dropped at two seconds — the timeline would say nothing true about
+    when it plays or when it is over, which is most of what a timeline is for.
+
+    A LOOPING item keeps the full bar: its animation is a rule with no end, so
+    an arbitrary window would be a lie in the other direction.
+  */
+  if (!item.loop) setInsertedClipWindow(baseId, t0, mographDuration(item));
   bumpScene();
 
   // The choreography starts HERE, so the frame the user is on is its opening

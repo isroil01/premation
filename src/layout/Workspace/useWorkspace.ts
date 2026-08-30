@@ -32,6 +32,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { idleCacheSpan, nextSpanFrame } from '@core/rendering/idleCacheSpan';
+import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
@@ -355,6 +356,29 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // AnimationChanged but must NOT bump this — doing so cleared the RAM
     // preview cache on every decoded frame and playback could never warm up.
     let animRev = 0;
+    /*
+      CLIP-GEOMETRY revision — the bars, which live in the Timeline Engine.
+
+      `sceneContentHash` is exhaustive over the scene graph and the animation
+      engine, and a clip bar is in neither: its start, duration and source-in
+      belong to the timeline, whose edits deliberately never bump the scene
+      revision (see `useClipRevision`). So moving or trimming a bar changed the
+      picture and left the cache key identical — frames rendered before the drag
+      stayed servable after it, playback interleaved them with fresh ones, and a
+      moved layer flickered in and out at times it no longer occupied until
+      every frame had been re-rendered.
+    */
+    let clipRev = 0;
+    /** `clipGeometrySignature`, at most once per bar edit rather than per frame. */
+    let clipSigMemo: { rev: number; compId: string; sig: string } | null = null;
+    const clipSignature = (compId: string): string => {
+      if (clipSigMemo && clipSigMemo.rev === clipRev && clipSigMemo.compId === compId) {
+        return clipSigMemo.sig;
+      }
+      const sig = clipGeometrySignature(compId);
+      clipSigMemo = { rev: clipRev, compId, sig };
+      return sig;
+    };
     let lastPlaybackFrame = -1;
     /** Last frame written into the RAM preview this play-through. Used to fill
      *  skipped frames when the playhead outruns rendering (the green cache bar
@@ -752,7 +776,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // most. Cached frames keep whatever resolution they were rendered at,
       // like After Effects. CSS size IS included: it changes framing.
       const invalidationKey = [
-        contentKey, focusKeyRef.current,
+        contentKey, clipSignature(compRef.current.id), focusKeyRef.current,
         compRef.current.id, compRef.current.width, compRef.current.height, fps,
         camera3dModeRef.current, draft3dRef.current ? 1 : 0,
         lastCssSize,
@@ -1020,6 +1044,23 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       }
     });
 
+    /*
+      Clip edits reach us as `DocumentChanged {source:'timeline'}` — the bus
+      signal every composition's timeline already emits for exactly the events
+      that move a bar (LayerMoved, LayerTrimmed, LayerSplit, LayerUpdated…).
+
+      Subscribed on the BUS rather than on `controller.timeline.events`: the
+      controller holds one timeline per composition and swaps them on a tab
+      change, so a direct subscription would silently stop hearing about the
+      comp the user switched to. The bus listener is bound once and hears all
+      of them.
+    */
+    const clipSub = getEventBus().on('DocumentChanged', (payload) => {
+      if (payload?.source !== 'timeline') return;
+      clipRev++;
+      controller.requestRender();
+    });
+
     // Content also depends on the animation engine (keyframe edits, playback).
     const animSub = getEventBus().on('AnimationChanged', (payload) => {
       if (!isMediaDecodeRepaint(payload?.nodeId)) animRev++;
@@ -1068,6 +1109,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       qualitySub();
       onionSub();
       animSub.dispose();
+      clipSub.dispose();
       nodeSub.dispose();
       playSub();
       // Don't leave a mount's worth of frames pinned in RAM.

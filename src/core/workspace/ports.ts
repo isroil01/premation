@@ -31,6 +31,7 @@ import {
   OBox,
 } from '@motion/workspace';
 import { readNodeAnchor, moveAnchorCompensated } from '@core/scene/anchor';
+import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
 import { SIZE } from '@core/rendering/buildSnapshot';
 import { readNodeKind as kindOf } from '@core/scene/sceneDerive';
 
@@ -50,7 +51,7 @@ import { defaultAnimation } from '@motion/animation';
 import { drawToolOptions } from '@motion/workspace';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { useProjectStore } from '@stores/projectStore';
-import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
+import { getRemappedTime, getTimelineController, governingClipsFor } from '@core/timeline/TimelineController';
 import { is3DEnabled, readNode3D } from '@core/scene/threeD';
 import { Matrix4Math, Project3D } from '@motion/scene';
 import { currentViewProjector, currentViewCamera } from '@core/workspace/viewProjection';
@@ -285,8 +286,10 @@ function toWorkspaceNode(
   }
 
   let visibleVal = node.visible !== false;
-  const controller = getTimelineController();
-  const nodeClips = controller.getLayersForNode(node.id);
+  // Governing clips, matching the renderer's own gate: a group's members have
+  // no clips of their own, so asking for theirs left every member of a trimmed
+  // group hit-testable at times it was not drawn.
+  const nodeClips = governingClipsFor(node.id as string);
   if (nodeClips.length > 0) {
     const fps = comp?.fps ?? 60;
     const lastFrame = Math.max(0, Math.round((comp?.durationSeconds ?? 10) * fps) - 1);
@@ -1094,7 +1097,12 @@ function createNode(payload: CreateNodePayload): void {
   const node = makeNodeAt(kind, payload.kind, outX, outY, ellipse, outPoints, outW, outH);
   const rootId = activeCompRootId() as ID;
   defaultSceneGraph.addChild(rootId, node);
-  
+  // The same default every MENU and LIBRARY insert applies. This path — every
+  // layer the user DRAWS — was the one place that did not, so a pen path went
+  // soft past 400% while the identical shape from the Layer menu stayed sharp.
+  // Must follow `addChild`: the helper reads the node back out of the graph.
+  enableContinuousRasterByDefault(node.id as string);
+
   useSelectionStore.getState().set([node.id]);
   bumpScene();
 }

@@ -442,15 +442,37 @@ export class Workspace implements InputSink {
     this.tools.onWheel(e);
     this.reconcile();
   }
-  onKeyDown(e: KeyInput): void {
+  /** True when the active tool consumed the key — see `onToolKey`. */
+  onKeyDown(e: KeyInput): boolean {
     // Global shortcuts first (space → temporary hand), then the active tool.
     if (e.code === 'Space' && !this.input.isDragging) {
       this.tools.pushTemporary('hand');
     } else if (!e.modifiers.mod && !e.modifiers.ctrl && !e.modifiers.meta && e.key.length === 1) {
       this.tools.activateByShortcut(e.key);
     }
-    this.tools.onKeyDown(e);
+    const handled = this.tools.onKeyDown(e);
     this.reconcile();
+    return handled;
+  }
+
+  /**
+   * Feed a key to the ACTIVE TOOL ONLY, and report whether it consumed it.
+   *
+   * `onKeyDown` above is the whole keyboard channel: it also claims Space for
+   * the temporary hand tool and treats any unmodified single character as a
+   * tool shortcut. An embedder that already owns its own shortcut system — the
+   * editor does, via `shortcutOverrides` — cannot use that channel without
+   * every letter it types in the viewport silently switching tools. So it had
+   * no way to reach a tool's keyboard at all, and the pen's Enter (finish) and
+   * Escape (cancel) were unreachable: an in-progress outline could only be
+   * committed by double-clicking and could not be abandoned at all.
+   *
+   * This is that channel with the global shortcuts left out.
+   */
+  onToolKey(e: KeyInput): boolean {
+    const handled = this.tools.onKeyDown(e);
+    this.reconcile();
+    return handled;
   }
   onKeyUp(e: KeyInput): void {
     if (e.code === 'Space') this.releaseTemporaryTool();

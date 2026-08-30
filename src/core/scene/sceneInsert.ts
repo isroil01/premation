@@ -45,19 +45,11 @@ import { addTrimOp, pathOpPropPath } from '@core/scene/pathOps';
 import { sanitizeSvg } from '@core/svg/svgSanitize';
 import { scanSvgCapabilities, isAnimatedSvg, svgCapabilityWarnings, type SvgCapabilities } from '@core/svg/svgCapabilities';
 import { makeSvgComponent } from '@core/svg/svgLayer';
-import { setContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
+import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
 import { applyAlpha } from '@core/paint/fill';
 
 
 let seq = 0;
-
-/** Turn Continuous Rasterization on for new vector layers by default.
- *  Soft zoom under camera moves is the #1 tell of "not AE-finished" logo/type
- *  work; requiring users to find the switch meant most comps stayed soft. */
-function enableContinuousRasterByDefault(nodeId: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (node && supportsContinuousRaster(node)) setContinuousRaster(nodeId, true);
-}
 
 export { activeCompRootId } from './activeComp';
 import { activeCompRootId, activeCompSize } from './activeComp';
@@ -1140,6 +1132,8 @@ export interface LightSeed {
   intensity?: number;
   /** Spot only: full cone width, degrees. */
   coneAngle?: number;
+  /** Spot only: cone edge softness, percent (see `lightConeFeather`). */
+  coneFeather?: number;
   /** Cast 2.5D drop-shadows from this light. */
   castShadows?: boolean;
 }
@@ -1162,6 +1156,7 @@ export function insertLight(seed: LightSeed = {}): void {
     // exact prop shape it always had (readNodeLight defaults cover the rest).
     if (seed.type && seed.type !== 'point') t.props.lightType = seed.type;
     if (seed.type === 'spot' && typeof seed.coneAngle === 'number') t.props.lightCone = seed.coneAngle;
+    if (seed.type === 'spot' && typeof seed.coneFeather === 'number') t.props.lightConeFeather = seed.coneFeather;
     // Cast shadows ON for a NEW light unless the caller says otherwise.
     //
     // `readNodeLight` treats a missing prop as false, so adding a light did

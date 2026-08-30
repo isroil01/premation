@@ -442,6 +442,23 @@ export class TimelineController {
     this.layerIndexes = new WeakMap();
   }
 
+  /**
+   * Every clip in a composition's own track, in track order.
+   *
+   * For `clipGeometrySignature` — the cache needs to see ALL the bars, not one
+   * node's. Returns empty for a comp with no timeline yet, which is a comp
+   * nothing has been added to.
+   */
+  layersOfComp(compId?: string): Layer[] {
+    const ws = useWorkspaceStore.getState();
+    const tab = ws.activeTabId ? ws.tabs[ws.activeTabId] : null;
+    const targetCompId = compId || tab?.compositionId || 'scene-root';
+    const timeline = this.registries.get(targetCompId);
+    const trackId = this.compositionTrackIds.get(targetCompId);
+    if (!timeline || !trackId) return [];
+    return timeline.getTrack(trackId)?.layers ?? [];
+  }
+
   getLayersForNode(nodeId: string): Layer[] {
     const reg = this.registryForNode(nodeId);
     if (!reg) return [];
@@ -1538,6 +1555,84 @@ function srcIdOf(nodeId: string): string {
   return instanceSourceOf(defaultSceneGraph.getNode(nodeId)) ?? nodeId;
 }
 
+/**
+ * A fingerprint of every clip bar in a composition.
+ *
+ * Clip geometry lives in the Timeline Engine, NOT in the scene graph or the
+ * animation engine — so it is absent from `sceneContentHash`, and the viewport
+ * frame cache (which keys on that hash) could not see a bar move. Frames
+ * rendered before a drag stayed servable afterwards, and playback interleaved
+ * them with freshly rendered ones: the layer flickered in and out at times it
+ * no longer occupied, and only "worked" once every frame had been re-rendered.
+ *
+ * A HASH rather than a change counter, for the reason `sceneContentHash` is one:
+ * undo restores identical geometry, and identical geometry must produce an
+ * identical key or every undo throws away a warm cache.
+ *
+ * Cheap by construction — one pass over the composition's own layers, four
+ * numbers each. Call it once per clip edit, not per frame.
+ */
+export function clipGeometrySignature(compId?: string): string {
+  const controller = getTimelineController();
+  const parts: string[] = [];
+  for (const layer of controller.layersOfComp(compId)) {
+    parts.push(
+      `${layer.sourceId ?? ''}:${layer.start}:${layer.duration}:${layer.clip.sourceIn}`,
+    );
+  }
+  // Sorted: track order is an implementation detail of how layers were added,
+  // and a reorder that changes no geometry must not invalidate the cache.
+  parts.sort();
+  return parts.join('|');
+}
+
+/**
+ * The clips that GOVERN a node's time — its own, or its enclosing GROUP's.
+ *
+ * ── The bug this exists for ────────────────────────────────────────────
+ * `syncFromScene` deliberately does not descend into groups: a group is the
+ * collapse unit, so it gets ONE clip bar and its members get none. But the
+ * renderer draws the MEMBERS, not the group — groups are skipped in the layer
+ * walk — and both the in/out gate and the keyframe time axis asked each drawn
+ * layer for ITS OWN clips. A member has none, both treated "no clips" as "no
+ * constraints", and the group's bar governed nothing at all.
+ *
+ * The bar was therefore decorative on every grouped element, which is every
+ * item the Motion GFX library inserts. Trimming it did nothing. Dragging it to
+ * start at two seconds did nothing. The layer drew from frame zero regardless,
+ * and there was no error anywhere to suggest why.
+ *
+ * The walk is the exact inverse of `collect`'s: it stops climbing where that
+ * one stops descending, so every node is governed by precisely the clip the
+ * timeline drew for it.
+ *
+ * PRECOMPS are not climbed through. A precomp's children live in the precomp's
+ * own timeline and are folded by `foldPrecompChain`; borrowing the instance's
+ * clip here as well would apply that mapping twice.
+ */
+export function governingClipsFor(nodeId: string): Layer[] {
+  const controller = getTimelineController();
+  const own = controller.getLayersForNode(srcIdOf(nodeId));
+  if (own.length > 0) return own;
+
+  let node = defaultSceneGraph.getNode(nodeId);
+  // Bounded rather than `while (true)`: a malformed parent cycle must not hang
+  // a render. Nothing legitimate nests groups this deep.
+  for (let depth = 0; depth < 32; depth++) {
+    const parentId = node?.parent ?? null;
+    if (!parentId) return [];
+    const parent = defaultSceneGraph.getNode(parentId);
+    if (!parent) return [];
+    // A precomp boundary, or anything that is not a plain group, ends the walk:
+    // only a group's members are clip-less by design.
+    if (isPrecomp(parent) || readNodeKind(parent) !== 'group') return [];
+    const clips = controller.getLayersForNode(srcIdOf(parent.id as string));
+    if (clips.length > 0) return clips;
+    node = parent;
+  }
+  return [];
+}
+
 /** The node's precomp-group ancestors, OUTERMOST first, excluding itself
  *  (mirrors `precompAncestorChain`, reading straight off the scene graph). */
 function precompChainOf(nodeId: string): SceneNode[] {
@@ -1627,7 +1722,10 @@ export function compToKeyframeTime(nodeId: string, compTime: number, prop?: stri
   let time = foldPrecompChain(nodeId, compTime);
   if (prop !== undefined && REMAP_PROPS.has(prop)) return time;
   const frame = Math.round(time * fps);
-  const active = controller.getLayersForNode(src).find((l) => l.isActiveAt(frame));
+  // The GOVERNING clip, not merely this node's own: a group's members have no
+  // clips, and reading only their own left a moved or trimmed group bar with no
+  // effect on the animation inside it. See `governingClipsFor`.
+  const active = governingClipsFor(nodeId).find((l) => l.isActiveAt(frame));
   if (active) time = active.clip.sourceFrameAt(frame) / fps;
   const node = defaultSceneGraph.getNode(nodeId);
   const cfg = node ? readNodeLayerTime(node) : undefined;
@@ -1687,7 +1785,14 @@ export function keyframeToCompTime(nodeId: string, keyframeTime: number, prop?: 
   }
   // 2⁻¹ — clip retime: earliest clip that shows this source frame, else the
   // nearest clip edge.
-  const clips = controller.getLayersForNode(src);
+  //
+  // The GOVERNING clips, exactly as `compToKeyframeTime` uses. These two are a
+  // matched pair — one places a keyframe, the other draws it — and asking them
+  // different questions is visible immediately: the motion follows a moved bar
+  // while the diamonds stay behind, so the animation and the keyframes that
+  // define it appear at different times. That is what "the keyframes don't move
+  // with the template" was.
+  const clips = governingClipsFor(nodeId);
   if (clips.length > 0) {
     const sourceFrame = Math.round(t * fps);
     let best: number | null = null;

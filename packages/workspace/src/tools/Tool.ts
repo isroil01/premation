@@ -129,6 +129,16 @@ export interface Tool {
   onDrag?(e: ToolDragEvent, ctx: ToolContext): void;
   onDragEnd?(e: ToolDragEvent, ctx: ToolContext): void;
   onWheel?(e: ToolWheelEvent, ctx: ToolContext): void;
-  onKeyDown?(e: ToolKeyEvent, ctx: ToolContext): void;
+  /**
+   * Return `true` when the tool CONSUMED the key, so the host can skip its own
+   * meaning for it.
+   *
+   * Escape is the case that forced this: the viewport's own Escape clears the
+   * selection, and the pen's cancels the outline being drawn. Both are correct
+   * — which one applies depends on whether a draft is in progress, and only the
+   * tool knows that. `void` (every tool that predates this) reads as "not
+   * handled", so the host keeps its existing behaviour untouched.
+   */
+  onKeyDown?(e: ToolKeyEvent, ctx: ToolContext): void | boolean;
   onKeyUp?(e: ToolKeyEvent, ctx: ToolContext): void;
 }

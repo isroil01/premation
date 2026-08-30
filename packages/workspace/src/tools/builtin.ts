@@ -859,13 +859,22 @@ export class PenTool implements Tool {
     this.finish(ctx);
   }
 
-  onKeyDown(e: ToolKeyEvent, ctx: ToolContext): void {
-    if (e.key === 'Enter') this.finish(ctx);
-    else if (e.key === 'Escape') {
+  onKeyDown(e: ToolKeyEvent, ctx: ToolContext): boolean {
+    // Only with an outline in progress. With none, Escape is the viewport's own
+    // — clear the selection — and claiming it here would break that everywhere
+    // the pen happens to be the active tool.
+    if (this.points.length === 0) return false;
+    if (e.key === 'Enter') {
+      this.finish(ctx);
+      return true;
+    }
+    if (e.key === 'Escape') {
       this.points = [];
       this.mouse = null;
       ctx.requestRender();
+      return true;
     }
+    return false;
   }
 
   private finish(ctx: ToolContext): void {
@@ -1341,13 +1350,20 @@ export class CurvatureTool implements Tool {
     this.finish(ctx);
   }
 
-  onKeyDown(e: ToolKeyEvent, ctx: ToolContext): void {
-    if (e.key === 'Enter') this.finish(ctx);
-    else if (e.key === 'Escape') {
+  onKeyDown(e: ToolKeyEvent, ctx: ToolContext): boolean {
+    // See PenTool.onKeyDown — claimed only while there is a draft to act on.
+    if (this.pts.length === 0) return false;
+    if (e.key === 'Enter') {
+      this.finish(ctx);
+      return true;
+    }
+    if (e.key === 'Escape') {
       this.pts = [];
       this.mouse = null;
       ctx.requestRender();
+      return true;
     }
+    return false;
   }
 
   deactivate(ctx: ToolContext): void {

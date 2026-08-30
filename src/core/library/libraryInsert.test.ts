@@ -360,6 +360,24 @@ describe('Transitions — applying a card keyframes the live engine', () => {
     // nudge and the element never left the screen — it just sat there, shifted.
     const groupId = insertMographItem('mg-lower-line')!;
     useSelectionStore.getState().set([groupId]);
+
+    /*
+      Seek to the item's IN point, so the transition is unambiguously an
+      ENTRANCE.
+
+      This used to rely on the insert leaving a full-composition clip bar: the
+      playhead rests on the item's settled frame, and against a bar running to
+      the end of the comp `detectPhase` read that as "near the start" and chose
+      an entrance. Inserted items now carry a bar the length of their own
+      choreography — which is the point of that change — so resting on the
+      settled frame is resting on the bar's END, and an EXIT is the correct
+      reading of it.
+
+      The claim under test is about a group's displacement being driven by its
+      content box rather than a 100px stub, which is true of both phases. So the
+      fixture states which phase it wants instead of inheriting one.
+    */
+    getTimelineController().seekSeconds(0);
     const t0 = getTimelineController().currentSeconds;
 
     const res = applyTransitionItem('tr-slide-left');
