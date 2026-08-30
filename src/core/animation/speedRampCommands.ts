@@ -16,11 +16,23 @@
  *     is the same frames held four times each, which reads as broken rather
  *     than as slow motion.
  *
- * WHAT IT APPLIES TO. Precomposed layers. `timeRemap` is sampled by
- * `buildSnapshot` for precomp containers and their descendants — a footage
- * layer has no self-remap hook, so a ramp written onto one would be stored,
- * shown in the graph editor, and do nothing at all. Refusing with a sentence
- * that names the fix beats writing keyframes that are silently inert.
+ * WHAT IT APPLIES TO. Layers that have a SOURCE to retime: video, audio, and
+ * precomps. `buildSnapshot` samples a node's own `timeRemap` when it computes
+ * that layer's `sourceTime`, so a ramp retimes the frames a video layer shows
+ * exactly as it retimes a precomp's contents.
+ *
+ * A shape or solid is excluded, and not arbitrarily: `timeRemap` feeds
+ * `sourceTime` only. It does NOT move the layer's own transform keyframes,
+ * which is the same separation After Effects makes — time-remapping footage
+ * retimes the picture, not the animation you put on top of it. A shape has no
+ * source, so nothing would read the value and the ramp would be inert.
+ *
+ * (An earlier version of this file restricted ramps to precomps, on the
+ * strength of `precompSourceTime` and the precomp ancestor chain — while the
+ * general layer path a hundred lines further down samples `timeRemap` for
+ * every node. The restriction blocked the main use case, ramping a video clip,
+ * and the docs asserted it was impossible. Verified the other way now, in
+ * `speedRampRender.test.ts`, against a real video layer.)
  */
 
 import { asCommandId } from '@app-types/common';
@@ -32,6 +44,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { isPrecomp } from '@core/scene/precomp';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
 import { runAnimEdit } from './animationCommands';
 import { spliceRecordedRange } from './motionSketch';
@@ -52,12 +65,17 @@ function playhead(): number {
   return (project.activeTabId ? project.tabs[project.activeTabId]?.time : 0) ?? 0;
 }
 
+/** Kinds whose rendering reads `sourceTime`, and so can actually be retimed. */
+function hasRetimableSource(nodeId: string): boolean {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return false;
+  const kind = readNodeKind(node);
+  return kind === 'video' || kind === 'audio' || isPrecomp(node);
+}
+
 /** Selected layers a ramp can actually act on. */
 export function rampTargets(): string[] {
-  return useSelectionStore.getState().ids.filter((id) => {
-    const node = defaultSceneGraph.getNode(id);
-    return node !== undefined && isPrecomp(node);
-  });
+  return useSelectionStore.getState().ids.filter(hasRetimableSource);
 }
 
 /**
@@ -87,8 +105,8 @@ function rampTo(target: number): void {
     const anySelected = useSelectionStore.getState().ids.length > 0;
     notify(
       anySelected
-        ? 'Speed ramps need a pre-composed layer — select one, or pre-compose this layer first.'
-        : 'Select a pre-composed layer to ramp.',
+        ? 'Speed ramps need a layer with a source to retime — video, audio, or a pre-comp.'
+        : 'Select a video, audio or pre-composed layer to ramp.',
       'warning',
     );
     return;

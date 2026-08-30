@@ -31,6 +31,7 @@ function bootCommandSystem(): void {
 
 const PRECOMP = 'pre_1';
 const SOLID = 'solid_1';
+const VIDEO = 'video_1';
 
 /**
  * A layer, optionally flagged as a precomp.
@@ -74,11 +75,12 @@ function setPlayhead(t: number): void {
 
 beforeEach(() => {
   bootCommandSystem();
-  for (const id of [PRECOMP, SOLID]) {
+  for (const id of [PRECOMP, SOLID, VIDEO]) {
     if (defaultSceneGraph.getNode(id)) defaultSceneGraph.removeNode?.(id);
   }
   addNode(PRECOMP, 'group', true);
   addNode(SOLID, 'solid');
+  addNode(VIDEO, 'video');
   defaultAnimation.setKeyframes(PRECOMP, 'timeRemap', []);
   useCompositionStore.setState({ durationSeconds: 10 } as never);
   useSelectionStore.setState({ ids: [PRECOMP] });
@@ -90,10 +92,20 @@ describe('rampTargets', () => {
     expect(rampTargets()).toEqual([PRECOMP]);
   });
 
-  it('refuses a plain layer, where a remap track would be inert', () => {
-    // `buildSnapshot` samples `timeRemap` for precomp containers only. Writing
-    // it onto a solid would store keyframes, draw them in the graph editor,
-    // and change nothing on screen.
+  it('accepts a video layer — the main thing anyone ramps', () => {
+    // The regression. Ramps were restricted to precomps on the belief that a
+    // footage layer had no self-remap hook; the general layer path samples
+    // `timeRemap` for every node, and `speedRampRender.test.ts` shows a video
+    // layer's `sourceTime` following the curve.
+    useSelectionStore.setState({ ids: [VIDEO] });
+    expect(rampTargets()).toEqual([VIDEO]);
+    expect(command('quarter').enabled!()).toBe(true);
+  });
+
+  it('refuses a shape, where a remap track really would be inert', () => {
+    // `timeRemap` feeds `sourceTime` and nothing else — it does not move the
+    // layer's own transform keyframes. A solid has no source to retime, so
+    // nothing would read the value.
     useSelectionStore.setState({ ids: [SOLID] });
     expect(rampTargets()).toEqual([]);
     expect(command('quarter').enabled!()).toBe(false);

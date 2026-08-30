@@ -1,7 +1,7 @@
 # Speed ramps
 
-Park the playhead, press **Ramp to 25%**, and the layer eases into quarter
-speed over half a second and stays there. **Ramp back to 100%** eases out
+Park the playhead, press **Ramp to 25%**, and the video (or audio, or pre-comp)
+eases into quarter speed over half a second and stays there. **Ramp back to 100%** eases out
 again. There is also 50%, 200%, and a ramp to a freeze.
 
 Slowing turns on Pixel Motion frame blending, because 25% without it is the
@@ -53,22 +53,31 @@ be right.
 
 ## What it applies to
 
-**Pre-composed layers.** `buildSnapshot` samples `timeRemap` for precomp
-containers and their descendants; a footage layer has no self-remap hook, so a
-ramp written onto one would be stored, drawn in the graph editor, and do
-nothing at all. The commands refuse with a sentence naming the fix rather than
-writing keyframes that are silently inert.
+**Anything with a source to retime: video, audio, and pre-comps.**
+`buildSnapshot` samples a node's own `timeRemap` when it computes that layer's
+`sourceTime`, so a ramp retimes the frames a video layer shows exactly as it
+retimes a precomp's contents.
 
-Extending `timeRemap` to media layers is a render-path change — `buildSnapshot`,
-the exact-frame video path, `compToKeyframeTime`/`keyframeToCompTime`, and the
-audio retime segments all have a say — and is deliberately not attempted here.
-The ramp maths is independent of it and would not change.
+A shape or solid is excluded, and not arbitrarily: `timeRemap` feeds
+`sourceTime` only. It does **not** move the layer's own transform keyframes —
+the same separation After Effects makes, where time-remapping footage retimes
+the picture and not the animation you put on top of it. A shape has no source,
+so nothing would read the value.
 
-`speedRampRender.test.ts` drives the real `buildSnapshot` and reads `sourceTime`
-off the precomp container, so "the renderer actually slows down" is checked
-rather than assumed. (An empty precomp is not emitted into the snapshot at all,
-so that fixture needs a child in it or every ramp reads back as the identity
-and proves nothing.)
+> **Corrected.** This shipped restricted to pre-comps, with the docs asserting
+> that a footage layer "has no self-remap hook" and that extending it would be
+> a render-path change. That was wrong. `precompSourceTime` and the precomp
+> ancestor chain both look precomp-specific, and the general layer path a
+> thousand lines further down samples `timeRemap` for every node. The
+> restriction blocked the main use case — ramping a video clip — for one
+> release. `speedRampRender.test.ts` now drives a real video layer and watches
+> its `sourceTime` follow the curve.
+
+`speedRampRender.test.ts` drives the real `buildSnapshot` and reads
+`sourceTime`, so "the renderer actually slows down" is checked rather than
+assumed. (An empty precomp is not emitted into the snapshot at all, so that
+fixture needs a child in it or every ramp reads back as the identity and proves
+nothing.)
 
 ## Behaviour worth knowing
 

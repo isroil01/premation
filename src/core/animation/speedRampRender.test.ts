@@ -114,3 +114,66 @@ describe('a speed ramp changes what the renderer shows', () => {
     expect((b - a) / 4).toBeCloseTo(2, 1);
   });
 });
+
+describe('a VIDEO layer honours its own time remap', () => {
+  /**
+   * The correction. This file first tested only precomps, on the belief that
+   * `timeRemap` was sampled for precomp containers alone — `precompSourceTime`
+   * and the precomp ancestor chain both say so, and the general layer path a
+   * thousand lines further down samples it for EVERY node. Ramping a video
+   * clip is the main thing anyone wants a speed ramp for, and the commands
+   * were refusing it.
+   */
+  const VIDEO = 'vid';
+
+  function videoSetup(): { graph: SceneGraph; anim: AnimationEngine } {
+    const graph = new SceneGraph();
+    graph.addChild(null as unknown as string, {
+      id: VIDEO, name: VIDEO, parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        {
+          id: 'vid_t',
+          type: 'Transform',
+          props: { [SCENE_KIND_PROP]: 'video', assetId: 'a1', x: 0, y: 0, width: 100, height: 100 },
+        },
+      ],
+    } as unknown as SceneNode);
+    return { graph, anim: new AnimationEngine() };
+  }
+
+  function videoSourceAt(graph: SceneGraph, anim: AnimationEngine, t: number): number {
+    const layer = buildSnapshot(graph, anim, t).layers.find((l) => l.id === VIDEO);
+    return layer?.sourceTime ?? t;
+  }
+
+  it('runs source time with comp time when there is no remap', () => {
+    const { graph, anim } = videoSetup();
+    expect(videoSourceAt(graph, anim, 4)).toBeCloseTo(4, 3);
+  });
+
+  it('shows a quarter of the footage per second after a ramp to 25%', () => {
+    const { graph, anim } = videoSetup();
+    anim.setKeyframes(VIDEO, 'timeRemap', buildTimeRemap(
+      [{ t: 0, speed: 1 }, { t: 0.5, speed: 0.25 }, { t: 10, speed: 0.25 }], 0,
+    ).map((k) => ({
+      t: k.t, value: k.value,
+      ...(k.bezier ? { easing: 'bezier', bezier: k.bezier } : { easing: 'linear' }),
+    })) as never);
+
+    const a = videoSourceAt(graph, anim, 2);
+    const b = videoSourceAt(graph, anim, 6);
+    expect((b - a) / 4).toBeCloseTo(0.25, 2);
+  });
+
+  it('holds one frame when the video is ramped to a freeze', () => {
+    const { graph, anim } = videoSetup();
+    anim.setKeyframes(VIDEO, 'timeRemap', buildTimeRemap(
+      [{ t: 0, speed: 1 }, { t: 0.5, speed: 0 }, { t: 10, speed: 0 }], 0,
+    ).map((k) => ({
+      t: k.t, value: k.value,
+      ...(k.bezier ? { easing: 'bezier', bezier: k.bezier } : { easing: 'linear' }),
+    })) as never);
+    expect(videoSourceAt(graph, anim, 8)).toBeCloseTo(videoSourceAt(graph, anim, 3), 3);
+  });
+});
