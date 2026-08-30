@@ -74,6 +74,10 @@ import { buildCaptionCommands } from '@core/captions/captionCommands';
 import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
 import { buildBeatCommands } from '@core/audio/beatCommands';
 import { buildSpeedRampCommands } from '@core/animation/speedRampCommands';
+import {
+  buildSmartAnimateCommands,
+  installSmartAnimateCommandSync,
+} from '@core/animation/smartAnimateCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
@@ -985,6 +989,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildChoreographyCommands(),
     ...buildBeatCommands(),
     ...buildSpeedRampCommands(),
+    ...buildSmartAnimateCommands(),
     ...buildReframeCommands(),
   ];
 }
@@ -1780,6 +1785,11 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // Register built-in + project commands AFTER boot so the registry exists.
         const registry = getCommandRegistry();
         for (const cmd of buildStaticCommands()) registry.register(cmd);
+        // Smart Animate has one command per TARGET composition, and comps are
+        // created and renamed while the app runs — so that set is kept in step
+        // rather than snapshotted here. Tracked like every other subscription
+        // (see the note above about Providers mounting per route).
+        track(installSmartAnimateCommandSync());
         registry.register({
           id: asCommandId(BuiltinCommands.Undo),
           label: 'Undo',
