@@ -219,6 +219,35 @@ describe('the commands track the compositions that exist', () => {
     expect(buildSmartAnimateCommands().map((c) => String(c.id))).toContain(`comp.smartAnimate.${b}`);
   });
 
+  it('offers a pristine composition that has been drawn into', () => {
+    // The default comp keeps `pristine: true` forever — nothing clears it when
+    // layers are added — so filtering on that flag alone hid the composition
+    // most people put their first board in. The rule the codebase already
+    // states (see `pristineCompToAdopt`) is pristine AND LAYERLESS.
+    const { transitionTargets } = require('./smartAnimateCommands') as typeof import('./smartAnimateCommands');
+    const { useProjectStore: store } = require('@stores/projectStore') as typeof import('@stores/projectStore');
+
+    const drawnInto = createComposition({ name: 'Drawn Into' });
+    store.setState((s) => { const c = s.comps[drawnInto]; if (c) c.pristine = true; });
+    addLayer(drawnInto, 'Something', { x: 0 });
+
+    const empty = createComposition({ name: 'Never Touched' });
+    store.setState((s) => { const c = s.comps[empty]; if (c) c.pristine = true; });
+
+    // Point the tab elsewhere so neither is excluded for being active.
+    const other = createComposition({ name: 'Elsewhere' });
+    const tabId = store.getState().activeTabId;
+    if (tabId) {
+      store.setState({
+        tabs: { ...store.getState().tabs, [tabId]: { ...store.getState().tabs[tabId]!, compositionId: other } },
+      } as never);
+    }
+
+    const ids = transitionTargets().map((t) => t.id);
+    expect(ids).toContain(drawnInto);
+    expect(ids).not.toContain(empty);
+  });
+
   it('drops the command for a composition that has gone', () => {
     const { syncSmartAnimateCommands } = require('./smartAnimateCommands') as typeof import('./smartAnimateCommands');
     const { getCommandRegistry } = require('@core/commands/Command') as typeof import('@core/commands/Command');

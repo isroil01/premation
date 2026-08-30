@@ -105,3 +105,17 @@ created and renamed while the app runs and `buildStaticCommands` runs once at
 boot, so the set is kept in step by a subscription
 (`installSmartAnimateCommandSync`) rather than snapshotted — otherwise a board
 made after startup would have no command to animate to it.
+
+Two things about that list are easy to get wrong, and both were found by
+running it rather than by a test:
+
+- **The excluded placeholder is pristine AND layerless.** The default
+  composition keeps `pristine: true` forever — nothing clears it when layers
+  are added — so filtering on the flag alone hides the composition most people
+  put their first board in. `pristineCompToAdopt` already states the correct
+  rule: "a pristine comp the user has already drawn into is theirs by use".
+- **The sync key is the active COMPOSITION, not the active tab.** A tab can be
+  pointed at a different comp without its id changing, and the active comp is
+  the one excluded from its own target list — so keying on the tab left the
+  commands offering whichever board happened to be open when they were last
+  built.

@@ -18,6 +18,8 @@ import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { useUIStore } from '@stores/uiStore';
 import { useProjectStore } from '@stores/projectStore';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { flattenComposition } from '@core/scene/sceneDerive';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { smartAnimateBetween } from './smartAnimateApply';
 import { PHYSICS } from './motionCurves';
@@ -30,12 +32,26 @@ function activeCompId(): string | undefined {
   return project.activeTabId ? project.tabs[project.activeTabId]?.compositionId : undefined;
 }
 
-/** Compositions that could be a target: everything except the active one. */
+/**
+ * Compositions that could be a target: everything except the active one and
+ * the auto-minted empty placeholder.
+ *
+ * "Empty placeholder" means pristine AND LAYERLESS, which is the rule
+ * `pristineCompToAdopt` already states: a pristine comp the user has drawn into
+ * is theirs by use. Filtering on `pristine` alone hides the default composition
+ * — the one most people put their first board in — from its own target list,
+ * because nothing clears that flag when you add layers.
+ */
 export function transitionTargets(): Array<{ id: string; name: string }> {
   const project = useProjectStore.getState();
   const current = activeCompId();
   return Object.values(project.comps)
-    .filter((c) => c.id !== current && !c.pristine)
+    .filter((c) => {
+      if (c.id === current) return false;
+      if (!c.pristine) return true;
+      // `<= 1` because `flattenComposition` includes the composition root.
+      return flattenComposition(defaultSceneGraph, c.id).length > 1;
+    })
     .map((c) => ({ id: c.id, name: c.name }));
 }
 
@@ -124,9 +140,14 @@ export function syncSmartAnimateCommands(): void {
 export function installSmartAnimateCommandSync(): () => void {
   let lastKey = '';
   return useProjectStore.subscribe((state) => {
-    // Keyed on the comps and the active one: a rename changes a label, a new
-    // comp changes the set, and switching comps changes which one is excluded.
-    const key = `${Object.keys(state.comps).sort().join(',')}|${state.activeTabId ?? ''}`
+    // Keyed on what the target list is actually derived from. The ACTIVE
+    // COMPOSITION matters, not just the active tab: a tab can be pointed at a
+    // different comp without the tab id changing, and the active comp is the
+    // one excluded from its own target list — key on the tab alone and the
+    // commands keep offering whichever board was open when they were last
+    // built.
+    const activeComp = state.activeTabId ? state.tabs[state.activeTabId]?.compositionId ?? '' : '';
+    const key = `${Object.keys(state.comps).sort().join(',')}|${activeComp}`
       + `|${Object.values(state.comps).map((c) => c.name).join(',')}`;
     if (key === lastKey) return;
     lastKey = key;
