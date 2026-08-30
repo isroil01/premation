@@ -38,6 +38,31 @@ export interface TrackerResult {
   status: 'completed' | 'lost' | 'cancelled';
 }
 
+/**
+ * The one-click flow's three states.
+ *
+ * `picking` exists because a click on the viewport already means "select
+ * that layer", and one gesture cannot mean two things. Arming makes the
+ * intent explicit for exactly one click, and Escape or a second press of the
+ * button disarms — so the tracker never quietly owns the pointer.
+ */
+export type AutoPhase = 'idle' | 'picking' | 'analyzing';
+
+/** What the analysis measured, in source display px — drawn by the overlay
+ *  and summarized in the panel, so the user can see WHY it chose that spot. */
+export interface AutoPlanSummary {
+  x: number;
+  y: number;
+  featureHalf: number;
+  searchHalf: number;
+  /** Measured px/frame at the feature; null when it could not be measured. */
+  motionPerFrame: number | null;
+  /** Shi-Tomasi corner strength — how well-defined the feature is. */
+  strength: number;
+  /** 0..1; low means look-alikes nearby (see autoFeature.distinctnessAt). */
+  distinctness: number;
+}
+
 export function pointCountFor(mode: TrackerMode): number {
   // Smooth stabilize is DENSE — the flow grid is its points, so it places none.
   // Corner/planar seeds 4 corners + centre for an overdetermined LS fit.
@@ -66,6 +91,23 @@ export function seedPointsFor(mode: TrackerMode, w: number, h: number): Array<{ 
   }
   if (mode === 'mask' || mode === 'smooth') return [];
   return [{ x: w / 2, y: h / 2 }];
+}
+
+/**
+ * Is the viewport armed for the one-click target pick?
+ *
+ * Exported as a plain predicate because a GLOBAL shortcut has to consult it:
+ * Escape is bound to Deselect, `ShortcutManager` listens on window in the
+ * capture phase and is registered at app boot, and a panel-mounted listener
+ * therefore loses the race no matter what it does — even with
+ * `stopImmediatePropagation`. The supported way for a transient mode to take a
+ * chord is for the competing COMMAND to report itself disabled, which is what
+ * `BuiltinCommands.Deselect` does with this. Deselecting mid-pick unmounts the
+ * panel that armed the pick, so the two are not merely both-firing, they are
+ * contradictory.
+ */
+export function isPickArmed(): boolean {
+  return useTrackerStore.getState().autoPhase === 'picking';
 }
 
 interface TrackerStore {
@@ -99,6 +141,12 @@ interface TrackerStore {
   /** Human-readable outcome/error line for the section. */
   note: string | null;
 
+  /** One-click tracking: waiting for a click, analysing, or neither. */
+  autoPhase: AutoPhase;
+  /** The last analysis's measurements, kept so the result stays explainable
+   *  after the run finishes. Cleared when a new pick starts. */
+  autoPlan: AutoPlanSummary | null;
+
   activate: (nodeId: string) => void;
   disarm: () => void;
   setMode: (mode: TrackerMode, sourceW: number, sourceH: number) => void;
@@ -109,6 +157,9 @@ interface TrackerStore {
   beginTracking: () => void;
   setProgress: (p: number) => void;
   finishTracking: (result: TrackerResult | null, note: string | null) => void;
+  /** Arm (or disarm) the viewport for the one-click target pick. */
+  setAutoPhase: (phase: AutoPhase) => void;
+  setAutoPlan: (plan: AutoPlanSummary | null) => void;
   clear: () => void;
 }
 
@@ -124,17 +175,25 @@ export const useTrackerStore = create<TrackerStore>((set, get) => ({
   progress: 0,
   result: null,
   note: null,
+  autoPhase: 'idle',
+  autoPlan: null,
 
   activate: (nodeId) => {
     // Switching layers drops the points and result — a track point positioned
     // on one clip's pixels means nothing on another clip.
     if (get().nodeId !== nodeId) {
-      set({ nodeId, armed: true, points: [], result: null, note: null, tracking: false, progress: 0 });
+      set({
+        nodeId, armed: true, points: [], result: null, note: null,
+        tracking: false, progress: 0, autoPhase: 'idle', autoPlan: null,
+      });
     } else if (!get().armed) {
       set({ armed: true });
     }
   },
-  disarm: () => set({ armed: false }),
+  // Closing the section must also drop the pointer arming: an overlay that
+  // is no longer drawn cannot show a crosshair, and a viewport that still
+  // swallows the next click would look like the app had frozen.
+  disarm: () => set({ armed: false, autoPhase: 'idle' }),
   setMode: (mode, sourceW, sourceH) => {
     if (get().mode === mode) return;
     set({ mode, points: seedPointsFor(mode, sourceW, sourceH), result: null, note: null });
@@ -154,7 +213,13 @@ export const useTrackerStore = create<TrackerStore>((set, get) => ({
   setDense: (dense) => set({ dense }),
   beginTracking: () => set({ tracking: true, progress: 0, result: null, note: null }),
   setProgress: (p) => set({ progress: p }),
-  finishTracking: (result, note) => set({ tracking: false, progress: 0, result, note }),
+  finishTracking: (result, note) =>
+    set({ tracking: false, progress: 0, result, note, autoPhase: 'idle' }),
+  setAutoPhase: (autoPhase) => set({ autoPhase }),
+  setAutoPlan: (autoPlan) => set({ autoPlan }),
   clear: () =>
-    set({ nodeId: null, armed: false, points: [], result: null, note: null, tracking: false, progress: 0 }),
+    set({
+      nodeId: null, armed: false, points: [], result: null, note: null,
+      tracking: false, progress: 0, autoPhase: 'idle', autoPlan: null,
+    }),
 }));

@@ -13,6 +13,13 @@
  * screen for drawing, and the exact inverse for dragging. Boxes are drawn by
  * mapping their CORNERS, not by drawing a fixed-size rect, so they stay
  * honest under rotation, non-uniform scale and 3D.
+ *
+ * It is also the pointer half of one-click tracking. While `autoPhase` is
+ * 'picking' the whole surface takes clicks and shows a crosshair; one click
+ * runs the analysis on that spot and the surface goes back to letting
+ * everything through. That arming exists because a click on the viewport
+ * already means "select this layer" — the tracker gets the pointer for
+ * exactly one gesture, announced, and never by ambush.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -25,12 +32,34 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { readGeometry } from '@core/workspace/geometry';
 import { trackSampleToComp } from '@core/tracking/applyTrack';
+import { runAutoTrack } from '@core/tracking/autoTrackCommand';
 import { sourceDisplaySize } from '@core/tracking/trackerSource';
 import { layerScreenMapping } from './layerScreen';
 
 const POINT_R = 5;
 const PICK_R = 12;
 const CORNER_LABELS = ['TL', 'TR', 'BR', 'BL'];
+
+/**
+ * Match confidence → dot opacity.
+ *
+ * Mapped from the tracker's own accept threshold (0.55) up to a strong match
+ * (0.95) rather than from 0, because everything BELOW the threshold was
+ * coasted and is already drawn amber — spending half the opacity range on
+ * scores that cannot occur would make every real sample look uncertain.
+ */
+function qualityStroke(distinctness: number): string {
+  // Same three bands the panel's quality pill uses — one vocabulary, two
+  // places, so the canvas and the inspector never disagree about a feature.
+  if (distinctness >= 0.6) return 'rgba(102, 217, 132, 0.9)';
+  if (distinctness >= 0.35) return 'rgba(255, 209, 102, 0.9)';
+  return 'rgba(255, 107, 107, 0.9)';
+}
+
+function confidenceAlpha(confidence: number): number {
+  const t = (confidence - 0.55) / (0.95 - 0.55);
+  return 0.35 + 0.55 * Math.max(0, Math.min(1, t));
+}
 
 export function TrackPointOverlay(): JSX.Element | null {
   useSceneRevision((s) => s.rev);
@@ -42,6 +71,8 @@ export function TrackPointOverlay(): JSX.Element | null {
   const featureHalf = useTrackerStore((s) => s.featureHalf);
   const searchHalf = useTrackerStore((s) => s.searchHalf);
   const result = useTrackerStore((s) => s.result);
+  const autoPhase = useTrackerStore((s) => s.autoPhase);
+  const autoPlan = useTrackerStore((s) => s.autoPlan);
   const setPoint = useTrackerStore((s) => s.setPoint);
   const time = useActiveWorkspace()?.time ?? 0;
   const comp = useCompositionStore((s) => s.comp());
@@ -82,6 +113,24 @@ export function TrackPointOverlay(): JSX.Element | null {
       };
     };
   }, [mapping, geom, src]);
+
+  // One-click pick. Separate from the drag plumbing below because it is a
+  // different interaction with a different lifetime: it owns the WHOLE
+  // surface, lasts exactly one click, and must not be reachable when the
+  // panel has not armed it.
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || autoPhase !== 'picking' || !screenToSource || !active) return;
+    const onPick = (e: PointerEvent): void => {
+      e.stopPropagation();
+      e.preventDefault();
+      const r = svg.getBoundingClientRect();
+      const hint = screenToSource(e.clientX - r.left, e.clientY - r.top);
+      void runAutoTrack({ nodeId: active, hint });
+    };
+    svg.addEventListener('pointerdown', onPick);
+    return () => svg.removeEventListener('pointerdown', onPick);
+  }, [autoPhase, screenToSource, active]);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -137,7 +186,10 @@ export function TrackPointOverlay(): JSX.Element | null {
     };
   }, [sourceToScreen, screenToSource, points, setPoint]);
 
-  if (!node || !geom || !src || points.length === 0 || !sourceToScreen) return null;
+  // While picking there may be no point yet — the surface still has to be
+  // there to receive the click.
+  const picking = autoPhase === 'picking';
+  if (!node || !geom || !src || !sourceToScreen || (points.length === 0 && !picking)) return null;
 
   const screenPts = points.map((p) => sourceToScreen(p.x, p.y));
   const boxPoints = (centre: { x: number; y: number }, half: number): string =>
@@ -160,7 +212,11 @@ export function TrackPointOverlay(): JSX.Element | null {
               node.id, s.x, s.y, s.compTime, result.sourceWidth, result.sourceHeight, comp,
             );
             if (!c) return null;
-            return { sc: camera.worldToScreen({ x: c.x, y: c.y }), coasted: s.coasted };
+            return {
+              sc: camera.worldToScreen({ x: c.x, y: c.y }),
+              coasted: s.coasted,
+              confidence: s.confidence,
+            };
           })
           .filter((v): v is NonNullable<typeof v> => v !== null),
       )
@@ -174,7 +230,16 @@ export function TrackPointOverlay(): JSX.Element | null {
       // `auto` svg swallowed every viewport gesture (pan, zoom, layer drags)
       // whenever the tracker was armed. Only the per-point hit circles are
       // interactive; everything else lets input fall through to the canvas.
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        // Armed for a pick, the surface takes the click; otherwise only the
+        // per-point hit circles are interactive.
+        pointerEvents: picking ? 'all' : 'none',
+        ...(picking ? { cursor: 'crosshair' } : {}),
+      }}
     >
       {paths.map((path, i) =>
         path.length > 1 ? (
@@ -190,13 +255,15 @@ export function TrackPointOverlay(): JSX.Element | null {
       {paths.flatMap((path, i) =>
         path.map((v, j) => (
           // Coasted samples in amber: the stretch the tracker predicted rather
-          // than measured should LOOK different before anyone applies it.
+          // than measured should LOOK different before anyone applies it. The
+          // rest fade with match confidence, so a stretch the tracker only
+          // just held onto reads as faint rather than as solid fact.
           <circle
             key={`s-${i}-${j}`}
             cx={v.sc.x}
             cy={v.sc.y}
             r={1.5}
-            fill={v.coasted ? '#ffd166' : 'rgba(102, 217, 132, 0.9)'}
+            fill={v.coasted ? '#ffd166' : `rgba(102, 217, 132, ${confidenceAlpha(v.confidence)})`}
           />
         )),
       )}
@@ -220,6 +287,20 @@ export function TrackPointOverlay(): JSX.Element | null {
           stroke="rgba(255, 209, 102, 0.6)"
           strokeDasharray="6 4"
           strokeWidth={1}
+        />
+      )}
+      {points[0] && autoPlan && (
+        // The analysis's verdict, on the footage rather than only in the
+        // panel: the ring around the chosen feature carries its distinctness,
+        // so an ambiguous pick is visible exactly where the user is looking.
+        <circle
+          cx={sourceToScreen(points[0].x, points[0].y).x}
+          cy={sourceToScreen(points[0].x, points[0].y).y}
+          r={POINT_R + 6}
+          fill="none"
+          stroke={qualityStroke(autoPlan.distinctness)}
+          strokeWidth={1.5}
+          strokeDasharray="3 3"
         />
       )}
       {points[0] && (

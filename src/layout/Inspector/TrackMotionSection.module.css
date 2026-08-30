@@ -1,0 +1,252 @@
+/**
+ * Track Motion's chrome.
+ *
+ * The panel has two audiences at once — someone who wants a track and someone
+ * who wants to tune one — so it is laid out as one prominent primary action
+ * with everything else demoted behind a disclosure. The styles carry that
+ * hierarchy: the card is the only raised, tinted surface in the section, and
+ * the advanced block is deliberately quiet.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── The one-click card ─────────────────────────────────────────────── */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1);
+}
+
+/* Armed for the viewport click: the card echoes the crosshair on the canvas,
+   so the two halves of one gesture look like one thing. */
+.card[data-armed='true'] {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent) inset;
+}
+
+.cardTitle {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.cardHint {
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* ── Progress ───────────────────────────────────────────────────────── */
+
+.progressRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progressTrack {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+
+/**
+ * Filled by scaling a full-width bar, not by animating `width`.
+ *
+ * The bar updates on every tracked frame — tens of times a second on a long
+ * clip — and a width change relayouts the panel each time, on the same main
+ * thread the tracker is matching pixels on. `transform` is composited, so the
+ * progress bar costs the analysis nothing.
+ */
+.progressFill {
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--color-accent);
+  transform-origin: left center;
+  transition: transform 120ms linear;
+}
+
+.progressValue {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  min-width: 34px;
+  text-align: right;
+}
+
+/* ── Result readout ─────────────────────────────────────────────────── */
+
+.note {
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.note[data-tone='warn'] {
+  color: var(--color-warning);
+}
+
+.note[data-tone='error'] {
+  color: var(--color-danger);
+}
+
+/* Measurements behind the pick — small, monospaced-numeric, dismissible by
+   simply not reading them. */
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+.stat b {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/* Quality pill: one glance at whether the track is worth applying. */
+.quality {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+}
+
+.quality[data-level='good'] {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+
+.quality[data-level='fair'] {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.quality[data-level='poor'] {
+  background: color-mix(in srgb, var(--color-danger) 18%, transparent);
+  color: var(--color-danger);
+}
+
+/* ── Actions ────────────────────────────────────────────────────────── */
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.actionRow {
+  display: flex;
+  gap: 6px;
+}
+
+.actionRow > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Advanced disclosure ────────────────────────────────────────────── */
+
+.advanced {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 8px;
+}
+
+.advancedSummary {
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.advancedSummary::-webkit-details-marker {
+  display: none;
+}
+
+/* A caret drawn rather than an icon import: it must rotate with the
+   disclosure state, which `details[open]` gives for free. */
+.advancedSummary::before {
+  content: '';
+  width: 0;
+  height: 0;
+  border-left: 4px solid currentColor;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  transition: transform 120ms ease;
+}
+
+.advanced[open] > .advancedSummary::before {
+  transform: rotate(90deg);
+}
+
+.advancedSummary:hover {
+  color: var(--color-text-primary);
+}
+
+.advancedBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.select {
+  padding: 3px 8px;
+  font-size: var(--font-size-xs);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  max-width: 100%;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.groupLabel {
+  font-size: var(--font-size-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progressFill,
+  .advancedSummary::before {
+    transition: none;
+  }
+}

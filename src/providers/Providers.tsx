@@ -17,6 +17,7 @@ import { allLayerKinds } from '@core/plugins/layerKindRegistry';
 import { createCustomLayerFromMenu } from '@core/plugins/createCustomLayerFromMenu';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { isPickArmed } from '@stores/trackerStore';
 import { pruneKeyframeSelectionToNodes, useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { prunePropertySelectionToNodes } from '@stores/propertySelectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -810,7 +811,13 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       label: 'Deselect',
       icon: 'deselect',
       shortcut: { key: 'Escape' },
-      enabled: () => useSelectionStore.getState().count() > 0,
+      // Not while the tracker is waiting for its target click. Escape has to
+      // cancel that pick, and deselecting instead unmounts the very panel that
+      // armed it — using the ShortcutManager's documented fallthrough (a
+      // DISABLED command lets the chord reach other handlers) rather than a
+      // race between two window listeners, which the tracker loses because it
+      // mounts second.
+      enabled: () => useSelectionStore.getState().count() > 0 && !isPickArmed(),
       execute: () => useSelectionStore.getState().clear(),
     },
     {
