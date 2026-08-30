@@ -7,6 +7,11 @@
  * a toast, that stepping rows applies the row you are looking at, and that a
  * field with no column gets a warning rather than silently keeping its authored
  * value on every row.
+ *
+ * The batch half is the same argument. `batchRender.test.ts` owns the loop and
+ * the naming rules; what is only testable here is that the panel REFUSES to
+ * start a batch whose names do not vary — the failure that would otherwise
+ * leave one file where forty were expected, with nothing reported.
  */
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
@@ -27,6 +32,28 @@ jest.mock('@core/template/dataFill', () => ({
 const notify = jest.fn();
 jest.mock('@stores/uiStore', () => ({
   useUIStore: { getState: () => ({ notify }) },
+}));
+
+/*
+  The batch renderer is mocked at its module boundary, not stubbed inside the
+  component. It reaches the export manager, the composition store and a GPU
+  sink — none of which exist under jsdom, and none of which this file is about.
+  What IS about this file is whether the button calls it at all.
+*/
+type BatchSummary = { rows: Array<{ error?: string }>; rendered: number; failed: number };
+const runEditorBatchRender = jest.fn<Promise<BatchSummary>, [Record<string, unknown>]>(
+  async () => ({ rows: [], rendered: 2, failed: 0 }),
+);
+jest.mock('@core/template/batchRenderEditor', () => ({
+  BATCH_FORMATS: [{ format: 'mp4', label: 'MP4 · H.264' }, { format: 'gif', label: 'Animated GIF' }],
+  batchFileName: (pattern: string) => `${pattern}.mp4`,
+  runEditorBatchRender: (opts: unknown) => runEditorBatchRender(opts as Record<string, unknown>),
+}));
+
+const chooseOutputDir = jest.fn(async () => '/out');
+jest.mock('@stores/renderQueueStore', () => ({
+  canChooseOutputDir: () => true,
+  useRenderQueueStore: { getState: () => ({ outputDir: '/out', chooseOutputDir }) },
 }));
 
 const field = (id: string, kind: TemplateField['kind'] = 'text'): TemplateField =>
@@ -53,6 +80,8 @@ const pick = (file: File): void => {
 beforeEach(() => {
   applyDataRow.mockClear();
   notify.mockClear();
+  runEditorBatchRender.mockClear();
+  chooseOutputDir.mockClear();
 });
 
 describe('DataFillSection', () => {
@@ -122,11 +151,60 @@ describe('DataFillSection', () => {
     expect(await screen.findByText(/Ignored columns: notes/)).toBeInTheDocument();
   });
 
-  it('says the batch render is not built rather than implying it is', async () => {
-    render(<DataFillSection fields={[field('name')]} />);
-    pick(fileOf('name\nAda\n', 'rows.csv'));
+  describe('render every row', () => {
+    const load = async (): Promise<void> => {
+      render(<DataFillSection fields={[field('name')]} />);
+      pick(fileOf('name\nAda\nGrace\n', 'rows.csv'));
+      await screen.findByText(/Row 1 of 2/);
+    };
 
-    expect(await screen.findByText(/isn’t built yet/)).toBeInTheDocument();
+    it('offers a render for every row of the table', async () => {
+      await load();
+      expect(screen.getByRole('button', { name: 'Render 2 files' })).toBeEnabled();
+    });
+
+    it('previews what row 1 will be called, so a bad pattern is visible before the batch', async () => {
+      await load();
+      expect(screen.getByText(/Row 1 →/)).toBeInTheDocument();
+    });
+
+    it('refuses a pattern that does not vary, which would leave one file', async () => {
+      await load();
+      fireEvent.change(screen.getByLabelText('File name pattern'), { target: { value: 'promo' } });
+
+      expect(screen.getByText(/same for every row/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Render 2 files' })).toBeDisabled();
+    });
+
+    it('reports an unknown column instead of naming every file the same', async () => {
+      await load();
+      fireEvent.change(screen.getByLabelText('File name pattern'), { target: { value: '{nmae}' } });
+
+      expect(screen.getByText(/is not a column/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Render 2 files' })).toBeDisabled();
+    });
+
+    it('runs the batch with the table, the fields and the chosen pattern', async () => {
+      await load();
+      fireEvent.click(screen.getByRole('button', { name: 'Render 2 files' }));
+
+      await waitFor(() => expect(runEditorBatchRender).toHaveBeenCalled());
+      const opts = runEditorBatchRender.mock.calls[0]?.[0] as unknown as {
+        pattern: string; outputDir: string; table: { rows: unknown[] };
+      };
+      expect(opts.pattern).toBe('{index}');
+      expect(opts.outputDir).toBe('/out');
+      expect(opts.table.rows).toHaveLength(2);
+    });
+
+    it('says how many files it wrote', async () => {
+      await load();
+      fireEvent.click(screen.getByRole('button', { name: 'Render 2 files' }));
+
+      await waitFor(() =>
+        expect(notify).toHaveBeenCalledWith(expect.objectContaining({ message: 'Rendered 2 files' })),
+      );
+    });
   });
 
   it('warns when a row matched no field at all', async () => {

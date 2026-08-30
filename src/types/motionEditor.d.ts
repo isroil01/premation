@@ -8,6 +8,72 @@
  * undefined and the app degrades to its web adapters.
  */
 
+/**
+ * What `premation render` asked this process to do.
+ *
+ * Mirrors `CliRenderJob` in electron/cliArgs.ts. The two halves live in
+ * separate TypeScript projects that cannot import one another (see
+ * electron/tsconfig.json), so this file is the shared contract for the CLI
+ * exactly as it already is for the rest of the bridge.
+ */
+export type CliTaskRequest =
+  | { kind: 'render'; job: CliRenderRequest }
+  | { kind: 'comps'; projectPath: string }
+  | { kind: 'captions'; projectPath: string; outPath: string; comp?: string; language?: string };
+
+export interface CliRenderRequest {
+  projectPath: string;
+  comp?: string;
+  outPath: string;
+  format: string;
+  startFrame?: number;
+  endFrame?: number;
+  fps?: number;
+  scale?: number;
+  width?: number;
+  height?: number;
+  quality?: 'high' | 'medium' | 'draft';
+  proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
+  transparent?: boolean;
+  /**
+   * A data table, already READ by the main process (the renderer never sees a
+   * `--data` path). Present turns the run into one render per row, with
+   * `outPath` as a `{token}` pattern.
+   */
+  data?: { text: string; filename: string };
+  /** Start a --data batch at this row (0-based) — resuming an interrupted run. */
+  startRow?: number;
+  /** Retarget to this aspect before rendering (the `reframe` command). */
+  aspect?: string;
+  /** A caption file's text, imported before the render (burn-in). */
+  captions?: { text: string; filename: string };
+}
+
+/** The single report that ends a CLI run, and decides its exit code. */
+export type CliDoneReport =
+  | {
+      ok: true;
+      outPath: string;
+      compositionName: string;
+      frames: number;
+      width: number;
+      height: number;
+      fps: number;
+      warnings: string[];
+    }
+  | { ok: true; comps: string[] }
+  | { ok: true; captions: { text: string; cues: number; compositionName: string }; warnings: string[] }
+  | {
+      ok: true;
+      batch: {
+        rendered: number;
+        failed: number;
+        rows: Array<{ outputPath: string; error?: string }>;
+      };
+      warnings: string[];
+    }
+  | { ok: false; message: string };
+
 export interface MotionEditorFile {
   path: string;
   name: string;
@@ -68,6 +134,17 @@ export interface AiImageRequest {
   width?: number;
   height?: number;
 }
+
+/**
+ * Timed speech, as the shell returns it.
+ *
+ * Cues are relative to the START of the audio that was sent, not to the
+ * composition — the caller supplied the window, so the caller re-bases them.
+ * See `@core/captions/transcribe`.
+ */
+export type AiTranscribeResult =
+  | { ok: true; cues: Array<{ start: number; end: number; text: string }>; language?: string }
+  | { ok: false; code: string; message: string };
 
 export type AiImageResult =
   | { ok: true; base64: string; mime: string }
@@ -200,6 +277,21 @@ export interface MotionEditorApi {
      * Generate one image. Resolves with base64 bytes — never a provider URL.
      * Same custody as `stream`: the shell holds the key; the renderer never sees it.
      */
+    /**
+     * Speech → timed segments, for captions.
+     *
+     * OpenAI only: Anthropic has no audio API, and Gemini returns prose
+     * without timings, which cannot become captions. A request naming either
+     * resolves `ok: false` explaining that rather than failing obscurely.
+     */
+    transcribe?(request: {
+      provider: AiVaultProvider;
+      /** Audio file bytes. 16 kHz mono WAV is what the app sends; 25 MB cap. */
+      bytes: Uint8Array;
+      filename?: string;
+      /** BCP-47-ish hint. Absent: the model detects the language. */
+      language?: string;
+    }): Promise<AiTranscribeResult>;
     image?(request: AiImageRequest): Promise<AiImageResult>;
     /** Text-to-video via fal.ai. Returns base64 mp4 bytes. */
     video?(request: { prompt: string; durationSec?: number }): Promise<AiMediaResult>;
@@ -319,12 +411,28 @@ export interface MotionEditorApi {
     cancel?(jobId: string): Promise<void>;
     /** Native save dialog, then move the encoded file there. Null if cancelled. */
     save?(jobId: string, defaultName: string): Promise<{ path: string } | null>;
-    /** Move the encoded file into an already-chosen folder, no dialog. Never
-     *  overwrites — a clashing name is suffixed ` (2)`. */
-    saveTo?(jobId: string, dir: string, filename: string): Promise<{ path: string }>;
+    /** Move the encoded file into an already-chosen folder, no dialog. A
+     *  clashing name is suffixed ` (2)` unless `overwrite` says otherwise —
+     *  the render queue never overwrites, the headless CLI always does. */
+    saveTo?(jobId: string, dir: string, filename: string, overwrite?: boolean): Promise<{ path: string }>;
     /** Directory picker for the render queue's output folder. */
     chooseOutputDir?(): Promise<string | null>;
     cleanJob?(jobId: string): Promise<void>;
+  };
+
+  /**
+   * The headless CLI (`premation render`). Present only in a desktop build,
+   * and only answering during a CLI launch — a normal editor session has no
+   * `cli:job` handler registered, so `job()` rejects and the /render route
+   * stands down. See electron/cliRender.ts.
+   */
+  cli?: {
+    /** The job this process was launched to perform. Rejects if there is none. */
+    job?(): Promise<CliTaskRequest>;
+    /** Render progress 0–1. Fire-and-forget; it also resets the stall watchdog. */
+    progress?(fraction: number): void;
+    /** The one terminal report. The process exits on it. */
+    done?(report: CliDoneReport): void;
   };
 
   /** Diagnostics forwarded to the main-process log (DevTools-less builds). */

@@ -142,9 +142,25 @@
   z-index: 3;
 }
 
+/* Export sits LEFT of delete, and inherits everything else from it — same
+   size, same reveal, same stacking. A share control that appeared at a
+   different size or on a different hover rule would read as a different kind
+   of thing, which it is not. */
+.shareBtn {
+  composes: deleteBtn;
+  right: 26px;
+}
+
 .rowWrapper:hover .deleteBtn,
-.rowWrapper:focus-within .deleteBtn {
+.rowWrapper:focus-within .deleteBtn,
+.rowWrapper:hover .shareBtn,
+.rowWrapper:focus-within .shareBtn {
   opacity: 1;
+}
+
+.shareBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
 }
 
 .deleteBtn:hover {

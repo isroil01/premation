@@ -25,7 +25,10 @@ type OrtSession = {
 
 type OrtNamespace = {
   InferenceSession: {
-    create: (url: string, opts?: Record<string, unknown>) => Promise<OrtSession>;
+    // Both forms: a URL for the build-time `VITE_SAM_MODEL_URL` path, and BYTES
+    // for a model restored from the local cache — which is the normal case once
+    // one is installed, and the case that needs no network at all.
+    create: (source: string | Uint8Array, opts?: Record<string, unknown>) => Promise<OrtSession>;
   };
   Tensor: new (type: string, data: Float32Array | Uint8Array, dims: number[]) => unknown;
 };
@@ -78,11 +81,14 @@ function wrapSession(ort: OrtNamespace, session: OrtSession): (req: SamSegmentRe
 }
 
 /**
- * Dynamically load onnxruntime-web + model URL and register the SAM session.
- * Safe to call when ORT is missing — returns `unavailable`.
+ * Create the session from a URL or from bytes, and register it.
+ *
+ * One implementation for both, because the only difference is what ORT is
+ * handed: everything around it — the optional import, the provider list, the
+ * refusal to leave a half-registered session behind — has to be identical or
+ * the cached path and the env-var path can diverge without anything noticing.
  */
-export async function tryRegisterSamOnnxFromUrl(modelUrl: string): Promise<SamOnnxLoadResult> {
-  if (!modelUrl) return { status: 'unavailable', reason: 'No model URL.' };
+async function registerFrom(source: string | Uint8Array): Promise<SamOnnxLoadResult> {
   const ort = await importOrt();
   if (!ort) {
     return {
@@ -91,18 +97,44 @@ export async function tryRegisterSamOnnxFromUrl(modelUrl: string): Promise<SamOn
     };
   }
   try {
-    const session = await ort.InferenceSession.create(modelUrl, {
+    const session = await ort.InferenceSession.create(source, {
       executionProviders: ['webgpu', 'wasm'],
     });
     registerSamOnnxSession(wrapSession(ort, session));
     return { status: 'ok' };
   } catch (e) {
+    // Cleared, not left as it was: a failed load after a previous success would
+    // otherwise leave the OLD session registered while the UI reports a
+    // failure, and clicks would keep going somewhere the user thinks they
+    // stopped going.
     registerSamOnnxSession(null);
     return {
       status: 'failed',
       reason: e instanceof Error ? e.message : String(e),
     };
   }
+}
+
+/**
+ * Dynamically load onnxruntime-web + model URL and register the SAM session.
+ * Safe to call when ORT is missing — returns `unavailable`.
+ */
+export async function tryRegisterSamOnnxFromUrl(modelUrl: string): Promise<SamOnnxLoadResult> {
+  if (!modelUrl) return { status: 'unavailable', reason: 'No model URL.' };
+  return registerFrom(modelUrl);
+}
+
+/**
+ * Register a session from model BYTES — the cached path.
+ *
+ * This is what makes Object Matte work offline after one download: the model
+ * comes out of IndexedDB (`samModelCache.ts`) and never touches the network
+ * again. See `samModelInstall.ts` for why the download itself is always an
+ * explicit action.
+ */
+export async function tryRegisterSamOnnxFromBytes(bytes: Uint8Array): Promise<SamOnnxLoadResult> {
+  if (bytes.byteLength === 0) return { status: 'unavailable', reason: 'The model file is empty.' };
+  return registerFrom(bytes);
 }
 
 /** Clear any registered ONNX inferrer. */

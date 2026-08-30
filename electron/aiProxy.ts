@@ -62,6 +62,34 @@ const IMAGE_ENDPOINTS = {
   gemini: 'https://generativelanguage.googleapis.com/v1beta/models',
 } as const;
 
+/**
+ * Speech-to-text endpoint — a THIRD allowlist, for the third reason.
+ *
+ * OpenAI only, and not because the others are worse. Anthropic has no audio
+ * API at all, and Gemini's audio understanding returns prose rather than
+ * timestamped segments — and a caption track without timings is not a caption
+ * track. A request naming either fails closed with that explanation instead of
+ * inventing an endpoint, exactly as image generation does for Anthropic.
+ */
+const TRANSCRIBE_ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions';
+
+/**
+ * The transcription model, fixed here rather than taken from the renderer.
+ *
+ * whisper-1 specifically: it is the only OpenAI transcription model that
+ * returns SEGMENTS with start and end times (`verbose_json`). The newer
+ * gpt-4o-transcribe models are better at words and return no timings, which
+ * makes them useless for this — captions are timings.
+ */
+const TRANSCRIBE_MODEL = 'whisper-1';
+
+/**
+ * OpenAI refuses an upload over 25 MB. Checked here so the failure is
+ * immediate and explains itself, rather than being a 413 after a long upload.
+ * At 16 kHz mono (what the renderer sends) this is about 13 minutes.
+ */
+const MAX_TRANSCRIBE_BYTES = 25 * 1024 * 1024;
+
 /** Stable Imagen model — not renderer-chosen, so the path concat stays closed. */
 const GEMINI_IMAGE_MODEL = 'imagen-3.0-generate-002';
 
@@ -330,6 +358,127 @@ async function generateImage(
   return { ok: true, base64: image.base64, mime: image.mime };
 }
 
+export type TranscribeResult =
+  | { ok: true; cues: Array<{ start: number; end: number; text: string }>; language?: string }
+  | { ok: false; code: string; message: string };
+
+/** A `verbose_json` segment list, defended against a response that is not one. */
+function parseWhisperSegments(parsed: unknown): Array<{ start: number; end: number; text: string }> | null {
+  const body = parsed as { segments?: unknown; text?: unknown };
+  if (!Array.isArray(body?.segments)) return null;
+  const cues: Array<{ start: number; end: number; text: string }> = [];
+  for (const raw of body.segments) {
+    const seg = raw as { start?: unknown; end?: unknown; text?: unknown };
+    if (typeof seg.start !== 'number' || typeof seg.end !== 'number' || typeof seg.text !== 'string') continue;
+    const text = seg.text.trim();
+    if (text === '') continue;
+    cues.push({ start: seg.start, end: seg.end, text });
+  }
+  return cues;
+}
+
+/**
+ * Transcribe audio bytes into timed segments.
+ *
+ * The bytes arrive over IPC and go straight into a multipart body — never to
+ * disk. A temp file would be a second copy of someone's audio living outside
+ * the app's own storage, and nothing here needs one: unlike ffprobe (which
+ * needs to seek), an HTTP upload is a stream.
+ */
+async function transcribeAudio(
+  provider: VaultProvider,
+  bytes: Uint8Array,
+  filename: string,
+  language: string | undefined,
+): Promise<TranscribeResult> {
+  if (provider !== 'openai') {
+    return {
+      ok: false,
+      code: 'unsupported',
+      message:
+        provider === 'anthropic'
+          ? 'Anthropic has no speech-to-text API. Connect an OpenAI key in Settings → Assistant to generate captions.'
+          : 'Gemini returns transcripts without timings, which cannot become captions. '
+            + 'Connect an OpenAI key in Settings → Assistant to generate captions.',
+    };
+  }
+  if (bytes.byteLength === 0) {
+    return { ok: false, code: 'bad_request', message: 'There is no audio to transcribe.' };
+  }
+  if (bytes.byteLength > MAX_TRANSCRIBE_BYTES) {
+    return {
+      ok: false,
+      code: 'bad_request',
+      message: `That is ${Math.round(bytes.byteLength / (1024 * 1024))} MB of audio; the limit is 25 MB `
+        + '(about 13 minutes). Set a work area over the part you want captioned and try again.',
+    };
+  }
+
+  const key = await getKeyForProvider(provider);
+  if (!key) {
+    return {
+      ok: false,
+      code: 'no_key',
+      message: 'No OpenAI API key is connected. Add one in Settings → Assistant.',
+    };
+  }
+
+  const form = new FormData();
+  // Copied into a fresh ArrayBuffer: the IPC-delivered view may be a slice of a
+  // larger buffer, and Blob would otherwise send the whole thing.
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  form.append('file', new Blob([copy], { type: 'audio/wav' }), filename || 'audio.wav');
+  form.append('model', TRANSCRIBE_MODEL);
+  form.append('response_format', 'verbose_json');
+  // Segment granularity is what turns a transcript into captions.
+  form.append('timestamp_granularities[]', 'segment');
+  // A declared language is a real accuracy gain and stops the model guessing;
+  // absent, whisper detects one. Validated as a short code so it cannot smuggle
+  // anything into the body.
+  if (language && /^[a-z]{2,8}(-[A-Za-z0-9]{2,8})?$/.test(language)) form.append('language', language);
+
+  let res: Response;
+  try {
+    res = await fetch(TRANSCRIBE_ENDPOINT, {
+      method: 'POST',
+      // No content-type: `fetch` sets the multipart boundary itself, and
+      // setting it by hand is the classic way to make the body unparseable.
+      headers: { authorization: `Bearer ${key}` },
+      body: form,
+      redirect: 'error',
+    });
+  } catch {
+    return { ok: false, code: 'network', message: 'Could not reach OpenAI. Check your connection and try again.' };
+  }
+
+  const text = await res.text().catch(() => '');
+  if (!res.ok) {
+    return {
+      ok: false,
+      code: codeForStatus(res.status),
+      message: text.slice(0, 400) || `OpenAI refused the transcription (${res.status}).`,
+    };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return { ok: false, code: 'provider_error', message: 'OpenAI returned a non-JSON transcription.' };
+  }
+
+  const cues = parseWhisperSegments(parsed);
+  if (!cues) {
+    return { ok: false, code: 'provider_error', message: 'OpenAI returned a transcription with no timed segments.' };
+  }
+  if (cues.length === 0) {
+    return { ok: false, code: 'empty', message: 'No speech was found in that audio.' };
+  }
+  const language_ = (parsed as { language?: unknown }).language;
+  return { ok: true, cues, ...(typeof language_ === 'string' ? { language: language_ } : {}) };
+}
+
 export function registerAiProxyIpc(): void {
   handle(
     'ai:stream',
@@ -361,6 +510,28 @@ export function registerAiProxyIpc(): void {
     controller.abort();
     inFlight.delete(requestId);
     return true;
+  });
+
+  handle('ai:transcribe', async (_event, request: unknown): Promise<TranscribeResult> => {
+    const { provider, bytes, filename, language } = (request ?? {}) as {
+      provider?: unknown;
+      bytes?: unknown;
+      filename?: unknown;
+      language?: unknown;
+    };
+
+    if (!isVaultProvider(provider)) {
+      return { ok: false, code: 'unsupported', message: 'Unknown AI provider.' };
+    }
+    if (!(bytes instanceof Uint8Array)) {
+      return { ok: false, code: 'bad_request', message: 'Audio bytes are required.' };
+    }
+    return transcribeAudio(
+      provider,
+      bytes,
+      typeof filename === 'string' ? filename : 'audio.wav',
+      typeof language === 'string' ? language : undefined,
+    );
   });
 
   handle('ai:image', async (_event, request: unknown): Promise<ImageResult> => {

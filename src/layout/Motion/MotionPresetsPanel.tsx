@@ -233,6 +233,26 @@ export function MotionPresetsPanel(): JSX.Element {
     });
   };
 
+  /**
+   * Export ONE preset.
+   *
+   * The panel could already export the whole library, which is the wrong
+   * granularity for what people actually do with presets: "send me that title
+   * animation" is one preset, and answering it with a bundle of everything
+   * someone has ever saved makes the recipient sort through a stranger's
+   * library — and silently replaces any of THEIR presets that share a name.
+   *
+   * Same bundle format as the full export, so a single preset opens with the
+   * same importer and needs no second path.
+   */
+  const doExportOne = (name: string): void => {
+    downloadBlob(
+      new Blob([exportPresets([name])], { type: 'application/json' }),
+      `${name.replace(/[\\/:*?"<>|]/g, ' ').trim() || 'preset'}.preset.json`,
+    );
+    notify({ level: 'success', message: `Exported "${name}"`, durationMs: 2000 });
+  };
+
   /** Shared outcome report for both import paths (file and cloud). Both halves
    *  are reported: an import that replaced six presets and said only "imported
    *  6" reads as additive, and the user finds out it was not when a preset they
@@ -480,6 +500,17 @@ export function MotionPresetsPanel(): JSX.Element {
                         // second apply is undoable, so the duplicate is harmless.
                         onDoubleClick={() => apply(preset)}
                       />
+                      {!preset.builtin && (
+                        <button
+                          type="button"
+                          className={styles.shareBtn}
+                          title="Export this preset to a file"
+                          aria-label={`Export preset ${preset.name}`}
+                          onClick={() => doExportOne(preset.name)}
+                        >
+                          <Icon name="download" size="sm" />
+                        </button>
+                      )}
                       {!preset.builtin && (
                         <button
                           type="button"

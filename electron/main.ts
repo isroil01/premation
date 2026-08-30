@@ -17,6 +17,8 @@ import { registerPluginNetIpc } from './pluginNet';
 import { aiEnabled, pluginsEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
+import { CLI_HELP, cliArgs, parseCli, type CliInvocation } from './cliArgs';
+import { runCliAndExit } from './cliRender';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -98,11 +100,45 @@ function handleDeepLink(url: string | undefined): void {
   }
 }
 
+// ── What kind of launch is this? ─────────────────────────────────────────
+//
+// Decided FIRST, because the answer changes what this process is allowed to do
+// — including whether it may take the single-instance lock below. Anything that
+// is not one of our command words reads as a normal launch, so a deep link, a
+// file association and Chromium's own switches all fall through untouched.
+// See electron/cliArgs.ts.
+const cliInvocation = parseCli(cliArgs(process.argv, !!process.defaultApp));
+const isHeadlessRun =
+  cliInvocation.kind === 'render'
+  || cliInvocation.kind === 'comps'
+  || cliInvocation.kind === 'captions';
+
+// These three need no app, no window and no GPU, so they answer and leave
+// rather than booting Electron to print a paragraph.
+if (cliInvocation.kind === 'help') {
+  console.log(CLI_HELP);
+  app.exit(0);
+} else if (cliInvocation.kind === 'version') {
+  console.log(app.getVersion());
+  app.exit(0);
+} else if (cliInvocation.kind === 'error') {
+  console.error(cliInvocation.message);
+  // 2, not 1: a malformed command line is a different failure from a render
+  // that ran and failed, and a pipeline should be able to tell them apart.
+  app.exit(2);
+}
+
 // Only one instance may run: on Windows a premation:// link launches a SECOND
 // copy whose argv carries the URL, and `second-instance` relays it to the
 // original (which holds the lock). Without the lock the link would spawn a
 // duplicate app instead of returning to the signed-in one.
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+//
+// A headless render is exempt, and has to be. The lock is what makes a second
+// launch hand its argument to the first and quit — correct for a deep link,
+// fatal for a CLI, which would exit 0 having rendered nothing while the open
+// editor silently ignored it. Renders are their own processes; that is the
+// whole point of being able to run several at once.
+const hasSingleInstanceLock = isHeadlessRun || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
@@ -888,12 +924,18 @@ function registerRenderIpc(): void {
    *
    * Never overwrites — an existing name gets ` (2)`, ` (3)` and so on, because
    * silently replacing a previous render is not recoverable.
+   *
+   * `overwrite` opts out, and only the headless CLI passes it: an invocation
+   * that named its output file must produce that file, or a pipeline's artifact
+   * path stops being knowable after the first run. The queue never sets it.
    */
-  handle('render:saveTo', async (_e, jobId: string, dir: string, filename: string) => {
+  handle('render:saveTo', async (_e, jobId: string, dir: string, filename: string, overwrite?: boolean) => {
     const ext = path.extname(filename).replace('.', '') || 'mp4';
     const stem = path.basename(filename, `.${ext}`);
     let target = path.join(dir, filename);
-    for (let n = 2; existsSync(target); n++) target = path.join(dir, `${stem} (${n}).${ext}`);
+    if (!overwrite) {
+      for (let n = 2; existsSync(target); n++) target = path.join(dir, `${stem} (${n}).${ext}`);
+    }
     await moveOutput(jobId, ext, target);
     return { path: target };
   });
@@ -1225,10 +1267,96 @@ async function logGpuDiagnostics(): Promise<void> {
   }
 }
 
+/**
+ * The renderer reports its own edition on first paint so a build whose two
+ * halves disagree says so. Not authoritative — see preload's `reportEdition`.
+ *
+ * Registered by BOTH launch shapes. The renderer sends this unconditionally
+ * from its entry module, so leaving it out of the headless path did not make it
+ * un-sent — it made every CLI run print an Electron "no handler registered"
+ * stack trace over the render's own output.
+ */
+function registerEditionReportIpc(): void {
+  handle('edition:report', (_event, reported: unknown) => {
+    const result = assertRendererEditionMatches(reported);
+    if (!result.ok) console.error(result.message);
+    return result;
+  });
+}
+
+/** Resolve `local-file://` URLs (imported media) to real files on disk. */
+function registerLocalFileProtocol(): void {
+  protocol.handle('local-file', (request) => {
+    let filePath = request.url.replace(/^local-file:\/\//, '');
+    filePath = decodeURIComponent(filePath);
+    // On Windows, local-file://C:/... sometimes retains a slash or format that needs normalize/file URL format
+    if (process.platform === 'win32') {
+      filePath = filePath.replace(/^\/([A-Za-z]:)/, '$1');
+    }
+    return net.fetch('file://' + filePath);
+  });
+}
+
+/**
+ * Boot just enough of the app to render one file, then exit.
+ *
+ * The registrations here are a deliberately SHORTER list than a GUI launch's,
+ * and the omissions are the point. A headless render never signs in, never
+ * publishes, never talks to a provider and never loads a plugin's network
+ * bridge, so none of those channels are opened — the same argument the GUI path
+ * makes for gating them by edition, applied to a process that has even less
+ * business holding them open. What is left is the disk (the project, its
+ * assets, its blobs) and ffmpeg.
+ */
+function bootHeadlessRun(
+  cli: Extract<CliInvocation, { kind: 'render' } | { kind: 'comps' } | { kind: 'captions' }>,
+): void {
+  registerLocalFileProtocol();
+  registerFileIpc();
+  registerBundleIpc();
+  registerBlobIpc();
+  registerIndexIpc(app);
+  registerThumbIpc(app);
+  registerRenderIpc();
+  registerEditionReportIpc();
+
+  void runCliAndExit(
+    cli.kind === 'render'
+      ? { request: { kind: 'render', job: cli.job }, output: cli.output }
+      : cli.kind === 'captions'
+        ? {
+            request: {
+              kind: 'captions',
+              projectPath: cli.projectPath,
+              outPath: cli.outPath,
+              ...(cli.comp ? { comp: cli.comp } : {}),
+              ...(cli.language ? { language: cli.language } : {}),
+            },
+            output: cli.output,
+          }
+        : { request: { kind: 'comps', projectPath: cli.projectPath }, output: cli.output },
+  );
+}
+
 app.whenReady().then(() => {
   // A second instance already relayed its deep link and quit; this one should not
   // have reached whenReady, but guard anyway rather than open a duplicate window.
   if (!hasSingleInstanceLock) return;
+
+  // A render, not an editor: no menu, no updater, no managed backend, no
+  // protocol registration, no GPU diagnostics timer — and no window anyone can
+  // see. It exits the process itself once the file is written.
+  // Re-tested rather than reusing `isHeadlessRun`: a boolean does not narrow
+  // the union, and `bootHeadlessRun` may only be handed an invocation that
+  // actually carries a job.
+  if (
+    cliInvocation.kind === 'render'
+    || cliInvocation.kind === 'comps'
+    || cliInvocation.kind === 'captions'
+  ) {
+    bootHeadlessRun(cliInvocation);
+    return;
+  }
 
   // Sweep render staging dirs older than two days. They leak whenever a save
   // fails mid-move, the app crashes mid-export, or a finished render's save
@@ -1261,16 +1389,7 @@ app.whenReady().then(() => {
   // Claim the premation:// scheme so the OAuth callback can hand the code back.
   registerProtocolClient();
 
-  // Protocol handler to resolve local files under the local-file:// scheme
-  protocol.handle('local-file', (request) => {
-    let filePath = request.url.replace(/^local-file:\/\//, '');
-    filePath = decodeURIComponent(filePath);
-    // On Windows, local-file://C:/... sometimes retains a slash or format that needs normalize/file URL format
-    if (process.platform === 'win32') {
-      filePath = filePath.replace(/^\/([A-Za-z]:)/, '$1');
-    }
-    return net.fetch('file://' + filePath);
-  });
+  registerLocalFileProtocol();
 
   registerFileIpc();
   registerBundleIpc();
@@ -1331,13 +1450,7 @@ app.whenReady().then(() => {
     registerAiMediaProxyIpc();
   }
 
-  // The renderer reports its own edition on first paint so a build whose two
-  // halves disagree says so. Not authoritative — see preload's `reportEdition`.
-  handle('edition:report', (_event, reported: unknown) => {
-    const result = assertRendererEditionMatches(reported);
-    if (!result.ok) console.error(result.message);
-    return result;
-  });
+  registerEditionReportIpc();
 
   // A normal build is a CLIENT: it talks to a deployed motion-back at the origin
   // baked in by VITE_BACKEND_ORIGIN, or to one you run yourself on localhost:4000
@@ -1371,6 +1484,10 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopBackend();
+  // A headless run owns its own exit (`runCliAndExit`). Quitting here as well
+  // would race it: the hidden window closes the moment the render resolves, and
+  // on a fast `comps` listing that fires before the result has been printed.
+  if (isHeadlessRun) return;
   if (process.platform !== 'darwin') app.quit();
 });
 

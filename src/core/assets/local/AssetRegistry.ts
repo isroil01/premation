@@ -24,6 +24,16 @@ const REGISTRY_VERSION = '1.0.0';
 export interface AssetImportMeta {
   name: string;
   mime: string;
+  /**
+   * Keep this id instead of deriving one from the hash.
+   *
+   * For COLLECTING an asset the document already references. Layers bind to a
+   * library entry by `assetId`, so minting a fresh hash-derived id while
+   * copying the bytes into the bundle would orphan every layer using it — the
+   * asset would be safely stored and no longer reachable, which is worse than
+   * not storing it. Fresh imports pass nothing and get the content-addressed id.
+   */
+  id?: string;
   /** Override the MIME-inferred kind. */
   type?: LocalAssetType;
   width?: number;
@@ -45,7 +55,7 @@ export class AssetRegistry {
    */
   async importBytes(bytes: Uint8Array, meta: AssetImportMeta): Promise<AssetRecord> {
     const hash = await this.hasher(bytes);
-    const id = `asset_${hash.slice(0, 12)}`;
+    const id = meta.id ?? `asset_${hash.slice(0, 12)}`;
 
     const existing = this.records.get(id);
     if (existing) return existing;

@@ -89,7 +89,9 @@ Not started. Awaiting a decision on A vs B.
 apply one. 24 tests. Restricted to `text`/`color`/`number` as recommended;
 media fields are reported as skipped rather than silently ignored.
 
-**Not shipped, and NOT a small remainder: one render per row.**
+**Not shipped at the time of writing, and NOT a small remainder: one render per
+row.** (It has since shipped — see the update at the end of this file. The
+analysis below is why it took the shape it did, and is kept.)
 
 The obvious implementation — apply row *i*, `addJob(...)`, repeat — produces
 silently wrong files. `renderJob` calls `renderVideo`, which calls
@@ -118,3 +120,34 @@ Two ways out, and they are different sizes:
 **Recommendation:** the sequential driver, sequenced AFTER Step 3, because
 pause/resume is the thing that makes a long batch usable and building the driver
 first would mean building it twice.
+
+---
+
+## Update — the sequential driver shipped
+
+Built as recommended: **the sequential driver**, in
+`src/core/template/batchRender.ts`. It applies a row, awaits the whole render,
+then applies the next; it never touches `addJob`, so the "forty identical
+files" defect described above cannot occur. Per-job document snapshots remain
+the larger, more general fix and remain unbuilt — a batch still cannot
+interleave with user-queued renders, and that is stated rather than hidden.
+
+Three things the design above did not anticipate, all of which turned out to
+matter more than pause/resume:
+
+1. **Naming is the real failure mode.** "One render per row" is only useful if
+   the rows land in different files, and an overwriting CLI plus a constant
+   output name silently leaves one. So the pattern is validated before anything
+   renders — `patternVariesPerRow` — on both surfaces, and the panel previews
+   what row 1 will be called.
+2. **The template has to be put back.** Filling rows mutates the open document.
+   Values are captured before the loop and restored in a `finally`, as one undo
+   entry, so an abort or a mid-batch error still hands the user their own
+   project back rather than the last row's copy.
+3. **A CLI wanted it first.** The headless renderer (`docs/CLI.md`) is
+   inherently sequential and has no queue to interleave with, which is what made
+   the driver the obviously correct shape rather than a compromise. The editor
+   panel then reuses the same loop — see `batchRenderEditor.ts`.
+
+Pause/resume (Step 3) is still not built for batches. Stopping a batch abandons
+the in-flight row and keeps the finished ones.

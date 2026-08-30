@@ -70,6 +70,8 @@ import type { SaveOutcome } from '@core/project/ProjectManager';
 import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurrentProject';
 import { renderStillFrame } from '@core/export/offlineRenderer';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
+import { buildCaptionCommands } from '@core/captions/captionCommands';
+import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
@@ -976,6 +978,8 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildMergePathCommands(),
     ...buildProjectCommands(),
     ...buildRigPresetCommands(),
+    ...buildCaptionCommands(),
+    ...buildReframeCommands(),
   ];
 }
 

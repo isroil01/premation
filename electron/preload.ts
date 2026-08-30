@@ -63,10 +63,24 @@ const bridge = {
     probeHdr: () => ipcRenderer.invoke('render:probeHdr') as Promise<{ libx265: boolean }>,
     cancel: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),
     save: (jobId: string, defaultName: string) => ipcRenderer.invoke('render:save', jobId, defaultName),
-    saveTo: (jobId: string, dir: string, filename: string) =>
-      ipcRenderer.invoke('render:saveTo', jobId, dir, filename),
+    saveTo: (jobId: string, dir: string, filename: string, overwrite?: boolean) =>
+      ipcRenderer.invoke('render:saveTo', jobId, dir, filename, overwrite),
     chooseOutputDir: () => ipcRenderer.invoke('render:chooseOutputDir'),
     cleanJob: (jobId: string) => ipcRenderer.invoke('render:cleanJob', jobId),
+  },
+
+  /**
+   * The headless CLI's channel, and the only one the /render route uses.
+   *
+   * PULL, not push: the page asks for its job when it is ready, so there is no
+   * race between the window finishing its load and the route mounting. Absent
+   * outside a `premation render` launch — `job()` simply rejects, and the
+   * route treats that as "not a CLI run" and does nothing.
+   */
+  cli: {
+    job: () => ipcRenderer.invoke('cli:job'),
+    progress: (fraction: number) => ipcRenderer.send('cli:progress', fraction),
+    done: (report: unknown) => ipcRenderer.send('cli:done', report),
   },
 
   diag: {
@@ -244,6 +258,8 @@ const bridge = {
     },
     /** One image as base64 bytes. Counterpart to motion-back `POST /ai/image`. */
     image: (request: unknown) => ipcRenderer.invoke('ai:image', request),
+    /** Speech → timed segments. OpenAI only; see aiProxy's TRANSCRIBE_ENDPOINT. */
+    transcribe: (request: unknown) => ipcRenderer.invoke('ai:transcribe', request),
     video: (request: unknown) => ipcRenderer.invoke('ai:video', request),
     speech: (request: unknown) => ipcRenderer.invoke('ai:speech', request),
     model3d: (request: unknown) => ipcRenderer.invoke('ai:3d', request),

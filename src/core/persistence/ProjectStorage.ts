@@ -24,6 +24,7 @@ import type { EditorDocument } from '@core/api/cloudDocument';
 import { BundleRepository } from '@core/project/bundle/BundleRepository';
 import { getBundleRepository, isBundlePath } from '@core/project/bundle/bundleProjectIO';
 import { isLocalFirst } from '@core/config/flags';
+import { collectBundleAssetsForSave } from '@core/assets/local/bundleAssetCollect';
 
 export interface ProjectStorage<T extends VersionedDocument = VersionedDocument> {
   save(path: string, doc: T): Promise<void>;
@@ -52,6 +53,20 @@ export class BundleProjectStorage<T extends VersionedDocument = VersionedDocumen
   constructor(private readonly repo: BundleRepository = getBundleRepository()) {}
 
   async save(path: string, doc: T): Promise<void> {
+    /*
+      COLLECT before writing.
+
+      Footage imported before this bundle existed lives only in this session's
+      object URLs, so the document references bytes the bundle does not have.
+      Saved as-is the bundle looks complete, weighs nothing, and renders black
+      on any other machine — the failure is invisible until the project has
+      already travelled. Copying the bytes in and repointing the document is
+      what makes a `.motion` self-contained.
+
+      Best-effort by construction: a save must not fail because one object URL
+      died. See `bundleAssetCollect`.
+    */
+    await collectBundleAssetsForSave(path, doc as unknown as EditorDocument);
     await this.repo.save(path, doc as unknown as EditorDocument);
   }
 

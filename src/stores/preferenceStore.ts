@@ -42,6 +42,18 @@ export interface Preferences {
    */
   retainOriginalSvg: boolean;
   /**
+   * While the editor is idle, cache the whole WORK AREA rather than a few
+   * seconds ahead of the playhead.
+   *
+   * On by default, because it is what makes a preview real-time: After Effects
+   * fills the work area for the same reason, and a five-second look-ahead only
+   * ever helps the first press of play. The pass yields on a time budget,
+   * stands down on any interaction, and runs once per invalidation rather than
+   * continuously — but it is still real GPU work, and someone on a laptop who
+   * would rather it stayed quiet should be able to say so.
+   */
+  idleCacheWorkArea: boolean;
+  /**
    * Draw the thin bounding box around every layer in the 3D reference overlay.
    *
    * A PREFERENCE, not view state, and the distinction is the whole reason this
@@ -127,6 +139,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   confirmOnClose: true,
   timelineHeaderWidth: 460,
   retainOriginalSvg: true,
+  idleCacheWorkArea: true,
   showLayerBounds: true,
   useProxies: true,
   libraryFavorites: [],

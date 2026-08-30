@@ -623,7 +623,14 @@ export function ScenePanel(): JSX.Element {
           onChange={(e) => setQuery(e.currentTarget.value)}
         />
       </div>
-      <div className={styles.body}>
+      {/*
+        A pick-whip drop surface. Rows already carry `data-id` from the shared
+        TreeView and that id IS the scene node id here, so scoping the container
+        is the entire integration — see `@core/whip/whipTarget` for why the
+        alternative (teaching TreeView to emit whip attributes) would be worse
+        for a component six panels use with four kinds of id.
+      */}
+      <div className={styles.body} data-whip-scope="layer">
         {filtered.length ? (
           <TreeView
             nodes={filtered}

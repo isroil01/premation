@@ -132,7 +132,8 @@ registry, this section is expected to drift, so re-check before quoting it.
 
 **Animation**
 - Keyframes with full easing control and a graph editor
-- **39 presets** — 15 animation, 18 text, 6 behaviour
+- **78 presets** — 15 animation, 18 text, 6 behaviour, 5 scenery, 34 film look —
+  plus your own, saved from any layer and exported as a shareable file
 - Per-glyph text animators with a real selector stack
 - Expressions
 - Bone and puppet mesh rigging (FK, linear-blend skinning, FABRIK IK, ARAP)
@@ -143,6 +144,15 @@ registry, this section is expected to drift, so re-check before quoting it.
 - SVG — static files import as one intact layer; animated SVG (CSS or SMIL)
   converts to keyframes
 - Lottie / Bodymovin
+- Captions — `.srt` / `.vtt` in and out, or generated from the composition's
+  own audio ([`docs/CAPTIONS.md`](docs/CAPTIONS.md))
+
+**Delivery**
+- `premation render` — render a project from a terminal, with no editor open
+  ([`docs/CLI.md`](docs/CLI.md))
+- Data-driven batches — one file per row of a CSV, filled through template fields
+- Auto-reframe — retarget a composition to 9:16, 1:1, 4:5 or 16:9, following the
+  subject and cutting where the edit cuts ([`docs/AUTO_REFRAME.md`](docs/AUTO_REFRAME.md))
 
 **Engine**
 - One GPU render graph, WebGPU or WebGL2, used by the viewport *and* the exporter
@@ -299,6 +309,12 @@ Deep dives on individual subsystems:
 - [`docs/MOTION_FORMAT_FREEZE.md`](docs/MOTION_FORMAT_FREEZE.md) — what the
   `.motion` bundle is, the six migrations behind it, and what a 1.0
   compatibility promise would actually require
+- [`docs/CLI.md`](docs/CLI.md) — headless rendering and data-driven batches
+- [`docs/CAPTIONS.md`](docs/CAPTIONS.md) — subtitles in, out, and from speech
+- [`docs/AUTO_REFRAME.md`](docs/AUTO_REFRAME.md) — how the crop decides where to
+  look, and why it jumps at cuts
+- [`docs/PICK_WHIP.md`](docs/PICK_WHIP.md) — drag-to-link, and how a panel
+  becomes a drop target
 
 Prose drifts faster than code. Where a document and the source disagree, the
 source is right — and a PR fixing the document is very welcome.

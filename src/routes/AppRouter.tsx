@@ -39,6 +39,9 @@ const AuthPage = lazy(() => import('../pages/AuthPage').then(m => ({ default: m.
 const DashboardPage = lazy(() => import('../pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
 const EditorPage = lazy(() => import('../pages/EditorPage').then(m => ({ default: m.EditorPage })));
 const PopoutRoute = lazy(() => import('../pages/PopoutRoute').then(m => ({ default: m.PopoutRoute })));
+// The headless CLI's route. Lazy like the editor because it pulls the same
+// engine in, and because a GUI launch must never pay for it.
+const RenderPage = lazy(() => import('../pages/RenderPage').then(m => ({ default: m.RenderPage })));
 const VerifyEmailPage = lazy(() =>
   import('../pages/VerifyEmailPage').then(m => ({ default: m.VerifyEmailPage })),
 );
@@ -129,22 +132,53 @@ function AppLayout(): JSX.Element {
   );
 }
 
+/**
+ * The headless render route, recognised before anything else mounts.
+ *
+ * `premation render` loads `#/render` into a hidden window, and what it needs
+ * is the ENGINE, not the application. Routing it here — above the router, above
+ * the auth splash — is what keeps the app shell out of it: no title bar, no
+ * modal hosts, no OAuth deep-link listener, and no auto-update poll (which in a
+ * headless launch calls an IPC channel that deliberately is not registered, and
+ * logged an error on every run). It is also outside RequireAuth on purpose:
+ * rendering a project already on this disk is not an account-bound operation,
+ * and a build agent cannot answer a sign-in screen.
+ *
+ * The page itself refuses to act unless the main process really has a job for
+ * it, so a stray `#/render` in a dev build renders a line of text and stops.
+ */
+function isHeadlessRenderRoute(): boolean {
+  return typeof window !== 'undefined' && window.location.hash.startsWith('#/render');
+}
+
 export function AppRouter(): JSX.Element {
   const hydrate = useAuthStore((s) => s.hydrate);
   const [booted, setBooted] = useState(false);
+  // Read once, at first render: the hash cannot change in a headless window,
+  // and a hook after the early return would be a conditional hook.
+  const [headless] = useState(isHeadlessRenderRoute);
 
   useEffect(() => {
     // No accounts in the local edition, so there is no stored token to validate
     // — skip the call rather than let it reach for a backend that isn't there.
     // Boot immediately: this splash exists only to hide the token round-trip.
-    if (!cloudAccountsEnabled()) {
+    // A headless render has no session to validate and nothing to gate on it.
+    if (headless || !cloudAccountsEnabled()) {
       setBooted(true);
       return;
     }
     let alive = true;
     hydrate().finally(() => { if (alive) setBooted(true); });
     return () => { alive = false; };
-  }, [hydrate]);
+  }, [hydrate, headless]);
+
+  if (headless) {
+    return (
+      <Suspense fallback={null}>
+        <RenderPage />
+      </Suspense>
+    );
+  }
 
   if (!booted) return <BootSplash />;
 

@@ -1,0 +1,96 @@
+/* Object Matte — the model installer, in a settings row.
+   Column-flowing because the URL, the progress and the explanation each need a
+   full line; the surrounding rows are single-line and stay that way. */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 320px;
+}
+
+.installRow,
+.readyRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.installRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.readyRow {
+  justify-content: space-between;
+}
+
+.ready {
+  font-size: var(--font-size-micro);
+  color: var(--color-success);
+}
+
+.progressText {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The URL of an installed model. One line, ellipsised, full value on hover —
+   it is provenance rather than something to read every time. */
+.source {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progressTrack {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border-subtle);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 120ms linear;
+}
+
+/* No Content-Length means no percentage, so the bar says "working" instead of
+   claiming a position it does not know. */
+.progressIndeterminate {
+  height: 100%;
+  width: 33%;
+  background: var(--color-primary);
+  animation: objectMatteSlide 1.1s ease-in-out infinite;
+}
+
+@keyframes objectMatteSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* Respect a user who has asked for less motion: the bar holds still and simply
+   reads as an accent, which is no less informative than a sliding one. */
+@media (prefers-reduced-motion: reduce) {
+  .progressIndeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+.error {
+  font-size: var(--font-size-micro);
+  color: var(--color-danger);
+  line-height: 1.4;
+}
+
+.hint {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}

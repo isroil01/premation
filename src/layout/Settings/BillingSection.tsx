@@ -339,7 +339,10 @@ export function BillingSection(): JSX.Element | null {
         <div className={styles.callout}>
           <Icon name="info" size="sm" className={styles.calloutIcon} />
           <div className={styles.calloutBody}>
-            <strong>Confirm your email to start your {summary.trialDays}-day trial.</strong>
+            <strong>
+              Confirm your email to start your{' '}
+              {summary.trialLabel ?? `${summary.trialDays}-day`} trial.
+            </strong>
             <span>
               Your projects are read-only until then — you can open and export them, but not save.
             </span>

@@ -5,6 +5,7 @@ import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
 import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
+import { restoreSamModelAtBoot } from '@core/tracking/samModelInstall';
 import { parseEdition, setEdition } from '@core/config/edition';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import { installPluginNetBridge } from '@core/plugins/pluginNetBridge';
@@ -66,6 +67,17 @@ setLocalFirst(
       if (r.status === 'ok') console.info('[sam] neural segmenter ready');
       else console.warn(`[sam] ${r.status}: ${r.reason}`);
     });
+  } else {
+    /*
+      No build-time URL: look for a model the USER installed.
+
+      This is the path that makes the feature reachable at all. A Vite env var
+      is a thing a packager sets, not a thing a person does, so the model now
+      arrives through Settings ▸ Object Matte — downloaded once, on an explicit
+      press, and cached in IndexedDB. This call touches the network never: it
+      reads the cache, and returns immediately when it is empty.
+    */
+    restoreSamModelAtBoot();
   }
 }
 

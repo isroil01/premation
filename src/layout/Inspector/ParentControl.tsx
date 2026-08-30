@@ -1,12 +1,20 @@
 /**
- * ParentControl (Prompt E3) — the layer's "Parent" picker in the inspector.
- * Choosing a parent reparents the layer WITHOUT moving it on screen; the option
- * list already excludes the layer itself and its descendants, so it can never
- * create a cycle. "None" parents the layer back to the composition root.
+ * ParentControl — the layer's "Parent" picker in the inspector.
+ *
+ * Two ways to set it, because people reach for two. The DROPDOWN is the one you
+ * use when you know the layer's name and it is off screen. The PICK-WHIP is the
+ * one every After Effects user reaches for first: drag the spiral onto a layer
+ * in the scene tree or the timeline and it becomes the parent. Both go through
+ * `reparentNode`, so a layer never moves on screen when it is parented, and
+ * neither can create a cycle — the dropdown's option list and the whip's
+ * `accept` ask `eligibleParents` the same question.
+ *
+ * "None" parents the layer back to the composition root.
  */
 
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
+import { PickWhip } from '@components/PickWhip';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { eligibleParents, parentOfNode, reparentNode } from '@core/scene/parenting';
@@ -44,6 +52,14 @@ export function ParentControl({ nodeId }: { nodeId: string }): JSX.Element | nul
   return (
     <div className={styles.row}>
       <span className={styles.label}>Parent</span>
+      <PickWhip
+        label="Parent pick-whip — drag onto a layer"
+        // The same question the dropdown's list answers, asked of one id:
+        // `eligibleParents` already excludes this layer and its descendants,
+        // so a cycle cannot be dropped and the line greys out over one.
+        accept={(target) => options.some((o) => o.id === target.nodeId)}
+        onPick={(target) => reparentNode(nodeId, target.nodeId)}
+      />
       <Dropdown
         placement="left-start"
         trigger={

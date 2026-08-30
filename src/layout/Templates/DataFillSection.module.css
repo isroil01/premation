@@ -76,3 +76,42 @@
   color: var(--color-text-tertiary);
   line-height: 1.4;
 }
+
+/* ── Render every row ──────────────────────────────────────────────────
+   A distinct block, not another row of the stepper: stepping is reversible
+   and instant, rendering writes files and takes minutes. The rule marks that
+   change of consequence. */
+.batch {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.batchRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The pattern field takes the room; the format button stays its own width. */
+.batchRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.progressTrack {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border-subtle);
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--color-primary);
+  /* Rows finish seconds apart, so the bar would otherwise jump. Short enough
+     that it still reads as progress rather than as an animation. */
+  transition: width 120ms linear;
+}

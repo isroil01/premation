@@ -31,6 +31,7 @@ import { cn } from '@utils/cn';
 import { CacheBars } from './CacheBars';
 import { Icon, type IconName } from '@components/Icon';
 import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
+import { PickWhip } from '@components/PickWhip';
 import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
 import { snapKeyframeGroup, type SnapTarget } from './keyframeSnap';
 import { scaleSelection, scaleGrip } from './keyframeTimeScale';
@@ -1359,6 +1360,8 @@ function Timeline({
               return (
                 <PropertyHeader
                   key={`h_${row.track.id}_${row.prop.prop}`}
+                  whipNodeId={row.track.id}
+                  whipProp={row.prop.prop}
                   label={row.prop.label}
                   style={propStyle}
                   keyframes={row.prop.keyframes}
@@ -1867,6 +1870,11 @@ const Ruler = memo(RulerImpl);
 // wrote `node.color` directly instead of through `setNodeLabelColor`, so its
 // choice never even saved.)
 
+/*
+  `data-whip-layer` on the row makes it a pick-whip drop target. `track.id` IS
+  the scene node id — `deriveTimelineTracks` builds one track per node — so no
+  lookup is needed on the drop side. See `@core/whip/whipTarget`.
+*/
 const TrackHeader = memo(function TrackHeader({
   track,
   index,
@@ -1962,6 +1970,7 @@ const TrackHeader = memo(function TrackHeader({
       className={cn(styles.trackHeader, selected && styles.trackHeaderSelected)}
       style={{ ...style, '--track-color': track.color ?? 'transparent' } as CSSProperties}
       data-track-id={track.id}
+      data-whip-layer={track.id}
       data-hidden={hidden || undefined}
       data-ghost={track.ghosted || undefined}
       onClick={(e) => onClick(e.ctrlKey || e.metaKey || e.shiftKey)}
@@ -2203,7 +2212,18 @@ const TrackHeader = memo(function TrackHeader({
         />
       </div>
 
+      {/*
+        "Parent & Link" — the column's name, and now both halves of it. The
+        whip is the gesture; the dropdown is for a parent that is scrolled out
+        of sight. Both call `onParentChange`, so parenting cannot mean two
+        different things depending on which control was used.
+      */}
       <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
+        <PickWhip
+          label="Parent pick-whip — drag onto a layer"
+          accept={(target) => parentOptions.some((o) => o.id === target.nodeId)}
+          onPick={(target) => onParentChange?.(target.nodeId)}
+        />
         <Dropdown
           placement="bottom-start"
           trigger={
@@ -2251,6 +2271,8 @@ export function PropertyHeader({
   onToggleKeyframe,
   onStopwatch,
   onSeek,
+  whipNodeId,
+  whipProp,
 }: {
   label: string;
   style: CSSProperties;
@@ -2272,6 +2294,9 @@ export function PropertyHeader({
   /** Enable animation for a static placeholder row (create first keyframe). */
   onStopwatch?: () => void;
   onSeek?: (time: number) => void;
+  /** The layer and property this row edits, so a pick-whip can land on it. */
+  whipNodeId?: string;
+  whipProp?: string;
 }): JSX.Element {
   const sorted = useMemo(() => [...keyframes].sort((a, b) => a.time - b.time), [keyframes]);
   const at = sorted.find((k) => Math.abs(k.time - currentTime) < KEYFRAME_EPSILON);
@@ -2351,6 +2376,8 @@ export function PropertyHeader({
       <div
         className={cn(styles.propHeader, styles.propHeaderStatic, selected && styles.propHeaderSelected)}
         style={style}
+        data-whip-layer={whipNodeId}
+        data-whip-prop={whipProp}
       >
         {stopwatch}
         {name}
@@ -2360,7 +2387,12 @@ export function PropertyHeader({
   }
 
   return (
-    <div className={cn(styles.propHeader, selected && styles.propHeaderSelected)} style={style}>
+    <div
+      className={cn(styles.propHeader, selected && styles.propHeaderSelected)}
+      style={style}
+      data-whip-layer={whipNodeId}
+      data-whip-prop={whipProp}
+    >
       {stopwatch}
       {name}
       {fields}

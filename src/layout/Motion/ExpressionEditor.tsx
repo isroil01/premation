@@ -1,9 +1,21 @@
 /**
- * ExpressionEditor — attach a formula that drives a property each frame
- *. VS-Code flavored: JetBrains Mono, quick-insert
- * autocomplete for the API, inline plain-language errors, a live value that
- * updates as you scrub, and AI-assist that turns intent into an editable
- * expression (never a locked result).
+ * ExpressionEditor — attach a formula that drives a property each frame.
+ *
+ * VS-Code flavoured: JetBrains Mono, quick-insert autocomplete for the API,
+ * inline plain-language errors, a live value that updates as you scrub, and
+ * AI-assist that turns intent into an editable expression (never a locked
+ * result).
+ *
+ * ── The pick-whip ──────────────────────────────────────────────────────
+ * Everything above is nicer than After Effects' expression field, and none of
+ * it replaces the one gesture people actually use to write an expression:
+ * dragging a whip onto another property. Typing `layer('Hero', 'y')` requires
+ * knowing the function, the layer's exact name and the property's internal key;
+ * dragging requires knowing which layer you meant.
+ *
+ * Dropping on a PROPERTY row references that property. Dropping on a LAYER
+ * references the same property this expression is on — "follow that layer's Y",
+ * which is what the gesture means when you drag from Y, and what AE produces.
  */
 
 import { useMemo, useRef, useState } from 'react';
@@ -21,6 +33,9 @@ import {
   type TokenKind,
 } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { PickWhip } from '@components/PickWhip';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { insertAtCaret, whipExpression } from '@core/whip/whipTarget';
 import styles from './ExpressionEditor.module.css';
 
 const TOKEN_CLASS: Record<TokenKind, string | undefined> = {
@@ -91,6 +106,30 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
     commit(next);
   };
 
+  /**
+   * Insert a reference to whatever the whip landed on.
+   *
+   * The caret is read from the textarea rather than from `caret` state: the
+   * pointer-down that started the drag did not touch the textarea, so the state
+   * value is whatever it was before — and a whip dropped after clicking away
+   * would otherwise insert at a stale position.
+   */
+  const insertWhipReference = (target: { nodeId: string; prop?: string }): void => {
+    const name = defaultSceneGraph.getNode(target.nodeId)?.name;
+    if (!name) return;
+    const el = taRef.current;
+    const at = el?.selectionStart ?? draft.length;
+    const next = insertAtCaret(draft, at, whipExpression(name, target.prop ?? prop));
+    commit(next.text);
+    setCaret(next.caret);
+    // Focus and caret restored on the next tick, after the controlled value
+    // has been re-rendered — setting selection before that puts it at the end.
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
   const generate = (): void => {
     if (!intent.trim()) return;
     commit(suggestExpression(intent));
@@ -101,6 +140,15 @@ export function ExpressionEditor({ nodeId, prop }: { nodeId: string; prop: strin
       <div className={styles.header}>
         <span className={styles.title}>
           <Icon name="track" size="sm" className={styles.fx} /> Expression · {prop}
+        </span>
+        <span className={styles.headerActions}>
+          <PickWhip
+            label="Expression pick-whip — drag onto a layer or property"
+            // Itself excluded: an expression that reads its own property is a
+            // cycle, and the evaluator would refuse it after the fact.
+            accept={(target) => !(target.nodeId === nodeId && (target.prop ?? prop) === prop)}
+            onPick={insertWhipReference}
+          />
         </span>
         {attached ? (
           <span className={styles.headerActions}>

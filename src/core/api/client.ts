@@ -422,6 +422,12 @@ export interface BillingSummary {
   emailVerified: boolean;
   trialEndsAt: string | null;
   trialDays: number;
+  /**
+   * The trial length in words ("5 months"), phrased server-side next to the
+   * constant so the editor never renders "150-day". Optional: a desktop build
+   * can be talking to a server that predates the field.
+   */
+  trialLabel?: string;
   /** Raw Lemon Squeezy status: active | past_due | cancelled | … */
   subscriptionStatus: string | null;
   currentPeriodEnd: string | null;

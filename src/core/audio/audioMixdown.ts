@@ -128,7 +128,7 @@ export interface AudioMixdown {
  * all muted) or Web Audio is unavailable — the caller then keeps the video
  * silent, exactly as before, rather than failing. Deterministic: no wall-clock.
  */
-async function mixdownBuffer(startSec: number, endSec: number, scopeRootId?: string): Promise<AudioBuffer | null> {
+export async function mixdownBuffer(startSec: number, endSec: number, scopeRootId?: string): Promise<AudioBuffer | null> {
   const Ctor = offlineCtor();
   const duration = Math.max(0, endSec - startSec);
   if (!Ctor || duration <= 0) return null;

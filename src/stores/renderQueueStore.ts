@@ -12,20 +12,20 @@
  */
 
 import { create } from 'zustand';
+import { downloadBlob } from '@core/export/exportManager';
 import {
-  exportAudioEntries,
-  renderSequenceZip,
-  renderExrSequenceZip,
-  renderVideo,
-  downloadBlob,
-  renderGifBlob,
-  createResumableVideoRender,
-  type ExportOptions,
-  type ResumableVideoRender,
-} from '@core/export/exportManager';
-import { canEncodeLocally, type VideoFormat } from '@core/export/videoSink';
-import { DEFAULT_COMPOSITION } from './compositionStore';
-import { compSizeOf } from '@core/composition/compSizes';
+  outputExtFor,
+  renderJobOutput,
+  type JobResume,
+  type OutputFormat,
+  type RenderJobSpec,
+} from '@core/export/renderJob';
+
+// Re-exported so the panels, the Export dialog and the AI export tool keep
+// importing the queue's vocabulary from the queue. The DEFINITIONS moved to
+// @core/export/renderJob when the headless CLI became a second caller of the
+// same render; where they are declared is not the panels' business.
+export { outputExtFor, type OutputFormat };
 
 /**
  * Tell plugins a render left the queue — a post-render action.
@@ -64,63 +64,19 @@ function notifyPlugins(info: {
 
 export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
 
-export type OutputFormat = VideoFormat | 'png-sequence' | 'jpg-sequence' | 'exr-sequence';
-
-export interface RenderJob {
+/**
+ * A queued render: what to render (`RenderJobSpec`) plus what a QUEUE has to
+ * know about it. The render half is shared with the headless CLI, which has an
+ * id-less, statusless, progressless version of the same work.
+ */
+export interface RenderJob extends RenderJobSpec {
   id: string;
-  compositionName: string;
-  /**
-   * WHICH composition to render.
-   *
-   * Only `compositionName` existed — a label — so every job rendered whatever
-   * comp happened to be active. Queue three comps, get three copies of one,
-   * each correctly named.
-   */
-  compositionId?: string;
-  outputPath: string;
-  format: OutputFormat;
   status: RenderStatus;
   /** Render progress 0–1. */
   progress: number;
   /** Wall-clock render time in ms (set when done or failed). */
   elapsedMs?: number;
   error?: string;
-  /** Output frame size. May differ from the composition's own size (half-res
-   *  previews, oversized deliverables). */
-  width: number;
-  height: number;
-  /**
-   * The COMPOSITION's own size, which is not the same thing as the output size.
-   *
-   * These were conflated: the comp was described to the renderer as being
-   * `width × height` — the output size — so a job rendered at anything other than
-   * full resolution described a comp that did not exist. Every layer positioned
-   * beyond the shrunken bounds fell outside the frame, and a half-resolution
-   * render came out empty. Optional so jobs queued before this existed still run,
-   * falling back to the output size.
-   */
-  compWidth?: number;
-  compHeight?: number;
-  fps: number;
-  durationSec: number;
-  /**
-   * The export RANGE, in seconds (end exclusive), captured at QUEUE time.
-   *
-   * Without these the job read `getWorkArea()` at RENDER time — a live,
-   * GLOBAL value belonging to whichever comp is focused — so "Entire
-   * composition" still rendered only the current work area, and queueing
-   * comp A then editing comp B's in/out rendered A's picture over B's range.
-   * Absent (legacy jobs), the whole comp renders.
-   */
-  rangeStartSec?: number;
-  rangeEndSec?: number;
-  transparent: boolean;
-  /** The comp's own background. Was hardcoded '#101014' at render time. */
-  background?: string;
-  /** Encoder quality tier. Draft renders fast and looks it. */
-  quality?: 'high' | 'medium' | 'draft';
-  /** mov only — ProRes flavour, captured from the dialog at queue time. */
-  proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
   /**
    * A paused render's live state: the open sink (staged frames intact on disk)
    * and the offset the loop stops resuming at. Present only between a pause and
@@ -128,7 +84,7 @@ export interface RenderJob {
    * in-memory handle, so quitting the app still loses a partial render (as AE's
    * queue does), but a PAUSE no longer does.
    */
-  _resume?: { render: ResumableVideoRender; nextOffset: number };
+  _resume?: JobResume;
 }
 
 interface RenderQueueState {
@@ -163,139 +119,7 @@ export function canChooseOutputDir(): boolean {
   return typeof window !== 'undefined' && !!window.motionEditor?.render?.chooseOutputDir;
 }
 
-/**
- * The file extension a queued format produces.
- *
- * One home for this: the Export dialog hardcoded `.webm` for everything that
- * wasn't a sequence, so a GIF job was *named*.webm — matching the queue's old
- * behaviour of actually shipping a WebM under that name.
- */
-export function outputExtFor(format: OutputFormat): string {
-  switch (format) {
-    case 'png-sequence':
-    case 'jpg-sequence':
-    case 'exr-sequence':
-      return 'zip';
-    // HDR presets encode into an MP4 container — falling through advertised a
-    // ".hdr10" file that never exists (the delivered file was always .mp4).
-    case 'hdr10':
-    case 'hlg':
-      return 'mp4';
-    default:
-      // A plugin format's "extension" would otherwise be "plugin:id.exporter"
-      // — a colon in a filename. Fall back to a neutral extension; the sink
-      // renames by its real extension on delivery.
-      return format.startsWith('plugin:') ? 'bin' : format;
-  }
-}
-
 let jobSeq = 1;
-
-/** The exporter options a queued job renders with. */
-function jobOptions(job: RenderJob): ExportOptions {
-  return {
-    format: job.format,
-    width: job.width,
-    height: job.height,
-    fps: job.fps,
-    duration: job.durationSec,
-    time: 0,
-    quality: job.quality ?? 'high',
-    ...(job.proresProfile ? { proresProfile: job.proresProfile } : {}),
-    // The captured range, never the LIVE work area: a queued job must render
-    // what was queued, regardless of what the user does to any timeline
-    // between queueing and running.
-    ...(job.rangeStartSec !== undefined && job.rangeEndSec !== undefined
-      ? { range: { startSec: job.rangeStartSec, endSec: job.rangeEndSec } }
-      : { useWorkArea: false }),
-    baseName: job.outputPath.replace(/\.[a-z0-9]+$/i, ''),
-    comp: {
-      // The COMPOSITION's size, so the comp→frame fit is right at any output
-      // scale. See RenderJob.compWidth for what using the output size did.
-      width: job.compWidth ?? job.width,
-      height: job.compHeight ?? job.height,
-      transparent: job.transparent,
-      // The job's own comp and background — this rendered the ACTIVE comp on a
-      // hardcoded '#101014' regardless of what was queued.
-      background: job.background ?? DEFAULT_COMPOSITION.background,
-      ...(job.compositionId ? { rootId: job.compositionId } : {}),
-      compSizeOf,
-    },
-  };
-}
-
-/** What a finished job produced, and how to hand it to the user. */
-type JobOutput =
-  | { kind: 'blob'; blob: Blob; ext: string }
-  | {
-      kind: 'file';
-      ext: string;
-      frames: number;
-      save(name: string): Promise<string | null>;
-      saveTo(dir: string, name: string): Promise<string>;
-      discard(): Promise<void>;
-    };
-
-/** Render one queued job to a file — or pause partway, keeping its staged frames. */
-async function renderJob(
-  job: RenderJob,
-  onProgress: (f: number) => void,
-  signal: AbortSignal,
-): Promise<JobOutput | { kind: 'paused'; resume: NonNullable<RenderJob['_resume']> }> {
-  const opts = jobOptions(job);
-
-  if (job.format === 'png-sequence' || job.format === 'jpg-sequence') {
-    const ext = job.format === 'png-sequence' ? 'png' : 'jpg';
-    const audio = await exportAudioEntries(opts);
-    return { kind: 'blob', blob: await renderSequenceZip(opts, ext, onProgress, signal, audio), ext: 'zip' };
-  }
-
-  if (job.format === 'exr-sequence') {
-    return { kind: 'blob', blob: await renderExrSequenceZip(opts, onProgress, signal), ext: 'zip' };
-  }
-
-  // GIF has no browser encoder path through the sink, so it keeps its own.
-  if (job.format === 'gif' && !canEncodeLocally()) {
-    return { kind: 'blob', blob: await renderGifBlob(opts, onProgress, signal), ext: 'gif' };
-  }
-
-  // ── The resumable path (desktop) ──
-  // A paused job keeps its open sink — frames already staged on disk stay
-  // there — and comes back at the exact frame the loop stopped on. Pausing
-  // used to abort the render outright: the sink was disposed, the staging dir
-  // deleted, and Resume meant re-rendering from frame 0.
-  const render = job._resume?.render
-    ?? await createResumableVideoRender(opts, job.format);
-  if (render) {
-    const from = job._resume?.nextOffset ?? 0;
-    try {
-      const res = await render.run(from, onProgress, signal);
-      if (!res.done) return { kind: 'paused', resume: { render, nextOffset: res.nextOffset } };
-      const result = await render.finish();
-      return result.kind === 'blob'
-        ? { kind: 'blob', blob: result.blob, ext: result.ext }
-        : { kind: 'file', ext: result.ext, frames: result.frames, save: result.save, saveTo: result.saveTo, discard: result.discard };
-    } catch (e) {
-      // run() disposed on real errors; finish() failures still hold the sink.
-      // Either way the job is FAILED now, so nothing may keep a resume handle.
-      await render.dispose().catch(() => undefined);
-      throw e;
-    }
-  }
-
-  // Browser fallback: streaming sinks can't pause, so the one-shot path stays.
-  const result = await renderVideo(opts, job.format, onProgress, signal);
-  return result.kind === 'blob'
-    ? { kind: 'blob', blob: result.blob, ext: result.ext }
-    : {
-        kind: 'file',
-        ext: result.ext,
-        frames: result.frames,
-        save: result.save,
-        saveTo: result.saveTo,
-        discard: result.discard,
-      };
-}
 
 export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   jobs: [],
@@ -393,7 +217,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
           get().updateJob(job.id, { progress: f });
         };
         try {
-          const output = await renderJob(job, onProgress, abort.signal);
+          const output = await renderJobOutput(job, onProgress, abort.signal, job._resume);
           if (output.kind === 'paused') {
             // Back to the queue holding its staged frames and its progress —
             // the whole point. `startAll` picks it up where it stopped.

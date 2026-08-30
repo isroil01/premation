@@ -1,0 +1,70 @@
+/* PickWhip — the spiral, and the line it drags.
+   Sized against the controls it sits beside (a stopwatch, a dropdown trigger),
+   so a property row does not gain a taller line just for having a whip. */
+
+.whip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  /* `grab`, not `pointer`: this control is dragged, never clicked, and the
+     cursor is the only thing that says so before someone tries. */
+  cursor: grab;
+  flex: none;
+}
+
+.whip:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.whip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.whipActive {
+  cursor: grabbing;
+  color: var(--color-primary);
+  background: var(--color-hover);
+}
+
+/* The rubber band. Fixed and full-viewport because the whip is dragged ACROSS
+   panels — a line clipped at the first panel edge would be cut off on every
+   drag that matters. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.line {
+  stroke: var(--color-text-tertiary);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+/* Solid and accented the moment the cursor is over something droppable — the
+   only feedback that answers "will this land?" before the release. */
+.lineValid {
+  stroke: var(--color-primary);
+  stroke-dasharray: none;
+  stroke-width: 2;
+}
+
+.tip {
+  fill: var(--color-text-tertiary);
+}
+
+.tipValid {
+  fill: var(--color-primary);
+}

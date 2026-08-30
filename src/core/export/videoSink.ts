@@ -105,8 +105,16 @@ export type VideoSinkResult =
       };
       /** Ask the user where to put it. Null if they cancelled. */
       save(defaultName: string): Promise<string | null>;
-      /** Drop it into an already-chosen folder without a dialog. */
-      saveTo(dir: string, filename: string): Promise<string>;
+      /**
+       * Drop it into an already-chosen folder without a dialog.
+       *
+       * `overwrite` is what separates a queue from a CLI. The queue never
+       * overwrites — a clashing name becomes " (2)", because silently replacing
+       * someone's previous render is not recoverable. A CLI told exactly where
+       * to write must land THERE: a build whose artifact appears at
+       * `out (7).mp4` on the seventh run has no artifact path at all.
+       */
+      saveTo(dir: string, filename: string, overwrite?: boolean): Promise<string>;
       /** Discard the encoded file and its staging directory. */
       discard(): Promise<void>;
     }
@@ -244,6 +252,20 @@ function readableContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D | 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(canvas, 0, 0);
   return ctx;
+}
+
+/**
+ * RGBA pixels of a frame canvas.
+ *
+ * Exported because the comment above is right that this gets re-discovered per
+ * call site: the GIF path, the HDR stats reader, the plugin sink and now
+ * auto-reframe all need to read pixels out of a GPU-backed canvas, and each one
+ * that rolls its own scratch canvas is another full-frame allocation per frame.
+ * One scratch, one place that knows why it exists.
+ */
+export function readCanvasPixels(canvas: HTMLCanvasElement): ImageData | null {
+  const ctx = readableContext(canvas);
+  return ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
 }
 
 /** Encode a canvas to image bytes. Shared by the sinks and the sequence export. */
@@ -450,8 +472,8 @@ class FfmpegSink implements VideoSink {
         if (saved) await cleanup();
         return saved?.path ?? null;
       },
-      saveTo: async (dir: string, filename: string) => {
-        const saved = await r.saveTo?.(jobId, dir, filename);
+      saveTo: async (dir: string, filename: string, overwrite?: boolean) => {
+        const saved = await r.saveTo?.(jobId, dir, filename, overwrite);
         await cleanup();
         if (!saved) throw new Error('This build cannot save into a folder directly.');
         return saved.path;

@@ -23,6 +23,15 @@ Added 2026-08-18: the frame cache is keyed on scene content and survives undo
 and restart; output-module templates; cloner cascade, push and path modes; and
 physics rotation (opt-in per body — real OBBs, contact torque, rolling).
 
+Added 2026-08-30: a headless CLI (`premation render`) over the same
+deterministic pipeline the editor exports with; data-driven batch rendering, one
+file per row of a CSV; captions — `.srt`/`.vtt` in and out as ordinary text
+layers, plus generation from the composition's own audio; auto-reframe to
+another aspect ratio, following the subject and jumping at cuts; the pick-whip,
+for parenting and for expressions; a download-on-demand installer for the Object
+Matte model; and idle caching of the whole work area rather than five seconds
+ahead.
+
 The engine is one GPU render graph (WebGPU, falling back to WebGL2) shared by the
 viewport and the exporter, covered by golden-image render tests.
 
@@ -47,9 +56,19 @@ degrades to the MRU list, as before.
 
 ### Finish verifying local-first on-device
 
-The `.motion` bundle, content-addressed asset store, local version history and
-their Electron IPC are written and unit-tested, but the disk-backed paths have
-not been exercised end-to-end on a real device. Specifically: `better-sqlite3`
+ASSETS are done. A bundle now COLLECTS session-local footage on save — the
+bytes content-addressed into `blobs/`, recorded in `assets/registry.json`, and
+the document repointed at them — and RESTORES that registry on open, so a
+project moved to another machine renders the footage it was authored with and
+its Assets panel comes back populated.
+
+Verified end to end by rendering a hand-built bundle whose document carried
+nothing but a dead `blob:` URL and an asset id, and by the control: with the
+registry removed, the export refuses with "media offline" rather than shipping
+a frame with a hole in it.
+
+The rest of the disk-backed paths have still not been exercised end-to-end on
+a real device. Specifically: `better-sqlite3`
 needs an `electron-rebuild` against the Electron ABI, and the binary blob IPC
 needs a real save/load cycle. Concrete, verifiable, and a good way to learn the
 storage layer.
@@ -84,9 +103,16 @@ storage layer.
   rotoscoping's first step), and **Follow + rotation & scale** (2-point
   solve: anchor drives position, the anchor→reference vector drives
   rotation and scale, angle-unwrapped past ±180°). Still open on the
-  column: a roto brush / edge-aware masks. Beyond tracking: more of
-  the effect set, richer expression bindings. Open an issue for the specific
-  gap you hit — that is far more useful than a general "more parity" wish.
+  column: a roto brush / edge-aware masks — though the ROTO BRUSH's neural
+  half is now reachable, because the piece that was missing was never code.
+  The segmenter, the ONNX wrapper and the runtime have all been in the tree;
+  what nobody had was a way to GET a model, since a build-time environment
+  variable is not something a person does. Settings ▸ Object Matte downloads
+  one on an explicit press and caches it for every later launch. The PICK-WHIP
+  shipped too, for parenting and for expressions — the most-felt gesture gap.
+  Beyond tracking: more of the effect set, richer expression bindings. Open an
+  issue for the specific gap you hit — that is far more useful than a general
+  "more parity" wish.
 - **Timeline and graph-editor polish.** The graph editor is capable but not yet
   pleasant for dense compositions.
 - **Performance on large projects.** The engine handles high layer counts, but

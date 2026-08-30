@@ -47,6 +47,7 @@ import type { KeyChord } from '@app-types/common';
 // the OSS build with nowhere to enter a key at all.
 import { AiSettingsSection } from './AiSettingsSection';
 import { UpdatesControl } from './UpdatesControl';
+import { ObjectMatteControl } from './ObjectMatteControl';
 import { aiEnabled } from '@core/config/edition';
 import styles from './CustomizeDialog.module.css';
 
@@ -228,6 +229,7 @@ function AppearanceTab(): JSX.Element {
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const confirmOnClose = usePreferenceStore((s) => s.confirmOnClose);
   const retainOriginalSvg = usePreferenceStore((s) => s.retainOriginalSvg);
+  const idleCacheWorkArea = usePreferenceStore((s) => s.idleCacheWorkArea);
   const setPref = usePreferenceStore((s) => s.set);
 
   const leftSidebarPos = useLayoutStore((s) => s.leftSidebarPosition);
@@ -463,9 +465,28 @@ function AppearanceTab(): JSX.Element {
       </div>
 
       <div className={styles.row}>
+        <span className={styles.rowLabel}>Cache the work area while idle</span>
+        <div className={styles.rowRight}>
+          <input
+            type="checkbox"
+            checked={idleCacheWorkArea}
+            onChange={(e) => setPref('idleCacheWorkArea', e.target.checked)}
+            aria-label="While paused, pre-render the whole work area instead of a few seconds ahead"
+          />
+        </div>
+      </div>
+
+      <div className={styles.row}>
         <span className={styles.rowLabel}>Preview disk cache</span>
         <div className={styles.rowRight}>
           <PreviewCacheControl />
+        </div>
+      </div>
+
+      <div className={styles.row}>
+        <span className={styles.rowLabel}>Object Matte</span>
+        <div className={styles.rowRight}>
+          <ObjectMatteControl />
         </div>
       </div>
 

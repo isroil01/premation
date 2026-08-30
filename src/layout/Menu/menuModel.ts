@@ -142,6 +142,25 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'comp.delete', label: 'Delete Composition' },
       { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
       { separator: true },
+      // One entry per target shape rather than a dialog: the only input is the
+      // aspect, and this way the whole feature is reachable by typing '9:16'
+      // into the command palette. Each greys itself out for a comp already at
+      // that aspect, which would have nothing to pan within.
+      { commandId: 'comp.autoReframe.9:16', label: 'Auto-Reframe to 9:16 Vertical' },
+      { commandId: 'comp.autoReframe.1:1', label: 'Auto-Reframe to 1:1 Square' },
+      { commandId: 'comp.autoReframe.4:5', label: 'Auto-Reframe to 4:5 Portrait' },
+      { commandId: 'comp.autoReframe.16:9', label: 'Auto-Reframe to 16:9 Widescreen' },
+      { commandId: 'comp.autoReframe.4:3', label: 'Auto-Reframe to 4:3 Classic' },
+      { separator: true },
+      // Captions sit under Composition rather than Layer: they are a property
+      // of the whole comp (its spoken words), and every one of these acts on
+      // all of them at once, not on a selection.
+      { commandId: 'captions.import', label: 'Import Captions…' },
+      { commandId: 'captions.generate', label: 'Generate Captions from Audio' },
+      { commandId: 'captions.exportSrt', label: 'Export Captions (.srt)…' },
+      { commandId: 'captions.exportVtt', label: 'Export Captions (.vtt)…' },
+      { commandId: 'captions.clear', label: 'Remove All Captions' },
+      { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
       { commandId: 'comp.copyFrame', label: 'Copy Frame to Clipboard' },
     ],

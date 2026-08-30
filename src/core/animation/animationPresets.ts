@@ -649,16 +649,93 @@ export function presetFolder(p: AnimationPreset): string {
  * so saving one without the other produced a preset that applied cleanly and
  * did nothing.
  */
+/**
+ * A layer's effect stack, in a preset's own id namespace.
+ *
+ * Ids are renumbered to `fx0`, `fx1`, … and the layer's
+ * `effect.<realId>.<param>` tracks are re-pointed to match — the exact inverse
+ * of what `installEffects` + `remapEffectTracks` do on apply. Saving the live
+ * ids instead would produce a preset whose keyframes address effects that only
+ * exist on the machine it was saved on.
+ *
+ * Returns the tracks alongside the effects because the rewrite has to happen to
+ * BOTH or to neither: a preset carrying renumbered effects and un-renumbered
+ * tracks animates nothing, silently.
+ */
+function captureEffects(
+  nodeId: string,
+  tracks: ReadonlyArray<PresetTrack>,
+): { effects: NonNullable<AnimationPreset['effects']>; tracks: PresetTrack[] } {
+  const stack = getNodeEffects(nodeId);
+  if (stack.length === 0) return { effects: [], tracks: [...tracks] };
+
+  const mapping = new Map<string, string>();
+  const effects = stack.map((e, i) => {
+    const presetId = `fx${i}`;
+    mapping.set(e.id, presetId);
+    return { id: presetId, type: e.type, ...(e.params ? { params: e.params } : {}) };
+  });
+
+  return {
+    effects,
+    tracks: tracks.map((t) => {
+      const m = /^effect\.([^.]+)\.(.*)$/.exec(t.prop);
+      const presetId = m ? mapping.get(m[1]!) : undefined;
+      return presetId ? { ...t, prop: `effect.${presetId}.${m![2]}` as PropPath } : t;
+    }),
+  };
+}
+
+/**
+ * The expressions driving this layer, as preset behaviours.
+ *
+ * Only ENABLED ones. A disabled expression is not driving the property — the
+ * keyframes under it are — so carrying it into a preset would make applying
+ * that preset behave differently from the layer it was captured from, which is
+ * the one thing a preset must never do.
+ */
+function captureExpressions(nodeId: string): NonNullable<AnimationPreset['expressions']> {
+  const out: NonNullable<AnimationPreset['expressions']> = [];
+  for (const prop of defaultAnimation.animatedProps(nodeId)) {
+    if (!defaultAnimation.isExpressionEnabled(nodeId, prop)) continue;
+    const expr = defaultAnimation.getExpressionSrc(nodeId, prop);
+    if (typeof expr === 'string' && expr.trim() !== '') out.push({ prop: prop as PropPath, expr });
+  }
+  return out;
+}
+
+/**
+ * Save a layer's animation as a user preset.
+ *
+ * Captures everything the preset FORMAT can carry — keyframes, text animators,
+ * effects and expressions — rather than keyframes alone. That was the gap:
+ * `AnimationPreset` has had `effects` and `expressions` fields since transitions
+ * and behaviours landed, and `applyPreset` installs both, but nothing ever
+ * WROTE them. A layer with a glow and a wiggle saved as a preset that replayed
+ * the movement and dropped the look, silently, with no error and nothing on
+ * screen to explain it — the shape of defect this repo keeps finding, an
+ * asymmetric round trip.
+ *
+ * Returns false when there is genuinely nothing to save, which now includes
+ * fewer cases than it used to: a layer whose only authored state is an effect
+ * stack is a legitimate preset (AE's are frequently exactly that).
+ */
 export function saveCurrentAsPreset(
   nodeId: string,
   name: string,
   folder = USER_PRESET_FOLDER,
 ): boolean {
   const ctx = presetContextFor(nodeId);
-  const tracks = captureAnimation(nodeId, defaultAnimation, ctx);
+  const captured = captureAnimation(nodeId, defaultAnimation, ctx);
   const node = defaultSceneGraph.getNode(nodeId);
   const animators = node && hasTextComponent(node) ? readAnimatorData(node) : [];
-  if (!tracks.length && !animators.length) return false; // nothing to save
+  const expressions = captureExpressions(nodeId);
+  const { effects, tracks } = captureEffects(nodeId, captured);
+
+  if (!tracks.length && !animators.length && !effects.length && !expressions.length) {
+    return false; // nothing to save
+  }
+
   const others = readUserPresets().filter((p) => p.name !== name);
   writeUserPresets([
     ...others,
@@ -667,6 +744,8 @@ export function saveCurrentAsPreset(
       folder,
       tracks,
       ...(animators.length ? { animators, requires: 'text' as const } : {}),
+      ...(effects.length ? { effects } : {}),
+      ...(expressions.length ? { expressions } : {}),
     },
   ]);
   return true;

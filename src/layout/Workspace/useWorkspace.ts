@@ -1,6 +1,6 @@
 import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { getNodeLabelColor } from '@core/scene/labelColor';
-import { getRemappedTime } from '@core/timeline/TimelineController';
+import { getRemappedTime, getTimelineController } from '@core/timeline/TimelineController';
 /**
  * useWorkspace — the React⇄Workspace-engine seam for the viewport.
  *
@@ -31,6 +31,7 @@ import { defaultAnimation } from '@motion/animation';
 import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { idleCacheSpan, nextSpanFrame } from '@core/rendering/idleCacheSpan';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { useRenderQualityStore } from '@stores/renderQualityStore';
@@ -454,13 +455,34 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
     // ── Idle caching (the After Effects idle pump) ─────────────────────
     //
-    // While the editor is PAUSED and quiet, quietly render the frames just
-    // ahead of the playhead into the RAM preview — one frame per timer slice,
-    // masked behind the cache overlay so nothing flashes on screen. Pressing
-    // play then starts on green instead of paying the first pass live. Any
-    // real render (scrub, edit, play, decode landing) bumps `renderSeq` and
-    // the pass silently stands down; a media decode still in flight ends the
-    // pass early and the decode's own repaint re-arms it.
+    // While the editor is PAUSED and quiet, quietly render frames into the RAM
+    // preview — one slice at a time, masked behind the cache overlay so nothing
+    // flashes on screen. Pressing play then starts on green instead of paying
+    // the first pass live. Any real render (scrub, edit, play, decode landing)
+    // bumps `renderSeq` and the pass silently stands down; a media decode still
+    // in flight ends the pass early and the decode's own repaint re-arms it.
+    //
+    // ── How far ahead ──────────────────────────────────────────────────
+    // The WORK AREA, from the playhead forward and then wrapping to its start —
+    // which is what After Effects fills, and what makes the green bar mean
+    // "this is ready" rather than "the next few seconds are ready". A five
+    // second look-ahead only ever helped the first press of play; a filled work
+    // area makes the whole loop real-time, which is the thing people actually
+    // want from a preview.
+    //
+    // Wrapping matters as much as the span. Caching forward-only from the
+    // playhead leaves the head of the work area cold, so playing the loop again
+    // — the single most common thing anyone does with a work area — starts on
+    // the one part that was never cached.
+    //
+    // One PASS per invalidation, tracked by `visited`. Without that bound, a
+    // span larger than the cache would evict its own head and the pump would
+    // re-render forever on a paused editor. The disk tier keeps evicted frames
+    // (the blue lane), so a long pass is not wasted work even when RAM cannot
+    // hold all of it.
+    //
+    // `idleCacheWorkArea` turns the span back down to a short look-ahead for
+    // anyone who would rather their machine stayed quiet.
     const IDLE_CACHE_DELAY_MS = 1500;
     const IDLE_CACHE_AHEAD_SEC = 5;
     /** How long one idle slice may hold the main thread before yielding. */
@@ -515,9 +537,31 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       const fps = compRef.current.fps || 60;
       const lastCompFrame = Math.max(0, Math.round((compRef.current.durationSeconds || 0) * fps) - 1);
-      let f = Math.min(Math.round(timeRef.current * fps) + 1, lastCompFrame);
-      const endFrame = Math.min(f + Math.round(fps * IDLE_CACHE_AHEAD_SEC), lastCompFrame);
-      if (f > endFrame) return;
+      // Which frames, and where to start — pure and unit-tested, because a span
+      // that is one frame long or one frame off is invisible from in here.
+      const wantWholeSpan = usePreferenceStore.getState().idleCacheWorkArea;
+      const span = idleCacheSpan({
+        playhead: Math.round(timeRef.current * fps),
+        lastCompFrame,
+        fps,
+        workArea: wantWholeSpan ? getTimelineController().getWorkArea() : null,
+        wholeSpan: wantWholeSpan,
+        aheadSeconds: IDLE_CACHE_AHEAD_SEC,
+      });
+      if (!span) return;
+
+      let f = span.from;
+      /** Frames examined this pass. The pass ends after one lap of the span. */
+      let visited = 0;
+      /** Advance the cursor, wrapping at the end of the span. */
+      const step = (): void => {
+        f = nextSpanFrame(f, span);
+        visited += 1;
+      };
+      /** Skip to the next frame this pass still has to render. */
+      const skipCached = (): void => {
+        while (visited < span.length && viewportFrameCache.has(f)) step();
+      };
 
       // Let the disk tier start promoting this window back into RAM. Probing
       // with `has` (below) deliberately does not do this, so without an
@@ -529,13 +573,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // (scanning a cached run used to promote all of it to most-recently-used,
       // so eviction then dropped the frames NEAREST the playhead) and must not
       // fire a disk look-ahead per probe.
-      while (f <= endFrame && viewportFrameCache.has(f)) f += 1;
+      skipCached();
       // Nothing to do. Return without masking, without re-rendering and without
       // re-arming — otherwise a settled editor sitting on a fully cached span
       // woke every 1.5s forever to mask, scan, render the current frame again
       // and re-arm itself: a permanent GPU/CPU tickover on an idle app.
       // Any real render (scrub, edit, decode landing) re-arms via armIdleCache.
-      if (f > endFrame) return;
+      if (visited >= span.length) return;
 
       const cacheCanvas = cacheCanvasRef?.current;
       if (!cacheCanvas) return;
@@ -582,8 +626,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const slice = (): void => {
         idleSliceTimer = null;
         if (renderSeq !== seqAtStart || isPlayingNow() || isExportBusy() || backendRef.current !== backend) return;
-        while (f <= endFrame && viewportFrameCache.has(f)) f += 1;
-        if (f > endFrame) {
+        skipCached();
+        if (visited >= span.length) {
           finish();
           return;
         }
@@ -593,7 +637,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         // while it pre-rendered; yielding on a budget keeps the main thread
         // responsive without giving up throughput on light comps.
         const sliceStart = performance.now();
-        while (f <= endFrame) {
+        while (visited < span.length) {
           renderFrameAt(f / fps);
           // Only a frame that actually drew, with settled media, may be kept.
           if (b.lastFrameDidRender?.() === false) {
@@ -622,11 +666,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           viewportFrameCache.put(f, content);
           // Progress: the fast retry has earned its budget back.
           idleMediaRetries = 0;
-          f += 1;
+          step();
           if (performance.now() - sliceStart >= IDLE_CACHE_SLICE_BUDGET_MS) break;
-          while (f <= endFrame && viewportFrameCache.has(f)) f += 1;
+          skipCached();
         }
-        if (f > endFrame) {
+        if (visited >= span.length) {
           finish();
           return;
         }

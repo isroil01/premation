@@ -687,8 +687,12 @@
   min-width: 0;
 }
 
+/* 132px, not 110: the pick-whip took a 22px square out of this column, and the
+   whole point of the earlier widening was that a parent layer's NAME reads in
+   full instead of ellipsising at ~40px. Giving the whip its own width keeps
+   that. The legend below matches, or the header drifts off its column. */
 .parentCol {
-  width: 110px;
+  width: 132px;
   flex: none;
   display: flex;
   align-items: center;
@@ -945,7 +949,7 @@
 }
 
 .colHeadParent {
-  width: 110px;
+  width: 132px;
   flex: none;
   display: inline-flex;
   align-items: center;
