@@ -54,8 +54,8 @@ const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportF
   { id: 'video', label: 'Video', formats: ['mp4', 'hdr10', 'hlg', 'webm', 'mov', 'gif'] },
   { id: 'frames', label: 'Frames', formats: ['png-sequence', 'jpg-sequence', 'exr-sequence', 'png'] },
   { id: 'audio', label: 'Audio', formats: ['wav'] },
-  { id: 'editorial', label: 'Editorial / Interchange', formats: ['otio', 'fcpxml', 'edl', 'ale'] },
-  { id: 'data', label: 'Package & Data', formats: ['lottie', 'json', 'mogrt'] },
+  { id: 'editorial', label: 'Editorial', formats: ['otio', 'fcpxml', 'edl', 'ale'] },
+  { id: 'data', label: 'Data', formats: ['lottie', 'json', 'mogrt'] },
 ];
 
 function dataPreviewMeta(format: ExportFormat): { icon: import('@components/Icon').IconName; title: string } {
@@ -86,6 +86,10 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
   }, [presets]);
 
   const [format, setFormat] = useState<ExportFormat>(presets[0]?.format ?? 'webm');
+  const [activeCategory, setActiveCategory] = useState<string>(() => {
+    const grp = FORMAT_GROUPS.find((g) => g.formats.includes(presets[0]?.format ?? 'webm'));
+    return grp?.id ?? 'video';
+  });
   const [scaleIdx, setScaleIdx] = useState(0);
   const [quality, setQuality] = useState<ExportQuality>('high');
   const [proresProfile, setProresProfile] = useState<ProresProfile>('4444');
@@ -297,36 +301,63 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
         </section>
 
         <section className={styles.settingsCol} aria-label="Export settings">
-          {FORMAT_GROUPS.map((group) => {
-            const items = group.formats.filter((f) => presetByFormat.has(f));
-            if (items.length === 0) return null;
-            return (
-              <div key={group.id} className={styles.section}>
-                <div className={styles.label}>{group.label}</div>
-                <div className={styles.formatGrid} role="radiogroup" aria-label={group.label}>
-                  {items.map((id) => {
-                    const p = presetByFormat.get(id)!;
-                    const on = format === id;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        role="radio"
-                        aria-checked={on}
-                        disabled={busy}
-                        title={p.hint}
-                        className={cn(styles.formatCard, on && styles.formatCardOn)}
-                        onClick={() => setFormat(id)}
-                      >
-                        <span className={styles.formatName}>{p.label}</span>
-                        <span className={styles.formatExt}>.{p.ext}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })}
+          {/* Format Category Tabs */}
+          <div className={styles.section}>
+            <div className={styles.label}>Format Category</div>
+            <div className={styles.categoryTabs} role="tablist">
+              {FORMAT_GROUPS.map((group) => {
+                const items = group.formats.filter((f) => presetByFormat.has(f));
+                if (items.length === 0) return null;
+                const on = activeCategory === group.id;
+                return (
+                  <button
+                    key={group.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    disabled={busy}
+                    className={cn(styles.categoryTab, on && styles.categoryTabOn)}
+                    onClick={() => {
+                      setActiveCategory(group.id);
+                      const firstInGroup = group.formats.find((f) => presetByFormat.has(f));
+                      if (firstInGroup && !group.formats.includes(format)) {
+                        setFormat(firstInGroup);
+                      }
+                    }}
+                  >
+                    {group.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Format Preset Cards for Active Category */}
+          <div className={styles.section}>
+            <div className={styles.label}>Format Preset</div>
+            <div className={styles.formatGrid} role="radiogroup" aria-label="Format Preset">
+              {(FORMAT_GROUPS.find((g) => g.id === activeCategory)?.formats.filter((f) => presetByFormat.has(f)) ?? []).map((id) => {
+                const p = presetByFormat.get(id)!;
+                const on = format === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    disabled={busy}
+                    title={p.hint}
+                    className={cn(styles.formatCard, on && styles.formatCardOn)}
+                    onClick={() => setFormat(id)}
+                  >
+                    <span className={styles.formatName}>{p.label}</span>
+                    <span className={styles.formatExt}>.{p.ext}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {activePreset ? <p className={styles.formatHint}>{activePreset.hint}</p> : null}
           {isHdrFormat ? (
             <p
@@ -506,7 +537,7 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
             <Button
               variant="secondary"
               size="md"
-              leftIcon={<Icon name="queue" size="md" />}
+              leftIcon={<Icon name="queue" size="sm" />}
               onClick={queueJob}
               disabled={busy}
               title="Queue this render in the Render Queue (F6) instead of exporting now"
@@ -517,7 +548,7 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
           <Button
             variant="primary"
             size="md"
-            leftIcon={<Icon name="export" size="md" />}
+            leftIcon={<Icon name="export" size="sm" />}
             onClick={doExport}
             disabled={busy}
             title={activePreset?.hint}

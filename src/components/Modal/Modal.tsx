@@ -93,7 +93,7 @@ export function Modal({
                 {!hideCloseButton ? (
                   <Dialog.Close asChild>
                     <IconButton aria-label="Close" size="sm">
-                      <Icon name="close" size="md" />
+                      <Icon name="close" size="sm" />
                     </IconButton>
                   </Dialog.Close>
                 ) : null}

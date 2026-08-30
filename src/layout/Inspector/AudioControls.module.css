@@ -20,10 +20,10 @@
 }
 
 .clipBadge {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  padding: 1px 6px;
-  border-radius: 999px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
   background: var(--color-surface-2);
   border: 1px solid var(--color-border-subtle);
@@ -50,9 +50,9 @@
   text-transform: none;
   letter-spacing: 0;
   font-weight: var(--font-weight-regular);
-  font-size: var(--font-size-micro);
+  font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-  opacity: 0.75;
+  opacity: 0.85;
 }
 
 .waveBox {
@@ -78,8 +78,12 @@
 /* Trimmed-away head/tail — dimmed rather than hidden, so you can still see
    what you cut off and drag it back. */
 .trim {
-  fill: var(--color-surface-2);
-  opacity: 0.72;
+  /* The scale has one cyan (`--color-cyan-500`); `--color-cyan-900` was never
+     defined, so this declaration was dropped and the trimmed region fell back
+     to the SVG default black. The dimming the darker step was reaching for is
+     already carried by the opacity below. */
+  fill: var(--color-cyan-500);
+  opacity: 0.35;
 }
 
 .trimEdge {
@@ -89,7 +93,7 @@
 }
 
 .playhead {
-  stroke: var(--color-accent);
+  stroke: var(--color-red-500);
   stroke-width: 1.5;
 }
 
@@ -125,27 +129,6 @@
 
 .muted {
   color: var(--color-text-tertiary);
-}
-
-/* ── Convert-to-keyframes trigger + popover ───────────────────────── */
-
-.convertBtn {
-  width: 100%;
-  height: 26px;
-  padding: 0 10px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.convertBtn:hover {
-  background: var(--color-surface-3);
-  border-color: var(--color-border);
 }
 
 .panel {

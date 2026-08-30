@@ -62,7 +62,7 @@
   width: 2px;
   margin-left: -1px;
   background: var(--color-timeline-playhead);
-  box-shadow: 0 0 6px var(--color-timeline-playhead);
+  box-shadow: none;
   pointer-events: none;
 }
 
@@ -246,7 +246,7 @@
   background: var(--color-primary);
   border: 1px solid transparent;
   color: var(--color-primary-foreground);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  box-shadow: none;
   transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -254,15 +254,14 @@
   background: var(--color-primary-hover);
   border-color: transparent;
   color: var(--color-primary-foreground);
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--color-primary) 50%, transparent);
-  transform: translateY(-0.5px);
+  box-shadow: none;
 }
 
 .playBtnActive {
   background: var(--color-primary-active) !important;
   border-color: transparent !important;
   color: var(--color-primary-foreground) !important;
-  box-shadow: 0 0 12px color-mix(in srgb, var(--color-primary) 65%, transparent);
+  box-shadow: none;
   transform: scale(0.97);
 }
 
@@ -313,13 +312,13 @@
   font-weight: var(--font-weight-medium);
 }
 
-/* ── Timeline Search Bar Row (Under Comp Tabs, Spanning Left Header) ── */
-.searchBarRow {
+/* ── Timeline Unified Sub-Header (Search Left + Comp Tabs Right) ── */
+.subHeaderRow {
   display: flex;
   align-items: center;
-  height: 28px;
+  height: 30px;
   background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-subtle);
   flex: none;
   width: 100%;
 }
@@ -327,15 +326,35 @@
 .searchBarCol {
   display: flex;
   align-items: center;
-  padding: 2px 8px;
+  padding: 0 8px;
+  height: 100%;
   flex: none;
   box-sizing: border-box;
-  border-right: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border-subtle);
 }
 
-.searchBarRightGap {
+.tabBarCol {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 100%;
+  padding: 0 8px;
   flex: 1 1 auto;
-  background: var(--color-panel-header);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabBarCol::-webkit-scrollbar {
+  display: none;
+}
+
+.tabDivider {
+  width: 1px;
+  height: 14px;
+  background: var(--color-border-subtle);
+  margin: 0 2px;
+  flex-shrink: 0;
 }
 
 .searchContainer {
@@ -345,8 +364,8 @@
   gap: 6px;
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-control);
-  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  padding: 0 7px;
   height: 22px;
   width: 100%;
   box-sizing: border-box;
@@ -359,9 +378,9 @@
 }
 
 .searchContainer:focus-within {
-  border-color: var(--color-selection);
+  border-color: var(--color-primary);
   background: var(--color-surface-1);
-  box-shadow: 0 0 0 1px var(--color-selection);
+  box-shadow: 0 0 0 1px var(--color-primary);
 }
 
 .searchIcon {
@@ -394,8 +413,8 @@
   align-items: center;
   justify-content: center;
   padding: 2px;
-  border-radius: 4px;
-  margin-right: -4px;
+  border-radius: 3px;
+  margin-right: -3px;
 }
 
 .searchClear:hover {
@@ -656,52 +675,59 @@ button.play:hover {
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 100%;
-  padding: 0 12px;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px;
   background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-  font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  font-family: var(--font-family-sans);
   font-weight: 500;
   cursor: pointer;
-  transition: color 0.12s, border-color 0.12s;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   white-space: nowrap;
 }
 .tab:hover {
+  background: rgba(255, 255, 255, 0.05);
   color: var(--color-text-primary);
 }
 
 .tabActive {
-  color: var(--color-primary);
-  border-bottom-color: var(--color-primary);
+  background: var(--color-surface-2) !important;
+  color: var(--color-text-primary) !important;
   font-weight: 600;
+  border-color: transparent !important;
+  box-shadow: none !important;
 }
 
 .tabChevron {
-  color: var(--color-text-secondary);
+  color: var(--color-text-tertiary);
   font-size: var(--font-size-micro);
   flex-shrink: 0;
+  margin: 0 1px;
 }
 
 .tabClose {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   margin-left: 2px;
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
+  border-radius: 2px;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
   line-height: 1;
   cursor: pointer;
+  opacity: 0.6;
+  transition: all 0.12s ease;
 }
 .tabClose:hover {
   color: var(--color-text-primary);
-  background: var(--color-active);
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 1;
 }
 
 /* ── Timeline grip / reposition button ────────────────────────── */

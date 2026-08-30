@@ -13,9 +13,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-control);
+  background: #000000;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   min-height: 240px;
   max-height: 60vh;
   overflow: hidden;
@@ -40,8 +40,9 @@
 }
 
 .facts {
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -60,7 +61,8 @@
 .transportReadout {
   flex: 1;
   text-align: center;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
 }
 
 .exactNote {
@@ -75,6 +77,6 @@
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
 }

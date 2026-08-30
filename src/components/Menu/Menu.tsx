@@ -256,8 +256,8 @@ export function MenuItem({
         onPointerLeave={() => { if (children) scheduleCloseSub(); }}
       >
         {checked
-          ? <Icon name="check" size="md" className={styles.itemIcon} />
-          : icon ? <Icon name={icon} size="md" className={styles.itemIcon} /> : <span className={styles.itemIconSpacer} />}
+          ? <Icon name="check" size="sm" className={styles.itemIcon} />
+          : icon ? <Icon name={icon} size="sm" className={styles.itemIcon} /> : <span className={styles.itemIconSpacer} />}
         <span className={styles.itemLabel}>{label}</span>
         {shortcut ? <span className={styles.itemShortcut}>{shortcut}</span> : null}
         {children ? <Icon name="chevron-right" size="sm" className={styles.itemChevron} /> : null}

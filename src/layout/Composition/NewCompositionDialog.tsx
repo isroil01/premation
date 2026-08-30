@@ -199,7 +199,7 @@ function NewComposition({ close }: { close: () => void }): JSX.Element {
         <Button variant="secondary" size="md" onClick={close}>
           Cancel
         </Button>
-        <Button variant="primary" size="md" leftIcon={<Icon name="plus" size="md" />} onClick={handleCreate}>
+        <Button variant="primary" size="md" leftIcon={<Icon name="plus" size="sm" />} onClick={handleCreate}>
           Create
         </Button>
       </div>

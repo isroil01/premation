@@ -25,12 +25,12 @@
 .stopwatch {
   background: none;
   border: 1px solid transparent;
-  width: 20px;
-  height: 20px;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
   padding: 0;
   color: var(--color-text-tertiary);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -46,11 +46,11 @@
 .stopwatchOn {
   color: var(--color-primary) !important;
   background: var(--color-primary-subtle) !important;
-  border-color: rgba(41, 136, 255, 0.3) !important;
+  border-color: transparent !important;
 }
 
 .stopwatchSpacer {
-  width: 15px;
+  width: var(--control-height-sm);
 }
 
 .field {
@@ -68,7 +68,7 @@
   color: var(--color-text-primary);
   font-size: var(--font-size-xs);
   padding: var(--space-2) var(--space-3);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .textInput { cursor: text; }
@@ -81,14 +81,14 @@
 .textInput:focus-visible {
   outline: none;
   border-color: var(--color-primary);
-  box-shadow: var(--shadow-focus-ring);
+  box-shadow: none;
 }
 
 .colorInput {
   width: 100%;
-  height: 24px;
+  height: var(--control-height-row);
   border: 1px solid var(--color-field-border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0;
   background: none;
   cursor: pointer;

@@ -26,12 +26,13 @@ export interface DropdownProps {
   trigger: ReactElement;
   items: ReadonlyArray<DropdownItem>;
   placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end' | 'right-start' | 'left-start';
+  offset?: { x: number; y: number };
   className?: string;
   /** When true, removes the max-height cap so all items show without scrolling. */
   noScroll?: boolean;
 }
 
-export function Dropdown({ trigger, items, placement = 'bottom-start', className, noScroll }: DropdownProps): JSX.Element {
+export function Dropdown({ trigger, items, placement = 'bottom-start', offset, className, noScroll }: DropdownProps): JSX.Element {
   const [open, setOpen] = useState(false);
 
   const handleSelect = (onSelect?: () => void) => {
@@ -45,6 +46,7 @@ export function Dropdown({ trigger, items, placement = 'bottom-start', className
     <Popover
       trigger={trigger}
       placement={placement}
+      offset={offset}
       className={className}
       closeOnOutside
       closeOnEscape

@@ -1,24 +1,18 @@
 /**
- * CustomizeDialog (Prompt E10) — workspace & UI customization in one place:
- *   • Shortcuts — rebind / disable / reset command keys, with conflict warnings
- *   • Workspaces — apply a layout preset, save the current one, delete user ones
- *   • Appearance — accent colour + theme
- *
- * There is deliberately no AI tab — see the note above the import list, and the
- * assistant's own error copy, which sends people to Dashboard → Settings →
- * Assistant. This docstring used to advertise one, which is why messages
- * elsewhere in the app told users to look for it here.
- *
- * Shortcut rebinds persist via shortcutOverrides and re-apply through the
- * ShortcutManager; layout presets drive the layout store; accent overrides the
- * primary CSS token. Those all ride the existing SettingsManager.
+ * CustomizeDialog — workspace, shortcuts & UI customization in one place:
+ *   • Shortcuts — search, filter, record, rebind, clear, and reset command keys
+ *   • Workspaces — apply layout presets, save current arrangement, manage custom presets
+ *   • Appearance — accent color picker with presets, dock alignment, UI zoom, switches
+ *   • AI Engine — provider keys and model configuration (when AI edition is active)
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { cn } from '@utils/cn';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { ColorPicker } from '@components/ColorPicker';
+import { Switch } from '@components/Switch';
+import { Icon, type IconName } from '@components/Icon';
 import { useLayoutStore } from '@stores/layoutStore';
 import { openModal } from '@stores/modalStore';
 import { getCommandRegistry } from '@core/commands/Command';
@@ -34,17 +28,12 @@ import {
   findChordConflict,
 } from '@core/commands/shortcutOverrides';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
-import { getThemeManager } from '@core/services/coreServices';
+import { getThemeManager, getSettingsManager } from '@core/services/coreServices';
 import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { viewportFrameCache } from '@core/rendering/frameCache';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import type { KeyChord } from '@app-types/common';
-// AI setup DOES live here, on the tab below, in the editions that have it. The
-// note that used to sit on this import said the opposite — "deliberately NOT
-// here, it lives on Dashboard → Settings" — and had outlived its own decision by
-// a commit: the dashboard is a server-edition route, so that arrangement left
-// the OSS build with nowhere to enter a key at all.
 import { AiSettingsSection } from './AiSettingsSection';
 import { UpdatesControl } from './UpdatesControl';
 import { ObjectMatteControl } from './ObjectMatteControl';
@@ -65,23 +54,64 @@ interface Row {
   overridden: boolean;
 }
 
+function getCommandCategory(id: string, label: string): { key: string; label: string } {
+  const lowerId = id.toLowerCase();
+  const lowerLabel = label.toLowerCase();
+  if (lowerId.startsWith('tool.') || lowerId.startsWith('tools.') || lowerLabel.includes('tool')) return { key: 'tools', label: 'Tools' };
+  if (lowerId.startsWith('timeline.') || lowerId.startsWith('time.') || lowerId.startsWith('playback.') || lowerLabel.includes('play') || lowerLabel.includes('frame') || lowerLabel.includes('timeline')) return { key: 'timeline', label: 'Timeline' };
+  if (lowerId.startsWith('edit.') || lowerId.startsWith('history.') || lowerLabel.includes('undo') || lowerLabel.includes('redo') || lowerLabel.includes('duplicate') || lowerLabel.includes('delete') || lowerLabel.includes('select')) return { key: 'edit', label: 'Edit' };
+  if (lowerId.startsWith('layer.') || lowerId.startsWith('scene.') || lowerLabel.includes('layer') || lowerLabel.includes('matte') || lowerLabel.includes('mask')) return { key: 'layer', label: 'Layers' };
+  if (lowerId.startsWith('view.') || lowerId.startsWith('canvas.') || lowerId.startsWith('zoom.') || lowerLabel.includes('zoom') || lowerLabel.includes('fit') || lowerLabel.includes('view')) return { key: 'view', label: 'View' };
+  if (lowerId.startsWith('file.') || lowerId.startsWith('project.') || lowerLabel.includes('file') || lowerLabel.includes('project') || lowerLabel.includes('save') || lowerLabel.includes('export')) return { key: 'file', label: 'File' };
+  if (lowerId.startsWith('animation.') || lowerId.startsWith('keyframe.') || lowerLabel.includes('keyframe') || lowerLabel.includes('ease')) return { key: 'animation', label: 'Animation' };
+  return { key: 'general', label: 'General' };
+}
+
+function renderChordKeys(chord: KeyChord | undefined): JSX.Element {
+  if (!chord) {
+    return <span className={styles.unassigned}>Unassigned</span>;
+  }
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  const keys: string[] = [];
+  if (chord.ctrl) keys.push(isMac ? '⌃' : 'Ctrl');
+  if (chord.alt) keys.push(isMac ? '⌥' : 'Alt');
+  if (chord.shift) keys.push(isMac ? '⇧' : 'Shift');
+  if (chord.meta) keys.push(isMac ? '⌘' : 'Win');
+  keys.push(chord.key.length === 1 ? chord.key.toUpperCase() : chord.key);
+
+  return (
+    <div className={styles.keyCombo}>
+      {keys.map((k, idx) => (
+        <span key={idx} className={styles.keyWrapper}>
+          {idx > 0 && <span className={styles.keyPlus}>+</span>}
+          <kbd className={styles.kbd}>{k}</kbd>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function ShortcutsTab(): JSX.Element {
   const [, force] = useState(0);
   const [recording, setRecording] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ id: string; withId: string } | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeCategory, setActiveCategory] = useState<string>('all');
 
   const overrides = getShortcutOverrides();
   const commands = getCommandRegistry().all();
-  const rows: Row[] = commands
-    .map((c) => ({
-      id: c.id as unknown as string,
-      label: c.label,
-      chord: resolveChord(c.id as unknown as string, c.shortcut, overrides),
-      overridden: (c.id as unknown as string) in overrides,
-    }))
-    // Only commands that have (or had) a binding — the meaningful set to edit.
-    .filter((r) => r.chord || r.overridden || commands.find((c) => (c.id as unknown as string) === r.id)?.shortcut);
-  const resolved = rows.map((r) => ({ commandId: r.id, chord: r.chord }));
+  const rows: Row[] = useMemo(() => {
+    return commands
+      .map((c) => ({
+        id: c.id as unknown as string,
+        label: c.label,
+        chord: resolveChord(c.id as unknown as string, c.shortcut, overrides),
+        overridden: (c.id as unknown as string) in overrides,
+      }))
+      .filter((r) => r.chord || r.overridden || commands.find((c) => (c.id as unknown as string) === r.id)?.shortcut);
+  }, [commands, overrides]);
+
+  const resolved = useMemo(() => rows.map((r) => ({ commandId: r.id, chord: r.chord })), [rows]);
 
   const beginRecord = (id: string): void => {
     setConflict(null);
@@ -89,10 +119,10 @@ function ShortcutsTab(): JSX.Element {
     const onKey = (e: KeyboardEvent): void => {
       e.preventDefault();
       e.stopPropagation();
-      if (isModifierKey(e.key)) return; // wait for the non-modifier key
+      if (isModifierKey(e.key)) return;
       window.removeEventListener('keydown', onKey, true);
       setRecording(null);
-      if (e.key === 'Escape') return; // cancel
+      if (e.key === 'Escape') return;
       const chord = chordFromEvent(e);
       const clash = findChordConflict(chord, id, resolved);
       if (clash) {
@@ -111,11 +141,13 @@ function ShortcutsTab(): JSX.Element {
     getShortcutManager().applyOverrides();
     force((n) => n + 1);
   };
+
   const reset = (id: string): void => {
     clearShortcutOverride(id);
     getShortcutManager().applyOverrides();
     force((n) => n + 1);
   };
+
   const resetAll = (): void => {
     clearAllShortcutOverrides();
     getShortcutManager().applyOverrides();
@@ -126,53 +158,187 @@ function ShortcutsTab(): JSX.Element {
   const labelFor = (id: string): string =>
     getCommandRegistry().all().find((c) => (c.id as unknown as string) === id)?.label ?? id;
 
+  const CATEGORIES = [
+    { id: 'all', label: 'All Commands' },
+    { id: 'tools', label: 'Tools' },
+    { id: 'timeline', label: 'Timeline' },
+    { id: 'edit', label: 'Edit' },
+    { id: 'layer', label: 'Layers' },
+    { id: 'view', label: 'View' },
+    { id: 'file', label: 'File' },
+  ];
+
+  const filteredRows = rows.filter((r) => {
+    const cat = getCommandCategory(r.id, r.label);
+    const matchesCat = activeCategory === 'all' || cat.key === activeCategory;
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return matchesCat;
+    const chordStr = r.chord ? formatChord(r.chord).toLowerCase() : '';
+    const matchesSearch =
+      r.label.toLowerCase().includes(q) ||
+      r.id.toLowerCase().includes(q) ||
+      chordStr.includes(q);
+    return matchesCat && matchesSearch;
+  });
+
   return (
     <div className={styles.tabBody}>
-      <div className={styles.toolbar}>
-        <span className={styles.hint}>Click a shortcut, then press the new keys. Esc cancels.</span>
-        <Button variant="ghost" size="sm" onClick={resetAll}>Reset all</Button>
-      </div>
-      <div className={styles.list}>
-        {rows.map((r) => (
-          <div key={r.id} className={styles.row}>
-            <span className={styles.rowLabel}>{r.label}</span>
-            <div className={styles.rowRight}>
-              {conflict?.id === r.id ? (
-                <span className={styles.conflict}>Used by “{labelFor(conflict.withId)}”</span>
-              ) : null}
+      <div className={styles.shortcutsToolbar}>
+        <div className={styles.shortcutsSearchRow}>
+          <div className={styles.searchBox}>
+            <Icon name="search" size="sm" className={styles.searchIcon} />
+            <input
+              type="text"
+              className={styles.searchInput}
+              placeholder="Search by command name, action, or shortcut key…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery ? (
               <button
                 type="button"
-                className={cn(styles.chip, recording === r.id && styles.chipRecording, r.overridden && styles.chipOn)}
-                onClick={() => beginRecord(r.id)}
+                className={styles.clearSearchBtn}
+                onClick={() => setSearchQuery('')}
+                title="Clear search"
+                aria-label="Clear search"
               >
-                {recording === r.id ? 'Press keys…' : r.chord ? formatChord(r.chord) : 'Disabled'}
+                <Icon name="close" size="sm" />
               </button>
-              <button type="button" className={styles.miniBtn} title="Disable" onClick={() => disable(r.id)}>✕</button>
-              {r.overridden ? (
-                <button type="button" className={styles.miniBtn} title="Reset to default" onClick={() => reset(r.id)}>↺</button>
-              ) : null}
-            </div>
+            ) : null}
           </div>
-        ))}
+
+          <Button variant="ghost" size="sm" onClick={resetAll} title="Reset all custom shortcuts to factory defaults">
+            <Icon name="refresh" size="sm" />
+            <span>Reset All</span>
+          </Button>
+        </div>
+
+        <div className={styles.categoryChips}>
+          {CATEGORIES.map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              className={cn(styles.categoryChip, activeCategory === cat.id && styles.categoryChipActive)}
+              onClick={() => setActiveCategory(cat.id)}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={styles.shortcutsContainer}>
+        <div className={styles.tableHeader}>
+          <span className={styles.colCommand}>Command Action</span>
+          <span className={styles.colCategory}>Category</span>
+          <span className={styles.colKey}>Shortcut Binding</span>
+          <span className={styles.colActions}>Actions</span>
+        </div>
+
+        <div className={styles.shortcutsList}>
+          {filteredRows.length === 0 ? (
+            <div className={styles.emptyState}>
+              <Icon name="search" size="md" />
+              <span className={styles.emptyTitle}>No matching shortcuts found</span>
+              <span className={styles.hint}>Try a different search query or category filter.</span>
+            </div>
+          ) : (
+            filteredRows.map((r) => {
+              const cat = getCommandCategory(r.id, r.label);
+              const isRec = recording === r.id;
+              const hasConflict = conflict?.id === r.id;
+
+              return (
+                <div key={r.id} className={cn(styles.shortcutRow, isRec && styles.shortcutRowRecording)}>
+                  <div className={styles.colCommand}>
+                    <span className={styles.commandLabel}>{r.label}</span>
+                    {hasConflict ? (
+                      <span className={styles.conflictBadge}>
+                        <Icon name="warning" size="sm" />
+                        <span>Conflict with “{labelFor(conflict.withId)}”</span>
+                      </span>
+                    ) : null}
+                  </div>
+
+                  <div className={styles.colCategory}>
+                    <span className={styles.categoryTag}>{cat.label}</span>
+                  </div>
+
+                  <div className={styles.colKey}>
+                    {isRec ? (
+                      <div className={cn(styles.shortcutChip, styles.shortcutRecording)}>
+                        <span className={styles.recordingPulse} />
+                        <span className={styles.recordingText}>Press keys now…</span>
+                        <span className={styles.escBadge}>Esc to cancel</span>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className={cn(
+                          styles.shortcutChip,
+                          r.overridden && styles.shortcutOverridden,
+                          !r.chord && styles.shortcutEmpty,
+                        )}
+                        onClick={() => beginRecord(r.id)}
+                        title="Click to assign or rebind shortcut"
+                      >
+                        {renderChordKeys(r.chord)}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className={styles.colActions}>
+                    {r.overridden ? (
+                      <button
+                        type="button"
+                        className={styles.rowActionBtn}
+                        title="Reset to default binding"
+                        aria-label="Reset to default binding"
+                        onClick={() => reset(r.id)}
+                      >
+                        <Icon name="refresh" size="sm" />
+                      </button>
+                    ) : null}
+
+                    {r.chord ? (
+                      <button
+                        type="button"
+                        className={styles.rowActionBtn}
+                        title="Unassign shortcut"
+                        aria-label="Unassign shortcut"
+                        onClick={() => disable(r.id)}
+                      >
+                        <Icon name="close" size="sm" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div className={styles.shortcutsFooter}>
+        <span className={styles.hint}>
+          Showing <strong>{filteredRows.length}</strong> of {rows.length} commands. Click any shortcut chip to record a new key combination.
+        </span>
       </div>
     </div>
   );
 }
 
-/**
- * Reads the SAME workspace list as the TopNav Workspaces dropdown.
- *
- * It used to read `core/layout/workspaceLayouts` — a second, parallel system
- * with its own four presets and its own settings key. A layout saved here never
- * appeared in the toolbar dropdown and vice versa, and both shipped a preset
- * called "Default". That module is gone; anything saved under its key is
- * migrated in by `migrateLegacyLayouts`.
- */
 function WorkspacesTab(): JSX.Element {
   const [, force] = useState(0);
   const [name, setName] = useState('');
   const manager = getWorkspaceManager();
   const layouts = manager.listWorkspaces();
+  let currentWorkspaceId = 'default';
+  try {
+    currentWorkspaceId = getSettingsManager().get<string>('workspace.activeId', 'default');
+  } catch {
+    currentWorkspaceId = 'default';
+  }
 
   const save = (): void => {
     const n = name.trim();
@@ -181,28 +347,92 @@ function WorkspacesTab(): JSX.Element {
     setName('');
     force((v) => v + 1);
   };
-  const remove = (id: string): void => { manager.deleteWorkspace(id); force((v) => v + 1); };
+
+  const remove = (id: string): void => {
+    manager.deleteWorkspace(id);
+    force((v) => v + 1);
+  };
 
   return (
     <div className={styles.tabBody}>
-      <div className={styles.list}>
-        {layouts.map((l) => (
-          <div key={l.id} className={styles.row}>
-            <span className={styles.rowLabel}>
-              {l.name}{l.builtin ? <span className={styles.badge}>preset</span> : null}
-            </span>
-            <div className={styles.rowRight}>
-              <Button variant="secondary" size="sm" onClick={() => manager.applyWorkspace(l.id)}>Apply</Button>
-              {!l.builtin ? (
-                <button type="button" className={styles.miniBtn} title="Delete" onClick={() => remove(l.id)}>✕</button>
-              ) : null}
-            </div>
-          </div>
-        ))}
+      <div className={styles.workspaceHeader}>
+        <div>
+          <h4 className={styles.subHeading}>Workspace Layout Presets</h4>
+          <p className={styles.hint}>Switch between tailored multi-dock layouts or save your current screen arrangement.</p>
+        </div>
       </div>
-      <div className={styles.saveRow}>
-        <Input value={name} placeholder="Save current layout as…" onChange={(e) => setName(e.currentTarget.value)} />
-        <Button variant="primary" size="sm" onClick={save} disabled={!name.trim()}>Save</Button>
+
+      <div className={styles.workspaceGrid}>
+        {layouts.map((l) => {
+          const isActive = l.id === currentWorkspaceId;
+          return (
+            <div key={l.id} className={cn(styles.workspaceCard, isActive && styles.workspaceCardActive)}>
+              <div className={styles.workspaceCardHeader}>
+                <div className={styles.workspaceCardIcon}>
+                  <Icon name="layout" size="md" />
+                </div>
+                <div className={styles.workspaceCardMeta}>
+                  <div className={styles.workspaceCardTitleRow}>
+                    <span className={styles.workspaceCardName}>{l.name}</span>
+                    {l.builtin ? (
+                      <span className={styles.badge}>Preset</span>
+                    ) : (
+                      <span className={cn(styles.badge, styles.customBadge)}>Custom</span>
+                    )}
+                  </div>
+                  <span className={styles.workspaceCardSub}>
+                    {isActive ? 'Currently active arrangement' : 'Saved docking layout'}
+                  </span>
+                </div>
+              </div>
+
+              <div className={styles.workspaceCardActions}>
+                <Button
+                  variant={isActive ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => {
+                    manager.applyWorkspace(l.id);
+                    force((v) => v + 1);
+                  }}
+                >
+                  {isActive ? 'Active' : 'Apply Layout'}
+                </Button>
+                {!l.builtin && (
+                  <button
+                    type="button"
+                    className={styles.rowActionBtn}
+                    title={`Delete “${l.name}”`}
+                    aria-label={`Delete ${l.name}`}
+                    onClick={() => remove(l.id)}
+                  >
+                    <Icon name="trash" size="sm" />
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className={styles.saveWorkspaceCard}>
+        <div className={styles.saveWorkspaceMeta}>
+          <span className={styles.saveWorkspaceTitle}>Save Current Layout as Preset</span>
+          <span className={styles.hint}>Capture the exact sizes and dock positions of your open panels.</span>
+        </div>
+        <div className={styles.saveRow}>
+          <Input
+            value={name}
+            placeholder="e.g. Dual Monitor Animation, Color Grading…"
+            onChange={(e) => setName(e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && name.trim()) save();
+            }}
+          />
+          <Button variant="primary" size="sm" onClick={save} disabled={!name.trim()}>
+            <Icon name="plus" size="sm" />
+            <span>Save Preset</span>
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -243,298 +473,413 @@ function AppearanceTab(): JSX.Element {
   const setRightInspectorPos = useLayoutStore((s) => s.setRightInspectorPosition);
   const setTimelinePos = useLayoutStore((s) => s.setTimelinePosition);
 
+  const ACCENT_PRESETS = [
+    { name: 'Studio Blue', color: '#2988ff' },
+    { name: 'Cyber Violet', color: '#8b5cf6' },
+    { name: 'Emerald', color: '#10b981' },
+    { name: 'Coral', color: '#f97316' },
+    { name: 'Rose', color: '#f43f5e' },
+    { name: 'Amber', color: '#f59e0b' },
+    { name: 'Cyan', color: '#06b6d4' },
+  ];
+
   return (
-    <div className={styles.tabBody}>
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Accent color</span>
-        <div className={styles.rowRight}>
-          {/*
-            With no custom accent set the swatch must show the accent actually
-            in force, which is the active theme's --color-primary. This used to
-            fall back to a hardcoded #2b7eff — a blue the app uses nowhere — so
-            the picker opened misreporting the current colour. Read the token
-            rather than keeping a second, drifting copy of the value here.
-          */}
-          <ColorPicker value={accent || themeAccentColor()} onChange={applyAccent} aria-label="Accent color" />
-          <Button variant="ghost" size="sm" onClick={() => applyAccent('')} disabled={!accent}>Reset</Button>
+    <div className={styles.appearanceScroll}>
+      <div className={styles.sectionGroup}>
+        <div className={styles.sectionHeading}>
+          <span className={styles.sectionTitle}>Theme & Brand Accent</span>
+          <span className={styles.hint}>Choose the studio accent highlight and light/dark interface mode.</span>
         </div>
-      </div>
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Theme</span>
-        <div className={styles.rowRight}>
-          <Button variant="secondary" size="sm" onClick={() => getThemeManager().toggle()}>Switch light / dark</Button>
-        </div>
-      </div>
 
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Button Size</span>
-        <div className={styles.rowRight}>
-          <Button variant={buttonSize === 'sm' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('buttonSize', 'sm')}>Small</Button>
-          <Button variant={buttonSize === 'md' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('buttonSize', 'md')}>Medium</Button>
-          <Button variant={buttonSize === 'lg' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('buttonSize', 'lg')}>Large</Button>
-        </div>
-      </div>
+        <div className={styles.settingCard}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Accent Color</span>
+              <span className={styles.settingDesc}>Controls focus rings, active keyframe markers, and selection bounding boxes.</span>
+            </div>
+            <div className={styles.accentPickerWrap}>
+              <div className={styles.presetSwatches}>
+                {ACCENT_PRESETS.map((p) => {
+                  const isCur = (accent || themeAccentColor()).toLowerCase() === p.color.toLowerCase();
+                  return (
+                    <button
+                      key={p.color}
+                      type="button"
+                      className={cn(styles.colorSwatch, isCur && styles.colorSwatchActive)}
+                      style={{ backgroundColor: p.color }}
+                      title={p.name}
+                      onClick={() => applyAccent(p.color)}
+                    />
+                  );
+                })}
+              </div>
+              <ColorPicker value={accent || themeAccentColor()} onChange={applyAccent} aria-label="Accent color" />
+              {accent ? (
+                <Button variant="ghost" size="sm" onClick={() => applyAccent('')}>
+                  Reset
+                </Button>
+              ) : null}
+            </div>
+          </div>
 
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Icon Size</span>
-        <div className={styles.rowRight}>
-          <Button variant={iconSize === 'sm' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('iconSize', 'sm')}>Small</Button>
-          <Button variant={iconSize === 'md' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('iconSize', 'md')}>Medium</Button>
-          <Button variant={iconSize === 'lg' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('iconSize', 'lg')}>Large</Button>
-        </div>
-      </div>
-
-      {/*
-        Whole-UI zoom.
-        `uiScale` was fully implemented and completely unreachable: the store
-        held it, `applyUiPreferences` pushed it onto `document.zoom`, and
-        useResponsiveLayout divided by it so breakpoints stayed honest — but no
-        surface anywhere let anyone change it from 1. This is that surface. It
-        belongs next to the other size controls, not buried in a menu.
-      */}
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Interface Scale</span>
-        <div className={styles.rowRight}>
-          <input
-            type="range"
-            min={75}
-            max={150}
-            step={5}
-            value={Math.round(uiScale * 100)}
-            onChange={(e) => setPref('uiScale', Number(e.target.value) / 100)}
-            aria-label="Interface scale"
-          />
-          <span style={{ minWidth: 46, textAlign: 'right' }}>{Math.round(uiScale * 100)}%</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setPref('uiScale', 1)}
-            disabled={uiScale === 1}
-          >
-            Reset
-          </Button>
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Interface Theme</span>
+              <span className={styles.settingDesc}>Toggle between dark studio mode and high-contrast light mode.</span>
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => getThemeManager().toggle()}>
+              <Icon name="theme" size="sm" />
+              <span>Toggle Dark / Light</span>
+            </Button>
+          </div>
         </div>
       </div>
 
-      {/*
-        Named for what it actually does. It was "Sidebar Items Density", which
-        promises the whole sidebar; the two CSS variables it sets are read by
-        exactly one stylesheet — the Library's item grid. Widening it to every
-        panel's rows is a real change to a lot of untested CSS; renaming it to
-        the truth costs nothing and stops the control lying about its reach.
-      */}
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Library Item Density</span>
-        <div className={styles.rowRight}>
-          <Button variant={sidebarDensity === 'compact' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'compact')}>Compact</Button>
-          <Button variant={sidebarDensity === 'default' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'default')}>Default</Button>
-          <Button variant={sidebarDensity === 'comfortable' ? 'primary' : 'secondary'} size="sm" onClick={() => setPref('sidebarDensity', 'comfortable')}>Comfortable</Button>
+      <div className={styles.sectionGroup}>
+        <div className={styles.sectionHeading}>
+          <span className={styles.sectionTitle}>Dock & Panel Alignment</span>
+          <span className={styles.hint}>Configure which edge each studio dock pane attaches to.</span>
+        </div>
+
+        <div className={styles.settingCard}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Left Sidebar Position</span>
+              <span className={styles.settingDesc}>Attach Project, Library, and Scene panels to the left or right edge.</span>
+            </div>
+            <div className={styles.segmented}>
+              <button
+                type="button"
+                className={cn(styles.segItem, leftSidebarPos === 'left' && styles.segItemActive)}
+                onClick={() => setLeftSidebarPos('left')}
+              >
+                Left
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, leftSidebarPos === 'right' && styles.segItemActive)}
+                onClick={() => setLeftSidebarPos('right')}
+              >
+                Right
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Inspector Position</span>
+              <span className={styles.settingDesc}>Attach Properties and Effects inspectors to the right or left edge.</span>
+            </div>
+            <div className={styles.segmented}>
+              <button
+                type="button"
+                className={cn(styles.segItem, rightInspectorPos === 'left' && styles.segItemActive)}
+                onClick={() => setRightInspectorPos('left')}
+              >
+                Left
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, rightInspectorPos === 'right' && styles.segItemActive)}
+                onClick={() => setRightInspectorPos('right')}
+              >
+                Right
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Timeline Position</span>
+              <span className={styles.settingDesc}>Position the layer tracks and graph editor at the bottom or top.</span>
+            </div>
+            <div className={styles.segmented}>
+              <button
+                type="button"
+                className={cn(styles.segItem, timelinePos === 'bottom' && styles.segItemActive)}
+                onClick={() => setTimelinePos('bottom')}
+              >
+                Bottom
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, timelinePos === 'top' && styles.segItemActive)}
+                onClick={() => setTimelinePos('top')}
+              >
+                Top
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Default Sidebar Width</span>
+              <span className={styles.settingDesc}>Base width for project and layer inspector sidebars.</span>
+            </div>
+            <div className={styles.sliderWrap}>
+              <input
+                type="range"
+                min={260}
+                max={540}
+                step={10}
+                value={leftSidebarWidth}
+                onChange={(e) => setRegionSize('leftSidebar', Number(e.target.value))}
+                aria-label="Left sidebar width resizer"
+                className={styles.rangeInput}
+              />
+              <span className={styles.rangeVal}>{leftSidebarWidth}px</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setRegionSize('leftSidebar', 340)}
+                disabled={leftSidebarWidth === 340}
+              >
+                Reset
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Sidebar Width Resizer</span>
-        <div className={styles.rowRight}>
-          <input
-            type="range"
-            min={260}
-            max={540}
-            step={10}
-            value={leftSidebarWidth}
-            onChange={(e) => setRegionSize('leftSidebar', Number(e.target.value))}
-            aria-label="Left sidebar width resizer"
-          />
-          <span style={{ minWidth: 46, textAlign: 'right' }}>{leftSidebarWidth}px</span>
-          <Button variant="ghost" size="sm" onClick={() => setRegionSize('leftSidebar', 340)} disabled={leftSidebarWidth === 340}>
-            Reset
-          </Button>
+      <div className={styles.sectionGroup}>
+        <div className={styles.sectionHeading}>
+          <span className={styles.sectionTitle}>Scale & Control Sizing</span>
+          <span className={styles.hint}>Fine-tune icon scales, button targets, and whole-canvas zoom.</span>
+        </div>
+
+        <div className={styles.settingCard}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Interface Zoom Scale</span>
+              <span className={styles.settingDesc}>Scales the entire application typography, dialogs, and controls.</span>
+            </div>
+            <div className={styles.sliderWrap}>
+              <input
+                type="range"
+                min={75}
+                max={150}
+                step={5}
+                value={Math.round(uiScale * 100)}
+                onChange={(e) => setPref('uiScale', Number(e.target.value) / 100)}
+                aria-label="Interface scale"
+                className={styles.rangeInput}
+              />
+              <span className={styles.rangeVal}>{Math.round(uiScale * 100)}%</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setPref('uiScale', 1)}
+                disabled={uiScale === 1}
+              >
+                Reset
+              </Button>
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Button Target Sizing</span>
+              <span className={styles.settingDesc}>Compact rows for precision density or larger targets for high-DPI displays.</span>
+            </div>
+            <div className={styles.segmented}>
+              <button
+                type="button"
+                className={cn(styles.segItem, buttonSize === 'sm' && styles.segItemActive)}
+                onClick={() => setPref('buttonSize', 'sm')}
+              >
+                Small
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, buttonSize === 'md' && styles.segItemActive)}
+                onClick={() => setPref('buttonSize', 'md')}
+              >
+                Medium
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, buttonSize === 'lg' && styles.segItemActive)}
+                onClick={() => setPref('buttonSize', 'lg')}
+              >
+                Large
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Toolbar Icon Scale</span>
+              <span className={styles.settingDesc}>Scales tool selector and timeline track control glyphs.</span>
+            </div>
+            <div className={styles.segmented}>
+              <button
+                type="button"
+                className={cn(styles.segItem, iconSize === 'sm' && styles.segItemActive)}
+                onClick={() => setPref('iconSize', 'sm')}
+              >
+                Small
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, iconSize === 'md' && styles.segItemActive)}
+                onClick={() => setPref('iconSize', 'md')}
+              >
+                Medium
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, iconSize === 'lg' && styles.segItemActive)}
+                onClick={() => setPref('iconSize', 'lg')}
+              >
+                Large
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Library Asset Grid Density</span>
+              <span className={styles.settingDesc}>Item spacing inside Footage and Asset browsing galleries.</span>
+            </div>
+            <div className={styles.segmented}>
+              <button
+                type="button"
+                className={cn(styles.segItem, sidebarDensity === 'compact' && styles.segItemActive)}
+                onClick={() => setPref('sidebarDensity', 'compact')}
+              >
+                Compact
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, sidebarDensity === 'default' && styles.segItemActive)}
+                onClick={() => setPref('sidebarDensity', 'default')}
+              >
+                Default
+              </button>
+              <button
+                type="button"
+                className={cn(styles.segItem, sidebarDensity === 'comfortable' && styles.segItemActive)}
+                onClick={() => setPref('sidebarDensity', 'comfortable')}
+              >
+                Comfortable
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Left Sidebar Position</span>
-        <div className={styles.rowRight}>
-          <Button
-            variant={leftSidebarPos === 'left' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setLeftSidebarPos('left')}
-          >
-            Left
-          </Button>
-          <Button
-            variant={leftSidebarPos === 'right' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setLeftSidebarPos('right')}
-          >
-            Right
-          </Button>
+      <div className={styles.sectionGroup}>
+        <div className={styles.sectionHeading}>
+          <span className={styles.sectionTitle}>Editor Behaviors & Safeguards</span>
+          <span className={styles.hint}>Animation automation, motion comfort, and safety prompts.</span>
+        </div>
+
+        <div className={styles.settingCard}>
+          <div className={styles.switchRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Auto-Keyframe Recording</span>
+              <span className={styles.settingDesc}>Automatically record a keyframe whenever a property changes while the playhead is parked.</span>
+            </div>
+            <Switch
+              checked={autoKeyframe}
+              onChange={(e) => setPref('timelineAutoKeyframe', e.target.checked)}
+              aria-label="Auto-keyframe recording"
+            />
+          </div>
+
+          <div className={styles.switchRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Confirm Unsaved Changes on Exit</span>
+              <span className={styles.settingDesc}>Prompt for confirmation before New, Open, or Close discards project edits.</span>
+            </div>
+            <Switch
+              checked={confirmOnClose}
+              onChange={(e) => setPref('confirmOnClose', e.target.checked)}
+              aria-label="Confirm before discarding unsaved changes"
+            />
+          </div>
+
+          <div className={styles.switchRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Reduce UI Motion & Transitions</span>
+              <span className={styles.settingDesc}>Disables non-essential panel animations and transitions (viewport playback unaffected).</span>
+            </div>
+            <Switch
+              checked={reduceMotion}
+              onChange={(e) => setPref('editorReduceMotion', e.target.checked)}
+              aria-label="Reduce UI motion"
+            />
+          </div>
+
+          <div className={styles.switchRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Retain Original Vector SVG Sources</span>
+              <span className={styles.settingDesc}>Preserve vector XML structures when importing complex SVG assets.</span>
+            </div>
+            <Switch
+              checked={retainOriginalSvg}
+              onChange={(e) => setPref('retainOriginalSvg', e.target.checked)}
+              aria-label="Retain original SVG sources"
+            />
+          </div>
+
+          <div className={styles.switchRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Background Idle Cache Work Area</span>
+              <span className={styles.settingDesc}>Pre-render timeline frames during user idle periods for smoother real-time scrubbing.</span>
+            </div>
+            <Switch
+              checked={idleCacheWorkArea}
+              onChange={(e) => setPref('idleCacheWorkArea', e.target.checked)}
+              aria-label="Idle cache work area"
+            />
+          </div>
         </div>
       </div>
 
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Right Inspector Position</span>
-        <div className={styles.rowRight}>
-          <Button
-            variant={rightInspectorPos === 'left' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setRightInspectorPos('left')}
-          >
-            Left
-          </Button>
-          <Button
-            variant={rightInspectorPos === 'right' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setRightInspectorPos('right')}
-          >
-            Right
-          </Button>
+      <div className={styles.sectionGroup}>
+        <div className={styles.sectionHeading}>
+          <span className={styles.sectionTitle}>Storage, Cache & Intelligence</span>
+          <span className={styles.hint}>Manage disk cache usage and optional neural segmentation models.</span>
+        </div>
+
+        <div className={styles.settingCard}>
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Render Frame Disk Cache</span>
+              <span className={styles.settingDesc}>Disk space used for cached frames, onion skins, and parked states.</span>
+            </div>
+            <div className={styles.settingRight}>
+              <PreviewCacheControl />
+            </div>
+          </div>
+
+          <div className={styles.settingRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>AI Object Matte Model</span>
+              <span className={styles.settingDesc}>Local neural model powering one-click Roto subject selection.</span>
+            </div>
+            <div className={styles.settingRight}>
+              <ObjectMatteControl />
+            </div>
+          </div>
+
+          <UpdatesControl />
         </div>
       </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Timeline Position</span>
-        <div className={styles.rowRight}>
-          <Button
-            variant={timelinePos === 'bottom' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setTimelinePos('bottom')}
-          >
-            Bottom
-          </Button>
-          <Button
-            variant={timelinePos === 'top' ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setTimelinePos('top')}
-          >
-            Top
-          </Button>
-        </div>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Reduce motion</span>
-        <div className={styles.rowRight}>
-          <input
-            type="checkbox"
-            checked={reduceMotion}
-            onChange={(e) => setPref('editorReduceMotion', e.target.checked)}
-            aria-label="Reduce UI motion (disables chrome transitions; playback unaffected)"
-          />
-        </div>
-      </div>
-
-      {/*
-        Auto-keyframe used to live only on the dashboard's settings tab, which
-        is the one screen you cannot see while editing — the exact moment you
-        want to turn it on or off. Moved here with the other editing behaviour.
-      */}
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Auto-keyframe</span>
-        <div className={styles.rowRight}>
-          <input
-            type="checkbox"
-            checked={autoKeyframe}
-            onChange={(e) => setPref('timelineAutoKeyframe', e.target.checked)}
-            aria-label="Record a keyframe automatically when a property changes with the playhead parked"
-          />
-        </div>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Confirm before discarding unsaved changes</span>
-        <div className={styles.rowRight}>
-          <input
-            type="checkbox"
-            checked={confirmOnClose}
-            onChange={(e) => setPref('confirmOnClose', e.target.checked)}
-            aria-label="Ask before New/Open/Close discards unsaved changes"
-          />
-        </div>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Retain original SVG data after conversion</span>
-        <div className={styles.rowRight}>
-          <input
-            type="checkbox"
-            checked={retainOriginalSvg}
-            onChange={(e) => setPref('retainOriginalSvg', e.target.checked)}
-            aria-label="Keep the original SVG on a layer after Convert to Editable Shapes, so it can be reverted"
-          />
-        </div>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Cache the work area while idle</span>
-        <div className={styles.rowRight}>
-          <input
-            type="checkbox"
-            checked={idleCacheWorkArea}
-            onChange={(e) => setPref('idleCacheWorkArea', e.target.checked)}
-            aria-label="While paused, pre-render the whole work area instead of a few seconds ahead"
-          />
-        </div>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Preview disk cache</span>
-        <div className={styles.rowRight}>
-          <PreviewCacheControl />
-        </div>
-      </div>
-
-      <div className={styles.row}>
-        <span className={styles.rowLabel}>Object Matte</span>
-        <div className={styles.rowRight}>
-          <ObjectMatteControl />
-        </div>
-      </div>
-
-      {/* Renders nothing in a browser build — there is no shell to update. */}
-      <UpdatesControl />
-
-      <p className={styles.hint}>
-        The accent tints buttons, selection and the playhead. Empty follows the theme.
-        <br />
-        <span style={{ color: 'var(--color-text-tertiary)', display: 'block', marginTop: 'var(--space-2)' }}>
-          Note: GPU backends are experimental. Complex blend modes, masking, and adjustment layers are currently bypassed on the GPU path.
-        </span>
-      </p>
     </div>
   );
 }
 
-/**
- * The dialog's tabs, as a FUNCTION rather than a constant.
- *
- * A module-level array would be built when this module is first imported, which
- * happens before `main.tsx` calls `setEdition()` — so an edition-gated entry
- * would capture the default ('server') and the gate would never fire. Same
- * reason `panelDefs` takes a predicate instead of a boolean.
- */
-function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string }> {
+function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string; icon: IconName }> {
   return [
-    { id: 'shortcuts', label: 'Shortcuts' },
-    { id: 'tabs', label: 'Workspaces' },
-    { id: 'appearance', label: 'Appearance' },
-    // Both editions. AI setup used to live ONLY on the dashboard settings page,
-    // and the assistant panel linked to it with `#/dashboard?tab=settings` —
-    // a route the local edition does not register. The editor owns the surface
-    // now so BYOK works without an account.
-    ...(aiEnabled() ? ([{ id: 'ai' as const, label: 'AI' }]) : []),
+    { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' as IconName },
+    { id: 'tabs', label: 'Workspaces', icon: 'layout' as IconName },
+    { id: 'appearance', label: 'Appearance', icon: 'palette' as IconName },
+    ...(aiEnabled() ? [{ id: 'ai' as const, label: 'AI Engine', icon: 'ai' as IconName }] : []),
   ];
 }
 
-/**
- * Size readout + Purge for the preview disk tier.
- *
- * This is `FrameDiskCache.purge()`'s ONE caller — the export existed for a
- * dialog that had not been built, which is the dead-export shape this repo's
- * working agreements flag. The readout counts parked generations too, because
- * they are exactly the bytes a user wondering "why is this app holding 3 GB"
- * is looking at. Purge also clears the RAM tier: AE's purge does, and a purge
- * that leaves the green bar lit reads as a button that did nothing.
- */
 function PreviewCacheControl(): JSX.Element {
   const [, bump] = useState(0);
   const disk = activeViewportDiskCache();
@@ -544,8 +889,8 @@ function PreviewCacheControl(): JSX.Element {
   const mb = disk.totalBytes / (1024 * 1024);
   const parked = disk.retainedGenerations;
   return (
-    <>
-      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
+    <div className={styles.cacheControlWrap}>
+      <span className={styles.cacheSizeReadout}>
         {mb < 1 ? '< 1' : Math.round(mb)} MB
         {parked > 0 ? ` · ${parked} parked state${parked === 1 ? '' : 's'}` : ''}
       </span>
@@ -559,67 +904,61 @@ function PreviewCacheControl(): JSX.Element {
           });
         }}
       >
-        Purge
+        <Icon name="trash" size="sm" />
+        <span>Purge Cache</span>
       </Button>
-    </>
+    </div>
   );
 }
 
 function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): JSX.Element {
   const tabs = tabsForEdition();
-  // A persisted or deep-linked 'ai' tab must not survive into an edition that
-  // has no such tab — it would render the panel with no way to leave it.
   const [tab, setTab] = useState<Tab>(
     tabs.some((t) => t.id === initialTab) ? initialTab : 'shortcuts',
   );
+
   return (
     <div className={styles.root}>
-      <div className={styles.tabs} role="tablist">
+      <div className={styles.tabsWrap} role="tablist">
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
             role="tab"
             aria-selected={tab === t.id}
-            className={cn(styles.tab, tab === t.id && styles.tabOn)}
+            className={cn(styles.tabBtn, tab === t.id && styles.tabBtnActive)}
             onClick={() => setTab(t.id)}
           >
-            {t.label}
+            <Icon name={t.icon} size="sm" />
+            <span>{t.label}</span>
           </button>
         ))}
       </div>
-      {tab === 'shortcuts' ? <ShortcutsTab />
-        : tab === 'tabs' ? <WorkspacesTab />
-        : tab === 'ai' ? <div className={styles.section}><AiSettingsSection /></div>
-        : <AppearanceTab />}
+
+      <div className={styles.contentWrap}>
+        {tab === 'shortcuts' ? (
+          <ShortcutsTab />
+        ) : tab === 'tabs' ? (
+          <WorkspacesTab />
+        ) : tab === 'ai' ? (
+          <div className={styles.section}><AiSettingsSection /></div>
+        ) : (
+          <AppearanceTab />
+        )}
+      </div>
     </div>
   );
 }
 
-/**
- * Open the Customize dialog, optionally on a specific tab.
- *
- * The fixed modal id means a second call REPLACES the open dialog rather than
- * stacking one — so "Open AI settings" from the assistant panel switches tabs
- * even when Customize is already up.
- */
 export function openCustomizeDialog(initialTab?: Tab): void {
   openModal({
     id: 'customize',
-    title: 'Customize',
+    title: 'Studio Preferences & Customization',
     size: 'lg',
     render: () => <Customize {...(initialTab ? { initialTab } : {})} />,
   });
 }
 
-/**
- * Deep link for the assistant's "Connect an AI provider" banner.
- *
- * A no-op when the edition has no assistant. The only caller is the assistant
- * panel itself, which that edition never mounts — but this is the kind of
- * function that acquires a second caller later, and opening Customize on a tab
- * that does not exist would silently land the user on Shortcuts.
- */
 export function openAiSettings(): void {
   if (!aiEnabled()) return;
   openCustomizeDialog('ai');

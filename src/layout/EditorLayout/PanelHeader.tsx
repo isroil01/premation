@@ -71,7 +71,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
   return (
     <div className={styles.header}>
       <div className={styles.leftGroup}>
-        {icon && <Icon name={icon as any} size="md" />}
+        {icon && <Icon name={icon as any} size="sm" />}
         <span className={styles.title}>{title}</span>
       </div>
 
@@ -88,7 +88,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
             onClick={() => setMenuOpen(!menuOpen)}
             title="Panel Options"
           >
-            <Icon name="more-horizontal" size="md" />
+            <Icon name="more-horizontal" size="sm" />
           </button>
         )}
 
@@ -100,7 +100,7 @@ export function PanelHeader({ panelId, title, icon, closable = true, isPopout = 
             onClick={() => closePanel(panelId)}
             title="Close Panel"
           >
-            <Icon name="close" size="md" />
+            <Icon name="close" size="sm" />
           </button>
         )}
 

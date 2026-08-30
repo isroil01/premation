@@ -263,16 +263,16 @@ export function PresentationMode(): JSX.Element | null {
         </div>
         <div className={styles.topActions}>
           <button type="button" className={styles.iconBtn} onClick={downloadFrame} title="Download current frame (PNG)" aria-label="Download current frame">
-            <Icon name="download" size="md" />
+            <Icon name="download" size="sm" />
           </button>
           <button type="button" className={styles.iconBtn} onClick={() => openExportDialog(duration, fps)} title="Export video…" aria-label="Export video">
-            <Icon name="export" size="md" />
+            <Icon name="export" size="sm" />
           </button>
           <button type="button" className={styles.iconBtn} onClick={toggleFullscreen} title={isFullscreen ? 'Exit fullscreen (F)' : 'Fullscreen (F)'} aria-label="Toggle fullscreen">
-            <Icon name={isFullscreen ? 'minimize' : 'maximize'} size="md" />
+            <Icon name={isFullscreen ? 'minimize' : 'maximize'} size="sm" />
           </button>
           <button type="button" className={styles.iconBtn} onClick={handleExit} title="Exit presentation (Esc)" aria-label="Exit presentation">
-            <Icon name="close" size="md" />
+            <Icon name="close" size="sm" />
           </button>
         </div>
       </div>
@@ -326,19 +326,19 @@ export function PresentationMode(): JSX.Element | null {
 
         <div className={styles.transport}>
           <button type="button" className={styles.tBtn} onClick={() => getTimelineController().goToStart()} title="Go to start (Home)" aria-label="Go to start">
-            <Icon name="skip-back" size="md" />
+            <Icon name="skip-back" size="sm" />
           </button>
           <button type="button" className={styles.tBtn} onClick={() => getTimelineController().previousFrame()} title="Previous frame (←)" aria-label="Previous frame">
-            <Icon name="chevron-left" size="md" />
+            <Icon name="chevron-left" size="sm" />
           </button>
           <button type="button" className={styles.play} onClick={togglePlay} title={playing ? 'Pause (Space)' : 'Play (Space)'} aria-label={playing ? 'Pause' : 'Play'}>
-            <Icon name={playing ? 'pause' : 'play'} size="md" />
+            <Icon name={playing ? 'pause' : 'play'} size="sm" />
           </button>
           <button type="button" className={styles.tBtn} onClick={() => getTimelineController().nextFrame()} title="Next frame (→)" aria-label="Next frame">
-            <Icon name="chevron-right" size="md" />
+            <Icon name="chevron-right" size="sm" />
           </button>
           <button type="button" className={styles.tBtn} onClick={() => getTimelineController().goToEnd()} title="Go to end (End)" aria-label="Go to end">
-            <Icon name="skip-forward" size="md" />
+            <Icon name="skip-forward" size="sm" />
           </button>
           <button
             type="button"
@@ -348,7 +348,7 @@ export function PresentationMode(): JSX.Element | null {
             aria-label="Loop playback"
             aria-pressed={looping}
           >
-            <Icon name="loop" size="md" />
+            <Icon name="loop" size="sm" />
           </button>
         </div>
       </div>

@@ -5,12 +5,13 @@
  * an authentic AE panel options / hamburger dropdown (≡), allowing instant switching.
  */
 
-import { useMemo, useRef, useState, useEffect, type ReactNode, type DragEvent } from 'react';
+import { useMemo, type ReactNode, type DragEvent } from 'react';
 import { useLayoutStore } from '@stores/layoutStore';
 import type { RegionId } from '@stores/layoutStore';
 import type { IconName } from '@components/Icon';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { Icon } from '@components/Icon';
+import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { panelDef } from '@layout/EditorLayout/panelDefs';
 import styles from './DockPanel.module.css';
@@ -43,27 +44,19 @@ export function DockPanel({
   splitPosition,
   onToggleSplit,
 }: DockPanelProps): JSX.Element | null {
+  const isLeft = region.startsWith('leftSidebar');
+  const isTop = splitPosition ? splitPosition === 'top' : (region === 'leftSidebar' || region === 'rightInspector');
+  const regionKey = isLeft ? 'leftSidebar' : 'rightInspector';
+
   const panelOrder = useLayoutStore((s) => s.panelOrder[region] ?? []);
   const activeTabId = useLayoutStore((s) => s.activePanelByRegion[region]);
   const panels = useLayoutStore((s) => s.panels);
+  const isRegionCollapsed = useLayoutStore((s) => s.regions[regionKey]?.collapsed ?? false);
   const openPanel = useLayoutStore((s) => s.openPanel);
   const closePanel = useLayoutStore((s) => s.closePanel);
   const movePanel = useLayoutStore((s) => s.movePanel);
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  // Close popover on outside click
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [menuOpen]);
+  const isCollapsed = isRegionCollapsed || className?.includes('collapsed-view') || false;
 
   const allItems: TabDescriptor[] = useMemo(() => {
     return panelOrder
@@ -96,15 +89,107 @@ export function DockPanel({
     return top;
   }, [allItems, effectiveActiveId]);
 
+  const targetPanelId = effectiveActiveId ?? allItems[0]?.id ?? null;
+  const targetPanel = targetPanelId ? panels[targetPanelId] : undefined;
+  const targetLabel = targetPanel?.title || 'Panel';
+
+  const moveActiveTo = (dest: RegionId) => {
+    if (targetPanelId) {
+      const destLen = useLayoutStore.getState().panelOrder[dest]?.length ?? 0;
+      movePanel(targetPanelId, dest, destLen);
+    }
+  };
+
+  const popoutActivePanel = () => {
+    if (targetPanelId) {
+      useLayoutStore.getState().popoutPanel(targetPanelId);
+      if (window.motionEditor?.popout?.spawnWindow) {
+        window.motionEditor.popout.spawnWindow(targetPanelId);
+      } else {
+        const url = `${window.location.origin}${window.location.pathname}#/popout/${targetPanelId}`;
+        window.open(url, `popout-${targetPanelId}`, 'width=900,height=650,resizable=yes');
+      }
+    }
+  };
+
+  const menuItems: DropdownItem[] = useMemo(() => {
+    const items: DropdownItem[] = [
+      { type: 'label', label: 'Dock Panels' },
+      ...allItems.map((item) => ({
+        type: 'item' as const,
+        id: `panel-${item.id}`,
+        label: item.label,
+        icon: item.id === effectiveActiveId ? ('check' as IconName) : (item.icon ?? undefined),
+        onSelect: () => openPanel(item.id),
+      })),
+      { type: 'separator' },
+      { type: 'label', label: 'Panel Actions' },
+      {
+        type: 'item' as const,
+        id: 'toggle-collapse',
+        label: isRegionCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar',
+        icon: (isLeft
+          ? isRegionCollapsed ? 'chevron-right' : 'chevron-left'
+          : isRegionCollapsed ? 'chevron-left' : 'chevron-right') as IconName,
+        onSelect: () => {
+          useLayoutStore.getState().setCollapsed(regionKey, !isRegionCollapsed);
+        },
+      },
+      ...(onToggleSplit
+        ? [
+            {
+              type: 'item' as const,
+              id: 'split-view',
+              label: isSplit ? 'Merge into Single View' : 'Split View (Top & Bottom)',
+              icon: (isSplit ? 'minimize' : 'layers') as IconName,
+              onSelect: onToggleSplit,
+            },
+          ]
+        : []),
+      ...(isSplit
+        ? [
+            {
+              type: 'item' as const,
+              id: 'move-pane',
+              label: isTop ? 'Move to Bottom Pane' : 'Move to Top Pane',
+              icon: 'layout' as IconName,
+              onSelect: () => {
+                if (isTop) {
+                  const bottomDest: RegionId = isLeft ? 'leftSidebar_bottom' : 'rightInspector_bottom';
+                  moveActiveTo(bottomDest);
+                } else {
+                  const topDest: RegionId = isLeft ? 'leftSidebar' : 'rightInspector';
+                  moveActiveTo(topDest);
+                }
+              },
+            },
+          ]
+        : []),
+      {
+        type: 'item' as const,
+        id: 'move-side',
+        label: isLeft ? 'Move to Right Inspector' : 'Move to Left Sidebar',
+        icon: 'layout' as IconName,
+        onSelect: () => {
+          const otherSide: RegionId = isLeft ? 'rightInspector' : 'leftSidebar';
+          moveActiveTo(otherSide);
+        },
+      },
+      {
+        type: 'item' as const,
+        id: 'popout',
+        label: `Undock “${targetLabel}”`,
+        icon: 'export' as IconName,
+        onSelect: popoutActivePanel,
+      },
+    ];
+    return items;
+  }, [allItems, effectiveActiveId, onToggleSplit, isSplit, isTop, isLeft, targetLabel, targetPanelId, isRegionCollapsed, regionKey]);
+
   // All hooks must run before this guard — bail out only once they have.
   if (allItems.length === 0) return null;
 
   const activeRenderer = effectiveActiveId ? renderers[effectiveActiveId] : undefined;
-
-  const overflowCount = Math.max(0, allItems.length - visibleItems.length);
-
-  // Check if this sidebar is collapsed
-  const isCollapsed = className?.includes('collapsed-view') || false;
 
   /** Drag handlers — plain HTML5 DnD for tab reordering */
   const onDragStart = (id: string) => (e: DragEvent<HTMLDivElement>) => {
@@ -132,33 +217,51 @@ export function DockPanel({
     movePanel(src, region, targetIdx);
   };
 
-  const targetPanelId = effectiveActiveId ?? allItems[0]?.id ?? null;
-  const targetPanel = targetPanelId ? panels[targetPanelId] : undefined;
-  const targetLabel = targetPanel?.title || 'Panel';
+  if (isCollapsed) {
+    return (
+      <div className={cn(styles.root, styles.collapsedRoot, className)}>
+        <div className={styles.collapsedHeaderBar}>
+          <Dropdown
+            placement={isLeft ? 'right-start' : 'left-start'}
+            offset={{ x: 6, y: 0 }}
+            noScroll
+            trigger={
+              <button
+                type="button"
+                className={styles.collapsedMenuBtn}
+                title="Dock Panels & Options"
+                aria-label="Dock panels and options menu"
+              >
+                <Icon name="menu" size="sm" />
+              </button>
+            }
+            items={menuItems}
+          />
+        </div>
 
-  const isLeft = region.startsWith('leftSidebar');
-  const isTop = splitPosition ? splitPosition === 'top' : (region === 'leftSidebar' || region === 'rightInspector');
-
-  const moveActiveTo = (dest: RegionId) => {
-    if (targetPanelId) {
-      const destLen = useLayoutStore.getState().panelOrder[dest]?.length ?? 0;
-      movePanel(targetPanelId, dest, destLen);
-    }
-    setMenuOpen(false);
-  };
-
-  const popoutActivePanel = () => {
-    if (targetPanelId) {
-      useLayoutStore.getState().popoutPanel(targetPanelId);
-      if (window.motionEditor?.popout?.spawnWindow) {
-        window.motionEditor.popout.spawnWindow(targetPanelId);
-      } else {
-        const url = `${window.location.origin}${window.location.pathname}#/popout/${targetPanelId}`;
-        window.open(url, `popout-${targetPanelId}`, 'width=900,height=650,resizable=yes');
-      }
-    }
-    setMenuOpen(false);
-  };
+        <div className={styles.collapsedIconsRail}>
+          {allItems.map((item) => {
+            const isActive = item.id === effectiveActiveId;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={cn(styles.collapsedIconBtn, isActive && styles.collapsedIconBtnActive)}
+                title={`${item.label} (Click to expand)`}
+                aria-label={item.label}
+                onClick={() => {
+                  openPanel(item.id);
+                  useLayoutStore.getState().setCollapsed(regionKey, false);
+                }}
+              >
+                {item.icon ? <Icon name={item.icon} size="sm" /> : <Icon name="layers" size="sm" />}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={cn(styles.root, className)}>
@@ -276,7 +379,7 @@ export function DockPanel({
         </div>
 
         {/* ── Actions & Panel Hamburger / Overflow Menu ── */}
-        <div className={styles.headerActions} ref={popoverRef}>
+        <div className={styles.headerActions}>
           {headerExtras}
 
           {/* Quick Split / Merge Toggle Button */}
@@ -292,121 +395,22 @@ export function DockPanel({
             </button>
           )}
 
-          <button
-            type="button"
-            className={cn(styles.actionBtn, menuOpen && styles.actionBtnActive)}
-            title={`Dock Panels & Options (${allItems.length} panels)`}
-            aria-label="Dock panels and options menu"
-            onClick={() => setMenuOpen(!menuOpen)}
-          >
-            {overflowCount > 0 && <span className={styles.overflowBadge}>+{overflowCount}</span>}
-            <Icon name="menu" size="sm" />
-          </button>
-
-          {menuOpen && (
-            <ul className={styles.moveMenu} role="menu">
-              <li className={styles.moveMenuLabel} role="none">Dock Panels</li>
-              {allItems.map((item) => {
-                const isActive = item.id === effectiveActiveId;
-                return (
-                  <li key={item.id} role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className={cn(styles.moveMenuItem, isActive && styles.moveMenuItemActive)}
-                      onClick={() => {
-                        openPanel(item.id);
-                        setMenuOpen(false);
-                      }}
-                    >
-                      <span className={styles.menuItemLeft}>
-                        {item.icon && <Icon name={item.icon} size="sm" />}
-                        <span>{item.label}</span>
-                      </span>
-                      {isActive && <span className={styles.activeCheck}>✓</span>}
-                    </button>
-                  </li>
-                );
-              })}
-
-              <li className={styles.menuSectionDivider} role="separator" />
-
-              <li className={styles.moveMenuLabel} role="none">Panel Actions</li>
-              {onToggleSplit && (
-                <li role="none">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={styles.moveMenuItem}
-                    onClick={() => {
-                      onToggleSplit();
-                      setMenuOpen(false);
-                    }}
-                  >
-                    <span className={styles.menuItemLeft}>
-                      <Icon name={isSplit ? 'minimize' : 'layers'} size="sm" />
-                      <span>{isSplit ? 'Merge into Single View' : 'Split View (Top & Bottom)'}</span>
-                    </span>
-                  </button>
-                </li>
-              )}
-
-              {isSplit && (
-                <li role="none">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={styles.moveMenuItem}
-                    onClick={() => {
-                      if (isTop) {
-                        const bottomDest: RegionId = isLeft ? 'leftSidebar_bottom' : 'rightInspector_bottom';
-                        moveActiveTo(bottomDest);
-                      } else {
-                        const topDest: RegionId = isLeft ? 'leftSidebar' : 'rightInspector';
-                        moveActiveTo(topDest);
-                      }
-                    }}
-                  >
-                    <span className={styles.menuItemLeft}>
-                      <Icon name="layout" size="sm" />
-                      <span>{isTop ? 'Move to Bottom Pane' : 'Move to Top Pane'}</span>
-                    </span>
-                  </button>
-                </li>
-              )}
-
-              <li role="none">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={styles.moveMenuItem}
-                  onClick={() => {
-                    const otherSide: RegionId = isLeft ? 'rightInspector' : 'leftSidebar';
-                    moveActiveTo(otherSide);
-                  }}
-                >
-                  <span className={styles.menuItemLeft}>
-                    <Icon name="layout" size="sm" />
-                    <span>{isLeft ? 'Move to Right Inspector' : 'Move to Left Sidebar'}</span>
-                  </span>
-                </button>
-              </li>
-
-              <li role="none">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className={styles.moveMenuItem}
-                  onClick={popoutActivePanel}
-                >
-                  <span className={styles.menuItemLeft}>
-                    <Icon name="export" size="sm" />
-                    <span>Undock “{targetLabel}”</span>
-                  </span>
-                </button>
-              </li>
-            </ul>
-          )}
+          <Dropdown
+            placement="bottom-end"
+            offset={{ x: -8, y: 4 }}
+            noScroll
+            trigger={
+              <button
+                type="button"
+                className={styles.actionBtn}
+                title="Dock Panels & Options"
+                aria-label="Dock panels and options menu"
+              >
+                <Icon name="menu" size="sm" />
+              </button>
+            }
+            items={menuItems}
+          />
         </div>
       </div>
 

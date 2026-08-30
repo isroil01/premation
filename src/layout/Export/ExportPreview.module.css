@@ -14,7 +14,7 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: var(--radius-surface);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--color-border);
   /* Letterbox behind the rendered frame — black in both themes. */
   background: #000000;
@@ -76,7 +76,7 @@
 .scrubRow {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .scrub {
@@ -85,13 +85,15 @@
   accent-color: var(--color-primary);
   height: 4px;
   cursor: pointer;
+  border-radius: 2px;
 }
 
 .timecode {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 

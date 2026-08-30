@@ -75,7 +75,7 @@ export function SceneControls(): JSX.Element {
           aria-pressed={cameraTool === id}
           title={`${label}${cameraTool === id ? ' (active)' : ''} — hold Alt to use temporarily, C to cycle`}
         >
-          <Icon name={icon} size="md" />
+          <Icon name={icon} size="sm" />
         </button>
       ))}
       {cameraTool !== 'none' ? (
@@ -96,7 +96,7 @@ export function SceneControls(): JSX.Element {
           aria-pressed={gizmo3dState === id}
           title={label}
         >
-          <Icon name={icon} size="md" />
+          <Icon name={icon} size="sm" />
         </button>
       ))}
 
@@ -129,7 +129,7 @@ export function SceneControls(): JSX.Element {
             : 'Draft 3D OFF — Full 3D shading. Click to enable fast preview.'
         }
       >
-        <Icon name="draft-3d" size="md" />
+        <Icon name="draft-3d" size="sm" />
       </button>
 
       <button
@@ -139,7 +139,7 @@ export function SceneControls(): JSX.Element {
         aria-pressed={groundGridVisible}
         title={groundGridVisible ? 'Hide 3D ground plane' : 'Show 3D ground plane'}
       >
-        <Icon name="ground-grid" size="md" />
+        <Icon name="ground-grid" size="sm" />
       </button>
 
       {/*
@@ -155,7 +155,7 @@ export function SceneControls(): JSX.Element {
         aria-pressed={layerBoxesVisible}
         title={layerBoxesVisible ? 'Hide layer bounding boxes' : 'Show layer bounding boxes'}
       >
-        <Icon name="frame" size="md" />
+        <Icon name="frame" size="sm" />
       </button>
     </div>
   );

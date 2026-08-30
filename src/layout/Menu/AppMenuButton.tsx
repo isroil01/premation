@@ -69,7 +69,7 @@ export function AppMenuButton(): JSX.Element {
       {open && anchor
         ? createPortal(
             <div id="app-menu-dropdown" className={styles.dropdown} style={{ left: anchor.left, top: anchor.top }}>
-              <Menu onItemActivate={() => setOpen(false)}>
+              <Menu noScroll onItemActivate={() => setOpen(false)}>
                 {menuGroups.map((group) => (
                   <MenuItem key={group.id} id={group.id} label={group.label}>
                     {group.items.map((it, i) => {

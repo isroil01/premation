@@ -3,7 +3,16 @@ import { useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { Icon } from '@components/Icon';
+import { Switch } from '@components/Switch';
 import styles from './PreviewPanel.module.css';
+
+function formatTimecode(seconds: number, fps: number): string {
+  const total = Math.max(0, Math.round(seconds * fps));
+  const f = total % Math.max(1, Math.round(fps));
+  const s = Math.floor(total / Math.max(1, Math.round(fps)));
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return `${pad(Math.floor(s / 60))}:${pad(s % 60)}:${pad(f)}`;
+}
 
 export function PreviewPanel(): JSX.Element {
   const activeTabId = useProjectStore((s) => s.activeTabId);
@@ -14,6 +23,8 @@ export function PreviewPanel(): JSX.Element {
 
   const fps = useCompositionStore((s) => s.fps);
   const duration = useCompositionStore((s) => s.durationSeconds);
+  const compWidth = useCompositionStore((s) => s.width);
+  const compHeight = useCompositionStore((s) => s.height);
 
   const [loopMode, setLoopMode] = useState<'loop' | 'ping-pong' | 'once'>('loop');
   const [range, setRange] = useState<'work-area' | 'entire-comp' | 'current-forward'>('work-area');
@@ -51,6 +62,15 @@ export function PreviewPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
+      {/* ── Status Head Readout ── */}
+      <div className={styles.statusHead}>
+        <span className={styles.timecodeDisplay}>{formatTimecode(time, fps || 30)}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className={styles.fpsBadge}>{fps || 30} fps</span>
+          <span className={styles.fpsBadge}>{compWidth}×{compHeight}</span>
+        </div>
+      </div>
+
       {/* ── AE RAM Transport Controls ── */}
       <div className={styles.transportBar}>
         <button
@@ -77,7 +97,7 @@ export function PreviewPanel(): JSX.Element {
           title={playing ? 'Pause Preview (Spacebar)' : 'RAM Preview Play (Spacebar / Numpad 0)'}
           onClick={handleTogglePlay}
         >
-          <Icon name={playing ? 'pause' : 'play'} size="md" />
+          <Icon name={playing ? 'pause' : 'play'} size="sm" />
         </button>
 
         <button
@@ -113,7 +133,7 @@ export function PreviewPanel(): JSX.Element {
       {/* ── Preview Options Card ── */}
       <div className={styles.settingsCard}>
         <div className={styles.row}>
-          <span className={styles.label}>Shortcut:</span>
+          <span className={styles.label}>Shortcut</span>
           <select className={styles.select} defaultValue="space">
             <option value="space">Spacebar</option>
             <option value="num0">Numpad 0</option>
@@ -122,7 +142,7 @@ export function PreviewPanel(): JSX.Element {
         </div>
 
         <div className={styles.row}>
-          <span className={styles.label}>Range:</span>
+          <span className={styles.label}>Range</span>
           <select
             className={styles.select}
             value={range}
@@ -135,7 +155,7 @@ export function PreviewPanel(): JSX.Element {
         </div>
 
         <div className={styles.row}>
-          <span className={styles.label}>Skip Frames:</span>
+          <span className={styles.label}>Skip Frames</span>
           <select
             className={styles.select}
             value={skip}
@@ -149,7 +169,7 @@ export function PreviewPanel(): JSX.Element {
         </div>
 
         <div className={styles.row}>
-          <span className={styles.label}>Resolution:</span>
+          <span className={styles.label}>Resolution</span>
           <select
             className={styles.select}
             value={resolution}
@@ -164,16 +184,12 @@ export function PreviewPanel(): JSX.Element {
         </div>
 
         <div className={styles.row}>
-          <span className={styles.label}>Mute Audio:</span>
-          <button
-            type="button"
-            className={styles.transportBtn}
-            style={{ width: 26, height: 24 }}
-            title={muteAudio ? 'Unmute preview audio' : 'Mute preview audio'}
-            onClick={() => setMuteAudio(!muteAudio)}
-          >
-            <Icon name={muteAudio ? 'audio-off' : 'sound'} size="sm" />
-          </button>
+          <span className={styles.label}>Mute Audio</span>
+          <Switch
+            checked={muteAudio}
+            onChange={(e) => setMuteAudio(e.currentTarget.checked)}
+            aria-label="Mute preview audio"
+          />
         </div>
       </div>
     </div>

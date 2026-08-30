@@ -218,7 +218,7 @@ export function ExportPreview({
         <div className={styles.scrubRow}>
           <IconButton
             aria-label={isPlaying ? 'Pause preview (Space)' : 'Play preview (Space)'}
-            size="xs"
+            size="sm"
             disabled={disabled}
             onClick={() => setIsPlaying((p) => !p)}
             title={isPlaying ? 'Pause preview (Space)' : 'Play preview (Space)'}
@@ -227,7 +227,7 @@ export function ExportPreview({
           </IconButton>
           <IconButton
             aria-label="Previous frame (Left arrow)"
-            size="xs"
+            size="sm"
             disabled={disabled || clampedFrame <= 0}
             onClick={() => {
               setIsPlaying(false);
@@ -253,7 +253,7 @@ export function ExportPreview({
           />
           <IconButton
             aria-label="Next frame (Right arrow)"
-            size="xs"
+            size="sm"
             disabled={disabled || clampedFrame >= frameCount - 1}
             onClick={() => {
               setIsPlaying(false);

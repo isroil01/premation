@@ -616,7 +616,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border);
   cursor: pointer;
   background: var(--color-timeline-header);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -625,21 +625,23 @@
 }
 
 .trackHeader:hover {
-  background: var(--color-timeline-header-hover);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .trackHeaderSelected {
-  background: color-mix(in srgb, var(--color-selection) 22%, var(--color-timeline-header));
+  background: rgba(41, 136, 255, 0.12);
 }
 
 .trackHeaderSelected::after {
   content: "";
   position: absolute;
   left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
+  top: 2px;
+  bottom: 2px;
+  width: 2.5px;
+  border-radius: 2px;
   background: var(--color-primary);
+  box-shadow: none;
 }
 
 /* Fixed width, matching `.colHeadLayer` — the pair is what keeps every column
@@ -737,25 +739,25 @@
 }
 
 .timelineSelectTrigger {
-  background: var(--color-timeline-well);
-  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
   font-family: var(--font-family-sans);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   cursor: pointer;
   padding: 0 6px;
-  height: 22px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
   box-sizing: border-box;
-  border-radius: 0;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
   text-align: left;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /**
@@ -1231,7 +1233,7 @@
   gap: var(--space-2);
   padding-right: var(--space-2);
   padding-left: 88px;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border);
   background: color-mix(in srgb, var(--color-surface-2) 90%, transparent);
   min-width: max-content;
   box-sizing: border-box;
@@ -1289,7 +1291,7 @@
   padding-right: var(--space-2);
   /* Indent inside its parent category accordion so property names start ~10-14px after parent category name. */
   padding-left: 124px;
-  border-bottom: 1px solid var(--color-border-subtle);
+  border-bottom: 1px solid var(--color-border);
   background: var(--color-surface-0);
   min-width: max-content;
   box-sizing: border-box;

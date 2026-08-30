@@ -1,13 +1,13 @@
 .root {
-  margin-top: 16px;
-  border-top: 1px solid var(--color-border-subtle);
-  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
 }
 
 .panelRoot {
   display: flex;
   flex-direction: column;
-  padding: 10px;
+  padding: 8px;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -16,26 +16,18 @@
   color: var(--color-text-primary);
 }
 
-.header {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: -0.01em;
-  color: var(--color-text-secondary);
-  margin-bottom: 10px;
-}
-
 .grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  gap: 4px;
 }
 
 .button {
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-subtle);
   color: var(--color-text-secondary);
-  border-radius: var(--radius-md);
-  height: 30px;
+  border-radius: var(--radius-sm);
+  height: var(--control-height-row);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -58,23 +50,22 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 2px;
 }
 
 .targetLabel {
-  font-size: var(--font-size-micro);
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.02em;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-secondary);
 }
 
 .targetToggles {
   display: flex;
-  background: var(--color-surface-3);
-  border-radius: 4px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
   padding: 2px;
-  gap: 1px;
+  gap: 2px;
 }
 
 .targetBtn {
@@ -84,22 +75,25 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 8px;
+  height: var(--control-height-sm);
+  padding: 0 8px;
   border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-micro);
-  font-weight: 500;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   transition: var(--motion-hover-transition);
 }
 
 .targetBtn:hover {
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
 }
 
 .targetBtnActive {
   composes: targetBtn;
-  background: var(--color-active);
+  background: var(--color-surface-2);
   color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 

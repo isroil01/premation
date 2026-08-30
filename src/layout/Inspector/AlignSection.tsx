@@ -27,10 +27,8 @@ export function AlignSection(): JSX.Element | null {
 
   return (
     <div className={styles.root}>
-      <div className={styles.header}>Align & Distribute</div>
-
       <div className={styles.targetRow}>
-        <span className={styles.targetLabel}>Align Layers to:</span>
+        <span className={styles.targetLabel}>Align to:</span>
         <div className={styles.targetToggles}>
           <button
             type="button"
@@ -74,7 +72,7 @@ export function AlignSection(): JSX.Element | null {
               disabled={isDisabled}
               onClick={() => alignNodes([...selectedIds], a.id, alignTo, compWidth, compHeight)}
             >
-              <Icon name={a.icon} size="md" />
+              <Icon name={a.icon} size="sm" />
             </button>
           );
         })}

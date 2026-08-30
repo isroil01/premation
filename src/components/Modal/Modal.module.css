@@ -29,9 +29,10 @@
   background: var(--color-surface-raised);
   color: var(--color-text-primary);
   border: 1px solid var(--color-border-strong);
-  border-radius: 0;
-  box-shadow: var(--shadow-modal);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--color-border-subtle);
   outline: none;
+  overflow: hidden;
 }
 
 .dialog[data-state="open"] {
@@ -51,17 +52,17 @@
 }
 
 .dialog.sm         { width: 420px; }
-.dialog.md         { width: 520px; }
-.dialog.lg         { width: 760px; }
-.dialog.xl         { width: 1040px; }
+.dialog.md         { width: 540px; }
+.dialog.lg         { width: 860px; }
+.dialog.xl         { width: 1000px; }
 .dialog.fullscreen { max-width: 100%; max-height: 100%; width: 100%; height: 100%; border-radius: 0; border: none; }
 
 .header {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-6);
-  border-bottom: 1px solid var(--color-divider);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
   flex: none;
 }
 
@@ -91,18 +92,20 @@
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: var(--space-6);
+  padding: var(--space-5);
   /* Modals never scroll sideways — content wraps/fits, only vertical scroll. */
   overflow-x: hidden;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .footer {
   display: flex;
   justify-content: flex-end;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-6);
-  border-top: 1px solid var(--color-divider);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-top: 1px solid var(--color-border-subtle);
   flex: none;
   background: var(--color-surface-0);
   border-radius: 0;

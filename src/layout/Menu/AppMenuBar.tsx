@@ -86,7 +86,7 @@ export function AppMenuBar(): JSX.Element {
       {group && anchor
         ? createPortal(
             <div id="app-menu-dropdown" className={styles.dropdown} style={{ left: anchor.left, top: anchor.top }}>
-              <Menu onItemActivate={() => setOpenGroup(null)}>
+              <Menu noScroll onItemActivate={() => setOpenGroup(null)}>
                 {group.items.map((it, i) => {
                   if (it.separator) return <MenuSeparator key={`sep-${i}`} />;
                   const cmd = it.commandId ? getCommandRegistry().get(asCommandId(it.commandId)) : undefined;

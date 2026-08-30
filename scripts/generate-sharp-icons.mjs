@@ -79,7 +79,7 @@ const MAP = {
   collapse: 'keyboard_double_arrow_up', expand: 'keyboard_double_arrow_down',
 
   // `keyframe` and `diamond` are drawn here rather than mapped — see HAND_DRAWN.
-  keyframe: null, diamond: null,
+  keyframe: null, diamond: null, magnet: null,
 
   track: 'format_list_bulleted', marker: 'flag', stopwatch: 'timer', sparkles: 'star_shine',
   // `scale` is the 3D SCALE GIZMO, not a page-fit control: arrows driven
@@ -92,7 +92,7 @@ const MAP = {
   'align-left': 'align_horizontal_left', 'align-center': 'align_horizontal_center', 'align-right': 'align_horizontal_right',
   'align-top': 'align_vertical_top', 'align-middle': 'align_vertical_center', 'align-bottom': 'align_vertical_bottom',
   'distribute-horizontal': 'horizontal_distribute', 'distribute-vertical': 'vertical_distribute',
-  magnet: 'point_scan', grid: 'grid_on', ruler: 'straighten', scissors: 'content_cut', queue: 'list_alt',
+  grid: 'grid_on', ruler: 'straighten', scissors: 'content_cut', queue: 'list_alt',
   plugin: 'extension', path: 'polyline', ease: 'animation', frame: 'crop_free',
   'select-arrow': 'arrow_selector_tool', 'sliders-h': 'tune', brush: 'brush', '3d-focus': 'filter_center_focus',
   loop: 'repeat', 'motion-blur': 'motion_blur', 'trim-in': 'first_page', 'trim-out': 'last_page',
@@ -116,7 +116,6 @@ const MAP = {
  */
 const SUBSTITUTIONS = {
   bone: 'no bone glyph; `device_hub` is a joint with limbs radiating off it',
-  magnet: 'no magnet glyph; `point_scan` is the crosshair-in-brackets snap mark',
   queue: 'no plain `queue`; `list_alt` is the render-queue panel it opens',
   'text-3d': 'no 3D-text glyph; `font_download` is the boxed glyph mark',
 };
@@ -128,6 +127,10 @@ const HAND_DRAWN = {
   keyframe: {
     d: 'M480-900 900-480 480-60 60-480Z M480-767 193-480 480-193 767-480Z',
     fill: 'M480-900 900-480 480-60 60-480Z',
+  },
+  magnet: {
+    d: 'M180-840 h200 v140 H180 Z M580-840 h200 v140 H580 Z M180-660 h200 v180 q0 42 29 71 t71 29 q42 0 71-29 t29-71 v-180 h200 v180 q0 124-88 212 t-212 88 q-124 0-212-88 t-88-212 Z',
+    fill: 'M180-840 h200 v140 H180 Z M580-840 h200 v140 H580 Z M180-660 h200 v180 q0 42 29 71 t71 29 q42 0 71-29 t29-71 v-180 h200 v180 q0 124-88 212 t-212 88 q-124 0-212-88 t-88-212 Z',
   },
 };
 

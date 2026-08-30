@@ -22,8 +22,7 @@ describe('Properties panel structure', () => {
     expect(src).toMatch(/inspectorBody/);
   });
 
-  it('does not open Parent or Blend by default — Transform is the first screen', () => {
-    expect(src).toMatch(/id: 'parenting'[\s\S]*?defaultOpen: false/);
+  it('does not open Compositing by default — Transform is the first screen', () => {
     expect(src).toMatch(/id: 'compositing'[\s\S]*?defaultOpen: false/);
     expect(src).toMatch(/id: 'transform'[\s\S]*?defaultOpen: true/);
   });

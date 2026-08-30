@@ -1,8 +1,8 @@
 .root {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 10px;
+  gap: var(--space-3);
+  padding: 12px;
   background: var(--color-panel);
   color: var(--color-text-primary);
   font-family: inherit;
@@ -14,14 +14,45 @@
   overflow-y: auto;
 }
 
+.statusHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px 12px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.timecodeDisplay {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-primary);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.fpsBadge {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+}
+
 .transportBar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-field-border);
-  border-radius: var(--radius-control);
+  justify-content: space-between;
+  gap: 3px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
   padding: 4px;
   box-sizing: border-box;
   width: 100%;
@@ -30,41 +61,42 @@
 .transportBtn {
   flex: 1 1 0;
   min-width: 0;
-  height: 28px;
-  border: none;
+  height: 30px;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--color-text-secondary);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: grid;
   place-items: center;
   padding: 0;
-  transition: background-color 100ms ease, color 100ms ease;
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .transportBtn:hover {
-  background: var(--color-surface-3);
+  background: var(--color-surface-2);
   color: var(--color-text-primary);
 }
 
 .transportBtnPrimary {
-  background: var(--color-selection);
-  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  color: var(--color-primary);
+  border-color: var(--color-border);
 }
 
 .transportBtnPrimary:hover {
-  background: var(--color-selection-hover);
-  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  color: var(--color-primary);
 }
 
 .settingsCard {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-field-border);
-  border-radius: var(--radius-control);
-  padding: 8px 10px;
+  gap: 10px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
   box-sizing: border-box;
   width: 100%;
 }
@@ -74,30 +106,38 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: var(--control-height-row);
   width: 100%;
   box-sizing: border-box;
 }
 
 .label {
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-weight: 500;
   flex-shrink: 0;
 }
 
 .select {
-  height: 24px;
-  background: var(--color-surface-1);
+  height: var(--control-height-row);
+  background: var(--color-surface-2);
   color: var(--color-text-primary);
-  border: 1px solid var(--color-field-border);
-  border-radius: var(--radius-control);
-  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
   font-size: var(--font-size-xs);
   outline: none;
-  min-width: 0;
+  min-width: 140px;
+  max-width: 180px;
   box-sizing: border-box;
+  cursor: pointer;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.select:hover {
+  border-color: var(--color-border-strong);
 }
 
 .select:focus {
-  border-color: var(--color-selection);
+  border-color: var(--color-primary);
 }

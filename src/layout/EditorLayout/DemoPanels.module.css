@@ -505,25 +505,39 @@
 /* Folder rows share the asset-row look but with a folder glyph + open affordance. */
 
 /* ── Libraries panel ─────────────────────────────────────── */
+/**
+ * Library tab strips — WRAPPING, not scrolling.
+ *
+ * Both strips use this: the seven library sections, and the category row inside
+ * each of them.
+ *
+ * They used to be a horizontal scroller with the scrollbar deliberately hidden.
+ * In a default 280px sidebar that is 656px of tabs in a 269px box — two and a
+ * half sections visible, four and a half unreachable, and NOTHING on screen to
+ * say they exist. Components, Shapes and Text were simply undiscoverable, and
+ * the strip looked like the panel had been cut off, because visually it had.
+ *
+ * Hiding a scrollbar is only safe where the content's overflow is obvious from
+ * its own shape (a row of thumbnails that visibly continues past the edge). A
+ * row of text tabs gives no such cue: it just ends.
+ *
+ * Wrapping needs no affordance because nothing is hidden. It costs one extra
+ * row at narrow widths and collapses back to a single row as soon as the
+ * sidebar is wide enough, which is the behaviour someone dragging the splitter
+ * expects to see.
+ */
 .libTabs {
   display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
   gap: 2px;
+  /* A little vertical room once the tabs occupy more than one row; at a single
+     row this reads as the same strip it always was. */
+  row-gap: 0;
   padding: 0 var(--space-3);
   border-bottom: 1px solid var(--color-divider);
   background: var(--color-panel-header);
   flex: none;
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: nowrap;
-  scroll-behavior: smooth;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none; /* IE/Edge */
-}
-
-.libTabs::-webkit-scrollbar {
-  display: none; /* Chrome/Safari */
 }
 
 /**

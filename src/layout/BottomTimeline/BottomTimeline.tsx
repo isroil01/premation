@@ -396,140 +396,16 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         )}
       </header>
 
-      {/* ── Timeline Tabs — After Effects style: Render Queue and Comp tabs ── */}
+      {/* ── Unified Sub-header: Search Bar (Left) + Comp Tabs (Right) ── */}
       {!isCollapsed && (
-        <div className={styles.tabBar}>
-          <button
-            type="button"
-            className={styles.tab}
-            onClick={() => useLayoutStore.getState().openPanel('renderQueue')}
-            title="Open Render Queue"
-          >
-            <Icon name="queue" size="sm" />
-            <span>Render Queue</span>
-          </button>
-          <span className={styles.tabChevron} aria-hidden>|</span>
-          {tabOrder.length === 0 ? (
-            <button
-              type="button"
-              className={cn(styles.tab, styles.tabActive)}
-              title="Composition (none)"
-            >
-              <span>(none)</span>
-            </button>
-          ) : (
-            tabOrder.map((tid, idx) => {
-              const tab = projectTabs[tid];
-              if (!tab) return null;
-              const node = defaultSceneGraph.getNode(tab.compositionId);
-              const label =
-                comps[tab.compositionId]?.name ?? node?.name ?? tab.title ?? tab.compositionId;
-              const isActive = tid === activeTabId && focusPath.length === 0;
-              // Right-click comp management — with the duplicate Project bin
-              // gone, the comp tab IS the composition's handle, so it carries
-              // the operations AE puts on a comp item. Delete always works:
-              // deleting the last comp lands on the "(none)" empty state.
-              const openCompTabMenu = (e: React.MouseEvent): void => {
-                e.preventDefault();
-                const compId = tab.compositionId;
-                openContextMenu(e.clientX, e.clientY, [
-                  {
-                    id: 'settings',
-                    label: 'Composition Settings…',
-                    icon: 'settings',
-                    onSelect: () => {
-                      // The settings dialog edits the ACTIVE comp.
-                      setActiveTab(tid);
-                      openCompositionSettings();
-                    },
-                  },
-                  { id: 'duplicate', label: 'Duplicate', icon: 'copy', onSelect: () => duplicateComposition(compId) },
-                  { id: 'sep', separator: true },
-                  {
-                    id: 'delete',
-                    label: 'Delete Composition',
-                    icon: 'trash',
-                    danger: true,
-                    onSelect: async () => {
-                      const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
-                      const warn = layers > 0
-                        ? `Delete “${label}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
-                        : `Delete “${label}”?`;
-                      if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
-                        deleteComposition(compId);
-                      }
-                    },
-                  },
-                ]);
-              };
-              return (
-                <div key={tid} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-                  {idx > 0 && <span className={styles.tabChevron} aria-hidden>|</span>}
-                  <button
-                    type="button"
-                    className={cn(styles.tab, isActive && styles.tabActive)}
-                    onClick={() => {
-                      setActiveTab(tid);
-                      jumpToFocus(-1);
-                    }}
-                    onContextMenu={openCompTabMenu}
-                  >
-                    {label}
-                  {idx > 0 && (
-                    <span
-                      className={styles.tabClose}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Close ${label}`}
-                      title={`Close ${label}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        closeTab(tid);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          closeTab(tid);
-                        }
-                      }}
-                    >
-                      ×
-                    </span>
-                  )}
-                </button>
-              </div>
-            );
-          })
-        )}
-          {focusPath.map((id, idx) => {
-            const node = defaultSceneGraph.getNode(id);
-            const name = node?.name || id;
-            return (
-              <div key={id} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-                <span className={styles.tabChevron}>&gt;</span>
-                <button
-                  type="button"
-                  className={cn(styles.tab, focusPath.length - 1 === idx && styles.tabActive)}
-                  onClick={() => jumpToFocus(idx)}
-                >
-                  {name}
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── Sub-header: Search Bar under Comp Tabs aligned with Left Table Header ── */}
-      {!isCollapsed && (
-        <div className={styles.searchBarRow}>
+        <div className={styles.subHeaderRow}>
+          {/* Left Column: Search Bar spanning exactly the Track Header width */}
           <div className={styles.searchBarCol} style={{ width: headerWidth }}>
             <div className={styles.searchContainer}>
               <Icon name="search" size="sm" className={styles.searchIcon} />
               <input
                 type="text"
-                placeholder="Search Timeline..."
+                placeholder="Filter layers & props..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className={styles.searchInput}
@@ -547,7 +423,124 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               )}
             </div>
           </div>
-          <div className={styles.searchBarRightGap} />
+
+          {/* Right Column: Comp Tabs and Focus Path */}
+          <div className={styles.tabBarCol}>
+            <button
+              type="button"
+              className={styles.tab}
+              onClick={() => useLayoutStore.getState().openPanel('renderQueue')}
+              title="Open Render Queue"
+            >
+              <Icon name="queue" size="sm" />
+              <span>Render Queue</span>
+            </button>
+            <span className={styles.tabDivider} aria-hidden />
+            {tabOrder.length === 0 ? (
+              <button
+                type="button"
+                className={cn(styles.tab, styles.tabActive)}
+                title="Composition (none)"
+              >
+                <span>(none)</span>
+              </button>
+            ) : (
+              tabOrder.map((tid) => {
+                const tab = projectTabs[tid];
+                if (!tab) return null;
+                const node = defaultSceneGraph.getNode(tab.compositionId);
+                const label =
+                  comps[tab.compositionId]?.name ?? node?.name ?? tab.title ?? tab.compositionId;
+                const isActive = tid === activeTabId && focusPath.length === 0;
+                const openCompTabMenu = (e: React.MouseEvent): void => {
+                  e.preventDefault();
+                  const compId = tab.compositionId;
+                  openContextMenu(e.clientX, e.clientY, [
+                    {
+                      id: 'settings',
+                      label: 'Composition Settings…',
+                      icon: 'settings',
+                      onSelect: () => {
+                        setActiveTab(tid);
+                        openCompositionSettings();
+                      },
+                    },
+                    { id: 'duplicate', label: 'Duplicate', icon: 'copy', onSelect: () => duplicateComposition(compId) },
+                    { id: 'sep', separator: true },
+                    {
+                      id: 'delete',
+                      label: 'Delete Composition',
+                      icon: 'trash',
+                      danger: true,
+                      onSelect: async () => {
+                        const layers = Math.max(0, flattenComposition(defaultSceneGraph, compId).length - 1);
+                        const warn = layers > 0
+                          ? `Delete “${label}” and its ${layers} layer${layers === 1 ? '' : 's'}?`
+                          : `Delete “${label}”?`;
+                        if (await customConfirm('Delete Composition', warn, { isDanger: true, confirmLabel: 'Delete' })) {
+                          deleteComposition(compId);
+                        }
+                      },
+                    },
+                  ]);
+                };
+                return (
+                  <div key={tid} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+                    <button
+                      type="button"
+                      className={cn(styles.tab, isActive && styles.tabActive)}
+                      onClick={() => {
+                        setActiveTab(tid);
+                        jumpToFocus(-1);
+                      }}
+                      onContextMenu={openCompTabMenu}
+                    >
+                      <Icon name="layers" size="sm" />
+                      <span>{label}</span>
+                      {tabOrder.length > 1 && (
+                        <span
+                          className={styles.tabClose}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Close ${label}`}
+                          title={`Close ${label}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            closeTab(tid);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              closeTab(tid);
+                            }
+                          }}
+                        >
+                          <Icon name="close" size="sm" />
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                );
+              })
+            )}
+            {focusPath.map((id, idx) => {
+              const node = defaultSceneGraph.getNode(id);
+              const name = node?.name || id;
+              return (
+                <div key={id} style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+                  <span className={styles.tabChevron}>&gt;</span>
+                  <button
+                    type="button"
+                    className={cn(styles.tab, focusPath.length - 1 === idx && styles.tabActive)}
+                    onClick={() => jumpToFocus(idx)}
+                  >
+                    {name}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

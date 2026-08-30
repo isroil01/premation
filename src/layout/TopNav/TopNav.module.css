@@ -93,40 +93,38 @@
 .previewBtn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: var(--radius-md);
-  background: var(--color-primary-subtle);
-  color: var(--color-primary);
-  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  gap: 6px;
+  height: var(--control-height-row);
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
   font-size: var(--font-size-xs);
   font-weight: 600;
   letter-spacing: -0.01em;
   cursor: pointer;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .previewBtn:hover {
-  background: color-mix(in srgb, var(--color-primary) 25%, transparent);
-  border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
-  color: var(--color-primary-hover);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 25%, transparent);
-  transform: translateY(-0.5px);
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 .previewBtn:active {
-  transform: scale(0.96);
-  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  transform: scale(0.97);
+  background: var(--color-surface-1);
 }
 
 .exportBtn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: var(--radius-md);
+  gap: 6px;
+  height: var(--control-height-row);
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
   background: var(--color-primary);
   color: var(--color-primary-foreground);
   border: 1px solid transparent;
@@ -134,18 +132,15 @@
   font-weight: 600;
   letter-spacing: -0.01em;
   cursor: pointer;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .exportBtn:hover {
   background: var(--color-primary-hover);
-  box-shadow: 0 2px 12px color-mix(in srgb, var(--color-primary) 45%, transparent);
-  transform: translateY(-0.5px);
 }
 
 .exportBtn:active {
-  transform: scale(0.96);
+  transform: scale(0.97);
   background: var(--color-primary-active);
 }
 
@@ -162,11 +157,11 @@
 .toolRow {
   display: flex;
   align-items: center;
-  min-height: var(--bar-height-tool);
-  height: auto;
-  padding: var(--space-2) var(--space-3);
-  background: transparent;
-  border-top: 1px solid var(--color-border);
+  min-height: 40px;
+  height: 40px;
+  padding: 0 var(--space-3);
+  background: var(--color-toolbar);
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .inner {
@@ -174,7 +169,7 @@
   align-items: center;
   flex-wrap: nowrap;
   width: 100%;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .zoomGroup {
@@ -183,21 +178,32 @@
   gap: var(--space-1);
 }
 
-/* Same two-state pairing as .tool / .toolActive below, for the same reason. */
+/* Segmented Ribbon Capsule Group */
+.toolGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+/* Same two-state pairing as .tool / .toolActive below */
 .toolDropdownTrigger,
 .toolDropdownTriggerActive {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  height: var(--control-height-lg);
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-md);
+  gap: 3px;
+  height: 28px;
+  padding: 0 7px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   font-family: inherit;
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: var(--motion-hover-transition);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .toolDropdownTrigger {
@@ -206,14 +212,15 @@
 }
 
 .toolDropdownTrigger:hover {
-  background: var(--color-surface-3);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--color-text-primary);
 }
 
 .toolDropdownTriggerActive {
-  background: transparent;
+  background: var(--color-surface-3);
   color: var(--color-primary);
   border-color: transparent;
+  box-shadow: none;
 }
 
 .toolDropdownTriggerActive:hover {
@@ -228,35 +235,27 @@
   outline-offset: 1px;
 }
 
-.toolGroup {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
 .toolDivider {
   width: 1px;
-  height: var(--space-6);
-  margin: 0;
-  background: var(--color-border);
+  height: 18px;
+  margin: 0 2px;
+  background: var(--color-border-subtle);
+  opacity: 0.6;
 }
 
 /**
- * Viewport toggles — Rulers, Safe Areas, the ground plane, bounding boxes.
- *
- * `.tool` and `.toolActive` are ONE button in two states, so they share one
- * geometry block.
+ * Viewport toggles & Tools — Rulers, Safe Areas, Magnet, Text, etc.
  */
 .tool,
 .toolActive {
-  width: var(--control-height-lg);
-  height: var(--control-height-lg);
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   cursor: pointer;
-  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tool {
@@ -265,15 +264,16 @@
 }
 
 .tool:hover {
-  background: var(--color-surface-3);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--color-text-primary);
 }
 
-/* ON: Active state highlights icon color without background/border fill */
+/* ON: Active state highlights icon with clean elevated surface */
 .toolActive {
-  background: transparent;
+  background: var(--color-surface-3);
   color: var(--color-primary);
   border-color: transparent;
+  box-shadow: none;
 }
 
 .toolActive:hover {

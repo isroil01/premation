@@ -34,7 +34,7 @@
   /* Lanes sit on surface-0; header column on surface-1. The chrome is neutral
      black; the ONLY colour is the signature blue temporal family (playhead + markers). */
   --color-timeline-bg:       #1d1d1d;
-  --color-timeline-grid:     #161616;
+  --color-timeline-grid:     #282828;
   --color-timeline-zebra:    rgba(255, 255, 255, 0.01);
   /* Playhead follows the primary accent so the Customize accent override
      (which sets --color-primary) tints it too. Dark primary == #2988ff. */

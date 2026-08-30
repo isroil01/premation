@@ -26,7 +26,6 @@ import { Icon, type IconName } from '@components/Icon';
 import { customConfirm } from '@components/Modal';
 import { isLibraryAsset, useAssetStore, type AssetFolder, type ImportedAsset } from '@stores/assetStore';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
-import { ParentControl } from '@layout/Inspector/ParentControl';
 import { PrecompControl } from '@layout/Inspector/PrecompControl';
 import { TextAnimatorControls } from '@layout/Inspector/TextAnimatorControls';
 import { AudioControls } from '@layout/Inspector/AudioControls';
@@ -56,18 +55,15 @@ import { findLayerKind, findKindFor } from '@core/plugins/layerKindRegistry';
 import { splitKind } from '@core/plugins/layerKindSchema';
 import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
 import { ParticleSection } from '@layout/Inspector/ParticleSection';
-import { VersionHistorySection } from '@layout/Inspector/VersionHistorySection';
-import { ActiveTemplateFields, TemplateAuthoringSection } from '@layout/Templates/TemplateFieldsPanel';
+import { ActiveTemplateFields } from '@layout/Templates/TemplateFieldsPanel';
 import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
 import { useTemplateStore } from '@stores/templateStore';
-import { CompositingControls } from '@layout/Inspector/CompositingControls';
+import { CompositingSection } from '@layout/Inspector/CompositingSection';
 import { PuppetControls } from '@layout/Inspector/PuppetControls';
 import { BoneControls } from '@layout/Inspector/BoneControls';
 import { readNodePuppet } from '@core/rig/puppet';
 import { readNodeSkeleton } from '@core/rig/skeletonCommands';
-import { LayerSwitchesControls } from '@layout/Inspector/LayerSwitchesControls';
 import { LayerStylesControls } from '@layout/Effects/LayerStylesControls';
-import { TimeControls } from '@layout/Effects/TimeControls';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useFocusStore } from '@stores/focusStore';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
@@ -1504,8 +1500,6 @@ export function PropertiesPanel(): JSX.Element {
           <div className={styles.inspectorExtras}>
             <MographParamsSection />
             <TemplateFieldsSection />
-            <TemplateAuthoringSection />
-            <VersionHistorySection />
           </div>
         </div>
       </div>
@@ -1607,16 +1601,12 @@ function renderInspector(items: AccordionItem[], query: string): JSX.Element {
 /**
  * Every property section for the selected layer, in one ordered list.
  *
- * The order is the order you actually work in: where the layer IS, then what
- * KIND of thing it is, then how it LOOKS, then how it BEHAVES. Previously
- * these three groups were three separate tabs, so the sequence only existed in
- * the user's head.
- *
- * defaultOpen is stingy on purpose. Transform and the kind-specific section
- * (Text, Camera, Fill & Stroke, …) start open — that is why you selected the
- * layer. Parent, Blend, Time, Switches and style add-ons start closed, so the
- * first screen is an inspector, not a scroll. A search match still force-opens
- * anything it matches.
+ * The order is the natural flow of editing:
+ * 1. Transform (Spatial orientation)
+ * 2. Layer Type Specific Content (Appearance, Media, Text Animators, Cameras, Lights, etc.)
+ * 3. Align & Distribute
+ * 4. Advanced Layer Compositing, Parenting & Timing (Collapsed by default)
+ * 5. Layer Styles & Saved Presets (Collapsed by default)
  */
 function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query?: string }): JSX.Element {
   // Hook before any early return — the group section's "Enter group" needs it.
@@ -1642,7 +1632,7 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   const isAbstract = kind === 'camera' || kind === 'light' || kind === 'audio';
   const isDrawable = kind === 'shape' || kind === 'text' || kind === 'image' || kind === 'video';
 
-  // ── Where it is ────────────────────────────────────────────────
+  // ── 1. Where it is (Transform) ───────────────────────────────────
   if (kind !== 'audio') {
     items.push({
       id: 'transform',
@@ -1658,71 +1648,13 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  // Layer time / switches sit next to Transform (AE-adjacent), not buried under styles.
-  if (!isAbstract) {
-    items.push({
-      id: 'time',
-      title: 'Layer Time',
-      icon: 'stopwatch',
-      defaultOpen: false,
-      content: <TimeControls nodeId={nodeId} />,
-    });
-    items.push({
-      id: 'layerSwitches',
-      title: 'Switches & Quality',
-      icon: 'sliders-h',
-      defaultOpen: false,
-      content: <LayerSwitchesControls nodeId={nodeId} />,
-    });
-    items.push({
-      id: 'compositing',
-      title: 'Blend & Matte',
-      icon: 'layers',
-      defaultOpen: false,
-      content: <CompositingControls nodeId={nodeId} />,
-    });
-  }
-
-  // Lights included. They were the one kind without this section, while the
-  // renderer has been explicitly parent-aware for them for a long time: a
-  // light's world position, its Point of Interest and its aim all lift through
-  // the parent chain, and buildSnapshot carries fixes written for exactly the
-  // "light parented to a null" rig. Nothing in `eligibleParents` excluded them
-  // either — the only way to build that rig was to skip the inspector, so this
-  // read as an oversight rather than a rule.
-  items.push({
-    id: 'parenting',
-    title: 'Parent & Link',
-    icon: 'layers',
-    defaultOpen: false,
-    content: <ParentControl nodeId={nodeId} />,
-  });
-
-  if (isDrawable || kind === 'group') {
-    items.push({
-      id: 'align',
-      title: 'Align & Distribute',
-      icon: 'align-center',
-      content: <AlignSection />,
-    });
-  }
-
-  /*
-    A plugin's own layer kind.
-
-    Recognised by the dot: a native kind is a bare word, a custom one is always
-    `<pluginId>.<kindId>`. The section is rendered from the plugin's SCHEMA by
-    host components — and rendered even when the plugin is missing, where it
-    falls back to what the document stored and goes read-only. An empty panel
-    would read as a layer that had lost its settings.
-  */
+  // ── 2. What kind of thing it is & How it looks ──────────────────
+  /* Plugin custom layer kind */
   const customKind = splitKind(kind);
   if (customKind) {
     const registered = findLayerKind(kind);
     items.push({
       id: 'custom',
-      // The plugin's own label when it is here; the kind id when it is not,
-      // which is still more use than "Custom Layer".
       title: registered?.kind.label ?? customKind.kindId,
       icon: (registered?.kind.icon as never) ?? 'plugin',
       defaultOpen: true,
@@ -1730,7 +1662,6 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  // ── What kind of thing it is ───────────────────────────────────
   if (kind === 'camera') {
     items.push({
       id: 'custom', title: 'Camera Settings', icon: 'camera', defaultOpen: true,
@@ -1764,9 +1695,6 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     if (kind === 'video') {
       items.push({
         id: 'tracker', title: 'Track Motion', icon: 'crosshair',
-        // Mounting arms the canvas overlay (activate + seedPoints), so the
-        // section must not exist while collapsed — every video selection
-        // otherwise grew track-point chrome over the viewport.
         mountOnOpen: true,
         content: <TrackMotionSection nodeId={nodeId} />,
       });
@@ -1807,21 +1735,14 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
-  // ── How it looks ───────────────────────────────────────────────
   if (kind === 'text') {
     items.push({
       id: 'animators', title: 'Text Animators', icon: 'sparkles',
+      defaultOpen: false,
       content: <TextAnimatorControls nodeId={nodeId} />,
     });
   }
 
-  // Cloner + Physics live in Effects → Simulation (add) / Effect Controls
-  // (edit). They used to sit in this Properties accordion on every layer,
-  // which buried Fill & Stroke under two always-present modifier sections.
-
-  // Shapes / media: full Fill & Stroke. Text layers already own Character Color
-  // in Text — Appearance still mounts for Stroke (and corner radius is N/A),
-  // but with fill chrome suppressed so the two panels do not both edit "fill".
   if (isDrawable) {
     items.push({
       id: 'appearance',
@@ -1835,25 +1756,48 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   if (kind === 'shape') {
     items.push({
       id: 'geometry', title: 'Audio Waveform', icon: 'audio',
+      defaultOpen: false,
       content: <ShapeEffects nodeId={nodeId} />,
     });
   }
 
-  // Composed looks — a starting point you then refine in the sections above.
-  // Gated on drawables: the old Style tab pushed this unconditionally, so a
-  // camera or a light offered you "Neon" and "Gradient Card" presets that
-  // cannot apply to anything they own. Splitting it across tabs hid that;
-  // putting every section in one column made it obvious.
+  // ── 3. Align & Distribute ───────────────────────────────────────
+  if (isDrawable || kind === 'group') {
+    items.push({
+      id: 'align',
+      title: 'Align & Distribute',
+      icon: 'align-center',
+      defaultOpen: false,
+      content: <AlignSection />,
+    });
+  }
+
+  // ── 4. Compositing & Switches (Collapsed by default) ────────────
+  if (!isAbstract || kind === 'camera' || kind === 'light') {
+    items.push({
+      id: 'compositing',
+      title: 'Compositing & Switches',
+      icon: 'layers',
+      defaultOpen: false,
+      content: <CompositingSection nodeId={nodeId} />,
+    });
+  }
+
+  // ── 5. Layer Styles (Collapsed by default) ──────────────────────
   if (isDrawable) {
     items.push({
-      // "Layer Styles" is the After Effects term users will look for; the
-      // keyword map also matches shadow/glow/bevel so either search finds it.
-      id: 'layerStyles', title: 'Layer Styles', icon: 'sparkles',
-      content: <LayerStylesControls nodeId={nodeId} />,
-    });
-    items.push({
-      id: 'style-presets', title: 'Saved Styles', icon: 'sparkles',
-      content: <StylePresetsSection nodeId={nodeId} />,
+      id: 'layerStyles',
+      title: 'Layer Styles',
+      icon: 'sparkles',
+      defaultOpen: false,
+      content: (
+        <>
+          <LayerStylesControls nodeId={nodeId} />
+          <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--color-border-subtle)' }}>
+            <StylePresetsSection nodeId={nodeId} />
+          </div>
+        </>
+      ),
     });
   }
 

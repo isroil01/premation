@@ -361,7 +361,7 @@ export function CommandPalette(): JSX.Element | null {
                   >
                     <Icon
                       name={item.icon}
-                      size="md"
+                      size="sm"
                       className={styles.rowIcon}
                       style={item.color ? { color: item.color } : undefined}
                     />

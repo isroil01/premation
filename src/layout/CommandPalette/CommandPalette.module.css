@@ -18,8 +18,8 @@
   flex-direction: column;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-strong);
-  border-radius: 0;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.75), 0 0 0 1px var(--color-border-subtle);
   overflow: hidden;
   animation: palette-in var(--motion-duration-base) var(--motion-ease-standard);
 }
@@ -28,9 +28,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  padding: 0 var(--space-6);
-  height: 52px;
-  border-bottom: 1px solid var(--color-divider);
+  padding: 0 var(--space-5);
+  height: 44px;
+  border-bottom: 1px solid var(--color-border-subtle);
   flex: none;
 }
 
@@ -46,7 +46,7 @@
   border: none;
   outline: none;
   color: var(--color-text-primary);
-  font-size: var(--font-size-xl); /* 16px — comfortable search field */
+  font-size: var(--font-size-md);
   font-family: var(--font-family-sans);
 }
 
@@ -58,12 +58,12 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-3) var(--space-3) var(--space-4);
+  padding: var(--space-2);
 }
 
 .sectionHeader {
-  padding: var(--space-4) var(--space-4) var(--space-2);
-  font-size: var(--font-size-xs);
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--font-size-micro);
   font-weight: var(--font-weight-semibold);
   letter-spacing: var(--letter-spacing-uppercase);
   text-transform: uppercase;
@@ -73,10 +73,10 @@
 .row {
   display: flex;
   align-items: center;
-  gap: var(--space-5);
+  gap: var(--space-3);
   width: 100%;
-  padding: var(--space-3) var(--space-4);
-  border-radius: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-secondary);
   text-align: left;
@@ -115,7 +115,7 @@
 .rowLabel {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -124,9 +124,9 @@
 .rowHint {
   flex: none;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-micro);
   color: var(--color-text-muted);
-  padding: 2px var(--space-3);
+  padding: 2px var(--space-2);
   border-radius: 2px;
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-strong);

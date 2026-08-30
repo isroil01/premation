@@ -466,7 +466,7 @@ export function TopNav(): JSX.Element {
                   className={isPointerActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${pointerDropdownTool.label}${pointerDropdownTool.shortcut ? ` (${pointerDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={pointerDropdownTool.icon} size="md" />
+                  <Icon name={pointerDropdownTool.icon} size="sm" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -488,7 +488,7 @@ export function TopNav(): JSX.Element {
                   className={isPenActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${penDropdownTool.label}${penDropdownTool.shortcut ? ` (${penDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={penDropdownTool.icon} size="md" />
+                  <Icon name={penDropdownTool.icon} size="sm" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -508,7 +508,7 @@ export function TopNav(): JSX.Element {
               title={`${TEXT_TOOL.label} (${TEXT_TOOL.shortcut})`}
               onClick={() => setTool(TEXT_TOOL.id)}
             >
-              <Icon name={TEXT_TOOL.icon} size="md" />
+              <Icon name={TEXT_TOOL.icon} size="sm" />
             </button>
 
             {/* Shape Tools Dropdown */}
@@ -520,7 +520,7 @@ export function TopNav(): JSX.Element {
                   className={isShapeActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${shapeDropdownTool.label}${shapeDropdownTool.shortcut ? ` (${shapeDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={shapeDropdownTool.icon} size="md" />
+                  <Icon name={shapeDropdownTool.icon} size="sm" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -549,7 +549,7 @@ export function TopNav(): JSX.Element {
                       title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
                       onClick={() => setTool(tool.id)}
                     >
-                      <Icon name={tool.icon} size="md" />
+                      <Icon name={tool.icon} size="sm" />
                     </button>
                   );
                 })}
@@ -566,7 +566,7 @@ export function TopNav(): JSX.Element {
                           disabled={!canRig}
                           aria-label={puppetPinLabel(puppetPinKind)}
                         >
-                          <Icon name={PUPPET_PIN_ICONS[puppetPinKind]} size="md" />
+                          <Icon name={PUPPET_PIN_ICONS[puppetPinKind]} size="sm" />
                           <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                         </button>
                       }
@@ -585,7 +585,7 @@ export function TopNav(): JSX.Element {
                       disabled={!canRig}
                       onClick={() => setTool(BONE_TOOL.id)}
                     >
-                      <Icon name={BONE_TOOL.icon} size="md" />
+                      <Icon name={BONE_TOOL.icon} size="sm" />
                     </button>
                   </>
                 )}
@@ -602,7 +602,7 @@ export function TopNav(): JSX.Element {
               noScroll
               trigger={
                 <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New Layer (Shape, Text, Solid, Null, Camera, Light, 3D…)">
-                  <Icon name="layer-plus" size="md" />
+                  <Icon name="layer-plus" size="sm" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -664,7 +664,7 @@ export function TopNav(): JSX.Element {
                     title={selectedId ? 'Animation presets & rigging (Easy Ease, Typewriter, Bounce, Rig)…' : 'Select a layer to apply animation presets'}
                     disabled={!selectedId}
                   >
-                    <Icon name="magic-wand" size="md" />
+                    <Icon name="magic-wand" size="sm" />
                     <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                   </button>
                 }
@@ -686,7 +686,7 @@ export function TopNav(): JSX.Element {
                   title={snap ? 'Snapping ON — Magnetically snaps layers & playhead (Click to disable)' : 'Snapping OFF — Click to enable magnetic snapping'}
                   onClick={toggleSnap}
                 >
-                  <Icon name="magnet" size="md" />
+                  <Icon name="magnet" size="sm" />
                 </button>
               </div>
             </>
@@ -711,7 +711,7 @@ export function TopNav(): JSX.Element {
                   placement="bottom-end"
                   trigger={
                     <button type="button" className={styles.tool} aria-label="More tools" title="More tools">
-                      <Icon name="more-horizontal" size="md" />
+                      <Icon name="more-horizontal" size="sm" />
                     </button>
                   }
                   items={overflowItems}
@@ -733,7 +733,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canUndo}
                   onClick={() => performUndo()}
                 >
-                  <Icon name="undo" size="md" />
+                  <Icon name="undo" size="sm" />
                 </button>
                 <button
                   type="button"
@@ -743,7 +743,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canRedo}
                   onClick={() => performRedo()}
                 >
-                  <Icon name="redo" size="md" />
+                  <Icon name="redo" size="sm" />
                 </button>
               </div>
             </>
