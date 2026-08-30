@@ -73,6 +73,7 @@ import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
 import { buildCaptionCommands } from '@core/captions/captionCommands';
 import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
 import { buildBeatCommands } from '@core/audio/beatCommands';
+import { buildSpeedRampCommands } from '@core/animation/speedRampCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
@@ -983,6 +984,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildCaptionCommands(),
     ...buildChoreographyCommands(),
     ...buildBeatCommands(),
+    ...buildSpeedRampCommands(),
     ...buildReframeCommands(),
   ];
 }

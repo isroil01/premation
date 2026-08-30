@@ -230,6 +230,9 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'animation.animateInOnBeats', label: 'Animate In on Beats' },
       { commandId: 'audio.markBeats', label: 'Markers on Beats' },
       { separator: true },
+      { commandId: 'time.speedRamp.quarter', label: 'Speed Ramp to 25%' },
+      { commandId: 'time.speedRamp.normal', label: 'Speed Ramp back to 100%' },
+      { separator: true },
       { commandId: 'animation.motionSketch', label: 'Motion Sketch' },
       { commandId: 'animation.convertAudioToKeyframes', label: 'Convert Audio to Keyframes' },
       {
