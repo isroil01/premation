@@ -161,11 +161,10 @@ light ignores rotation outright: a POI is a real 3D aim and wins.
 Smooth / Inverse Square Clamped. The curves reach *past* the radius, where the
 legacy ramp cut off hard.
 
-All of it — both branches — lives in `lightAttenuationAt`, and `lightReach` is
-the distance past which it is effectively zero (for Inverse Square, where it
-drops below 1/256, one step of an 8-bit channel). The shading and the glow both
-read those two functions, which is what makes "the glow ends where the light
-ends" true by construction rather than by tuning.
+All of it — both branches — lives in `lightAttenuationAt`. `lightReach` is the
+distance past which that is effectively zero (for Inverse Square, where it drops
+below 1/256, one step of an 8-bit channel); it sizes a parallel light's landed
+pool. The glow wash reads neither — see **The glow wash** below.
 
 **Cone edge**: hard cut at the half-cone, then a **smoothstep** across a feather
 band given as a percent of it. The same curve is applied in three places —
@@ -178,25 +177,25 @@ where it cut off.
 ### The glow wash
 
 Lights also render a screen-blended glow *wash*, which AE does not do. It IS
-projected through the current view, so it tracks depth and moves with the view
-like everything else. Four things shape it:
+projected through the current view, so its POSITION tracks depth and moves with
+the view like everything else. Two things shape it:
 
-- **Its profile is the light's own falloff**, read from `lightAttenuationAt` at
-  `t × reach`. The wash used to draw one fixed curve for every light, so all
-  three Falloff modes glowed identically while lighting three different
-  distances.
-- **It is sized in screen space.** The quad's half-size is `reach × the
-  perspective scale at the light's depth`, resolved in `buildSnapshot` and
-  carried as `screenRadius`. It used to be `2·radius` in comp pixels, so a light
-  dollied deep into the scene threw exactly as large a glow as one sitting on the
-  comp plane — the wash was the one thing in the frame that ignored the camera.
-- **It dithers by half a level.** It uploads as 8-bit and is then magnified
-  across its box, and a smooth ramp is the worst case for 8-bit quantization —
-  undithered it breaks into concentric rings. Every curve is also multiplied by a
-  zero-sloped `(1 − t²)²` shoulder so it cannot end on a visible rim.
+- **A two-stop radial gradient at the authored radius.** The quad's half-size is
+  `radius` in comp pixels, carried as `screenRadius`. It does *not* take the
+  perspective scale at the light's depth: that was tried and reverted, because a
+  light anywhere near the camera then flooded the whole frame with flat colour
+  (a 500px radius at z = −400 became a 1667px quad on a 480×360 comp), wiping out
+  its own falloff and screen-blending every other layer toward white.
 - **The texture is aim-agnostic** (a spot's cone opens along +X) and the quad is
   rotated to aim it. Baking the aim in meant every degree of rotation was a cache
   miss and a full CPU re-raster of 512² pixels.
+
+A wash whose profile follows the light's own Falloff curve — so all three modes
+stop glowing where they stop lighting — is a real improvement and was attempted
+here. It is not in: it changes what every light looks like, so it needs its own
+re-blessed reference frames and a deliberate decision rather than riding along
+with a lighting fix. `references/light-point` is the specification for the
+current look.
 
 The one exception to projection is an ambient light, which lifts the whole frame
 uniformly and has no position to project — projecting it would slide a full-frame

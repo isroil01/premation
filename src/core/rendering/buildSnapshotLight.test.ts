@@ -93,14 +93,9 @@ describe('lights', () => {
       // The wash shapes a spot's cone, so it needs the feather too. 50 is
       // LIGHT_DEFAULTS.coneFeather — a point light carries it and ignores it.
       coneFeather: 50,
-      // The profile is baked from `lightAttenuationAt`, so the wash has to carry
-      // the same falloff the shading reads — otherwise the glow and the light
-      // reach different distances, which is exactly what they used to do.
-      falloff: 'none',
-      falloffDistance: 500,
-      // Comp px. `radius` is world units and shapes the curve; this sizes the
-      // quad, and equals reach × the projection scale — here 250 × 1, because a
-      // default camera renders the comp plane 1:1.
+      // Comp px — the quad's half-size. Equal to `radius` for a fixture's glow,
+      // which is authored in comp pixels. Only a landed beam's footprint goes
+      // through the projection.
       screenRadius: 250,
       // No `angle`. The wash texture is baked aim-agnostic (the cone opens
       // along +X) and the LAYER's rotation aims it, so a rotating spot reuses

@@ -1710,18 +1710,21 @@ export function buildSnapshot(
         radius: av?.get('radius') ?? lt.radius,
         falloffDistance: av?.get('falloffDistance') ?? lt.falloffDistance,
       };
-      // The texture spans the light's REACH, not its radius, so the glow ends
-      // exactly where `lightAttenuationAt` says the lighting does. Under a
-      // Smooth or Inverse Square falloff those are different distances — the
-      // curves deliberately carry past the radius — and the wash, which had no
-      // access to the falloff at all, kept drawing the same disc for all three.
+      // How far the light carries. Used ONLY to size a parallel light's landed
+      // pool below — the fixture glow is drawn at its authored radius, because
+      // that is what the reference frames were captured against.
       const reach = lightReach(shape);
-      // An ambient wash has no position to project (see above), so it has no
-      // projected SIZE either; everything else takes the perspective scale at
-      // its own depth. Without this a light dollied deep into the scene threw
-      // exactly as large a glow as one sitting on the comp plane — the wash was
-      // the one thing in the frame that ignored the camera.
-      const washScale = lp.scale;
+      // NOT scaled by the light's own perspective. That was tried and it is
+      // wrong: `radius` is authored in COMP PIXELS (it is what the inspector
+      // dials and what the reference frames were drawn against), so multiplying
+      // the quad by the scale at the emitter's depth made a light anywhere near
+      // the camera flood the whole frame with flat colour — a 500px radius at
+      // z = -400 became an 1667px quad on a 480x360 comp, wiping out its own
+      // falloff and screen-blending every other layer toward white.
+      //
+      // A POOL is different and does take the projection: it is a real footprint
+      // measured on a plane at a known depth, so its size genuinely is a world
+      // quantity. See the beam projection below.
       const washLayer: RenderLayer = {
         id: node.id, kind: 'shape',
         x: lp.x, y: lp.y, rotation: aimDeg, scaleX: 1, scaleY: 1, depth: 0,
@@ -1731,14 +1734,12 @@ export function buildSnapshot(
           color: lt.color,
           intensity: av?.get('intensity') ?? lt.intensity,
           radius: shape.radius,
-          screenRadius: reach * washScale,
+          screenRadius: shape.radius,
           type: lt.type,
           cone: av?.get('lightCone') ?? lt.cone,
           // Without this the wash had no feather to apply and a spot's soft
           // edge was unreachable from the inspector — see rasterizeLight.
           coneFeather: av?.get('lightConeFeather') ?? lt.coneFeather,
-          falloff: shape.falloff,
-          falloffDistance: shape.falloffDistance,
         },
       };
       emitLayer(washLayer, node);

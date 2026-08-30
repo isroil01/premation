@@ -152,22 +152,21 @@ export interface RenderLayer {
   light?: {
     color: string;
     intensity: number;
-    /** WORLD units. Shapes the wash profile (with `falloff`), never its size. */
+    /** WORLD units — the light's authored reach. */
     radius: number;
     /**
-     * COMP px — the wash quad's half-size, already through the projection.
+     * COMP px — the wash quad's half-size.
      *
-     * Separate from `radius` because the two answer different questions: how far
-     * the light carries (world) versus how big that reads on screen (view). The
-     * quad used to be sized from `radius` directly, so a light dollied far into
-     * depth threw exactly the same glow as one on the comp plane.
+     * Equal to `radius` for a fixture's glow, which is authored in comp pixels.
+     * A landed beam is different: its footprint is measured on a plane at a
+     * known depth, so it is a real world quantity and goes through the
+     * projection. Scaling the FIXTURE glow that way was tried and reverted — it
+     * made a light near the camera flood the frame with flat colour.
      */
     screenRadius: number;
     type?: 'point' | 'ambient' | 'spot' | 'parallel';
     cone?: number;
     coneFeather?: number;
-    falloff?: 'none' | 'smooth' | 'inverse-square';
-    falloffDistance?: number;
     /**
      * This wash is a BEAM LANDING ON A SURFACE, not the fixture's own glow: an
      * aimed light's cone cross-section, placed where its axis meets the nearest

@@ -3,8 +3,9 @@
   "tolerance": 0.01,
   "frames": {
     "fill-opacity-zero-inner-shadow#0": 0.07453,
-    "svg-filter-blur#0": 0.01101,
+    "light-spot#0": 0.0124,
+    "plugin-visible#0": 0.24177,
     "svg-embedded-raster#0": 0.19156,
-    "plugin-visible#0": 0.24177
+    "svg-filter-blur#0": 0.01101
   }
 }
