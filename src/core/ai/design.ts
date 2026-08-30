@@ -9,24 +9,13 @@
  * construction instead of by luck.
  */
 
-/** A cubic-bezier easing curve [x1,y1,x2,y2]. */
-export type Bezier = [number, number, number, number];
-
-/** Named motion-physics curves — how things move, with weight and life. */
-export const PHYSICS = {
-  /** Confident pop with a little overshoot — entrances with character. */
-  overshoot: [0.34, 1.56, 0.64, 1] as Bezier,
-  /** Strong, smooth deceleration (easeOutQuint) — premium arrivals. */
-  softOut: [0.22, 1, 0.36, 1] as Bezier,
-  /** Snappy UI move. */
-  snappy: [0.4, 0, 0.2, 1] as Bezier,
-  /** Gentle in/out for holds and settles. */
-  smooth: [0.45, 0, 0.55, 1] as Bezier,
-  /** Anticipation pull-back before forward motion. */
-  anticipate: [0.6, -0.28, 0.735, 0.045] as Bezier,
-  /** Dynamic spring elasticity for kinetic motion. */
-  elastic: [0.68, -0.55, 0.265, 1.55] as Bezier,
-} as const;
+// The easing curves moved to `core/animation/motionCurves.ts` — the editor's
+// own animation commands need them, and they should not have to import the
+// AI's design system to get an ease. Re-exported so every `from './design'`
+// import in the recipe layer still resolves.
+export { PHYSICS, type Bezier } from '@core/animation/motionCurves';
+import type { Bezier } from '@core/animation/motionCurves';
+import { PHYSICS } from '@core/animation/motionCurves';
 
 export interface MotionStyle {
   name: string;

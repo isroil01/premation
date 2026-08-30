@@ -222,6 +222,12 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'animation.exponentialScale', label: 'Exponential Scale' },
       { commandId: 'animation.sequenceLayerBars', label: 'Sequence Layers…' },
       { commandId: 'animation.sequenceLayers', label: 'Stagger Animations (0.3s)' },
+      { separator: true },
+      // Creates animation on layers that have none — the counterpart to
+      // Stagger Animations above, which only offsets keyframes that exist.
+      { commandId: 'animation.animateIn', label: 'Animate In' },
+      { commandId: 'animation.animateOut', label: 'Animate Out' },
+      { separator: true },
       { commandId: 'animation.motionSketch', label: 'Motion Sketch' },
       { commandId: 'animation.convertAudioToKeyframes', label: 'Convert Audio to Keyframes' },
       {

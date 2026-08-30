@@ -71,6 +71,7 @@ import { canSyncCurrentProject, syncCurrentProject } from '@core/sync/syncCurren
 import { renderStillFrame } from '@core/export/offlineRenderer';
 import { asThemeId, asCommandId, type KeyChord } from '@app-types/common';
 import { buildCaptionCommands } from '@core/captions/captionCommands';
+import { buildChoreographyCommands } from '@core/animation/choreographyCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
@@ -979,6 +980,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildProjectCommands(),
     ...buildRigPresetCommands(),
     ...buildCaptionCommands(),
+    ...buildChoreographyCommands(),
     ...buildReframeCommands(),
   ];
 }
