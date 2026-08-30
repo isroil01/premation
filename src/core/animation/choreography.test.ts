@@ -11,6 +11,8 @@
 
 import { animateLayers, staggerOffsets, CHOREOGRAPHY_ARCHETYPES } from './choreography';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { getNodeEffects } from '@core/effects/effects';
+import { readAnimatorData } from '@core/text/textAnimators';
 import type { AnimationEngine } from '@motion/animation';
 
 interface Written {
@@ -335,5 +337,97 @@ describe('the motion feel is reachable', () => {
       nodeIds: LAYERS, atCompTime: 0, phase: 'in', engine: recorder().engine, feel: currentFeel(), fps: 30,
     });
     expect(snappy.durationSec).toBeLessThan(smooth.durationSec);
+  });
+});
+
+describe('the two structural archetypes', () => {
+  const TEXT = 'text_1';
+
+  /** A text layer — `hasTextComponent` looks for a component of type 'Text'. */
+  function addTextLayer(): void {
+    defaultSceneGraph.addChild('comp_root', {
+      id: TEXT,
+      name: TEXT,
+      parent: 'comp_root',
+      children: [],
+      transform: { position: { x: 100, y: 200 }, rotation: 0, scale: { x: 1, y: 1 } },
+      visible: true,
+      locked: false,
+      components: [
+        { id: `${TEXT}_t`, type: 'Transform', props: { __kind: 'text', x: 100, y: 200 } },
+        { id: `${TEXT}_x`, type: 'Text', props: { text: 'HELLO' } },
+      ],
+    } as never);
+  }
+
+  beforeEach(() => {
+    if (defaultSceneGraph.getNode(TEXT)) defaultSceneGraph.removeNode?.(TEXT);
+    addTextLayer();
+  });
+
+  it('never gives a non-text layer a character cascade', () => {
+    // It sweeps a selector across characters. On a solid there is nothing to
+    // sweep, so it must not be offered — and must not be silently swapped for
+    // something else either, which would over-represent the substitute.
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 40; seed++) {
+      const out = animateLayers({ nodeIds: LAYERS, atCompTime: 0, phase: 'in', engine: recorder().engine, seed });
+      out.archetypes.forEach((a) => seen.add(a));
+    }
+    expect(seen.has('char_cascade')).toBe(false);
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it('installs a blur and animates its amount', () => {
+    const { engine, written } = recorder();
+    animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'in', engine, archetype: 'blur_resolve' });
+
+    const blur = getNodeEffects('l1').find((e) => e.type === 'blur');
+    expect(blur).toBeDefined();
+    // `effect.<id>` with no param key is the effect's own amount.
+    const track = written.filter((w) => w.prop === `effect.${blur!.id}`).sort((a, b) => a.t - b.t);
+    expect(track.length).toBeGreaterThan(1);
+    expect(track[0]!.value).toBeGreaterThan(track[track.length - 1]!.value);
+    expect(track[track.length - 1]!.value).toBe(0);
+  });
+
+  it('reuses the blur it already added instead of stacking another', () => {
+    // Pressing Animate In twice must not leave the layer with two blurs.
+    animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'in', engine: recorder().engine, archetype: 'blur_resolve' });
+    animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'in', engine: recorder().engine, archetype: 'blur_resolve' });
+    expect(getNodeEffects('l1').filter((e) => e.type === 'blur')).toHaveLength(1);
+  });
+
+  it('installs a text animator and sweeps its selector', () => {
+    const { engine, written } = recorder();
+    animateLayers({ nodeIds: [TEXT], atCompTime: 0, phase: 'in', engine, archetype: 'char_cascade' });
+
+    const animators = readAnimatorData(defaultSceneGraph.getNode(TEXT)!);
+    expect(animators.length).toBeGreaterThan(0);
+    const sweep = written.filter((w) => w.prop.startsWith('ta.') && w.prop.endsWith('.offset'))
+      .sort((a, b) => a.t - b.t);
+    expect(sweep).toHaveLength(2);
+    expect(sweep[0]!.value).toBe(0);
+    expect(sweep[1]!.value).toBe(100);
+  });
+
+  it('offers the cascade to a text layer', () => {
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 40; seed++) {
+      const out = animateLayers({ nodeIds: [TEXT], atCompTime: 0, phase: 'in', engine: recorder().engine, seed });
+      out.archetypes.forEach((a) => seen.add(a));
+    }
+    expect(seen.has('char_cascade')).toBe(true);
+  });
+
+  it('mirrors the installed tracks on an exit too', () => {
+    // The blur track has to ride the same reversal as everything else, or an
+    // exit resolves INTO focus while the layer leaves.
+    const { engine, written } = recorder();
+    animateLayers({ nodeIds: ['l1'], atCompTime: 0, phase: 'out', engine, archetype: 'blur_resolve' });
+    const blur = getNodeEffects('l1').find((e) => e.type === 'blur')!;
+    const track = written.filter((w) => w.prop === `effect.${blur.id}`).sort((a, b) => a.t - b.t);
+    expect(track[0]!.value).toBe(0);
+    expect(track[track.length - 1]!.value).toBeGreaterThan(0);
   });
 });

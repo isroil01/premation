@@ -38,6 +38,8 @@ const ARCHETYPE_LABELS: Record<(typeof CHOREOGRAPHY_ARCHETYPES)[number], string>
   scale_pop: 'Pop',
   slide_settle: 'Slide',
   mask_wipe: 'Wipe',
+  blur_resolve: 'Blur In',
+  char_cascade: 'Character Cascade',
 };
 
 /**

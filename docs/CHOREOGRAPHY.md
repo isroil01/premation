@@ -80,14 +80,27 @@ flat across 300 seeds (under 10%; it is ~2% in practice).
 
 ## Which archetypes
 
-Four of the six: **rise**, **scale_pop**, **slide_settle**, **mask_wipe** —
-everything achievable with keyframes alone.
+All six: **rise**, **scale_pop**, **slide_settle**, **mask_wipe**,
+**blur_resolve** and **char_cascade**.
 
-`blur_resolve` needs a blur effect installed on the layer and `char_cascade`
-needs a text animator (and a text layer). Both change the layer's *structure*
-rather than its animation. They are excluded rather than silently substituted,
-because falling back would skew every varied pick toward the fallback — the
-sameness problem the archetypes exist to solve.
+The last two change the layer's *structure* before anything is keyframed —
+`blur_resolve` installs a blur effect and animates its amount, `char_cascade`
+installs a text animator and sweeps its selector across the string. Those
+installs are scene edits, so they run outside the animation transaction, and
+the property to keyframe (`effect.<id>`, `ta.<index>.offset`) is not knowable
+until they have. Running Animate In twice reuses the blur it already added
+rather than stacking a second one.
+
+Candidates are filtered **per layer** rather than picked and substituted: only
+text layers are offered the cascade, because coercing a bad pick into a
+fallback would quietly over-represent that fallback — the sameness problem the
+archetypes exist to solve.
+
+Two things had to line up for the cascade to be reachable at all. It needs a
+text layer, and it is not in the `generic` role's allowed set — so a layer's
+ROLE has to be right as well as its type. Text maps to `title` (the most
+permissive text role) and everything else to `generic`; passing `generic` for
+everything made the cascade unreachable even on layers that could perform it.
 
 ## On the beat
 

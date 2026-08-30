@@ -34,10 +34,14 @@ import { compToKeyframeTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled, set3DEnabled, THREE_D_PROPS } from '@core/scene/threeD';
 import { readNodeKind } from '@core/scene/sceneDerive';
+import { addEffect, effectPropPath, getNodeEffects } from '@core/effects/effects';
+import { addTextAnimator, hasTextComponent, updateAnimator } from '@core/text/textAnimators';
 import { runAnimEdit } from './animationCommands';
 import { nodeBaseValue } from './animationPresets';
 import { PHYSICS, type Bezier } from './motionCurves';
 import {
+  blurResolvePoints,
+  charCascadePoints,
   entranceTrackPlans,
   hash32,
   hashFrac,
@@ -47,21 +51,54 @@ import {
 } from './entranceArchetypes';
 
 /**
- * The archetypes this command can perform with keyframes alone.
+ * Every archetype the choreography commands can perform.
  *
- * `blur_resolve` needs a blur effect installed on the layer and `char_cascade`
- * needs a text animator — both are real work with their own failure modes (a
- * non-text layer cannot cascade), and both change the layer's structure rather
- * than just its animation. Offering them here and quietly falling back would
- * skew every varied pick toward the fallback, which is exactly the
- * everything-looks-the-same problem the archetypes exist to solve.
+ * Four of these need nothing but keyframes. Two change the layer's STRUCTURE
+ * first: `blur_resolve` installs a blur effect and animates its amount, and
+ * `char_cascade` installs a text animator and sweeps its selector across the
+ * string. Those installs are scene edits, so they happen outside the animation
+ * transaction — the same split `applyPresetTracks` makes.
  */
 export const CHOREOGRAPHY_ARCHETYPES = [
   'rise',
   'scale_pop',
   'slide_settle',
   'mask_wipe',
+  'blur_resolve',
+  'char_cascade',
 ] as const satisfies readonly EntranceArchetype[];
+
+/**
+ * What a given layer can actually do.
+ *
+ * `char_cascade` sweeps a selector across characters, so it needs a text
+ * layer. Filtering the picker's candidates PER LAYER rather than picking and
+ * substituting is what keeps the distribution honest: coercing a bad pick into
+ * a fallback would quietly over-represent that fallback, which is the
+ * everything-looks-the-same problem the archetypes exist to solve.
+ */
+function archetypesFor(nodeId: string): readonly EntranceArchetype[] {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (node && hasTextComponent(node)) return CHOREOGRAPHY_ARCHETYPES;
+  return CHOREOGRAPHY_ARCHETYPES.filter((a) => a !== 'char_cascade');
+}
+
+/**
+ * The picker's ROLE for a layer.
+ *
+ * The archetypes were written for a compositor that knows what each element
+ * is — a title, a card, an emblem — and `ROLE_ALLOWED` gates them accordingly.
+ * The editor knows only what kind of layer it is, so text maps to `title`
+ * (the most permissive text role) and everything else to `generic`.
+ *
+ * This is load-bearing, not cosmetic: `char_cascade` is not in `generic`'s
+ * allowed set at all, so passing `generic` for everything made the cascade
+ * unreachable even on text layers that could perform it.
+ */
+function roleFor(nodeId: string): 'title' | 'generic' {
+  const node = defaultSceneGraph.getNode(nodeId);
+  return node && hasTextComponent(node) ? 'title' : 'generic';
+}
 
 export type ChoreographyFeel = 'snappy' | 'smooth' | 'bouncy';
 
@@ -186,6 +223,52 @@ function reverseValues(plans: readonly EntranceTrackPlan[]): EntranceTrackPlan[]
   });
 }
 
+/**
+ * Install whatever an archetype needs on the layer, and return the extra
+ * keyframe plans that only exist once the ids do.
+ *
+ * Structural, so it runs BEFORE the animation transaction: adding an effect or
+ * a text animator writes to the scene graph, and the property path to keyframe
+ * (`effect.<id>`, `ta.<index>.offset`) is not knowable until it has.
+ */
+function installFor(
+  nodeId: string,
+  archetype: EntranceArchetype,
+  start: number,
+  dur: number,
+): EntranceTrackPlan[] {
+  if (archetype === 'blur_resolve') {
+    // Reuse a blur the layer already has rather than stacking a second one on
+    // every re-run — pressing Animate In twice should not leave two blurs.
+    const existing = getNodeEffects(nodeId).find((e) => e.type === 'blur');
+    let effectId = existing?.id;
+    if (!effectId) {
+      const before = new Set(getNodeEffects(nodeId).map((e) => e.id));
+      addEffect(nodeId, 'blur');
+      effectId = getNodeEffects(nodeId).find((e) => !before.has(e.id))?.id;
+    }
+    if (!effectId) return [];
+    // No param key: `effect.<id>` is the effect's own amount (effectPropPath).
+    return [{ prop: effectPropPath(effectId), points: blurResolvePoints(start, dur) }];
+  }
+
+  if (archetype === 'char_cascade') {
+    const index = addTextAnimator(nodeId);
+    if (index < 0) return [];
+    // Covered glyphs start invisible, low and small; sweeping the selector
+    // window off the end of the string reveals them left to right.
+    updateAnimator(nodeId, index, {
+      basedOn: 'characters', shape: 'rampUp', start: 0, end: 100, opacity: 0, y: 16, scale: 88,
+    });
+    return [{
+      prop: `ta.${index}.offset`,
+      points: charCascadePoints(start, Math.max(0.4, dur * 1.1)),
+    }];
+  }
+
+  return [];
+}
+
 /** Layers whose entrance tilts in 3D need the layer's 3D switch on to render. */
 function enable3DIfNeeded(nodeId: string, plans: readonly EntranceTrackPlan[]): void {
   if (!plans.some((p) => (THREE_D_PROPS as readonly string[]).includes(p.prop))) return;
@@ -223,10 +306,10 @@ export function animateLayers(req: ChoreographyRequest): ChoreographyResult {
     const nodeId = ids[i]!;
     const start = req.atCompTime + (offsets[i] ?? 0);
     const archetype = req.archetype ?? pickEntranceArchetype({
-      role: 'generic',
+      role: roleFor(nodeId),
       seed,
       index: i,
-      allowed: CHOREOGRAPHY_ARCHETYPES,
+      allowed: archetypesFor(nodeId),
     });
     archetypes.push(archetype);
 
@@ -248,7 +331,10 @@ export function animateLayers(req: ChoreographyRequest): ChoreographyResult {
       // side, which reads as a single object splitting rather than as several.
       direction: (['left', 'right', 'up', 'down'] as const)[hash32(seed, 'dir', i, nodeId) % 4]!,
     });
-    perLayer.push({ nodeId, plans: req.phase === 'out' ? reverseValues(plans) : plans });
+    // Structural installs contribute their own tracks (blur amount, the text
+    // animator's selector offset), which ride the same phase mirroring.
+    const withInstalls = [...plans, ...installFor(nodeId, archetype, start, feel.durSec)];
+    perLayer.push({ nodeId, plans: req.phase === 'out' ? reverseValues(withInstalls) : withInstalls });
   }
 
   // The 3D switch is a SCENE edit, not an animation edit, so it is flipped
