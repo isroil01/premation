@@ -38,6 +38,7 @@ import {
 } from '@core/animation/animationPresets';
 import { downloadBlob } from '@core/export/exportManager';
 import { hasTextComponent } from '@core/text/textAnimators';
+import { ChoreographySection } from './ChoreographySection';
 import { api, isAuthenticated } from '@core/api/client';
 import { cloudProjectsEnabled } from '@core/config/edition';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -446,6 +447,10 @@ export function MotionPresetsPanel(): JSX.Element {
           </div>
         )}
       </div>
+      {/* Above the library, not inside it: these act on the SELECTION and the
+          composition rather than being things you browse, and they are the
+          only discovery surface the choreography features have. */}
+      <ChoreographySection />
       <div className={styles.libBody}>
         {folders.length > 0 ? (
           <BrowserTree>

@@ -9,7 +9,11 @@ times, nudge every offset, and it still reads as mechanical.
 
 ## Using it
 
-- **Animation ▸ Animate In / Animate Out**, or type "animate" in the command
+- The **Presets** panel has an "Animate selection" section at the top — the
+  feel picker, Animate In/Out, the beat row, speed ramps and Smart Animate, in
+  one place. It lives there rather than in a panel of its own because that
+  panel is already "apply motion to this layer".
+- Or **Animation ▸ Animate In / Animate Out**, or type "animate" in the command
   palette.
 - The plain command varies the entrance per layer. `Animate In: Rise / Pop /
   Slide / Wipe` force one for every layer.

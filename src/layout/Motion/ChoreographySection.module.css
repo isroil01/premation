@@ -1,0 +1,119 @@
+/**
+ * "Animate selection", at the top of the Presets panel.
+ *
+ * It sits above a dense scrolling library, so it has to read as a distinct
+ * band without competing with it: one tint, one rule beneath, and buttons that
+ * are quieter than the preset rows they precede.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1);
+}
+
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.subheading {
+  margin-top: 2px;
+  font-size: var(--font-size-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--font-size-micro);
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Feel picker ────────────────────────────────────────────────────
+   A segmented control rather than three loose buttons: the three are mutually
+   exclusive, and a row of equal buttons with one filled says that without a
+   label explaining it. */
+
+.feelRow {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+}
+
+.feelButton {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.feelButton:hover {
+  color: var(--color-text-primary);
+}
+
+.feelButton[data-active='true'] {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+/* ── Action rows ────────────────────────────────────────────────────
+   `flex: 1` with `min-width: 0` so a long composition name in a Smart Animate
+   button shrinks and ellipsizes rather than pushing the row out of the panel,
+   which is the width the whole inspector is fighting over. */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.action {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.action:hover:not(:disabled) {
+  background: var(--color-surface-3);
+  border-color: var(--color-border);
+}
+
+.action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feelButton,
+  .action {
+    transition: none;
+  }
+}
