@@ -101,6 +101,16 @@ export interface ChoreographyRequest {
   archetype?: EntranceArchetype;
   /** Variation seed — same seed, same choreography. */
   seed?: number;
+  /**
+   * An explicit start time per layer, composition seconds — a beat grid, when
+   * the music is what should be setting the rhythm.
+   *
+   * It REPLACES the computed stagger rather than shifting it: two rhythms at
+   * once is not a rhythm. Shorter than the selection, the remaining layers
+   * share the last time; the caller is expected to have extended its own grid
+   * (see `beatGrid.beatsForLayers`), which knows the tempo and can count on.
+   */
+  startTimes?: readonly number[];
   /** Composition frame rate. The rhythm is quantized to it — see
    *  `staggerOffsets`. Defaults to 30 when a caller cannot say. */
   fps?: number;
@@ -203,7 +213,9 @@ export function animateLayers(req: ChoreographyRequest): ChoreographyResult {
   const ids = req.nodeIds.filter((id) => defaultSceneGraph.getNode(id) !== undefined);
   if (ids.length === 0) return EMPTY;
 
-  const offsets = staggerOffsets(ids.length, feel.staggerSec, req.fps ?? 30, seed);
+  const offsets = req.startTimes && req.startTimes.length > 0
+    ? ids.map((_, i) => (req.startTimes![Math.min(i, req.startTimes!.length - 1)] ?? req.atCompTime) - req.atCompTime)
+    : staggerOffsets(ids.length, feel.staggerSec, req.fps ?? 30, seed);
   const archetypes: EntranceArchetype[] = [];
   const perLayer: Array<{ nodeId: string; plans: EntranceTrackPlan[] }> = [];
 

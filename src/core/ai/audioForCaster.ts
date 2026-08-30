@@ -8,7 +8,7 @@
 import { analyseAudio } from '@motion/audio';
 import type { AudioGrid } from '@motion/caster';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind } from '@core/scene/sceneDerive';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { useAssetStore } from '@stores/assetStore';
 
 /** Skip decode on huge files — a 10-minute wav would stall the generative path. */
@@ -24,11 +24,19 @@ export function readAudioAssetId(node: { components: { props: Record<string, unk
   return undefined;
 }
 
+/**
+ * `traverse`, NOT `flattenScene` — the same fix as `core/audio/beatGrid.ts`,
+ * for the same reason. On a fresh unsaved project layers hang off the VIRTUAL
+ * `comp_root`, so `getRoots()` is empty and a roots-downwards walk sees no
+ * layers at all. This silently cost the caster its beat grid on exactly the
+ * projects most likely to be generated into: brand-new ones.
+ */
 function findAudioLayerId(): string | undefined {
-  for (const n of flattenScene(defaultSceneGraph)) {
-    if (readNodeKind(n) === 'audio') return n.id;
-  }
-  return undefined;
+  let found: string | undefined;
+  defaultSceneGraph.traverse((n) => {
+    if (found === undefined && readNodeKind(n) === 'audio') found = n.id;
+  });
+  return found;
 }
 
 /**

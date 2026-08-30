@@ -77,6 +77,40 @@ rather than its animation. They are excluded rather than silently substituted,
 because falling back would skew every varied pick toward the fallback — the
 sameness problem the archetypes exist to solve.
 
+## On the beat
+
+**Animation ▸ Animate In on Beats** replaces the computed stagger with the
+music's own pulse: one layer per beat of the composition's audio layer. There
+is also **Markers on Beats** (and a half-time variant of each, because most
+cuts phrase on every second beat rather than every one).
+
+The analysis is `@motion/audio`'s `analyseAudio` — spectral-flux onset
+envelope, autocorrelation tempo, phase estimation — which has been in the tree
+since the AI caster shipped and was reachable only by prompting. The beats were
+computed, handed to a language model, and thrown away.
+`core/audio/beatGrid.ts` is the missing half: the same analysis, in
+**composition** time.
+
+Verified against ground truth — a synthesized 120.00 BPM click track came back
+as **119.68 BPM at 0.88 confidence**, and five layers animated in on frames
+14 / 29 / 44 / 60 / 75, which are exactly the beat markers' frames.
+
+**Audio time is not comp time.** The analyser returns seconds from the start of
+the file; the layer may start ten seconds into the comp, be trimmed twenty
+seconds into the file, and be stretched. Beats go through `keyframeToCompTime`,
+the inverse of the chain every keyframe already uses, rather than an offset
+computed locally.
+
+**Confidence is reported, not enforced.** `core/ai/audioForCaster.ts` returns
+*undefined* below 0.25 confidence, which is right for a language model — it
+will time a whole piece to a bad grid and cannot tell. A person can, so the
+grid comes back with its confidence attached and the command says it is a weak
+guess instead of silently refusing.
+
+**When the music runs out** before the layers do, the grid is extended at the
+tempo it was keeping. Dropping the remaining layers would animate fewer things
+than were selected, and piling them on the last beat would look like a bug.
+
 ## Not Stagger Animations
 
 **Animation ▸ Stagger Animations** (`sequenceLayers`) offsets the keyframes a
@@ -87,11 +121,33 @@ re-stagger it there — and neither substitutes for the other.
 ## Layout
 
 ```
-motionCurves.ts          the named easing curves (moved out of core/ai/design.ts)
-entranceArchetypes.ts    pure: which entrance, what rhythm, what keyframes
-choreography.ts          impure: resting positions, frame grid, one undo step
-choreographyCommands.ts  the commands, the selection, the toast
+core/animation/
+  motionCurves.ts          the named easing curves (moved out of core/ai/design.ts)
+  entranceArchetypes.ts    pure: which entrance, what rhythm, what keyframes
+  choreography.ts          impure: resting positions, frame grid, one undo step
+  choreographyCommands.ts  the commands, the selection, the toast
+core/audio/
+  beatGrid.ts              the analysis, in composition time
+  beatCommands.ts          markers on beats, and animating to them
 ```
+
+The two features were built a day apart and compose without either knowing
+about the other, because both speak in composition seconds: `beatCommands`
+hands `animateLayers` a list of start times and the beat grid becomes the
+rhythm.
+
+### The virtual-root trap
+
+`findAudioLayer` uses `defaultSceneGraph.traverse`, **not** `flattenScene`. On
+a fresh unsaved project every layer hangs off the virtual `comp_root`, which is
+a fallback id with no engine node behind it — so `getRoots()` is empty and a
+roots-downwards walk returns nothing while the layers are plainly in the
+timeline. Measured: a scene with an audio layer and five solids flattened to
+`[]` and traversed to all six, which left every beat command disabled with the
+music sitting right there. `core/ai/audioForCaster.ts` had the same bug, which
+cost the AI caster its beat grid on exactly the projects most likely to be
+generated into — brand new ones. Both are fixed and pinned by a test that
+builds the virtual-root case.
 
 `entranceArchetypes.ts` is pure — planes of numbers in, plans out — so the craft
 is unit-tested with no scene graph, and `core/ai/archetypes.ts` re-exports it so

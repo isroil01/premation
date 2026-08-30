@@ -268,6 +268,28 @@ describe('animateLayers', () => {
     expect(ys[ys.length - 1]!.value).toBeCloseTo(640, 5);
   });
 
+  it('lets an explicit beat grid replace the stagger entirely', () => {
+    // The music is the rhythm; a nominal stagger on top would fight it.
+    const { engine, written } = recorder();
+    const beats = [1, 1.5, 2.25, 3, 3.5];
+    animateLayers({ nodeIds: LAYERS, atCompTime: 1, phase: 'in', engine, startTimes: beats, fps: 30 });
+
+    const starts = LAYERS.map((id) =>
+      Math.min(...written.filter((w) => w.nodeId === id).map((w) => w.t)));
+    // Frame-quantized, so compare on the grid the engine stores on.
+    expect(starts.map((s) => Math.round(s * 30))).toEqual(beats.slice(0, 4).map((b) => Math.round(b * 30)));
+  });
+
+  it('shares the last beat when the grid is shorter than the selection', () => {
+    // The caller is expected to have extended its grid; this is the backstop,
+    // and it must not throw or write NaN times.
+    const { engine, written } = recorder();
+    animateLayers({ nodeIds: LAYERS, atCompTime: 0, phase: 'in', engine, startTimes: [0, 0.5], fps: 30 });
+    expect(written.every((w) => Number.isFinite(w.t))).toBe(true);
+    const last = Math.min(...written.filter((w) => w.nodeId === 'l4').map((w) => w.t));
+    expect(last).toBeCloseTo(0.5, 5);
+  });
+
   it('gives each feel its own timing', () => {
     const snappy = animateLayers({ nodeIds: LAYERS, atCompTime: 0, phase: 'in', engine: recorder().engine, feel: 'snappy' });
     const smooth = animateLayers({ nodeIds: LAYERS, atCompTime: 0, phase: 'in', engine: recorder().engine, feel: 'smooth' });
