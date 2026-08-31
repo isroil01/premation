@@ -6,7 +6,7 @@ import { PickWhip } from '@components/PickWhip';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { eligibleParents, parentOfNode, reparentNode } from '@core/scene/parenting';
+import { eligibleParents, parentOfNode, reparentNode, parentOptionsFor } from '@core/scene/parenting';
 import { getNodeBlend, setNodeBlend } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from './blendMenu';
 import { getNodeMatte, setNodeMatte } from '@core/effects/matte';
@@ -37,7 +37,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
       id: '__none__',
       label: 'None',
       icon: currentParent === null ? 'check' : undefined,
-      onSelect: () => reparentNode(nodeId, null),
+      onSelect: (m) => reparentNode(nodeId, null, parentOptionsFor(m)),
     },
     ...(parentOptions.length ? [{ type: 'separator' as const }] : []),
     ...parentOptions.map((o): DropdownItem => ({
@@ -45,7 +45,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
       id: o.id,
       label: o.name,
       icon: o.id === currentParent ? 'check' : undefined,
-      onSelect: () => reparentNode(nodeId, o.id),
+      onSelect: (m) => reparentNode(nodeId, o.id, parentOptionsFor(m)),
     })),
   ];
 
@@ -113,9 +113,9 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
             <span className={styles.label}>Parent</span>
             <div className={styles.rowRight}>
               <PickWhip
-                label="Parent pick-whip — drag onto a layer"
+                label="Parent pick-whip â€” drag onto a layer (Alt: keep values, layer jumps)"
                 accept={(target) => parentOptions.some((o) => o.id === target.nodeId)}
-                onPick={(target) => reparentNode(nodeId, target.nodeId)}
+                onPick={(target, m) => reparentNode(nodeId, target.nodeId, parentOptionsFor(m))}
               />
               <Dropdown
                 placement="bottom-end"
@@ -208,11 +208,11 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
             <div className={styles.fieldGrid}>
               <label className={styles.fieldLabel}>
                 <span>Shutter</span>
-                <ValueField value={mb.shutterAngle} min={0} max={360} precision={0} unit="°" onChange={mb.setShutterAngle} aria-label="Shutter angle" />
+                <ValueField value={mb.shutterAngle} min={0} max={360} precision={0} unit="Â°" onChange={mb.setShutterAngle} aria-label="Shutter angle" />
               </label>
               <label className={styles.fieldLabel}>
                 <span>Phase</span>
-                <ValueField value={mb.shutterPhase ?? -90} min={-360} max={360} precision={0} unit="°" onChange={mb.setShutterPhase} aria-label="Shutter phase" />
+                <ValueField value={mb.shutterPhase ?? -90} min={-360} max={360} precision={0} unit="Â°" onChange={mb.setShutterPhase} aria-label="Shutter phase" />
               </label>
             </div>
             <div className={styles.fieldGrid}>

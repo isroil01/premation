@@ -53,7 +53,8 @@
  * otherwise pin every frame it ever touched.
  */
 
-import { getEventBus } from '@core/events/EventBus';
+import { requestMediaRepaint } from './repaintScheduler';
+import { attachVideoSrc, detachVideoSrc } from './localBlobSource';
 
 /** Times within this many seconds are the same frame. Tighter than the 0.05s
  *  deadband the live path uses — that deadband is ~1.5 frames at 30fps and
@@ -104,8 +105,17 @@ function defaultVideoFactory(src: string): HTMLVideoElement {
   v.loop = false;
   v.preload = 'auto';
   v.crossOrigin = 'anonymous';
-  v.src = src;
+  // A `motion-blob:<hash>` ref is not a URL — see attachVideoSrc. This tier is
+  // where a bundled clip lands when the exact path cannot take it, so it has to
+  // resolve one too or the fallback falls back to nothing.
+  attachVideoSrc(v, src);
   return v;
+}
+
+/** Tear an element down and drop its claim on a local-first object URL. */
+function releaseElement(video: HTMLVideoElement): void {
+  detachVideoSrc(video);
+  video.src = '';
 }
 
 /** Quantize a source time to a stable cache key (sub-millisecond). */
@@ -144,7 +154,7 @@ export class VideoFrameCache {
       this.sweepCounter = 0;
       for (const [s, e] of this.sources) {
         if (e !== entry && entry.lastUsed - e.lastUsed > IDLE_EVICT_MS) {
-          e.video.src = '';
+          releaseElement(e.video);
           this.sources.delete(s);
         }
       }
@@ -217,8 +227,10 @@ export class VideoFrameCache {
     this.pump(entry);
     this.notify();
     // Keep the existing repaint contract: the live path already re-renders on
-    // AnimationChanged, so a newly decoded frame reaches the screen the same way.
-    getEventBus().emit('AnimationChanged', { nodeId: src });
+    // AnimationChanged, so a newly decoded frame reaches the screen the same
+    // way — but coalesced to one repaint per animation frame, because the
+    // element tier fills a queue and can land several seeks per frame.
+    requestMediaRepaint(src);
   }
 
   private capture(entry: SourceEntry, key: number): void {
@@ -265,13 +277,13 @@ export class VideoFrameCache {
   retain(keep: ReadonlySet<string>): void {
     for (const [src, entry] of this.sources) {
       if (keep.has(src)) continue;
-      entry.video.src = '';
+      releaseElement(entry.video);
       this.sources.delete(src);
     }
   }
 
   clear(): void {
-    for (const entry of this.sources.values()) entry.video.src = '';
+    for (const entry of this.sources.values()) releaseElement(entry.video);
     this.sources.clear();
   }
 

@@ -27,9 +27,23 @@ import { cn } from '@utils/cn';
 import { resolveWhipTargetAt, type WhipTarget } from '@core/whip/whipTarget';
 import styles from './PickWhip.module.css';
 
+/** Modifier keys held at the moment the whip was released. */
+export interface WhipModifiers {
+  altKey: boolean;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+}
+
 export interface PickWhipProps {
-  /** Called on release over a valid target. Not called when released elsewhere. */
-  onPick: (target: WhipTarget) => void;
+  /**
+   * Called on release over a valid target. Not called when released elsewhere.
+   *
+   * `modifiers` reports what was held at the drop, because After Effects gives
+   * the parent whip a modified variant: Alt links without compensating the
+   * transform. Callers that do not have one ignore the second argument.
+   */
+  onPick: (target: WhipTarget, modifiers: WhipModifiers) => void;
   /** Accessible name — "Parent pick-whip", "Expression pick-whip". */
   label: string;
   /**
@@ -95,7 +109,12 @@ export function PickWhip({ onPick, label, accept, disabled, className }: PickWhi
     event.currentTarget.releasePointerCapture(event.pointerId);
     setDrag(null);
     const target = targetAt(event.clientX, event.clientY);
-    if (target) onPick(target);
+    if (target) {
+      onPick(target, {
+        altKey: event.altKey, shiftKey: event.shiftKey,
+        ctrlKey: event.ctrlKey, metaKey: event.metaKey,
+      });
+    }
   };
 
   const onPointerCancel = (): void => setDrag(null);

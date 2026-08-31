@@ -367,17 +367,34 @@
 
 
 /*
- * Inside the timeline's tool row (container `tl-toolbar`), the zoom group is
- * the first thing to go when space runs short.
+ * The zoom group's own `display: none` breakpoint is gone.
  *
- * It is the largest single cluster here and the most redundant: wheel zoom, the
- * +/- keys and "Fit in view" inside the View Options dropdown all survive, so
- * nothing becomes unreachable. The rule lives in this file, next to the class
- * it hides, because a container query matches on the ancestor chain — the
- * container's NAME is global even though these class names are not.
+ * It hid the cluster at a fixed container width — a second opinion on a
+ * question `useTransportDemote` now answers by measuring: the bar decides which
+ * groups it can afford and stops rendering `ZoomField` itself. Two mechanisms
+ * competing over one element meant the zoom field could vanish while the bar
+ * still had room for it, and the bar's measurement could not see why.
  */
-@container tl-toolbar (max-width: 1040px) {
-  .zoomGroup {
-    display: none;
+
+/*
+ * Inside the transport bar, the tool triggers match the bar's control height.
+ *
+ * `--control-height-lg` (28px) is right in the top nav, where these buttons ARE
+ * the row. Down here they sit beside 26px transport buttons carrying `sm`
+ * glyphs, and 28px with an `md` glyph made View Options the tallest thing in a
+ * row of equals. Scoped to the container rather than changed on the class,
+ * because the top nav still wants the larger size.
+ */
+@container tl-toolbar (min-width: 0) {
+  .toolDropdownTrigger,
+  .toolDropdownTriggerActive,
+  .tool,
+  .toolActive {
+    height: var(--control-height-row);
+  }
+
+  .tool,
+  .toolActive {
+    width: var(--control-height-row);
   }
 }

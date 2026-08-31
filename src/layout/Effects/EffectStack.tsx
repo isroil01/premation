@@ -60,6 +60,8 @@ import {
   removeEffect,
   toggleEffect,
   setEffectMaskId,
+  setEffectOpacity,
+  effectOpacityPath,
   moveEffect,
   dragEffectTo,
   effectPropPath,
@@ -167,6 +169,94 @@ function ParamGroup({
 }
 
 /**
+ * AE Compositing Options → Effect Opacity: how much of THIS effect's result
+ * survives, 0–100.
+ *
+ * The dial that gives any effect a time range. An effect has no in/out point —
+ * in AE or here — so limiting one to frames 30–60 means keyframing it to
+ * nothing outside them, and most effects have no parameter that means "off":
+ * Find Edges, Mosaic and a colour LUT have nothing to ramp to zero. This does,
+ * uniformly, because the blend is against the effect's own input rather than
+ * against any value it happens to expose.
+ *
+ * Deliberately NOT an `EffectParamRow`: that component is driven by an
+ * `EffectParamDef` off the effect's definition, and this value lives on the
+ * effect INSTANCE (`Effect.opacity`) precisely so it can exist for effects
+ * whose definitions know nothing about it. It keyframes through the same
+ * animation engine on the reserved path, so the stopwatch, the timeline row and
+ * the graph editor all behave exactly as they do for a declared param.
+ */
+function EffectOpacityRow({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element {
+  const time = useActiveWorkspace()?.time ?? 0;
+  const path = effectOpacityPath(effect.id);
+  const animated = defaultAnimation.isAnimated(nodeId, path);
+  const layerT = compToKeyframeTime(nodeId, time);
+  const stored = effect.opacity ?? 100;
+  const display = animated ? defaultAnimation.sample(nodeId, path, layerT) ?? stored : stored;
+
+  // Same split `writeEffectParams` makes for declared params: keyframe when the
+  // property is already animated, set the static value when it is not. Written
+  // out rather than routed through that helper because the static half is
+  // `setEffectOpacity` (an instance field) instead of `updateEffectParam`.
+  const onChange = (v: number): void => {
+    const next = Math.max(0, Math.min(100, v));
+    if (animated) {
+      runAnimEdit(
+        'Set Effect Opacity',
+        () => defaultAnimation.setKeyframe(nodeId, path, layerT, next),
+        `fxop:${nodeId}:${path}:${layerT}`,
+      );
+    } else {
+      setEffectOpacity(nodeId, effect.id, next);
+    }
+  };
+
+  const toggle = (): void => {
+    if (animated) {
+      runAnimEdit('Remove Effect Opacity animation', () => {
+        defaultAnimation.removeTrack(nodeId, path);
+        // Put the last sampled value back as the STATIC one, so switching the
+        // stopwatch off leaves the frame looking as it did. Without this the
+        // field falls back to whatever static value predated the animation —
+        // usually 100 — and the effect snaps to full strength on the frame the
+        // author was looking at.
+        setEffectOpacity(nodeId, effect.id, display);
+      });
+    } else {
+      runAnimEdit('Animate Effect Opacity', () => {
+        defaultAnimation.setKeyframe(nodeId, path, layerT, stored);
+        // Stamp the field so the layer is on the CPU bake from the first frame,
+        // not only once the ramp leaves 100 — see `Effect.opacity`.
+        if (effect.opacity === undefined) setEffectOpacity(nodeId, effect.id, stored);
+      });
+    }
+  };
+
+  return (
+    <ParamLine>
+      <PropertyRow
+        label="Effect Opacity"
+        animated={animated}
+        onStopwatch={toggle}
+        onReset={animated ? undefined : () => setEffectOpacity(nodeId, effect.id, undefined)}
+        compact
+      >
+        <ValueField
+          value={display}
+          min={0}
+          max={100}
+          step={1}
+          precision={0}
+          unit="%"
+          onChange={onChange}
+          aria-label={`${effect.type} effect opacity`}
+        />
+      </PropertyRow>
+    </ParamLine>
+  );
+}
+
+/**
  * AE Compositing Options → Effect Mask. The bake path already honours
  * `Effect.maskId`; this is the missing writer so authors can set it.
  */
@@ -175,7 +265,7 @@ function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): 
   const current = effect.maskId ?? '';
   const stale = current !== '' && !paths.some((p) => p.id === current);
   return (
-    <ParamGroup name="Compositing Options" defaultOpen={current !== ''}>
+    <>
       <ParamLine>
         <div className={row.paramRow}>
           <div style={{ width: 14 }} />
@@ -206,6 +296,25 @@ function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): 
           Add a mask on this layer (mode None recommended) to scope the effect.
         </p>
       )}
+    </>
+  );
+}
+
+/**
+ * AE's Compositing Options section: WHERE this effect applies (Effect Mask) and
+ * HOW MUCH of it applies (Effect Opacity). One section, because they are the
+ * same question asked over space and over strength, and the bake answers both
+ * with one blend against the effect's input.
+ *
+ * Open by default once either is in use, so a layer arriving from elsewhere
+ * does not hide the reason it looks the way it does behind a collapsed group.
+ */
+function CompositingOptions({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element {
+  const inUse = effect.maskId !== undefined || effect.opacity !== undefined;
+  return (
+    <ParamGroup name="Compositing Options" defaultOpen={inUse}>
+      <EffectOpacityRow nodeId={nodeId} effect={effect} />
+      <EffectMaskRow nodeId={nodeId} effect={effect} />
     </ParamGroup>
   );
 }
@@ -755,7 +864,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                     ? <ParamGroup key={`g:${section.group}:${si}`} name={section.group}>{rows}</ParamGroup>
                     : <Fragment key={`u:${si}`}>{rows}</Fragment>;
                 })}
-                <EffectMaskRow nodeId={nodeId} effect={e} />
+                <CompositingOptions nodeId={nodeId} effect={e} />
               </div>
             )}
           </div>

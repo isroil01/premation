@@ -28,6 +28,7 @@ import { syncChannel } from './syncChannel';
 import { captureDocument, restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { useHistoryStore } from '@stores/historyStore';
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { bumpScene } from '@stores/sceneStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
@@ -86,7 +87,9 @@ export function startWindowSync(): () => void {
   // ── Outbound ────────────────────────────────────────────────────
   const subs = [
     getEventBus().on('SceneGraphChanged', scheduleDoc),
-    getEventBus().on('AnimationChanged', scheduleDoc),
+    // Media decode repaints carry no document change — publishing one to
+    // the other window is a whole-document serialize per decoded frame.
+    getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) scheduleDoc(); }),
     getEventBus().on('NodeUpdated', scheduleDoc),
   ];
 

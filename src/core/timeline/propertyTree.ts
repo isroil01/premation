@@ -45,7 +45,7 @@ import {
   hasPropertyMeta,
   GROUP_PLACEHOLDER_PREFIX,
 } from '@core/inspector/propertyMeta';
-import { getNodeEffects, effectDefFor, effectPropPath } from '@core/effects/effects';
+import { getNodeEffects, effectDefFor, effectPropPath, effectOpacityPath, effectHasOpacity } from '@core/effects/effects';
 import {
   getNodeLayerStyles,
   LAYER_STYLE_NUMBER_PARAMS,
@@ -299,6 +299,17 @@ function effectRows(nodeId: string): StaticPropertyRow[] {
       const path = effectPropPath(effect.id, param.key);
       if (param.type === 'number') out.push(row(path, 'effects', [path], { nodeId }));
       else if (param.type === 'color') out.push(colorRow(path, 'effects', nodeId));
+    }
+    // Compositing Options -> Effect Opacity, LAST, matching where AE draws the
+    // section. Conditional because it is the one row here that is not part of
+    // every effect's inventory: listing it unconditionally would add a row to
+    // all of a layer's effects the moment the layer had any, for a dial almost
+    // none of them are using. Present once touched — and `setEffectOpacity`
+    // clears the field at 100, so the row retires when the author is done with
+    // it, the same way the field does.
+    if (effectHasOpacity(effect)) {
+      const path = effectOpacityPath(effect.id);
+      out.push(row(path, 'effects', [path], { nodeId }));
     }
   }
   return out;

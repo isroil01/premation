@@ -34,9 +34,10 @@
  * evicts itself — we draw its frames into canvases and NEVER close them.
  */
 
-import { getEventBus } from '@core/events/EventBus';
-import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
-import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
+import { requestMediaRepaint } from './repaintScheduler';
+import { isLocalBlobRef, resolveLocalBlobObjectUrl, releaseLocalBlobObjectUrl } from './localBlobSource';
+import type { DemuxedVideo } from '@core/video/mp4Demuxer';
+import { demuxFile } from '@core/video/demuxClient';
 import {
   ExactVideoSource,
   SequentialFrameReader,
@@ -61,15 +62,88 @@ const MAX_DECODE_FAILURES = 3;
  *  Scrub gestures are not ascending runs; playback and export are. */
 const STREAM_AFTER_SEQ = 1;
 
-/** How far past the newest request the stream decodes. ~1/3s at 30fps: deep
- *  enough that playback stays on cache hits, shallow enough that a pause
- *  wastes almost nothing. */
-const STREAM_AHEAD = 25;
+/**
+ * Deepest the stream ever decodes past the newest request. ~1/3s at 30fps:
+ * deep enough that playback stays on cache hits, shallow enough that a pause
+ * wastes almost nothing.
+ *
+ * A CEILING, not the depth — see `streamPlanFor`. As a flat constant this was
+ * the arithmetic half of the "4K re-decodes frames it already cached" bug: one
+ * 4K RGBA frame is 31.6 MiB, so a 512 MiB budget holds 16 while the stream
+ * decoded 25 ahead. Its own lookahead evicted the frames it had decoded and not
+ * yet displayed, and every request past the first was a guaranteed miss.
+ */
+const MAX_STREAM_AHEAD = 25;
 
-/** Forward index gap that still counts as playback (not a scrub seek). Kept
- *  independent of STREAM_AHEAD so a deeper decode buffer does not swallow
- *  real seeks. */
+/** Shallowest useful lookahead. Below this the stream cannot stay ahead of a
+ *  playhead at all and per-frame GOP random access would be no worse. */
+const MIN_STREAM_AHEAD = 4;
+
+/**
+ * Frames the cache must hold for ANY source, byte budget or not.
+ *
+ * The floor exists so `streamPlanFor` can always return a plan whose lookahead
+ * fits, including for sources whose single frame is a meaningful fraction of
+ * the whole budget (8K RGBA is 132MB — four of them exceed it). Paying over
+ * budget there is the lesser evil: the alternative is a cache too small to
+ * stream from, which is the bug this whole plan exists to make impossible.
+ */
+const MIN_RESIDENT_FRAMES = MIN_STREAM_AHEAD * 2;
+
+/** Forward index gap that still counts as playback (not a scrub seek).
+ *
+ *  Deliberately NOT derived from the lookahead. This is a CLASSIFICATION
+ *  threshold — "did the playhead run ahead of decode, or did the user seek?" —
+ *  and the frames in the gap need not be resident for the answer to be right.
+ *  Tying it to a 4K source's shallow lookahead would reclassify ordinary
+ *  playback stutter as a seek and kill the stream that was catching up. */
 const STREAM_PLAY_WINDOW = 45;
+
+/** How a source's byte budget, frame size and lookahead fit together. */
+export interface StreamPlan {
+  /** Measured bytes of one decoded frame (RGBA). */
+  frameBytes: number;
+  /** Bytes this source's cache may actually hold. */
+  budgetBytes: number;
+  /** Frames that fit in `budgetBytes`. */
+  capacity: number;
+  /** Frames the stream decodes past the newest request. */
+  ahead: number;
+}
+
+/**
+ * Derive the streaming plan for a source from its frame size.
+ *
+ * THE INVARIANT, and the reason this is a function rather than two constants:
+ * `ahead * 2 <= capacity`. The stream must be able to hold everything it has
+ * decoded ahead of the playhead AND the same span behind it (loop-back, frame
+ * blend, the nearest-neighbour stand-in) without evicting either. Two constants
+ * in the same file could not know about each other, and did not: at 4K the
+ * lookahead was 25 into a cache that held 15.
+ *
+ * Self-tuning across the range that matters, at the 512 MiB default:
+ *
+ *   540p   960×540    1.98 MiB/frame   capacity 258   ahead 25 (ceiling)
+ *   720p  1280×720    3.52 MiB/frame   capacity 145   ahead 25 (ceiling)
+ *   1080p 1920×1080   7.91 MiB/frame   capacity  64   ahead 25 (ceiling)
+ *   4K    3840×2160  31.64 MiB/frame   capacity  16   ahead  8
+ *   8K    7680×4320 126.56 MiB/frame   capacity   8   ahead  4  (budget raised)
+ *
+ * 1080p and below are unchanged — the ceiling still binds there, which is what
+ * the original constant was tuned for.
+ */
+export function streamPlanFor(byteBudget: number, frameBytes: number): StreamPlan {
+  // A non-finite frame size would poison every figure below with NaN, and a
+  // NaN capacity compares false against every budget check — the cache would
+  // silently stop evicting. Fall back to one byte: the floor then supplies a
+  // usable plan, and the first real capture re-derives it.
+  const bytes = Number.isFinite(frameBytes) ? Math.max(1, Math.floor(frameBytes)) : 1;
+  const budget = Number.isFinite(byteBudget) ? byteBudget : DEFAULT_BUDGET_BYTES;
+  const budgetBytes = Math.max(budget, MIN_RESIDENT_FRAMES * bytes);
+  const capacity = Math.max(MIN_RESIDENT_FRAMES, Math.floor(budgetBytes / bytes));
+  const ahead = Math.max(MIN_STREAM_AHEAD, Math.min(MAX_STREAM_AHEAD, Math.floor(capacity / 2)));
+  return { frameBytes: bytes, budgetBytes, capacity, ahead };
+}
 
 /** The slice of ExactVideoSource the cache uses — structural, so tests can
  *  stub a source without a decoder. */
@@ -161,6 +235,12 @@ interface ReadyEntry {
   /** performance.now() of the last get() — idle sources are fully released. */
   lastUsed: number;
   rotation: 0 | 90 | 180 | 270;
+  /** Budget/capacity/lookahead for THIS source's frame size. Seeded from the
+   *  coded size and re-derived on the first captured frame, which is the first
+   *  time the real (display-size, rotation-applied) byte cost is known. */
+  plan: StreamPlan;
+  /** True once `plan` has been re-derived from a real decoded frame. */
+  planMeasured: boolean;
 }
 
 type Entry =
@@ -168,16 +248,30 @@ type Entry =
   | ReadyEntry
   | { state: 'unavailable'; reason: string };
 
+/** Holder label this cache retains a local-first object URL under. */
+function exactHolder(src: string): string {
+  return `exact:${src}`;
+}
+
 async function defaultLoader(src: string): Promise<LoadedExactSource> {
-  const res = await fetch(src);
+  // A `motion-blob:<hash>` ref is not fetchable. Resolving it here is what
+  // lets footage carried INSIDE a `.motion` bundle reach the exact decoder at
+  // all — before this, `fetch('motion-blob:…')` threw, the source went sticky
+  // `unavailable`, and the element tier could not open the ref either, so a
+  // bundled clip had no working tier. Retained for as long as this cache holds
+  // the source; `sweepIdle`/`clear` release it.
+  const url = isLocalBlobRef(src) ? await resolveLocalBlobObjectUrl(src, exactHolder(src)) : src;
+  if (!url) throw new Error(`local blob not found: ${src}`);
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
   const buf = await res.arrayBuffer();
   if (buf.byteLength > MAX_DEMUX_BYTES) {
     throw new Error(`file too large for in-memory demux (${buf.byteLength} bytes) — generate a proxy`);
   }
-  // WebM / Matroska → dedicated demuxer (VP8/VP9). ISO-BMFF → mp4box.
-  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  // Off the main thread when one is available, inline otherwise — same
+  // function either way (see demuxClient). The container check moves inside;
+  // `buf` is TRANSFERRED on the worker path and must not be read after this.
+  const demuxed = await demuxFile(buf);
   if ((demuxed as { hasAlpha?: boolean }).hasAlpha) {
     // The exact path decodes only the primary bitstream; the alpha plane
     // rides in BlockAdditional side data it never feeds. The element tier
@@ -218,6 +312,12 @@ export class ExactVideoFrameCache {
         this.killStream(e);
         e.source.close();
         this.sources.delete(src);
+        // The object URL belongs in the same teardown as the decoder, the
+        // frames and the file bytes — but only OUR claim on it. A `<video>`
+        // element on the fallback tier may still be seeking through the same
+        // asset, and `releaseLocalBlobObjectUrl` revokes only once the last
+        // holder is gone.
+        releaseLocalBlobObjectUrl(src, exactHolder(src));
       }
     }
   }
@@ -242,13 +342,20 @@ export class ExactVideoFrameCache {
   }
 
   private notify(src: string): void {
+    // Local listeners stay SYNCHRONOUS. They are per-instance and private to
+    // the consumer that registered them, so nothing fans out from here — and a
+    // consumer that asked to be told the instant a frame landed must not have
+    // that answer deferred a frame.
     for (const fn of this.listeners) fn();
-    // Same repaint contract as the legacy cache: the render loop already
-    // re-renders on AnimationChanged, so a landed decode reaches the screen
-    // without a new asynchrony mechanism. Private instances skip it — their
-    // consumer (export/preview convergence) re-renders explicitly.
+    // The bus emit is COALESCED to one repaint per animation frame (see
+    // repaintScheduler.ts). Streaming playback lands a whole lookahead of
+    // decodes between two displayed frames, and this event is the app's widest
+    // signal — one emit per landing meant the effect chain ran several times
+    // per displayed frame, and the more effects there were the more decodes
+    // landed mid-render. Private instances skip it entirely — their consumer
+    // (export/preview convergence) re-renders explicitly.
     if (this.opts.emitEvents !== false) {
-      getEventBus().emit('AnimationChanged', { nodeId: src });
+      requestMediaRepaint(src);
     }
   }
 
@@ -377,7 +484,7 @@ export class ExactVideoFrameCache {
     if (entry.lastWrapTo >= 0 && Math.abs(presIdx - entry.lastWrapTo) <= 2 && lastReq >= presIdx + 15) {
       return true;
     }
-    const window = Math.max(STREAM_AHEAD * 3, 15);
+    const window = Math.max(entry.plan.ahead * 3, 15);
     // Either a full clip loop (near clip end back to near clip start),
     // or a composition/work-area loop (any backward jump from >=15 frames back to near start).
     return presIdx <= window && (lastReq >= end - window || lastReq >= presIdx + 15);
@@ -456,7 +563,7 @@ export class ExactVideoFrameCache {
     }
   }
 
-  /** Decode forward until the stream is STREAM_AHEAD past the newest request.
+  /** Decode forward until the stream is `entry.plan.ahead` past the newest request.
    *  One pump loop per stream; re-entered from get() as the target advances. */
   private pump(src: string, entry: ReadyEntry): void {
     const s = entry.stream;
@@ -466,7 +573,7 @@ export class ExactVideoFrameCache {
       try {
         for (;;) {
           if (entry.stream !== s || this.sources.get(src) !== entry) return;
-          if (s.next > Math.min(s.target + STREAM_AHEAD, s.end)) return;
+          if (s.next > Math.min(s.target + entry.plan.ahead, s.end)) return;
           const idx = s.next;
           let frame: DecodedFrameLike;
           try {
@@ -601,6 +708,9 @@ export class ExactVideoFrameCache {
           // not resurrect it (and must not leak its decoder).
           if (this.sources.get(src)?.state !== 'loading') {
             loaded.source.close();
+            // The loader retained a local-first URL for a source we are about
+            // to drop on the floor. Nothing else will ever release this claim.
+            releaseLocalBlobObjectUrl(src, exactHolder(src));
             return;
           }
           this.sources.set(src, {
@@ -620,10 +730,17 @@ export class ExactVideoFrameCache {
             lastWrapTo: -1,
             lastUsed: performance.now(),
             rotation: loaded.rotation ?? 0,
+            plan: streamPlanFor(this.maxBytesPerSource, (loaded.width || 2) * (loaded.height || 2) * 4),
+            planMeasured: false,
           });
           this.notify(src);
         },
         (err) => {
+          // Release before the state check: a load that failed AFTER resolving
+          // the URL (a codec the demuxer refuses, a file too large) has a claim
+          // outstanding either way, and `markUnavailable` — the other place
+          // that drops it — is not on this path.
+          releaseLocalBlobObjectUrl(src, exactHolder(src));
           if (this.sources.get(src)?.state !== 'loading') return;
           this.sources.set(src, {
             state: 'unavailable',
@@ -693,7 +810,16 @@ export class ExactVideoFrameCache {
       }
     }
 
-    this.store(entry, presIdx, canvas, cw * ch * 4);
+    const bytes = cw * ch * 4;
+    if (!entry.planMeasured) {
+      // First real frame: the coded size the demux reported is an estimate
+      // (PAR correction and container rotation both change it), and the plan
+      // has to be derived from what is actually stored or the capacity figure
+      // is wrong in exactly the direction that reintroduces the bug.
+      entry.planMeasured = true;
+      entry.plan = streamPlanFor(this.maxBytesPerSource, bytes);
+    }
+    this.store(entry, presIdx, canvas, bytes);
   }
 
   /** Recycled canvases from evicted frames. Streaming playback and export
@@ -716,15 +842,40 @@ export class ExactVideoFrameCache {
     return c;
   }
 
-  /** LRU insert shared by decoded and woven frames. */
+  /**
+   * LRU insert shared by decoded and woven frames.
+   *
+   * Eviction obeys two rules, and the second one is new. The budget is the
+   * SOURCE's (`entry.plan.budgetBytes`), not a flat constant, so a source whose
+   * single frame is a large fraction of the default budget still gets a cache it
+   * can stream from. And a frame the live stream has decoded but the renderer
+   * has not displayed yet is never the victim: LRU order is arrival order, so
+   * the frame at the playhead is always OLDER than the lookahead frames queued
+   * behind it, and plain LRU therefore threw away precisely the frame that was
+   * about to be asked for. That is the eviction half of the "already cached but
+   * re-decoded at 4K" bug; `streamPlanFor` is the arithmetic half.
+   */
   private store(entry: ReadyEntry, presIdx: number, canvas: HTMLCanvasElement, bytes: number): void {
     if (entry.frames.has(presIdx)) return;
     entry.frames.set(presIdx, { canvas, bytes });
     entry.order.push(presIdx);
     entry.bytes += bytes;
-    while (entry.bytes > this.maxBytesPerSource && entry.order.length > 1) {
-      const oldest = entry.order.shift();
-      if (oldest === undefined) break;
+
+    const s = entry.stream;
+    // Decoded-but-not-yet-displayed: everything from the playhead forward to
+    // the newest frame the pump has delivered.
+    const protectedFrom = s ? s.target : Infinity;
+    const protectedTo = s ? s.next : -Infinity;
+
+    let scan = 0;
+    while (entry.bytes > entry.plan.budgetBytes && entry.order.length > 1) {
+      if (scan >= entry.order.length) break; // everything left is protected
+      const oldest = entry.order[scan]!;
+      if (oldest >= protectedFrom && oldest <= protectedTo) {
+        scan += 1;
+        continue;
+      }
+      entry.order.splice(scan, 1);
       const old = entry.frames.get(oldest);
       if (old) {
         entry.bytes -= old.bytes;
@@ -748,25 +899,30 @@ export class ExactVideoFrameCache {
     this.killStream(entry);
     entry.source.close();
     this.sources.set(src, { state: 'unavailable', reason });
+    // This source will never decode exactly again, so this cache has no
+    // further use for the URL. The element tier is about to become the
+    // source's only truth, and it holds its own claim.
+    releaseLocalBlobObjectUrl(src, exactHolder(src));
   }
 
   /** Drop everything and close every decoder. Backend dispose. */
   clear(): void {
-    for (const entry of this.sources.values()) {
+    for (const [src, entry] of this.sources) {
       if (entry.state === 'ready') {
         this.killStream(entry);
         entry.source.close();
       }
+      releaseLocalBlobObjectUrl(src, exactHolder(src));
     }
     this.sources.clear();
   }
 
   /** For tests and diagnostics. */
-  stats(src: string): { state: string; frames: number; bytes: number } | null {
+  stats(src: string): { state: string; frames: number; bytes: number; plan?: StreamPlan } | null {
     const e = this.sources.get(src);
     if (!e) return null;
     if (e.state !== 'ready') return { state: e.state, frames: 0, bytes: 0 };
-    return { state: e.state, frames: e.frames.size, bytes: e.bytes };
+    return { state: e.state, frames: e.frames.size, bytes: e.bytes, plan: e.plan };
   }
 }
 

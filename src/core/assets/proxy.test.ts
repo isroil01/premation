@@ -147,34 +147,34 @@ describe('resolveMediaSrc — every state, because this one can damage output', 
   const ready: ProxyRecord = { status: 'ready', src: PROXY, width: 960, height: 540 };
 
   it('returns the proxy only when opted in AND ready', () => {
-    expect(resolveMediaSrc({ src: ORIGINAL, proxy: ready }, true)).toBe(PROXY);
+    expect(resolveMediaSrc({ src: ORIGINAL, proxy: ready }, 'viewport')).toBe(PROXY);
   });
 
   it('returns the ORIGINAL when not opted in, even with a ready proxy — the export invariant', () => {
-    expect(resolveMediaSrc({ src: ORIGINAL, proxy: ready }, false)).toBe(ORIGINAL);
+    expect(resolveMediaSrc({ src: ORIGINAL, proxy: ready }, 'original')).toBe(ORIGINAL);
   });
 
   it('falls back to the original while a proxy is still generating', () => {
-    expect(resolveMediaSrc({ src: ORIGINAL, proxy: { status: 'generating' } }, true)).toBe(ORIGINAL);
+    expect(resolveMediaSrc({ src: ORIGINAL, proxy: { status: 'generating' } }, 'viewport')).toBe(ORIGINAL);
   });
 
   it('falls back to the original when generation failed', () => {
     const failed: ProxyRecord = { status: 'failed', error: 'ffmpeg exited 1' };
-    expect(resolveMediaSrc({ src: ORIGINAL, proxy: failed }, true)).toBe(ORIGINAL);
+    expect(resolveMediaSrc({ src: ORIGINAL, proxy: failed }, 'viewport')).toBe(ORIGINAL);
   });
 
   it("falls back when the record says ready but the src is gone — a deleted proxy file must not render black", () => {
-    expect(resolveMediaSrc({ src: ORIGINAL, proxy: { status: 'ready' } }, true)).toBe(ORIGINAL);
-    expect(resolveMediaSrc({ src: ORIGINAL, proxy: { status: 'ready', src: '' } }, true)).toBe(ORIGINAL);
+    expect(resolveMediaSrc({ src: ORIGINAL, proxy: { status: 'ready' } }, 'viewport')).toBe(ORIGINAL);
+    expect(resolveMediaSrc({ src: ORIGINAL, proxy: { status: 'ready', src: '' } }, 'viewport')).toBe(ORIGINAL);
   });
 
   it('falls back when there is no proxy record at all', () => {
-    expect(resolveMediaSrc({ src: ORIGINAL }, true)).toBe(ORIGINAL);
+    expect(resolveMediaSrc({ src: ORIGINAL }, 'viewport')).toBe(ORIGINAL);
   });
 
   it('passes an absent original through rather than inventing one', () => {
-    expect(resolveMediaSrc({}, true)).toBeUndefined();
-    expect(resolveMediaSrc({}, false)).toBeUndefined();
+    expect(resolveMediaSrc({}, 'viewport')).toBeUndefined();
+    expect(resolveMediaSrc({}, 'original')).toBeUndefined();
   });
 
   it('NEVER returns the proxy with useProxies false, across every record shape', () => {
@@ -186,7 +186,7 @@ describe('resolveMediaSrc — every state, because this one can damage output', 
       { status: 'ready', src: PROXY, userSupplied: true },
     ];
     for (const proxy of records) {
-      expect(resolveMediaSrc({ src: ORIGINAL, ...(proxy ? { proxy } : {}) }, false)).toBe(ORIGINAL);
+      expect(resolveMediaSrc({ src: ORIGINAL, ...(proxy ? { proxy } : {}) }, 'original')).toBe(ORIGINAL);
     }
   });
 });
@@ -210,7 +210,8 @@ describe('isProxyInUse — what the UI badges', () => {
     for (const proxy of cases) {
       for (const on of [true, false]) {
         const asset = { src: 'blob:o', proxy };
-        expect(isProxyInUse(asset, on)).toBe(resolveMediaSrc(asset, on) !== 'blob:o');
+        const tier = on ? ('viewport' as const) : ('original' as const);
+        expect(isProxyInUse(asset, tier)).toBe(resolveMediaSrc(asset, tier) !== 'blob:o');
       }
     }
   });
@@ -252,7 +253,7 @@ describe('isPersistableProxy — only records that survive a reload are stored',
     // dead blob rather than the original. This is the exact damage the drop
     // prevents; asserting it here pins WHY the persistence gate exists.
     const dead: ProxyRecord = { status: 'ready', src: 'blob:dead' };
-    expect(resolveMediaSrc({ src: 'blob:original', proxy: dead }, true)).toBe('blob:dead');
+    expect(resolveMediaSrc({ src: 'blob:original', proxy: dead }, 'viewport')).toBe('blob:dead');
     expect(isPersistableProxy(dead)).toBe(false); // ...so it never reaches storage
   });
 });

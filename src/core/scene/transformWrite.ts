@@ -79,6 +79,60 @@ function layerTime(nodeId: string): number {
   return getRemappedTime(nodeId, rawTime);
 }
 
+/**
+ * Aliases the renderer accepts for one transform prop, in the order it tries
+ * them: `buildSnapshot` resolves scale as `av.scaleX ?? av.scale ?? base`, so a
+ * layer animated through the uniform `scale` shorthand has no `scaleX` anywhere
+ * and a reader that only asks for `scaleX` sees 1.
+ */
+const PROP_ALIASES: Record<string, readonly string[]> = {
+  scaleX: ['scaleX', 'scale'],
+  scaleY: ['scaleY', 'scale'],
+};
+
+/**
+ * The value the RENDERER resolves for `prop` right now: the animated value at
+ * the playhead when the property is keyframed or expression-driven, the base
+ * prop otherwise.
+ *
+ * ── WHY THIS IS THE OTHER HALF OF `writeTransformProps` ─────────────────────
+ * That function fixed the WRITE side of the AE keyframing contract. The read
+ * side was left behind, and every caller that computes a value RELATIVE to the
+ * current one — `current + delta`, a bounding box, a compensation — kept
+ * reading the static base prop. On an animated layer the two halves then
+ * disagree: the new value is derived from the layer's rest pose and written as
+ * a keyframe at the playhead, so the layer TELEPORTS from wherever it actually
+ * was to wherever it would have been at time 0 plus the delta.
+ *
+ * Measured before this existed, on a layer keyframed 100 → 900 with the
+ * playhead at its midpoint (world x = 500):
+ *
+ *   • Pan Behind, anchor +20px  → x jumped to 120 instead of 520
+ *   • Centre Anchor in Content  → x jumped to 70 instead of 470
+ *   • Align Left                → aligned to the rest pose, not the artwork
+ *
+ * All three are the SAME defect as the parenting bug, in the read direction:
+ * chrome and commands reasoning about a place the layer is not. Any code that
+ * needs "where is this property NOW" must come through here.
+ */
+export function readTransformProp(nodeId: string, prop: string, fallback = 0): number {
+  const node = defaultSceneGraph.getNode(nodeId as ID);
+  if (!node) return fallback;
+  const lt = layerTime(nodeId);
+  const names = PROP_ALIASES[prop] ?? [prop];
+  for (const name of names) {
+    const v = defaultAnimation.sample(nodeId, name, lt);
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+  }
+  for (const name of names) {
+    for (const c of node.components) {
+      const v = (c.props as Record<string, unknown>)[name];
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+  }
+  return fallback;
+}
+
 export interface TransformWrite {
   prop: string;
   value: number;

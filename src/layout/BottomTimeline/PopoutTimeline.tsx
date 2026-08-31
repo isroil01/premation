@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BottomTimeline } from './BottomTimeline';
+import { TransportBar } from '@layout/Workspace/TransportBar';
 import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
 import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -45,7 +46,7 @@ export function PopoutTimeline(): JSX.Element {
       setGraphRev((v) => v + 1);
     });
     const animSub = bus.on('AnimationChanged', (payload) => {
-      if (!isMediaDecodeRepaint(payload?.nodeId)) setAnimRev((v) => v + 1);
+      if (!isMediaDecodeRepaint(payload)) setAnimRev((v) => v + 1);
     });
     return () => {
       graphSub.dispose();
@@ -135,6 +136,17 @@ export function PopoutTimeline(): JSX.Element {
   }, []);
 
   return (
+    /*
+      The transport rides along in this window.
+
+      In the docked editor it lives under the stage — the panel you are watching
+      while it plays. This window has no stage, and a timeline you cannot start
+      playing is a strange thing to pop out, so it gets its own copy. Both read
+      the same controller, so the two stay in step.
+    */
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      <TransportBar />
+      <div style={{ flex: 1, minHeight: 0 }}>
     <BottomTimeline
       model={model}
       onScrub={(t) => getTimelineController().seekSeconds(t)}
@@ -158,5 +170,7 @@ export function PopoutTimeline(): JSX.Element {
       }}
       onTrackColorChange={(trackId, color) => setNodeLabelColor(trackId, color)}
     />
+      </div>
+    </div>
   );
 }

@@ -102,8 +102,7 @@ function CacheBarsImpl({ fps, pixelsPerSecond, leftOffset, rulerHeight }: CacheB
 
   return (
     <>
-      {/* Disk-tier lane. Drawn BEFORE the RAM lane and one lane lower, so where
-          both hold a frame the green one is what you see. */}
+      {/* Disk-tier lane */}
       {segments.disk.map((seg, i) => (
         <div
           key={`diskcache_${i}`}
@@ -112,13 +111,12 @@ function CacheBarsImpl({ fps, pixelsPerSecond, leftOffset, rulerHeight }: CacheB
           aria-hidden
         />
       ))}
-      {/* RAM-preview lane — sits on top of ruler minor ticks so short spans read
-          as a continuous strip, not green dots between grey marks. */}
+      {/* RAM-preview lane — thin green indicator line directly under the progress bar ruler */}
       {segments.ram.map((seg, i) => (
         <div
           key={`cache_${i}`}
           className={styles.cacheBar}
-          style={{ left: seg.left, width: seg.width, top: rulerHeight - 4 }}
+          style={{ left: seg.left, width: seg.width, top: rulerHeight - 2.5 }}
           aria-hidden
         />
       ))}

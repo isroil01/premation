@@ -14,7 +14,11 @@
 
 import { useAssetStore, type ImportedAsset } from '@stores/assetStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { proxyResolution, proxyCodec, proxyEncodeArgs, type ProxyRecord } from './proxy';
+import {
+  proxyResolution, proxyCodec, proxyEncodeArgs,
+  analysisResolution, analysisEncodeArgs,
+  type ProxyRecord,
+} from './proxy';
 
 /** Placeholders the main process substitutes with paths it owns. Keeping the
  *  ARGUMENTS in the renderer keeps the encode rule in one place. */
@@ -68,6 +72,9 @@ export const REFUSAL_TEXT: Record<ProxyRefusal, string> = {
 
 const write = (assetId: string, proxy: ProxyRecord | null): void =>
   useAssetStore.getState().setProxy(assetId, proxy);
+
+const writeAnalysis = (assetId: string, proxy: ProxyRecord | null): void =>
+  useAssetStore.getState().setAnalysisProxy(assetId, proxy);
 
 /** The asset as it stands NOW — re-read after every await, because the user can
  *  delete or re-import a file while a multi-minute encode runs. */
@@ -139,6 +146,81 @@ export async function startProxy(assetId: string): Promise<ProxyRefusal | null> 
   return null;
 }
 
+/** Why an analysis proxy could not be started, or null to proceed. Separate
+ *  from `proxyRefusal` because the two tiers refuse at different sizes. */
+export function analysisRefusal(asset: ImportedAsset | undefined): ProxyRefusal | null {
+  if (!asset) return 'source-unreadable';
+  if (!canGenerateProxy()) return 'no-ffmpeg';
+  if (asset.type !== 'video') return 'not-video';
+  if (asset.analysisProxy?.status === 'generating') return 'already-running';
+  const w = asset.metadata?.width;
+  const h = asset.metadata?.height;
+  if (!w || !h) return 'unknown-size';
+  if (!analysisResolution(w, h)) return 'too-small';
+  return null;
+}
+
+/**
+ * Generate the ANALYSIS stand-in for an asset — 540p, `-g 6`, never displayed.
+ *
+ * Deliberately a sibling of `startProxy` rather than a mode of it. They differ
+ * in the encode, in the record they write, in the size at which they refuse,
+ * and in whether the result is ever shown to a human; folding them together
+ * would mean four flags and one more place for the export invariant to be
+ * argued about.
+ *
+ * Encodes from the ORIGINAL, not from the viewport proxy. Transcoding a
+ * transcode compounds compression artefacts, and a tracker measuring correlation
+ * over blocked-up pixels loses exactly the high-frequency detail it locks onto.
+ */
+export async function startAnalysisProxy(assetId: string): Promise<ProxyRefusal | null> {
+  const asset = current(assetId);
+  const refusal = analysisRefusal(asset);
+  if (refusal || !asset) return refusal ?? 'source-unreadable';
+
+  const size = analysisResolution(asset.metadata!.width!, asset.metadata!.height!)!;
+  writeAnalysis(assetId, { status: 'generating' });
+
+  let bytes: Uint8Array;
+  try {
+    const res = await fetch(asset.src);
+    bytes = new Uint8Array(await res.arrayBuffer());
+  } catch {
+    if (current(assetId)?.analysisProxy?.status === 'generating') {
+      writeAnalysis(assetId, { status: 'failed', error: 'The original file could not be read.' });
+    }
+    return null;
+  }
+  if (!current(assetId)) return null;
+
+  const srcExt = /\.([a-z0-9]{1,5})$/i.exec(asset.name)?.[1] ?? 'mp4';
+  let out: Uint8Array | null = null;
+  try {
+    // A distinct job id, or cancelling one tier would kill the other's child.
+    out = (await window.motionEditor!.media!.generateProxy!(
+      `${assetId}#analysis`, bytes, srcExt, analysisEncodeArgs(IN, OUT, size), 'mp4',
+    )) ?? null;
+  } catch {
+    out = null;
+  }
+
+  const after = current(assetId);
+  if (!after || after.analysisProxy?.status !== 'generating') return null;
+
+  if (!out || out.byteLength === 0) {
+    writeAnalysis(assetId, { status: 'failed', error: 'The analysis proxy could not be encoded.' });
+    return null;
+  }
+
+  writeAnalysis(assetId, {
+    status: 'ready',
+    src: URL.createObjectURL(new Blob([out as BlobPart], { type: 'video/mp4' })),
+    width: size.width,
+    height: size.height,
+  });
+  return null;
+}
+
 /**
  * Auto-start a proxy when an asset is imported — the "generated at import" half
  * of the feature, as opposed to the manual Create Proxy button.
@@ -160,8 +242,24 @@ export async function startProxy(assetId: string): Promise<ProxyRefusal | null> 
  */
 export function maybeAutoGenerateProxy(assetId: string): void {
   if (!usePreferenceStore.getState().useProxies) return;
-  if (proxyRefusal(current(assetId)) !== null) return;
-  void startProxy(assetId);
+  void generateBothTiers(assetId);
+}
+
+/**
+ * Both stand-ins, viewport first.
+ *
+ * Order matters and cost does not: the viewport proxy is the one a human is
+ * waiting on, and the analysis one is only wanted the first time somebody
+ * tracks. Sequential so two ffmpeg children never compete for the cores the
+ * user is editing on.
+ *
+ * Each tier is gated by its OWN refusal, so a source too small for a viewport
+ * proxy can still get an analysis one and vice versa.
+ */
+async function generateBothTiers(assetId: string): Promise<void> {
+  if (proxyRefusal(current(assetId)) === null) await startProxy(assetId);
+  if (!usePreferenceStore.getState().useProxies) return;
+  if (analysisRefusal(current(assetId)) === null) await startAnalysisProxy(assetId);
 }
 
 /**
@@ -183,12 +281,11 @@ export async function backfillMissingProxies(): Promise<void> {
   if (!canGenerateProxy()) return;
   const ids = useAssetStore
     .getState()
-    .assets.filter((a) => a.type === 'video' && !a.proxy)
+    .assets.filter((a) => a.type === 'video' && (!a.proxy || !a.analysisProxy))
     .map((a) => a.id);
   for (const id of ids) {
     if (!usePreferenceStore.getState().useProxies) return;
-    if (proxyRefusal(current(id)) !== null) continue;
-    await startProxy(id);
+    await generateBothTiers(id);
   }
 }
 
@@ -232,4 +329,14 @@ export function detachProxy(assetId: string): void {
   const p = current(assetId)?.proxy;
   if (p?.src && !p.userSupplied) URL.revokeObjectURL(p.src);
   write(assetId, null);
+}
+
+/**
+ * Detach the analysis stand-in. Always ours, so always revoked — there is no
+ * user-supplied variant of a file nobody can see.
+ */
+export function detachAnalysisProxy(assetId: string): void {
+  const p = current(assetId)?.analysisProxy;
+  if (p?.src) URL.revokeObjectURL(p.src);
+  writeAnalysis(assetId, null);
 }

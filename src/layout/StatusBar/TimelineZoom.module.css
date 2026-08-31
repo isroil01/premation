@@ -1,0 +1,80 @@
+/**
+ * The timeline's zoom control, in the app status bar.
+ *
+ * It had a footer row of its own at the bottom of the timeline panel — 22px of
+ * chrome, empty across its whole left half, holding one cluster of four small
+ * controls. A row that exists to carry a single widget is a row that should not
+ * exist; the status bar is already the strip for readouts you glance at and
+ * occasionally poke, and it had the space.
+ */
+.zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.iconBtn {
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.iconBtn:hover:not(:disabled) {
+  color: var(--color-primary);
+}
+
+.iconBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 90px;
+  height: 3px;
+  background: var(--color-surface-3);
+  border-radius: 2px;
+  outline: none;
+}
+
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 8px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--color-primary);
+  cursor: pointer;
+}
+
+/* Flat, unlike the boxed 24px button this was in the timeline footer: the
+   status bar is a 22px strip of plain text readouts, and a bordered control in
+   it reads as a dialog that wandered in. */
+.label {
+  min-width: 40px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
+.label:hover:not(:disabled) {
+  color: var(--color-text-primary);
+}
+
+.label:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

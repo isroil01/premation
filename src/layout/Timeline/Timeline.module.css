@@ -36,8 +36,26 @@
    * Link named the wrong columns too. Fixed widths on both sides make the two
    * unable to disagree.
    */
+  /*
+   * NB: every width below is mirrored in `TL_COLUMN_WIDTHS` in Timeline.tsx,
+   * which adds them up to work out how wide the header column has to be for
+   * the visible columns to actually fit. Change one, change the other, or the
+   * right-hand columns go back to hiding behind the lanes.
+   */
   --tl-col-gap: var(--space-2);
   --tl-col-name: 190px;
+  /* The A/V gutter — video · solo · lock. AE's leftmost column, and ours now
+     too; the row and the legend both put it before the layer name.
+     3 × 22px cells + 2 × 3px gaps. */
+  --tl-col-preinfo: 72px;
+  --tl-col-mode: 70px;
+  /* The legend reads "TrkMat" now — AE's name for it — rather than a bare "T". */
+  --tl-col-matte: 58px;
+  --tl-col-parent: 120px;
+  /* One hairline between column groups, drawn as a left border with equal air
+     on both sides. AE rules every group boundary, not just the one before
+     Mode — without them the switches read as part of the layer name. */
+  --tl-col-rule: 1px solid var(--color-border);
   /* 7 switches × 22px + 6 gaps × 4px — shy, fx, motion blur, adjustment,
      guide, preserve-underlying-transparency, 3D. It was 126px back when there
      were six, so the switches OVERFLOWED their own column by 26px and, being
@@ -54,7 +72,17 @@
   flex-direction: column;
   min-height: 0;
   background: var(--color-panel);
-  border-right: 1px solid var(--color-border);
+  /*
+   * The panel's main vertical division: track headers on the left, time on the
+   * right. It was a 1px `--color-border` hairline, which was legible while the
+   * two sides were different surfaces and disappeared once they became one
+   * ground. Same 2px dark rule the horizontal divisions use, so the panel's
+   * boundaries are one system rather than three weights.
+   *
+   * `.searchBarCol` continues this line upward through the sub-header row and
+   * must match it exactly.
+   */
+  border-right: 2px solid var(--color-timeline-ruler-border);
   box-shadow: none;
   flex: none;
   z-index: 10;
@@ -136,12 +164,44 @@
      bottom edge by 2-4px so they read as a strip attached to it. */
 }
 
+/* The column-head strip and the time ruler share one row. Same ground as the
+   rows below it — a 2px dark rule is what separates them, not a second
+   surface. */
 .ruler {
   position: relative;
-  border-bottom: 1px solid var(--color-timeline-ruler-border);
+  border-bottom: 2px solid var(--color-timeline-ruler-border);
   background: var(--color-timeline-ruler-bg);
   flex: none;
   overflow: hidden;
+  cursor: pointer;
+}
+
+.rulerProgressTrack {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.02);
+  pointer-events: none;
+}
+
+/**
+ * How far the playhead has got — an EDGE, not a wash.
+ *
+ * This used to paint a primary-tinted gradient across everything left of the
+ * playhead. On a ruler that is mostly numbers, a blue field behind them is a
+ * background that changes as you scrub: the tick labels sat on a different
+ * colour depending on where the playhead happened to be, and the tint carried
+ * no information the playhead itself was not already giving. What remains is
+ * the leading edge, which is the part that says "here".
+ */
+.rulerProgressFill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: transparent;
+  border-right: 1.5px solid var(--color-primary);
+  pointer-events: none;
+  transition: width 0.04s linear;
 }
 
 .rulerSpacer {
@@ -149,33 +209,53 @@
   height: 100%;
 }
 
-/* Minor tick: short mark rising from the baseline. Major: full-height. */
+/**
+ * Ruler ticks — marks rising from the BASELINE, with the label above them.
+ *
+ * The major tick used to run the ruler's full height with its label set beside
+ * it, so the number read as a caption attached to a floor-to-ceiling rule and
+ * the rule itself competed with the playhead for "this is a position in time".
+ * Now the mark is a stub at the bottom of the strip and the number sits over
+ * it: the label is the thing you read, the mark is what pins it to a frame.
+ *
+ * Both weights went up as the heights came down — a 1px hairline that is only
+ * a few pixels tall disappears, and the minor ticks are the ruler's scale.
+ */
 .tick {
   position: absolute;
   bottom: 0;
-  height: 6px;
-  width: 1px;
+  height: 5px;
+  width: 1.5px;
   background: var(--color-timeline-tick);
   pointer-events: none;
 }
 
+/* Taller and heavier than a minor tick, but nothing like full height: it is
+   the labelled one, so it only has to be the mark the number points at. */
 .tickMajor {
-  top: 0;
-  height: auto;
+  top: auto;
+  height: 9px;
+  width: 2px;
   background: var(--color-timeline-tick-major);
 }
 
+/* Centred over its tick rather than set beside it. `translateX(-50%)` needs the
+   label's own box, so the left edge stays on the tick and the transform does
+   the centring — no width to measure. */
 .tickLabel {
   position: absolute;
-  top: 16px;
-  left: 5px;
-  font-size: var(--font-size-xs);
+  bottom: 11px;
+  left: 0;
+  transform: translateX(-50%);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
   line-height: 1;
-  /* The ruler band is a raised surface; tertiary reads at 3.76:1 on it. */
   color: var(--color-text-secondary);
   font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* ── Lanes / rows ──────────────────────────────────────────────── */
@@ -346,37 +426,49 @@
 }
 
 
-/* ── Work area (in/out region) ─────────────────────────────────── */
+/* ── Work area (in/out region) — AE solid bar with blue brackets ── */
 .workAreaBar {
   position: absolute;
   z-index: 3;
   pointer-events: auto;
   cursor: grab;
-  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
-  border-left: 2px solid var(--color-primary);
-  border-right: 2px solid var(--color-primary);
+  background: #52525b;
+  border-radius: var(--radius-xs);
   box-sizing: border-box;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.workAreaBar:hover {
+  background: #71717a;
 }
 
 .workAreaBar:active {
   cursor: grabbing;
+  background: #71717a;
 }
 
-/* Edge handles — widen the hit target for trimming in/out. */
+/* Edge handles — blue bracket tabs on in/out */
 .workAreaHandle {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 8px;
+  width: 6px;
+  background: var(--color-primary);
+  border-radius: var(--radius-xs);
   cursor: ew-resize;
+  transition: transform var(--motion-duration-fast);
 }
 
 .workAreaHandle[data-edge='in'] {
-  left: -4px;
+  left: 0;
 }
 
 .workAreaHandle[data-edge='out'] {
-  right: -4px;
+  right: 0;
+}
+
+.workAreaHandle:hover {
+  transform: scaleY(1.15);
 }
 
 .workAreaTint {
@@ -571,7 +663,7 @@
   background: var(--color-timeline-playhead);
   cursor: ew-resize;
   pointer-events: auto;
-  z-index: 2;
+  z-index: 10;
   will-change: transform;
 }
 
@@ -581,22 +673,26 @@
   top: 0;
   bottom: 0;
   left: 50%;
-  width: 11px;
+  width: 14px;
   transform: translateX(-50%);
 }
 
-/* Rounded diamond-grabber playhead head */
+/* After Effects-style compact downward shield playhead head */
 .playheadHead {
   position: absolute;
   top: 0;
   left: 50%;
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 14px;
   background: var(--color-timeline-playhead);
-  border: 1.5px solid rgba(255, 255, 255, 0.4);
-  border-radius: 2px;
-  transform: translate(-50%, -5px) rotate(45deg);
-  transition: box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+  clip-path: polygon(0% 0%, 100% 0%, 100% 60%, 50% 100%, 0% 60%);
+  transform: translateX(-50%);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6));
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.stickyPlayhead:hover .playheadHead {
+  transform: translateX(-50%) scale(1.1);
 }
 
 /* Keyboard focus lands on the grabber, not a full-height glowing bar. */
@@ -652,7 +748,11 @@
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: var(--space-2);
+  /* 2px, not 4: five pieces of chrome sit ahead of the name in this column
+     (grip · index · colour chip · disclosure · kind glyph), so every gap here
+     is spent five times over and came out of the name — which then ellipsised
+     at "Adjustment ..." inside a 190px column. */
+  gap: var(--space-1);
 }
 
 /* Layer number column (AE-style) — quiet mono, fixed width for alignment. */
@@ -671,22 +771,25 @@
 /* The divider rule needs air on BOTH sides: 8px was not enough once the 3D
    switch had spilled out of its column, and the glyph sat on the line. */
 .modeCol {
-  width: 76px;
+  width: var(--tl-col-mode);
   flex: none;
   display: flex;
   align-items: center;
   min-width: 0;
   margin-left: var(--tl-col-divider-space);
   padding-left: var(--tl-col-divider-space);
-  border-left: 1px solid var(--color-border);
+  border-left: var(--tl-col-rule);
 }
 
 .matteCol {
-  width: 60px;
+  width: var(--tl-col-matte);
   flex: none;
   display: flex;
   align-items: center;
   min-width: 0;
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
+  border-left: var(--tl-col-rule);
 }
 
 /* 132px, not 110: the pick-whip took a 22px square out of this column, and the
@@ -694,12 +797,15 @@
    full instead of ellipsising at ~40px. Giving the whip its own width keeps
    that. The legend below matches, or the header drifts off its column. */
 .parentCol {
-  width: 132px;
+  width: var(--tl-col-parent);
   flex: none;
   display: flex;
   align-items: center;
   gap: 2px;
   min-width: 0;
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
+  border-left: var(--tl-col-rule);
 }
 
 /**
@@ -719,6 +825,9 @@
   justify-content: center;
   gap: 4px;
   height: 22px;
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
+  border-left: var(--tl-col-rule);
 }
 
 /**
@@ -811,7 +920,7 @@
 }
 
 .colHeadPreInfo {
-  width: 76px;
+  width: var(--tl-col-preinfo);
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -819,9 +928,9 @@
   gap: 3px;
   color: var(--color-text-secondary);
   height: 22px;
-  margin-right: 8px;
-  padding-right: 8px;
-  border-right: 1px solid var(--color-border);
+  margin-right: var(--tl-col-divider-space);
+  padding-right: var(--tl-col-divider-space);
+  border-right: var(--tl-col-rule);
 }
 
 /**
@@ -852,10 +961,14 @@
    99px here against 134px on the row, because the two containers' intrinsic
    widths differ under `min-width: max-content`.
  *
- * Label size (`--font-size-md`, 13px), not tiny (`xs` 11px): this title sits
- * in the same 22px strip as the 15px eye / lock / pop-out glyphs, and 11px
- * next to those reads as a caption glued to oversized chrome. Line-height
- * matches `--icon-size-sm` so the text box and the icon box share a centre. */
+ * Label size (`--font-size-sm`, 12px), not tiny (`xs` 11px) and no longer `md`
+ * (13px): this title sits in the same 22px strip as the 15px eye / lock /
+ * pop-out glyphs, and 11px next to those reads as a caption glued to oversized
+ * chrome — but 13px read as a heading, where AE's column legend is a quiet
+ * caption over the controls. 12px is the size that is legibly smaller than the
+ * layer names below without dropping out of the glyphs' optical band. Every
+ * legend cell shares it. Line-height matches `--icon-size-sm` so the text box
+ * and the icon box share a centre. */
 .colHeadLayer {
   width: var(--tl-col-name);
   flex: none;
@@ -863,7 +976,7 @@
   align-items: center;
   gap: 6px;
   height: 22px;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   padding-left: 0;
@@ -875,7 +988,7 @@
 .colHeadIndex {
   flex: none;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   line-height: var(--icon-size-sm);
 }
 
@@ -915,51 +1028,61 @@
   justify-content: center;
   gap: 4px;
   height: 22px;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
+  border-left: var(--tl-col-rule);
 }
 
 /* Matches `.modeCol` exactly — same width, same divider, same spacing.
    Same type size as Source Name so the whole legend strip is one scale. */
 .colHeadMode {
-  width: 76px;
+  width: var(--tl-col-mode);
   flex: none;
   display: inline-flex;
   align-items: center;
   height: 22px;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   margin-left: var(--tl-col-divider-space);
   padding-left: var(--tl-col-divider-space);
-  border-left: 1px solid var(--color-border);
+  border-left: var(--tl-col-rule);
   line-height: var(--icon-size-sm);
   white-space: nowrap;
 }
 
 .colHeadMatte {
-  width: 60px;
+  width: var(--tl-col-matte);
   flex: none;
   display: inline-flex;
   align-items: center;
   height: 22px;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   line-height: var(--icon-size-sm);
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
+  border-left: var(--tl-col-rule);
+  white-space: nowrap;
 }
 
 .colHeadParent {
-  width: 132px;
+  width: var(--tl-col-parent);
   flex: none;
   display: inline-flex;
   align-items: center;
   height: 22px;
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-medium);
   line-height: var(--icon-size-sm);
+  margin-left: var(--tl-col-divider-space);
+  padding-left: var(--tl-col-divider-space);
+  border-left: var(--tl-col-rule);
   white-space: nowrap;
 }
 
@@ -973,16 +1096,17 @@
   padding-right: 6px;
 }
 
-/* Category icon chip — the hue lives on `color`; the chip tint derives. */
+/* Category glyph — the hue lives on `color`.
+   A bare glyph, not a bordered chip: AE's timeline shows the layer's kind as a
+   small mark beside the name, and a boxed chip here read as a second control
+   the row does not have. Dropping the box also gives 6px back to the name. */
 .trackIcon {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 0;
-  background: color-mix(in srgb, currentColor 8%, transparent);
-  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  width: 16px;
+  height: 16px;
   flex: none;
+  opacity: 0.85;
 }
 
 .trackColorPicker {
@@ -1051,17 +1175,20 @@
   flex: none;
 }
 
+/* Leftmost column, as in AE — the eye / solo / lock gutter is the panel's left
+   edge there, not something trailing the layer name. Width and rule must match
+   `.colHeadPreInfo` exactly. */
 .preInfoCol {
-  width: 76px;
+  width: var(--tl-col-preinfo);
   flex: none;
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 3px;
   height: 22px;
-  margin-right: 8px;
-  padding-right: 8px;
-  border-right: 1px solid var(--color-border);
+  margin-right: var(--tl-col-divider-space);
+  padding-right: var(--tl-col-divider-space);
+  border-right: var(--tl-col-rule);
 }
 
 /* Switch columns — AE-style square checkboxes.
@@ -1292,7 +1419,7 @@
   /* Indent inside its parent category accordion so property names start ~10-14px after parent category name. */
   padding-left: 124px;
   border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface-0);
+  background: var(--color-timeline-header);
   min-width: max-content;
   box-sizing: border-box;
 }
@@ -1385,33 +1512,27 @@
   background: color-mix(in srgb, var(--color-primary) 60%, transparent);
 }
 
-/* RAM-preview cache coverage — a thin green run under the ruler. */
+/* RAM-preview cache coverage — a thin green indicator line under the progress bar ruler. */
 .cacheBar {
   position: absolute;
-  height: 4px;
-  background: var(--color-success);
-  opacity: 0.85;
+  height: 2.5px;
+  background: #22c55e;
+  border-radius: 1px;
+  opacity: 0.95;
   pointer-events: none;
-  /* Above ruler minor ticks (z-index unset) so cached spans read as one bar. */
-  z-index: 4;
+  z-index: 5;
+  box-shadow: 0 0 4px rgba(34, 197, 94, 0.4);
 }
 
-/* Disk-cached coverage, a second lane UNDER the green one (AE's convention, and
-   the right one: the two are not the same promise). Green means the frame is
-   already in memory and blits this tick; blue means it survived RAM eviction
-   and gets read back ahead of the playhead — fast, but not free. Lower z-index
-   as well as lower position, so a frame held in both reads as green.
-
-   `--color-primary`, not `--color-info`: info is a neutral grey in the dark
-   theme and azure in the light one, so the bar would change meaning between
-   themes. Primary is blue in both. */
+/* Disk-cached coverage, a second lane UNDER the green one */
 .diskCacheBar {
   position: absolute;
   height: 2px;
   background: var(--color-primary);
-  opacity: 0.6;
+  border-radius: 1px;
+  opacity: 0.7;
   pointer-events: none;
-  z-index: 3;
+  z-index: 4;
 }
 
 /* Static placeholder rows (property tree before any keyframes): slightly
@@ -1487,11 +1608,11 @@
 }
 
 .lanePropBg {
-  background: var(--color-surface-0);
+  background: var(--color-timeline-bg);
 }
 
 .lanePropBg.laneAlt {
-  background: var(--color-surface-0);
+  background: var(--color-timeline-row-alt);
 }
 
 /* ── Track row drag handle ─────────────────────────────────── */

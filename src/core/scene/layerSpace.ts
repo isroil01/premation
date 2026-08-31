@@ -61,7 +61,7 @@ import type { LayerSpace } from '@motion/animation';
 import { defaultAnimation } from '@motion/animation';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { getRemappedTime } from '@core/timeline/TimelineController';
-import { worldMatrixOf, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
+import { worldMatrixOf, type LocalOf, type LocalTransform, type ParentOf } from '@core/scene/worldTransform';
 import { readGeometry } from '@core/workspace/geometry';
 import { is3DEnabled } from '@core/scene/threeD';
 import { readSceneCamera } from '@core/scene/camera3d';
@@ -104,9 +104,33 @@ function localOfAt(time: number): LocalOf {
 
 const parentOf: ParentOf = (id) => defaultSceneGraph.getNode(id)?.parent ?? null;
 
+/**
+ * One node's own local transform at `time`, animated values winning — the same
+ * read `world2DAt` composes up the chain, exposed for callers that need the
+ * local rather than the world (parenting compensation).
+ */
+export function localTransformAt(nodeId: string, time: number): LocalTransform | null {
+  return localOfAt(time)(nodeId);
+}
+
 /** The 2D world affine of a node at `time`, parent chain included. */
 export function world2DAt(nodeId: string, time: number): Matrix2D {
   return worldMatrixOf(nodeId, localOfAt(time), parentOf, new Map());
+}
+
+/**
+ * The world affine of a node's PARENT at `time` — identity at the comp root.
+ *
+ * This is the space a layer's `x`/`y` (and therefore its position KEYFRAMES)
+ * actually live in. Anything that reads those values as composition
+ * coordinates, or writes composition coordinates back into them, has to go
+ * through this matrix: the motion path drawn on canvas, the alignment commands,
+ * and any drag that turns a pointer position into a position keyframe.
+ */
+export function parentWorld2DAt(nodeId: string, time: number): Matrix2D {
+  const parent = defaultSceneGraph.getNode(nodeId)?.parent;
+  if (!parent || !defaultSceneGraph.getNode(parent)) return Matrix.identity();
+  return world2DAt(parent, time);
 }
 
 /** The layer's plane in world space: a point on it and its normal (+Z axis). */

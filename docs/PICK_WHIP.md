@@ -27,6 +27,25 @@ Parenting never moves the layer on screen. Both controls go through
 `reparentNode`, so it cannot mean two different things depending on which one
 you used.
 
+### Alt: the "jump" variant
+
+Hold **Alt** (Option) while dropping the whip — or while choosing from the
+parent dropdown — to link the layer *without* compensating its transform. Its
+values stay exactly as typed, so it jumps into the parent's coordinate space
+instead of staying put. After Effects has the same modifier.
+
+Use it when the child's numbers are already authored relative to the parent —
+building a rig from measured offsets, or re-attaching something you positioned
+in parent space — where the default compensation is something you would undo by
+hand a second later. On an animated layer the difference is visible in the
+keyframes: the default offsets every one of them to hold the pose, Alt leaves
+them untouched.
+
+All four surfaces (the inspector's picker, the compositing panel's, the
+timeline's Parent & Link column, and the whip on each) turn the modifier into an
+option through the one `parentOptionsFor` helper, so it cannot come to mean
+different things in different places.
+
 ## Expressions
 
 Typing `layer('Hero', 'y')` requires knowing the function, the layer's exact

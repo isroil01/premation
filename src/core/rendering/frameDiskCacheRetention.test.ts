@@ -16,6 +16,11 @@
 import { FrameDiskCache, type DecodedFrame } from './frameDiskCache';
 import type { FrameBlobStore, StoredFrame } from './frameBlobStore';
 
+/** Generation ids are namespaced by the renderer that wrote them (see
+ *  `rendererIdentity`). Pinned here so these tests assert on generation
+ *  bookkeeping rather than on the app's current version string. */
+const RID = 'r';
+
 class ManifestFrameStore implements FrameBlobStore {
   map = new Map<string, StoredFrame>();
   manifest: string | null = null;
@@ -37,6 +42,7 @@ const flush = async (): Promise<void> => { for (let i = 0; i < 10; i++) await Pr
 function makeCache(store: ManifestFrameStore, opts: { maxBytes?: number; maxGenerations?: number; blobBytes?: number } = {}) {
   return new FrameDiskCache({
     store,
+    identity: () => RID,
     maxBytes: opts.maxBytes ?? 10_000,
     maxGenerations: opts.maxGenerations ?? 4,
     encode: async () => blobOf(opts.blobBytes ?? 100),
@@ -122,7 +128,7 @@ describe('the reconcile', () => {
     const next = makeCache(store);
     await next.open();
     expect(store.map.has('g#99')).toBe(false);
-    expect(store.map.has('g#1')).toBe(true);
+    expect(store.map.has(`${RID}~g#1`)).toBe(true);
   });
 
   it('drops manifest rows whose blob is gone, rather than promising them', async () => {
@@ -130,7 +136,7 @@ describe('the reconcile', () => {
     // says yes, the read finds nothing, forever.
     const store = new ManifestFrameStore();
     await session(store, 'g', [1, 2]);
-    store.map.delete('g#2');
+    store.map.delete(`${RID}~g#2`);
     const next = makeCache(store);
     await next.open();
     next.setGeneration('g');
@@ -171,8 +177,8 @@ describe('the caps', () => {
     }
     // Live g4 + two parked; g1 (the oldest) is gone from disk too.
     expect(cache.retainedGenerations).toBe(2);
-    expect(store.map.has('g1#1')).toBe(false);
-    expect(store.map.has('g3#1')).toBe(true);
+    expect(store.map.has(`${RID}~g1#1`)).toBe(false);
+    expect(store.map.has(`${RID}~g3#1`)).toBe(true);
   });
 
   it('parked generations are evicted before the LIVE one sheds a frame', async () => {

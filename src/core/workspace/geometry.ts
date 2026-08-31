@@ -13,6 +13,9 @@ import { SIZE } from '@core/rendering/buildSnapshot';
 import { measureTextNodeSize, measureTextNodeSelectionBox } from '@core/text/measureText';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { defaultAnimation } from '@motion/animation';
+import { getRemappedTime } from '@core/timeline/TimelineController';
+import { useProjectStore } from '@stores/projectStore';
 import { Mat, Rect, type Vec2, type Mat2D } from '@motion/workspace';
 
 /** Active comp dimensions (hit box for full-frame comp-instance layers). */
@@ -97,16 +100,34 @@ export function isDrawableKind(kind: string): boolean {
  * transform — only rotation/scale of a child would, and the union of AABBs is
  * the conventional (and cheap) answer there.
  */
+/**
+ * A child's ANIMATED props at the playhead, or undefined when it has no tracks.
+ *
+ * Gated on `hasAnimation` deliberately: `readGeometry(group)` walks every
+ * descendant, and this runs inside that walk, so sampling a static child would
+ * put an engine call on the hot path of every scene enumeration for nothing.
+ */
+function animatedPropsOf(nodeId: string): Record<string, unknown> | undefined {
+  if (!defaultAnimation.hasAnimation(nodeId)) return undefined;
+  const s = useProjectStore.getState();
+  const rawTime = s.tabs[s.activeTabId ?? '']?.time ?? 0;
+  const av = defaultAnimation.evaluateNode(nodeId, getRemappedTime(nodeId, rawTime));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of av.entries()) out[k] = v;
+  return out;
+}
+
 function groupContentBounds(
   node: SceneNode,
   depth = 0,
+  live = false,
 ): { minX: number; minY: number; maxX: number; maxY: number } | null {
   if (depth > 16) return null; // cycle guard; a healthy tree is far shallower
   const children = defaultSceneGraph.getChildren(node.id);
   if (children.length === 0) return null;
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const child of children) {
-    const g = readGeometry(child);
+    const g = readGeometry(child, live ? animatedPropsOf(child.id) : undefined, { liveChildren: live });
     if (!g) continue;
     // A nested group contributes its own union, offset by its position.
     const halfW = Math.abs(g.width * g.scaleX) / 2;
@@ -122,8 +143,28 @@ function groupContentBounds(
   return { minX, minY, maxX, maxY };
 }
 
-/** Read a node's on-canvas geometry from its components (base/authoring props). */
-export function readGeometry(node: SceneNode, overrideProps?: Record<string, unknown>): NodeGeometry | null {
+/**
+ * Read a node's on-canvas geometry from its components (base/authoring props),
+ * with `overrideProps` (typically the animated values at the playhead) winning.
+ *
+ * `opts.liveChildren` decides what a GROUP's box means, and the two answers are
+ * genuinely different questions rather than one with a bug in it:
+ *
+ *   • OFF (default) — the union of the children at their BASE props: the
+ *     element's settled LAYOUT box. That is what a transition asks for when it
+ *     computes how far the element must travel to clear the frame; measuring
+ *     mid-animation children would size the move from a pose the element is
+ *     only passing through, and under-shoot.
+ *   • ON — the union at the PLAYHEAD. That is what the editor CHROME needs: a
+ *     selection outline, a hit area and a marquee target have to sit on the
+ *     artwork as drawn, and with base props an animated group was unclickable
+ *     everywhere it was visible and clickable where it was not.
+ */
+export function readGeometry(
+  node: SceneNode,
+  overrideProps?: Record<string, unknown>,
+  opts?: { liveChildren?: boolean },
+): NodeGeometry | null {
   const kind = readNodeKind(node);
   if (!isDrawableKind(kind)) return null;
 
@@ -284,7 +325,7 @@ export function readGeometry(node: SceneNode, overrideProps?: Record<string, unk
   // Authored width/height on a group is a stale artifact of `makeNode` (which
   // stamps 280×280 on every group it creates), so it must NOT win here.
   if (kind === 'group') {
-    const b = groupContentBounds(node);
+    const b = groupContentBounds(node, 0, opts?.liveChildren === true);
     if (b) {
       finalW = Math.max(1, b.maxX - b.minX);
       finalH = Math.max(1, b.maxY - b.minY);

@@ -140,7 +140,16 @@ function runElectron(backends) {
       HARNESS_MANIFEST_OUT: MANIFEST_OUT,
       HARNESS_BACKENDS: backends.join(','),
       HARNESS_HTML: HARNESS_HTML,
-      HARNESS_TIMEOUT_MS: process.env.HARNESS_TIMEOUT_MS || '180000',
+      // 180000 was one scene away from flaking, and not on the fast backend.
+      // The two backends are wildly asymmetric on SwiftShader: measured on this
+      // machine the webgpu pass renders 349 pairs in 45-52s, while webgl2 takes
+      // 137-175s for the same set (`ext-dof-wall` alone is ~3s). At 175.3s
+      // against a 180s ceiling the suite had five seconds of headroom, so the
+      // very next scene anyone added timed out the run and reported "no pixels
+      // produced" — a failure that reads like a renderer fault and is not one.
+      // The ceiling exists to stop a WEDGED renderer hanging CI forever, and it
+      // does that job just as well an order of magnitude higher.
+      HARNESS_TIMEOUT_MS: process.env.HARNESS_TIMEOUT_MS || '900000',
     };
     // `--no-sandbox` is passed on the ACTUAL command line, not only via
     // app.commandLine.appendSwitch in main.cjs, because Chromium reads the

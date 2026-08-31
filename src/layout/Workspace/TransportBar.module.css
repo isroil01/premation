@@ -1,0 +1,187 @@
+/**
+ * Transport bar — the play controls, under the stage.
+ *
+ * They used to sit in the timeline panel's top row, sharing it with the split /
+ * trim buttons and the viewport tools. That row is the timeline's, and the
+ * transport is not the timeline's: it drives the VIEWPORT, which is what you
+ * are looking at while you press play. AE puts it in the Preview panel for the
+ * same reason. Moving it here also freed the timeline's top row for the comp
+ * tabs and the render queue, which do belong to it.
+ *
+ * A real bar below the stage, not a floating pill over it: an overlay covers
+ * the canvas, and covers a different part of it at every zoom level.
+ */
+/**
+ * `1fr auto 1fr`, not a flex row.
+ *
+ * The play button has to sit on the bar's midpoint. In a flex row it lands
+ * wherever the controls to its left happen to end, so it moved every time a
+ * neighbour collapsed at a breakpoint or the timecode went from 00:00:00 to
+ * 00:10:00 — a button you aim at from memory cannot drift. A three-column grid
+ * with an `auto` middle pins it: the side columns are equal by construction, so
+ * the centre is the centre whatever they hold.
+ */
+.bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-5);
+  flex: none;
+  min-height: var(--control-height-row);
+  /* 2px vertical: enough to keep the buttons off the rules above and below,
+     not enough to turn a control strip into a band. 12px horizontal stays —
+     that is the panel's own edge inset, not padding around the buttons. */
+  padding: var(--space-1) var(--space-5);
+  box-sizing: content-box;
+  background: var(--color-panel);
+  /* The same dark rule that divides the timeline's chrome from its track list —
+     this bar is the viewport's floor, and the division reads as one system. */
+  border-top: 2px solid var(--color-timeline-ruler-border);
+  position: relative;
+  /*
+   * `hidden`, not `auto` — this row never scrolls.
+   *
+   * A scrollbar here meant controls sat past an edge, reachable only by a
+   * gesture nothing on screen advertised. The row sheds groups into the View
+   * Options menu instead (`useTransportDemote`), so overflow lasts one frame
+   * while that measurement settles; clipping keeps that frame from flashing a
+   * scrollbar.
+   */
+  overflow: hidden;
+  min-width: 0;
+
+  /* A CONTAINER under the same name the timeline's row used, so ViewportTools
+     keeps the progressive collapse it was written for — it reads
+     `tl-toolbar`'s inline size, and that row is this one now. */
+  container-type: inline-size;
+  container-name: tl-toolbar;
+}
+
+/**
+ * The side groups lean IN, toward the transport, rather than out to the bar's
+ * edges.
+ *
+ * Pinned to the outer edges they were two islands with a lake of empty panel
+ * between them and the play button, and a control 400px from the thing it
+ * qualifies does not read as related to it. Leaning in keeps the whole row one
+ * band of controls with even spacing, and leaves the empty space at the ends
+ * where empty space is harmless.
+ */
+.sideLeft,
+.sideRight {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.sideLeft {
+  justify-content: flex-end;
+}
+
+.sideRight {
+  justify-content: flex-start;
+}
+
+
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/**
+ * The timecode reads out here, beside the controls that move it.
+ *
+ * Not a duplicate of the timeline's: that one is the SCRUB field over the track
+ * headers, and it is the current time alone. This one is current / duration,
+ * which is what the transport needs and what the timeline's tool row used to
+ * show twice — once here, once directly beneath.
+ */
+.timecode {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.timecodeTotal {
+  color: var(--color-text-tertiary);
+  margin-left: 6px;
+}
+
+.divider {
+  width: 1px;
+  height: 16px;
+  background: var(--color-border-subtle);
+  flex-shrink: 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-lg);
+  height: var(--control-height-row);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-shrink: 0;
+}
+
+.btn:hover {
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+  transform: translateY(-0.5px);
+}
+
+.btn:active {
+  transform: scale(0.94);
+}
+
+.btnActive {
+  background: transparent !important;
+  border-color: transparent !important;
+  color: var(--color-primary) !important;
+  box-shadow: none;
+}
+
+.playBtn {
+  width: calc(var(--control-height-lg) + 8px);
+  background: var(--color-primary);
+  border: 1px solid transparent;
+  color: var(--color-primary-foreground);
+  box-shadow: none;
+}
+
+.playBtn:hover {
+  background: var(--color-primary-hover);
+  border-color: transparent;
+  color: var(--color-primary-foreground);
+  box-shadow: none;
+}
+
+.playBtnActive {
+  background: var(--color-primary-active) !important;
+  border-color: transparent !important;
+  color: var(--color-primary-foreground) !important;
+  box-shadow: none;
+  transform: scale(0.97);
+}
+
+/* The quality dropdown's trigger carries a label, so it sizes to its text. */
+.qualityBtn {
+  width: auto;
+  padding: 0 6px;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+}

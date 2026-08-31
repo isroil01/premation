@@ -19,7 +19,7 @@
  * ffmpeg and asserts real output.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildSnapshot } from './buildSnapshot';
 import SceneGraph from '@core/scene/SceneGraph';
@@ -140,6 +140,57 @@ describe('structural guards', () => {
 
   it.each(OUTPUT_PATHS)('%s never mentions useProxies', (rel) => {
     expect(read(rel)).not.toContain('useProxies');
+  });
+
+  it.each(OUTPUT_PATHS)('%s never mentions the tier type either', (rel) => {
+    // `resolveMediaSrc` takes a `ProxyTier` now, defaulting to 'original'. The
+    // boolean guard above would not have noticed an output path that named a
+    // tier directly — and one of the tiers is 540p footage meant only for a
+    // matcher to read. An output path cannot even SPELL the type.
+    const src = read(rel);
+    expect(src).not.toContain('ProxyTier');
+    expect(src).not.toContain('resolveMediaSrc');
+    expect(src).not.toContain("'analysis'");
+  });
+
+  it('exactly ONE module resolves the analysis tier, derived from the tree', () => {
+    /*
+      The invisible tier has one door, and this finds it rather than being told.
+
+      A hand-listed caller set is the F25 shape — it only ever checks the
+      subjects someone remembered, and goes green while a new caller sits
+      outside it. So the file list comes from the directories where analysis
+      walks live, and the claim is that precisely one of them names the tier.
+
+      That module also owns the rule an extra caller would most likely get
+      wrong: an analysis walk must know the ORIGINAL's display grid
+      independently of what it decoded, or every measurement comes back in
+      proxy pixels (see `analysisTier`). Routing through one door is what makes
+      that rule unavoidable rather than remembered.
+    */
+    const dirs = ['src/core/tracking', 'src/core/reframe'];
+    const namers: string[] = [];
+    for (const dir of dirs) {
+      const abs = join(__dirname, '..', '..', '..', dir);
+      for (const f of readdirSync(abs)) {
+        if (!f.endsWith('.ts') || f.endsWith('.test.ts')) continue;
+        if (read(`${dir}/${f}`).includes("'analysis'")) namers.push(`${dir}/${f}`);
+      }
+    }
+    expect(namers).toEqual(['src/core/tracking/analysisTier.ts']);
+  });
+
+  it('the walks that should use a stand-in go through that door', () => {
+    // Scene-edit detection is deliberately absent: it argues in its own source
+    // that a re-encode can move a hard cut and land the detector a frame late.
+    // Roto is absent because its output IS the silhouette, so resolution there
+    // is the deliverable rather than the cost.
+    for (const w of ['src/core/tracking/trackVideoLayer.ts', 'src/core/tracking/smoothStabilize.ts']) {
+      expect(read(w)).toContain('planAnalysisDecode');
+    }
+    for (const w of ['src/core/tracking/sceneEditDetectLayer.ts', 'src/core/tracking/rotoBrush.ts']) {
+      expect(read(w)).not.toContain('planAnalysisDecode');
+    }
   });
 
   it('exactly two viewport hosts opt in, and they are the ones we think', () => {

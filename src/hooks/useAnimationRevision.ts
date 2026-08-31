@@ -15,11 +15,15 @@
 
 import { useEffect, useReducer } from 'react';
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 
 export function useAnimationRevision(): number {
   const [rev, bump] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    const sub = getEventBus().on('AnimationChanged', () => bump());
+    // Media decode repaints do not change any sampled property value, and
+    // re-rendering every subscribing panel at the source's frame rate is
+    // the single widest cost a landed video frame used to pay for.
+    const sub = getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) bump(); });
     return () => sub.dispose();
   }, []);
   return rev;

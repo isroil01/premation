@@ -157,9 +157,36 @@ export interface MenuItemProps {
    * `itemIconSpacer`), so nothing shifts as the state changes.
    */
   checked?: boolean;
-  onSelect?: () => void;
+  onSelect?: (modifiers: MenuSelectModifiers) => void;
   /** Submenu children render in a portal anchored to this item. */
   children?: ReactNode;
+}
+
+/**
+ * Which modifier keys were held when a menu item was activated.
+ *
+ * Passed to `onSelect` because some commands legitimately have a modified
+ * variant — After Effects' Alt-click on a parent, for one, which links the
+ * layer WITHOUT compensating its transform. Handlers that do not care simply
+ * declare no parameter; `() => void` stays assignable.
+ *
+ * A plain record rather than the React event: a keyboard activation (Enter or
+ * Space on the focused item) must report the same thing a click does, and
+ * callers should not have to know which one they got.
+ */
+export interface MenuSelectModifiers {
+  altKey: boolean;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+}
+
+const NO_MODIFIERS: MenuSelectModifiers = {
+  altKey: false, shiftKey: false, ctrlKey: false, metaKey: false,
+};
+
+function modifiersOf(e: { altKey: boolean; shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }): MenuSelectModifiers {
+  return { altKey: e.altKey, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
 }
 
 export function MenuItem({
@@ -214,13 +241,13 @@ export function MenuItem({
     };
   }, [subOpen]);
 
-  const onClick = (): void => {
+  const onClick = (modifiers: MenuSelectModifiers = NO_MODIFIERS): void => {
     if (disabled) return;
     if (children) {
       setSubOpen((s) => !s);
       return;
     }
-    onSelect?.();
+    onSelect?.(modifiers);
     ctx?.closeParent();
   };
 
@@ -228,7 +255,7 @@ export function MenuItem({
     if (disabled) return;
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      onClick();
+      onClick(modifiersOf(e));
     } else if (e.key === 'ArrowRight' && children) {
       e.preventDefault();
       setSubOpen(true);
@@ -250,7 +277,7 @@ export function MenuItem({
         aria-expanded={children ? subOpen : undefined}
         disabled={disabled}
         className={cn(styles.item, danger && styles.danger, subOpen && styles.subOpen)}
-        onClick={onClick}
+        onClick={(e) => onClick(modifiersOf(e))}
         onKeyDown={onKey}
         onPointerEnter={() => { if (children) openSub(); }}
         onPointerLeave={() => { if (children) scheduleCloseSub(); }}

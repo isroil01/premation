@@ -14,8 +14,9 @@
  * and offset (that is why it is NCC), and consistency WITHIN a walk is all
  * that matters — every frame of a walk takes the same path.
  *
- * The canvas fallback stays for RGBA-format frames, canvas-backed frames
- * (ExactVideoSource's retained copies), and any copyTo failure.
+ * The canvas fallback stays for RGBA-format frames, IMAGE-BACKED frames
+ * (ExactVideoSource's retained copies are ImageBitmaps, which have no YUV
+ * planes to read), and any copyTo failure.
  */
 
 import type { LumaPlane } from './patchMatch';

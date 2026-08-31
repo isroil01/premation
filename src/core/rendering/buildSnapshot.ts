@@ -2704,7 +2704,7 @@ export function buildSnapshot(
       // Heal absolute backend URLs baked into older documents → same-origin path.
       // Resolution order lives in rigMeshInputs so the puppet overlay resolves
       // the SAME source this layer draws (its coverage mask is keyed off it).
-      src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id), comp.useProxies === true),
+      src: resolveRigImageSrc(node, kind, base, remapOf(node.id)(t), (id) => assetById().get(id), comp.useProxies === true ? 'viewport' : 'original'),
       assetId: base.assetId,
       ...(kind === 'svg' && readSvgLayer(node)?.livePlayback ? { liveSvgPlayback: true } : {}),
       // Media-slot COVER crop. The quad is already the slot rect (fillSlot

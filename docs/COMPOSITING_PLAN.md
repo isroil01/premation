@@ -342,6 +342,35 @@ makes it worse.
   advanced-blended and 3D layers all route through. **Feature-flag this one.**
 - **Rollback:** flag off, then revert
 
+### M6b — Compositing Options: per-effect opacity · **S** · SHIPPED
+
+The other half of M6's blend, and the reason it was cheap: scoping an effect in
+SPACE and scaling it in STRENGTH are the same composite against the effect's own
+input, so both ride one `before` snapshot and one scaled coverage matte in
+`applyEffectChain`. An effect carrying both is blended once, not twice.
+
+- **Why it exists:** an effect has no in/out point, in AE or here. Limiting one
+  to a time range means keyframing it to nothing outside that range, and most
+  effects expose no parameter that means "off" — Find Edges, Mosaic and a colour
+  LUT have nothing to ramp to zero. `Effect.opacity` does, for every effect in
+  the registry, because it blends the result rather than any single param.
+- **Files:** `Effect.opacity` + `EFFECT_OPACITY_KEY` in `effects.ts`,
+  `compositeBlend` in `effectBake.ts`, the Compositing Options section in
+  `EffectStack.tsx`, `propertyMeta.ts`, `propertyTree.ts`
+- **Schema:** additive optional field; absent = today's behaviour
+- **Keyframe path:** `effect.<id>.fx.opacity`. The key carries a DOT because
+  nineteen effects already declare a param keyed plainly `opacity` and every
+  declared key in the registry is a plain identifier — the collision is
+  impossible rather than merely absent. Pinned by `effectOpacityKeyIsReserved`.
+- **Semantics:** `out = before·(1−α) + after·α`, byte-identical to `before` at
+  α = 0 and to `after` at α = 1. Absent ≠ 100: absent keeps the effect on its
+  GPU-native path, PRESENT forces the CPU bake at any value, so an animated
+  opacity does not flip render paths at the top of a 0→100→0 ramp and pop where
+  the two backends round differently.
+- **Tests:** `effectOpacity.test.ts`, `setEffectOpacity.test.ts`. Pixel algebra
+  is the golden-frame suite's — Skia doubles `globalAlpha` on `destination-in`,
+  one of the two ops the flat blend is built from.
+
 ### M7 — Responsive time / protected regions · **M–L**
 
 - **Files:** time evaluation in `buildSnapshot.ts`, timeline UI, template

@@ -12,6 +12,18 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import type { Disposable } from '@app-types/common';
 import type { PinKind } from '@core/rig/puppet';
 
+/**
+ * Which of AE's two right-hand column blocks the timeline shows.
+ *
+ * AE's "Toggle Switches / Modes" button, and the reason its panel fits: the
+ * layer switches (shy · fx · blur · adjustment · guide · T · 3D) and the mode
+ * columns (Mode · TrkMat · Parent) occupy the same horizontal space, and you
+ * see one set at a time. Ours used to render both unconditionally, which needs
+ * ~760px of header — so at any normal panel width Mode, TrkMat and Parent were
+ * pushed off the right edge and could not be reached at all.
+ */
+export type TimelineColumns = 'switches' | 'modes' | 'both';
+
 export type BoneRigMode = 'draw' | 'pose' | 'weights';
 export type BoneWeightMode = 'add' | 'subtract' | 'smooth' | 'pick';
 
@@ -74,6 +86,8 @@ interface UIState {
   graphEditorOpen: boolean;
   /** Whether the global Shy layers toggle is active. */
   globalShy: boolean;
+  /** AE's Toggle Switches / Modes — which right-hand column block is shown. */
+  timelineColumns: TimelineColumns;
 }
 
 export interface Notification {
@@ -117,6 +131,9 @@ interface UIActions {
   toggleSnap(): void;
   setGraphEditorOpen(open: boolean): void;
   setGlobalShy(open: boolean): void;
+  setTimelineColumns(columns: TimelineColumns): void;
+  /** AE's button: Switches → Modes → Both → Switches. */
+  cycleTimelineColumns(): void;
 }
 
 export type UIStore = UIState & UIActions;
@@ -134,6 +151,11 @@ export const useUIStore = create<UIStore>()(
       snap: true,
       graphEditorOpen: false,
       globalShy: false,
+      // Both, not 'modes': the toggle exists so the panel CAN be narrowed, not
+      // so it starts with controls missing. Defaulting to 'modes' hid every
+      // per-layer switch (shy · fx · blur · adjustment · guide · T · 3D) until
+      // you found the button, which is a worse first run than a wide header.
+      timelineColumns: 'both',
 
       setActiveTool: (tool) =>
         set((s) => {
@@ -190,6 +212,19 @@ export const useUIStore = create<UIStore>()(
       setGlobalShy: (open) =>
         set((s) => {
           s.globalShy = open;
+        }),
+      setTimelineColumns: (columns) =>
+        set((s) => {
+          s.timelineColumns = columns;
+        }),
+      cycleTimelineColumns: () =>
+        set((s) => {
+          s.timelineColumns =
+            s.timelineColumns === 'switches'
+              ? 'modes'
+              : s.timelineColumns === 'modes'
+                ? 'both'
+                : 'switches';
         }),
     })),
   ),

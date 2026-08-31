@@ -7,6 +7,7 @@ import { useRenderQualityStore, RESOLUTION_LABELS, type PreviewResolution } from
 import { useCompositionStore } from '@stores/compositionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { Dropdown } from '@components/Dropdown';
+import { useTransportOverflow } from '@layout/Workspace/transportOverflow';
 import styles from './TopNav.module.css';
 
 /** Tiny inline number field that scrubs on drag. */
@@ -236,6 +237,9 @@ export function ViewControls(): JSX.Element {
       onChange: () => setMotionPathDots(id),
     });
 
+  // Controls the transport bar could not fit — see `transportOverflow`.
+  const overflow = useTransportOverflow((st) => st.items);
+
   return (
     <div className={styles.toolGroup}>
       {/* View Options & Overlays Dropdown */}
@@ -247,7 +251,10 @@ export function ViewControls(): JSX.Element {
             className={styles.toolDropdownTrigger}
             title="View Options"
           >
-            <Icon name="sliders-h" size="md" />
+            {/* `sm`, like every other glyph in the transport bar this renders
+                into. At `md` it was a size above its neighbours and, with the
+                chevron beside it, read as the one important button in the row. */}
+            <Icon name="sliders-h" size="sm" />
             <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
           </button>
         }
@@ -373,6 +380,13 @@ export function ViewControls(): JSX.Element {
               { type: 'item' as const, id: 'roi-clear', label: 'Clear Region', disabled: !roi, onSelect: () => setRoi(null) },
             ],
           },
+          /*
+            Whatever the transport bar has shed to fit, appended under a rule.
+            Last, so the menu's own entries never move as the window resizes —
+            a menu whose items reorder while you reach for one is worse than a
+            long menu. Empty at full width, so the separator goes with them.
+          */
+          ...(overflow.length ? [{ type: 'separator' as const }, ...overflow] : []),
         ]}
       />
     </div>

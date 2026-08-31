@@ -50,6 +50,24 @@
  * previous session's blobs weigh without reading them all, so it keeps the old
  * behaviour: purge at open, retention within the session only.
  *
+ * ── What surviving a restart made necessary ─────────────────────────────────
+ *
+ * Retention closed the identity half and opened a second hole, and the paragraph
+ * above did not notice: the content hash names the DOCUMENT, and nothing named
+ * the RENDERER. Within one session that is fine — the code cannot change while
+ * the process runs. Across a restart it is not: upgrade the app, or update a
+ * plugin whose effect a layer uses, and a generation written by the OLD build
+ * matches the new build's key exactly and is served. The green and blue bars
+ * then promise pixels the current code would not produce, silently.
+ *
+ * So every generation id is NAMESPACED with `rendererIdentity()` (app version +
+ * the compiled shader source of every ready plugin effect, plus a per-process
+ * nonce in development). A build that differs cannot name a previous build's
+ * generation, and `open()` drops parked generations from any other namespace
+ * outright rather than leaving them to age out of the budget. The failure mode
+ * is a cold cache, never a wrong frame — which is the same direction
+ * `isPersistableProxy` errs in one layer up.
+ *
  * ── Why look-ahead rather than a fallback read ──────────────────────────────
  *
  * `FrameCache.get` is synchronous — the render loop blits or re-renders in the
@@ -61,6 +79,8 @@
  */
 
 import { IndexedDbFrameStore, frameStoreAvailable } from './frameBlobStore';
+import { rendererIdentity } from './rendererIdentity';
+import { previewDiskCacheBytes } from '@stores/preferenceStore';
 import type { FrameBlobStore, StoredFrame } from './frameBlobStore';
 
 /** What a decode yields. Narrower than `CanvasImageSource` on purpose: both of
@@ -92,6 +112,14 @@ export interface FrameDiskCacheOptions {
   encode?: (canvas: HTMLCanvasElement) => Promise<Blob | null>;
   /** Injected for the same reason. */
   decode?: (blob: Blob) => Promise<DecodedFrame | null>;
+  /**
+   * Which renderer produced these frames — see the header.
+   *
+   * DEFAULTED rather than required, deliberately: a caller that forgets it must
+   * get versioning anyway, because the whole point is that this cannot be left
+   * out. Injected only so tests can drive a version change without rebuilding.
+   */
+  identity?: () => string;
 }
 
 /** Manifest schema. Versioned so a future shape change reads as "no manifest"
@@ -170,12 +198,28 @@ export class FrameDiskCache {
   private persistScheduled = false;
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
+  private readonly identity: () => string;
+
   constructor(opts: FrameDiskCacheOptions) {
     this.store = opts.store;
     this.maxBytes = opts.maxBytes ?? 4 * 1024 * 1024 * 1024;
     this.maxGenerations = Math.max(1, opts.maxGenerations ?? 4);
     this.encode = opts.encode ?? defaultEncode;
     this.decode = opts.decode ?? defaultDecode;
+    this.identity = opts.identity ?? rendererIdentity;
+  }
+
+  /**
+   * The caller's key, namespaced by the renderer that would render it.
+   *
+   * Every generation id on disk goes through here, so a build that differs
+   * cannot NAME a previous build's generation — the protection is structural
+   * rather than a check anyone has to remember to perform. `~` separates the
+   * halves and appears in neither: the identity is version digits and base-36
+   * hashes, the caller's key is a colon-joined list.
+   */
+  private namespaced(key: string): string {
+    return `${this.identity()}~${key}`;
   }
 
   /**
@@ -220,7 +264,15 @@ export class FrameDiskCache {
 
     const present = new Set(await this.store.keys());
     const orphans: string[] = [];
+    // Only this renderer's generations are adoptable. A generation written by
+    // another build could never be NAMED again (ids are namespaced), so leaving
+    // it parked would just hold budget until the LRU got round to it — and it
+    // would sit in the size readout as cache the user does not have. Dropping
+    // it here is the same reconcile the orphan sweep below performs, one level
+    // up: what cannot be used is not kept.
+    const mine = `${this.identity()}~`;
     for (const gen of manifest.gens) {
+      if (!gen.id.startsWith(mine)) continue;
       const frames = new Map<number, number>();
       for (const [frame, size] of gen.frames) {
         if (present.has(`${gen.id}#${frame}`)) {
@@ -266,7 +318,10 @@ export class FrameDiskCache {
    * generation is promoted whole and every frame it held is immediately
    * servable. This exchange is the entire payoff of the content-derived key.
    */
-  setGeneration(generation: string): void {
+  setGeneration(key: string): void {
+    // Namespaced HERE, at the single door every generation comes through, so
+    // there is one place to get right rather than one per call site.
+    const generation = this.namespaced(key);
     if (generation === this.generation) return;
 
     if (this.generation && this.index.size > 0) {
@@ -529,7 +584,15 @@ export class FrameDiskCache {
  */
 export function createViewportDiskCache(): FrameDiskCache | null {
   if (!frameStoreAvailable()) return null;
-  const cache = new FrameDiskCache({ store: new IndexedDbFrameStore() });
+  // The budget is the user's — how much disk to spend on not re-rendering is a
+  // statement about this machine, and the one cache setting the app cannot
+  // guess. Read at construction: changing it takes effect on the next launch,
+  // which is honest about the fact that shrinking it cannot un-write frames
+  // already on disk.
+  const cache = new FrameDiskCache({
+    store: new IndexedDbFrameStore(),
+    maxBytes: previewDiskCacheBytes(),
+  });
   active = cache;
   return cache;
 }

@@ -11,11 +11,16 @@ import defaultSceneGraph from './DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 import { getEventBus } from '@core/events/EventBus';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useProjectStore } from '@stores/projectStore';
+import { defaultAnimation } from '@motion/animation';
+import { Matrix, type Matrix2D } from '@motion/scene';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
 import { isPrecomp } from './precomp';
 import { activeCompRootId } from './activeComp';
+import { world2DAt, localTransformAt } from './layerSpace';
 import type { SceneNode } from '@core/types';
 import {
+  localUnderParent,
   type LocalTransform,
 } from './worldTransform';
 
@@ -37,8 +42,10 @@ export function baseLocal(node: SceneNode): LocalTransform {
     x: node.transform.position.x,
     y: node.transform.position.y,
     rotation: node.transform.rotation,
-    scaleX: scale ?? scaleX,
-    scaleY: scale ?? scaleY,
+    // Per-axis first, matching `readGeometry` and the renderer — see the same
+    // note in `SceneGraph.getLocalTransform`.
+    scaleX: scaleX ?? scale ?? 1,
+    scaleY: scaleY ?? scale ?? 1,
   };
 }
 
@@ -105,6 +112,176 @@ export function canReparent(childId: string, newParentId: string | null): boolea
   return home !== null && home === enclosingCompRootOf(newParentId);
 }
 
+/** The playhead, in raw comp time — the instant a reparent must preserve. */
+function playheadCompTime(): number {
+  const s = useProjectStore.getState();
+  return s.tabs[s.activeTabId ?? '']?.time ?? 0;
+}
+
+/** Below this, a delta is float noise out of a matrix decomposition, not an edit. */
+const EPS = 1e-9;
+
+/**
+ * Shift every keyframe of one track: `value * mul + add`. Spatial tangents are
+ * VALUE-space offsets relative to `value`, so a translation leaves them alone
+ * and a multiplication has to carry them along.
+ */
+function offsetTrack(nodeId: string, prop: string, add: number, mul = 1): void {
+  const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
+  if (!kfs || kfs.length === 0) return;
+  defaultAnimation.setTrackKeyframes(
+    nodeId,
+    prop,
+    kfs.map((k) => ({
+      ...k,
+      value: k.value * mul + add,
+      ...(k.si !== undefined ? { si: k.si * mul } : null),
+      ...(k.so !== undefined ? { so: k.so * mul } : null),
+    })),
+  );
+}
+
+/**
+ * Re-base `childId`'s local transform so the layer stays where it is on screen
+ * after being relinked under `targetId` — the ANIMATED layer included.
+ *
+ * ## Why the compensation is not left to `SceneGraph.setParent`
+ *
+ * That one composes both parent chains from the static base props and writes
+ * its answer back to the static base props. Both halves stop being true the
+ * moment a keyframe exists, and a Null is nearly always keyframed:
+ *
+ *   • the new parent's pose is read as its base x/y rather than the value its
+ *     keyframes hold at the playhead, so the correction is computed against a
+ *     place the Null is not; and
+ *   • the corrected value is written to the child's base x/y, which an animated
+ *     child's own tracks then override at render time — so the write lands
+ *     nowhere and the layer jumps by the parent's whole transform.
+ *
+ * Reported as "Bug Position when Parent to Null" (#16): animate a circle,
+ * animate a null, parent the circle to the null, and the circle teleports.
+ *
+ * So the pose is sampled through `world2DAt` / `localTransformAt` — the readers
+ * the RENDERER uses — and the correction is applied as a DELTA, to the base
+ * props AND to every transform track the layer owns. Offsetting the tracks
+ * rather than replacing the base is what moves the layer into the parent's
+ * space while leaving its own animation intact: keyframe times, easing and
+ * spatial tangents are all untouched.
+ *
+ * ## The limit, stated
+ *
+ * The delta is exact at the playhead and rigid across time. Under a parent that
+ * ROTATES or SCALES, the child's path is re-based but not re-shaped — which is
+ * the point of parenting (the child inherits the parent's motion), though it
+ * does mean the pose is held at the current frame only, as in After Effects. A
+ * property driven by an EXPRESSION is not compensated at all: there is no value
+ * to offset there, only source text.
+ */
+function compensateReparent(childId: string, targetId: string, worldBefore: Matrix2D): void {
+  const node = defaultSceneGraph.getNode(childId);
+  if (!node) return;
+  const time = playheadCompTime();
+  const parentWorld = defaultSceneGraph.getNode(targetId)
+    ? world2DAt(targetId, time)
+    : Matrix.identity();
+  const want = localUnderParent(worldBefore, Matrix.clone(parentWorld));
+  // A layer the geometry reader has no box for (a group) contributes identity
+  // to the world chain, so its live local IS its base local.
+  const have = localTransformAt(childId, time) ?? baseLocal(node);
+
+  const dx = want.x - have.x;
+  const dy = want.y - have.y;
+  const dRot = want.rotation - have.rotation;
+  const kx = Math.abs(have.scaleX) > EPS ? want.scaleX / have.scaleX : 1;
+  const ky = Math.abs(have.scaleY) > EPS ? want.scaleY / have.scaleY : 1;
+
+  // The component carrying x — the one `SceneGraph.setLocalTransform` writes,
+  // so both paths agree on where a layer's transform lives.
+  const comp = node.components.find((c) => typeof (c.props as Record<string, unknown>).x === 'number');
+  if (comp) {
+    const p = comp.props as Record<string, unknown>;
+    const base = (k: string, dflt: number): number => (typeof p[k] === 'number' ? (p[k] as number) : dflt);
+    defaultSceneGraph.writeProp(childId, comp.id, 'x', base('x', 0) + dx);
+    defaultSceneGraph.writeProp(childId, comp.id, 'y', base('y', 0) + dy);
+    if (Math.abs(dRot) > EPS) {
+      defaultSceneGraph.writeProp(childId, comp.id, 'rotation', base('rotation', 0) + dRot);
+    }
+    // Scale is only touched when it actually changed: writing scaleX/scaleY
+    // onto a layer that stores the uniform `scale` shorthand would leave the
+    // two readers of these props disagreeing about which one wins.
+    if (Math.abs(kx - 1) > EPS || Math.abs(ky - 1) > EPS) {
+      const uniformOnly = typeof p.scale === 'number'
+        && p.scaleX === undefined && p.scaleY === undefined
+        && Math.abs(kx - ky) < EPS;
+      if (uniformOnly) {
+        defaultSceneGraph.writeProp(childId, comp.id, 'scale', (p.scale as number) * kx);
+      } else {
+        const uniform = typeof p.scale === 'number' ? (p.scale as number) : 1;
+        defaultSceneGraph.writeProp(childId, comp.id, 'scaleX', base('scaleX', uniform) * kx);
+        defaultSceneGraph.writeProp(childId, comp.id, 'scaleY', base('scaleY', uniform) * ky);
+      }
+    }
+  }
+
+  if (Math.abs(dx) > EPS) offsetTrack(childId, 'x', dx);
+  if (Math.abs(dy) > EPS) offsetTrack(childId, 'y', dy);
+  if (Math.abs(dRot) > EPS) offsetTrack(childId, 'rotation', dRot);
+  if (Math.abs(kx - 1) > EPS) offsetTrack(childId, 'scaleX', 0, kx);
+  if (Math.abs(ky - 1) > EPS) offsetTrack(childId, 'scaleY', 0, ky);
+  // The uniform shorthand can only follow a uniform ratio; a non-uniform one is
+  // already carried by the per-axis props written above.
+  if (Math.abs(kx - 1) > EPS && Math.abs(kx - ky) < EPS) offsetTrack(childId, 'scale', 0, kx);
+}
+
+/**
+ * Turn the modifier keys held during a parenting gesture into the option
+ * `reparentNode` takes.
+ *
+ * ALT (Option) is After Effects' "jump" variant: link the layer but leave its
+ * transform values alone, so it moves into the parent's coordinate space
+ * instead of staying put. It is the right gesture when the child's values are
+ * ALREADY authored relative to the parent — building a rig from measured
+ * offsets, or re-attaching something you deliberately positioned in parent
+ * space — where the compensation would be undone by hand immediately after.
+ *
+ * Lives here, next to the thing it configures, because four surfaces parent
+ * (the inspector's picker, the compositing panel's, the timeline's Parent &
+ * Link column, and the pick-whip on each of them) and a modifier implemented
+ * four times is a modifier that means four things.
+ */
+export function parentOptionsFor(
+  modifiers: { altKey?: boolean } | undefined,
+): { preserveWorld?: boolean } | undefined {
+  return modifiers?.altKey === true ? { preserveWorld: false } : undefined;
+}
+
+/**
+ * Relink `childId` under `targetId` so the layer stays exactly where it is on
+ * screen — the ANIMATED layer included.
+ *
+ * Exported for the callers that own their own eligibility rules and so cannot
+ * go through `reparentNode`: Group Layers, Precompose and both Ungroup paths
+ * all build or dissolve a container and move layers into or out of it. They
+ * called `defaultSceneGraph.setParent` directly, which compensates from static
+ * base props only — so grouping or precomposing an ANIMATED layer MOVED it, by
+ * the container's own offset (measured: world x 500 → 660 on a layer keyframed
+ * 100 → 900 with the playhead at its midpoint). Same defect as issue #16,
+ * reached through the Layer menu instead of the parent dropdown.
+ *
+ * A no-op relink (the link already IS what was asked for) compensates nothing:
+ * `setParent` returns early there, and a correction for a move that did not
+ * happen would shift the layer for real.
+ */
+export function setParentPreservingWorld(childId: string, targetId: string): void {
+  const from = defaultSceneGraph.getNode(childId)?.parent ?? null;
+  const moves = from !== targetId && !(from === null && targetId === COMP_ROOT);
+  // Sampled BEFORE the relink, with keyframes and expressions evaluated — see
+  // `compensateReparent` for why this cannot be left to `setParent`.
+  const worldBefore = moves ? world2DAt(childId, playheadCompTime()) : null;
+  defaultSceneGraph.setParent(childId, targetId, { preserveWorld: false });
+  if (worldBefore) compensateReparent(childId, targetId, worldBefore);
+}
+
 /**
  * Reparent `childId` under `newParentId` (null → comp root). By default this
  * does NOT move the layer on screen: the child adopts the local transform that
@@ -124,8 +301,11 @@ export function reparentNode(
   // the same disappearance as parenting across comps, reached by the dropdown's
   // most-used entry.
   const target = newParentId ?? enclosingCompRootOf(childId) ?? COMP_ROOT;
-
-  defaultSceneGraph.setParent(childId, target, { preserveWorld: options.preserveWorld ?? true });
+  if (options.preserveWorld ?? true) {
+    setParentPreservingWorld(childId, target);
+  } else {
+    defaultSceneGraph.setParent(childId, target, { preserveWorld: false });
+  }
 
   // The layer has MOVED IN THE TREE, and a collapsed destination hides it
   // outright — parenting to a fresh Null (never expanded, because it had no

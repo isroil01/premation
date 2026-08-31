@@ -18,6 +18,7 @@
 
 import { restoreDocument, type EditorDocument } from '@core/api/cloudDocument';
 import { renderOffline } from '@core/export/offlineRenderer';
+import { setMediaRepaintScheduler, syncFlushScheduler } from '@core/rendering/repaintScheduler';
 import { useProjectStore } from '@stores/projectStore';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import type { CompositionSettings } from '@stores/projectStore';
@@ -83,6 +84,10 @@ function encodeFrame(canvas: HTMLCanvasElement): string {
 }
 
 async function main(): Promise<void> {
+  // No wall clock on an offline render: `requestAnimationFrame` in an offscreen
+  // Electron window is throttled (and can stop firing once occluded), so the
+  // media-repaint coalescer flushes synchronously here. See repaintScheduler.ts.
+  setMediaRepaintScheduler(syncFlushScheduler);
   try {
     const spec = await window.renderBridge.job();
     if (!spec?.document) throw new Error('No document was supplied to the renderer.');

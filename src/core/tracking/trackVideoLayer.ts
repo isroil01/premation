@@ -22,6 +22,34 @@
  * its GOP cache absorbs the sequential access and memory stays flat on long
  * clips. Luma extraction goes through ONE reused canvas.
  *
+ * ── It decodes the ANALYSIS proxy when there is one ─────────────────────────
+ *
+ * A tracker does not need 4K pixels, and the repo's own table says why it must
+ * not ask for them: a 4K random seek costs 171.8ms against 17.4ms at 540p, and
+ * seek is 97.6% of the cost at 4K. A feature matcher works on a downsampled
+ * pyramid; AE's does, and this app's auto-reframe has analysed at 160px wide
+ * since it was written.
+ *
+ * This used to read the ORIGINAL unconditionally, with a comment arguing that a
+ * quarter-resolution tracker returning quarter-precision positions would be the
+ * "proxy silently in use" bug again. The premise is right and the conclusion did
+ * not follow: positions are reported in the DISPLAY grid, and the display↔coded
+ * conversion this module already owns (`toCodedX`/`toCodedY`) is exactly the
+ * factor between them. Decoding a 960px stand-in changes `codedWidth`, and every
+ * number in and out goes through that same conversion — so precision is a
+ * property of the MATCHER, which refines sub-pixel, not of the file it read.
+ *
+ * What would have made the old comment true is measuring in one grid and
+ * reporting in another. That is precisely what the window sizes did: `points`
+ * were converted and `featureHalf`/`searchHalf` were not, which was invisible
+ * while coded == display and would have made every window four times too large
+ * on a proxy. They are converted now, and pinned by test.
+ *
+ * Falls back analysis → viewport → original (`resolveMediaSrc`), because an
+ * analysis walk cares about decode cost and nothing else: a 1920px stand-in
+ * beats a 3840px one when no 960px one exists. Slower than it could be always
+ * beats wrong — `proxyManager`'s failure philosophy, unchanged.
+ *
  * Two entry points share all of that through `openLayerFrames`:
  * `trackVideoLayerPoints` (explicit points, playhead onwards — the classic
  * Track Motion panel) and `autoTrackVideoLayer` (one click: pick the feature,
@@ -31,17 +59,23 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { useAssetStore } from '@stores/assetStore';
+import { planAnalysisDecode, type AnalysisPlan } from './analysisTier';
+import {
+  isLocalBlobRef,
+  resolveLocalBlobObjectUrl,
+  releaseLocalBlobObjectUrl,
+} from '@core/rendering/localBlobSource';
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
-import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
-import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
+import type { DemuxedVideo } from '@core/video/mp4Demuxer';
+import { demuxFile } from '@core/video/demuxClient';
 import { ExactVideoSource, SequentialFrameReader, webCodecsAvailable } from '@core/video/exactVideoSource';
 import type { VideoFrameIndex } from '@core/video/frameIndex';
 import type { LumaPlane } from './patchMatch';
 import { lumaFromDecodedFrame, makeCanvasLumaReader } from './lumaExtract';
 import { trackPoints, type TrackSample } from './tracker';
-import { sourceDisplaySize } from './trackerSource';
 import { createReverseFrameWalk } from './reverseFrameWalk';
 import { runAutoTrack, type TrackPlan } from './autoTrack';
+import { yieldToUi, ANALYSIS_YIELD_EVERY } from '@core/loading/yieldToUi';
 
 export interface CompTrackSample {
   /** Comp seconds — where the playhead is when this sample applies. */
@@ -124,6 +158,10 @@ interface LayerFrames {
   planeBytes: number;
   /** Presentation index of the keyframe starting `index`'s GOP. */
   keyframeAtOrBefore: (index: number) => number;
+  /** Which tier actually served, for diagnostics and tests. Typed from the
+   *  plan rather than restated, so this file names no tier of its own — the
+   *  guard in `proxyExport.test.ts` requires exactly one module to. */
+  servedTier: AnalysisPlan['tier'];
   close: () => void;
 }
 
@@ -157,14 +195,23 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
     : undefined;
   if (!asset || asset.type !== 'video') throw new Error('Layer has no video source.');
 
-  // Always the ORIGINAL file, never the proxy: a proxy is quarter-resolution,
-  // and a tracker that silently returns quarter-precision positions while the
-  // proxy switch is on is the "proxy silently in use" bug all over again.
-  const res = await fetch(asset.src);
+  // Which file to decode, and the grid to report in — one decision, shared with
+  // the stabilizer, because the two got it subtly differently the first time.
+  // See `analysisTier` for why an unknown display grid forbids a stand-in.
+  const plan = planAnalysisDecode(nodeId, asset);
+  const src = plan.src;
+  const servedTier: LayerFrames['servedTier'] = plan.tier;
+  // A `motion-blob:` ref is a bundle reference, not a URL — fetching one throws.
+  // Retained for the life of this walk and released with the source.
+  const holder = `track:${nodeId}`;
+  const url = isLocalBlobRef(src) ? await resolveLocalBlobObjectUrl(src, holder) : src;
+  if (!url) throw new Error('The footage for this layer could not be resolved.');
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   const buf = await res.arrayBuffer();
-  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  // Off the main thread when one is available (see demuxClient). `buf` is
+  // TRANSFERRED on that path and must not be read after this.
+  const demuxed = await demuxFile(buf);
   const source = new ExactVideoSource(demuxed);
 
   // prefer-software: the tracker reads EVERY pixel back to the CPU, and a
@@ -191,7 +238,13 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
 
   // Display grid (what requests and samples speak) ↔ coded grid (what the
   // decoder hands the matcher). See trackerSource.ts.
-  const display = sourceDisplaySize(nodeId) ?? {
+  //
+  // The fallback is only ever reached when `plan.display` is null, and that is
+  // exactly the case in which `planAnalysisDecode` refused a stand-in — so
+  // "the decoded size" and "the source's size" are the same thing here. Reading
+  // the decoded size WITHOUT that guarantee was the trap: it would have made
+  // the conversion ratio 1 on a proxy and reported every sample in proxy pixels.
+  const display = plan.display ?? {
     width: demuxed.codedWidth,
     height: demuxed.codedHeight,
   };
@@ -214,8 +267,25 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
     },
     planeBytes: demuxed.codedWidth * demuxed.codedHeight,
     keyframeAtOrBefore: keyframeLookup(source.index),
-    close: () => source.close(),
+    servedTier,
+    close: () => {
+      source.close();
+      releaseLocalBlobObjectUrl(src, holder);
+    },
   };
+}
+
+/**
+ * Display px → decoded px for a scalar LENGTH (a window half-size, a radius).
+ *
+ * The inverse of `displayPlan`'s `toDisplayLength`, and the same reasoning:
+ * anamorphic footage stretches the grid in x only, so one number cannot be
+ * right for both axes and the geometric mean is the least wrong one — exactly
+ * the per-axis scale whenever the pixels are square, which is every codec path
+ * but anamorphic. Coordinates still convert per axis; only lengths use this.
+ */
+function toCodedLength(frames: LayerFrames): number {
+  return Math.sqrt(frames.toCodedX * frames.toCodedY);
 }
 
 /** Comp frames in `[startFrame..endFrame]` paired with their source indices. */
@@ -292,8 +362,17 @@ export async function trackVideoLayerPoints(req: MultiVideoTrackRequest): Promis
         fromFrame: srcFrom,
         toFrame: srcTo,
         points: req.points.map((p) => ({ x: p.x * frames.toCodedX, y: p.y * frames.toCodedY })),
-        featureHalf: req.featureHalf,
-        searchHalf: req.searchHalf,
+        // Converted, like the points. These are DISPLAY px in the request and
+        // the matcher wants decoded px — a distinction that was invisible while
+        // the two grids matched and becomes a four-times-too-large search window
+        // the moment a stand-in is decoded. Anamorphic footage had the same bug
+        // on the original, in one axis, forever.
+        //
+        // By the geometric mean, which is the convention `displayPlan` already
+        // established for a scalar LENGTH and states the reason for: one number
+        // cannot be right for both axes, and the mean preserves area.
+        featureHalf: req.featureHalf * toCodedLength(frames),
+        searchHalf: req.searchHalf * toCodedLength(frames),
         onProgress: (done, total) => req.onProgress?.(done / total),
       });
     } finally {
@@ -337,10 +416,37 @@ function openWalk(
   from: number,
   to: number,
 ): { frameAt: (index: number) => Promise<LumaPlane>; close: () => void } {
+  /*
+    Hand the thread back every few frames.
+
+    The walk is full of `await`s and none of them yields: awaiting an
+    already-decoded frame queues a MICROTASK, and microtasks run to exhaustion
+    before the browser gets to paint. So a walk that looks asynchronous occupies
+    the main thread from the first frame to the last, which is what "tracking
+    freezes the UI" actually was.
+
+    The analysis tier is what made this affordable rather than a rewrite:
+    measured, the matcher costs ~53ms per frame per point on a 4K original and
+    ~1.6ms on the 960x540 analysis proxy. At 4K, 300 frames is ~16 seconds of
+    solid occupancy and no yield rate rescues it; at the analysis tier it is
+    ~0.5s, and yielding every few frames turns that into a walk the user can
+    cancel, scrub during, and watch progress on.
+  */
+  let sinceYield = 0;
+  const paced = async <T>(read: () => Promise<T>): Promise<T> => {
+    if (++sinceYield >= ANALYSIS_YIELD_EVERY) {
+      sinceYield = 0;
+      // BEFORE the read, never while holding a frame: `SequentialFrameReader`
+      // closes the previous frame on the next request, and its indices must be
+      // non-decreasing. Yielding here touches neither contract.
+      await yieldToUi();
+    }
+    return read();
+  };
   if (to >= from) {
     const reader = new SequentialFrameReader(frames.demuxed, from, to, undefined, frames.decoderOpts);
     return {
-      frameAt: async (index) => frames.toLuma(await reader.frameAt(index)),
+      frameAt: (index) => paced(async () => frames.toLuma(await reader.frameAt(index))),
       close: () => reader.close(),
     };
   }
@@ -352,7 +458,9 @@ function openWalk(
     readAscending: async (lo, hi, emit) => {
       const reader = new SequentialFrameReader(frames.demuxed, lo, hi, undefined, frames.decoderOpts);
       try {
-        for (let i = lo; i <= hi; i++) emit(i, await frames.toLuma(await reader.frameAt(i)));
+        for (let i = lo; i <= hi; i++) {
+          emit(i, await paced(async () => frames.toLuma(await reader.frameAt(i))));
+        }
       } finally {
         reader.close();
       }

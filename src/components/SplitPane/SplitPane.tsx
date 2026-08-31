@@ -11,9 +11,28 @@
  *   - "vertical"   → split is a horizontal line; top/bottom panes, `size` is height of first pane
  *
  * Persistence: pass `storageKey` to remember size in localStorage.
+ *
+ * ## Why a drag does not re-render this component
+ *
+ * A pointer device reports far faster than the screen refreshes — a 1000 Hz
+ * mouse lands ~16 `pointermove` events inside a single 60 Hz frame. Every one
+ * of them used to run `setInternal` + `onResize`, and `onResize` is wired to
+ * the layout store, so ONE painted frame of dragging cost a dozen full
+ * re-renders of the sidebar, the inspector and the viewport. The rAF throttle
+ * meant to prevent exactly that never armed itself: it stored the handle
+ * behind `if (rafId.current !== null)`, which is false by construction inside
+ * the `=== null` branch it lived in, so the latch stayed null forever and
+ * every move scheduled its own frame.
+ *
+ * The drag is imperative now. The coalescer really coalesces — at most one
+ * update per animation frame — and that update writes the pane size straight
+ * to the DOM node instead of through React state. React is told once, on
+ * pointer-up. `onResize` still fires per frame for callers that want to follow
+ * the drag, but a consumer that only needs the final value should listen to
+ * `onResizeEnd` and leave its store alone until then.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { cn } from '@utils/cn';
 import { clamp } from '@utils/lang';
 import { useUIStore } from '@stores/uiStore';
@@ -29,7 +48,7 @@ export interface SplitPaneProps {
   maxSize: number;
   /** Optional controlled size. */
   size?: number;
-  /** Notified continuously during drag. */
+  /** Notified during drag, at most once per animation frame. */
   onResize?: (size: number) => void;
   /** Notified when drag ends. */
   onResizeEnd?: (size: number) => void;
@@ -83,11 +102,29 @@ export function SplitPane({
 }: SplitPaneProps): JSX.Element {
   const [internal, setInternal] = useState<number>(() => readPersisted(storageKey, defaultSize));
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const firstPaneRef = useRef<HTMLDivElement | null>(null);
+  const lastPaneRef = useRef<HTMLDivElement | null>(null);
+  const separatorRef = useRef<HTMLDivElement | null>(null);
   const dragging = useRef(false);
   const startPos = useRef(0);
   const startSize = useRef(0);
   const latestPos = useRef(0);
   const rafId = useRef<number | null>(null);
+  /**
+   * The coalescer's latch, kept SEPARATE from the handle.
+   *
+   * Latching on `rafId` alone is not sound: a rAF implementation free to run
+   * the callback before returning (jsdom's, under a synchronous test mock)
+   * lets the callback null the handle first and the assignment re-set it
+   * afterwards — the latch then sticks closed and the drag freezes on its
+   * first frame. The flag is written before the call and cleared inside the
+   * callback, so neither order can strand it.
+   */
+  const framePending = useRef(false);
+  /** Size the live drag is painting; null when no drag is in flight. */
+  const dragSize = useRef<number | null>(null);
+  /** Detaches this drag's window listeners. Held so an unmount can call it. */
+  const detachRef = useRef<(() => void) | null>(null);
 
   const current = (size ?? internal);
   // When the fixed pane is the last one, dragging the splitter toward it
@@ -95,8 +132,35 @@ export function SplitPane({
   const sign = primary === 'last' ? -1 : 1;
 
   // Keep latest callbacks and options in a ref so event listeners don't rebind or abort during drag
-  const propsRef = useRef({ onResize, onResizeEnd, minSize, maxSize, sign, direction, storageKey });
-  propsRef.current = { onResize, onResizeEnd, minSize, maxSize, sign, direction, storageKey };
+  const propsRef = useRef({ onResize, onResizeEnd, minSize, maxSize, sign, direction, storageKey, primary });
+  propsRef.current = { onResize, onResizeEnd, minSize, maxSize, sign, direction, storageKey, primary };
+
+  /**
+   * Paint a size without going through React.
+   *
+   * Sets exactly the properties `fixedStyle` sets below, so the one render
+   * that does land (on pointer-up) writes the same values that are already
+   * there and the pane never flashes back through a stale width.
+   */
+  const paintSize = useCallback((px: number): void => {
+    const { direction: dir, primary: prim } = propsRef.current;
+    const el = prim === 'last' ? lastPaneRef.current : firstPaneRef.current;
+    if (el) {
+      const v = px + 'px';
+      if (dir === 'horizontal') {
+        el.style.width = v;
+        el.style.minWidth = v;
+        el.style.maxWidth = v;
+      } else {
+        el.style.height = v;
+        el.style.minHeight = v;
+        el.style.maxHeight = v;
+      }
+    }
+    // The separator is the accessible control for this size — keep it truthful
+    // mid-drag even though React is not re-rendering it.
+    separatorRef.current?.setAttribute('aria-valuenow', String(Math.round(px)));
+  }, []);
 
   const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 && e.pointerType === 'mouse') return;
@@ -106,6 +170,7 @@ export function SplitPane({
     startPos.current = direction === 'horizontal' ? e.clientX : e.clientY;
     latestPos.current = startPos.current;
     startSize.current = current;
+    dragSize.current = current;
 
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -117,28 +182,43 @@ export function SplitPane({
     document.body.style.cursor = direction === 'horizontal' ? 'col-resize' : 'row-resize';
     document.body.style.userSelect = 'none';
 
+    /** Pointer position → clamped pane size. */
+    const sizeFromPos = (pos: number): number => {
+      const { minSize: min, maxSize: max, sign: s } = propsRef.current;
+      return clamp(startSize.current + s * (pos - startPos.current), min, max);
+    };
+
     const handlePointerMove = (ev: PointerEvent): void => {
       if (!dragging.current) return;
       const { direction: dir } = propsRef.current;
       latestPos.current = dir === 'horizontal' ? ev.clientX : ev.clientY;
 
-      if (rafId.current === null) {
-        const id = requestAnimationFrame(() => {
-          rafId.current = null;
-          if (!dragging.current) return;
-          const { minSize: min, maxSize: max, sign: s, onResize: resizeCb } = propsRef.current;
-          const delta = latestPos.current - startPos.current;
-          const next = clamp(startSize.current + s * delta, min, max);
-          setInternal(next);
-          resizeCb?.(next);
-        });
-        if (rafId.current !== null) {
-          rafId.current = id;
-        }
-      }
+      // One update per frame no matter how fast the pointer reports.
+      if (framePending.current) return;
+      framePending.current = true;
+      rafId.current = requestAnimationFrame(() => {
+        framePending.current = false;
+        rafId.current = null;
+        if (!dragging.current) return;
+        const next = sizeFromPos(latestPos.current);
+        dragSize.current = next;
+        paintSize(next);
+        propsRef.current.onResize?.(next);
+      });
     };
 
-    const handlePointerUp = (ev: PointerEvent): void => {
+    const detach = (): void => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      detachRef.current = null;
+    };
+
+    // A declaration, so `detach` above can name it before it is defined.
+    function handlePointerUp(ev: PointerEvent): void {
+      // Unconditional, and first: the listeners must come off even on the
+      // paths that bail out below, or the drag closure outlives the gesture.
+      detach();
       if (!dragging.current) return;
       dragging.current = false;
 
@@ -146,38 +226,55 @@ export function SplitPane({
         cancelAnimationFrame(rafId.current);
         rafId.current = null;
       }
+      framePending.current = false;
 
       useUIStore.getState().setDragging(false);
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
 
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-      window.removeEventListener('pointercancel', handlePointerUp);
-
-      const { minSize: min, maxSize: max, sign: s, direction: dir, storageKey: key, onResizeEnd: endCb } = propsRef.current;
-      const pos = dir === 'horizontal' ? ev.clientX : ev.clientY;
-      const delta = pos - startPos.current;
-      const next = clamp(startSize.current + s * delta, min, max);
+      const { direction: dir, storageKey: key, onResizeEnd: endCb } = propsRef.current;
+      const next = sizeFromPos(dir === 'horizontal' ? ev.clientX : ev.clientY);
+      dragSize.current = null;
+      paintSize(next);
+      // The single React update of the entire gesture.
       setInternal(next);
       writePersisted(key, next);
       endCb?.(next);
-    };
+    }
 
+    detachRef.current = detach;
     window.addEventListener('pointermove', handlePointerMove);
     window.addEventListener('pointerup', handlePointerUp);
     window.addEventListener('pointercancel', handlePointerUp);
-  }, [current, direction]);
+  }, [current, direction, paintSize]);
 
-  // Clean up global cursor, drag flag, and rAF if component unmounts mid-drag
+  /**
+   * Re-assert the painted size after any render that lands mid-drag.
+   *
+   * A parent may re-render for reasons of its own while the splitter is held,
+   * and React would then write its `size` prop — deliberately stale, since the
+   * drag no longer commits per frame — back over the painted width.
+   */
+  useLayoutEffect(() => {
+    if (dragging.current && dragSize.current !== null) paintSize(dragSize.current);
+  });
+
+  // Clean up global cursor, drag flag, listeners and rAF if we unmount mid-drag
   useEffect(() => {
     return () => {
       if (rafId.current !== null) {
         cancelAnimationFrame(rafId.current);
         rafId.current = null;
       }
+      framePending.current = false;
+      // Unconditional: an unmount used to leave the window listeners attached
+      // (the pointerup handler that removed them returned early once the
+      // cleanup below had cleared `dragging`), so every interrupted drag left
+      // a live pointermove listener and its closure behind for good.
+      detachRef.current?.();
       if (dragging.current) {
         dragging.current = false;
+        dragSize.current = null;
         useUIStore.getState().setDragging(false);
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
@@ -200,10 +297,11 @@ export function SplitPane({
       data-direction={direction}
       data-collapsed={collapsed || undefined}
     >
-      <div className={cn(styles.pane, styles.first)} style={firstStyle}>
+      <div ref={firstPaneRef} className={cn(styles.pane, styles.first)} style={firstStyle}>
         {children[0]}
       </div>
       <div
+        ref={separatorRef}
         role="separator"
         aria-orientation={isH ? 'vertical' : 'horizontal'}
         aria-valuenow={Math.round(current)}
@@ -240,7 +338,7 @@ export function SplitPane({
           }
         }}
       />
-      <div className={cn(styles.pane, styles.last)} style={lastStyle}>
+      <div ref={lastPaneRef} className={cn(styles.pane, styles.last)} style={lastStyle}>
         {children[1]}
       </div>
     </div>

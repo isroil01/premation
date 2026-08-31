@@ -15,10 +15,13 @@ import { ApiKeysSection } from '@layout/Settings/ApiKeysSection';
 import { BillingSection } from '@layout/Settings/BillingSection';
 import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { billingEnabled } from '@core/config/edition';
+import { ColorPicker } from '@components/ColorPicker';
+import { cn } from '@utils/cn';
 import {
   SIZE_PRESETS, SIZE_GROUPS, FPS_PRESETS, DURATION_PRESETS,
-  MIN_DIMENSION, MAX_DIMENSION, MIN_FPS, MAX_FPS, MIN_DURATION, MAX_DURATION,
-  clampDimension, clampFps, clampDuration, describeSize, describeDuration, findSizePreset,
+  MIN_DIMENSION, MAX_DIMENSION, MIN_DURATION, MAX_DURATION,
+  clampDimension, clampFps, clampDuration, describeSize, describeDuration,
+  aspectRatioLabel,
 } from '@core/composition/presets';
 import { useAssetStore, type AssetFolder } from '@stores/assetStore';
 import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
@@ -266,6 +269,17 @@ export function DashboardPage(): JSX.Element {
   // `pendingFootage` to the editor, which imports it and drops it in at full
   // frame.
   const [setupFootage, setSetupFootage] = useState<File | null>(null);
+  const [presetCategory, setPresetCategory] = useState<string>('All');
+
+  const swapDimensions = (): void => {
+    setSetupWidth(setupHeight);
+    setSetupHeight(setupWidth);
+  };
+
+  const filteredPresets = useMemo(() => {
+    if (presetCategory === 'All') return SIZE_PRESETS;
+    return SIZE_PRESETS.filter((p) => p.group === presetCategory);
+  }, [presetCategory]);
 
   const chooseSetupFootage = (file: File): void => {
     setSetupFootage(file);
@@ -328,6 +342,7 @@ export function DashboardPage(): JSX.Element {
     setSetupBg('#101014');
     setSetupTransparent(false);
     setSetupFootage(null);
+    setPresetCategory('All');
     setSetupModalOpen(true);
   };
 
@@ -1684,227 +1699,317 @@ export function DashboardPage(): JSX.Element {
       <Modal
         open={setupModalOpen}
         onClose={() => !creating && setSetupModalOpen(false)}
-        title="Workspace Setup"
-        description="Customize composition dimensions, frame rate & canvas settings before opening editor"
-        size="md"
+        title="Create New Project"
+        description="Set up your composition canvas dimensions, frame rate & timeline length"
+        size="lg"
         persistent={creating}
       >
         <form className={styles.modalForm} onSubmit={onLaunchWorkspace}>
-          {/* The two ways in, said up front — AE's blank comp vs new-comp-from-
-              footage, as a visible choice instead of a buried context menu. */}
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Start from</label>
-            <div className={styles.startFromGrid}>
+          {/* Source Selector: Blank Composition vs Import Video */}
+          <div className={styles.setupSourceRow}>
+            <button
+              type="button"
+              className={cn(styles.setupSourceCard, !setupFootage && styles.setupSourceCardActive)}
+              onClick={() => setSetupFootage(null)}
+            >
+              <div className={styles.setupSourceIcon}>
+                <Icon name="plus" size="md" />
+              </div>
+              <div className={styles.setupSourceText}>
+                <span className={styles.setupSourceTitle}>Blank Composition</span>
+                <span className={styles.setupSourceSub}>Start with customized canvas and presets</span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              className={cn(styles.setupSourceCard, setupFootage && styles.setupSourceCardActive)}
+              onClick={() => {
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = 'video/*,.mp4,.mov,.webm,.m4v,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv';
+                input.onchange = () => {
+                  const f = input.files?.[0];
+                  if (f) chooseSetupFootage(f);
+                };
+                input.click();
+              }}
+            >
+              <div className={styles.setupSourceIcon}>
+                <Icon name="media" size="md" />
+              </div>
+              <div className={styles.setupSourceText}>
+                <span className={styles.setupSourceTitle}>
+                  {setupFootage ? 'Change Video Clip…' : 'Import Video Footage…'}
+                </span>
+                <span className={styles.setupSourceSub}>Auto-match dimensions & length from video</span>
+              </div>
+            </button>
+          </div>
+
+          {setupFootage && (
+            <div className={styles.footageDetectedBar}>
+              <Icon name="check" size="sm" className={styles.footageCheckIcon} />
+              <div className={styles.footageInfo}>
+                <span className={styles.footageName}>{setupFootage.name}</span>
+                <span className={styles.footageMeta}>
+                  Detected: {setupWidth}×{setupHeight} px · {describeDuration(setupDuration)} · Will be placed at full frame
+                </span>
+              </div>
               <button
                 type="button"
-                className={setupFootage ? styles.btnSecondary : styles.btnPrimary}
+                className={styles.clearFootageBtn}
                 onClick={() => setSetupFootage(null)}
-                title="An empty composition at the settings below"
+                title="Remove footage and use blank composition"
               >
-                <Icon name="plus" size="sm" />
-                <span>Blank composition</span>
-              </button>
-              <button
-                type="button"
-                className={setupFootage ? styles.btnPrimary : styles.btnSecondary}
-                title="Pick a video — the composition takes its size and length, and the clip lands at full frame"
-                onClick={() => {
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.accept = 'video/*,.mp4,.mov,.webm,.m4v,.mxf,.avi,.mts,.m2ts,.mpg,.wmv,.mkv';
-                  input.onchange = () => {
-                    const f = input.files?.[0];
-                    if (f) chooseSetupFootage(f);
-                  };
-                  input.click();
-                }}
-              >
-                <Icon name="image" size="sm" />
-                <span>{setupFootage ? 'Change video…' : 'From a video…'}</span>
+                <Icon name="close" size="sm" />
               </button>
             </div>
-            {setupFootage && (
-              <div className={styles.fieldNote}>
-                Starting from <strong>{setupFootage.name}</strong> — settings below were
-                read from the clip and stay editable. It will be imported at full frame.
+          )}
+
+          {/* Two-Column Studio Layout */}
+          <div className={styles.setupColumns}>
+            {/* Left Column: Form Controls */}
+            <div className={styles.setupLeftCol}>
+              {/* Project Name */}
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel}>Project Name</label>
+                <input
+                  type="text"
+                  className={styles.formInput}
+                  value={setupTitle}
+                  onChange={(e) => setSetupTitle(e.target.value)}
+                  placeholder="e.g. Cinematic Motion Graphics Promo"
+                  required
+                />
               </div>
-            )}
-          </div>
 
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Project / Composition Name</label>
-            <input
-              type="text"
-              className={styles.formInput}
-              value={setupTitle}
-              onChange={(e) => setSetupTitle(e.target.value)}
-              placeholder="e.g. Cinematic Promo Video"
-              required
-            />
-          </div>
+              {/* Preset Category Segmented Tabs & Preset Cards Grid */}
+              <div className={styles.formGroup}>
+                <div className={styles.presetHeaderRow}>
+                  <label className={styles.formLabel}>Format Presets</label>
+                  <div className={styles.categoryPills}>
+                    {['All', ...SIZE_GROUPS].map((cat) => (
+                      <button
+                        key={cat}
+                        type="button"
+                        className={cn(styles.categoryPill, presetCategory === cat && styles.categoryPillActive)}
+                        onClick={() => setPresetCategory(cat)}
+                      >
+                        {cat}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-          {/* Presets grouped by destination — people pick "Instagram Reel",
-              not "1080×1920". Every value stays editable below. */}
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Preset</label>
-            {SIZE_GROUPS.map((group) => (
-              <div key={group} style={{ marginBottom: 8 }}>
-                <div className={styles.presetGroupLabel}>{group}</div>
-                <div className={styles.presetPills}>
-                  {SIZE_PRESETS.filter((p) => p.group === group).map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      title={`${p.width}×${p.height}${p.note ? ` — ${p.note}` : ''}`}
-                      className={`${styles.presetPill} ${setupWidth === p.width && setupHeight === p.height ? styles.presetPillActive : ''}`}
-                      onClick={() => { setSetupWidth(p.width); setSetupHeight(p.height); }}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+                <div className={styles.presetCardsGrid}>
+                  {filteredPresets.map((p) => {
+                    const isSelected = setupWidth === p.width && setupHeight === p.height;
+                    const isPortrait = p.height > p.width;
+                    const isSquare = p.height === p.width;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        className={cn(styles.presetCard, isSelected && styles.presetCardActive)}
+                        onClick={() => { setSetupWidth(p.width); setSetupHeight(p.height); }}
+                        title={`${p.label} (${p.width}×${p.height})`}
+                      >
+                        <div className={styles.presetCardThumbWrap}>
+                          <div
+                            className={cn(
+                              styles.aspectThumb,
+                              isPortrait ? styles.aspectThumbPortrait : isSquare ? styles.aspectThumbSquare : styles.aspectThumbLandscape
+                            )}
+                          />
+                        </div>
+                        <div className={styles.presetCardDetails}>
+                          <span className={styles.presetCardTitle}>{p.label}</span>
+                          <span className={styles.presetCardDims}>
+                            {p.width} × {p.height} · {aspectRatioLabel(p.width, p.height)}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            ))}
-          </div>
 
-          <div className={styles.formRow}>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Width (px)</label>
-              <input
-                type="number"
-                className={styles.formInput}
-                value={setupWidth}
-                onChange={(e) => setSetupWidth(Number(e.target.value))}
-                onBlur={(e) => setSetupWidth(clampDimension(Number(e.target.value)))}
-                min={MIN_DIMENSION}
-                max={MAX_DIMENSION}
-                required
-              />
-            </div>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Height (px)</label>
-              <input
-                type="number"
-                className={styles.formInput}
-                value={setupHeight}
-                onChange={(e) => setSetupHeight(Number(e.target.value))}
-                onBlur={(e) => setSetupHeight(clampDimension(Number(e.target.value)))}
-                min={MIN_DIMENSION}
-                max={MAX_DIMENSION}
-                required
-              />
-            </div>
-          </div>
-          <div className={styles.fieldNote}>
-            {describeSize(setupWidth, setupHeight)}
-            {findSizePreset(setupWidth, setupHeight)?.note ? ` · ${findSizePreset(setupWidth, setupHeight)!.note}` : ' · custom size'}
-          </div>
+              {/* Dimensions Row (Width, Height, Swap Button) */}
+              <div className={styles.dimensionSection}>
+                <div className={styles.dimInputGroup}>
+                  <label className={styles.formLabel}>Width (px)</label>
+                  <input
+                    type="number"
+                    className={styles.formInput}
+                    value={setupWidth}
+                    onChange={(e) => setSetupWidth(Number(e.target.value))}
+                    onBlur={(e) => setSetupWidth(clampDimension(Number(e.target.value)))}
+                    min={MIN_DIMENSION}
+                    max={MAX_DIMENSION}
+                    required
+                  />
+                </div>
 
-          <div className={styles.formRow}>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Frame Rate (fps)</label>
-              <input
-                type="number"
-                className={styles.formInput}
-                list="fps-presets"
-                value={setupFps}
-                step="0.001"
-                min={MIN_FPS}
-                max={MAX_FPS}
-                onChange={(e) => setSetupFps(Number(e.target.value))}
-                onBlur={(e) => setSetupFps(clampFps(Number(e.target.value)))}
-                required
-              />
-              <datalist id="fps-presets">
-                {FPS_PRESETS.map((f) => (
-                  <option key={f.value} value={f.value}>{f.label}</option>
+                <button
+                  type="button"
+                  className={styles.swapDimensionsBtn}
+                  onClick={swapDimensions}
+                  title="Swap width and height (Rotate Landscape / Portrait)"
+                >
+                  <Icon name="refresh" size="sm" />
+                </button>
+
+                <div className={styles.dimInputGroup}>
+                  <label className={styles.formLabel}>Height (px)</label>
+                  <input
+                    type="number"
+                    className={styles.formInput}
+                    value={setupHeight}
+                    onChange={(e) => setSetupHeight(Number(e.target.value))}
+                    onBlur={(e) => setSetupHeight(clampDimension(Number(e.target.value)))}
+                    min={MIN_DIMENSION}
+                    max={MAX_DIMENSION}
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Frame Rate & Duration */}
+              <div className={styles.formRow}>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel}>Frame Rate</label>
+                  <select
+                    className={styles.formSelect}
+                    value={setupFps}
+                    onChange={(e) => setSetupFps(Number(e.target.value))}
+                  >
+                    {FPS_PRESETS.map((f) => (
+                      <option key={f.value} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel}>Duration (seconds)</label>
+                  <input
+                    type="number"
+                    className={styles.formInput}
+                    value={setupDuration}
+                    step="0.1"
+                    min={MIN_DURATION}
+                    max={MAX_DURATION}
+                    onChange={(e) => setSetupDuration(Number(e.target.value))}
+                    onBlur={(e) => setSetupDuration(clampDuration(Number(e.target.value)))}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className={styles.durationChipsRow}>
+                {DURATION_PRESETS.map((d) => (
+                  <button
+                    key={d.seconds}
+                    type="button"
+                    className={cn(styles.durationChip, setupDuration === d.seconds && styles.durationChipActive)}
+                    onClick={() => setSetupDuration(d.seconds)}
+                  >
+                    {d.label}
+                  </button>
                 ))}
-              </datalist>
+              </div>
+
+              {/* Canvas Background Color & Transparency */}
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel}>Canvas Background</label>
+                <div className={styles.colorConfigRow}>
+                  <div className={styles.swatchGroup}>
+                    {[
+                      { name: 'Dark Slate', hex: '#101014' },
+                      { name: 'Pure Black', hex: '#000000' },
+                      { name: 'Pure White', hex: '#ffffff' },
+                      { name: 'Chroma Green', hex: '#00ff00' },
+                    ].map((sw) => (
+                      <button
+                        key={sw.hex}
+                        type="button"
+                        className={cn(
+                          styles.colorSwatchBtn,
+                          !setupTransparent && setupBg.toLowerCase() === sw.hex.toLowerCase() && styles.colorSwatchBtnActive
+                        )}
+                        style={{ background: sw.hex }}
+                        title={sw.name}
+                        onClick={() => { setSetupBg(sw.hex); setSetupTransparent(false); }}
+                      />
+                    ))}
+                  </div>
+
+                  <ColorPicker
+                    value={setupBg}
+                    onChange={(c) => { setSetupBg(c); setSetupTransparent(false); }}
+                    aria-label="Canvas background color"
+                  />
+
+                  <label className={styles.transparentSwitchWrap}>
+                    <Checkbox
+                      checked={setupTransparent}
+                      onChange={(e) => setSetupTransparent(e.target.checked)}
+                    />
+                    <span>Transparent</span>
+                  </label>
+                </div>
+              </div>
             </div>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>Duration (seconds)</label>
-              <input
-                type="number"
-                className={styles.formInput}
-                value={setupDuration}
-                step="0.1"
-                min={MIN_DURATION}
-                max={MAX_DURATION}
-                onChange={(e) => setSetupDuration(Number(e.target.value))}
-                onBlur={(e) => setSetupDuration(clampDuration(Number(e.target.value)))}
-                required
-              />
+
+            {/* Right Column: Live Interactive Canvas Preview & Specs */}
+            <div className={styles.setupRightCol}>
+              <div className={styles.previewCard}>
+                <div className={styles.previewCardHeader}>
+                  <span className={styles.previewCardTitle}>Canvas Preview</span>
+                  <span className={styles.previewAspectTag}>{aspectRatioLabel(setupWidth, setupHeight)}</span>
+                </div>
+
+                <div className={styles.canvasViewportContainer}>
+                  <div
+                    className={cn(styles.canvasScaledFrame, setupTransparent && styles.canvasFrameTransparent)}
+                    style={{
+                      aspectRatio: `${setupWidth} / ${setupHeight}`,
+                      backgroundColor: setupTransparent ? 'transparent' : setupBg,
+                    }}
+                  >
+                    <div className={styles.canvasOverlayBadge}>
+                      {setupWidth} × {setupHeight}
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.specList}>
+                  <div className={styles.specRow}>
+                    <span className={styles.specLabel}>Resolution</span>
+                    <span className={styles.specValue}>{setupWidth} × {setupHeight} px</span>
+                  </div>
+                  <div className={styles.specRow}>
+                    <span className={styles.specLabel}>Aspect Ratio</span>
+                    <span className={styles.specValue}>{aspectRatioLabel(setupWidth, setupHeight)} ({setupWidth > setupHeight ? 'Landscape' : setupWidth < setupHeight ? 'Portrait' : 'Square'})</span>
+                  </div>
+                  <div className={styles.specRow}>
+                    <span className={styles.specLabel}>Frame Rate</span>
+                    <span className={styles.specValue}>{setupFps} fps</span>
+                  </div>
+                  <div className={styles.specRow}>
+                    <span className={styles.specLabel}>Total Frames</span>
+                    <span className={styles.specValue}>{Math.round(setupDuration * setupFps)} frames</span>
+                  </div>
+                  <div className={styles.specRow}>
+                    <span className={styles.specLabel}>Timeline Length</span>
+                    <span className={styles.specValue}>{describeDuration(setupDuration)}</span>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-          <div className={styles.presetPills} style={{ marginTop: -4 }}>
-            {DURATION_PRESETS.map((d) => (
-              <button
-                key={d.seconds}
-                type="button"
-                className={`${styles.presetPill} ${setupDuration === d.seconds ? styles.presetPillActive : ''}`}
-                onClick={() => setSetupDuration(d.seconds)}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
-          <div className={styles.fieldNote}>
-            Timeline length: {describeDuration(setupDuration)} · {Math.round(setupDuration * setupFps)} frames
           </div>
 
-          <div className={styles.formGroup}>
-            <label className={styles.formLabel}>Background Color</label>
-            <div className={styles.colorRow}>
-              <button
-                type="button"
-                className={`${styles.colorSwatchBtn} ${!setupTransparent && setupBg === '#101014' ? styles.colorSwatchBtnActive : ''}`}
-                style={{ background: '#101014' }}
-                title="Dark Slate (Default)"
-                onClick={() => { setSetupBg('#101014'); setSetupTransparent(false); }}
-              />
-              <button
-                type="button"
-                className={`${styles.colorSwatchBtn} ${!setupTransparent && setupBg === '#000000' ? styles.colorSwatchBtnActive : ''}`}
-                style={{ background: '#000000' }}
-                title="Pure Black"
-                onClick={() => { setSetupBg('#000000'); setSetupTransparent(false); }}
-              />
-              <button
-                type="button"
-                className={`${styles.colorSwatchBtn} ${!setupTransparent && setupBg === '#ffffff' ? styles.colorSwatchBtnActive : ''}`}
-                style={{ background: '#ffffff' }}
-                title="Pure White"
-                onClick={() => { setSetupBg('#ffffff'); setSetupTransparent(false); }}
-              />
-              <button
-                type="button"
-                className={`${styles.colorSwatchBtn} ${!setupTransparent && setupBg === '#00ff00' ? styles.colorSwatchBtnActive : ''}`}
-                style={{ background: '#00ff00' }}
-                title="Chroma Green screen"
-                onClick={() => { setSetupBg('#00ff00'); setSetupTransparent(false); }}
-              />
-              <input
-                type="color"
-                value={setupBg}
-                onChange={(e) => { setSetupBg(e.target.value); setSetupTransparent(false); }}
-                style={{ width: 36, height: 26, border: 'none', background: 'transparent', cursor: 'pointer' }}
-                title="Custom Hex Picker"
-              />
-              <input
-                type="text"
-                className={styles.colorHexInput}
-                value={setupBg}
-                onChange={(e) => { setSetupBg(e.target.value); setSetupTransparent(false); }}
-              />
-              <label className={styles.transparentToggle}>
-                <Checkbox
-                  checked={setupTransparent}
-                  onChange={(e) => setSetupTransparent(e.target.checked)}
-                />
-                Transparent canvas
-              </label>
-            </div>
-          </div>
+          {/* Modal Footer */}
           <div className={styles.modalFooter}>
             <Button
               variant="secondary"

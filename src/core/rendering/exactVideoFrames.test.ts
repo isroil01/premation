@@ -145,17 +145,25 @@ describe('ExactVideoFrameCache', () => {
     expect(cache.get('a.mp4', 1 / FPS).state).toBe('frame');
   });
 
-  it('evicts under the byte budget instead of pinning every frame', async () => {
-    // 4x4x4 = 64 bytes per canvas; a 100-byte budget holds one.
+  it('evicts under the EFFECTIVE budget instead of pinning every frame', async () => {
+    // 4x4x4 = 64 bytes per canvas. A 100-byte budget is below the frame-count
+    // floor (`MIN_RESIDENT_FRAMES` = 8), so the effective budget is 8 frames —
+    // see `streamPlanFor`. This assertion used to read `<= 100`, which was the
+    // old flat-constant contract: a budget too small to stream from is exactly
+    // the state the plan exists to make unreachable.
     const stub = stubSource();
     const cache = new ExactVideoFrameCache(100, loaderFor(stub), () => true);
     cache.get('a.mp4', 0);
     await flush();
-    for (let i = 0; i < 4; i++) {
-      cache.get('a.mp4', i / FPS);
+    for (let i = 0; i < 12; i++) {
+      cache.get('a.mp4', (i * 2) / FPS);
       await flush();
     }
-    expect(cache.stats('a.mp4')!.bytes).toBeLessThanOrEqual(100);
+    const stats = cache.stats('a.mp4')!;
+    expect(stats.plan!.budgetBytes).toBe(8 * 64);
+    expect(stats.bytes).toBeLessThanOrEqual(stats.plan!.budgetBytes);
+    // And it really did evict — 12 frames were decoded, 8 fit.
+    expect(stats.frames).toBe(8);
   });
 
   it('exposes inflight work as waits that clear themselves on settle', async () => {

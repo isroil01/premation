@@ -31,7 +31,7 @@ import { WorkspaceViewport, type WorkspaceViewportProps } from '@layout/Workspac
 import { EditorTabs } from '@layout/Tabs/EditorTabs';
 import { PluginDetailTab } from '@layout/Plugins/PluginDetailTab';
 import { Icon } from '@components/Icon';
-import { useLayoutStore } from '@stores/layoutStore';
+import { useLayoutStore, type RegionId } from '@stores/layoutStore';
 import styles from './EditorLayout.module.css';
 
 export interface EditorLayoutProps {
@@ -60,11 +60,32 @@ export function EditorLayout({
   const left = useLayoutStore((s) => s.regions.leftSidebar);
   const right = useLayoutStore((s) => s.regions.rightInspector);
   const bottom = useLayoutStore((s) => s.regions.bottomTimeline);
-  const setLeftSize = useLayoutStore((s) => s.setRegionSize);
-  const setRightSize = useLayoutStore((s) => s.setRegionSize);
-  const setBottomSize = useLayoutStore((s) => s.setRegionSize);
+  // One action, not three aliases of it — every region resizes through it.
+  const setRegionSize = useLayoutStore((s) => s.setRegionSize);
   const externalPanels = useLayoutStore((s) => s.externalPanels);
   const dockPanel = useLayoutStore((s) => s.dockPanel);
+
+  /**
+   * Live resize does NOT go through the store.
+   *
+   * Every region here is a subscriber of this component, so a `setRegionSize`
+   * per frame of a splitter drag re-rendered the sidebar, the inspector and
+   * the whole viewport subtree on every frame the user was dragging — and the
+   * store's persist subscriber ran a JSON.stringify of the layout alongside
+   * each one. None of that is needed to SEE the drag: SplitPane paints the
+   * pane width straight to the DOM while the pointer is down, and the
+   * viewport's own ResizeObserver picks that up. The store is the record of
+   * where the divider ended up, so it is written once, on `onResizeEnd`.
+   *
+   * The exception is the first frame that drags a COLLAPSED region open.
+   * `setRegionSize` is what clears the collapsed flag, and that flag drives a
+   * class name (`sidebar-collapsed-view`) rather than a width — nothing the
+   * imperative paint can express — so the region would stay visually collapsed
+   * under the pointer until release. Once it flips, this stops writing again.
+   */
+  const resizeRegionLive = (region: RegionId, size: number, isCollapsed: boolean): void => {
+    if (isCollapsed) setRegionSize(region, size);
+  };
 
   /**
    * Which edge each dock sits on.
@@ -146,8 +167,8 @@ export function EditorLayout({
       size={left.collapsed ? 44 : left.size}
       collapsed={left.collapsed}
       storageKey="leftSidebar"
-      onResize={(s) => setLeftSize('leftSidebar', s)}
-      onResizeEnd={(s) => setLeftSize('leftSidebar', s)}
+      onResize={(s) => resizeRegionLive('leftSidebar', s, left.collapsed)}
+      onResizeEnd={(s) => setRegionSize('leftSidebar', s)}
     >
       {topRowChildren}
     </SplitPane>
@@ -186,8 +207,8 @@ export function EditorLayout({
       size={bottom.collapsed ? 44 : bottom.size}
       collapsed={bottom.collapsed}
       storageKey="bottomTimeline"
-      onResize={(s) => setBottomSize('bottomTimeline', s)}
-      onResizeEnd={(s) => setBottomSize('bottomTimeline', s)}
+      onResize={(s) => resizeRegionLive('bottomTimeline', s, bottom.collapsed)}
+      onResizeEnd={(s) => setRegionSize('bottomTimeline', s)}
     >
       {mainCenterChildren}
     </SplitPane>
@@ -215,8 +236,8 @@ export function EditorLayout({
           size={right.collapsed ? 44 : right.size}
           collapsed={right.collapsed}
           storageKey="rightInspector"
-          onResize={(s) => setRightSize('rightInspector', s)}
-          onResizeEnd={(s) => setRightSize('rightInspector', s)}
+          onResize={(s) => resizeRegionLive('rightInspector', s, right.collapsed)}
+          onResizeEnd={(s) => setRegionSize('rightInspector', s)}
         >
           {bodyRow}
         </SplitPane>

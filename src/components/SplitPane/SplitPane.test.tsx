@@ -256,6 +256,153 @@ describe('SplitPane Component', () => {
     expect(separator).toHaveAttribute('aria-valuenow', '400');
   });
 
+  /**
+   * The regression this file exists for.
+   *
+   * A pointer reports far faster than the screen refreshes, and `onResize` is
+   * wired to the layout store — so an unthrottled handler re-rendered the whole
+   * editor a dozen times to paint one frame. The rAF coalescer that was meant
+   * to stop that never armed (it stored the handle behind a condition that is
+   * false by construction), and dragging got slower the longer you dragged.
+   */
+  describe('drag coalescing', () => {
+    let frames: FrameRequestCallback[];
+
+    beforeEach(() => {
+      // Override the suite-wide SYNCHRONOUS mock: a coalescer cannot be
+      // observed at all if the callback runs before requestAnimationFrame
+      // returns, which is the one thing a real browser never does.
+      frames = [];
+      jest.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        frames.push(cb);
+        return frames.length;
+      });
+    });
+
+    const flushFrame = (): void => {
+      const due = frames;
+      frames = [];
+      for (const cb of due) cb(performance.now());
+    };
+
+    it('collapses many pointermoves in one frame into a single onResize', () => {
+      const onResize = jest.fn();
+
+      render(
+        <SplitPane
+          direction="horizontal"
+          defaultSize={250}
+          minSize={100}
+          maxSize={500}
+          onResize={onResize}
+        >
+          <div>Left</div>
+          <div>Right</div>
+        </SplitPane>
+      );
+
+      const separator = screen.getByRole('separator');
+      fireEvent.pointerDown(separator, { clientX: 250, clientY: 0, button: 0, pointerId: 1 });
+
+      // Twelve moves before the browser gets a chance to paint.
+      for (let x = 251; x <= 262; x++) {
+        fireEvent(window, new PointerEvent('pointermove', { clientX: x, clientY: 0 }));
+      }
+
+      expect(onResize).not.toHaveBeenCalled();
+      expect(frames).toHaveLength(1);
+
+      flushFrame();
+
+      // One update, carrying the LATEST position — not twelve.
+      expect(onResize).toHaveBeenCalledTimes(1);
+      expect(onResize).toHaveBeenCalledWith(262);
+
+      // The latch reopens for the next frame.
+      fireEvent(window, new PointerEvent('pointermove', { clientX: 270, clientY: 0 }));
+      flushFrame();
+      expect(onResize).toHaveBeenCalledTimes(2);
+      expect(onResize).toHaveBeenLastCalledWith(270);
+    });
+
+    it('paints the pane live while the consumer commits only at drag end', () => {
+      // The arrangement EditorLayout uses: the store hears about the size once,
+      // on release. The pane still has to follow the pointer the whole way.
+      const parentRenders = jest.fn();
+      function Consumer(): JSX.Element {
+        const [size, setSize] = useState(250);
+        parentRenders();
+        return (
+          <SplitPane
+            direction="horizontal"
+            size={size}
+            defaultSize={250}
+            minSize={100}
+            maxSize={500}
+            onResizeEnd={(s) => setSize(s)}
+          >
+            <div>Left</div>
+            <div>Right</div>
+          </SplitPane>
+        );
+      }
+
+      render(<Consumer />);
+      const separator = screen.getByRole('separator');
+      const pane = separator.previousElementSibling as HTMLElement;
+      parentRenders.mockClear();
+
+      fireEvent.pointerDown(separator, { clientX: 250, clientY: 0, button: 0, pointerId: 1 });
+      for (const x of [300, 340, 380]) {
+        fireEvent(window, new PointerEvent('pointermove', { clientX: x, clientY: 0 }));
+        flushFrame();
+      }
+
+      // Three frames of drag, zero renders — and the user saw every one of them.
+      expect(parentRenders).not.toHaveBeenCalled();
+      expect(pane.style.width).toBe('380px');
+      expect(separator).toHaveAttribute('aria-valuenow', '380');
+
+      fireEvent(window, new PointerEvent('pointerup', { clientX: 380, clientY: 0 }));
+
+      // One render commits the gesture, and it agrees with what was painted.
+      expect(parentRenders).toHaveBeenCalledTimes(1);
+      expect(pane.style.width).toBe('380px');
+      expect(separator).toHaveAttribute('aria-valuenow', '380');
+    });
+
+    it('detaches its window listeners when unmounted mid-drag', () => {
+      const onResize = jest.fn();
+      const { unmount } = render(
+        <SplitPane
+          direction="horizontal"
+          defaultSize={250}
+          minSize={100}
+          maxSize={500}
+          onResize={onResize}
+        >
+          <div>Left</div>
+          <div>Right</div>
+        </SplitPane>
+      );
+
+      fireEvent.pointerDown(screen.getByRole('separator'), {
+        clientX: 250, clientY: 0, button: 0, pointerId: 1,
+      });
+
+      const removed = jest.spyOn(window, 'removeEventListener');
+      unmount();
+
+      const kinds = removed.mock.calls.map((c) => c[0]);
+      expect(kinds).toEqual(expect.arrayContaining(['pointermove', 'pointerup', 'pointercancel']));
+
+      // And the detached handler is inert: no frame is scheduled, no callback fires.
+      fireEvent(window, new PointerEvent('pointermove', { clientX: 400, clientY: 0 }));
+      expect(frames).toHaveLength(0);
+      expect(onResize).not.toHaveBeenCalled();
+    });
+  });
+
   it('supports keyboard arrow keys for accessibility', () => {
     function ControlledParent() {
       const [size, setSize] = useState(250);

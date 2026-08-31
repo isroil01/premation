@@ -141,27 +141,10 @@ export function makeNode(kind: SceneKind, name: string): SceneNode {
 }
 
 import { useProjectStore } from '@stores/projectStore';
-import { worldMatrixOf } from './worldTransform';
 import { Matrix } from '@motion/scene';
 
-function getLocalTransformForInsert(id: string) {
-  const node = defaultSceneGraph.getNode(id);
-  if (!node) return null;
-  const t = node.components.find((c) => c.type === 'Transform');
-  return {
-    x: (t?.props.x as number) ?? node.transform.position.x ?? 0,
-    y: (t?.props.y as number) ?? node.transform.position.y ?? 0,
-    rotation: (t?.props.rotation as number) ?? node.transform.rotation ?? 0,
-    scaleX: (t?.props.scaleX as number) ?? (t?.props.scale as number) ?? node.transform.scale.x ?? 1,
-    scaleY: (t?.props.scaleY as number) ?? (t?.props.scale as number) ?? node.transform.scale.y ?? 1,
-  };
-}
-
-function getParentIdForInsert(id: string) {
-  const node = defaultSceneGraph.getNode(id);
-  return node?.parent ?? null;
-}
-
+import { setParentPreservingWorld } from '@core/scene/parenting';
+import { parentWorld2DAt } from '@core/scene/layerSpace';
 import { useInfoStore } from '@stores/infoStore';
 import { clamp01 } from '@utils/lang';
 
@@ -233,15 +216,16 @@ export function placeInComp(
 export function setNodeWorldPosition(nodeId: string, x: number, y: number): void {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return;
-  let localX = x;
-  let localY = y;
-  if (node.parent) {
-    const pw = worldMatrixOf(node.parent, getLocalTransformForInsert, getParentIdForInsert);
-    const inv = Matrix.invert(pw);
-    const pt = Matrix.transformPoint(inv, { x, y });
-    localX = pt.x;
-    localY = pt.y;
-  }
+  // The parent chain AT THE PLAYHEAD: dropping an asset onto a comp whose
+  // container is keyframed has to land under the cursor, and the static
+  // resolver put it wherever that container rests at time 0.
+  const s = useProjectStore.getState();
+  const pt = Matrix.transformPoint(
+    Matrix.invert(parentWorld2DAt(nodeId, s.tabs[s.activeTabId ?? '']?.time ?? 0)),
+    { x, y },
+  );
+  const localX = pt.x;
+  const localY = pt.y;
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
     t.props.x = localX;
@@ -1338,7 +1322,9 @@ export function precomposeSelected(): void {
   defaultSceneGraph.addChild(parentId, preCompNode);
 
   for (const childId of selectedIds) {
-    defaultSceneGraph.setParent(childId, preCompNode.id);
+    // Keyframe-aware: `setParent`'s own compensation is static-props-only, so
+    // precomposing an animated layer moved it by the pre-comp's offset.
+    setParentPreservingWorld(childId, preCompNode.id);
   }
 
   // Flag it a real precomp: its subtree now composites as one unit (group
@@ -1777,7 +1763,7 @@ export function groupSelectedLayers(): void {
   defaultSceneGraph.addChild(rootId, group);
   for (const id of ids) {
     const node = defaultSceneGraph.getNode(id);
-    if (node && node.parent !== null) defaultSceneGraph.setParent(id, group.id);
+    if (node && node.parent !== null) setParentPreservingWorld(id, group.id);
   }
   sel.set([group.id]);
   bumpScene();
@@ -1798,7 +1784,7 @@ export function ungroupSelected(): void {
     if (!isGroup) continue;
     const parentId = node.parent ?? rootId;
     for (const child of defaultSceneGraph.getChildren(id)) {
-      defaultSceneGraph.setParent(child.id, parentId);
+      setParentPreservingWorld(child.id, parentId);
       freed.push(child.id);
     }
     defaultSceneGraph.removeNode(id);
@@ -1876,7 +1862,7 @@ export function groupSelectedNodes(groupName = 'Group Assembly'): string | null 
 
   // Re-parent selected nodes under the new group, offsetting position relative to group center
   for (const n of nodes) {
-    defaultSceneGraph.setParent(n.id, group.id);
+    setParentPreservingWorld(n.id, group.id);
     const relX = n.transform.position.x - groupX;
     const relY = n.transform.position.y - groupY;
     n.transform.position.x = relX;
@@ -1907,20 +1893,15 @@ export function ungroupSelectedNode(targetId?: string): string[] {
     if (children.length === 0) continue;
 
     const rootId = activeCompRootId();
-    const gx = groupNode.transform.position.x;
-    const gy = groupNode.transform.position.y;
 
     for (const child of children) {
-      defaultSceneGraph.setParent(child.id, rootId);
-      const absX = child.transform.position.x + gx;
-      const absY = child.transform.position.y + gy;
-      child.transform.position.x = absX;
-      child.transform.position.y = absY;
-      const t = child.components.find((c) => c.type === 'Transform');
-      if (t) {
-        t.props.x = absX;
-        t.props.y = absY;
-      }
+      // The child's new local used to be computed here as "its position plus
+      // the group's" — which happened to land right only because `getChildren`
+      // hands back a snapshot taken before the relink, and which wrote raw base
+      // props an animated layer's own tracks then overrode. One world-preserving
+      // relink replaces both halves, and it is the same one the parent dropdown
+      // and Group Layers use.
+      setParentPreservingWorld(child.id, rootId);
       newSelection.push(child.id);
     }
 

@@ -28,6 +28,7 @@ import { alphaInterpScenes } from './alphaInterp';
 import { keyframeFamilyScenes } from './keyframeFamilies';
 import { pluginEffectScenes } from './pluginEffects';
 import { extrusionScenes } from './extrusion';
+import { videoScenes } from './video';
 
 export const SCENES: Scene[] = [
   // Anchors + fill probes.
@@ -55,6 +56,9 @@ export const SCENES: Scene[] = [
   // — which of the synthesized faces an effect reached — has no meaning for a
   // single-quad 3D layer.
   ...extrusionScenes,
+  // Footage. The only scene family whose pixels come out of a decoder, and
+  // therefore the only golden coverage the video decode → upload path has.
+  ...videoScenes,
   ...motionScenes,
   ...precompScenes,
   ...rigScenes,

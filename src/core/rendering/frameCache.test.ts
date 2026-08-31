@@ -22,7 +22,10 @@ describe('FrameCache', () => {
     expect(cache.size).toBe(1);
   });
 
-  it('a key change clears everything (honest invalidation)', () => {
+  it('a key change serves nothing from the old key (honest invalidation)', () => {
+    // The frames are PARKED rather than deleted now (see the header), but the
+    // property this has always been about is unchanged and is the only one that
+    // matters for correctness: under a different key, none of them is servable.
     const cache = new FrameCache();
     cache.setKey('k1', 4, 4);
     cache.put(0, src());
@@ -30,6 +33,7 @@ describe('FrameCache', () => {
     cache.setKey('k2', 4, 4);
     expect(cache.size).toBe(0);
     expect(cache.get(0)).toBeNull();
+    expect(cache.has(1)).toBe(false);
   });
 
   it('a size (density) change does NOT invalidate — resolution is quality, not content', () => {

@@ -28,6 +28,7 @@ import { Icon } from '@components/Icon';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { hasPositionAnimation, smoothMotionPath, straightenMotionPath, hasPathTangents } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { defaultAnimation } from '@motion/animation';
@@ -122,7 +123,7 @@ export function ViewportTools(): JSX.Element {
   const selectedIds = useSelectionStore((s) => s.ids);
   const [, bumpAnim] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    const sub = getEventBus().on('AnimationChanged', () => bumpAnim());
+    const sub = getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) bumpAnim(); });
     return () => sub.dispose();
   }, []);
 
