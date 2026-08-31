@@ -57,3 +57,51 @@ export const VIDEO_DIAG_LIVE_MS = 2000;
  * second against a slowed timeline.
  */
 export const playbackHealth = { realtimeFactor: 1 };
+
+/**
+ * Frames dropped RECENTLY, from counters that only ever grow.
+ *
+ * `getVideoPlaybackQuality().droppedVideoFrames` is cumulative for the
+ * element's lifetime — and elements are deliberately PARKED and reused across
+ * loop passes (AppTextureProvider.retain), so the counter never resets. Read
+ * raw against a fixed threshold, one rough first pass tripped the status
+ * badge red and kept it red for the rest of the session, however smooth
+ * playback became. A warning that cannot clear once tripped says nothing;
+ * it reads as "still broken" over a perfect picture.
+ *
+ * So: per-key deltas against the previous reading, clamped at zero (an
+ * element torn down and re-created under the same key restarts its counter,
+ * which must not read as negative drops), summed over a short rolling window.
+ * Red then means pressure NOW, and clears within a breath of recovery.
+ *
+ * A class rather than refs in the badge component so the arithmetic is
+ * testable without React or a ticking clock.
+ */
+export class DropRateWindow {
+  private readonly prev = new Map<string, number>();
+  private readonly window: Array<{ t: number; drops: number }> = [];
+
+  constructor(private readonly windowMs = 4000) {}
+
+  /**
+   * Record one sampling tick and return the drops within the window.
+   *
+   * `counts` is key → the element's CUMULATIVE drop counter as of now. Keys
+   * absent this tick keep their last baseline, so an element that skips a tick
+   * (paused layer) does not re-count its history when it comes back.
+   */
+  sample(now: number, counts: ReadonlyMap<string, number>): number {
+    let tickDrops = 0;
+    for (const [key, total] of counts) {
+      tickDrops += Math.max(0, total - (this.prev.get(key) ?? total));
+      this.prev.set(key, total);
+    }
+    this.window.push({ t: now, drops: tickDrops });
+    while (this.window.length > 0 && now - this.window[0]!.t > this.windowMs) {
+      this.window.shift();
+    }
+    let recent = 0;
+    for (const e of this.window) recent += e.drops;
+    return recent;
+  }
+}

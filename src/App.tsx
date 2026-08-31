@@ -19,7 +19,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { framesToTimecode } from '@core/time/timecode';
-import { videoDiag, VIDEO_DIAG_LIVE_MS } from '@core/rendering/videoPlaybackDiag';
+import { videoDiag, VIDEO_DIAG_LIVE_MS, DropRateWindow } from '@core/rendering/videoPlaybackDiag';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToKeyframes } from '@core/animation/keyframeAssistants';
 import { copyKeyframes, pasteKeyframes } from '@core/animation/keyframeClipboard';
@@ -159,6 +159,14 @@ function playheadNow(): number {
 /** Self-subscribing status-bar timecode — the ONE render-time consumer of the
  *  playhead in the shell. Isolated (same pattern as FpsMeter/VUMeter beside
  *  it) so only this span re-renders per comp frame, not EditorShellInner. */
+/** How far back the drop readout looks. Long enough that sustained pressure
+ *  cannot hide between ticks, short enough that the badge clears within a
+ *  breath of playback recovering. */
+const DROP_WINDOW_MS = 4000;
+/** Drops inside the window that turn the badge red — about a quarter-second of
+ *  30fps footage lost while the window is only four seconds long. */
+const DROP_BAD_COUNT = 30;
+
 function StatusBarTimecode({ fps, startFrame }: { fps: number; startFrame: number }): JSX.Element {
   const time = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
   return (
@@ -179,6 +187,11 @@ function StatusBarTimecode({ fps, startFrame }: { fps: number; startFrame: numbe
 function VideoHealth(): JSX.Element | null {
   const [state, setState] = useState<{ label: string; bad: boolean } | null>(null);
   const warnedRef = useRef(false);
+  // Recent drops, not lifetime drops — the counters are cumulative and the
+  // elements are reused across loops, so raw totals kept the badge red forever
+  // after one rough pass. The arithmetic and its reasoning live in
+  // `DropRateWindow`.
+  const dropsRef = useRef(new DropRateWindow(DROP_WINDOW_MS));
   useEffect(() => {
     const id = setInterval(() => {
       if (videoDiag.stalledSources.size > 0) {
@@ -197,16 +210,17 @@ function VideoHealth(): JSX.Element | null {
       }
       const now = performance.now();
       let live = 0;
-      let dropped = 0;
       let seeking = false;
       let worstLagMs = 0;
+      const counts = new Map<string, number>();
       for (const s of videoDiag.samples.values()) {
         if (now - s.updatedAt > VIDEO_DIAG_LIVE_MS) continue;
         live += 1;
-        dropped += s.droppedFrames;
+        counts.set(s.key, s.droppedFrames);
         seeking = seeking || s.seeking;
         if (s.driftMs < worstLagMs) worstLagMs = s.driftMs;
       }
+      const recentDrops = dropsRef.current.sample(now, counts);
       if (live === 0) {
         setState(null);
         return;
@@ -216,8 +230,10 @@ function VideoHealth(): JSX.Element | null {
       // (Media Settings ▸ Proxy), not a code path.
       const lag = worstLagMs < -150 ? ` · behind ${(-worstLagMs / 1000).toFixed(1)}s` : '';
       setState({
-        label: `video ×${live} · drop ${dropped}${seeking ? ' · seeking' : ''}${lag}`,
-        bad: dropped > 120 || worstLagMs < -400,
+        label: `video ×${live} · drop ${recentDrops}${seeking ? ' · seeking' : ''}${lag}`,
+        // ~1/4 of a second's frames lost inside the window = real pressure now;
+        // a couple of drops around a seek is normal and stays quiet.
+        bad: recentDrops > DROP_BAD_COUNT || worstLagMs < -400,
       });
     }, 500);
     return () => clearInterval(id);
@@ -231,7 +247,7 @@ function VideoHealth(): JSX.Element | null {
           fontVariantNumeric: 'tabular-nums',
           ...(state.bad ? { color: 'var(--color-danger, #e06055)', fontWeight: 600 } : {}),
         }}
-        title="Video decoder health: live elements, cumulative dropped frames"
+        title={`Video decoder health: live elements, frames dropped in the last ${DROP_WINDOW_MS / 1000}s`}
       >
         {state.label}
       </span>
@@ -1463,8 +1479,8 @@ function EditorShellInner(): JSX.Element {
                 setNodeMatte(trackId, matte);
                 bumpScene();
               }}
-              onTrackParentChange={(trackId, parentId) => {
-                reparentNode(trackId, parentId);
+              onTrackParentChange={(trackId, parentId, options) => {
+                reparentNode(trackId, parentId, options);
                 bumpScene();
               }}
               onTrackToggleFlag={(trackId, flag) => {
