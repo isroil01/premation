@@ -10,6 +10,8 @@ import {
   mayServeCachedFrame,
   mayFillFromPausedRender,
   isOnFrameGrid,
+  playbackBlitWorthwhile,
+  MIN_PLAYBACK_BLIT_RUN,
   type PreviewCacheState,
 } from './previewCacheGate';
 
@@ -107,5 +109,38 @@ describe('isOnFrameGrid', () => {
     expect(isOnFrameGrid(1, 0, 30)).toBe(false);
     expect(isOnFrameGrid(NaN, 30, 30)).toBe(false);
     expect(isOnFrameGrid(1, 30, NaN)).toBe(false);
+  });
+});
+
+describe('playbackBlitWorthwhile', () => {
+  it('refuses an isolated hit — the toggle storm case', () => {
+    // One cached frame in a fragmented set. Blitting it parks the video
+    // elements; the very next frame is a miss that demands them back at the
+    // playhead — a hard mid-GOP seek per fragment boundary, felt as freeze,
+    // old stand-in frames, then a fast catch-up. Rendering the hit live is
+    // strictly cheaper than serving it.
+    expect(playbackBlitWorthwhile(100, 100)).toBe(false);
+  });
+
+  it('refuses a run shorter than one seek of runway', () => {
+    for (let end = 100; end < 100 + MIN_PLAYBACK_BLIT_RUN; end++) {
+      expect(playbackBlitWorthwhile(100, end)).toBe(false);
+    }
+  });
+
+  it('serves a real run — the warmed second pass this cache exists for', () => {
+    expect(playbackBlitWorthwhile(100, 100 + MIN_PLAYBACK_BLIT_RUN)).toBe(true);
+    expect(playbackBlitWorthwhile(0, 287)).toBe(true);
+  });
+
+  it('hands the tail of a run back to the live path before it ends', () => {
+    // The last frames of a genuine run render live even though they are
+    // cached — a few wasted renders, paid so the pipeline switches once per
+    // run instead of once per fragment. The wrap then re-enters the blit path
+    // at the head of the span, where the runway is long again.
+    const end = 287;
+    expect(playbackBlitWorthwhile(end - MIN_PLAYBACK_BLIT_RUN, end)).toBe(true);
+    expect(playbackBlitWorthwhile(end - MIN_PLAYBACK_BLIT_RUN + 1, end)).toBe(false);
+    expect(playbackBlitWorthwhile(end, end)).toBe(false);
   });
 });

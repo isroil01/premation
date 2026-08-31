@@ -86,6 +86,54 @@ export function mayServeCachedFrame(s: PreviewCacheState): boolean {
 }
 
 /**
+ * Cached frames a PLAYBACK blit must have ahead of it before it is worth
+ * taking.
+ *
+ * ## The toggle storm this exists to stop
+ *
+ * Serving a cache hit during playback is not free: the blit path bypasses
+ * `renderFrame` entirely, so it also has to PARK the playback `<video>`
+ * elements (at the end of the cached run) to keep their decoders tracking the
+ * playhead. The live path, one frame later, needs those same elements AT the
+ * playhead. Alternate between the two paths every frame and the element is
+ * park-seeked and then immediately demanded back — a hard mid-GOP seek, which
+ * freezes; while its decode is in flight the exact tier deliberately serves
+ * the nearest ALREADY-DECODED neighbour (an old frame, `exact: false`) and
+ * repaints as the real ones land, which fast-passes.
+ *
+ * Freeze → old frames → rapid catch-up: the "old disk" playback report, and it
+ * is the SHAPE of the cache that causes it, not its contents. At 4K on a
+ * hi-dpi display RAM holds ~16 frames, so the cached set is fragmented — an
+ * isolated hit, a gap, another hit — and every fragment boundary is one of
+ * these toggles. An isolated one-frame hit saves one render and costs a seek:
+ * strictly worse than rendering it live.
+ *
+ * So a playback blit requires a RUN: this many cached frames ahead of the one
+ * being served. Runs exist precisely when the cache is genuinely useful (a
+ * warmed second pass, disk promotion keeping ahead of the playhead) and do not
+ * exist in the fragmented case that causes the storm. Near the end of a real
+ * run this renders a few frames live that were technically cached — a small
+ * waste, paid to never enter the blit path for a fragment. Paused serving is
+ * unaffected: with no playhead advancing there is no next-frame toggle, so a
+ * single paused hit is pure win.
+ *
+ * Three frames (~100ms at 30fps) is one video-element seek's worth of runway —
+ * enough that parking the element at the run's end is a real instruction
+ * rather than "seek to now" issued sixty times a second.
+ */
+export const MIN_PLAYBACK_BLIT_RUN = 3;
+
+/**
+ * Is this playback hit worth blitting, given where its cached run ends?
+ *
+ * `contiguousEnd` is `FrameCache.contiguousEnd(frame)`: the last frame of the
+ * unbroken cached run containing `frame` (or `frame` itself when isolated).
+ */
+export function playbackBlitWorthwhile(frame: number, contiguousEnd: number): boolean {
+  return contiguousEnd - frame >= MIN_PLAYBACK_BLIT_RUN;
+}
+
+/**
  * May the frame just rendered by a PAUSED pass be stored?
  *
  * `mediaExact` is `lastFrameMediaExact() !== false` — false only when the

@@ -23,7 +23,7 @@ import type { Guide, GuideAxis, WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, drawToolOptions, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
 import { viewportFrameCache } from '@core/rendering/frameCache';
-import { mayServeCachedFrame, mayFillFromPausedRender } from '@core/rendering/previewCacheGate';
+import { mayServeCachedFrame, mayFillFromPausedRender, playbackBlitWorthwhile } from '@core/rendering/previewCacheGate';
 import { useWorkspaceStore } from '@stores/projectStore';
 import workspaceStyles from './Workspace.module.css';
 import { useProjectStore } from '@stores/projectStore';
@@ -59,6 +59,8 @@ import {
   positionSamplerFor,
 } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { parentWorld2DAt } from '@core/scene/layerSpace';
+import { Matrix } from '@motion/scene';
 import { useTextEditStore } from '@stores/textEditStore';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
@@ -823,7 +825,15 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       if (mayServeCachedFrame(gateState)) {
         const hit = viewportFrameCache.get(frame);
         const cacheCanvas = cacheCanvasRef?.current;
-        if (hit && cacheCanvas) {
+        // During playback an ISOLATED hit is worse than a miss: the blit path
+        // parks the video elements and the live path, one frame later, demands
+        // them back — a hard seek per fragment boundary, felt as freeze /
+        // old-frames / fast-pass. Blit only with a real run ahead; a paused
+        // serve has no next frame and skips the check. See previewCacheGate.
+        // (Computed once — the park instruction below reuses it.)
+        const runEnd = hit ? viewportFrameCache.contiguousEnd(frame) : frame;
+        const runOk = !playing || playbackBlitWorthwhile(frame, runEnd);
+        if (hit && cacheCanvas && runOk) {
           // Blit instead of re-rendering the whole comp — the entire point of a
           // RAM preview: the second pass over a heavy comp plays at full rate.
           // It goes on its own 2D layer because the content canvas is WebGL and
@@ -847,7 +857,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             // ENDS, so a decoder that can't sustain realtime is parked there,
             // decoded and ready, instead of chasing a playhead whose frames
             // are already cached.
-            b.syncPlaybackVideo?.(frame / fps, viewportFrameCache.contiguousEnd(frame) / fps);
+            b.syncPlaybackVideo?.(frame / fps, runEnd / fps);
             renderCache.mark(timeRef.current);
             paintChrome();
             return;
@@ -975,8 +985,14 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // buffer during a drag and this is the one place the buffer is sized.
       const previewRes = useRenderQualityStore.getState().effectiveResolution() || 1;
       backend.resize(rect.width, rect.height, dpr / previewRes);
-      overlay.width = Math.max(1, Math.round(rect.width * dpr));
-      overlay.height = Math.max(1, Math.round(rect.height * dpr));
+      // Guarded the same way the content backbuffer is: writing `width` on a
+      // canvas reallocates (and clears) it even when the value is unchanged,
+      // and sizeAll runs from a ResizeObserver, a window resize, a rAF and a
+      // settle timer — most of which arrive at a size that already holds.
+      const ow = Math.max(1, Math.round(rect.width * dpr));
+      const oh = Math.max(1, Math.round(rect.height * dpr));
+      if (overlay.width !== ow) overlay.width = ow;
+      if (overlay.height !== oh) overlay.height = oh;
       overlay.style.width = `${rect.width}px`;
       overlay.style.height = `${rect.height}px`;
       // Re-fit while auto-fit is on so the comp keeps filling the available
@@ -1743,11 +1759,14 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           // (the old toLayerTime call) shifted the write off the keyframe being
           // dragged on any clip that doesn't start at 0. The tangent branch
           // below always passed it raw; now both do.
+          // Back through the parent chain: `w` is where the pointer is in COMP
+          // space and the x/y tracks hold parent-space values.
+          const lp = compToPath(drag.nodeId, playheadTime(), w);
           runAnimEdit(
             'Move keyframe',
             () => {
-              defaultAnimation.setKeyframe(drag.nodeId, 'x', drag.t, w.x);
-              defaultAnimation.setKeyframe(drag.nodeId, 'y', drag.t, w.y);
+              defaultAnimation.setKeyframe(drag.nodeId, 'x', drag.t, lp.x);
+              defaultAnimation.setKeyframe(drag.nodeId, 'y', drag.t, lp.y);
             },
             `mpdrag:${drag.nodeId}:${drag.t}`,
           );
@@ -1758,7 +1777,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           const mirror = isPathTangentContinuous(drag.nodeId, drag.t) && !e.altKey;
           runAnimEdit(
             'Adjust path tangent',
-            () => setPathTangent(drag.nodeId, drag.t, part, w, mirror),
+            () => setPathTangent(drag.nodeId, drag.t, part, compToPath(drag.nodeId, playheadTime(), w), mirror),
             `mptan:${drag.nodeId}:${drag.t}:${part}`,
           );
         }
@@ -2710,6 +2729,32 @@ function paintOverlay(
 }
 
 /**
+ * A motion-path point → COMPOSITION space.
+ *
+ * The samples come from the layer's own `x`/`y` tracks, and those are values in
+ * its PARENT's space — not comp coordinates, which is what this module drew
+ * them as. Parent a layer to a Null and its trajectory, its keyframe dots and
+ * their grab targets all appeared at the raw local numbers: for a circle at
+ * comp (960, 540) under a null at (300, 700) the path was drawn up at
+ * (660, −160), nowhere near the artwork it belongs to, and dragging a dot wrote
+ * the pointer's COMP position straight into a parent-space keyframe, teleporting
+ * that keyframe by the parent's whole transform.
+ *
+ * Identity for an unparented layer, so the common case is unchanged.
+ */
+function pathToComp(nodeId: string, time: number, p: { x: number; y: number }): { x: number; y: number } {
+  return Matrix.transformPoint(parentWorld2DAt(nodeId, time), p);
+}
+
+/**
+ * COMPOSITION space → the layer's position-track space, for writing a dragged
+ * point back. The 2D inverse of `pathToComp`.
+ */
+function compToPath(nodeId: string, time: number, p: { x: number; y: number }): { x: number; y: number } {
+  return Matrix.transformPoint(Matrix.invert(parentWorld2DAt(nodeId, time)), p);
+}
+
+/**
  * Hit-test the selected layer's motion-path keyframe dots and tangent handles
  * at a screen point (within a small radius). Returns the grabbed part — the
  * keyframe 'point' itself or its 'in'/'out' spatial tangent handle — or null.
@@ -2732,11 +2777,14 @@ function hitMotionPathKeyframe(
   const is3D = is3DEnabled(node);
   const project = is3D ? currentViewProjector(comp.w, comp.h, playheadTime()) : null;
   const baseZ = is3D ? readNode3D(node).z : 0;
+  const time = playheadTime();
   const near = (p: { x: number; y: number }, t?: number): boolean => {
-    let world = p;
+    // Through the parent chain FIRST, exactly as the painter does — the dots
+    // have to be grabbable where they are drawn.
+    let world = pathToComp(nodeId, time, p);
     if (project) {
       const z = (t !== undefined ? defaultAnimation.sample(nodeId, 'z', t) : undefined) ?? baseZ;
-      const q = project({ x: p.x, y: p.y, z });
+      const q = project({ x: world.x, y: world.y, z });
       world = { x: q.x, y: q.y };
     }
     const s = controller.ws.worldToScreen(world);
@@ -2976,9 +3024,10 @@ function paintMotionPath(
   const project = is3D ? currentViewProjector(comp.w, comp.h, time) : null;
   const baseZ = is3D ? readNode3D(node).z : 0;
   const toS = (p: { x: number; y: number; t?: number }): { x: number; y: number } => {
-    if (!project) return controller.ws.worldToScreen({ x: p.x, y: p.y });
+    const c = pathToComp(nodeId, time, p);
+    if (!project) return controller.ws.worldToScreen(c);
     const z = (p.t !== undefined ? defaultAnimation.sample(nodeId, 'z', p.t) : undefined) ?? baseZ;
-    const q = project({ x: p.x, y: p.y, z });
+    const q = project({ x: c.x, y: c.y, z });
     return controller.ws.worldToScreen({ x: q.x, y: q.y });
   };
 
