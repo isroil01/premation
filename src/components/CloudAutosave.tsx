@@ -5,6 +5,7 @@ import { clearRecovery } from '@core/persistence/recovery';
 import { useWorkspaceStore } from '@stores/index';
 import { useEntitlementStore, canWriteCloud } from '@stores/entitlementStore';
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 
 /**
  * Autosave component with configurable debounce and exponential backoff.
@@ -93,7 +94,9 @@ export function CloudAutosave({ projectId }: { projectId: string }): null {
 
     const bus = getEventBus();
     const subs = [
-      bus.on('AnimationChanged', schedule),
+      // A landed video decode is not an edit; autosaving for one would
+      // re-upload the document at the source's frame rate.
+      bus.on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) schedule(); }),
       bus.on('NodeUpdated', schedule),
       bus.on('SceneGraphChanged', schedule),
       bus.on('DocumentChanged', schedule),

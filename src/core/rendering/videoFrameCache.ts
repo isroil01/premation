@@ -53,7 +53,7 @@
  * otherwise pin every frame it ever touched.
  */
 
-import { getEventBus } from '@core/events/EventBus';
+import { requestMediaRepaint } from './repaintScheduler';
 
 /** Times within this many seconds are the same frame. Tighter than the 0.05s
  *  deadband the live path uses — that deadband is ~1.5 frames at 30fps and
@@ -217,8 +217,10 @@ export class VideoFrameCache {
     this.pump(entry);
     this.notify();
     // Keep the existing repaint contract: the live path already re-renders on
-    // AnimationChanged, so a newly decoded frame reaches the screen the same way.
-    getEventBus().emit('AnimationChanged', { nodeId: src });
+    // AnimationChanged, so a newly decoded frame reaches the screen the same
+    // way — but coalesced to one repaint per animation frame, because the
+    // element tier fills a queue and can land several seeks per frame.
+    requestMediaRepaint(src);
   }
 
   private capture(entry: SourceEntry, key: number): void {

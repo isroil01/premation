@@ -15,6 +15,7 @@ import { AnimationEngine } from '@motion/animation';
 import { createRenderBackend, type BackendChoice } from '@core/rendering/createRenderBackend';
 import { buildSnapshot } from '@core/rendering/buildSnapshot';
 import { exportView } from '@core/export/offlineRenderer';
+import { setMediaRepaintScheduler, syncFlushScheduler } from '@core/rendering/repaintScheduler';
 import { SCENES } from './scenes/registry';
 import type { Scene } from './sceneKit';
 import { registeredEffects } from '@core/plugins/pluginEffects';
@@ -333,6 +334,10 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
 }
 
 async function main(): Promise<void> {
+  // No wall clock on an offline render: `requestAnimationFrame` in an offscreen
+  // Electron window is throttled (and can stop firing once occluded), so the
+  // media-repaint coalescer flushes synchronously here. See repaintScheduler.ts.
+  setMediaRepaintScheduler(syncFlushScheduler);
   try {
     const backends = window.harnessBridge.config.backends;
     /*

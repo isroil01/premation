@@ -1063,13 +1063,13 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
 
     // Content also depends on the animation engine (keyframe edits, playback).
     const animSub = getEventBus().on('AnimationChanged', (payload) => {
-      if (!isMediaDecodeRepaint(payload?.nodeId)) animRev++;
+      if (!isMediaDecodeRepaint(payload)) animRev++;
       // During playback the playhead pump already re-renders every frame;
       // decode-landing repaints on top of that were a render storm.
       const tabPlaying = useWorkspaceStore.getState().activeTabId
         ? useWorkspaceStore.getState().tabs[useWorkspaceStore.getState().activeTabId!]?.playing
         : false;
-      if (!isMediaDecodeRepaint(payload?.nodeId) || !tabPlaying) {
+      if (!isMediaDecodeRepaint(payload) || !tabPlaying) {
         controller.requestRender();
       }
     });

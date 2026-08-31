@@ -1978,7 +1978,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         // exactly that reason. The viewport still repaints for them; it just
         // does it without pretending the document changed.
         track(getEventBus().on('AnimationChanged', (payload) => {
-          if (isMediaDecodeRepaint(payload?.nodeId)) return;
+          if (isMediaDecodeRepaint(payload)) return;
           bumpScene();
         }));
 
@@ -2356,7 +2356,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             const s = useProjectStore.getState();
             if (s.activeTabId && !s.tabs[s.activeTabId]?.dirty) s.actions.markDirty(s.activeTabId, true);
           };
-          track(getEventBus().on('AnimationChanged', markDirty));
+          // A landed video decode is not an unsaved edit — before this the
+          // amber dot appeared just from playing footage back.
+          track(getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) markDirty(); }));
           track(getEventBus().on('NodeUpdated', markDirty));
           track(getEventBus().on('SceneGraphChanged', markDirty));
           getAutosaveController().start({

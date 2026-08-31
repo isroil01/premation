@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { api } from '@core/api/client';
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { useCompositionStore } from '@stores/compositionStore';
 
 /**
@@ -57,7 +58,7 @@ export function CloudThumbnailWorker({ projectId }: { projectId: string }): null
 
     const bus = getEventBus();
     const subs = [
-      bus.on('AnimationChanged', onChange),
+      bus.on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) onChange(); }),
       bus.on('SceneGraphChanged', onChange),
     ];
 

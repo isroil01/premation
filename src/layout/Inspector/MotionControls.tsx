@@ -10,6 +10,7 @@
 import { useEffect, useReducer } from 'react';
 import { Switch } from '@components/Switch';
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { canAutoOrient, readAutoOrientMode, setAutoOrientMode, type AutoOrientMode } from '@core/scene/autoOrient';
@@ -29,7 +30,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   // path buttons can do — re-render on animation changes too.
   const [, bumpAnim] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
-    const sub = getEventBus().on('AnimationChanged', () => bumpAnim());
+    const sub = getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) bumpAnim(); });
     return () => sub.dispose();
   }, []);
   const node = defaultSceneGraph.getNode(nodeId);

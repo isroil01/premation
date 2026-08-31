@@ -17,6 +17,7 @@
 
 import { useEffect, useRef } from 'react';
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { useCompositionStore } from '@stores/compositionStore';
 import { getProjectManager } from '@core/services/coreServices';
 import { isBundlePath } from '@core/project/bundle/bundleProjectIO';
@@ -73,7 +74,10 @@ export function LocalThumbnailWorker(): null {
     };
 
     const bus = getEventBus();
-    const subs = [bus.on('AnimationChanged', onChange), bus.on('SceneGraphChanged', onChange)];
+    const subs = [
+      bus.on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) onChange(); }),
+      bus.on('SceneGraphChanged', onChange),
+    ];
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);

@@ -29,6 +29,7 @@ import { snapshotToFrameScene, viewToCamera, needsShapeRaster } from './snapshot
 import { viewportVideoFrames } from './videoFrameCache';
 import { renderPixelMotion } from './pixelMotion';
 import { exactVideoFrames, ExactVideoFrameCache } from './exactVideoFrames';
+import { requestMediaRepaint } from './repaintScheduler';
 import { isLutEffect, buildChannelLut } from '@core/effects/colorLut';
 import { readCubeLutParam, cubeLutSignature } from '@core/effects/cubeLut';
 import { layerIsBaked } from '@core/effects/effectBake';
@@ -494,7 +495,7 @@ export class MotionRendererBackend implements RenderBackend {
       if (this.textures) {
         this.textures.setExactMediaTiming?.(this.exactMediaTiming);
         (this.textures as AppTextureProvider).onChange = () =>
-          getEventBus().emit('AnimationChanged', { nodeId: '__texture__' });
+          requestMediaRepaint('__texture__');
       }
       try {
         await withTimeout(renderer.initialize({ canvas }), INIT_TIMEOUT_MS, `${attempt.kind} initialize`);
@@ -1107,7 +1108,7 @@ export class MotionRendererBackend implements RenderBackend {
    * the same channel the texture provider uses for async media settles.
    */
   private readonly rasterSettle = createRasterScaleSettle(() =>
-    getEventBus().emit('AnimationChanged', { nodeId: '__texture__' }),
+    requestMediaRepaint('__texture__'),
   );
 
   private settledRasterScale(target: number): number {

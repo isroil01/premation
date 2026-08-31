@@ -34,7 +34,7 @@
  * evicts itself — we draw its frames into canvases and NEVER close them.
  */
 
-import { getEventBus } from '@core/events/EventBus';
+import { requestMediaRepaint } from './repaintScheduler';
 import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
 import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
 import {
@@ -242,13 +242,20 @@ export class ExactVideoFrameCache {
   }
 
   private notify(src: string): void {
+    // Local listeners stay SYNCHRONOUS. They are per-instance and private to
+    // the consumer that registered them, so nothing fans out from here — and a
+    // consumer that asked to be told the instant a frame landed must not have
+    // that answer deferred a frame.
     for (const fn of this.listeners) fn();
-    // Same repaint contract as the legacy cache: the render loop already
-    // re-renders on AnimationChanged, so a landed decode reaches the screen
-    // without a new asynchrony mechanism. Private instances skip it — their
-    // consumer (export/preview convergence) re-renders explicitly.
+    // The bus emit is COALESCED to one repaint per animation frame (see
+    // repaintScheduler.ts). Streaming playback lands up to STREAM_AHEAD
+    // decodes between two displayed frames, and this event is the app's widest
+    // signal — one emit per landing meant the effect chain ran several times
+    // per displayed frame, and the more effects there were the more decodes
+    // landed mid-render. Private instances skip it entirely — their consumer
+    // (export/preview convergence) re-renders explicitly.
     if (this.opts.emitEvents !== false) {
-      getEventBus().emit('AnimationChanged', { nodeId: src });
+      requestMediaRepaint(src);
     }
   }
 

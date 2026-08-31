@@ -254,6 +254,7 @@ export function performJumpTo(index: number): void {
 }
 
 import { getEventBus } from '@core/events/EventBus';
+import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 
 /**
  * Keep `lastState` in step with the undo stack. MUST be called from inside the
@@ -329,7 +330,8 @@ export function batchHistory<T>(key: string, fn: () => T): T {
 export function attachHistoryRecording(): { dispose(): void } {
   const h = (): HistoryStore => useHistoryStore.getState();
   const subs = [
-    getEventBus().on('AnimationChanged', () => h().schedule('anim')),
+    // Decoding a video frame is not an undoable edit.
+    getEventBus().on('AnimationChanged', (p) => { if (!isMediaDecodeRepaint(p)) h().schedule('anim'); }),
     getEventBus().on('NodeUpdated', (e) => {
       const p = e as { nodeId?: string; propName?: string } | undefined;
       h().schedule(p?.nodeId ? `node:${p.nodeId}:${p.propName ?? ''}` : 'node');

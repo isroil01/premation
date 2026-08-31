@@ -22,6 +22,7 @@
  */
 
 import { getProjectManager } from '@core/services/coreServices';
+import { setMediaRepaintScheduler, syncFlushScheduler } from '@core/rendering/repaintScheduler';
 import { captureDocument } from '@core/api/cloudDocument';
 import { findMissingAssets } from '@core/project/missingAssets';
 import { renderJobOutput, outputExtFor, type OutputFormat, type RenderJobSpec } from '@core/export/renderJob';
@@ -321,6 +322,14 @@ async function renderToPath(
 
 /** Open the project and report anything about it worth printing. */
 async function openForRender(projectPath: string): Promise<string[]> {
+  // No wall clock on this path. Media decode repaints are coalesced behind
+  // `requestAnimationFrame` for the interactive viewport, and this runs in a
+  // hidden Electron window where rAF is throttled to roughly 1 Hz (and can stop
+  // entirely once the window is occluded). A deterministic fixed-timestep
+  // render must not be paced by a display callback that may never fire, so the
+  // coalescer flushes synchronously here. See `repaintScheduler.ts`.
+  setMediaRepaintScheduler(syncFlushScheduler);
+
   // AWAITED, where the editor fires this and forgets: the boot path can afford
   // for footage to pop in a moment late, and a render cannot. A frame
   // rasterised before its media hydrated is a frame with a hole in it, and the

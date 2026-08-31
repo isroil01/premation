@@ -379,7 +379,7 @@ function EditorShellInner(): JSX.Element {
       setGraphRev((v) => v + 1);
     });
     const animSub = bus.on('AnimationChanged', (payload) => {
-      if (!isMediaDecodeRepaint(payload?.nodeId)) setAnimRev((v) => v + 1);
+      if (!isMediaDecodeRepaint(payload)) setAnimRev((v) => v + 1);
     });
     return () => {
       graphSub.dispose();
