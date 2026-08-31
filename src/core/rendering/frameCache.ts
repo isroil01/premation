@@ -34,6 +34,32 @@
  * holding a mix of Full and Quarter frames was being sized as if every frame
  * matched the newest one — overshooting the budget by up to 16× after a
  * degrade, and evicting valid frames early after a restore.
+ *
+ * ## Parking, and why it costs nothing
+ *
+ * A changed key used to DELETE every frame. That is right about validity and
+ * wrong about value: the invalidation key is a coordinate, not an arrow, and
+ * editing moves back and forth across it constantly. Undo. Scrub a slider and
+ * release it back where it started. Toggle a layer off to look behind it and on
+ * again. Zoom in to check an edge and zoom out. Drag a panel divider and drag it
+ * back. Every one of those threw away a full work area of rendered frames and
+ * re-rendered it from scratch, and measured on a 20-layer comp with 90 frames
+ * cached, a viewport zoom left exactly zero of them.
+ *
+ * So a key change now PARKS the outgoing generation instead, and a returning key
+ * adopts it whole — the same move `frameDiskCache` already makes one tier down,
+ * for the same reason and with the same wholesale eviction policy (half a parked
+ * generation is barely better than none).
+ *
+ * OPPORTUNISTIC, which is the part that matters. Parked frames are evicted
+ * before live ones, always, so a comp whose work area already fills the budget
+ * behaves exactly as it did before — parking can only ever use headroom the
+ * live generation was not using. There is no tuning fraction to get wrong and no
+ * case where this costs live capacity.
+ *
+ * Correctness is unchanged and needs no argument beyond the key itself: a parked
+ * generation is servable only when its EXACT key comes back, which is the same
+ * condition that made it servable in the first place.
  */
 
 import type { FrameDiskCache } from './frameDiskCache';
@@ -47,6 +73,13 @@ export class FrameCache {
   /** Insertion order IS the LRU order: least-recently-used first. */
   private frames = new Map<number, CachedFrame>();
   private totalBytes = 0;
+  /**
+   * Generations that stopped being live but whose frames are still held,
+   * waiting for their key to come back. Oldest first — a Map preserves
+   * insertion order, and age IS the eviction order.
+   */
+  private parked = new Map<string, { frames: Map<number, CachedFrame>; bytes: number }>();
+  private parkedBytes = 0;
   private key = '';
   private version = 0;
   private readonly maxBytes: number;
@@ -113,13 +146,75 @@ export class FrameCache {
    * and a future budget heuristic would want the current frame's cost.
    */
   setKey(key: string, _width: number, _height: number): void {
-    if (key !== this.key) {
-      this.key = key;
-      this.clearFrames();
-      // The disk tier turns over with RAM: it is the same invalidation, and a
-      // generation that outlived its key would serve pre-edit pixels.
-      this.disk?.setGeneration(key);
+    if (key === this.key) return;
+    this.parkLive();
+    this.key = key;
+    this.adoptParked(key);
+    this.lastPrefetchFrom = -1;
+    // The disk tier turns over with RAM: it is the same invalidation, and a
+    // generation that outlived its key would serve pre-edit pixels. It parks
+    // its own outgoing generation by the same rule.
+    this.disk?.setGeneration(key);
+    this.notify();
+  }
+
+  /** Move the live generation to the parked set, if it holds anything. */
+  private parkLive(): void {
+    if (!this.key || this.frames.size === 0) return;
+    // Re-park (delete + set) so insertion order stays true age order even when
+    // a key is visited, left and visited again.
+    this.parked.delete(this.key);
+    this.parked.set(this.key, { frames: this.frames, bytes: this.totalBytes });
+    this.parkedBytes += this.totalBytes;
+    this.frames = new Map();
+    this.totalBytes = 0;
+    this.enforceParkedCap();
+  }
+
+  /** Take a parked generation back as the live one, or start empty. */
+  private adoptParked(key: string): void {
+    const hit = this.parked.get(key);
+    if (!hit) return;
+    this.parked.delete(key);
+    this.parkedBytes -= hit.bytes;
+    this.frames = hit.frames;
+    this.totalBytes = hit.bytes;
+  }
+
+  /**
+   * Parked generations held at once, the live one excluded.
+   *
+   * Small on purpose. Unlike the disk tier's 4 GB this budget is RAM shared
+   * with the renderer, and the round trips worth catching are recent ones — an
+   * undo, a zoom out and back. A deep history of parked states would just be
+   * headroom the live generation could have used.
+   */
+  private static readonly MAX_PARKED = 3;
+
+  private enforceParkedCap(): void {
+    while (this.parked.size > FrameCache.MAX_PARKED) {
+      if (!this.dropOldestParked()) break;
     }
+  }
+
+  /** Drop the oldest parked generation WHOLESALE. Returns false when none. */
+  private dropOldestParked(): boolean {
+    const oldest = this.parked.keys().next();
+    if (oldest.done) return false;
+    const gen = this.parked.get(oldest.value)!;
+    this.parked.delete(oldest.value);
+    this.parkedBytes -= gen.bytes;
+    return true;
+  }
+
+  /** Bytes held across the live generation and every parked one. */
+  get totalBytesHeld(): number {
+    return this.totalBytes + this.parkedBytes;
+  }
+
+  /** Parked generations currently held. Diagnostics and tests. */
+  get parkedGenerations(): number {
+    return this.parked.size;
   }
 
   /**
@@ -252,6 +347,13 @@ export class FrameCache {
       ctx.clearRect(0, 0, c.width, c.height);
       ctx.drawImage(source, 0, 0);
     }
+    // Parked generations are SPECULATIVE and yield first, wholesale — that is
+    // what makes parking free: it can only ever occupy headroom the live
+    // generation was not using, so a comp whose work area already fills the
+    // budget behaves exactly as it did before parking existed.
+    while (this.totalBytes + this.parkedBytes > this.maxBytes && this.parked.size > 0) {
+      if (!this.dropOldestParked()) break;
+    }
     // Never evict down to nothing: one frame larger than the whole budget is a
     // misconfiguration, not a reason to hold zero frames and re-render forever.
     while (this.totalBytes > this.maxBytes && this.frames.size > 1) {
@@ -293,9 +395,14 @@ export class FrameCache {
   }
 
   private clearFrames(): void {
-    if (this.frames.size === 0) return;
+    if (this.frames.size === 0 && this.parked.size === 0) return;
     this.frames.clear();
     this.totalBytes = 0;
+    // A real clear means the user asked for one (Purge Cache) or the surface is
+    // going away. Leaving parked generations behind would be a purge that
+    // silently kept most of what it claimed to free.
+    this.parked.clear();
+    this.parkedBytes = 0;
     this.lastPrefetchFrom = -1;
     this.notify();
   }
