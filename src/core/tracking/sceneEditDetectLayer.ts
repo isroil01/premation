@@ -21,8 +21,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { useAssetStore } from '@stores/assetStore';
 import { compToKeyframeTime, keyframeToCompTime, getTimelineController } from '@core/timeline/TimelineController';
-import { demuxMp4 } from '@core/video/mp4Demuxer';
-import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
+import { demuxFile } from '@core/video/demuxClient';
 import { ExactVideoSource, SequentialFrameReader, webCodecsAvailable } from '@core/video/exactVideoSource';
 import { bumpScene } from '@stores/sceneStore';
 import type { LumaPlane } from './patchMatch';
@@ -68,8 +67,9 @@ export async function detectSceneEdits(req: SceneEditRequest): Promise<SceneEdit
   const res = await fetch(asset.src);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   const buf = await res.arrayBuffer();
-  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  // Off the main thread when one is available (see demuxClient). `buf` is
+  // TRANSFERRED on that path and must not be read after this.
+  const demuxed = await demuxFile(buf);
   const source = new ExactVideoSource(demuxed);
 
   try {

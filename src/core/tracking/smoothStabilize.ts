@@ -12,7 +12,7 @@
  * global signal and quarter resolution measures it at a sixteenth the cost.
  */
 
-import { demuxMp4 } from '@core/video/mp4Demuxer';
+import { demuxFile } from '@core/video/demuxClient';
 import { ExactVideoSource, SequentialFrameReader, webCodecsAvailable } from '@core/video/exactVideoSource';
 import { lumaFromDecodedFrame } from './lumaExtract';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -94,7 +94,10 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
   // Original file, never the proxy — same reasoning as the point tracker.
   const res = await fetch(asset.src);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
-  const demuxed = await demuxMp4(await res.arrayBuffer());
+  // Off the main thread when one is available (see demuxClient). This also
+  // picks the container by magic bytes, where this call site assumed MP4 —
+  // a WebM layer used to reach mp4box and fail with a parse error.
+  const demuxed = await demuxFile(await res.arrayBuffer());
   const source = new ExactVideoSource(demuxed);
   // Hoisted so the finally below can close the streaming pass (see makePass).
   let pass: { frameFor: (i: number) => Promise<unknown>; close: () => void } | null = null;

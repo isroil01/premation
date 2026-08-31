@@ -16,8 +16,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
 import { useAssetStore } from '@stores/assetStore';
 import { assetIdOf } from '@core/source/sourceInfo';
-import { demuxMp4 } from '@core/video/mp4Demuxer';
-import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
+import { demuxFile } from '@core/video/demuxClient';
 import { ExactVideoSource, webCodecsAvailable } from '@core/video/exactVideoSource';
 import { computeFlow, lumaOf, sampleFlow } from '@core/rendering/pixelMotionFlow';
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
@@ -173,8 +172,9 @@ async function loadExactSource(nodeId: string): Promise<{
   const res = await fetch(asset.src);
   if (!res.ok) throw new Error(`Could not load footage (${res.status}).`);
   const buf = await res.arrayBuffer();
-  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  // Off the main thread when one is available (see demuxClient). `buf` is
+  // TRANSFERRED on that path and must not be read after this.
+  const demuxed = await demuxFile(buf);
   return {
     source: new ExactVideoSource(demuxed),
     width: demuxed.codedWidth,

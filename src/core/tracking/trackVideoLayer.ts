@@ -66,8 +66,8 @@ import {
   releaseLocalBlobObjectUrl,
 } from '@core/rendering/localBlobSource';
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
-import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
-import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
+import type { DemuxedVideo } from '@core/video/mp4Demuxer';
+import { demuxFile } from '@core/video/demuxClient';
 import { ExactVideoSource, SequentialFrameReader, webCodecsAvailable } from '@core/video/exactVideoSource';
 import type { VideoFrameIndex } from '@core/video/frameIndex';
 import type { LumaPlane } from './patchMatch';
@@ -211,8 +211,9 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   const buf = await res.arrayBuffer();
-  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  // Off the main thread when one is available (see demuxClient). `buf` is
+  // TRANSFERRED on that path and must not be read after this.
+  const demuxed = await demuxFile(buf);
   const source = new ExactVideoSource(demuxed);
 
   // prefer-software: the tracker reads EVERY pixel back to the CPU, and a

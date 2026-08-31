@@ -36,8 +36,8 @@
 
 import { requestMediaRepaint } from './repaintScheduler';
 import { isLocalBlobRef, resolveLocalBlobObjectUrl, releaseLocalBlobObjectUrl } from './localBlobSource';
-import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
-import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
+import type { DemuxedVideo } from '@core/video/mp4Demuxer';
+import { demuxFile } from '@core/video/demuxClient';
 import {
   ExactVideoSource,
   SequentialFrameReader,
@@ -268,9 +268,10 @@ async function defaultLoader(src: string): Promise<LoadedExactSource> {
   if (buf.byteLength > MAX_DEMUX_BYTES) {
     throw new Error(`file too large for in-memory demux (${buf.byteLength} bytes) — generate a proxy`);
   }
-  // WebM / Matroska → dedicated demuxer (VP8/VP9). ISO-BMFF → mp4box.
-  const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-  const demuxed = isWebmMagic(head) ? await demuxWebm(buf) : await demuxMp4(buf);
+  // Off the main thread when one is available, inline otherwise — same
+  // function either way (see demuxClient). The container check moves inside;
+  // `buf` is TRANSFERRED on the worker path and must not be read after this.
+  const demuxed = await demuxFile(buf);
   if ((demuxed as { hasAlpha?: boolean }).hasAlpha) {
     // The exact path decodes only the primary bitstream; the alpha plane
     // rides in BlockAdditional side data it never feeds. The element tier
