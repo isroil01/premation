@@ -59,7 +59,7 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { useAssetStore } from '@stores/assetStore';
-import { resolveMediaSrc, servedProxy } from '@core/assets/proxy';
+import { planAnalysisDecode, type AnalysisPlan } from './analysisTier';
 import {
   isLocalBlobRef,
   resolveLocalBlobObjectUrl,
@@ -73,7 +73,6 @@ import type { VideoFrameIndex } from '@core/video/frameIndex';
 import type { LumaPlane } from './patchMatch';
 import { lumaFromDecodedFrame, makeCanvasLumaReader } from './lumaExtract';
 import { trackPoints, type TrackSample } from './tracker';
-import { sourceDisplaySize } from './trackerSource';
 import { createReverseFrameWalk } from './reverseFrameWalk';
 import { runAutoTrack, type TrackPlan } from './autoTrack';
 import { yieldToUi, ANALYSIS_YIELD_EVERY } from '@core/loading/yieldToUi';
@@ -159,8 +158,10 @@ interface LayerFrames {
   planeBytes: number;
   /** Presentation index of the keyframe starting `index`'s GOP. */
   keyframeAtOrBefore: (index: number) => number;
-  /** Which tier actually served, for diagnostics and tests. */
-  servedTier: 'analysis' | 'viewport' | 'original';
+  /** Which tier actually served, for diagnostics and tests. Typed from the
+   *  plan rather than restated, so this file names no tier of its own — the
+   *  guard in `proxyExport.test.ts` requires exactly one module to. */
+  servedTier: AnalysisPlan['tier'];
   close: () => void;
 }
 
@@ -194,16 +195,12 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
     : undefined;
   if (!asset || asset.type !== 'video') throw new Error('Layer has no video source.');
 
-  // The ANALYSIS stand-in when one exists, else the viewport one, else the
-  // original — see the header for why a lower-resolution decode does not cost
-  // precision here. Requested BY NAME: no render path can reach this tier, and
-  // the export invariant is untouched.
-  const served = servedProxy(asset, 'analysis');
-  const src = resolveMediaSrc(asset, 'analysis') ?? asset.src;
-  const servedTier: LayerFrames['servedTier'] =
-    served === asset.analysisProxy && served ? 'analysis'
-      : served ? 'viewport'
-        : 'original';
+  // Which file to decode, and the grid to report in — one decision, shared with
+  // the stabilizer, because the two got it subtly differently the first time.
+  // See `analysisTier` for why an unknown display grid forbids a stand-in.
+  const plan = planAnalysisDecode(nodeId, asset);
+  const src = plan.src;
+  const servedTier: LayerFrames['servedTier'] = plan.tier;
   // A `motion-blob:` ref is a bundle reference, not a URL — fetching one throws.
   // Retained for the life of this walk and released with the source.
   const holder = `track:${nodeId}`;
@@ -241,7 +238,13 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
 
   // Display grid (what requests and samples speak) ↔ coded grid (what the
   // decoder hands the matcher). See trackerSource.ts.
-  const display = sourceDisplaySize(nodeId) ?? {
+  //
+  // The fallback is only ever reached when `plan.display` is null, and that is
+  // exactly the case in which `planAnalysisDecode` refused a stand-in — so
+  // "the decoded size" and "the source's size" are the same thing here. Reading
+  // the decoded size WITHOUT that guarantee was the trap: it would have made
+  // the conversion ratio 1 on a proxy and reported every sample in proxy pixels.
+  const display = plan.display ?? {
     width: demuxed.codedWidth,
     height: demuxed.codedHeight,
   };

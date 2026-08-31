@@ -23,7 +23,7 @@ import { computeFlow } from '@core/rendering/pixelMotionFlow';
 import { fitSimilarity, flowSamplePoints, stabilizingCorrections, IDENTITY_SIM, type Sim } from './globalMotion';
 import { applySmoothStabilize, applySubspaceMeshSequence } from './applyTrack';
 import { estimateRollingShutterShear, fitSubspaceWarp, applyRollingShutterRepair } from './subspaceWarp';
-import { sourceDisplaySize } from './trackerSource';
+import { planAnalysisDecode } from './analysisTier';
 
 export interface SmoothStabilizeRequest {
   nodeId: string;
@@ -91,8 +91,14 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
   const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : undefined;
   if (!asset || asset.type !== 'video') throw new Error('Layer has no video source.');
 
-  // Original file, never the proxy — same reasoning as the point tracker.
-  const res = await fetch(asset.src);
+  // The ANALYSIS stand-in when one exists — same decision, and the same shared
+  // rule, as the point tracker. Flow already runs at STAB_MAX_DIM whatever gets
+  // decoded, so the resolution of the file changes nothing about the
+  // measurement; what it changes is the seek (97.6% of the cost at 4K, per the
+  // table in `@core/assets/proxy`) and the readback canvas, which drops from
+  // 3840x2160 to 960x540 — a sixteenth of the pixels pulled back per frame.
+  const plan = planAnalysisDecode(req.nodeId, asset);
+  const res = await fetch(plan.src);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   // Off the main thread when one is available (see demuxClient). This also
   // picks the container by magic bytes, where this call site assumed MP4 —
@@ -112,7 +118,11 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
       return source.frameIndexAt(Math.max(0, Math.round(mediaSec * 1e6) + 1));
     };
 
-    const display = sourceDisplaySize(req.nodeId) ?? {
+    // The ORIGINAL's grid, established without asking the decoder. The fallback
+    // is reachable only when `planAnalysisDecode` refused a stand-in, so there
+    // it IS the source's size — see `analysisTier` for why deriving this from
+    // the decode would silently scale every correction by the proxy ratio.
+    const display = plan.display ?? {
       width: demuxed.codedWidth,
       height: demuxed.codedHeight,
     };
@@ -269,7 +279,8 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
         prevI = idx;
         req.onProgress?.(i / (compFrames.length - 1));
       }
-      const g = sourceDisplaySize(req.nodeId);
+      // `display` already IS that answer, resolved once above and guaranteed to
+      // describe the original rather than whatever was decoded.
       const keyframes = applySubspaceMeshSequence({
         targetNodeId: req.nodeId,
         frames: meshFrames,
@@ -277,8 +288,8 @@ export async function smoothStabilizeVideoLayer(req: SmoothStabilizeRequest): Pr
         cols: 4,
         fieldW: fieldW0,
         fieldH: fieldH0,
-        layerW: g?.width ?? display.width,
-        layerH: g?.height ?? display.height,
+        layerW: display.width,
+        layerH: display.height,
       });
       return { keyframes, fittedPairs: fitted, totalPairs: pairs.length };
     }
