@@ -89,10 +89,17 @@ export interface DecoderIO {
    * Hardware decoders own a fixed pool of output buffers, and every unclosed
    * `VideoFrame` pins one. Hold ~10 and the decoder's `flush()` stalls FOREVER
    * — which surfaced as Track Motion "freezing at 2–4%" and would hang exact
-   * scrubbing the same way. So the session never caches raw VideoFrames: in
-   * production this draws the frame into a plain canvas (pool-free, still a
-   * CanvasImageSource) and closes it; the jsdom tests omit it (identity), as
-   * fake frames have no pool to exhaust.
+   * scrubbing the same way. So the session never caches raw VideoFrames.
+   *
+   * SYNCHRONOUS, and that is the load-bearing half of the contract. This runs
+   * inside the decoder's `output` callback and the original frame must be
+   * closed before control leaves it — an `await` anywhere between output and
+   * `close()` is exactly the pool stall above. That rules out
+   * `createImageBitmap`, which is async; see the production adapter for the
+   * synchronous route it takes instead.
+   *
+   * The jsdom tests omit this hook entirely (identity), as fake frames have no
+   * pool to exhaust.
    */
   retain?: (frame: DecodedFrameLike) => DecodedFrameLike;
 }
@@ -135,6 +142,57 @@ export const webCodecsIO: DecoderIO = {
     const f = frame as unknown as { displayWidth?: number; displayHeight?: number; codedWidth?: number; codedHeight?: number };
     const w = f.displayWidth || f.codedWidth || 2;
     const h = f.displayHeight || f.codedHeight || 2;
+    const timestamp = frame.timestamp;
+
+    // ── The synchronous ImageBitmap route ──────────────────────
+    //
+    // Draw into a pooled OffscreenCanvas, then `transferToImageBitmap()` —
+    // synchronous, and it hands back a CLOSEABLE, TRANSFERABLE bitmap. That
+    // matters twice. Holding one 2D canvas per cached frame put the cache
+    // against Chromium's accelerated-canvas budget, whose response to pressure
+    // is to discard backing stores or drop to software raster SILENTLY, which
+    // is what "quality degrades gradually across a long session" looks like
+    // from the outside. And a transferable frame is what decoding in a worker
+    // would need to hand back.
+    //
+    // `createImageBitmap` would be the obvious call and cannot be used here:
+    // it is async, and an await between the decoder's `output` and
+    // `frame.close()` pins a hardware pool slot — the stall this seam exists
+    // to avoid, and the one that surfaced as Track Motion freezing at 2–4%.
+    //
+    // ALPHA IS A NON-ISSUE ON THIS PATH, written down because the two upload
+    // routes treat premultiply differently: a 2D canvas is converted at upload,
+    // while an ImageBitmap carries its own state and WebGL2's unpack flag is
+    // ignored for it. The `drawImage` below is unchanged, so the bitmap
+    // inherits the canvas's premultiplied backing store either way — and
+    // nothing arriving here has alpha at all. The exact loader REFUSES alpha
+    // WebM outright (see `defaultLoader` in exactVideoFrames.ts: "alpha WebM —
+    // element path preserves transparency"), so every frame retained here is
+    // opaque and premultiply is the identity.
+    //
+    // `transferToImageBitmap` transfers the backing store and leaves the canvas
+    // blank at the same size, so the pool hands back clean surfaces with no
+    // clear of its own.
+    const off = offscreenFor(w, h);
+    if (off) {
+      const ctx = off.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
+        const bitmap = off.transferToImageBitmap();
+        frame.close();
+        // The bitmap IS the frame: a CanvasImageSource with a real `close()` on
+        // its prototype — so eviction frees it explicitly instead of leaving it
+        // to GC — plus the session's routing fields.
+        return Object.assign(bitmap, {
+          timestamp,
+          displayWidth: w,
+          displayHeight: h,
+        }) as unknown as DecodedFrameLike;
+      }
+    }
+
+    // No OffscreenCanvas (older runtime, jsdom): the original canvas route,
+    // which is correct and merely holds more GPU-backed surfaces.
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -145,10 +203,7 @@ export const webCodecsIO: DecoderIO = {
       return frame;
     }
     ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, w, h);
-    const timestamp = frame.timestamp;
     frame.close();
-    // The canvas IS the frame: drawable via drawImage like the VideoFrame it
-    // replaces, with the session's routing fields grafted on.
     return Object.assign(canvas, {
       timestamp,
       displayWidth: w,
@@ -157,6 +212,44 @@ export const webCodecsIO: DecoderIO = {
     }) as unknown as DecodedFrameLike;
   },
 };
+
+/**
+ * Pooled draw surfaces for {@link webCodecsIO}.retain.
+ *
+ * `transferToImageBitmap` empties the canvas without resizing it, so a surface
+ * is reusable the instant its bitmap has been taken. Pooling matters because
+ * streaming playback retains 30–60 frames a second, and allocating a full-res
+ * OffscreenCanvas per frame is pure allocator churn — the same reasoning as the
+ * canvas pool in `exactVideoFrames`, and the same small ceiling: a handful of
+ * distinct frame sizes is all any project has on screen at once.
+ */
+const offscreenPool: OffscreenCanvas[] = [];
+const OFFSCREEN_POOL_MAX = 4;
+
+/** Drop the pooled surfaces. Tests only — production has one implementation
+ *  of `OffscreenCanvas` and never needs to forget it. */
+export function resetRetainSurfacePool(): void {
+  offscreenPool.length = 0;
+}
+
+function offscreenFor(w: number, h: number): OffscreenCanvas | null {
+  if (typeof OffscreenCanvas !== 'function') return null;
+  for (const c of offscreenPool) {
+    if (c.width === w && c.height === h) return c;
+  }
+  let c: OffscreenCanvas;
+  try {
+    c = new OffscreenCanvas(w, h);
+  } catch {
+    return null;
+  }
+  // `transferToImageBitmap` is what makes the synchronous route possible; a
+  // runtime with OffscreenCanvas but without it falls back to the canvas.
+  if (typeof c.transferToImageBitmap !== 'function') return null;
+  if (offscreenPool.length >= OFFSCREEN_POOL_MAX) offscreenPool.shift();
+  offscreenPool.push(c);
+  return c;
+}
 
 /** Frames a single flush can strand in cache beyond the configured budget:
  *  the budget must never evict frames of the GOP being decoded RIGHT NOW, or
@@ -210,10 +303,11 @@ export class ExactVideoSource {
   constructor(
     private readonly demuxed: DemuxedVideo,
     private readonly io: DecoderIO = webCodecsIO,
-    // Cached frames are canvas COPIES in production (see DecoderIO.retain), so
-    // the budget is plain memory, not decoder pool slots — but at 1080p each
-    // copy is ~8MB, so the budget stays small. The byte-budgeted tier above
-    // (exactVideoFrames) is the real cache; this one only smooths stepping.
+    // Cached frames are COPIES in production (an ImageBitmap; see
+    // DecoderIO.retain), so the budget is plain memory, not decoder pool slots
+    // — but at 1080p each copy is ~8MB, so the budget stays small. The
+    // byte-budgeted tier above (exactVideoFrames) is the real cache; this one
+    // only smooths stepping.
     private readonly maxCached = 12,
   ) {
     const routing = routingFor(demuxed);
