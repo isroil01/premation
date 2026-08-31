@@ -16,6 +16,11 @@ import { FrameCache } from './frameCache';
 import { FrameDiskCache, type DecodedFrame } from './frameDiskCache';
 import type { FrameBlobStore, StoredFrame } from './frameBlobStore';
 
+/** Generation ids are namespaced by the renderer that wrote them (see
+ *  `rendererIdentity`). Pinned here so these tests assert on generation
+ *  bookkeeping rather than on the app's current version string. */
+const RID = 'r';
+
 class MemoryFrameStore implements FrameBlobStore {
   map = new Map<string, StoredFrame>();
   async get(key: string): Promise<StoredFrame | undefined> { return this.map.get(key); }
@@ -40,6 +45,7 @@ function setup(opts: { encodes?: () => void } = {}) {
   const store = new MemoryFrameStore();
   const disk = new FrameDiskCache({
     store,
+    identity: () => RID,
     maxBytes: 1e9,
     encode: async () => { opts.encodes?.(); return ({ size: 10 }) as Blob; },
     decode: async () => sourceCanvas() as DecodedFrame,
@@ -55,7 +61,7 @@ describe('write-through', () => {
     const { store, ram } = setup();
     ram.put(1, sourceCanvas());
     await flush();
-    expect([...store.map.keys()]).toEqual(['k1#1']);
+    expect([...store.map.keys()]).toEqual([`${RID}~k1#1`]);
   });
 
   it('the RAM cache still works with no disk attached', () => {
@@ -159,13 +165,13 @@ describe('invalidation', () => {
     // the current key the tier would sit generation-less until the next edit
     // and silently store nothing.
     const store = new MemoryFrameStore();
-    const disk = new FrameDiskCache({ store, encode: async () => ({ size: 10 }) as Blob });
+    const disk = new FrameDiskCache({ store, identity: () => RID, encode: async () => ({ size: 10 }) as Blob });
     const ram = new FrameCache(1024 * 1024);
     ram.setKey('k1', 4, 4);
     ram.attachDisk(disk);
     ram.put(1, sourceCanvas());
     await flush();
-    expect([...store.map.keys()]).toEqual(['k1#1']);
+    expect([...store.map.keys()]).toEqual([`${RID}~k1#1`]);
   });
 });
 

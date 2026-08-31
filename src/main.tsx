@@ -7,6 +7,7 @@ import { setLocalFirst } from '@core/config/flags';
 import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
 import { restoreSamModelAtBoot } from '@core/tracking/samModelInstall';
 import { parseEdition, setEdition } from '@core/config/edition';
+import { setDevRendererBuild } from '@core/rendering/rendererIdentity';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import { installPluginNetBridge } from '@core/plugins/pluginNetBridge';
 import './styles/global.css';
@@ -21,6 +22,12 @@ purgeLegacyLocalAiKeys();
 // here at the entry for the same reason as the flag below, and read BEFORE it
 // because the local edition implies local-first storage.
 const edition = parseEdition(import.meta.env.VITE_EDITION as string | undefined);
+
+// A dev build's version does not move between edits, so it cannot tell
+// yesterday's renderer from today's — and the disk frame cache now survives a
+// restart. Read here for the same reason the flags above are: `import.meta`
+// trips Jest under this repo's CJS transform.
+setDevRendererBuild(import.meta.env.DEV === true);
 setEdition(edition);
 
 // Report it to the shell, which resolved its OWN edition from a different build

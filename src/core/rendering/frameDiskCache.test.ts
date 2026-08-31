@@ -15,6 +15,11 @@
 import { FrameDiskCache, type DecodedFrame } from './frameDiskCache';
 import type { FrameBlobStore, StoredFrame } from './frameBlobStore';
 
+/** Generation ids are namespaced by the renderer that wrote them (see
+ *  `rendererIdentity`). Pinned here so these tests assert on generation
+ *  bookkeeping rather than on the app's current version string. */
+const RID = 'r';
+
 class MemoryFrameStore implements FrameBlobStore {
   map = new Map<string, StoredFrame>();
   clears = 0;
@@ -52,6 +57,7 @@ function makeCache(opts: { maxBytes?: number; blobBytes?: number } = {}) {
   const store = new MemoryFrameStore();
   const cache = new FrameDiskCache({
     store,
+    identity: () => RID,
     maxBytes: opts.maxBytes ?? 1000,
     encode: async () => blobOf(opts.blobBytes ?? 100),
     decode: async () => ({ width: 4, height: 4 }) as DecodedFrame,
@@ -68,7 +74,7 @@ describe('a previous session is never trusted', () => {
     // whole reason this tier is safe to have at all.
     const store = new MemoryFrameStore();
     await store.put('stale#12', { blob: blobOf(10), bytes: 10 });
-    const cache = new FrameDiskCache({ store });
+    const cache = new FrameDiskCache({ store, identity: () => RID });
     await cache.open();
     expect(store.map.size).toBe(0);
   });
@@ -91,7 +97,7 @@ describe('storing frames', () => {
     await flush();
     expect(cache.has(3)).toBe(true);
     expect(cache.storedFrames).toBe(1);
-    expect([...store.map.keys()]).toEqual(['g1#3']);
+    expect([...store.map.keys()]).toEqual([`${RID}~g1#3`]);
   });
 
   it('does not re-encode a frame it already holds', async () => {
@@ -99,6 +105,7 @@ describe('storing frames', () => {
     let encodes = 0;
     const cache = new FrameDiskCache({
       store,
+      identity: () => RID,
       encode: async () => { encodes++; return blobOf(10); },
     });
     cache.setGeneration('g1');
@@ -118,7 +125,7 @@ describe('storing frames', () => {
 
   it('does nothing at all before a generation is set', async () => {
     const store = new MemoryFrameStore();
-    const cache = new FrameDiskCache({ store, encode: async () => blobOf(10) });
+    const cache = new FrameDiskCache({ store, identity: () => RID, encode: async () => blobOf(10) });
     cache.write(1, canvas());
     await flush();
     expect(store.map.size).toBe(0);
@@ -147,7 +154,7 @@ describe('the byte budget', () => {
     await flush();
     cache.write(2, canvas());
     await flush();
-    expect([...store.map.keys()]).toEqual(['g1#2']);
+    expect([...store.map.keys()]).toEqual([`${RID}~g1#2`]);
   });
 
   it('a read moves a frame to the back of the eviction queue', async () => {
@@ -216,6 +223,7 @@ describe('generation turnover', () => {
     const gate = new Promise<void>((r) => { release = r; });
     const cache = new FrameDiskCache({
       store,
+      identity: () => RID,
       encode: async () => { await gate; return blobOf(10); },
     });
     cache.setGeneration('g1');
@@ -235,6 +243,7 @@ describe('generation turnover', () => {
     const gate = new Promise<void>((r) => { release = r; });
     const cache = new FrameDiskCache({
       store,
+      identity: () => RID,
       encode: async () => blobOf(10),
       decode: async () => { await gate; return ({ width: 4, height: 4 }) as DecodedFrame; },
     });
@@ -307,6 +316,7 @@ describe('look-ahead', () => {
     let decodes = 0;
     const cache = new FrameDiskCache({
       store,
+      identity: () => RID,
       encode: async () => blobOf(10),
       decode: async () => { decodes++; await gate; return ({ width: 4, height: 4 }) as DecodedFrame; },
     });
@@ -328,6 +338,7 @@ describe('look-ahead', () => {
     const gate = new Promise<void>((r) => { release = r; });
     const cache = new FrameDiskCache({
       store,
+      identity: () => RID,
       encode: async () => blobOf(10),
       decode: async () => {
         inFlight++;
