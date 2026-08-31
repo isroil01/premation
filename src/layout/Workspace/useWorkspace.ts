@@ -23,6 +23,7 @@ import type { Guide, GuideAxis, WorkspaceOverlay } from '@motion/workspace';
 import { modifiersFrom, drawToolOptions, type PointerInput, type WheelInput } from '@motion/workspace';
 import renderCache from '@core/rendering/renderCache';
 import { viewportFrameCache } from '@core/rendering/frameCache';
+import { mayServeCachedFrame, mayFillFromPausedRender } from '@core/rendering/previewCacheGate';
 import { useWorkspaceStore } from '@stores/projectStore';
 import workspaceStyles from './Workspace.module.css';
 import { useProjectStore } from '@stores/projectStore';
@@ -804,7 +805,22 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       // `setKey` is a string compare when nothing changed, so this is free on
       // the hot path.
       viewportFrameCache.setKey(invalidationKey, content.width, content.height);
-      if (playing) {
+
+      // SERVE and FILL while paused too, not only while playing — scrubbing
+      // back over a green region used to re-render every frame from scratch.
+      // The conditions, and the four separate hazards they answer, are in
+      // `previewCacheGate`.
+
+      const interacting = useRenderQualityStore.getState().interacting;
+      const gateState = {
+        playing,
+        interacting,
+        onionSkins: useOnionSkinStore.getState().enabled,
+        timeSec: timeRef.current,
+        fps,
+        frame,
+      };
+      if (mayServeCachedFrame(gateState)) {
         const hit = viewportFrameCache.get(frame);
         const cacheCanvas = cacheCanvasRef?.current;
         if (hit && cacheCanvas) {
@@ -821,7 +837,9 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
             ctx.clearRect(0, 0, cacheCanvas.width, cacheCanvas.height);
             ctx.drawImage(hit, 0, 0);
             cacheCanvas.classList.add(cacheVisibleClass);
-            lastPlaybackPutFrame = frame;
+            // Playback bookkeeping only: this cursor drives the catch-up loop,
+            // which does not run while paused.
+            if (playing) lastPlaybackPutFrame = frame;
             // Blits bypass renderFrame, so nothing else drives the playback
             // video elements — keep them tracking the playhead or the next
             // cache miss pays a hard mid-GOP seek (a visibly frozen picture).
@@ -900,7 +918,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         }
       } else {
         const q = useRenderQualityStore.getState();
-        if (q.interacting) {
+        if (interacting) {
           // Adaptive Resolution for DRAGS mirrors the playback path: measure
           // the real frame cost and let the store's hysteresis decide. A drag
           // on a light comp keeps full quality; a heavy one degrades within
@@ -916,6 +934,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           }
         } else {
           renderAt(timeRef.current);
+          // And CACHE it, so a scrub leaves a green trail behind it. The idle
+          // pump is otherwise the only paused writer, and it needs 1.5s of
+          // quiet that an active scrub re-arms away on every move.
+          if (mayFillFromPausedRender({ ...gateState, mediaExact: b.lastFrameMediaExact?.() !== false })) {
+            viewportFrameCache.put(frame, content);
+          }
         }
       }
 
