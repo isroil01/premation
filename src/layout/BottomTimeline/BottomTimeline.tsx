@@ -32,7 +32,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenComposition } from '@core/scene/sceneDerive';
 import { deleteComposition, duplicateComposition } from '@core/composition/compositionOps';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
-import { customConfirm } from '@components/Modal';
+import { customConfirm, customPrompt } from '@components/Modal';
 import styles from './BottomTimeline.module.css';
 
 export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
@@ -270,11 +270,18 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 className={styles.timecodeMain}
                 title="Current timecode (Click to seek)"
                 onClick={() => {
-                  const sec = prompt('Go to timecode or seconds:', (ws?.time ?? props.model.currentTime).toFixed(2));
-                  if (sec !== null) {
+                  // `customPrompt`, not `window.prompt`: Electron has no
+                  // `prompt`, so in the desktop build this button did nothing
+                  // at all. The lint rule that names it exists for that reason.
+                  void customPrompt(
+                    'Go to Time',
+                    'Timecode or seconds',
+                    (ws?.time ?? props.model.currentTime).toFixed(2),
+                  ).then((sec) => {
+                    if (sec === null) return;
                     const val = parseFloat(sec);
-                    if (!isNaN(val)) getTimelineController().seekSeconds(val);
-                  }
+                    if (!Number.isNaN(val)) getTimelineController().seekSeconds(val);
+                  });
                 }}
               >
                 {framesToTimecode(ws?.time ?? props.model.currentTime, fps, startFrame)}
