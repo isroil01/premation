@@ -22,6 +22,34 @@
  * its GOP cache absorbs the sequential access and memory stays flat on long
  * clips. Luma extraction goes through ONE reused canvas.
  *
+ * ── It decodes the ANALYSIS proxy when there is one ─────────────────────────
+ *
+ * A tracker does not need 4K pixels, and the repo's own table says why it must
+ * not ask for them: a 4K random seek costs 171.8ms against 17.4ms at 540p, and
+ * seek is 97.6% of the cost at 4K. A feature matcher works on a downsampled
+ * pyramid; AE's does, and this app's auto-reframe has analysed at 160px wide
+ * since it was written.
+ *
+ * This used to read the ORIGINAL unconditionally, with a comment arguing that a
+ * quarter-resolution tracker returning quarter-precision positions would be the
+ * "proxy silently in use" bug again. The premise is right and the conclusion did
+ * not follow: positions are reported in the DISPLAY grid, and the display↔coded
+ * conversion this module already owns (`toCodedX`/`toCodedY`) is exactly the
+ * factor between them. Decoding a 960px stand-in changes `codedWidth`, and every
+ * number in and out goes through that same conversion — so precision is a
+ * property of the MATCHER, which refines sub-pixel, not of the file it read.
+ *
+ * What would have made the old comment true is measuring in one grid and
+ * reporting in another. That is precisely what the window sizes did: `points`
+ * were converted and `featureHalf`/`searchHalf` were not, which was invisible
+ * while coded == display and would have made every window four times too large
+ * on a proxy. They are converted now, and pinned by test.
+ *
+ * Falls back analysis → viewport → original (`resolveMediaSrc`), because an
+ * analysis walk cares about decode cost and nothing else: a 1920px stand-in
+ * beats a 3840px one when no 960px one exists. Slower than it could be always
+ * beats wrong — `proxyManager`'s failure philosophy, unchanged.
+ *
  * Two entry points share all of that through `openLayerFrames`:
  * `trackVideoLayerPoints` (explicit points, playhead onwards — the classic
  * Track Motion panel) and `autoTrackVideoLayer` (one click: pick the feature,
@@ -31,6 +59,12 @@
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { assetIdOf } from '@core/source/sourceInfo';
 import { useAssetStore } from '@stores/assetStore';
+import { resolveMediaSrc, servedProxy } from '@core/assets/proxy';
+import {
+  isLocalBlobRef,
+  resolveLocalBlobObjectUrl,
+  releaseLocalBlobObjectUrl,
+} from '@core/rendering/localBlobSource';
 import { compToKeyframeTime, getTimelineController } from '@core/timeline/TimelineController';
 import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
 import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
@@ -124,6 +158,8 @@ interface LayerFrames {
   planeBytes: number;
   /** Presentation index of the keyframe starting `index`'s GOP. */
   keyframeAtOrBefore: (index: number) => number;
+  /** Which tier actually served, for diagnostics and tests. */
+  servedTier: 'analysis' | 'viewport' | 'original';
   close: () => void;
 }
 
@@ -157,10 +193,22 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
     : undefined;
   if (!asset || asset.type !== 'video') throw new Error('Layer has no video source.');
 
-  // Always the ORIGINAL file, never the proxy: a proxy is quarter-resolution,
-  // and a tracker that silently returns quarter-precision positions while the
-  // proxy switch is on is the "proxy silently in use" bug all over again.
-  const res = await fetch(asset.src);
+  // The ANALYSIS stand-in when one exists, else the viewport one, else the
+  // original — see the header for why a lower-resolution decode does not cost
+  // precision here. Requested BY NAME: no render path can reach this tier, and
+  // the export invariant is untouched.
+  const served = servedProxy(asset, 'analysis');
+  const src = resolveMediaSrc(asset, 'analysis') ?? asset.src;
+  const servedTier: LayerFrames['servedTier'] =
+    served === asset.analysisProxy && served ? 'analysis'
+      : served ? 'viewport'
+        : 'original';
+  // A `motion-blob:` ref is a bundle reference, not a URL — fetching one throws.
+  // Retained for the life of this walk and released with the source.
+  const holder = `track:${nodeId}`;
+  const url = isLocalBlobRef(src) ? await resolveLocalBlobObjectUrl(src, holder) : src;
+  if (!url) throw new Error('The footage for this layer could not be resolved.');
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Source unreadable (${res.status}).`);
   const buf = await res.arrayBuffer();
   const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
@@ -214,8 +262,25 @@ async function openLayerFrames(nodeId: string, fps: number): Promise<LayerFrames
     },
     planeBytes: demuxed.codedWidth * demuxed.codedHeight,
     keyframeAtOrBefore: keyframeLookup(source.index),
-    close: () => source.close(),
+    servedTier,
+    close: () => {
+      source.close();
+      releaseLocalBlobObjectUrl(src, holder);
+    },
   };
+}
+
+/**
+ * Display px → decoded px for a scalar LENGTH (a window half-size, a radius).
+ *
+ * The inverse of `displayPlan`'s `toDisplayLength`, and the same reasoning:
+ * anamorphic footage stretches the grid in x only, so one number cannot be
+ * right for both axes and the geometric mean is the least wrong one — exactly
+ * the per-axis scale whenever the pixels are square, which is every codec path
+ * but anamorphic. Coordinates still convert per axis; only lengths use this.
+ */
+function toCodedLength(frames: LayerFrames): number {
+  return Math.sqrt(frames.toCodedX * frames.toCodedY);
 }
 
 /** Comp frames in `[startFrame..endFrame]` paired with their source indices. */
@@ -292,8 +357,17 @@ export async function trackVideoLayerPoints(req: MultiVideoTrackRequest): Promis
         fromFrame: srcFrom,
         toFrame: srcTo,
         points: req.points.map((p) => ({ x: p.x * frames.toCodedX, y: p.y * frames.toCodedY })),
-        featureHalf: req.featureHalf,
-        searchHalf: req.searchHalf,
+        // Converted, like the points. These are DISPLAY px in the request and
+        // the matcher wants decoded px — a distinction that was invisible while
+        // the two grids matched and becomes a four-times-too-large search window
+        // the moment a stand-in is decoded. Anamorphic footage had the same bug
+        // on the original, in one axis, forever.
+        //
+        // By the geometric mean, which is the convention `displayPlan` already
+        // established for a scalar LENGTH and states the reason for: one number
+        // cannot be right for both axes, and the mean preserves area.
+        featureHalf: req.featureHalf * toCodedLength(frames),
+        searchHalf: req.searchHalf * toCodedLength(frames),
         onProgress: (done, total) => req.onProgress?.(done / total),
       });
     } finally {

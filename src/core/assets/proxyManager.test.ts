@@ -83,7 +83,7 @@ describe('a successful generation', () => {
     generate.mockImplementation(async () => {
       // While the encode runs the asset must still resolve to the original.
       const a = useAssetStore.getState().assets[0]!;
-      midFlight = resolveMediaSrc(a, true);
+      midFlight = resolveMediaSrc(a, 'viewport');
       return new Uint8Array([1, 2, 3]);
     });
 
@@ -115,7 +115,7 @@ describe('failure paths all land at full resolution', () => {
     generate.mockResolvedValue(null);
     await startProxy('a1');
     expect(proxyOf()?.status).toBe('failed');
-    expect(resolveMediaSrc(useAssetStore.getState().assets[0]!, true)).toBe(ORIGINAL);
+    expect(resolveMediaSrc(useAssetStore.getState().assets[0]!, 'viewport')).toBe(ORIGINAL);
   });
 
   it('an empty result is treated as failure, not as a valid zero-byte proxy', async () => {
@@ -234,7 +234,7 @@ describe('attach and detach a user-supplied proxy', () => {
     attachProxy('a1', file());
     detachProxy('a1');
     expect(proxyOf()).toBeUndefined();
-    expect(resolveMediaSrc(useAssetStore.getState().assets[0]!, true)).toBe(ORIGINAL);
+    expect(resolveMediaSrc(useAssetStore.getState().assets[0]!, 'viewport')).toBe(ORIGINAL);
   });
 
   it('detaching a GENERATED proxy revokes the URL we created', async () => {

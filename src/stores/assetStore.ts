@@ -73,6 +73,15 @@ export interface ImportedAsset {
    * See `@core/assets/proxy`.
    */
   proxy?: ProxyRecord;
+  /**
+   * The ANALYSIS stand-in — 540p, short GOP, never displayed.
+   *
+   * A separate record rather than a variant of `proxy` because the two have
+   * independent lifecycles: attaching, detaching or failing one says nothing
+   * about the other, and the UI badges only the viewport one (a proxy nobody
+   * can see is not a quality warning). See `@core/assets/proxy`.
+   */
+  analysisProxy?: ProxyRecord;
 }
 
 /** Longest edge (px) of a generated panel thumbnail — comfortably sharp for the
@@ -241,6 +250,8 @@ interface AssetStoreActions {
   setInterpretation: (assetId: string, patch: FootageInterpretation) => void;
   /** Write or clear an asset's proxy record. Pass null to detach. */
   setProxy: (assetId: string, proxy: ProxyRecord | null) => void;
+  /** The analysis stand-in's record. Same contract as `setProxy`. */
+  setAnalysisProxy: (assetId: string, proxy: ProxyRecord | null) => void;
   /** Replace the local list with the signed-in user's cloud assets. */
   loadFromCloud: () => Promise<void>;
   /** Initialize local assets hydrated from IndexedDB. */
@@ -270,6 +281,10 @@ const SOURCE_KEY = 'motion-editor.assetSources.v1';
 // a statement the editor makes about a file, and neither the cloud schema nor
 // the IndexedDB record carries it.
 const PROXY_KEY = 'motion-editor.assetProxies.v1';
+/** The analysis stand-in's records. A separate key, not a field inside the
+ *  one above, so a store written by a build that predates this tier reads
+ *  back unchanged instead of failing its shape check. */
+const ANALYSIS_PROXY_KEY = 'motion-editor.assetAnalysisProxies.v1';
 
 function loadFolders(): AssetFolder[] {
   try {
@@ -380,9 +395,9 @@ function loadInterpretations(): Record<string, FootageInterpretation> {
  * It should never be written, but a record from a crashed session or a hand
  * -edited store must not resurrect a job with no child process behind it.
  */
-function loadProxies(): Record<string, ProxyRecord> {
+function loadProxies(key: string = PROXY_KEY): Record<string, ProxyRecord> {
   try {
-    const raw = localStorage.getItem(PROXY_KEY);
+    const raw = localStorage.getItem(key);
     const map = raw ? (JSON.parse(raw) as Record<string, ProxyRecord>) : {};
     // Drop anything that cannot survive a reload — a 'generating' job with no
     // child behind it, or (the common case) a 'ready' record whose only src is
@@ -414,6 +429,11 @@ function saveProxies(assets: ImportedAsset[]): void {
     // dead url instead of a clean fall back to full resolution.
     for (const a of assets) if (isPersistableProxy(a.proxy)) map[a.id] = a.proxy!;
     localStorage.setItem(PROXY_KEY, JSON.stringify(map));
+    const analysis: Record<string, ProxyRecord> = {};
+    // Same durability rule, applied separately: the two records fail
+    // independently, so one being unpersistable must not lose the other.
+    for (const a of assets) if (isPersistableProxy(a.analysisProxy)) analysis[a.id] = a.analysisProxy!;
+    localStorage.setItem(ANALYSIS_PROXY_KEY, JSON.stringify(analysis));
   } catch {
     /* ignore */
   }
@@ -472,18 +492,21 @@ function applyAssignments(assets: ImportedAsset[], folders: AssetFolder[]): Impo
   const map = loadAssignments();
   const interp = loadInterpretations();
   const proxies = loadProxies();
+  const analysisProxies = loadProxies(ANALYSIS_PROXY_KEY);
   const sources = loadSources();
   const validFolder = new Set(folders.map((f) => f.id));
   return assets.map((a) => {
     const fid = map[a.id];
     const i = interp[a.id];
     const p = proxies[a.id];
+    const ap = analysisProxies[a.id];
     const src = sources[a.id];
     return {
       ...a,
       folderId: fid && validFolder.has(fid) ? fid : a.folderId ?? null,
       ...(i ? { interpret: i } : {}),
       ...(p ? { proxy: p } : {}),
+      ...(ap ? { analysisProxy: ap } : {}),
       ...(src ? { source: src } : {}),
     };
   });
@@ -1008,6 +1031,21 @@ export const useAssetStore = create<AssetStoreState & AssetStoreActions>()(
       });
       saveProxies(get().assets);
       bumpScene();
+    },
+
+    /**
+     * The analysis record. Deliberately does NOT `bumpScene`: nothing on screen
+     * decodes this tier, so announcing it as a scene change would invalidate
+     * every cached frame in the comp for a file the renderer will never open.
+     */
+    setAnalysisProxy: (assetId, proxy) => {
+      set((s) => {
+        const a = s.assets.find((x) => x.id === assetId);
+        if (!a) return;
+        if (proxy) a.analysisProxy = proxy;
+        else delete a.analysisProxy;
+      });
+      saveProxies(get().assets);
     },
 
     /**

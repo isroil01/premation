@@ -109,7 +109,7 @@ describe('"Proxy in use" agrees with what the renderer would decode', () => {
       seed(a);
       usePreferenceStore.getState().set('useProxies', on);
       render(<ProxyRow assetId={ID} />);
-      const decodesProxy = resolveMediaSrc(a, on) !== ORIGINAL;
+      const decodesProxy = resolveMediaSrc(a, on ? 'viewport' : 'original') !== ORIGINAL;
       expect(screen.queryByText('Proxy in use') !== null).toBe(decodesProxy);
     }
   });

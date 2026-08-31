@@ -28,7 +28,7 @@ import { assetUrl } from '@core/api/client';
 import { readNodeSequence, sequenceSrcAt } from '@core/scene/imageSequence';
 import { svgLayerSrc } from '@core/svg/svgLayer';
 import { getImageCoverageMask } from '@core/rendering/imageAlphaCoverage';
-import { resolveMediaSrc, type ProxyRecord } from '@core/assets/proxy';
+import { resolveMediaSrc, type ProxyRecord, type ProxyTier } from '@core/assets/proxy';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { rasterPadding } from '@core/rendering/raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints, resolvePuppetSilhouette } from './puppet';
@@ -85,10 +85,12 @@ export function rigLayerKind(kind: SceneKind): 'shape' | 'text' | 'image' | 'vid
  * (buildSnapshot memoizes an id→asset Map once per snapshot; the overlay reads
  * the store directly) without the resolution ORDER ever diverging.
  *
- * `useProxies` opts this call in to low-res stand-ins. It defaults to FALSE, and
- * that polarity is the safety property: export, the offline renderer and the
- * render-test harness never pass it, so they cannot use a proxy by forgetting
- * to opt out. Only the interactive viewport sets it. See `@core/assets/proxy`.
+ * `tier` opts this call in to a low-res stand-in. It defaults to `'original'`,
+ * and that polarity is the safety property: export, the offline renderer and
+ * the render-test harness never pass it, so they cannot use a proxy by
+ * forgetting to opt out. Only the interactive viewport sets it, and only ever
+ * to `'viewport'` — the analysis tier is not displayable and no render path can
+ * name it. See `@core/assets/proxy`.
  */
 export function resolveRigImageSrc(
   node: SceneNode,
@@ -96,7 +98,7 @@ export function resolveRigImageSrc(
   media: RigMediaRef,
   sourceTime: number,
   lookupAsset: (id: string) => RigAssetRef | undefined,
-  useProxies = false,
+  tier: ProxyTier = 'original',
 ): string {
   // SVG layer: the document lives on the node, not in the asset library.
   // `svgLayerSrc` memoizes the data URL per node and hands back the SAME string
@@ -115,7 +117,7 @@ export function resolveRigImageSrc(
     // The single substitution point. `resolveMediaSrc` falls back to the
     // original for every proxy state that is not ready-with-a-src.
     if (asset) {
-      const resolved = resolveMediaSrc(asset, useProxies);
+      const resolved = resolveMediaSrc(asset, tier);
       if (resolved) return resolved;
     }
   }

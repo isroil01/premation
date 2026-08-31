@@ -142,6 +142,27 @@ describe('structural guards', () => {
     expect(read(rel)).not.toContain('useProxies');
   });
 
+  it.each(OUTPUT_PATHS)('%s never mentions the tier type either', (rel) => {
+    // `resolveMediaSrc` takes a `ProxyTier` now, defaulting to 'original'. The
+    // boolean guard above would not have noticed an output path that named a
+    // tier directly — and one of the tiers is 540p footage meant only for a
+    // matcher to read. An output path cannot even SPELL the type.
+    const src = read(rel);
+    expect(src).not.toContain('ProxyTier');
+    expect(src).not.toContain('resolveMediaSrc');
+    expect(src).not.toContain("'analysis'");
+  });
+
+  it('only the analysis walks name the analysis tier, and they are the ones we think', () => {
+    // A count, so a new caller of the invisible tier is a deliberate decision
+    // rather than something that arrived. Scene-edit detection is deliberately
+    // NOT here: it argues in its own source that a re-encode can move a hard
+    // cut, and roto is not here because its output IS the silhouette, so
+    // resolution is the deliverable rather than the cost.
+    const callers = ['src/core/tracking/trackVideoLayer.ts'];
+    for (const c of callers) expect(read(c)).toContain("resolveMediaSrc(asset, 'analysis')");
+  });
+
   it('exactly two viewport hosts opt in, and they are the ones we think', () => {
     // If this count changes, a third render surface started using proxies and
     // someone has to decide deliberately whether that surface is an output.
