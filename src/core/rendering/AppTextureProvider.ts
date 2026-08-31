@@ -55,7 +55,12 @@ import { paintMaskMatte, type LayerMask } from '@core/effects/mask';
 import { drawParticleField, particleFieldSignature } from '@core/particles/particleRender';
 import type { ParticleConfig } from '@core/particles/particleSim';
 import type { CubeLut } from '@core/effects/cubeLut';
-import { isLocalBlobRef, loadLocalBlobObjectUrl } from './localBlobSource';
+import {
+  isLocalBlobRef,
+  attachVideoSrc,
+  detachVideoSrc,
+  resolveLocalBlobObjectUrl,
+} from './localBlobSource';
 import {
   offlineBarsRgba,
   OFFLINE_BARS_W,
@@ -247,22 +252,24 @@ function isSvgBlob(blob: Blob, src: string): boolean {
 
 const defaultLoader: ImageLoader = async (src, fillColor, premultipliedFile) => {
   // Local-first asset (`motion-blob:<hash>`): resolve bytes from the bundle blob
-  // store to a temporary object URL, decode it, then revoke. No network — the
+  // store to the ONE object URL for that hash and decode it. No network — the
   // bytes are already on disk.
+  //
+  // Deliberately NOT revoked here any more. The URL is cached per content hash
+  // and shared with the video tiers (see localBlobSource), so revoking it after
+  // one image decode would kill a `<video>` element still seeking through the
+  // same asset. Ownership lives in `releaseLocalBlobObjectUrl`; an image loader
+  // that finishes inside one await holds nothing.
   if (isLocalBlobRef(src)) {
-    const url = await loadLocalBlobObjectUrl(src);
+    const url = await resolveLocalBlobObjectUrl(src);
     if (!url) return rasterizeViaImage(src); // resolver missing → let <img> try (and fail visibly)
+    const res = await fetch(url);
+    const blob = await res.blob();
+    if (isSvgBlob(blob, src)) return await rasterizeSvg(url, fillColor);
     try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      if (isSvgBlob(blob, src)) return await rasterizeSvg(url, fillColor);
-      try {
-        return await createImageBitmap(blob, decodeOptions(premultipliedFile));
-      } catch {
-        return await rasterizeViaImage(url);
-      }
-    } finally {
-      URL.revokeObjectURL(url);
+      return await createImageBitmap(blob, decodeOptions(premultipliedFile));
+    } catch {
+      return await rasterizeViaImage(url);
     }
   }
   // Inline SVG (UI Kit components, etc.) — decode directly; fetch(data:) is
@@ -524,8 +531,7 @@ const defaultVideoFactory: VideoFactory = (src) => {
   v.crossOrigin = 'anonymous';
   v.playsInline = true;
   v.preload = 'auto';
-  v.src = src;
-  v.load();
+  attachVideoSrc(v, src);
   return v;
 };
 
@@ -2034,6 +2040,12 @@ export class AppTextureProvider implements TextureProvider {
    */
   private releaseVideoEntry(entry: VideoEntry): void {
     if (entry.onSeeked) entry.video.removeEventListener('seeked', entry.onSeeked);
+    // Marked BEFORE the teardown: a `motion-blob:` src resolves asynchronously,
+    // and a resolve still in flight must not re-arm a decoder on an element
+    // that is going away. This element was also the holder of record for that
+    // asset's object URL, and dropping the claim here — and only here — is what
+    // makes the URL eligible for revocation once the exact decoder lets go too.
+    detachVideoSrc(entry.video);
     try {
       entry.video.pause();
       entry.video.removeAttribute('src');

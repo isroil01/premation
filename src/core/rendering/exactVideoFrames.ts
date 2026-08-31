@@ -35,6 +35,7 @@
  */
 
 import { requestMediaRepaint } from './repaintScheduler';
+import { isLocalBlobRef, resolveLocalBlobObjectUrl, releaseLocalBlobObjectUrl } from './localBlobSource';
 import { demuxMp4, type DemuxedVideo } from '@core/video/mp4Demuxer';
 import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
 import {
@@ -168,8 +169,21 @@ type Entry =
   | ReadyEntry
   | { state: 'unavailable'; reason: string };
 
+/** Holder label this cache retains a local-first object URL under. */
+function exactHolder(src: string): string {
+  return `exact:${src}`;
+}
+
 async function defaultLoader(src: string): Promise<LoadedExactSource> {
-  const res = await fetch(src);
+  // A `motion-blob:<hash>` ref is not fetchable. Resolving it here is what
+  // lets footage carried INSIDE a `.motion` bundle reach the exact decoder at
+  // all — before this, `fetch('motion-blob:…')` threw, the source went sticky
+  // `unavailable`, and the element tier could not open the ref either, so a
+  // bundled clip had no working tier. Retained for as long as this cache holds
+  // the source; `sweepIdle`/`clear` release it.
+  const url = isLocalBlobRef(src) ? await resolveLocalBlobObjectUrl(src, exactHolder(src)) : src;
+  if (!url) throw new Error(`local blob not found: ${src}`);
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
   const buf = await res.arrayBuffer();
   if (buf.byteLength > MAX_DEMUX_BYTES) {
@@ -218,6 +232,12 @@ export class ExactVideoFrameCache {
         this.killStream(e);
         e.source.close();
         this.sources.delete(src);
+        // The object URL belongs in the same teardown as the decoder, the
+        // frames and the file bytes — but only OUR claim on it. A `<video>`
+        // element on the fallback tier may still be seeking through the same
+        // asset, and `releaseLocalBlobObjectUrl` revokes only once the last
+        // holder is gone.
+        releaseLocalBlobObjectUrl(src, exactHolder(src));
       }
     }
   }
@@ -608,6 +628,9 @@ export class ExactVideoFrameCache {
           // not resurrect it (and must not leak its decoder).
           if (this.sources.get(src)?.state !== 'loading') {
             loaded.source.close();
+            // The loader retained a local-first URL for a source we are about
+            // to drop on the floor. Nothing else will ever release this claim.
+            releaseLocalBlobObjectUrl(src, exactHolder(src));
             return;
           }
           this.sources.set(src, {
@@ -631,6 +654,11 @@ export class ExactVideoFrameCache {
           this.notify(src);
         },
         (err) => {
+          // Release before the state check: a load that failed AFTER resolving
+          // the URL (a codec the demuxer refuses, a file too large) has a claim
+          // outstanding either way, and `markUnavailable` — the other place
+          // that drops it — is not on this path.
+          releaseLocalBlobObjectUrl(src, exactHolder(src));
           if (this.sources.get(src)?.state !== 'loading') return;
           this.sources.set(src, {
             state: 'unavailable',
@@ -755,15 +783,20 @@ export class ExactVideoFrameCache {
     this.killStream(entry);
     entry.source.close();
     this.sources.set(src, { state: 'unavailable', reason });
+    // This source will never decode exactly again, so this cache has no
+    // further use for the URL. The element tier is about to become the
+    // source's only truth, and it holds its own claim.
+    releaseLocalBlobObjectUrl(src, exactHolder(src));
   }
 
   /** Drop everything and close every decoder. Backend dispose. */
   clear(): void {
-    for (const entry of this.sources.values()) {
+    for (const [src, entry] of this.sources) {
       if (entry.state === 'ready') {
         this.killStream(entry);
         entry.source.close();
       }
+      releaseLocalBlobObjectUrl(src, exactHolder(src));
     }
     this.sources.clear();
   }
