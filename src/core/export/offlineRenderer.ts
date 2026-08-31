@@ -18,6 +18,9 @@ import { buildSnapshot, COMP_WIDTH, COMP_HEIGHT, DEFAULT_COMP, type SnapshotComp
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+// Shared with the tracking walks — see that module for why an `await` alone
+// does not hand the thread back.
+import { yieldToUi } from '@core/loading/yieldToUi';
 import { defaultAnimation } from '@motion/animation';
 
 export interface OfflineRenderParams {
@@ -112,20 +115,6 @@ export type FrameSink = (
   total: number,
   backend?: import('@core/rendering/RenderBackend').RenderBackend,
 ) => void | Promise<void>;
-
-/**
- * Hand the main thread back between frames.
- *
- * `scheduler.yield` resumes this loop at a lower priority than user input and
- * rendering, which is exactly what an export wants: the editor stays interactive
- * and repaints while frames are being rasterised. `setTimeout(0)` is the fallback
- * — it also yields, just with a clamp and no priority ordering.
- */
-const yieldToUi: () => Promise<void> = (() => {
-  const sched = (globalThis as { scheduler?: { yield?: () => Promise<void> } }).scheduler;
-  if (typeof sched?.yield === 'function') return () => sched.yield!();
-  return () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-})();
 
 /**
  * Render each frame deterministically into an offscreen canvas and pass it to

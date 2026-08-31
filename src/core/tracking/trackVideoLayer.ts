@@ -76,6 +76,7 @@ import { trackPoints, type TrackSample } from './tracker';
 import { sourceDisplaySize } from './trackerSource';
 import { createReverseFrameWalk } from './reverseFrameWalk';
 import { runAutoTrack, type TrackPlan } from './autoTrack';
+import { yieldToUi, ANALYSIS_YIELD_EVERY } from '@core/loading/yieldToUi';
 
 export interface CompTrackSample {
   /** Comp seconds — where the playhead is when this sample applies. */
@@ -412,10 +413,37 @@ function openWalk(
   from: number,
   to: number,
 ): { frameAt: (index: number) => Promise<LumaPlane>; close: () => void } {
+  /*
+    Hand the thread back every few frames.
+
+    The walk is full of `await`s and none of them yields: awaiting an
+    already-decoded frame queues a MICROTASK, and microtasks run to exhaustion
+    before the browser gets to paint. So a walk that looks asynchronous occupies
+    the main thread from the first frame to the last, which is what "tracking
+    freezes the UI" actually was.
+
+    The analysis tier is what made this affordable rather than a rewrite:
+    measured, the matcher costs ~53ms per frame per point on a 4K original and
+    ~1.6ms on the 960x540 analysis proxy. At 4K, 300 frames is ~16 seconds of
+    solid occupancy and no yield rate rescues it; at the analysis tier it is
+    ~0.5s, and yielding every few frames turns that into a walk the user can
+    cancel, scrub during, and watch progress on.
+  */
+  let sinceYield = 0;
+  const paced = async <T>(read: () => Promise<T>): Promise<T> => {
+    if (++sinceYield >= ANALYSIS_YIELD_EVERY) {
+      sinceYield = 0;
+      // BEFORE the read, never while holding a frame: `SequentialFrameReader`
+      // closes the previous frame on the next request, and its indices must be
+      // non-decreasing. Yielding here touches neither contract.
+      await yieldToUi();
+    }
+    return read();
+  };
   if (to >= from) {
     const reader = new SequentialFrameReader(frames.demuxed, from, to, undefined, frames.decoderOpts);
     return {
-      frameAt: async (index) => frames.toLuma(await reader.frameAt(index)),
+      frameAt: (index) => paced(async () => frames.toLuma(await reader.frameAt(index))),
       close: () => reader.close(),
     };
   }
@@ -427,7 +455,9 @@ function openWalk(
     readAscending: async (lo, hi, emit) => {
       const reader = new SequentialFrameReader(frames.demuxed, lo, hi, undefined, frames.decoderOpts);
       try {
-        for (let i = lo; i <= hi; i++) emit(i, await frames.toLuma(await reader.frameAt(i)));
+        for (let i = lo; i <= hi; i++) {
+          emit(i, await paced(async () => frames.toLuma(await reader.frameAt(i))));
+        }
       } finally {
         reader.close();
       }
