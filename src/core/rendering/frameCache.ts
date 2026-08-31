@@ -62,7 +62,54 @@
  * condition that made it servable in the first place.
  */
 
-import type { FrameDiskCache } from './frameDiskCache';
+import { LOOK_AHEAD, type FrameDiskCache } from './frameDiskCache';
+
+/**
+ * How far ahead the disk tier may promote, given how many frames RAM holds.
+ *
+ * ## The bug this is the fix for
+ *
+ * `LOOK_AHEAD` was a flat 12, and it did not know the capacity it was promoting
+ * INTO — the same defect `STREAM_AHEAD` had one tier down, with the same shape
+ * and the same consequence. It was tuned where a frame is small: a 1600x900
+ * viewport at dpr 1 is 5.5 MiB a frame, so 512 MiB holds 93 and promoting 12 is
+ * comfortable.
+ *
+ * On a hi-dpi display it is not. A 1920x1080 viewport at dpr 2 renders a
+ * 3840x2160 canvas — 31.6 MiB a frame, 16 frames of budget. Promoting 12 into a
+ * 16-frame cache WHILE the render loop is also inserting into it means the
+ * promoted frames evict each other and the rendered ones before the playhead
+ * arrives. Every one of those promotions cost an IndexedDB read, a PNG decode
+ * and a full-resolution canvas draw, and bought nothing.
+ *
+ * That is why the first playback pass is smooth and the second and third are
+ * worse: on pass one the disk index is EMPTY, so `prefetch` finds nothing and
+ * does no work at all. From pass two on it finds everything, and the cost lands
+ * on top of a render loop that is already at its budget. Adding an effect makes
+ * it compound — a slower render means fewer promoted frames survive, which
+ * means a higher miss rate, which means more promotion.
+ *
+ * ## The rule
+ *
+ * `ahead * 2 <= capacity`: room for the frames being promoted AND the frames
+ * being rendered alongside them, which is the same invariant `streamPlanFor`
+ * states for the decoder's lookahead and for the same reason.
+ *
+ * Zero is a legitimate answer. When RAM cannot hold even a minimal lookahead,
+ * a promoted frame is evicted before it is read and prefetching is pure cost —
+ * strictly worse than leaving the tier alone and re-rendering. The disk tier
+ * still does its other job (surviving eviction, surviving a restart); it just
+ * stops trying to feed a cache with no room to receive.
+ */
+export function diskLookAhead(capacityFrames: number): number {
+  // UNKNOWN is not the same as small. An empty cache has stored nothing, so it
+  // has no frame size to reason from — throttling on that guess would disable
+  // the tier exactly when it is coldest and most useful. Only a capacity we
+  // have actually measured, and measured as small, holds the lookahead back.
+  if (!Number.isFinite(capacityFrames)) return LOOK_AHEAD;
+  if (capacityFrames < 4) return 0;
+  return Math.max(0, Math.min(LOOK_AHEAD, Math.floor(capacityFrames / 2)));
+}
 
 interface CachedFrame {
   canvas: HTMLCanvasElement;
@@ -231,11 +278,14 @@ export class FrameCache {
    */
   prefetchFrom(frame: number): void {
     if (!this.disk) return;
+    const ahead = diskLookAhead(this.capacityFrames);
+    if (ahead === 0) return;
     this.lastPrefetchFrom = frame;
     this.disk.prefetch(
       frame,
       (f) => this.frames.has(f),
       (f, image) => this.insert(f, image, image.width, image.height),
+      ahead,
     );
   }
 
@@ -272,6 +322,25 @@ export class FrameCache {
     return this.totalBytes;
   }
 
+  /**
+   * How many frames this budget holds at the size frames are ACTUALLY being
+   * stored at.
+   *
+   * Measured rather than assumed, for the reason the byte budget is charged per
+   * entry rather than per `bytesPerFrame`: adaptive resolution flips the canvas
+   * density mid-playback and cached frames keep whatever they were rendered at,
+   * so a single assumed frame size is wrong by up to 16x after a degrade.
+   *
+   * Infinity while empty — nothing has been stored, so nothing is known, and a
+   * lookahead derived from it should not be throttled on a guess.
+   */
+  get capacityFrames(): number {
+    if (this.frames.size === 0) return Infinity;
+    const avg = this.totalBytes / this.frames.size;
+    if (!(avg > 0)) return Infinity;
+    return Math.max(1, Math.floor(this.maxBytes / avg));
+  }
+
   /** The cached frame's canvas, or null. Touches LRU order.
    *
    *  Also asks the disk tier to pull the frames just AHEAD of this one into
@@ -280,12 +349,20 @@ export class FrameCache {
    *  running. */
   get(frame: number): HTMLCanvasElement | null {
     if (this.disk && frame !== this.lastPrefetchFrom) {
-      this.lastPrefetchFrom = frame;
-      this.disk.prefetch(
-        frame,
-        (f) => this.frames.has(f),
-        (f, image) => this.insert(f, image, image.width, image.height),
-      );
+      // Derived from what RAM can actually hold — a lookahead bigger than the
+      // cache evicts its own promotions before the playhead reaches them, and
+      // pays a read, a PNG decode and a full-res draw for each. See
+      // `diskLookAhead`.
+      const ahead = diskLookAhead(this.capacityFrames);
+      if (ahead > 0) {
+        this.lastPrefetchFrom = frame;
+        this.disk.prefetch(
+          frame,
+          (f) => this.frames.has(f),
+          (f, image) => this.insert(f, image, image.width, image.height),
+          ahead,
+        );
+      }
     }
     const e = this.frames.get(frame);
     if (!e) return null;

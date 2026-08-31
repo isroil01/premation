@@ -174,6 +174,18 @@ describe('the cache measures its own frame size', () => {
 });
 
 describe('a stream never evicts what it has decoded and not yet displayed', () => {
+  /*
+    These walk 120 displayed frames for real, settling the pump twice per frame
+    — ~240 macrotasks, ~3s each on an idle machine. That length is the POINT:
+    the bug only appears once the walk has passed more frames than the cache can
+    hold, so a shorter walk would pass under the very code it exists to catch.
+
+    Against jest's 5s default that left about 1.6x of headroom, which the full
+    suite (12 projects in parallel) eats — the failure then reads as a
+    correctness regression in the eviction rule rather than as a busy machine.
+  */
+  jest.setTimeout(30_000);
+
   it('4K: decoding forward past the capacity keeps the target resident', async () => {
     const stub = sizedSource(3840, 2160);
     const cache = new ExactVideoFrameCache(
