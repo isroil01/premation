@@ -746,6 +746,11 @@
 .cacheControlWrap {
   display: flex;
   align-items: center;
+  /* Four controls on one line (readout, limit, two purges) is comfortable at
+     the dialog's own width and tight in a narrow window. Wrapping to the right
+     beats a row that clips its last button off the edge. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: var(--space-3);
 }
 
@@ -834,4 +839,29 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* Preview-cache budget: a small numeric field inline with the purge buttons. */
+.cacheBudgetLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.cacheBudgetInput {
+  width: 4.5rem;
+  padding: var(--space-1) var(--space-2);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.cacheBudgetInput:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }

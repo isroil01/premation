@@ -31,6 +31,7 @@ import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { getThemeManager, getSettingsManager } from '@core/services/coreServices';
 import { activeViewportDiskCache } from '@core/rendering/frameDiskCache';
 import { viewportFrameCache } from '@core/rendering/frameCache';
+import { PREVIEW_DISK_MIN_GB, PREVIEW_DISK_MAX_GB } from '@stores/preferenceStore';
 import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import type { KeyChord } from '@app-types/common';
@@ -847,7 +848,10 @@ function AppearanceTab(): JSX.Element {
           <div className={styles.settingRow}>
             <div className={styles.settingInfo}>
               <span className={styles.settingTitle}>Render Frame Disk Cache</span>
-              <span className={styles.settingDesc}>Disk space used for cached frames, onion skins, and parked states.</span>
+              <span className={styles.settingDesc}>
+                Disk space used for cached frames, onion skins, and parked states.
+                A new limit applies from the next launch.
+              </span>
             </div>
             <div className={styles.settingRight}>
               <PreviewCacheControl />
@@ -880,20 +884,64 @@ function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string; icon: IconNam
   ];
 }
 
+/**
+ * The preview cache's size, its budget, and the two ways to empty it.
+ *
+ * TWO purges, not one, and the distinction is not cosmetic. Emptying memory
+ * costs a re-promotion from disk — seconds, and only for what is on screen.
+ * Emptying disk throws away every rendered frame the machine holds, including
+ * the parked states an undo would have come back to, and re-earning that is
+ * minutes of rendering. Offering only the second (which is what "Purge Cache"
+ * did) means anyone who wanted to reclaim a little memory paid the whole bill.
+ */
 function PreviewCacheControl(): JSX.Element {
   const [, bump] = useState(0);
+  const gb = usePreferenceStore((s) => s.previewDiskCacheGb);
+  const setPref = usePreferenceStore((s) => s.set);
   const disk = activeViewportDiskCache();
   if (!disk) {
     return <span className={styles.hint}>Unavailable in this environment.</span>;
   }
   const mb = disk.totalBytes / (1024 * 1024);
+  const ramMb = viewportFrameCache.totalBytesHeld / (1024 * 1024);
   const parked = disk.retainedGenerations;
   return (
     <div className={styles.cacheControlWrap}>
       <span className={styles.cacheSizeReadout}>
-        {mb < 1 ? '< 1' : Math.round(mb)} MB
+        {mb < 1 ? '< 1' : Math.round(mb)} MB disk
+        {' · '}
+        {ramMb < 1 ? '< 1' : Math.round(ramMb)} MB memory
         {parked > 0 ? ` · ${parked} parked state${parked === 1 ? '' : 's'}` : ''}
       </span>
+      <label className={styles.cacheBudgetLabel}>
+        <span>Limit</span>
+        <input
+          type="number"
+          className={styles.cacheBudgetInput}
+          min={PREVIEW_DISK_MIN_GB}
+          max={PREVIEW_DISK_MAX_GB}
+          step={0.5}
+          value={gb}
+          onChange={(e) => {
+            const v = Number.parseFloat(e.currentTarget.value);
+            if (Number.isFinite(v)) setPref('previewDiskCacheGb', v);
+          }}
+        />
+        <span>GB</span>
+      </label>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          // Memory only. The disk tier keeps everything, so the frames come
+          // straight back as the playhead reaches them.
+          viewportFrameCache.clear();
+          bump((n) => n + 1);
+        }}
+      >
+        <Icon name="trash" size="sm" />
+        <span>Empty Memory</span>
+      </Button>
       <Button
         variant="ghost"
         size="sm"
@@ -905,7 +953,7 @@ function PreviewCacheControl(): JSX.Element {
         }}
       >
         <Icon name="trash" size="sm" />
-        <span>Purge Cache</span>
+        <span>Empty Disk</span>
       </Button>
     </div>
   );

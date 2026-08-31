@@ -80,6 +80,7 @@
 
 import { IndexedDbFrameStore, frameStoreAvailable } from './frameBlobStore';
 import { rendererIdentity } from './rendererIdentity';
+import { previewDiskCacheBytes } from '@stores/preferenceStore';
 import type { FrameBlobStore, StoredFrame } from './frameBlobStore';
 
 /** What a decode yields. Narrower than `CanvasImageSource` on purpose: both of
@@ -583,7 +584,15 @@ export class FrameDiskCache {
  */
 export function createViewportDiskCache(): FrameDiskCache | null {
   if (!frameStoreAvailable()) return null;
-  const cache = new FrameDiskCache({ store: new IndexedDbFrameStore() });
+  // The budget is the user's — how much disk to spend on not re-rendering is a
+  // statement about this machine, and the one cache setting the app cannot
+  // guess. Read at construction: changing it takes effect on the next launch,
+  // which is honest about the fact that shrinking it cannot un-write frames
+  // already on disk.
+  const cache = new FrameDiskCache({
+    store: new IndexedDbFrameStore(),
+    maxBytes: previewDiskCacheBytes(),
+  });
   active = cache;
   return cache;
 }
