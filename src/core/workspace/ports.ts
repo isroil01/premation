@@ -124,7 +124,10 @@ function toWorkspaceNode(
 
   const evalMap: Record<string, unknown> = {};
   for (const [k, val] of av.entries()) evalMap[k] = val;
-  const g = readGeometry(node, evalMap);
+  // `liveChildren`: a GROUP's box is the union of its children, and this is the
+  // chrome — the outline, the hit test, the marquee and the snap targets all
+  // have to sit on the artwork as drawn, not on where it rests at time 0.
+  const g = readGeometry(node, evalMap, { liveChildren: true });
   if (!g) return null;
 
   const x = av.get('x') ?? g.x;
@@ -588,15 +591,63 @@ function transformComponentId(node: SceneNode): ID | null {
 }
 
 import { worldMatrixOf } from '@core/scene/worldTransform';
+import { localTransformAt, parentWorld2DAt } from '@core/scene/layerSpace';
 import { recordMotionSketchSample, motionSketchNodeId } from '@core/animation/motionSketch';
 import { Matrix } from '@motion/scene';
 
+/**
+ * The local transform every PARENT-CHAIN walk in this file composes, sampled at
+ * the playhead — animated values winning, exactly as `buildSnapshot` reads them.
+ *
+ * It used to read `readGeometry` alone, i.e. the static base props, so an
+ * ANIMATED parent contributed the place it sits at frame 0 rather than the place
+ * it is now. Everything downstream of that inherited the error: the selection
+ * outline and handles of a layer parented to a moving Null sat somewhere the
+ * layer was not, marquee and click hit-testing agreed with the box rather than
+ * the pixels, and a viewport drag inverted the wrong parent matrix when turning
+ * a screen delta into the layer's own x/y.
+ *
+ * `localTransformAt` is the reader `world2DAt` and the parenting compensation
+ * already use, so the chrome, the expression conversions and the renderer are
+ * one computation rather than three that have to be kept in step.
+ */
 function getLocalTransformForPorts(id: string) {
-  const node = defaultSceneGraph.getNode(id as ID);
-  if (!node) return null;
-  const g = readGeometry(node);
-  if (!g) return null;
-  return { x: g.x, y: g.y, rotation: g.rotationDeg, scaleX: g.scaleX, scaleY: g.scaleY };
+  const s = useProjectStore.getState();
+  return localTransformAt(id, s.tabs[s.activeTabId ?? '']?.time ?? 0);
+}
+
+/**
+ * The layer's PARENT space, for turning the tool's answers back into the props
+ * a layer actually stores.
+ *
+ * ── THE MISMATCH THIS CLOSES ────────────────────────────────────────────────
+ * Every transform tool measures in WORLD space: the rotate tool takes its start
+ * angle off `node.worldMatrix`, the resize tool hands back a world-space centre
+ * and the world scale it resolved. A layer's `rotation`, `x`/`y` and
+ * `scaleX`/`scaleY` are PARENT-space values. With no parent the two are the
+ * same thing and nothing showed; under a parent the writes were wrong by the
+ * parent's whole transform, and both gestures threw the layer across the comp:
+ *
+ *   • rotate, child of a null turned 30°  → asked for 10°, layer went to 40°
+ *   • resize, child of a null at x = 400 scaled 2× → asked for 1.5× at x = 100,
+ *     layer landed at x = 600 scaled 3×
+ *
+ * `moveNodes` already inverted the parent for its drag delta (and says so); the
+ * other two gestures never did. Parenting a layer to a Null and then scaling or
+ * spinning it is an everyday rig, so this was reachable in two clicks.
+ */
+function parentSpaceOf(nodeId: string, rawTime: number): {
+  inv: import('@motion/scene').Matrix2D; rotationDeg: number; scaleX: number; scaleY: number;
+} {
+  const m = parentWorld2DAt(nodeId, rawTime);
+  const d = Matrix.decompose(m);
+  const nz = (v: number): number => (Math.abs(v) > 1e-9 ? v : 1);
+  return {
+    inv: Matrix.invert(m),
+    rotationDeg: (d.rotation * 180) / Math.PI,
+    scaleX: nz(d.scale.x),
+    scaleY: nz(d.scale.y),
+  };
 }
 
 function getParentIdForPorts(id: string) {
@@ -1186,6 +1237,14 @@ function resizeNode(payload: ResizeNodePayload): void {
   // applied on top (it double-subtracts the clip start).
   const lt = getRemappedTime(node.id, rawTime);
 
+  // World → parent space. `centre` and `scaleX/scaleY` are what the TOOL
+  // measured on screen; `x`/`y`/`scaleX`/`scaleY` are stored relative to the
+  // parent. Identity for an unparented layer, so nothing changes there.
+  const ps = parentSpaceOf(node.id, rawTime);
+  const localCentre = Matrix.transformPoint(ps.inv, centre);
+  const localScaleX = scaleX / ps.scaleX;
+  const localScaleY = scaleY / ps.scaleY;
+
   // Per-property stopwatch contract (see hasAnyTrack): position and scale
   // decide independently, so scaling an animated-scale layer keyframes scale
   // while its un-animated position stays a static write.
@@ -1201,12 +1260,12 @@ function resizeNode(payload: ResizeNodePayload): void {
       'Keyframe Resize',
       () => {
         if (keyPos) {
-          defaultAnimation.setKeyframe(node.id, 'x', lt, centre.x);
-          defaultAnimation.setKeyframe(node.id, 'y', lt, centre.y);
+          defaultAnimation.setKeyframe(node.id, 'x', lt, localCentre.x);
+          defaultAnimation.setKeyframe(node.id, 'y', lt, localCentre.y);
         }
         if (keyScale) {
-          defaultAnimation.setKeyframe(node.id, 'scaleX', lt, scaleX);
-          defaultAnimation.setKeyframe(node.id, 'scaleY', lt, scaleY);
+          defaultAnimation.setKeyframe(node.id, 'scaleX', lt, localScaleX);
+          defaultAnimation.setKeyframe(node.id, 'scaleY', lt, localScaleY);
         }
         if (keySize) {
           defaultAnimation.setKeyframe(node.id, 'width', lt, nextW);
@@ -1219,8 +1278,8 @@ function resizeNode(payload: ResizeNodePayload): void {
 
   // Static base always follows the manipulation (harmless when animated —
   // animated reads win — and it keeps every consumer in agreement).
-  defaultSceneGraph.writeProp(node.id, cid, 'x', centre.x);
-  defaultSceneGraph.writeProp(node.id, cid, 'y', centre.y);
+  defaultSceneGraph.writeProp(node.id, cid, 'x', localCentre.x);
+  defaultSceneGraph.writeProp(node.id, cid, 'y', localCentre.y);
   if (sizing) {
     // Scale is deliberately left ALONE. The drag expressed itself entirely in
     // width/height, and writing the (unchanged) scale back would push the
@@ -1230,8 +1289,8 @@ function resizeNode(payload: ResizeNodePayload): void {
     defaultSceneGraph.writeProp(node.id, sizeCid, 'width', nextW);
     defaultSceneGraph.writeProp(node.id, sizeCid, 'height', nextH);
   } else {
-    defaultSceneGraph.writeProp(node.id, cid, 'scaleX', scaleX);
-    defaultSceneGraph.writeProp(node.id, cid, 'scaleY', scaleY);
+    defaultSceneGraph.writeProp(node.id, cid, 'scaleX', localScaleX);
+    defaultSceneGraph.writeProp(node.id, cid, 'scaleY', localScaleY);
   }
   bumpScene();
 }
@@ -1244,7 +1303,10 @@ function rotateNode(payload: RotateNodePayload): void {
 
   const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
   const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
-  const deg = (payload.rotation * 180) / Math.PI;
+  // The tool's angle is ABSOLUTE and in WORLD space (it starts from
+  // `node.worldMatrix`); `rotation` is stored relative to the parent. Subtract
+  // the parent's world rotation — zero, and so a no-op, without a parent.
+  const deg = (payload.rotation * 180) / Math.PI - parentSpaceOf(node.id, rawTime).rotationDeg;
 
   if (autoKeyframe || hasAnyTrack(node.id, ['rotation'])) {
     runAnimEdit(

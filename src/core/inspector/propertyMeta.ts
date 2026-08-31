@@ -29,7 +29,7 @@
  */
 
 import {
-  EFFECT_DEFS, effectDefFor, getNodeEffects, type EffectParamDef,
+  EFFECT_DEFS, EFFECT_OPACITY_KEY, effectDefFor, getNodeEffects, type EffectParamDef,
 } from '@core/effects/effects';
 import { pluginEffectDefs } from '@core/effects/pluginEffectDefs';
 import {
@@ -503,6 +503,30 @@ function resolveEffectParam(path: string, nodeId?: string): PropertyMeta | null 
     // first: a plugin's `radius` labelled and ranged as some other effect's.
     return fx ? effectDefFor(fx.type) : undefined;
   })();
+
+  // AE's Compositing Options -> Effect Opacity. A reserved key rather than a
+  // declared param (see EFFECT_OPACITY_KEY), so it resolves here or it falls
+  // through to the key-matching scan below and gets described by whichever
+  // effect declares `opacity` first — a Drop Shadow's shadow opacity standing
+  // in for "how much of this effect survives", which are not the same dial.
+  if (rawKey === EFFECT_OPACITY_KEY) {
+    const styleKey = styleKeyFromEffectId(effectId);
+    const owner = styleKey ? (LAYER_STYLE_LABEL[styleKey] ?? titleCase(styleKey)) : def?.label;
+    return {
+      path,
+      label: owner ? `${owner} Effect Opacity` : 'Effect Opacity',
+      group: 'effects',
+      type: 'number',
+      unit: '%',
+      min: 0,
+      max: 100,
+      step: 1,
+      precision: 0,
+      defaultValue: 100,
+      resettable: true,
+      order: ORDER.effects,
+    };
+  }
 
   // `effect.<id>` with no key is the legacy "primary scalar" track.
   const key = rawKey ?? def?.params.find((p) => p.type === 'number')?.key;

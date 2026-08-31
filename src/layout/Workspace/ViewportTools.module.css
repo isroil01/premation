@@ -221,16 +221,21 @@
  *   3. The REC label   — the auto-keyframe button keeps its glyph and its
  *                        active colour; only the word goes.
  *
- * A container query, not a media query: this row sits between two docks, so the
+ * A container query, not a media query: this row is the viewport's, so the
  * window's width says nothing useful about how much room it actually has.
+ *
+ * The thresholds dropped by ~420px when the row moved from the full editor
+ * width to the viewport's. They were tuned against a row spanning both docks;
+ * left as they were, every control below would have been hidden on a perfectly
+ * roomy screen the moment the sidebar and the inspector were open.
  */
-@container tl-toolbar (max-width: 1180px) {
+@container tl-toolbar (max-width: 700px) {
   .tools .popOut {
     display: none;
   }
 }
 
-@container tl-toolbar (max-width: 920px) {
+@container tl-toolbar (max-width: 560px) {
   .tools .recLabel {
     display: none;
   }

@@ -72,6 +72,7 @@ import { useGizmo3d } from './useGizmo3d';
 import { useDeviceHandles } from './useDeviceHandles';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { useWorkspace } from './useWorkspace';
+import { TransportBar } from './TransportBar';
 import styles from './Workspace.module.css';
 
 export interface WorkspaceViewportProps {
@@ -591,6 +592,16 @@ export function WorkspaceViewport({
 
         <FocusBreadcrumb />
       </div>
+
+      {/*
+        The transport, under the stage.
+
+        It lived in the timeline panel's top row, which put the play button in
+        the panel you are NOT watching while it plays. AE keeps it with the
+        preview for that reason, and moving it here gave the timeline's top row
+        back to the composition tabs and the render queue.
+      */}
+      <TransportBar />
     </div>
   );
 }

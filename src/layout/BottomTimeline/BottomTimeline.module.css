@@ -1,3 +1,5 @@
+/* One ground for the whole panel — the same `--color-panel` the sidebar and the
+   inspector sit on. See the note on `--color-timeline-bg`. */
 .root {
   display: flex;
   flex-direction: column;
@@ -5,7 +7,7 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-surface-0);
+  background: var(--color-panel);
   border-top: 1px solid var(--color-border-structural);
   overflow: hidden;
   font-family: var(--font-family-sans);
@@ -105,9 +107,15 @@
   align-items: center;
   gap: var(--space-3);
   height: var(--bar-height-tool);
-  padding: 0 10px;
-  background: var(--color-toolbar);
-  border-bottom: 1px solid var(--color-border);
+  /* No left padding — the tab strip owns the row and starts at its edge. */
+  padding: 0 10px 0 0;
+  background: var(--color-panel);
+  /* No rule here. The tabs and the search row beneath them are one block of
+     panel chrome; a rule between them cut that block in half and left the
+     search row looking like it belonged to the track list rather than to the
+     tabs. The division that matters is BELOW the search row — see
+     `.subHeaderRow`. */
+  border-bottom: none;
   flex: none;
   user-select: none;
   overflow-x: auto;
@@ -161,34 +169,56 @@
   display: none;
 }
 
+/* `flex: none`, not `1 1 auto`: this cluster is a fixed set of buttons, and the
+   tab strip beside it is the part that should absorb the row's spare width. */
 .headerLeft {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 1 1 auto;
+  flex: none;
   min-width: max-content;
   justify-content: flex-start;
-  flex-shrink: 0;
 }
 
-.headerCenter {
+/**
+ * The header's centre slot — the composition tabs and the render queue.
+ *
+ * It held the transport until the transport moved under the stage. The tabs
+ * took the space rather than leaving a gap, because they are what this panel
+ * is showing you: `Comp 1` belongs in the panel's chrome, not trailing the
+ * zoom slider on the row below where it read as part of the slider.
+ *
+ * `flex: 1 1 auto` with `min-width: 0`, unlike the fixed cluster that was here
+ * before: a tab strip grows with the project, so it has to be the thing that
+ * gives way when the row runs out of room, and it scrolls inside itself.
+ */
+.headerTabs {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
-  justify-content: center;
-  margin: 0 16px;
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+  /* Flush left. The 12px inset was there to hold the strip off a cluster that
+     no longer shares the row, so all it did was float the first tab away from
+     the corner the panel starts in. */
+  margin: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.headerTabs::-webkit-scrollbar {
+  display: none;
 }
 
 .headerRight {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 1 1 auto;
+  flex: none;
   min-width: max-content;
   justify-content: flex-end;
-  flex-shrink: 0;
 }
 
 .transportCluster {
@@ -240,30 +270,8 @@
   box-shadow: none;
 }
 
-.playBtn {
-  width: calc(var(--control-height-lg) + 8px);
-  height: var(--control-height-row);
-  background: var(--color-primary);
-  border: 1px solid transparent;
-  color: var(--color-primary-foreground);
-  box-shadow: none;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
 
-.playBtn:hover {
-  background: var(--color-primary-hover);
-  border-color: transparent;
-  color: var(--color-primary-foreground);
-  box-shadow: none;
-}
 
-.playBtnActive {
-  background: var(--color-primary-active) !important;
-  border-color: transparent !important;
-  color: var(--color-primary-foreground) !important;
-  box-shadow: none;
-  transform: scale(0.97);
-}
 
 .zoomCluster {
   display: flex;
@@ -280,73 +288,179 @@
   cursor: pointer;
 }
 
-/* ── Timecode ──────────────────────────────────────────────────────── */
-.timecode {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 0 4px;
-  background: transparent;
-  border: none;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-bold);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.01em;
-  color: var(--color-primary);
-  cursor: pointer;
-  white-space: nowrap;
-  box-sizing: border-box;
-  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
-  flex-shrink: 0;
-}
 
-.timecode:hover {
-  color: var(--color-primary-hover);
-}
 
-.timecodeTotal {
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-sans);
-  color: var(--color-text-tertiary);
-  font-weight: var(--font-weight-medium);
-}
 
 /* ── Timeline Unified Sub-Header (Search Left + Comp Tabs Right) ── */
+/**
+ * The row holding the scrub timecode, the filter field and the time navigator.
+ *
+ * Same ground as the panel, and one dark rule under it — the boundary between
+ * the panel's chrome (tabs, timecode, filter, navigator) and the track list
+ * itself. It used to sit on `--color-panel-header` with a hairline, a colour
+ * change and a border immediately above the ruler's own rule: two separators a
+ * pixel apart, reading as a thick gap rather than a division.
+ */
 .subHeaderRow {
   display: flex;
   align-items: center;
-  height: 30px;
-  background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-border-subtle);
+  height: 32px;
+  /* 2px of clearance above the rule. The timecode's descender and the filter
+     field's border were landing on it, which read as the row overflowing its
+     own boundary rather than sitting inside one. */
+  padding-bottom: 2px;
+  box-sizing: border-box;
+  background: var(--color-panel);
+  border-bottom: 2px solid var(--color-timeline-ruler-border);
   flex: none;
   width: 100%;
 }
 
+/**
+ * The left column, sized to the track-header width by an inline style so it
+ * ends on the same pixel the column legend does.
+ *
+ * `min-width` matters: the header column can be dragged to 220px, and below
+ * about 260 the timecode, the filter field and the eight toggles stop being a
+ * row and start overlapping each other. Past that the column holds its size
+ * and clips — the controls stay usable at the width they need, which is the
+ * same bargain the track-header columns make when they scroll.
+ */
 .searchBarCol {
   display: flex;
   align-items: center;
+  gap: 8px;
   padding: 0 8px;
   height: 100%;
   flex: none;
+  min-width: 260px;
   box-sizing: border-box;
-  border-right: 1px solid var(--color-border-subtle);
+  /* The top of the vertical rule that divides the track headers from the
+     lanes. `.headerCol` in Timeline.module.css draws the rest of it — same
+     width, same colour, or the line steps sideways halfway down the panel. */
+  border-right: 2px solid var(--color-timeline-ruler-border);
+  overflow: hidden;
 }
 
-.tabBarCol {
+.timecodeBlock {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 92px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/**
+ * The panel's current-time readout — the number you look at while scrubbing.
+ *
+ * It was `--font-size-xs` (11px), the same size as the frame count sitting
+ * under it, so the two read as one block of small mono type and neither was
+ * the one you could find at a glance. `lg` (14px) and heavier makes it the
+ * thing this corner is for; the frame count stays at micro underneath as its
+ * footnote. Two steps of separation is what makes one of them the headline.
+ */
+.timecodeMain {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+  color: var(--color-primary);
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.1;
+}
+
+.timecodeMain:hover {
+  text-decoration: underline;
+}
+
+.timecodeSub {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro);
+  color: color-mix(in srgb, var(--color-primary) 65%, var(--color-text-tertiary));
+  line-height: 1;
+  margin-top: 1px;
+}
+
+.timelineSwitchesGroup {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+/* The time navigator's column — everything right of the track-header split,
+   which is exactly the lanes' width. Named for what it holds: the comp tabs and
+   the render queue that used to share it moved up to `.headerTabs`. */
+.navigatorCol {
+  display: flex;
+  align-items: center;
   height: 100%;
   padding: 0 8px;
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 
-.tabBarCol::-webkit-scrollbar {
-  display: none;
+/* ── AE Time Navigator Overview Zoom Track ── */
+/**
+ * Time navigator — a pill, not a rectangle with softened corners.
+ *
+ * `--radius-xs` on a short bar reads as a rectangle someone forgot to finish:
+ * the corner is small enough to look like a rendering artefact rather than a
+ * shape. `999px` commits, and a fully rounded track is the shape every other
+ * scrubber in the app already uses.
+ *
+ * 14px, not 10: it is the panel's one progress readout, sitting alone in its
+ * row now that the tabs have moved up, and at 10px it read as a hairline rule
+ * rather than something you can aim a click at.
+ *
+ * No `max-width`. It was capped at 480px, so on any panel wider than that the
+ * bar stopped short and left dead space to its right — and, worse, its scale
+ * no longer matched the ruler beneath it, which DOES span the lanes. Spanning
+ * the same width means a click at the same x lands on the same frame.
+ */
+.timeNavigatorTrack {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 14px;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  overflow: hidden;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Grows from the left edge with the playhead. Anchored, not positioned: a
+   `width` alone cannot drift out of alignment with time the way a `left` +
+   `width` pair could. */
+.timeNavigatorFill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--color-primary);
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 2px;
+}
+
+/* The leading edge, on the inside of the fill — it is where the fill ENDS that
+   is the current frame, so the marker belongs there and nowhere else. */
+.timeNavPlayhead {
+  width: 2px;
+  height: 100%;
+  background: var(--color-primary-foreground);
+  opacity: 0.9;
+  flex: none;
 }
 
 .tabDivider {
@@ -357,29 +471,42 @@
   flex-shrink: 0;
 }
 
+/**
+ * The layer / property filter field.
+ *
+ * It had `border-top: none; border-bottom: none` — two vertical strokes and
+ * nothing across the top or bottom, which is not a field, it is a pair of
+ * lines. That shape only worked while the row it sat in was a darker surface
+ * than the panel: the colour change drew the horizontal edges for free. Once
+ * the whole timeline moved onto one ground, `--color-surface-1` against
+ * `--color-panel` was a few points of luminance apart and the field vanished.
+ *
+ * A closed border on all four sides, on the recessed-well surface the app uses
+ * for inputs elsewhere. It now reads as something you can type into whether or
+ * not the row behind it happens to contrast.
+ */
 .searchContainer {
   position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
+  background: var(--color-timeline-well);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   padding: 0 7px;
   height: 22px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   box-sizing: border-box;
   transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .searchContainer:hover {
-  background: var(--color-surface-3);
   border-color: var(--color-border-strong);
 }
 
 .searchContainer:focus-within {
   border-color: var(--color-primary);
-  background: var(--color-surface-1);
   box-shadow: 0 0 0 1px var(--color-primary);
 }
 
@@ -609,7 +736,10 @@ button.play:hover {
   min-height: 0;
   overflow: hidden;
   position: relative;
-  padding: 6px 6px 8px;
+  /* No padding. It inset the timeline from the panel edges, which read as a
+     card floating on a different surface — the point of one ground is that
+     there is no card. */
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0;

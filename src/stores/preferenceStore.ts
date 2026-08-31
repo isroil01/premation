@@ -162,7 +162,17 @@ export const DEFAULT_PREFERENCES: Preferences = {
   motionFeel: 'smooth',
   editorReduceMotion: false,
   confirmOnClose: true,
-  timelineHeaderWidth: 460,
+  /**
+   * Wide enough for every track-header column at once — the A/V gutter, the
+   * layer name, all seven switches, Mode, TrkMat and Parent & Link.
+   *
+   * It was 460, set when the header held a name and three toggles. The columns
+   * added since are fixed-width and sum past 790, so at 460 the right-hand half
+   * of them simply was not on screen. Dragging the divider in still works and
+   * now scrolls rather than truncates, so this is a starting point, not a
+   * floor.
+   */
+  timelineHeaderWidth: 796,
   retainOriginalSvg: true,
   idleCacheWorkArea: true,
   // The previous hardcoded budget, so nobody's cache changes size by upgrading.

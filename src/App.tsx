@@ -96,6 +96,7 @@ import { openCompositionSettings } from '@layout/Composition/CompositionSettings
 import { FpsMeter } from '@layout/StatusBar/FpsMeter';
 import { InfoReadout } from '@layout/StatusBar/InfoReadout';
 import { VUMeter } from '@layout/StatusBar/VUMeter';
+import { TimelineZoom } from '@layout/StatusBar/TimelineZoom';
 import { useFocusStore } from '@stores/focusStore';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -1425,6 +1426,12 @@ function EditorShellInner(): JSX.Element {
               right={
                 <>
                   <VUMeter />
+                  {/* Timeline zoom. It had a 22px footer row to itself at the
+                      bottom of the timeline panel, empty across its whole left
+                      half; the status bar is already the strip for readouts you
+                      glance at and occasionally poke. */}
+                  <TimelineZoom />
+                  <span style={{ opacity: 0.4 }}>·</span>
                   <FpsMeter />
                   <span style={{ opacity: 0.4 }}>·</span>
                   <StatusBarTimecode fps={compFps} startFrame={compStartFrame} />

@@ -17,7 +17,7 @@
  */
 
 import type { Effect } from './effects';
-import { effectCss } from './effects';
+import { effectCss, effectHasOpacity, effectOpacityOf } from './effects';
 import { paintMaskMatte, type LayerMask, type MaskPath } from '@core/effects/mask';
 import { isLutEffect, buildChannelLut, applyChannelLut } from './colorLut';
 import { isCanvas2dProcedural, applyProceduralEffect } from './proceduralCanvas2d';
@@ -47,10 +47,21 @@ export function isGpuUnbakeableEffect(type: string): boolean {
  * that effect to the WHOLE layer — a blur meant for one region blurring
  * everything, which looks like a plausible design choice rather than a bug.
  * Scoping is honoured only in the bake, so requesting it forces the bake.
+ *
+ * An effect carrying a COMPOSITING-OPTIONS OPACITY counts for the same reason
+ * and one more. Blending an effect against its own input needs both images at
+ * once, and the GPU chain has only the running one — but more to the point, the
+ * blend is defined here in exactly one place, the way fill opacity is (see
+ * `layerNeedsCpuBake`), rather than reimplemented in the composition pass and
+ * kept in step forever. PRESENCE of the field is the test, not `< 100`: an
+ * animated opacity is stamped on every frame including those sampling 100, so
+ * a 0→100→0 ramp stays on one path for its whole length instead of flipping to
+ * the GPU at the peak and popping where the two backends round differently.
  */
 export function effectsNeedCpuBake(effects: ReadonlyArray<Effect> | undefined): boolean {
   return !!effects?.some(
-    (e) => e.enabled !== false && (isGpuUnbakeableEffect(e.type) || !!e.maskId),
+    (e) => e.enabled !== false
+      && (isGpuUnbakeableEffect(e.type) || !!e.maskId || effectHasOpacity(e)),
   );
 }
 
@@ -321,17 +332,54 @@ export function applyEffectChain(
 
   /**
    * Composite `after` (currently in `oc`) back over `before`, weighted by the
-   * mask's coverage — the M6 scoped-effect blend.
+   * effect's coverage:
    *
-   * out = before·(1−cov) + after·cov, done with canvas ops rather than a pixel
-   * loop so feather and per-mask opacity come through as real partial coverage.
+   *   out = before·(1−cov) + after·cov
    *
-   * At cov = 0 the output is `before` BYTE-IDENTICAL, alpha included. That is
-   * the invariant that makes this an effect mask and not a second layer mask:
-   * it decides where the effect applies, never where the layer exists.
+   * where cov is the mask's matte (the M6 scoped-effect blend), a flat
+   * Compositing-Options opacity, or — when an effect carries both — the two
+   * multiplied, so a half-strength blur through a feathered mask is half as
+   * strong at the mask's core and fades from there.
+   *
+   * Done with canvas ops rather than a pixel loop so feather and per-mask
+   * opacity come through as real partial coverage.
+   *
+   * At cov = 0 the output is `before` BYTE-IDENTICAL, alpha included, and at
+   * cov = 1 it is `after` byte-identical. The first is the invariant that makes
+   * this an effect mask and not a second layer mask — it decides where the
+   * effect applies, never where the layer exists — and the second is what lets
+   * an author park an opacity keyframe at 100 without the frame shifting under
+   * a round-trip that should have been the identity.
    */
-  const compositeScoped = (before: HTMLCanvasElement, path: MaskPath): void => {
+  const compositeBlend = (
+    before: HTMLCanvasElement,
+    path: MaskPath | undefined,
+    alpha: number,
+  ): void => {
     flushBatch(); // reads oc.canvas through other contexts
+
+    // ── The flat case: no mask, so the coverage is a constant ──
+    // Two ops on `oc` and no scratch canvas at all. `destination-in` against a
+    // uniform alpha scales the premultiplied result to after·α (the same trick
+    // fill opacity uses above); `lighter` is Porter-Duff PLUS, so the second
+    // draw ADDS before·(1−α) rather than compositing it under, which is what a
+    // linear blend needs. The two terms sum to at most 1, so nothing clamps.
+    if (!path) {
+      const a = Math.max(0, Math.min(1, alpha));
+      oc.save();
+      oc.setTransform(1, 0, 0, 1, 0, 0);
+      oc.filter = 'none';
+      oc.globalCompositeOperation = 'destination-in';
+      oc.globalAlpha = a;
+      oc.fillStyle = '#000'; // irrelevant under destination-in; only alpha applies
+      oc.fillRect(0, 0, w, h);
+      oc.globalCompositeOperation = 'lighter';
+      oc.globalAlpha = 1 - a;
+      oc.drawImage(before, 0, 0);
+      oc.restore();
+      return;
+    }
+
     const cov = scratch(w, h);
     const cc = cov.getContext('2d');
     if (!cc) return;
@@ -343,6 +391,18 @@ export function applyEffectChain(
     // soft mask give a soft effect edge rather than a hard cut of a soft one.
     cc.translate(w / 2, h / 2);
     paintMaskMatte(cc, { paths: [{ ...path, mode: 'add' }] }, w, h);
+    // Fold a Compositing-Options opacity INTO the matte rather than blending
+    // twice: scaling the coverage keeps the whole composite below a single
+    // `cov`, so the byte-identity at both ends survives the combination.
+    if (alpha < 1) {
+      cc.setTransform(1, 0, 0, 1, 0, 0);
+      cc.globalCompositeOperation = 'destination-in';
+      cc.globalAlpha = Math.max(0, alpha);
+      cc.fillStyle = '#000';
+      cc.fillRect(0, 0, w, h);
+      cc.globalCompositeOperation = 'source-over';
+      cc.globalAlpha = 1;
+    }
 
     // after ∩ coverage
     const after = scratch(w, h);
@@ -381,17 +441,29 @@ export function applyEffectChain(
   const runChain = (): void => {
   for (const e of effects ?? []) {
     if (e.enabled === false) continue;
-    // ── Effect-scoped mask (M6) ──
-    // Everything queued before this must LAND first, or the scoped composite
-    // would capture a `before` that is missing the effects above it and then
-    // replay them through the mask.
+    // ── Effect-scoped mask (M6) and Compositing-Options opacity ──
+    // Both are the same operation — blend this effect's output against its own
+    // input — so they share one composite and one `before` snapshot. Taking two
+    // snapshots for an effect carrying both would be a second full-frame copy
+    // for a blend that is already expressible as one scaled matte.
+    //
+    // Everything queued before this must LAND first, or the composite would
+    // capture a `before` that is missing the effects above it and then replay
+    // them through the blend.
     const scope = e.maskId ? masks?.paths.find((p) => p.id === e.maskId) : undefined;
-    if (scope) {
+    const alpha = effectOpacityOf(e);
+    if (scope || alpha < 1) {
+      // Opacity 0 with no mask is the identity: skip the effect outright rather
+      // than run it and then discard every pixel of it. This is the frame an
+      // author sits on for most of a fade-in's length, so it is worth the
+      // branch — a Gaussian Blur held at 0 costs nothing instead of costing a
+      // full blur plus a composite that throws the blur away.
+      if (!scope && alpha <= 0) continue;
       flushCss();
       const before = snapshot();
       applyOne(e);
       flushCss();
-      compositeScoped(before, scope);
+      compositeBlend(before, scope, alpha);
       continue;
     }
     applyOne(e);

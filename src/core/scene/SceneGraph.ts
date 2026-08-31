@@ -279,8 +279,12 @@ export class SceneGraph {
       x: node.transform.position.x,
       y: node.transform.position.y,
       rotation: node.transform.rotation,
-      scaleX: scale ?? scaleX,
-      scaleY: scale ?? scaleY,
+      // Per-axis BEFORE the uniform shorthand — the order `readGeometry`,
+      // `buildSnapshot` and `layerSpace` all use. This reader had it inverted,
+      // so on a node carrying both props it composed a transform no renderer
+      // agrees with.
+      scaleX: scaleX ?? scale ?? 1,
+      scaleY: scaleY ?? scale ?? 1,
     };
   }
 

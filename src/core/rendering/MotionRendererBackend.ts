@@ -613,15 +613,28 @@ export class MotionRendererBackend implements RenderBackend {
   private sizeCanvas(): void {
     const canvas = this.canvas;
     if (!canvas) return;
-    canvas.width = Math.max(1, Math.round(this.cssW * this.dpr));
-    canvas.height = Math.max(1, Math.round(this.cssH * this.dpr));
+    const w = Math.max(1, Math.round(this.cssW * this.dpr));
+    const h = Math.max(1, Math.round(this.cssH * this.dpr));
+    // Guarded, because assigning `canvas.width` REALLOCATES the drawing buffer
+    // (and clears it) even when the value assigned is the one already there.
+    // Callers arrive from a ResizeObserver, a window resize, a settle timer
+    // and a rAF, so identical sizes land here constantly — and during a panel
+    // drag they landed here every frame, each one handing the GPU process a
+    // fresh backbuffer to allocate and the old one to reclaim.
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
     canvas.style.width = `${this.cssW}px`;
     canvas.style.height = `${this.cssH}px`;
   }
 
   resize(width: number, height: number, dpr: number): void {
-    this.cssW = Math.max(1, width);
-    this.cssH = Math.max(1, height);
+    const cssW = Math.max(1, width);
+    const cssH = Math.max(1, height);
+    // Nothing downstream of here is idempotent — the renderer rebuilds its
+    // render targets — so a no-op resize must not reach it.
+    if (cssW === this.cssW && cssH === this.cssH && dpr === this.dpr) return;
+    this.cssW = cssW;
+    this.cssH = cssH;
     this.dpr = dpr;
     if (this.ready && this.renderer && this.viewport) {
       this.sizeCanvas();

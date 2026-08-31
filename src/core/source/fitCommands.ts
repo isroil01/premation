@@ -16,7 +16,7 @@
  */
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { writeTransformProps } from '@core/scene/transformWrite';
+import { writeTransformProps, readTransformProp } from '@core/scene/transformWrite';
 import { compSourceOf } from '@core/composition/compSizes';
 import { sourceOf, type SourceInfo } from '@core/source/sourceInfo';
 import { SIZE } from '@core/rendering/buildSnapshot';
@@ -149,12 +149,16 @@ export function centreAnchorInContent(nodeId: string): void {
   const t = transformComponent(node);
   if (!t) return;
 
-  const ax = typeof t.props.anchorX === 'number' ? t.props.anchorX : 0;
-  const ay = typeof t.props.anchorY === 'number' ? t.props.anchorY : 0;
+  // At the playhead, animated values winning: this writes `x - ax` as a
+  // KEYFRAME on an animated layer, so reading the base props made the layer
+  // teleport to its rest pose minus the anchor. Same defect as Pan Behind's,
+  // and it reached here through the same missing read-side reader.
+  const ax = readTransformProp(nodeId, 'anchorX', 0);
+  const ay = readTransformProp(nodeId, 'anchorY', 0);
   if (ax === 0 && ay === 0) return;
 
-  const x = typeof t.props.x === 'number' ? t.props.x : 0;
-  const y = typeof t.props.y === 'number' ? t.props.y : 0;
+  const x = readTransformProp(nodeId, 'x', 0);
+  const y = readTransformProp(nodeId, 'y', 0);
   // Rotation/scale are deliberately ignored here: the anchor offset is stored
   // in the layer's own unrotated space, and so is position.
   writeTransformProps(

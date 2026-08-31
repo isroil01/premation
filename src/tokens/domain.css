@@ -31,9 +31,20 @@
   --color-temporal-subtle:   rgba(41, 136, 255, 0.14);
 
   /* ── Timeline chrome ──────────────────────────────────────────── */
-  /* Lanes sit on surface-0; header column on surface-1. The chrome is neutral
-     black; the ONLY colour is the signature blue temporal family (playhead + markers). */
-  --color-timeline-bg:       #1d1d1d;
+  /*
+   * The timeline panel sits on the SAME ground as every other panel.
+   *
+   * It used to run three surfaces of its own — #1d1d1d lanes, #202020 track
+   * headers, a near-black ruler — none of which matched `--color-panel`, so
+   * the bottom of the editor read as a different application from the sidebar
+   * beside it, striped into bands by surfaces that carried no meaning. One
+   * ground, and the column heads separated from the rows by a dark rule, which
+   * is the one boundary that IS meaningful.
+   *
+   * The ONLY colour in here is the signature blue temporal family (playhead +
+   * markers).
+   */
+  --color-timeline-bg:       var(--color-panel);
   --color-timeline-grid:     #282828;
   --color-timeline-zebra:    rgba(255, 255, 255, 0.01);
   /* Playhead follows the primary accent so the Customize accent override
@@ -74,10 +85,12 @@
    * dragged off it). The timeline's ruler has no such constraint and must
    * follow the ground like every other panel.
    */
-  --color-timeline-header:        #202020;  /* track header row            */
-  --color-timeline-header-hover:  #272727;
-  --color-timeline-row-alt:       #191919;  /* zebra banding, solid        */
-  --color-timeline-ruler-bg:      #141414;
+  --color-timeline-header:        var(--color-panel);  /* track header row */
+  --color-timeline-header-hover:  #2b2b2b;
+  --color-timeline-row-alt:       rgba(255, 255, 255, 0.015);
+  --color-timeline-ruler-bg:      var(--color-panel);
+  /* The one rule that has to read: it is what separates the column heads from
+     the rows now that both sit on the same ground. */
   --color-timeline-ruler-border:  #0d0d0d;
   --color-timeline-tick:          #383838;
   --color-timeline-tick-major:    #484848;
@@ -109,7 +122,7 @@
 /* Timeline chrome is the one domain group that CANNOT be theme-fixed:
    lanes must follow the ground, keyframes must contrast the lanes. */
 [data-theme="light"] {
-  --color-timeline-bg:       #eef0f3;
+  --color-timeline-bg:       var(--color-panel);
   --color-timeline-grid:     rgba(0, 0, 0, 0.06);
   --color-timeline-zebra:    rgba(0, 0, 0, 0.02);
   --color-timeline-keyframe: #444e60;
@@ -120,11 +133,12 @@
   --color-checkerboard-a: #ffffff;
   --color-checkerboard-b: #e3e5ea;
 
-  /* Timeline surfaces — the ground the lanes and headers sit on. */
-  --color-timeline-header:        #e4e7ec;
-  --color-timeline-header-hover:  #d9dde4;
-  --color-timeline-row-alt:       rgba(0, 0, 0, 0.03);
-  --color-timeline-ruler-bg:      #e0e3e9;
+  /* Timeline surfaces — the ground the lanes and headers sit on: the panel's,
+     the same as the sidebar's, as in the dark theme. */
+  --color-timeline-header:        var(--color-panel);
+  --color-timeline-header-hover:  rgba(0, 0, 0, 0.05);
+  --color-timeline-row-alt:       rgba(0, 0, 0, 0.02);
+  --color-timeline-ruler-bg:      var(--color-panel);
   --color-timeline-ruler-border:  rgba(0, 0, 0, 0.14);
   --color-timeline-tick:          rgba(0, 0, 0, 0.30);
   --color-timeline-tick-major:    rgba(0, 0, 0, 0.50);

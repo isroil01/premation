@@ -1,4 +1,4 @@
-export { Timeline } from './Timeline';
+export { Timeline, headerWidthFor, TRACK_HEADER_MIN_WIDTH } from './Timeline';
 export type { TimelineProps } from './Timeline';
 export type {
   TimelineModel,

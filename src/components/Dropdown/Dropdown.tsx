@@ -13,11 +13,11 @@
 
 import { type ReactElement, type ReactNode, useState } from 'react';
 import { Popover } from '@components/Popover';
-import { Menu, MenuItem, MenuSeparator, MenuLabel, MenuCheckbox } from '@components/Menu';
+import { Menu, MenuItem, MenuSeparator, MenuLabel, MenuCheckbox, type MenuSelectModifiers } from '@components/Menu';
 import type { IconName } from '@components/Icon';
 
 export type DropdownItem =
-  | { type: 'item'; id: string; label: ReactNode; icon?: IconName; shortcut?: string; disabled?: boolean; danger?: boolean; onSelect?: () => void; submenu?: DropdownItem[] }
+  | { type: 'item'; id: string; label: ReactNode; icon?: IconName; shortcut?: string; disabled?: boolean; danger?: boolean; onSelect?: (modifiers: MenuSelectModifiers) => void; submenu?: DropdownItem[] }
   | { type: 'separator' }
   | { type: 'label'; label: ReactNode }
   | { type: 'checkbox'; id: string; label: ReactNode; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean };
@@ -35,9 +35,9 @@ export interface DropdownProps {
 export function Dropdown({ trigger, items, placement = 'bottom-start', offset, className, noScroll }: DropdownProps): JSX.Element {
   const [open, setOpen] = useState(false);
 
-  const handleSelect = (onSelect?: () => void) => {
-    return () => {
-      onSelect?.();
+  const handleSelect = (onSelect?: (modifiers: MenuSelectModifiers) => void) => {
+    return (modifiers: MenuSelectModifiers) => {
+      onSelect?.(modifiers);
       setOpen(false);
     };
   };

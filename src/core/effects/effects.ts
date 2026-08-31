@@ -292,6 +292,34 @@ export interface Effect {
   /** When false the effect stays in the stack but contributes nothing. */
   enabled?: boolean;
   /**
+   * AE Compositing Options -> Effect Opacity, 0..100 percent.
+   *
+   * Blends this effect's OUTPUT against its INPUT: 100 is the effect as it has
+   * always rendered, 0 is a no-op, 50 is half-strength. Keyframeable under
+   * `effect.<id>.fx.opacity` (see `EFFECT_OPACITY_KEY`), which is what makes it
+   * the one dial that gives ANY effect a time range.
+   *
+   * Why an instance field rather than a param: 19 effect definitions already
+   * declare a param keyed `opacity` (Drop Shadow's, Glow's, Vegas'), and those
+   * mean "how opaque is the thing this effect draws". This one means "how much
+   * of this effect's result survives", and it exists for every effect in the
+   * registry including the ones with no natural zero (Find Edges, Mosaic, a
+   * LUT). Two different quantities cannot share a key.
+   *
+   * ── The absent/100 distinction is load-bearing ──
+   * ABSENT means "never touched", and only then is the effect free to render on
+   * the GPU's native path. PRESENT — even at exactly 100 — forces the CPU bake
+   * (`effectsNeedCpuBake`), because that is the only path that can blend an
+   * effect against its input. An ANIMATED opacity therefore keeps the field
+   * present at every frame including the ones that sample 100, which is what
+   * stops a 0->100->0 ramp from flipping between the GPU and CPU chains
+   * mid-animation and popping as the two backends' rounding disagreed.
+   *
+   * `setEffectOpacity` deletes the field at 100 so an untouched effect adds
+   * nothing to the saved file and costs nothing at render time.
+   */
+  opacity?: number;
+  /**
    * Optional AE-style label colour on this effect instance (Effect Controls
    * header swatch). Hex from `LABEL_COLORS`; absent = default chrome.
    */
@@ -3625,6 +3653,87 @@ export function effectPropPath(effectId: string, paramKey?: string): string {
 }
 
 /**
+ * The reserved param key for AE's Compositing Options -> Effect Opacity.
+ *
+ * It carries a DOT on purpose. Every declared `EffectParamDef.key` in the
+ * registry (and in every plugin def) is a plain identifier, so a key containing
+ * `.` cannot collide with one — which matters because nineteen effects already
+ * declare a param keyed plainly `opacity` and this is emphatically not that
+ * (see `Effect.opacity`). `effectOpacityKeyIsReserved` pins the invariant.
+ *
+ * The path parses: `resolveEffectParam`'s `/^effect\.([^.]+)(?:\.(.+))?$/`
+ * takes the id from the first segment and the whole remainder as the key, so
+ * `effect.fx_3.fx.opacity` resolves to effect `fx_3`, key `fx.opacity`.
+ */
+export const EFFECT_OPACITY_KEY = 'fx.opacity';
+
+/** The animation path for an effect's Compositing Options opacity. */
+export function effectOpacityPath(effectId: string): string {
+  return effectPropPath(effectId, EFFECT_OPACITY_KEY);
+}
+
+/**
+ * Guard for the registry: no effect definition may declare `fx.opacity` as a
+ * param key, or its param and its compositing opacity would share one track.
+ * Exported for the test that pins it rather than asserted at module load —
+ * plugin defs register after this module and a throw here would take the app
+ * down over a bad plugin.
+ */
+export function effectOpacityKeyIsReserved(defs: ReadonlyArray<EffectDef>): boolean {
+  return !defs.some((d) => d.params.some((p) => p.key === EFFECT_OPACITY_KEY));
+}
+
+/**
+ * This effect's Compositing Options opacity as a 0..1 BLEND FACTOR.
+ *
+ * Absent reads as 1 — an effect nobody has touched applies in full, which is
+ * what every project saved before this field expects.
+ */
+export function effectOpacityOf(e: Effect): number {
+  const pct = e.opacity;
+  if (typeof pct !== 'number' || !Number.isFinite(pct)) return 1;
+  return Math.max(0, Math.min(1, pct / 100));
+}
+
+/**
+ * Does this effect need the blend-against-input composite at all?
+ *
+ * PRESENCE of the field, not `< 100` — see `Effect.opacity` for why an animated
+ * opacity must keep forcing the composite on the frames it samples 100.
+ */
+export function effectHasOpacity(e: Effect): boolean {
+  return typeof e.opacity === 'number' && Number.isFinite(e.opacity);
+}
+
+/**
+ * Set one effect's Compositing Options opacity (0..100), or clear it.
+ *
+ * 100 CLEARS the field rather than storing it: absent is the state that lets
+ * the effect keep its GPU-native path, and an author who drags the slider back
+ * to full expects the effect to cost what it did before they touched it. A
+ * keyframed opacity is stamped back on per frame by `resolveEffectParams`, so
+ * clearing the static value here never disarms an animation.
+ */
+export function setEffectOpacity(
+  nodeId: string,
+  effectId: string,
+  pct: number | undefined,
+): void {
+  const clear = pct === undefined || !Number.isFinite(pct) || pct >= 100;
+  writeNodeEffects(
+    nodeId,
+    getNodeEffects(nodeId).map((e) => {
+      if (e.id !== effectId) return e;
+      if (clear) {
+        const { opacity: _drop, ...rest } = e;
+        return rest;
+      }
+      return { ...e, opacity: Math.max(0, Math.min(100, pct)) };
+    }),
+  );
+}
+
+/**
  * Hex → [r, g, b, a], each 0..1 — the channel convention the `_r/_g/_b/_a`
  * keyframe tracks actually store.
  *
@@ -3721,8 +3830,20 @@ export function resolveEffectParams(
   layerTimeSec?: number,
 ): Effect[] {
   return effects.map((e) => {
+    // Compositing-Options opacity FIRST, and above the `!def` return: it is an
+    // instance field rather than a declared param, so it is the one animatable
+    // quantity a plugin effect (whose def may not be in `DEF`) still carries.
+    //
+    // Stamped whenever the TRACK EXISTS, including on frames that sample
+    // exactly 100 — the field's presence is what keeps the layer on the CPU
+    // bake for the whole animation instead of flipping paths at the top of the
+    // ramp. See `Effect.opacity`.
+    const fxOp = sample(effectOpacityPath(e.id));
+    const withOp = fxOp !== undefined ? { ...e, opacity: Math.max(0, Math.min(100, fxOp)) } : e;
+
     const def = DEF.get(e.type);
-    if (!def) return e;
+    if (!def) return withOp;
+    e = withOp;
     const params: Record<string, EffectParamValue> = { ...paramsOf(e) };
     let touched = false;
 

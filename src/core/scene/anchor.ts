@@ -13,7 +13,7 @@
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { bumpScene } from '@stores/sceneStore';
-import { writeTransformProps } from '@core/scene/transformWrite';
+import { writeTransformProps, readTransformProp } from '@core/scene/transformWrite';
 
 const DEG = Math.PI / 180;
 export const ANCHOR_PROPS = ['anchorX', 'anchorY'] as const;
@@ -69,11 +69,19 @@ export function moveAnchorCompensated(nodeId: string, ax: number, ay: number): v
   const node = defaultSceneGraph.getNode(nodeId);
   const t = node ? transformComponent(node) : undefined;
   if (!node || !t) return;
-  const oldAx = num(t.props.anchorX);
-  const oldAy = num(t.props.anchorY);
-  const rot = num(t.props.rotation) * DEG;
-  const sx = num(t.props.scaleX, 1);
-  const sy = num(t.props.scaleY, 1);
+  // EVERY input is read at the playhead, animated values winning — see
+  // `readTransformProp`. Reading the base props here was the read-side half of
+  // the very bug this function exists to prevent: on a layer keyframed
+  // 100 → 900, dragging the anchor at the midpoint wrote `100 + wdx` as a
+  // keyframe and the layer teleported ~380px backwards. Rotation and scale
+  // matter for the same reason — they rotate and scale the compensation, so
+  // reading them at rest points the correction the wrong way on any layer
+  // whose spin or scale is animated.
+  const oldAx = readTransformProp(nodeId, 'anchorX', 0);
+  const oldAy = readTransformProp(nodeId, 'anchorY', 0);
+  const rot = readTransformProp(nodeId, 'rotation', 0) * DEG;
+  const sx = readTransformProp(nodeId, 'scaleX', 1);
+  const sy = readTransformProp(nodeId, 'scaleY', 1);
   const dax = ax - oldAx;
   const day = ay - oldAy;
   const wdx = dax * sx * Math.cos(rot) - day * sy * Math.sin(rot);
@@ -83,8 +91,8 @@ export function moveAnchorCompensated(nodeId: string, ax: number, ay: number): v
     [
       { prop: 'anchorX', value: ax },
       { prop: 'anchorY', value: ay },
-      { prop: 'x', value: num(t.props.x) + wdx },
-      { prop: 'y', value: num(t.props.y) + wdy },
+      { prop: 'x', value: readTransformProp(nodeId, 'x', 0) + wdx },
+      { prop: 'y', value: readTransformProp(nodeId, 'y', 0) + wdy },
     ],
     'Pan Behind',
   );

@@ -7,6 +7,7 @@ export {
   ContextMenu,
 } from './Menu';
 export type {
+  MenuSelectModifiers,
   MenuProps,
   MenuItemProps,
   MenuCheckboxProps,

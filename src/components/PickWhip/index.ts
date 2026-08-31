@@ -1,1 +1,1 @@
-export { PickWhip, type PickWhipProps } from './PickWhip';
+export { PickWhip, type PickWhipProps, type WhipModifiers } from './PickWhip';

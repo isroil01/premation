@@ -49,7 +49,8 @@ import type {
 import { Dropdown } from '@components/Dropdown';
 import { type LayerBlendMode } from '@core/effects/blendMode';
 import { blendDropdownItems, blendModeLabel } from '@layout/Inspector/blendMenu';
-import { eligibleParents, parentOfNode } from '@core/scene/parenting';
+import { eligibleParents, parentOfNode, parentOptionsFor } from '@core/scene/parenting';
+import type { MenuSelectModifiers } from '@components/Menu';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import {
   combineMarqueeSelection,
@@ -67,9 +68,66 @@ import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } fro
 import { TIMELINE_GROUP_ORDER, type TimelineGroupKey } from '@core/timeline/propertyTree';
 import { useUIStore } from '@stores/uiStore';
 
-const RULER_HEIGHT_DEFAULT = 36;
+/**
+ * The column-head / ruler strip.
+ *
+ * 26, not 36. Everything in it is a 22px control or a 12px label, so ten of
+ * those 36 pixels were padding — a header band half again as tall as the rows
+ * it labels, which made the track list look like it started a third of the way
+ * down the panel.
+ */
+const RULER_HEIGHT_DEFAULT = 26;
 const TRACK_HEIGHT_DEFAULT = 36;
-const TRACK_HEADER_WIDTH_DEFAULT = 560;
+/**
+ * The track-header column model, in pixels — the TypeScript half of the one in
+ * Timeline.module.css. Both halves have to agree.
+ *
+ * These are FIXED widths: a header narrower than their sum does not squeeze the
+ * columns, it hides the right-hand ones behind the lanes. That is how Mode,
+ * TrkMat and Parent & Link came to be unreachable — the stored default was
+ * 460px against the ~576px the mode columns need — so `headerWidthFor` below
+ * turns the sum into a floor instead of leaving it to chance.
+ */
+const TL_COLUMN_WIDTHS = {
+  /** `.colHeads` / `.trackHeader` horizontal padding, both edges. */
+  padding: 8,
+  /** `--tl-col-gap`, between every pair of columns. */
+  gap: 4,
+  /** A divider rule's margin + padding, on the one side that draws it. */
+  rule: 16,
+  preInfo: 72,
+  name: 190,
+  switches: 178,
+  mode: 70,
+  matte: 58,
+  parent: 120,
+} as const;
+
+/**
+ * The narrowest the header column may be dragged.
+ *
+ * Not a limit on the COLUMNS — those keep their widths and scroll. It is the
+ * width the sub-header row above needs: the timecode, the filter field and the
+ * eight toggles share that strip, and below this they stop being a row and
+ * start overlapping. Mirrored by `.searchBarCol`'s `min-width`, so the vertical
+ * line those two share cannot break at any drag position.
+ */
+export const TRACK_HEADER_MIN_WIDTH = 260;
+
+/** Width the header needs for `columns` — see `TL_COLUMN_WIDTHS`. */
+export function headerWidthFor(columns: 'switches' | 'modes' | 'both'): number {
+  const W = TL_COLUMN_WIDTHS;
+  // A/V gutter (ruled) + gap + name. Always present.
+  let total = W.padding + (W.preInfo + W.rule) + W.gap + W.name;
+  if (columns !== 'modes') total += W.gap + W.switches + W.rule;
+  if (columns !== 'switches') {
+    total += W.gap + W.mode + W.rule;
+    total += W.gap + W.matte + W.rule;
+    total += W.gap + W.parent + W.rule;
+  }
+  return total;
+}
+
 const TIMELINE_TOP_PADDING = 6;
 const TIMELINE_BOTTOM_PADDING = 12;
 
@@ -173,7 +231,7 @@ export interface TimelineProps {
   onTrackToggleSolo?: (trackId: string) => void;
   onTrackBlendModeChange?: (trackId: string, mode: LayerBlendMode) => void;
   onTrackMatteChange?: (trackId: string, matte: any) => void;
-  onTrackParentChange?: (trackId: string, parentId: string | null) => void;
+  onTrackParentChange?: (trackId: string, parentId: string | null, options?: { preserveWorld?: boolean }) => void;
   onTrackToggleFlag?: (trackId: string, flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   /** Rename a layer (confirmed on blur/Enter). */
   onTrackRename?: (trackId: string, newName: string) => void;
@@ -216,6 +274,13 @@ export interface TimelineProps {
   className?: string;
   searchQuery?: string;
   globalShy?: boolean;
+  /**
+   * AE's Toggle Switches / Modes. `switches` shows shy·fx·blur·adjustment·
+   * guide·T·3D; `modes` shows Mode·TrkMat·Parent; `both` shows the lot and
+   * needs a very wide header. Defaults to `both` so an embedder that has not
+   * been taught about the toggle keeps every column it had.
+   */
+  columns?: 'switches' | 'modes' | 'both';
   /**
    * Playhead time in seconds, supplied SEPARATELY from `model` so playback
    * (60 fps) does not rebuild the model and force the entire row tree to
@@ -271,9 +336,12 @@ function Timeline({
   className,
   searchQuery,
   globalShy,
+  columns = 'both',
   onDurationChange,
   playheadTime,
 }: TimelineProps): JSX.Element {
+  const showSwitches = columns !== 'modes';
+  const showModes = columns !== 'switches';
   const rulerHeight = model.rulerHeight ?? RULER_HEIGHT_DEFAULT;
   const trackHeight = model.trackHeight ?? TRACK_HEIGHT_DEFAULT;
   // The header column is user-resizable: property names + their value fields
@@ -282,7 +350,13 @@ function Timeline({
   // pin a width (tests, embeds); otherwise it is the user's preference.
   const prefHeaderWidth = usePreferenceStore((s) => s.timelineHeaderWidth);
   const setPref = usePreferenceStore((s) => s.set);
-  const headerWidth = model.trackHeaderWidth ?? prefHeaderWidth ?? TRACK_HEADER_WIDTH_DEFAULT;
+  // What the visible columns need. It is the DEFAULT and the reset target, no
+  // longer a floor on the drag: the header column scrolls horizontally now, so
+  // narrowing it hides columns behind an edge you can scroll back — which is
+  // the AE behaviour, and does not force the panel to a width the user did not
+  // ask for. See `.colHeads` / `.trackHeaderScroller`.
+  const minHeaderWidth = headerWidthFor(columns);
+  const headerWidth = model.trackHeaderWidth ?? prefHeaderWidth ?? minHeaderWidth;
 
   // Playhead is the one value that changes 60×/s during playback. We accept
   // it as a separate prop so the model can stay referentially stable and the
@@ -292,6 +366,17 @@ function Timeline({
 
   const lanesRef = useRef<HTMLDivElement | null>(null);
   const headerRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * The column-head strip, kept in step with the rows' horizontal scroll.
+   *
+   * The heads live in the ruler and the rows live in their own scroller, so
+   * they are two boxes that happen to share a column model — scroll one and the
+   * legend stops naming the columns under it. Written straight to the DOM
+   * rather than through state: this fires on every frame of a drag-scroll, and
+   * re-rendering every visible row to move one strip 4px is not what a scroll
+   * should cost.
+   */
+  const colHeadsRef = useRef<HTMLDivElement | null>(null);
   const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
   const [scrollLeft, setScrollLeft] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
@@ -316,7 +401,12 @@ function Timeline({
     const st = resizeRef.current;
     if (!st) return;
     // Floor keeps the switch column reachable; ceiling keeps the lanes usable.
-    setPref('timelineHeaderWidth', clamp(st.startW + (e.clientX - st.startX), 220, 900));
+    // Past the minimum the columns scroll rather than shrink, so dragging in
+    // costs nothing but visible width.
+    setPref(
+      'timelineHeaderWidth',
+      clamp(st.startW + (e.clientX - st.startX), TRACK_HEADER_MIN_WIDTH, 900),
+    );
   }, [setPref]);
 
   const onHeaderResizeUp = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
@@ -1251,7 +1341,17 @@ function Timeline({
       >
         <div className={styles.ruler} style={{ height: rulerHeight }}>
           {/* Column heads for the switches and modes (AE layout). */}
-          <div className={styles.colHeads}>
+          <div ref={colHeadsRef} className={styles.colHeads}>
+            {/* A/V toggles come FIRST, as they do in AE — the eye / solo / lock
+                gutter is the left edge of the panel there, not something that
+                trails the layer name. `.trackHeader` below is ordered to
+                match; the two must stay in step or the legend names the wrong
+                control. */}
+            <div className={styles.colHeadPreInfo} aria-hidden>
+              <span className={styles.colHeadItem}><Icon name="eye" size="sm" title="Video Visibility" /></span>
+              <span className={styles.colHeadItem}><Icon name="circle" size="sm" title="Solo" /></span>
+              <span className={styles.colHeadItem}><Icon name="lock" size="sm" title="Lock" /></span>
+            </div>
             <span className={styles.colHeadLayer}>
               <span className={styles.colHeadIndex} aria-hidden>#</span>
               <span className={styles.colHeadLayerLabel}>Source Name</span>
@@ -1268,34 +1368,39 @@ function Timeline({
                 <Icon name="export" size="sm" />
               </button>
             </span>
-            <div className={styles.colHeadPreInfo} aria-hidden>
-              <span className={styles.colHeadItem}><Icon name="eye" size="sm" title="Video Visibility" /></span>
-              <span className={styles.colHeadItem}><Icon name="circle" size="sm" title="Solo" /></span>
-              <span className={styles.colHeadItem}><Icon name="lock" size="sm" title="Lock" /></span>
-            </div>
             {/* Legend for the per-layer switch column below — one glyph per
                 switch that actually exists on the rows, in ROW ORDER. The
                 guide-layer glyph is not optional: `data-kind="guide"` ships on
                 every row between adjustment and 3D, and a legend that skips a
                 live switch is worse than no legend. */}
-            <span className={styles.colHeadAeSwitches} aria-hidden>
-              <span className={styles.colHeadItem}><Icon name="shy" size="sm" title="Shy" /></span>
-              <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects">fx</span></span>
-              <span className={styles.colHeadItem}><Icon name="motion-blur" size="sm" title="Motion Blur" /></span>
-              <span className={styles.colHeadItem}><Icon name="adjustment" size="sm" title="Adjustment Layer" /></span>
-              <span className={styles.colHeadItem}><Icon name="frame" size="sm" title="Guide Layer (not rendered)" /></span>
-              <span className={styles.colHeadItem}><span className={styles.fxText} title="Preserve Underlying Transparency">T</span></span>
-              <span className={styles.colHeadItem}><Icon name="3d" size="sm" title="3D Layer" /></span>
-            </span>
-            <span className={styles.colHeadMode}>Mode</span>
-            <span className={styles.colHeadMatte}>T</span>
-            <span className={styles.colHeadParent}>Parent & Link</span>
+            {showSwitches && (
+              <span className={styles.colHeadAeSwitches} aria-hidden>
+                <span className={styles.colHeadItem}><Icon name="shy" size="sm" title="Shy" /></span>
+                <span className={styles.colHeadItem}><span className={styles.fxText} title="Effects">fx</span></span>
+                <span className={styles.colHeadItem}><Icon name="motion-blur" size="sm" title="Motion Blur" /></span>
+                <span className={styles.colHeadItem}><Icon name="adjustment" size="sm" title="Adjustment Layer" /></span>
+                <span className={styles.colHeadItem}><Icon name="frame" size="sm" title="Guide Layer (not rendered)" /></span>
+                <span className={styles.colHeadItem}><span className={styles.fxText} title="Preserve Underlying Transparency">T</span></span>
+                <span className={styles.colHeadItem}><Icon name="3d" size="sm" title="3D Layer" /></span>
+              </span>
+            )}
+            {showModes && (
+              <>
+                <span className={styles.colHeadMode}>Mode</span>
+                <span className={styles.colHeadMatte}>TrkMat</span>
+                <span className={styles.colHeadParent}>Parent &amp; Link</span>
+              </>
+            )}
           </div>
         </div>
         <div
           ref={headerRef}
           className={styles.trackHeaderScroller}
           style={{ height: `calc(100% - ${rulerHeight}px)` }}
+          onScroll={(e) => {
+            const x = (e.currentTarget as HTMLDivElement).scrollLeft;
+            if (colHeadsRef.current) colHeadsRef.current.style.transform = `translateX(${-x}px)`;
+          }}
         >
           <div style={{ height: effectiveLanesHeight, position: 'relative' }}>
             {visibleRows.map((row, i) => {
@@ -1324,10 +1429,12 @@ function Timeline({
                     onToggleSolo={() => onTrackToggleSolo?.(row.track.id)}
                     onBlendModeChange={(mode) => onTrackBlendModeChange?.(row.track.id, mode)}
                     onMatteChange={(matte) => onTrackMatteChange?.(row.track.id, matte)}
-                    onParentChange={(parentId) => onTrackParentChange?.(row.track.id, parentId)}
+                    onParentChange={(parentId, options) => onTrackParentChange?.(row.track.id, parentId, options)}
                     onToggleFlag={(flag) => onTrackToggleFlag?.(row.track.id, flag)}
                     onRename={(name) => onTrackRename?.(row.track.id, name)}
                     onTrackColorChange={onTrackColorChange}
+                    showSwitches={showSwitches}
+                    showModes={showModes}
                     onReorderStart={(e) => {
                       rowDrag.current = { id: row.track.id, startY: e.clientY, currentIndex: realIndex };
                       document.body.style.userSelect = 'none';
@@ -1437,7 +1544,7 @@ function Timeline({
         onPointerDown={onHeaderResizeDown}
         onPointerMove={onHeaderResizeMove}
         onPointerUp={onHeaderResizeUp}
-        onDoubleClick={() => setPref('timelineHeaderWidth', TRACK_HEADER_WIDTH_DEFAULT)}
+        onDoubleClick={() => setPref('timelineHeaderWidth', minHeaderWidth)}
         title="Drag to resize · double-click to reset"
       />
       <div ref={lanesRef} className={styles.lanes} onScroll={onLanesScroll}>
@@ -1457,7 +1564,16 @@ function Timeline({
               scrolling back up first. The composition-duration handle stays
               OUTSIDE the stack — it spans ruler + lanes, so it cannot stick. */}
           <div className={styles.rulerStack} style={{ height: rulerHeight }}>
-            <Ruler ticks={ticks} height={rulerHeight} width={laneWidth} onPointerDown={onPlayheadDown} />
+            <Ruler
+              ticks={ticks}
+              height={rulerHeight}
+              width={laneWidth}
+              onPointerDown={onPlayheadDown}
+              currentTime={currentTime}
+              duration={totalSeconds}
+              pixelsPerSecond={pps}
+              leftOffset={TIMELINE_LEFT_OFFSET}
+            />
 
             {/* Preview-coverage lanes (green = RAM, blue = disk). They
                 SUBSCRIBE THEMSELVES to the frame cache rather than taking
@@ -1478,8 +1594,8 @@ function Timeline({
               <div
                 className={styles.workAreaBar}
                 style={{
-                  top: 0,
-                  height: rulerHeight,
+                  top: 14,
+                  height: Math.max(12, rulerHeight - 17),
                   left: TIMELINE_LEFT_OFFSET + model.workArea.start * pps,
                   width: Math.max(2, (model.workArea.end - model.workArea.start) * pps),
                 }}
@@ -1840,14 +1956,40 @@ function RulerImpl({
   height,
   width,
   onPointerDown,
+  currentTime = 0,
+  duration = 0,
+  pixelsPerSecond = 80,
+  leftOffset = 8,
 }: {
   ticks: { x: number; major: boolean; label: string }[];
   height: number;
   width: number;
   onPointerDown?: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  currentTime?: number;
+  duration?: number;
+  pixelsPerSecond?: number;
+  leftOffset?: number;
 }): JSX.Element {
+  const progressWidth = Math.max(0, Math.min(duration * pixelsPerSecond, currentTime * pixelsPerSecond));
+  const trackWidth = duration > 0 ? duration * pixelsPerSecond : width;
+
   return (
     <div className={styles.ruler} style={{ height, width }} onPointerDown={onPointerDown}>
+      {/* Background progress track */}
+      <div
+        className={styles.rulerProgressTrack}
+        style={{ left: leftOffset, width: trackWidth }}
+        aria-hidden
+      />
+
+      {/* Video progress fill with primary color as video passes */}
+      <div
+        className={styles.rulerProgressFill}
+        style={{ left: leftOffset, width: progressWidth }}
+        aria-hidden
+      />
+
+      {/* Ruler ticks and timecode labels at the top */}
       {ticks.map((t, i) => (
         <div
           key={i}
@@ -1893,6 +2035,8 @@ const TrackHeader = memo(function TrackHeader({
   onToggleFlag,
   onRename,
   onTrackColorChange,
+  showSwitches = true,
+  showModes = true,
   onReorderStart,
   style,
 }: {
@@ -1909,10 +2053,14 @@ const TrackHeader = memo(function TrackHeader({
   onToggleSolo: () => void;
   onBlendModeChange?: (mode: LayerBlendMode) => void;
   onMatteChange?: (matte: any) => void;
-  onParentChange?: (parentId: string | null) => void;
+  /** `options.preserveWorld: false` is the Alt variant — link without compensating. */
+  onParentChange?: (parentId: string | null, options?: { preserveWorld?: boolean }) => void;
   onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   onRename?: (newName: string) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
+  /** AE's Toggle Switches / Modes — see `TimelineProps['columns']`. */
+  showSwitches?: boolean;
+  showModes?: boolean;
   onReorderStart?: (e: ReactPointerEvent<HTMLDivElement>) => void;
   style: CSSProperties;
 }): JSX.Element {
@@ -1953,7 +2101,7 @@ const TrackHeader = memo(function TrackHeader({
       id: '__none__',
       label: 'None',
       icon: currentParent === null ? ('check' as const) : undefined,
-      onSelect: () => onParentChange?.(null),
+      onSelect: (m: MenuSelectModifiers) => onParentChange?.(null, parentOptionsFor(m)),
     },
     ...(parentOptions.length ? [{ type: 'separator' as const }] : []),
     ...parentOptions.map((o) => ({
@@ -1961,7 +2109,7 @@ const TrackHeader = memo(function TrackHeader({
       id: o.id,
       label: o.name,
       icon: o.id === currentParent ? ('check' as const) : undefined,
-      onSelect: () => onParentChange?.(o.id),
+      onSelect: (m: MenuSelectModifiers) => onParentChange?.(o.id, parentOptionsFor(m)),
     })),
   ];
 
@@ -1990,6 +2138,42 @@ const TrackHeader = memo(function TrackHeader({
       aria-label={track.name}
       title="Enter to select · F2 to focus"
     >
+      <div className={styles.preInfoCol}>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="visible"
+          data-on={!hidden || undefined}
+          aria-label={hidden ? 'Show track' : 'Hide track'}
+          title={hidden ? 'Hide' : 'Show (Video)'}
+          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
+        >
+          <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="solo"
+          data-on={solo || undefined}
+          aria-label={solo ? 'Unsolo track' : 'Solo track'}
+          title={solo ? 'Unsolo' : 'Solo'}
+          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
+        >
+          <Icon name="circle" size="sm" />
+        </button>
+        <button
+          type="button"
+          className={styles.trackAction}
+          data-kind="lock"
+          data-on={locked || undefined}
+          aria-label={locked ? 'Unlock track' : 'Lock track'}
+          title={locked ? 'Unlock' : 'Lock'}
+          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
+        >
+          <Icon name="lock" size="sm" />
+        </button>
+      </div>
+
       <div className={styles.layerInfoCol} style={{ paddingLeft: track.depth ? track.depth * 14 : undefined }}>
         <div
           className={styles.dragHandle}
@@ -2055,185 +2239,155 @@ const TrackHeader = memo(function TrackHeader({
         )}
       </div>
 
-      <div className={styles.preInfoCol}>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="visible"
-          data-on={!hidden || undefined}
-          aria-label={hidden ? 'Show track' : 'Hide track'}
-          title={hidden ? 'Hide' : 'Show (Video)'}
-          onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
-        >
-          <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="solo"
-          data-on={solo || undefined}
-          aria-label={solo ? 'Unsolo track' : 'Solo track'}
-          title={solo ? 'Unsolo' : 'Solo'}
-          onClick={(e) => { e.stopPropagation(); onToggleSolo(); }}
-        >
-          <Icon name="circle" size="sm" />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="lock"
-          data-on={locked || undefined}
-          aria-label={locked ? 'Unlock track' : 'Lock track'}
-          title={locked ? 'Unlock' : 'Lock'}
-          onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
-        >
-          <Icon name="lock" size="sm" />
-        </button>
-      </div>
+      {showSwitches && (
+        <div className={styles.aeSwitchesCol}>
+          <button
+            type="button"
+            className={styles.trackAction}
+            data-kind="shy"
+            data-on={(track as any).shy || undefined}
+            title="Toggle Shy Layer"
+            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
+          >
+            <Icon name="shy" size="sm" />
+          </button>
 
-      <div className={styles.aeSwitchesCol}>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="shy"
-          data-on={(track as any).shy || undefined}
-          title="Toggle Shy Layer"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
-        >
-          <Icon name="shy" size="sm" />
-        </button>
+          <button
+            type="button"
+            className={styles.trackAction}
+            data-kind="fx"
+            data-on={track.fxEnabled !== false || undefined}
+            title="Toggle Effects (fx)"
+            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
+          >
+            <span className={styles.fxText}>fx</span>
+          </button>
 
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="fx"
-          data-on={track.fxEnabled !== false || undefined}
-          title="Toggle Effects (fx)"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
-        >
-          <span className={styles.fxText}>fx</span>
-        </button>
+          <button
+            type="button"
+            className={styles.trackAction}
+            data-kind="motionBlur"
+            data-on={track.motionBlur || undefined}
+            title="Toggle Motion Blur"
+            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
+          >
+            <Icon name="motion-blur" size="sm" />
+          </button>
+          <button
+            type="button"
+            className={styles.trackAction}
+            data-kind="adjustment"
+            data-on={track.adjustment || undefined}
+            title="Toggle Adjustment Layer"
+            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
+          >
+            <Icon name="adjustment" size="sm" />
+          </button>
+          <button
+            type="button"
+            className={styles.trackAction}
+            data-kind="guide"
+            data-on={track.guide || undefined}
+            aria-pressed={track.guide === true}
+            title={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
+            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
+          >
+            {/* NOT `eye-off`. That is the glyph the VISIBILITY switch shows when
+                a layer is hidden, so every row carried two eyes doing unrelated
+                jobs — visibility over in the pre-info column, guide-layer here —
+                and the pair read as one control duplicated. A guide layer is
+                reference framing the render skips, which is what `frame` says. */}
+            <Icon name="frame" size="sm" />
+          </button>
+          {/* Preserve Underlying Transparency — AE's "T" switch. A glyph rather
+              than an icon because that is what it is called and what AE draws;
+              the column legend carries the same T in the same position. */}
+          <button
+            type="button"
+            className={styles.trackAction}
+            data-kind="preserveTransparency"
+            data-on={track.preserveTransparency || undefined}
+            aria-pressed={track.preserveTransparency === true}
+            aria-label="Preserve Underlying Transparency"
+            title={track.preserveTransparency
+              ? 'Preserve Underlying Transparency — visible only where layers beneath are opaque'
+              : 'Preserve Underlying Transparency'}
+            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('preserveTransparency'); }}
+          >
+            <span className={styles.fxText}>T</span>
+          </button>
+          <button
+            type="button"
+            className={styles.trackAction}
+            data-kind="threeD"
+            data-on={track.threeD || undefined}
+            title="Toggle 3D Layer"
+            onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
+          >
+            <Icon name="3d" size="sm" />
+          </button>
+        </div>
+      )}
 
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="motionBlur"
-          data-on={track.motionBlur || undefined}
-          title="Toggle Motion Blur"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
-        >
-          <Icon name="motion-blur" size="sm" />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="adjustment"
-          data-on={track.adjustment || undefined}
-          title="Toggle Adjustment Layer"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
-        >
-          <Icon name="adjustment" size="sm" />
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="guide"
-          data-on={track.guide || undefined}
-          aria-pressed={track.guide === true}
-          title={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
-        >
-          {/* NOT `eye-off`. That is the glyph the VISIBILITY switch shows when
-              a layer is hidden, so every row carried two eyes doing unrelated
-              jobs — visibility over in the pre-info column, guide-layer here —
-              and the pair read as one control duplicated. A guide layer is
-              reference framing the render skips, which is what `frame` says. */}
-          <Icon name="frame" size="sm" />
-        </button>
-        {/* Preserve Underlying Transparency — AE's "T" switch. A glyph rather
-            than an icon because that is what it is called and what AE draws;
-            the column legend carries the same T in the same position. */}
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="preserveTransparency"
-          data-on={track.preserveTransparency || undefined}
-          aria-pressed={track.preserveTransparency === true}
-          aria-label="Preserve Underlying Transparency"
-          title={track.preserveTransparency
-            ? 'Preserve Underlying Transparency — visible only where layers beneath are opaque'
-            : 'Preserve Underlying Transparency'}
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('preserveTransparency'); }}
-        >
-          <span className={styles.fxText}>T</span>
-        </button>
-        <button
-          type="button"
-          className={styles.trackAction}
-          data-kind="threeD"
-          data-on={track.threeD || undefined}
-          title="Toggle 3D Layer"
-          onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
-        >
-          <Icon name="3d" size="sm" />
-        </button>
-      </div>
+      {showModes && (
+        <>
+        <div className={styles.modeCol} onClick={(e) => e.stopPropagation()}>
+          <Dropdown
+            placement="bottom-start"
+            trigger={
+              <button type="button" className={styles.timelineSelectTrigger} aria-label="Layer Blend Mode">
+                {blendModeLabel(track.blendMode as LayerBlendMode | undefined)}
+              </button>
+            }
+            items={blendDropdownItems(
+              track.blendMode as LayerBlendMode | undefined,
+              (m) => onBlendModeChange?.(m),
+            )}
+          />
+        </div>
 
-      <div className={styles.modeCol} onClick={(e) => e.stopPropagation()}>
-        <Dropdown
-          placement="bottom-start"
-          trigger={
-            <button type="button" className={styles.timelineSelectTrigger} aria-label="Layer Blend Mode">
-              {blendModeLabel(track.blendMode as LayerBlendMode | undefined)}
-            </button>
-          }
-          items={blendDropdownItems(
-            track.blendMode as LayerBlendMode | undefined,
-            (m) => onBlendModeChange?.(m),
-          )}
-        />
-      </div>
+        <div className={styles.matteCol} onClick={(e) => e.stopPropagation()}>
+          <Dropdown
+            placement="bottom-start"
+            trigger={
+              <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte">
+                {currentMatteLabel}
+              </button>
+            }
+            items={MATTE_OPTIONS.map((m) => ({
+              type: 'item',
+              id: m.id,
+              label: MATTE_SHORT_LABEL[m.id] ?? m.label,
+              icon: m.id === currentMatteOption ? ('check' as const) : undefined,
+              onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
+            }))}
+          />
+        </div>
 
-      <div className={styles.matteCol} onClick={(e) => e.stopPropagation()}>
-        <Dropdown
-          placement="bottom-start"
-          trigger={
-            <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte">
-              {currentMatteLabel}
-            </button>
-          }
-          items={MATTE_OPTIONS.map((m) => ({
-            type: 'item',
-            id: m.id,
-            label: MATTE_SHORT_LABEL[m.id] ?? m.label,
-            icon: m.id === currentMatteOption ? ('check' as const) : undefined,
-            onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
-          }))}
-        />
-      </div>
-
-      {/*
-        "Parent & Link" — the column's name, and now both halves of it. The
-        whip is the gesture; the dropdown is for a parent that is scrolled out
-        of sight. Both call `onParentChange`, so parenting cannot mean two
-        different things depending on which control was used.
-      */}
-      <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
-        <PickWhip
-          label="Parent pick-whip — drag onto a layer"
-          accept={(target) => parentOptions.some((o) => o.id === target.nodeId)}
-          onPick={(target) => onParentChange?.(target.nodeId)}
-        />
-        <Dropdown
-          placement="bottom-start"
-          trigger={
-            <button type="button" className={styles.timelineSelectTrigger} aria-label="Parent Layer">
-              {currentParentName}
-            </button>
-          }
-          items={parentItems}
-        />
-      </div>
+        {/*
+          "Parent & Link" — the column's name, and now both halves of it. The
+          whip is the gesture; the dropdown is for a parent that is scrolled out
+          of sight. Both call `onParentChange`, so parenting cannot mean two
+          different things depending on which control was used.
+        */}
+        <div className={styles.parentCol} onClick={(e) => e.stopPropagation()}>
+          <PickWhip
+            label="Parent pick-whip — drag onto a layer (Alt: keep values, layer jumps)"
+            accept={(target) => parentOptions.some((o) => o.id === target.nodeId)}
+            onPick={(target, m) => onParentChange?.(target.nodeId, parentOptionsFor(m))}
+          />
+          <Dropdown
+            placement="bottom-start"
+            trigger={
+              <button type="button" className={styles.timelineSelectTrigger} aria-label="Parent Layer">
+                {currentParentName}
+              </button>
+            }
+            items={parentItems}
+          />
+        </div>
+        </>
+      )}
     </div>
   );
 }, areRowPropsEqual);
