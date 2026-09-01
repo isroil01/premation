@@ -777,10 +777,13 @@ export function AssetsPanel(): JSX.Element {
         try {
           const { importGltfModel } = await import('@core/scene/modelImport');
           const result = importGltfModel(await file.arrayBuffer(), file.name);
+          const clipNote = result.clip
+            ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s${result.clip.extraClips > 0 ? `, ${result.clip.extraClips} more clip${result.clip.extraClips === 1 ? '' : 's'} in file` : ''})`
+            : '';
           useUIStore.getState().notify({
             level: result.warning ? 'warning' : 'success',
-            message: result.warning ?? `Imported “${file.name}” — ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}`,
-            durationMs: result.warning ? 6000 : 3200,
+            message: result.warning ?? `Imported “${file.name}” — ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}${clipNote}`,
+            durationMs: result.warning || result.clip ? 6000 : 3200,
           });
         } catch (err) {
           useUIStore.getState().notify({

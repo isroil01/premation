@@ -61,6 +61,25 @@ export interface GltfNode {
   s: [number, number, number];
 }
 
+export type GltfInterpolation = 'LINEAR' | 'STEP' | 'CUBICSPLINE';
+
+export interface GltfChannel {
+  /** Target node index. */
+  node: number;
+  path: 'translation' | 'rotation' | 'scale';
+  /** Keyframe times, seconds, ascending. */
+  times: Float32Array;
+  /** Values: vec3 triples, or quat x y z w quadruples for 'rotation'. For
+   *  CUBICSPLINE this is the raw in-tangent/value/out-tangent triple stream. */
+  values: Float32Array;
+  interpolation: GltfInterpolation;
+}
+
+export interface GltfAnimation {
+  name: string;
+  channels: GltfChannel[];
+}
+
 export interface ParsedGltf {
   meshes: { name: string; primitives: GltfPrimitive[] }[];
   materials: GltfMaterial[];
@@ -68,6 +87,8 @@ export interface ParsedGltf {
   nodes: GltfNode[];
   /** Root node indices of the default scene (or every parentless node). */
   roots: number[];
+  /** TRS animation clips ('weights' morph channels are skipped for now). */
+  animations: GltfAnimation[];
 }
 
 // ── GLB container ─────────────────────────────────────────────────────
@@ -131,6 +152,11 @@ interface GltfJson {
   }[];
   scenes?: { nodes?: number[] }[];
   scene?: number;
+  animations?: {
+    name?: string;
+    channels?: { sampler: number; target: { node?: number; path: string } }[];
+    samplers?: { input: number; output: number; interpolation?: string }[];
+  }[];
 }
 
 interface GltfJsonPrimitive {
@@ -305,6 +331,27 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
     };
   });
 
+  // Animations → flat channels with decoded time/value streams.
+  const animations: GltfAnimation[] = (g.animations ?? []).map((an, ai) => {
+    const channels: GltfChannel[] = [];
+    for (const ch of an.channels ?? []) {
+      const s = (an.samplers ?? [])[ch.sampler];
+      if (!s || ch.target.node === undefined) continue;
+      const path = ch.target.path;
+      if (path !== 'translation' && path !== 'rotation' && path !== 'scale') continue; // 'weights' = morphs, later tier
+      const interpolation: GltfInterpolation =
+        s.interpolation === 'STEP' || s.interpolation === 'CUBICSPLINE' ? s.interpolation : 'LINEAR';
+      channels.push({
+        node: ch.target.node,
+        path,
+        times: readAccessorF32(s.input),
+        values: readAccessorF32(s.output),
+        interpolation,
+      });
+    }
+    return { name: an.name ?? `clip ${ai}`, channels };
+  });
+
   const sceneRoots = g.scenes?.[g.scene ?? 0]?.nodes;
   let roots: number[];
   if (sceneRoots && sceneRoots.length > 0) {
@@ -316,7 +363,7 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
     roots = nodes.map((_, i) => i).filter((i) => !claimed.has(i));
   }
 
-  return { meshes, materials, images, nodes, roots };
+  return { meshes, materials, images, nodes, roots, animations };
 }
 
 /** Area-weighted vertex normals for a mesh that ships none. */

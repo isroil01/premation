@@ -34,6 +34,7 @@ function parsedWith(positions: number[], opts: { uvs?: number[]; material?: numb
     images: [],
     nodes: [],
     roots: [],
+    animations: [],
   };
 }
 

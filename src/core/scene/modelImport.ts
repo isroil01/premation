@@ -26,6 +26,8 @@
  */
 
 import { parseGltf, type ParsedGltf } from '@core/media/gltf';
+import { bakeClip } from './modelAnimation';
+import { defaultAnimation } from '@motion/animation';
 import {
   MODEL_COMPONENT,
   modelKeyForBytes,
@@ -61,6 +63,8 @@ export interface ModelLayerSpec {
   style?: Record<string, unknown>;
   /** Model reference (leafs only). */
   model?: { mesh: number; prim: number };
+  /** The glTF node this null stands for — animation channels target it. */
+  gltfNode?: number;
 }
 
 export interface ModelLayout {
@@ -119,6 +123,7 @@ export function buildModelLayout(
       parent: parentSpec,
       name: n.name,
       kind: 'null',
+      gltfNode: nodeIndex,
       props: {
         [SCENE_KIND_PROP]: 'null',
         x: t.x,
@@ -232,6 +237,8 @@ export interface ModelImportResult {
   rootId: string;
   layerCount: number;
   warning: string | null;
+  /** First clip baked onto the layers, if the file carried animations. */
+  clip: { name: string; duration: number; extraClips: number } | null;
 }
 
 /**
@@ -298,6 +305,29 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
     idsBySpec.push(id);
   });
 
+  // Bake the FIRST animation clip onto the node layers as ordinary keyframes
+  // (see modelAnimation.ts). Further clips are reported, not silently lost —
+  // a clip picker is a follow-up; one honest clip beats a mystery default.
+  let clip: ModelImportResult['clip'] = null;
+  const firstClip = parsed.animations.find((a) => a.channels.length > 0);
+  if (firstClip) {
+    const baked = bakeClip(firstClip);
+    for (const [gltfNode, tracks] of baked.byNode) {
+      const specIndex = layout.specs.findIndex((s) => s.gltfNode === gltfNode);
+      if (specIndex < 0) continue;
+      const nodeId = idsBySpec[specIndex];
+      if (!nodeId) continue;
+      for (const tr of tracks) {
+        defaultAnimation.setTrackKeyframes(nodeId, tr.prop, tr.keyframes);
+      }
+    }
+    clip = {
+      name: baked.name,
+      duration: baked.duration,
+      extraClips: parsed.animations.filter((a) => a.channels.length > 0).length - 1,
+    };
+  }
+
   useSelectionStore.getState().set([rootId]);
   bumpScene();
 
@@ -307,5 +337,6 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
     warning: u8.length > MODEL_SOFT_CAP_BYTES
       ? `“${fileName}” is ${(u8.length / (1024 * 1024)).toFixed(1)} MB — it is stored inside the project, so saves and autosaves will be heavier.`
       : null,
+    clip,
   };
 }
