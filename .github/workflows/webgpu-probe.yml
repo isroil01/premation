@@ -5,6 +5,11 @@ name: webgpu-probe
 
 on:
   workflow_dispatch:
+  # workflow_dispatch only registers once the file reaches the default branch;
+  # this push trigger lets the probe run from its feature branch.
+  push:
+    paths:
+      - '.github/workflows/webgpu-probe.yml'
 
 jobs:
   probe:
