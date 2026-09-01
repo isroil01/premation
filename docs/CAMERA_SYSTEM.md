@@ -285,15 +285,30 @@ Aperture), `focus` defaults to the focal length — the comp plane — so a fres
 camera keeps everything sharp. `aperture` defaults to `strength`, which
 reproduces the older single-scalar ramp exactly.
 
-**Be precise about what this is.** The blur is computed per layer from that
-layer's depth and pushed through as an ordinary `blur` effect entry, which the
-`CompositionPass` renders. There is no DOF code in `packages/renderer`. A layer
-that spans a range of depths therefore gets **one uniform blur**, not a
-gradient. Calling it "depth of field" is fair at the shot level and misleading
-at the pixel level; see `docs/EDITOR_REFERENCE.md` §4.
+**Be precise about what this is.** DOF is resolved per LAYER, not from a scene
+depth buffer — but within a layer it is no longer flat. The preferred path is
+`planDofCocCorners` (`dofStrips.ts`): four corner CoC radii for the layer's
+projected quad, rendered by the renderer's own `coc-blur` shader
+(`builtin.ts`), which interpolates the blur radius per pixel across the quad —
+a tilted plane crossing the focal region sharpens continuously through it.
+Polygonal iris bokeh (`irisBlades` / `irisRoundness` / `highlightGain`) is a
+separate `bokeh` gather pass. Strip subdivision (`planDofStrips`, ≤12 strips /
+5×5 grid) remains the fallback when corners can't be planned, and a plain
+`blur` effect entry the fallback below that. What still does NOT exist is a
+depth-buffer gather across layers: each layer defocuses from its own plane, so
+two interpenetrating layers do not exchange blur at their intersection. See
+`docs/EDITOR_REFERENCE.md` §4.
 
 DOF is off entirely in orthographic views (no lens), in custom views (you are
 not looking through the shot camera), and under Draft 3D.
+
+**Camera moves blur.** An animated active camera motion-blurs every 3D layer
+(comp + layer switches still gate it): `buildSnapshot` extends the motion gate
+to 3D layers when any `CAMERA_MOTION_PROPS` track is keyframed on the active
+camera, and each sub-frame sample projects through the camera's own pose at
+that sample's comp time (`cameraFromNode` per sample time, memoized). A static
+card under a keyframed pan now blurs exactly like a moving card under a static
+camera. Time remap retimes the layer's own animation, never the camera's clock.
 
 ---
 
@@ -317,7 +332,8 @@ not looking through the shot camera), and under Draft 3D.
 | Custom views that never move the shot camera | Yes, three of them | Yes |
 | Only 3D-enabled layers respond | Yes | Yes |
 | Auto-orient "Towards Camera" | Yes (`autoOrient.ts`, 3D layers only) | Yes |
-| Depth of field with focus distance + aperture | Approximated, see §7 | Real |
+| Depth of field with focus distance + aperture | Per-layer, with per-pixel CoC gradients across each quad — see §7 | Real (scene-depth) |
+| Camera moves motion-blur the scene | Yes — sub-frame camera poses, see §7 | Yes |
 
 ### 8.2 Where the models genuinely differ
 
@@ -325,8 +341,9 @@ not looking through the shot camera), and under Draft 3D.
   HDRI. Extrusion exists (`extrusion.ts`) but the primitive is still a layer in
   a space. AE is the same in its classic renderer; it differs in having Cinema
   4D / Advanced 3D renderers this app has no equivalent of.
-- **Depth of field is a per-layer uniform blur** (§7). AE's is a real
-  circle-of-confusion applied per pixel.
+- **Depth of field is resolved per layer** (§7): per-pixel CoC gradients across
+  each layer's own quad, but no cross-layer depth-buffer gather. AE's is a real
+  circle-of-confusion over scene depth.
 - **Shadows are 2.5D projections**, not cast geometry. Shading itself is
   per-fragment: Lambert plus Blinn-Phong on the depth-tested path (`builtin.ts`,
   `fn shade3d`, driven by a world-position varying), with `quadGain` in

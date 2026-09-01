@@ -185,6 +185,12 @@ included), effect-scoped masking, and protected time regions. Track mattes
 
 ### Motion blur
 Shutter angle, shutter **phase**, and **adaptive sampling** — all three.
+**Camera moves blur too** (2026-09-01): an animated active camera extends the
+motion gate to every 3D layer and each sub-frame sample projects through the
+camera's pose at that sample's comp time — a static card under a keyframed pan
+blurs like a moving card under a static camera. The adaptive sample count for
+3D layers is sized by PROJECTED travel, so a card flip or a depth push no
+longer samples at the static-layer floor.
 
 ### Shapes
 Nine **chainable** path operators: `zigzag`, `roundCorners`, `pucker`, `twist`,
@@ -629,6 +635,14 @@ retiring a claim requires quoting it.
 | Claim | Reality |
 |---|---|
 | `README.md` and `ROADMAP.md`: "58 effects" | **73**, from `featureCounts.cjs`, the same extractor §1 uses. The count guard existed but was scoped to this file's marked table, so the number was corrected here and left wrong in the two most-read files in the repo |
+
+### Corrected 2026-09-01 (motion-quality pass)
+
+| Claim | Reality |
+|---|---|
+| §4/§5 "no DOF code in `packages/renderer`" (retained as true on 2026-08-10) | **No longer true.** The renderer owns two DOF shaders: `coc-blur` (per-pixel CoC interpolated from four corner radii — `planDofCocCorners` in `dofStrips.ts` plans them) and `bokeh` (polygonal iris gather), both in `builtin.ts` and dispatched by `CompositionPass`. Strip subdivision is now the fallback, not the mechanism |
+| `CAMERA_SYSTEM.md` §7 "a layer that spans a range of depths gets one uniform blur, not a gradient" | **Superseded by the corner-CoC path** — the blur radius varies per pixel across the quad. Still per-layer: no cross-layer depth-buffer gather, which remains the honest gap |
+| A static 3D layer under a keyframed camera renders sharp (motion blur gated on the layer's own tracks only) | **Fixed 2026-09-01**: `CAMERA_MOTION_PROPS` on the active camera extend the gate to all 3D layers, with per-sub-frame camera poses (`buildSnapshotCameraMotionBlur.test.ts`) |
 | `CAMERA_SYSTEM.md` §8.2 restated the retired per-quad lighting claim | Retired the day before, in the 2026-08-10 row above. Corrected there; the **shadow** half of that sentence (2.5D projections) was and is true and was kept |
 | Cameras have no in-place X/Y rotation, so a tripod pan is inexpressible | **Was true, now built.** `orientationX`/`orientationY` are Transform scalars composed as OFFSETS onto the base aim in `cameraFromNode`, so they also work on a two-node camera without breaking its tracking. `Rx`/`Ry` were already in the `world → camera` matrix, driven only by orbit/look-at — the matrix alone did not reveal that, the value trace did |
 | The camera orbit/pan/dolly tools are keyboard-only | **They are not.** Three visible toolbar buttons in `SceneControls.tsx` (`CAMERA_TOOLS`), plus the C-key cycle and a Tools-menu entry. Believed missing anyway, which is a discoverability lesson rather than a code one |
