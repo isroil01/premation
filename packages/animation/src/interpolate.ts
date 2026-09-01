@@ -203,6 +203,92 @@ export function applyRoving(kfs: Keyframe[]): Keyframe[] {
 }
 
 /**
+ * Reposition roving keyframes on a PAIRED x/y track for constant speed along
+ * the 2D SPATIAL path — After Effects' actual "Rove Across Time". Per-track
+ * `applyRoving` roves each axis by its own |value| distance, which is only
+ * constant-speed while the path is axis-aligned: on a curved path, x and y
+ * roved independently disagree about where the keyframe belongs and the dot
+ * speeds up through every bend. Here each segment's true arc length is
+ * measured by sampling the 2D trajectory (easing + spatial tangents included —
+ * the traced point set is retime-invariant, only speed along it changes), and
+ * both axes are retimed together from the cumulative arc.
+ *
+ * Returns null when the two tracks don't share an aligned grid (same count,
+ * same times, same roving flags) — the caller falls back to per-track roving,
+ * which is the only meaningful reading of a half-roved pair. Pure.
+ */
+export function applyRovingSpatial(
+  xKfs: Keyframe[],
+  yKfs: Keyframe[],
+): { x: Keyframe[]; y: Keyframe[] } | null {
+  if (xKfs.length !== yKfs.length || xKfs.length < 3) return null;
+  for (let i = 0; i < xKfs.length; i++) {
+    if (xKfs[i]!.t !== yKfs[i]!.t) return null;
+    if ((xKfs[i]!.roving === true) !== (yKfs[i]!.roving === true)) return null;
+  }
+  const xs = xKfs.map((k) => ({ ...k }));
+  const ys = yKfs.map((k) => ({ ...k }));
+
+  /** 2D arc length of one keyframe-to-keyframe segment, by dense sampling. */
+  const segArc = (i: number): number => {
+    const tx: PropertyTrack = { nodeId: '', prop: 'x', keyframes: [xs[i]!, xs[i + 1]!] };
+    const ty: PropertyTrack = { nodeId: '', prop: 'y', keyframes: [ys[i]!, ys[i + 1]!] };
+    const t0 = xs[i]!.t;
+    const t1 = xs[i + 1]!.t;
+    // A zero-width segment still has geometric length if values jump; the
+    // straight-line distance is exactly its arc.
+    if (!(t1 > t0)) {
+      return Math.hypot(xs[i + 1]!.value - xs[i]!.value, ys[i + 1]!.value - ys[i]!.value);
+    }
+    const N = 64;
+    let len = 0;
+    let px = 0;
+    let py = 0;
+    for (let s = 0; s <= N; s++) {
+      const tt = t0 + ((t1 - t0) * s) / N;
+      const vx = sampleTrack(tx, tt)!;
+      const vy = sampleTrack(ty, tt)!;
+      if (s > 0) len += Math.hypot(vx - px, vy - py);
+      px = vx;
+      py = vy;
+    }
+    return len;
+  };
+
+  let i = 0;
+  while (i < xs.length) {
+    if (!xs[i]!.roving) { i++; continue; }
+    const startAnchor = i - 1;
+    let j = i;
+    while (j < xs.length && xs[j]!.roving) j++;
+    const endAnchor = j;
+    if (startAnchor < 0 || endAnchor >= xs.length) { i = j; continue; } // unbounded run
+    // Cumulative arc across the run's segments, measured BEFORE any retiming
+    // in this run mutates segment spans (values never change, so segment
+    // geometry is stable; only the sampling parameter needs the original
+    // spans, and segArc reads times off the copies — so measure first).
+    let total = 0;
+    const cum: number[] = [0];
+    for (let k = startAnchor; k < endAnchor; k++) {
+      total += segArc(k);
+      cum.push(total);
+    }
+    const a = xs[startAnchor]!;
+    const b = xs[endAnchor]!;
+    const tSpan = b.t - a.t;
+    const runLen = endAnchor - i;
+    for (let k = 0; k < runLen; k++) {
+      const frac = total > 0 ? cum[k + 1]! / total : (k + 1) / (runLen + 1);
+      const nt = a.t + frac * tSpan;
+      xs[i + k]!.t = nt;
+      ys[i + k]!.t = nt;
+    }
+    i = j;
+  }
+  return { x: xs, y: ys };
+}
+
+/**
  * Auto-bezier ("smooth path"): give every keyframe Catmull-Rom-style spatial
  * tangents so the value curve is C1-continuous through the points. The slope at
  * an interior keyframe is the chord through its neighbours; endpoints use the

@@ -220,6 +220,8 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'animation.easyEaseAll', label: 'Easy Ease All Keyframes' },
       { commandId: 'animation.timeReverseKeyframes', label: 'Time-Reverse Keyframes' },
       { commandId: 'animation.exponentialScale', label: 'Exponential Scale' },
+      { commandId: 'animation.smoother', label: 'The Smoother…' },
+      { commandId: 'animation.wiggler', label: 'The Wiggler…' },
       { commandId: 'animation.sequenceLayerBars', label: 'Sequence Layers…' },
       { commandId: 'animation.sequenceLayers', label: 'Stagger Animations (0.3s)' },
       { separator: true },

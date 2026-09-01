@@ -175,6 +175,22 @@ by adding a lookalike bezier.
 Bounce Keyframes), not an ease — it generates decaying keys with amplitude *and*
 duration both scaled by decay, which is what separates gravity from a flutter.
 
+**The Smoother and The Wiggler ship** (2026-09-01, `keyframeAssistants.ts`,
+Animation menu): The Smoother replaces a dense baked track (motion sketch,
+tracking, audio keyframes, expression bakes) with the fewest keyframes that
+stay within a value-unit tolerance — Douglas-Peucker on VERTICAL deviation,
+because t and value have different units — then smooths the survivors'
+tangents. The Wiggler bakes a deterministic, seeded wobble into animated
+position as editable keyframes (x and y get independent seeds so the wobble is
+2D, the same lesson `wiggle()` carries); the `wiggle()` expression remains the
+live alternative.
+
+**Roving is spatial** (2026-09-01): on a position pair whose x/y tracks share a
+keyframe grid, Rove Across Time retimes both axes together by the 2D path's
+measured ARC length (`applyRovingSpatial`) — per-axis |value| roving is
+constant-speed only on an axis-aligned path, and tore the corner keyframe of an
+L-shaped move to two different times. Misaligned grids fall back per-track.
+
 ### Compositing
 36 layer blend modes on one GPU shader path (`BLEND_COMBINE`), including the
 four Stencil/Silhouette modes. Bezier masks with all 7 AE modes (`none`

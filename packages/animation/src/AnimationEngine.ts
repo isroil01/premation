@@ -8,7 +8,7 @@
  */
 
 import type { PropPath, PropertyTrack, SceneValueSnapshot, EasingKind, BezierHandles, Keyframe } from './types';
-import { sampleTrack, upsertKeyframe, applyRoving, smoothTrackTangents, clearTrackTangents } from './interpolate';
+import { sampleTrack, upsertKeyframe, applyRoving, applyRovingSpatial, smoothTrackTangents, clearTrackTangents } from './interpolate';
 import { compileExpression, type CompiledExpression, type ExprContext, type ExprResult } from './expressions';
 import {
   sampleDataTrack,
@@ -513,11 +513,31 @@ export class AnimationEngine {
     this.notifyChange(nodeId);
   }
 
-  /** Toggle a keyframe's roving flag and re-time the track for constant speed. */
+  /** Toggle a keyframe's roving flag and re-time the track for constant speed.
+   *  On a position axis whose sibling track shares the same keyframe grid, the
+   *  pair roves together along the 2D spatial ARC (AE's Rove Across Time);
+   *  roving x and y independently by their own value distance is constant-speed
+   *  only on an axis-aligned path. The UI toggles both axes of a merged
+   *  Position row in turn, and the paired retime is deterministic on the same
+   *  input, so the second call is a no-op rather than a double-move. */
   setRoving(nodeId: string, prop: PropPath, t: number, roving: boolean): void {
     const track = this.tracks.get(nodeId)?.get(prop);
     if (!track) return;
     const flagged = track.keyframes.map((k) => (k.t === t ? { ...k, roving } : { ...k }));
+    const sibling: PropPath | null = prop === 'x' ? 'y' : prop === 'y' ? 'x' : null;
+    const sibTrack = sibling ? this.tracks.get(nodeId)?.get(sibling) : undefined;
+    if (sibTrack) {
+      const sibFlagged = sibTrack.keyframes.map((k) => (k.t === t ? { ...k, roving } : { ...k }));
+      const paired = prop === 'x'
+        ? applyRovingSpatial(flagged, sibFlagged)
+        : applyRovingSpatial(sibFlagged, flagged);
+      if (paired) {
+        track.keyframes = prop === 'x' ? paired.x : paired.y;
+        sibTrack.keyframes = prop === 'x' ? paired.y : paired.x;
+        this.notifyChange(nodeId);
+        return;
+      }
+    }
     track.keyframes = applyRoving(flagged);
     this.notifyChange(nodeId);
   }
