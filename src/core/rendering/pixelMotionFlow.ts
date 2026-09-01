@@ -372,6 +372,15 @@ function bilinearRgba(
  * frames; A is sampled `t` of the way BACK along it and B `1−t` of the way
  * FORWARD, then the two motion-compensated samples cross-fade. Where flow is
  * zero this is exactly Frame Mix — the deliberate degradation.
+ *
+ * The body is `sampleFlow` + `bilinearRgba` with the flow bilinear unrolled:
+ * its x-side terms repeat every row and its y-side terms every column, so
+ * they are computed w+h times instead of w·h — and the per-pixel [dx,dy]
+ * tuple `sampleFlow` would allocate never exists. The per-pixel EXPRESSIONS
+ * are unchanged, so the output is bit-identical to the composed form (pinned
+ * by test). The GPU warp (`pixelMotionWarpGpu.ts`) mirrors this math within
+ * float tolerance — a change here needs a matching one there, or its
+ * self-check will (correctly) refuse the GPU warp.
  */
 export function warpBlend(
   a: Uint8ClampedArray,
@@ -388,12 +397,43 @@ export function warpBlend(
   const pb = new Float32Array(4);
   const invSX = 1 / flowScaleX;
   const invSY = 1 / flowScaleY;
+  const { cols, rows, step } = flow;
+  const fdx = flow.dx;
+  const fdy = flow.dy;
+  const x0s = new Int32Array(w);
+  const x1s = new Int32Array(w);
+  const fxs = new Float64Array(w);
+  for (let x = 0; x < w; x++) {
+    const gx = Math.min(cols - 1, Math.max(0, (x * invSX) / step - 0.5));
+    const x0 = Math.floor(gx);
+    x0s[x] = x0;
+    x1s[x] = Math.min(cols - 1, x0 + 1);
+    fxs[x] = gx - x0;
+  }
   let o = 0;
   for (let y = 0; y < h; y++) {
+    const gy = Math.min(rows - 1, Math.max(0, (y * invSY) / step - 0.5));
+    const y0 = Math.floor(gy);
+    const y1 = Math.min(rows - 1, y0 + 1);
+    const fy = gy - y0;
+    const r0 = y0 * cols;
+    const r1 = y1 * cols;
     for (let x = 0; x < w; x++, o += 4) {
-      const [fdx, fdy] = sampleFlow(flow, x * invSX, y * invSY);
-      const dx = fdx * flowScaleX;
-      const dy = fdy * flowScaleY;
+      const x0 = x0s[x]!;
+      const x1 = x1s[x]!;
+      const fx = fxs[x]!;
+      const i00 = r0 + x0;
+      const i10 = r0 + x1;
+      const i01 = r1 + x0;
+      const i11 = r1 + x1;
+      const fdxv =
+        (fdx[i00]! * (1 - fx) + fdx[i10]! * fx) * (1 - fy) +
+        (fdx[i01]! * (1 - fx) + fdx[i11]! * fx) * fy;
+      const fdyv =
+        (fdy[i00]! * (1 - fx) + fdy[i10]! * fx) * (1 - fy) +
+        (fdy[i01]! * (1 - fx) + fdy[i11]! * fx) * fy;
+      const dx = fdxv * flowScaleX;
+      const dy = fdyv * flowScaleY;
       bilinearRgba(a, w, h, x - dx * t, y - dy * t, pa);
       bilinearRgba(b, w, h, x + dx * (1 - t), y + dy * (1 - t), pb);
       out[o] = pa[0]! * (1 - t) + pb[0]! * t;

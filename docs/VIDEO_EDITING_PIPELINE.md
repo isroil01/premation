@@ -1201,6 +1201,16 @@ Two modes:
   backend ran, including a mid-session fall-back on context loss. The sub-pixel parabola
   and 3×3 smoothing run on the CPU either way (`finalizeFlow`), on the exact integers the
   search produced; no WebGL2 (or a failed self-check) means the CPU search, as before.
+  The full-res WARP prefers WebGL2 too (`pixelMotionWarpGpu.ts`, ~80× at 1080p: ~4.5ms
+  warm vs ~370ms CPU) under a DIFFERENT gate: float bilinear cannot be bit-equal across
+  backends, so the backend is a session-level decision instead — self-check once at init
+  (GPU within a few counts of the CPU warp on a synthetic pair, and two GPU runs
+  bit-identical), then every frame the session renders (preview and export alike) warps on
+  the chosen backend. Measured GPU-vs-CPU difference at 1080p: ≤1 count per channel. The
+  GPU path also skips both full-res `getImageData` reads and the `putImageData` write —
+  frames go canvas→texture and return via `drawImage`. A mid-session context loss drops
+  the remaining frames to the CPU warp (the one seam where warp pixels can change inside
+  a session — visually indistinguishable, deliberately preferred to killing the mode).
   Needs **both** bracket frames from the exact decoder; while either is decoding, the ordinary
   ladder feeds the *nearest* bracket under the same key — "nearest-frame, never a hole, and
   never a half-warped guess" (`:1251-1255`). The warp is memoized on the frame pair + weight,
