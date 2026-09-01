@@ -185,7 +185,18 @@ async function renderBackendsIsolated(backends) {
   for (const backend of backends) {
     process.stdout.write(dim(`· rendering [${backend}] in its own offscreen Electron…\n`));
     const code = await runElectron([backend]);
-    if (code === 0) continue;
+    // The exit code alone is NOT the health signal. renderEntry isolates
+    // per-scene render failures on purpose (one broken scene must not hide the
+    // other 300), so an Electron process whose EVERY scene threw — which is
+    // exactly what "no webgpu adapter" looks like — still calls done() with no
+    // error and exits 0. That is how CI spent months printing "0/0 frames
+    // match — 293 not rendered" while every webgpu gate reported success.
+    // Zero frames rendered is the same fact as a non-zero exit: this backend
+    // did not run.
+    const rendered = await countRenderedFrames(backend);
+    if (code === 0 && rendered > 0) continue;
+
+    const why = code !== 0 ? `exited ${code}` : `exited 0 having rendered no frames`;
 
     // A NON-GATING backend that cannot run on this machine is a skip, not a
     // failure.
@@ -228,7 +239,7 @@ async function renderBackendsIsolated(backends) {
     if (requireSecondary) {
       process.stdout.write(
         red(
-          `  x [${backend}] exited ${code} and this run REQUIRES it. `
+          `  x [${backend}] ${why} and this run REQUIRES it. `
           + `No adapter means every ${backend} gate silently passes. `
           + `Provision one, or set HARNESS_REQUIRE_WEBGPU=0 to state that you accept the hole.
 `,
@@ -238,7 +249,7 @@ async function renderBackendsIsolated(backends) {
     }
     process.stdout.write(
       yellow(
-        `  ! [${backend}] exited ${code} — SKIPPED, not gated. ` +
+        `  ! [${backend}] ${why} — SKIPPED, not gated. ` +
           `Usually means this machine has no ${backend} adapter; ` +
           `the ${GATE_BACKEND} oracle still gates.\n`,
       ),
@@ -246,6 +257,17 @@ async function renderBackendsIsolated(backends) {
     skipped.push(backend);
   }
   return { ok: true, skipped };
+}
+
+/** How many frames a backend's render pass actually wrote to disk. */
+async function countRenderedFrames(backend) {
+  try {
+    const dir = path.join(ACTUAL, backend);
+    const entries = await fs.readdir(dir, { recursive: true });
+    return entries.filter((e) => e.endsWith('.png')).length;
+  } catch {
+    return 0;
+  }
 }
 
 async function loadManifest() {
@@ -587,7 +609,14 @@ async function gateAnimatedFrames(scenes) {
  * must not silently lose the gate, but must not fail the build for it either.
  */
 async function gateSemantics(scenes, backends, script, probeScene, label) {
-  if (!backends.includes(SEMANTIC_GATE_BACKEND)) return 0;
+  if (!backends.includes(SEMANTIC_GATE_BACKEND)) {
+    // A run scoped away from the semantic backend (HARNESS_BACKENDS=webgl2)
+    // must SAY the gate did not run — a silent return here reads as a pass.
+    process.stdout.write(
+      '\n' + yellow(`  ${label} — gate SKIPPED, ${SEMANTIC_GATE_BACKEND} is not in this run's backends.\n`),
+    );
+    return 0;
+  }
   const probe = await readPngSafe(path.join(ACTUAL, SEMANTIC_GATE_BACKEND, probeScene, '0.png'));
   if (!probe) {
     process.stdout.write(
@@ -823,6 +852,13 @@ async function main() {
   let backendFail = 0;
   for (const backend of backends) {
     if (backend === GATE_BACKEND) continue;
+    if (run.skipped?.includes(backend)) {
+      // Comparing a backend that rendered nothing produces "0/0 frames match —
+      // N not rendered", which for months read like a statistic instead of
+      // what it is: the ratchet never ran.
+      process.stdout.write('\n' + yellow(`  ${backend} pixel ratchet SKIPPED — ${backend} rendered no frames on this machine.\n`));
+      continue;
+    }
     if (updateBackendBaselineMode) await updateBackendBaseline(scenes, backend);
     else backendFail += await gateSecondaryBackend(scenes, backend);
   }
@@ -830,6 +866,13 @@ async function main() {
   if (parityFail === 0 && fidelityFail === 0 && animFail === 0 && alphaFail === 0 && stylesFail === 0
     && pluginFail === 0 && extrusionFail === 0 && backendFail === 0) {
     process.stdout.write(green(`\n✓ gate green — unified engine output matches golden expectations.\n`));
+    const unverified = backends.filter((b) => b !== GATE_BACKEND && run.skipped?.includes(b));
+    if (!backends.includes(SEMANTIC_GATE_BACKEND)) unverified.push(SEMANTIC_GATE_BACKEND);
+    for (const b of new Set(unverified)) {
+      process.stdout.write(
+        yellow(`⚠ ${b} was NOT verified in this run — green here vouches for ${GATE_BACKEND} only.\n`),
+      );
+    }
     process.exit(0);
   }
   process.stdout.write(

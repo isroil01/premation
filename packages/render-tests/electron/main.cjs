@@ -75,22 +75,63 @@ app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('no-sandbox');
 if (WANT_WEBGPU) {
   app.commandLine.appendSwitch('enable-unsafe-webgpu');
-  // NOTE: the WebGPU run uses the machine's REAL adapter, and is therefore only
-  // deterministic in the "same machine + same driver" sense — not the stronger
-  // "any machine" sense the ANGLE-SwiftShader WebGL2 run gives.
+  // Linux: Dawn over Vulkan-SwiftShader — a real, SOFTWARE WebGPU adapter.
   //
-  // Dawn's software rasterizer was the obvious alternative and it does not work
-  // here. `--use-vulkan=swiftshader --use-webgpu-adapter=swiftshader` yields an
+  // Two facts, both probed on a hosted ubuntu runner (webgpu-probe run
+  // 33517961478, 2026-09-01) rather than assumed:
+  //
+  //   1. Without `--enable-features=Vulkan`, Dawn discovers NO backend at all
+  //      on Linux — Chromium says so itself in the renderer log ("WebGPU on
+  //      Linux requires GLES compat, or command-line flag
+  //      --enable-features=Vulkan…"). Every CI run before this block existed
+  //      failed all webgpu scenes with "asked for webgpu, got webgl2": the
+  //      adapter was never absent because the runner lacked a GPU, it was
+  //      absent because Vulkan was never enabled.
+  //   2. With Vulkan enabled, `--use-vulkan=swiftshader
+  //      --use-webgpu-adapter=swiftshader` resolves a google/swiftshader
+  //      adapter that renders and READS BACK correctly under OSR — the
+  //      "Instance dropped in onSubmittedWorkDone" first-submit crash this
+  //      combo produces on Windows (Electron 32.3.3, note below) does not
+  //      occur on the Linux stack. lavapipe (mesa-vulkan-drivers) also works
+  //      but diverged >1% from the reference on solid-fill, and its bytes move
+  //      with the runner image's Mesa version; SwiftShader is pinned by the
+  //      Electron build, same as the WebGL2 oracle's ANGLE-SwiftShader.
+  //
+  // Forced on Linux unconditionally (not only in CI) for the same reason
+  // --no-sandbox is: flag sets that differ between machines are how the
+  // "same scenes ⇒ same bytes" contract rots.
+  if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('enable-features', 'Vulkan');
+    app.commandLine.appendSwitch('use-vulkan', 'swiftshader');
+    app.commandLine.appendSwitch('use-webgpu-adapter', 'swiftshader');
+  }
+  // Elsewhere the WebGPU run uses the machine's REAL adapter, and is therefore
+  // only deterministic in the "same machine + same driver" sense — not the
+  // stronger "any machine" sense the ANGLE-SwiftShader WebGL2 run gives.
+  //
+  // On Windows the SwiftShader combo above is NOT a way out of that:
+  // `--use-vulkan=swiftshader --use-webgpu-adapter=swiftshader` yields an
   // adapter (google/swiftshader) and a device, then kills the render process on
   // the first submit: "A valid external Instance reference no longer exists" /
   // "Instance dropped in onSubmittedWorkDone", under OSR and windowed alike, on
-  // Electron 32.3.3. Until that is fixed upstream there is no software WebGPU
-  // to bless against, which is why references are still blessed from WebGL2 —
-  // see GATE_BACKEND in scripts/run.mjs.
+  // Electron 32.3.3.
 } else {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('use-gl', 'angle');
   app.commandLine.appendSwitch('use-angle', 'swiftshader');
+}
+
+// Extra Chromium switches for GPU-stack experiments, ';'-separated (';' rather
+// than ',' because switch VALUES contain commas: `enable-features=A,B`).
+// Example: HARNESS_CHROMIUM_SWITCHES='use-vulkan=swiftshader;use-webgpu-adapter=swiftshader'
+// This exists so CI can probe adapter configurations without a code change per
+// attempt; the flags a run settles on belong above, not in the workflow.
+for (const sw of (process.env.HARNESS_CHROMIUM_SWITCHES || '').split(';')) {
+  const s = sw.trim();
+  if (!s) continue;
+  const eq = s.indexOf('=');
+  if (eq === -1) app.commandLine.appendSwitch(s);
+  else app.commandLine.appendSwitch(s.slice(0, eq), s.slice(eq + 1));
 }
 
 const OUT = process.env.HARNESS_OUT;
