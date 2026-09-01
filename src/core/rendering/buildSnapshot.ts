@@ -53,6 +53,7 @@ import { resolveAudioSpectrum } from '@core/audio/audioSpectrum';
 import { readNodeMaterial } from '@core/scene/material';
 import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
 import { extrusionOutlineFor, extrusionMeshFor } from '@core/scene/extrusionMesh';
+import { readNodeModelRef, modelPrimitiveFor } from '@core/scene/modelMesh';
 import { isColorEffect } from '@core/effects/effectColorMatrix';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { faceEffectsFor } from '@core/scene/faceEffects';
@@ -3763,6 +3764,69 @@ export function buildSnapshot(
     // ring; the depth-path bridge (model3dFor) re-centres the smaller quad on
     // the same world3d origin, so it stays glued. No bevel ⇒ emitted verbatim
     // (byte-identical).
+    /*
+      Imported 3D model (glTF): the layer IS a triangle mesh, so the mesh
+      carrier REPLACES the quad instead of accompanying it the way an
+      extrusion's does. Rides the exact `extrudedMesh` path the extrusion
+      built — depth-grouped, per-fragment lit, GPU buffers cached by key — so
+      an imported model costs the renderer nothing new. A textured primitive
+      is an image-kind layer whose `src` IS its baseColor texture (rewritten
+      per session by modelHydrate), and the single `textured` range samples it
+      through the mesh's own UVs. Role picks lighting sidedness downstream:
+      'front' lights two-sided (glTF doubleSided), 'side' stays one-sided.
+      Registry still loading → nothing draws this frame; hydration bumps the
+      scene when the parse lands.
+    */
+    const modelRef = is3D && world3d ? readNodeModelRef(node) : null;
+    const modelEntry = modelRef ? modelPrimitiveFor(modelRef) : null;
+    let modelMeshLayer: RenderLayer | null = null;
+    if (modelEntry) {
+      const mMat = readNodeMaterial(node, a);
+      const mLit = mMat.acceptsLights && sceneLights.length > 0;
+      const textured = !!modelEntry.textureUrl && layer.kind === 'image' && !!layer.src;
+      modelMeshLayer = {
+        ...layer,
+        // Same scrub as the extrusion carrier: features the mesh path cannot
+        // stage yet must not half-apply (colour-effect folding is a follow-up).
+        effects: undefined,
+        matte: undefined,
+        isMatteSource: undefined,
+        isAdjustment: undefined,
+        motionSamples: undefined,
+        deformedMesh: undefined,
+        frameBlend: undefined,
+        glass: undefined,
+        backdropBlur: undefined,
+        preserveTransparency: undefined,
+        lighting: undefined,
+        shade3d: undefined,
+        extrudedMesh: {
+          key: modelEntry.key,
+          vertices: modelEntry.vertices,
+          indices: modelEntry.indices,
+          ranges: [{
+            role: modelEntry.doubleSided ? 'front' : 'side',
+            first: 0,
+            count: modelEntry.indices.length,
+            fill: textured ? '#ffffffff' : modelEntry.fill,
+            gain: 1,
+            ...(textured ? { textured: true } : {}),
+          }],
+        },
+      };
+      if (mLit) {
+        modelMeshLayer.lighting = [1, 1, 1];
+        modelMeshLayer.shade3d = {
+          specular: mMat.specular / 100,
+          shininess: mMat.shininess,
+          oneSided: true,
+          ambient: mMat.ambient,
+          diffuse: mMat.diffuse,
+          ...(mMat.shading === 'pbr' ? { roughness: mMat.roughness / 100, metal: mMat.metal / 100 } : {}),
+        };
+      }
+    }
+
     // Per-character 3D: replace the single string plane with one plane per
     // glyph, each carried by its own world matrix so glyphs depth-test,
     // intersect, and light individually — and a text animator's z /
@@ -3788,7 +3852,9 @@ export function buildSnapshot(
           })
         : [];
 
-    if (perCharGlyphs.length > 0 && world3d) {
+    if (modelMeshLayer) {
+      emitLayer(modelMeshLayer, node);
+    } else if (perCharGlyphs.length > 0 && world3d) {
       const pcMat = readNodeMaterial(node, a);
       const pcLit = pcMat.acceptsLights && sceneLights.length > 0;
       for (const g of perCharGlyphs) {

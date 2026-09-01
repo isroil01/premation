@@ -770,7 +770,28 @@ export function AssetsPanel(): JSX.Element {
     const items: Array<{ file: File; folderId: string | null }> = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      if (file) items.push({ file, folderId: currentFolderId });
+      if (!file) continue;
+      // 3D models take their own door: they become a LAYER TREE (nulls +
+      // mesh layers) rather than a library asset — see modelImport.ts.
+      if (/\.(glb|gltf)$/i.test(file.name)) {
+        try {
+          const { importGltfModel } = await import('@core/scene/modelImport');
+          const result = importGltfModel(await file.arrayBuffer(), file.name);
+          useUIStore.getState().notify({
+            level: result.warning ? 'warning' : 'success',
+            message: result.warning ?? `Imported “${file.name}” — ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}`,
+            durationMs: result.warning ? 6000 : 3200,
+          });
+        } catch (err) {
+          useUIStore.getState().notify({
+            level: 'error',
+            message: `3D import failed: ${err instanceof Error ? err.message : String(err)}`,
+            durationMs: 6000,
+          });
+        }
+        continue;
+      }
+      items.push({ file, folderId: currentFolderId });
     }
     const created = await addAssetsBatch(items);
     // Sequential, awaited: insertMedia ends by selecting what it created and
@@ -1164,7 +1185,7 @@ export function AssetsPanel(): JSX.Element {
         ref={fileInputRef}
         className={styles.fileInput}
         multiple
-        accept="image/*,video/*,audio/*,.exr,.dpx,.psd,.dng,.cr2,.cr3,.nef,.arw,.mxf,.mkv,.avi,.mts,.m2ts,.r3d,.braw"
+        accept="image/*,video/*,audio/*,.exr,.dpx,.psd,.dng,.cr2,.cr3,.nef,.arw,.mxf,.mkv,.avi,.mts,.m2ts,.r3d,.braw,.glb,.gltf"
         onChange={handleFileChange}
       />
       <input

@@ -315,12 +315,12 @@ export function TopNav(): JSX.Element {
       type: 'item',
       id: '3d-gizmos',
       label: '3D Gizmo Modes',
-      icon: 'axis-3d',
+      icon: 'gizmo-universal',
       submenu: [
-        { type: 'item', id: 'gizmo-universal', label: 'Universal Gizmo', icon: 'axis-3d', onSelect: () => useGuidesStore.getState().setGizmo3dState('universal') },
-        { type: 'item', id: 'gizmo-position', label: 'Position Gizmo', icon: 'move', onSelect: () => useGuidesStore.getState().setGizmo3dState('position') },
-        { type: 'item', id: 'gizmo-scale', label: 'Scale Gizmo', icon: 'scale', onSelect: () => useGuidesStore.getState().setGizmo3dState('scale') },
-        { type: 'item', id: 'gizmo-rotation', label: 'Rotation Gizmo', icon: 'rotate-cw', onSelect: () => useGuidesStore.getState().setGizmo3dState('rotation') },
+        { type: 'item', id: 'gizmo-universal', label: 'Universal Gizmo', icon: 'gizmo-universal', onSelect: () => useGuidesStore.getState().setGizmo3dState('universal') },
+        { type: 'item', id: 'gizmo-position', label: 'Position Gizmo', icon: 'gizmo-position', onSelect: () => useGuidesStore.getState().setGizmo3dState('position') },
+        { type: 'item', id: 'gizmo-scale', label: 'Scale Gizmo', icon: 'gizmo-scale', onSelect: () => useGuidesStore.getState().setGizmo3dState('scale') },
+        { type: 'item', id: 'gizmo-rotation', label: 'Rotation Gizmo', icon: 'gizmo-rotation', onSelect: () => useGuidesStore.getState().setGizmo3dState('rotation') },
       ]
     });
     overflowItems.push({

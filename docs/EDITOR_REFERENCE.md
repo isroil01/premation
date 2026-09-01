@@ -229,6 +229,18 @@ Classic 3D: cameras, 4 light types (point/ambient/spot/parallel) with AE falloff
 curves and cone feather, extrusion with bevels, face materials, ortho views,
 quad view. See §4 for what "3D" does **not** mean here.
 
+**glTF model import ships** (2026-09-01, `core/media/gltf.ts` +
+`core/scene/modelImport.ts`): drop a `.glb` (or embedded-URI `.gltf`) into the
+Assets import and it becomes ORDINARY layers — a 3D null per glTF node, a mesh
+layer per primitive — rendered through the same depth-grouped `extrudedMesh`
+path as extrusions, so imported models depth-sort, light per-fragment (Phong or
+PBR via Material Options) and keyframe with the standard gizmo. The source .glb
+persists as a data: URL inside the scene document (every edition's save path
+carries it; re-parsed on open by `modelHydrate`), which is why imports above
+20 MB warn about document weight. Triangles + base-colour materials/textures
+only for now; skins, animation clips and morph targets are the next tiers, and
+a `.gltf` referencing external files is refused with "export as .glb".
+
 ### Rigging
 Bone skeleton with **FK, IK and FABRIK**, weight painting, vertex weight editing,
 plus an **ARAP puppet** with pins and sketch. Both compose on the same layer and

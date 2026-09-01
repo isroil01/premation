@@ -54,6 +54,7 @@ export const ICON_NAMES = [
   // zoom-in = the Zoom tool, the ground plane was grid = the 2D grid
   // overlay, and the 3D primitives borrowed the shape/text tool glyphs).
   'orbit', 'hand-grab', 'pan-camera', 'perspective', 'axis-3d', 'ground-grid',
+  'gizmo-universal', 'gizmo-position', 'gizmo-scale', 'gizmo-rotation',
   'sphere', 'cylinder', 'text-3d', 'pop-out', 'gpu',
   // Effect-browser folder vocabulary, one glyph per AE folder.
   'blur', 'palette', 'gradient', 'waves', 'eraser', 'clock', 'wipe', 'magic-wand',

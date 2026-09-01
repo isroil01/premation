@@ -220,13 +220,15 @@ describe('one-sided shading: CPU and GPU agree on what the flag means', () => {
     expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(24);
   });
 
-  it('only an extrusion BODY asks for it', () => {
+  it('only a closed 3D BODY asks for it', () => {
     // Slices and the front face must not: their normals are +Z, so clamping
-    // would black them out under a front light. Two sites: the extruded MESH
-    // (every vertex normal points out of the solid) and the quad-synthesis
-    // fallback's walls + back cap.
+    // would black them out under a front light. Three sites, each a solid
+    // whose vertex normals all point out of the volume: the extruded MESH,
+    // the quad-synthesis fallback's walls + back cap, and an imported glTF
+    // model mesh (its single-sided materials; doubleSided ones route through
+    // the 'front' range role, which the renderer lights two-sided).
     const build = readSource('core/rendering/buildSnapshot.ts');
-    expect((build.match(/oneSided: true/g) ?? []).length).toBe(2);
+    expect((build.match(/oneSided: true/g) ?? []).length).toBe(3);
     expect((build.match(/sceneLights, undefined, true\)/g) ?? []).length).toBe(1);
   });
 });

@@ -113,7 +113,7 @@
 **🟡 Tier 2 — pro workflow**
 4. COLMAP-grade SfM / denser planar (Mocha product depth) — RANSAC + **temporal H smooth** + BA footholds shipped
 5. Adobe-quality Content-Aware Fill (classical PatchMatch + bidirectional video shipped)
-8. glTF/3D model import — *explicitly out of scope by design*
+8. glTF/3D model import — **foothold shipped 2026-09-01** (was "out of scope by design"; the user reversed that): `.glb`/embedded `.gltf` import as ordinary 3D layers (nulls per node, mesh layers per primitive) through the extrusion mesh render path — triangles, base-colour materials/textures, per-fragment lighting. Still open: skins/animations/morphs (later tiers), external-file `.gltf`, PBR texture maps beyond base colour
 
 **🟢 Tier 3 — niche/finishing**
 9. ~~3:2 pulldown removal~~ — shipped

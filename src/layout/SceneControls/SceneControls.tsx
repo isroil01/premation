@@ -31,10 +31,10 @@ const CAMERA_TOOLS: ReadonlyArray<{ id: CameraTool; icon: IconName; label: strin
 ];
 
 const GIZMO_MODES: ReadonlyArray<{ id: Gizmo3dState; icon: IconName; label: string }> = [
-  { id: 'universal', icon: 'axis-3d', label: 'Universal Gizmo (move · rotate · scale)' },
-  { id: 'position', icon: 'move', label: 'Position Gizmo' },
-  { id: 'scale', icon: 'scale', label: 'Scale Gizmo' },
-  { id: 'rotation', icon: 'rotate-cw', label: 'Rotation Gizmo' },
+  { id: 'universal', icon: 'gizmo-universal', label: 'Universal Gizmo (move · rotate · scale)' },
+  { id: 'position', icon: 'gizmo-position', label: 'Position Gizmo (move along X, Y, Z axes)' },
+  { id: 'scale', icon: 'gizmo-scale', label: 'Scale Gizmo (scale along X, Y, Z axes)' },
+  { id: 'rotation', icon: 'gizmo-rotation', label: 'Rotation Gizmo (rotate around X, Y, Z axes)' },
 ];
 
 /**

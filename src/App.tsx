@@ -39,6 +39,7 @@ import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
 import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
+import { installModelHydration } from '@core/scene/modelHydrate';
 import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
 import {
   keyframeMask,
@@ -326,6 +327,10 @@ function EditorShellInner(): JSX.Element {
     })),
     [],
   );
+
+  // Imported 3D models: re-parse stored .glb sources into the session mesh
+  // registry after a project opens (and repoint dead texture object URLs).
+  useEffect(() => installModelHydration(), []);
 
   // Register the default panels exactly once.
   useEffect(() => {
