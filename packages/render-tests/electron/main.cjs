@@ -75,32 +75,46 @@ app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('no-sandbox');
 if (WANT_WEBGPU) {
   app.commandLine.appendSwitch('enable-unsafe-webgpu');
-  // On Linux, Dawn discovers NO backend at all without this — Chromium says so
-  // itself in the renderer log: "WebGPU on Linux requires GLES compat, or
-  // command-line flag --enable-features=Vulkan, or command-line flag
-  // --enable-features=SkiaGraphite". Every CI run before this flag existed
-  // therefore failed all webgpu scenes with "asked for webgpu, got webgl2":
-  // the adapter was never absent because the runner lacked a GPU, it was
-  // absent because Vulkan was never enabled. With it, Dawn enumerates whatever
-  // Vulkan ICDs are installed — a hardware driver on a real box, lavapipe
-  // (mesa-vulkan-drivers) on a hosted runner.
+  // Linux: Dawn over Vulkan-SwiftShader — a real, SOFTWARE WebGPU adapter.
+  //
+  // Two facts, both probed on a hosted ubuntu runner (webgpu-probe run
+  // 33517961478, 2026-09-01) rather than assumed:
+  //
+  //   1. Without `--enable-features=Vulkan`, Dawn discovers NO backend at all
+  //      on Linux — Chromium says so itself in the renderer log ("WebGPU on
+  //      Linux requires GLES compat, or command-line flag
+  //      --enable-features=Vulkan…"). Every CI run before this block existed
+  //      failed all webgpu scenes with "asked for webgpu, got webgl2": the
+  //      adapter was never absent because the runner lacked a GPU, it was
+  //      absent because Vulkan was never enabled.
+  //   2. With Vulkan enabled, `--use-vulkan=swiftshader
+  //      --use-webgpu-adapter=swiftshader` resolves a google/swiftshader
+  //      adapter that renders and READS BACK correctly under OSR — the
+  //      "Instance dropped in onSubmittedWorkDone" first-submit crash this
+  //      combo produces on Windows (Electron 32.3.3, note below) does not
+  //      occur on the Linux stack. lavapipe (mesa-vulkan-drivers) also works
+  //      but diverged >1% from the reference on solid-fill, and its bytes move
+  //      with the runner image's Mesa version; SwiftShader is pinned by the
+  //      Electron build, same as the WebGL2 oracle's ANGLE-SwiftShader.
+  //
+  // Forced on Linux unconditionally (not only in CI) for the same reason
+  // --no-sandbox is: flag sets that differ between machines are how the
+  // "same scenes ⇒ same bytes" contract rots.
   if (process.platform === 'linux') {
     app.commandLine.appendSwitch('enable-features', 'Vulkan');
+    app.commandLine.appendSwitch('use-vulkan', 'swiftshader');
+    app.commandLine.appendSwitch('use-webgpu-adapter', 'swiftshader');
   }
-  // NOTE: the WebGPU run uses the machine's REAL adapter, and is therefore only
-  // deterministic in the "same machine + same driver" sense — not the stronger
-  // "any machine" sense the ANGLE-SwiftShader WebGL2 run gives.
+  // Elsewhere the WebGPU run uses the machine's REAL adapter, and is therefore
+  // only deterministic in the "same machine + same driver" sense — not the
+  // stronger "any machine" sense the ANGLE-SwiftShader WebGL2 run gives.
   //
-  // Dawn's software rasterizer was the obvious alternative and it does not work
-  // here. `--use-vulkan=swiftshader --use-webgpu-adapter=swiftshader` yields an
+  // On Windows the SwiftShader combo above is NOT a way out of that:
+  // `--use-vulkan=swiftshader --use-webgpu-adapter=swiftshader` yields an
   // adapter (google/swiftshader) and a device, then kills the render process on
   // the first submit: "A valid external Instance reference no longer exists" /
   // "Instance dropped in onSubmittedWorkDone", under OSR and windowed alike, on
-  // Electron 32.3.3 (probed on Windows; the Linux path behind
-  // --enable-features=Vulkan is a different stack and is probed from CI via
-  // HARNESS_CHROMIUM_SWITCHES below). Until a software adapter demonstrably
-  // works there is no software WebGPU to bless against, which is why references
-  // are still blessed from WebGL2 — see GATE_BACKEND in scripts/run.mjs.
+  // Electron 32.3.3.
 } else {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('use-gl', 'angle');
