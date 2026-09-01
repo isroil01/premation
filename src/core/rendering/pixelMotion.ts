@@ -22,9 +22,16 @@
  * Estimation runs at a DOWNSCALED size (max dim ~384): adjacent-frame motion
  * is small and smooth, so a coarse grid catches it, and the 25× area saving is
  * what makes the whole thing interactive. The warp runs at full resolution.
+ *
+ * Estimation itself prefers the GPU (`pixelMotionFlowGpu.ts`): an integer
+ * WebGL2 twin of the CPU search that proves itself BIT-EQUAL at init, so the
+ * choice of backend — decided once per session, or even flapping on a context
+ * loss — can never make preview and export disagree. No WebGL2, or a failed
+ * self-check, and every pair runs the CPU search below, exactly as before.
  */
 
-import { computeFlow, lumaOf, warpBlend, type FlowField } from './pixelMotionFlow';
+import { computeFlow, lumaIntOf, warpBlend, type FlowField } from './pixelMotionFlow';
+import { getGpuFlowEstimator } from './pixelMotionFlowGpu';
 
 /** Max dimension of the flow-estimation raster. */
 const FLOW_MAX_DIM = 384;
@@ -89,22 +96,29 @@ function flowFor(pairKey: string, a: HTMLCanvasElement, b: HTMLCanvasElement): F
   const scale = Math.min(1, FLOW_MAX_DIM / Math.max(w, h));
   const fw = Math.max(8, Math.round(w * scale));
   const fh = Math.max(8, Math.round(h * scale));
-  const surf = canvas2d(scaleCanvas, fw, fh);
-  if (!surf) return null;
-  scaleCanvas = surf.canvas;
-  let lumA: Float32Array;
-  let lumB: Float32Array;
-  try {
-    surf.ctx.clearRect(0, 0, fw, fh);
-    surf.ctx.drawImage(a, 0, 0, fw, fh);
-    lumA = lumaOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
-    surf.ctx.clearRect(0, 0, fw, fh);
-    surf.ctx.drawImage(b, 0, 0, fw, fh);
-    lumB = lumaOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
-  } catch {
-    return null;
+  // GPU search first — bit-equal to the CPU one below (enforced by its init
+  // self-check), so a null here (no WebGL2, lost context, failed check) can
+  // fall through mid-session without preview and export ever diverging.
+  let flow = getGpuFlowEstimator()?.compute(a, b, fw, fh) ?? null;
+  if (!flow) {
+    const surf = canvas2d(scaleCanvas, fw, fh);
+    if (!surf) return null;
+    scaleCanvas = surf.canvas;
+    let lumA: Int32Array;
+    let lumB: Int32Array;
+    try {
+      surf.ctx.clearRect(0, 0, fw, fh);
+      surf.ctx.drawImage(a, 0, 0, fw, fh);
+      lumA = lumaIntOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
+      surf.ctx.clearRect(0, 0, fw, fh);
+      surf.ctx.drawImage(b, 0, 0, fw, fh);
+      lumB = lumaIntOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
+    } catch {
+      return null;
+    }
+    flow = computeFlow(lumA, lumB, fw, fh);
   }
-  const entry: FlowEntry = { flow: computeFlow(lumA, lumB, fw, fh), fw, fh };
+  const entry: FlowEntry = { flow, fw, fh };
   flowCache.set(pairKey, entry);
   while (flowCache.size > FLOW_CACHE_MAX) {
     const oldest = flowCache.keys().next();

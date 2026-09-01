@@ -1193,6 +1193,14 @@ Two modes:
 - **`mix`** — cross-dissolve between the two bracket frames.
 - **`pixelMotion`** — optical-flow motion compensation (`feedPixelMotion`,
   `MotionRendererBackend.ts:1256-1287`; flow in `src/core/rendering/pixelMotionFlow.ts`).
+  Flow estimation prefers a WebGL2 pass (`pixelMotionFlowGpu.ts`, ~13× the CPU search at
+  1080p): an INTEGER twin of the CPU block match — integer luma, integer SAD, fixed scan
+  order, uint readback through RGBA32UI (core WebGL2, no float-readback extension) — that
+  must prove itself bit-equal to the CPU search on a synthetic pair at init before serving
+  a real frame. Bit-equal fields are what keep preview == export regardless of which
+  backend ran, including a mid-session fall-back on context loss. The sub-pixel parabola
+  and 3×3 smoothing run on the CPU either way (`finalizeFlow`), on the exact integers the
+  search produced; no WebGL2 (or a failed self-check) means the CPU search, as before.
   Needs **both** bracket frames from the exact decoder; while either is decoding, the ordinary
   ladder feeds the *nearest* bracket under the same key — "nearest-frame, never a hole, and
   never a half-warped guess" (`:1251-1255`). The warp is memoized on the frame pair + weight,
