@@ -63,6 +63,46 @@ export function cubicValueAt(v0: number, v1: number, v2: number, v3: number, u: 
 }
 
 /**
+ * Last-served segment index per keyframe ARRAY (not per track object — every
+ * mutation path builds a fresh array, so a stale cursor can never outlive the
+ * data it indexed). Playback and export sample monotonically, so the next query
+ * almost always lands in the same or the following segment; the cursor turns
+ * those into O(1) and the binary search below only runs on real jumps.
+ */
+const segmentCursor = new WeakMap<readonly Keyframe[], number>();
+
+/**
+ * Smallest segment index i (0..n-2) with kfs[i].t <= t <= kfs[i+1].t. The
+ * caller guarantees first.t < t < last.t. "Smallest" matches what the old
+ * linear scan returned, so degenerate duplicate-time keyframes keep resolving
+ * to the same segment they always did.
+ */
+function segmentIndexFor(kfs: readonly Keyframe[], t: number): number {
+  const hi0 = kfs.length - 2;
+  const cached = segmentCursor.get(kfs);
+  if (cached !== undefined && cached >= 0 && cached <= hi0) {
+    if (kfs[cached]!.t <= t && t <= kfs[cached + 1]!.t && (cached === 0 || t > kfs[cached]!.t)) {
+      return cached;
+    }
+    const next = cached + 1;
+    if (next <= hi0 && kfs[next]!.t < t && t <= kfs[next + 1]!.t) {
+      segmentCursor.set(kfs, next);
+      return next;
+    }
+  }
+  // Binary search: smallest i with t <= kfs[i+1].t.
+  let lo = 0;
+  let hi = hi0;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (kfs[mid + 1]!.t >= t) hi = mid;
+    else lo = mid + 1;
+  }
+  segmentCursor.set(kfs, lo);
+  return lo;
+}
+
+/**
  * Sample a property track at time `t`.
  * - Before the first / after the last keyframe: clamps to the endpoint value.
  * - Between keyframes: interpolates with the segment's easing. When the segment
@@ -79,34 +119,30 @@ export function sampleTrack(track: PropertyTrack, t: number): number | undefined
   if (t <= first.t) return first.value;
   if (t >= last.t) return last.value;
 
-  for (let i = 0; i < kfs.length - 1; i++) {
-    const a = kfs[i]!;
-    const b = kfs[i + 1]!;
-    if (t >= a.t && t <= b.t) {
-      const kind = a.easing ?? 'linear';
-      // Hold/step holds the start value UP TO — but not AT — the next keyframe:
-      // at exactly b.t the arriving keyframe's authored value wins, the same as
-      // every other easing (which reaches b.value at local=1). Without the
-      // `t < b.t` guard a held keyframe that lands on a frame showed its target
-      // one frame late — the classic off-by-one at an interior keyframe (the
-      // last-keyframe clamp above hid it for the final key only).
-      if (kind === 'step' || kind === 'hold') return t < b.t ? a.value : b.value;
-      const span = b.t - a.t;
-      const local = span <= 0 ? 0 : (t - a.t) / span;
-      const eased =
-        (kind === 'bezier' || kind === 'autoBezier' || kind === 'continuousBezier') && a.bezier
-          ? cubicBezierEase(a.bezier, local)
-          : ease(kind, local);
-      if (a.so !== undefined || b.si !== undefined) {
-        const third = (b.value - a.value) / 3; // linear default for the missing side
-        const c1 = a.value + (a.so ?? third);
-        const c2 = b.value + (b.si ?? -third);
-        return cubicValueAt(a.value, c1, c2, b.value, eased);
-      }
-      return a.value + (b.value - a.value) * eased;
-    }
+  const i = segmentIndexFor(kfs, t);
+  const a = kfs[i]!;
+  const b = kfs[i + 1]!;
+  const kind = a.easing ?? 'linear';
+  // Hold/step holds the start value UP TO — but not AT — the next keyframe:
+  // at exactly b.t the arriving keyframe's authored value wins, the same as
+  // every other easing (which reaches b.value at local=1). Without the
+  // `t < b.t` guard a held keyframe that lands on a frame showed its target
+  // one frame late — the classic off-by-one at an interior keyframe (the
+  // last-keyframe clamp above hid it for the final key only).
+  if (kind === 'step' || kind === 'hold') return t < b.t ? a.value : b.value;
+  const span = b.t - a.t;
+  const local = span <= 0 ? 0 : (t - a.t) / span;
+  const eased =
+    (kind === 'bezier' || kind === 'autoBezier' || kind === 'continuousBezier') && a.bezier
+      ? cubicBezierEase(a.bezier, local)
+      : ease(kind, local);
+  if (a.so !== undefined || b.si !== undefined) {
+    const third = (b.value - a.value) / 3; // linear default for the missing side
+    const c1 = a.value + (a.so ?? third);
+    const c2 = b.value + (b.si ?? -third);
+    return cubicValueAt(a.value, c1, c2, b.value, eased);
   }
-  return last.value;
+  return a.value + (b.value - a.value) * eased;
 }
 
 /**

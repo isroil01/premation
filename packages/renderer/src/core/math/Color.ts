@@ -6,6 +6,17 @@ export interface Color {
   a: number;
 }
 
+/**
+ * Parse memo for `fromHex`. The adapter calls it per layer per frame with the
+ * same handful of document colours, and the regex + split + parseInt work was
+ * showing up in snapshot profiles. Values are frozen parses; `fromHex` hands
+ * out copies so no caller can mutate a shared entry. Reset (not LRU'd) at a
+ * generous cap — a real document never approaches it, but a procedurally
+ * animated colour string must not grow it without bound.
+ */
+const HEX_PARSE_CACHE = new Map<string, Color>();
+const HEX_PARSE_CACHE_MAX = 4096;
+
 export const Color = {
   of(r: number, g: number, b: number, a = 1): Color {
     return { r, g, b, a };
@@ -22,6 +33,16 @@ export const Color = {
 
   /** Parse `#rgb`, `#rrggbb`, or `#rrggbbaa` into a linear-ish sRGB color 0..1. */
   fromHex(hex: string): Color {
+    const hit = HEX_PARSE_CACHE.get(hex);
+    if (hit) return { r: hit.r, g: hit.g, b: hit.b, a: hit.a };
+    const parsed = Color.parseHexUncached(hex);
+    if (HEX_PARSE_CACHE.size >= HEX_PARSE_CACHE_MAX) HEX_PARSE_CACHE.clear();
+    HEX_PARSE_CACHE.set(hex, parsed);
+    return { r: parsed.r, g: parsed.g, b: parsed.b, a: parsed.a };
+  },
+
+  /** The actual parser behind `fromHex` — exported for tests only. */
+  parseHexUncached(hex: string): Color {
     const raw = hex.trim();
     // `rgb()` / `rgba()` as well as hex, because the adapter reaches this with
     // both. `withAlpha()` (core/effects) folds an effect's opacity into its
