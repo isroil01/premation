@@ -89,6 +89,63 @@ export function buildSkinnedBarGlb(): ArrayBuffer {
   return buildGlbBytes(json, bin);
 }
 
+/**
+ * A morphing triangle: one target that lifts every vertex +1 in glTF y
+ * (compositor −1), mesh default weight 0, and a 1s 'weights' animation
+ * ramping 0 → 1. Exercises target parsing, the delta conversion, and the
+ * weights→morph0 keyframe bake.
+ */
+export function buildMorphTriGlb(): ArrayBuffer {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const deltas = new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]);
+  const indices = new Uint16Array([0, 1, 2]);
+  const animTimes = new Float32Array([0, 1]);
+  const animVals = new Float32Array([0, 1]);
+  const posOff = 0;
+  const delOff = posOff + positions.byteLength;
+  const idxOff = delOff + deltas.byteLength;
+  const tOff = idxOff + indices.byteLength + 2; // u16×3 = 6 bytes → pad 2 to align 4
+  const vOff = tOff + animTimes.byteLength;
+  const bin = new Uint8Array(vOff + animVals.byteLength);
+  bin.set(new Uint8Array(positions.buffer), posOff);
+  bin.set(new Uint8Array(deltas.buffer), delOff);
+  bin.set(new Uint8Array(indices.buffer), idxOff);
+  bin.set(new Uint8Array(animTimes.buffer), tOff);
+  bin.set(new Uint8Array(animVals.buffer), vOff);
+  const json = {
+    asset: { version: '2.0' },
+    buffers: [{ byteLength: bin.length }],
+    bufferViews: [
+      { buffer: 0, byteOffset: posOff, byteLength: positions.byteLength },
+      { buffer: 0, byteOffset: delOff, byteLength: deltas.byteLength },
+      { buffer: 0, byteOffset: idxOff, byteLength: indices.byteLength },
+      { buffer: 0, byteOffset: tOff, byteLength: animTimes.byteLength },
+      { buffer: 0, byteOffset: vOff, byteLength: animVals.byteLength },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+      { bufferView: 1, componentType: 5126, count: 3, type: 'VEC3' },
+      { bufferView: 2, componentType: 5123, count: 3, type: 'SCALAR' },
+      { bufferView: 3, componentType: 5126, count: 2, type: 'SCALAR' },
+      { bufferView: 4, componentType: 5126, count: 2, type: 'SCALAR' },
+    ],
+    meshes: [{
+      name: 'face',
+      primitives: [{ attributes: { POSITION: 0 }, indices: 2, targets: [{ POSITION: 1 }] }],
+      weights: [0],
+    }],
+    nodes: [{ name: 'face', mesh: 0 }],
+    animations: [{
+      name: 'blink',
+      samplers: [{ input: 3, output: 4, interpolation: 'LINEAR' }],
+      channels: [{ sampler: 0, target: { node: 0, path: 'weights' } }],
+    }],
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+  };
+  return buildGlbBytes(json, bin);
+}
+
 /** A red 2×2 quad (z=0, glTF space) under root→leaf nodes with TRS. */
 export function buildQuadGlb(): ArrayBuffer {
   const positions = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);

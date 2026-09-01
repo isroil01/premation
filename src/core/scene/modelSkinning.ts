@@ -167,6 +167,10 @@ export function skinnedMeshFor(
   layerWorld: Matrix4,
   r: SkinResolvers,
   jointMapCache: Map<string, Map<number, string> | null>,
+  // Morph-then-skin (the spec's order): when the primitive also morphs, the
+  // blended vertices come in here as the skinning base, with their weight
+  // tag folded into the pose identity so the memo/GPU keys stay honest.
+  morphedBase?: { vertices: Float32Array; tag: string },
 ): { key: string; vertices: Float32Array } | null {
   if (!entry.skinData || ref.skin === undefined) return null;
   const skin = modelSkinFor(ref.modelKey, ref.skin);
@@ -188,14 +192,14 @@ export function skinnedMeshFor(
     mats.set(full, j * 16);
   }
 
-  const hash = poseHash(mats);
+  const hash = morphedBase ? `${poseHash(mats)}~${morphedBase.tag}` : poseHash(mats);
   const memoKey = `${entry.key}#${meshNode.id}`;
   const memo = skinnedMemo.get(memoKey);
   let vertices: Float32Array;
   if (memo && memo.hash === hash) {
     vertices = memo.vertices;
   } else {
-    vertices = skinVertices(entry.vertices, entry.skinData, mats);
+    vertices = skinVertices(morphedBase ? morphedBase.vertices : entry.vertices, entry.skinData, mats);
     if (skinnedMemo.size >= SKINNED_MEMO_CAP && !skinnedMemo.has(memoKey)) {
       const oldest = skinnedMemo.keys().next().value;
       if (oldest !== undefined) skinnedMemo.delete(oldest);

@@ -28,7 +28,9 @@ function parsedWith(positions: number[], opts: { uvs?: number[]; material?: numb
         material: opts.material ?? null,
         joints: null,
         weights: null,
+        targets: [],
       }],
+      weights: [],
     }],
     materials: [
       { name: 'red', baseColorFactor: [1, 0, 0, 1], baseColorImage: null, doubleSided: true, metallicFactor: 0, roughnessFactor: 0.5 },

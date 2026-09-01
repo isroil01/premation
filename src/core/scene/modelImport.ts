@@ -26,7 +26,7 @@
  */
 
 import { parseGltf, type ParsedGltf } from '@core/media/gltf';
-import { bakeClip } from './modelAnimation';
+import { bakeClip, bakeWeightTracks } from './modelAnimation';
 import { defaultAnimation } from '@motion/animation';
 import {
   MODEL_COMPONENT,
@@ -176,6 +176,11 @@ export function buildModelLayout(
             metal: Math.round((entry?.metallic ?? 0) * 100),
             roughness: Math.round((entry?.roughness ?? 0.5) * 100),
             specular: 40,
+            // Morph weights as animatable props: the node's per-instance
+            // overrides win over the mesh defaults, per spec.
+            ...Object.fromEntries((entry?.morphDefaults ?? []).map((d, wi) => [
+              `morph${wi}`, n.weights?.[wi] ?? d,
+            ])),
           },
           style: { opacity: 100, ...(entry && !entry.textureUrl ? { fill: entry.fill } : {}) },
           model: ref,
@@ -333,6 +338,26 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
       for (const tr of tracks) {
         defaultAnimation.setTrackKeyframes(nodeId, tr.prop, tr.keyframes);
       }
+    }
+    // 'weights' channels bake onto the MESH LEAF layers (morph weights live
+    // where the geometry lives), one copy per primitive of the target node.
+    for (const ch of firstClip.channels) {
+      if (ch.path !== 'weights') continue;
+      const meshIndex = parsed.nodes[ch.node]?.mesh;
+      if (meshIndex === undefined || meshIndex === null) continue;
+      const targetCount = parsed.meshes[meshIndex]?.primitives[0]?.targets.length ?? 0;
+      const tracks = bakeWeightTracks(ch, targetCount);
+      if (tracks.length === 0) continue;
+      const nodeSpecIndex = layout.specs.findIndex((s) => s.gltfNode === ch.node);
+      if (nodeSpecIndex < 0) continue;
+      layout.specs.forEach((s, si) => {
+        if (s.parent !== nodeSpecIndex || !s.model) return;
+        const leafId = idsBySpec[si];
+        if (!leafId) return;
+        for (const tr of tracks) {
+          defaultAnimation.setTrackKeyframes(leafId, tr.prop, tr.keyframes);
+        }
+      });
     }
     clip = {
       name: baked.name,

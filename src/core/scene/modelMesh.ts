@@ -54,6 +54,10 @@ export interface ModelPrimitiveEntry {
   roughness: number;
   /** Per-vertex skinning attributes (4 joints + 4 weights each), or null. */
   skinData: { joints: Uint16Array; weights: Float32Array } | null;
+  /** Morph targets: per-vertex deltas, already basis-converted (xyz triples). */
+  morphTargets: { positions: Float32Array | null; normals: Float32Array | null }[];
+  /** Default morph weights (node override ∥ mesh default ∥ zeros). */
+  morphDefaults: number[];
 }
 
 /** One skin, compositor-ready: joint node indices + CONJUGATED inverse binds. */
@@ -149,7 +153,25 @@ export function primitiveToEntry(
     metallic: material?.metallicFactor ?? 0,
     roughness: material?.roughnessFactor ?? 0.5,
     skinData,
+    // Morph deltas get the same y/z flip as the base attributes — a delta is
+    // a vector, and vectors conjugate exactly like positions under F.
+    morphTargets: prim.targets.map((tg) => ({
+      positions: tg.positions ? flipYZTriples(tg.positions) : null,
+      normals: tg.normals ? flipYZTriples(tg.normals) : null,
+    })),
+    morphDefaults: Array.from({ length: prim.targets.length }, (_, i) => parsed.meshes[meshIndex]?.weights[i] ?? 0),
   };
+}
+
+/** Copy xyz triples negating y/z (`0 - v` so a zero never becomes -0). */
+function flipYZTriples(src: Float32Array): Float32Array {
+  const out = new Float32Array(src.length);
+  for (let i = 0; i + 2 < src.length; i += 3) {
+    out[i] = src[i]!;
+    out[i + 1] = 0 - src[i + 1]!;
+    out[i + 2] = 0 - src[i + 2]!;
+  }
+  return out;
 }
 
 /**

@@ -79,10 +79,12 @@ function valueAt(ch: GltfChannel, comps: number, key: number): number[] {
   return out;
 }
 
-/** Bake one channel into engine tracks (times pass through in seconds). */
+/** Bake one channel into engine tracks (times pass through in seconds).
+ *  'weights' channels are baked by `bakeWeightTracks` (they need the target
+ *  count, which lives on the mesh, not the channel) — skipped here. */
 export function bakeChannelTracks(ch: GltfChannel): BakedTrack[] {
   const keyCount = ch.times.length;
-  if (keyCount === 0) return [];
+  if (keyCount === 0 || ch.path === 'weights') return [];
   const easing = ch.interpolation === 'STEP' ? ('step' as const) : ('linear' as const);
 
   if (ch.path === 'translation' || ch.path === 'scale') {
@@ -145,6 +147,27 @@ export function bakeChannelTracks(ch: GltfChannel): BakedTrack[] {
   ];
 }
 
+/**
+ * Bake a 'weights' channel into `morph0…morphN-1` tracks. The channel's value
+ * stream is targetCount floats per key (3× that for CUBICSPLINE tangent
+ * triples); the caller supplies targetCount from the mesh it targets.
+ */
+export function bakeWeightTracks(ch: GltfChannel, targetCount: number): BakedTrack[] {
+  const keyCount = ch.times.length;
+  if (keyCount === 0 || targetCount === 0 || ch.path !== 'weights') return [];
+  const easing = ch.interpolation === 'STEP' ? ('step' as const) : ('linear' as const);
+  const stride = ch.interpolation === 'CUBICSPLINE' ? targetCount * 3 : targetCount;
+  const valueOffset = ch.interpolation === 'CUBICSPLINE' ? targetCount : 0;
+  const tracks: Keyframe[][] = Array.from({ length: targetCount }, () => []);
+  for (let k = 0; k < keyCount; k++) {
+    const t = ch.times[k]!;
+    for (let w = 0; w < targetCount; w++) {
+      tracks[w]!.push({ t, value: ch.values[k * stride + valueOffset + w] ?? 0, easing });
+    }
+  }
+  return tracks.map((keyframes, i) => ({ prop: `morph${i}`, keyframes }));
+}
+
 export interface BakedClip {
   name: string;
   /** glTF node index → its baked tracks. */
@@ -158,13 +181,15 @@ export function bakeClip(clip: GltfAnimation): BakedClip {
   const byNode = new Map<number, BakedTrack[]>();
   let duration = 0;
   for (const ch of clip.channels) {
+    // Duration counts EVERY channel — a clip that is only morph weights (a
+    // talking face) still has a length, even though its tracks bake elsewhere.
+    const last = ch.times[ch.times.length - 1];
+    if (last !== undefined && last > duration) duration = last;
     const tracks = bakeChannelTracks(ch);
     if (tracks.length === 0) continue;
     const list = byNode.get(ch.node) ?? [];
     list.push(...tracks);
     byNode.set(ch.node, list);
-    const last = ch.times[ch.times.length - 1];
-    if (last !== undefined && last > duration) duration = last;
   }
   return { name: clip.name, byNode, duration };
 }

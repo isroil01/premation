@@ -36,6 +36,8 @@ export interface GltfPrimitive {
   joints: Float32Array | null;
   /** WEIGHTS_0: 4 weights per vertex (raw; may not sum to 1), or null. */
   weights: Float32Array | null;
+  /** Morph targets: per-vertex POSITION/NORMAL deltas (glTF space). */
+  targets: { positions: Float32Array | null; normals: Float32Array | null }[];
 }
 
 export interface GltfMaterial {
@@ -61,6 +63,8 @@ export interface GltfNode {
   mesh: number | null;
   /** Index into `skins` when this node's mesh is skinned, or null. */
   skin: number | null;
+  /** Per-instance morph weight overrides, or null (use the mesh's). */
+  weights: number[] | null;
   /** Translation (glTF units). */
   t: [number, number, number];
   /** Rotation quaternion, x y z w (glTF order). */
@@ -80,11 +84,12 @@ export type GltfInterpolation = 'LINEAR' | 'STEP' | 'CUBICSPLINE';
 export interface GltfChannel {
   /** Target node index. */
   node: number;
-  path: 'translation' | 'rotation' | 'scale';
+  path: 'translation' | 'rotation' | 'scale' | 'weights';
   /** Keyframe times, seconds, ascending. */
   times: Float32Array;
-  /** Values: vec3 triples, or quat x y z w quadruples for 'rotation'. For
-   *  CUBICSPLINE this is the raw in-tangent/value/out-tangent triple stream. */
+  /** Values: vec3 triples, quat x y z w quadruples for 'rotation', or
+   *  targetCount floats per key for 'weights'. For CUBICSPLINE this is the
+   *  raw in-tangent/value/out-tangent triple stream. */
   values: Float32Array;
   interpolation: GltfInterpolation;
 }
@@ -95,7 +100,7 @@ export interface GltfAnimation {
 }
 
 export interface ParsedGltf {
-  meshes: { name: string; primitives: GltfPrimitive[] }[];
+  meshes: { name: string; primitives: GltfPrimitive[]; weights: number[] }[];
   materials: GltfMaterial[];
   images: GltfImage[];
   nodes: GltfNode[];
@@ -160,9 +165,9 @@ interface GltfJson {
       roughnessFactor?: number;
     };
   }[];
-  meshes?: { name?: string; primitives: GltfJsonPrimitive[] }[];
+  meshes?: { name?: string; primitives: GltfJsonPrimitive[]; weights?: number[] }[];
   nodes?: {
-    name?: string; children?: number[]; mesh?: number; skin?: number;
+    name?: string; children?: number[]; mesh?: number; skin?: number; weights?: number[];
     translation?: number[]; rotation?: number[]; scale?: number[]; matrix?: number[];
   }[];
   skins?: { joints?: number[]; inverseBindMatrices?: number }[];
@@ -180,6 +185,7 @@ interface GltfJsonPrimitive {
   indices?: number;
   material?: number;
   mode?: number;
+  targets?: Record<string, number>[];
 }
 
 const COMPONENT_BYTES: Record<number, number> = {
@@ -328,8 +334,13 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
           // malformed export better rendered rigid than half-skinned.
           joints: jointsAttr !== undefined && weightsAttr !== undefined ? readAccessorF32(jointsAttr) : null,
           weights: jointsAttr !== undefined && weightsAttr !== undefined ? readAccessorF32(weightsAttr) : null,
+          targets: (p.targets ?? []).map((t) => ({
+            positions: t.POSITION !== undefined ? readAccessorF32(t.POSITION) : null,
+            normals: t.NORMAL !== undefined ? readAccessorF32(t.NORMAL) : null,
+          })),
         };
       }),
+    weights: mesh.weights ?? [],
   }));
 
   // Nodes with TRS (matrix decomposed when given).
@@ -350,6 +361,7 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
       children: n.children ?? [],
       mesh: n.mesh ?? null,
       skin: n.skin ?? null,
+      weights: n.weights ?? null,
       t, r, s,
     };
   });
@@ -369,7 +381,7 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
       const s = (an.samplers ?? [])[ch.sampler];
       if (!s || ch.target.node === undefined) continue;
       const path = ch.target.path;
-      if (path !== 'translation' && path !== 'rotation' && path !== 'scale') continue; // 'weights' = morphs, later tier
+      if (path !== 'translation' && path !== 'rotation' && path !== 'scale' && path !== 'weights') continue;
       const interpolation: GltfInterpolation =
         s.interpolation === 'STEP' || s.interpolation === 'CUBICSPLINE' ? s.interpolation : 'LINEAR';
       channels.push({

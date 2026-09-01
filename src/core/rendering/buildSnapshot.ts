@@ -34,6 +34,7 @@ import { useAssetStore } from '@stores/assetStore';
 import { localMatrix, worldTransformOf, worldMatrixOf, localUnderParent, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
 import { parentWorld3d, resolveNode3DTransform, composeNodeWorld3d } from '@core/scene/nodeMatrix';
 import { skinnedMeshFor, type SkinResolvers } from '@core/scene/modelSkinning';
+import { morphedMeshFor } from '@core/scene/modelMorph';
 import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
@@ -2866,6 +2867,7 @@ export function buildSnapshot(
           shininess: mat.shininess,
           ...(mat.metal > 0 ? { metal: mat.metal / 100 } : {}),
           ...(mat.shading === 'pbr' ? { roughness: mat.roughness / 100 } : {}),
+          ...(mat.shading === 'toon' ? { toonBands: mat.toonBands } : {}),
           ambient: mat.ambient,
           diffuse: mat.diffuse,
         };
@@ -3529,7 +3531,7 @@ export function buildSnapshot(
               oneSided: true,
               ambient: extMat.ambient,
               diffuse: extMat.diffuse,
-              ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}),
+              ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}),
             };
           }
           emitLayer(meshLayer, node);
@@ -3633,7 +3635,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
             if (lg) {
               sliceLayer.lighting = lg;
-              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
+              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // Same rule as the geometric path: an explicit per-face colour is
@@ -3807,7 +3809,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, undefined, true);
             if (lg) {
               faceLayer.lighting = lg;
-              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
+              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // An explicit per-face fill is taken literally — dimming a colour
@@ -3847,12 +3849,20 @@ export function buildSnapshot(
       const mMat = readNodeMaterial(node, a);
       const mLit = mMat.acceptsLights && sceneLights.length > 0;
       const textured = !!modelEntry.textureUrl && layer.kind === 'image' && !!layer.src;
-      // Skinned primitive: swap in pose-deformed vertices under a pose-hashed
-      // buffer key. Unresolvable pose (joint layer deleted, degenerate matrix)
-      // → rigid bind pose, visible and honest.
-      const skinned = modelRef && modelEntry.skinData && world3d
-        ? skinnedMeshFor(node, modelRef, modelEntry, world3d as import('@motion/scene').Matrix4, skinResolvers, jointMapCache)
+      // Morph, then skin (the glTF order). Each stage swaps in deformed
+      // vertices under a weight-/pose-hashed buffer key; an unresolvable
+      // skin pose (joint layer deleted, degenerate matrix) falls back to the
+      // morphed or rigid bind pose, visible and honest.
+      const morphed = modelEntry.morphTargets.length > 0
+        ? morphedMeshFor(node, modelEntry, a)
         : null;
+      const skinned = modelRef && modelEntry.skinData && world3d
+        ? skinnedMeshFor(
+            node, modelRef, modelEntry, world3d as import('@motion/scene').Matrix4,
+            skinResolvers, jointMapCache, morphed ?? undefined,
+          )
+        : null;
+      const deformed = skinned ?? morphed;
       modelMeshLayer = {
         ...layer,
         // Same scrub as the extrusion carrier: features the mesh path cannot
@@ -3870,8 +3880,8 @@ export function buildSnapshot(
         lighting: undefined,
         shade3d: undefined,
         extrudedMesh: {
-          key: skinned ? skinned.key : modelEntry.key,
-          vertices: skinned ? skinned.vertices : modelEntry.vertices,
+          key: deformed ? deformed.key : modelEntry.key,
+          vertices: deformed ? deformed.vertices : modelEntry.vertices,
           indices: modelEntry.indices,
           ranges: [{
             role: modelEntry.doubleSided ? 'front' : 'side',
@@ -3892,6 +3902,7 @@ export function buildSnapshot(
           ambient: mMat.ambient,
           diffuse: mMat.diffuse,
           ...(mMat.shading === 'pbr' ? { roughness: mMat.roughness / 100, metal: mMat.metal / 100 } : {}),
+          ...(mMat.shading === 'toon' ? { toonBands: mMat.toonBands, metal: mMat.metal / 100 } : {}),
         };
       }
     }
@@ -3976,7 +3987,7 @@ export function buildSnapshot(
           const lg = shadeLayer(planeNormalOf(M), { x: O.x, y: O.y, z: z3 + g.offsetZ }, sceneLights);
           if (lg) {
             glyphLayer.lighting = lg;
-            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess, ambient: pcMat.ambient, diffuse: pcMat.diffuse, ...(pcMat.shading === 'pbr' ? { roughness: pcMat.roughness / 100, metal: pcMat.metal / 100 } : {}) };
+            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess, ambient: pcMat.ambient, diffuse: pcMat.diffuse, ...(pcMat.shading === 'pbr' ? { roughness: pcMat.roughness / 100, metal: pcMat.metal / 100 } : {}), ...(pcMat.shading === 'toon' ? { toonBands: pcMat.toonBands, metal: pcMat.metal / 100 } : {}) };
           }
         }
         emitLayer(glyphLayer, node);
