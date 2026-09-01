@@ -75,6 +75,18 @@ app.commandLine.appendSwitch('disable-gpu-sandbox');
 app.commandLine.appendSwitch('no-sandbox');
 if (WANT_WEBGPU) {
   app.commandLine.appendSwitch('enable-unsafe-webgpu');
+  // On Linux, Dawn discovers NO backend at all without this — Chromium says so
+  // itself in the renderer log: "WebGPU on Linux requires GLES compat, or
+  // command-line flag --enable-features=Vulkan, or command-line flag
+  // --enable-features=SkiaGraphite". Every CI run before this flag existed
+  // therefore failed all webgpu scenes with "asked for webgpu, got webgl2":
+  // the adapter was never absent because the runner lacked a GPU, it was
+  // absent because Vulkan was never enabled. With it, Dawn enumerates whatever
+  // Vulkan ICDs are installed — a hardware driver on a real box, lavapipe
+  // (mesa-vulkan-drivers) on a hosted runner.
+  if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('enable-features', 'Vulkan');
+  }
   // NOTE: the WebGPU run uses the machine's REAL adapter, and is therefore only
   // deterministic in the "same machine + same driver" sense — not the stronger
   // "any machine" sense the ANGLE-SwiftShader WebGL2 run gives.
@@ -84,13 +96,28 @@ if (WANT_WEBGPU) {
   // adapter (google/swiftshader) and a device, then kills the render process on
   // the first submit: "A valid external Instance reference no longer exists" /
   // "Instance dropped in onSubmittedWorkDone", under OSR and windowed alike, on
-  // Electron 32.3.3. Until that is fixed upstream there is no software WebGPU
-  // to bless against, which is why references are still blessed from WebGL2 —
-  // see GATE_BACKEND in scripts/run.mjs.
+  // Electron 32.3.3 (probed on Windows; the Linux path behind
+  // --enable-features=Vulkan is a different stack and is probed from CI via
+  // HARNESS_CHROMIUM_SWITCHES below). Until a software adapter demonstrably
+  // works there is no software WebGPU to bless against, which is why references
+  // are still blessed from WebGL2 — see GATE_BACKEND in scripts/run.mjs.
 } else {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('use-gl', 'angle');
   app.commandLine.appendSwitch('use-angle', 'swiftshader');
+}
+
+// Extra Chromium switches for GPU-stack experiments, ';'-separated (';' rather
+// than ',' because switch VALUES contain commas: `enable-features=A,B`).
+// Example: HARNESS_CHROMIUM_SWITCHES='use-vulkan=swiftshader;use-webgpu-adapter=swiftshader'
+// This exists so CI can probe adapter configurations without a code change per
+// attempt; the flags a run settles on belong above, not in the workflow.
+for (const sw of (process.env.HARNESS_CHROMIUM_SWITCHES || '').split(';')) {
+  const s = sw.trim();
+  if (!s) continue;
+  const eq = s.indexOf('=');
+  if (eq === -1) app.commandLine.appendSwitch(s);
+  else app.commandLine.appendSwitch(s.slice(0, eq), s.slice(eq + 1));
 }
 
 const OUT = process.env.HARNESS_OUT;

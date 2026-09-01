@@ -1,0 +1,56 @@
+# TEMPORARY probe: can a hosted Linux runner produce a working WebGPU adapter
+# for the render-tests harness? Tests flag/driver combos in a matrix and prints
+# what Dawn resolved. Delete once the answer is folded into render-tests.yml.
+name: webgpu-probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: vulkan-flag-only
+            mesa: false
+            switches: ''
+          - name: lavapipe
+            mesa: true
+            switches: ''
+          - name: swiftshader
+            mesa: false
+            switches: 'use-vulkan=swiftshader;use-webgpu-adapter=swiftshader'
+          - name: lavapipe-plus-swiftshader
+            mesa: true
+            switches: 'use-vulkan=swiftshader;use-webgpu-adapter=swiftshader'
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install mesa (lavapipe Vulkan ICD)
+        if: ${{ matrix.mesa }}
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers vulkan-tools && vulkaninfo --summary || true
+
+      - name: Install
+        run: npm ci
+
+      - name: Probe webgpu render (3 scenes)
+        env:
+          HARNESS_SCENES: flat-background,solid-fill,linear-gradient-fill
+          HARNESS_CHROMIUM_SWITCHES: ${{ matrix.switches }}
+          HARNESS_REQUIRE_WEBGPU: '0'
+        run: |
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" \
+            node packages/render-tests/scripts/run.mjs --scene solid-fill 2>&1 | tee probe.log || true
+          echo "=================== PROBE VERDICT ==================="
+          grep -E "backend resolved|scene-fail|render process gone|WebGPU on Linux|adapter" probe.log || true
+          echo "webgpu frames written:"
+          find packages/render-tests/.artifacts/actual/webgpu -name '*.png' | wc -l

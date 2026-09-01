@@ -333,12 +333,40 @@ async function renderScene(scene: Scene, backend: BackendChoice): Promise<void> 
   }
 }
 
+/**
+ * Pin the GLYPHS the way SwiftShader pins the rasterizer.
+ *
+ * Scenes ask for `Arial` because that is the default text spec the Text tool
+ * writes, and the harness's contract is to render the spec the tool produces.
+ * But `Arial` names a SYSTEM font: real Arial on Windows (where references are
+ * blessed), fontconfig's metric-compatible substitute (Liberation Sans) on a
+ * Linux runner. Same spec, two sets of outlines — which held `text-scale-4x`
+ * through `-8x` at 0.7–3.1% against their references on every CI run since they
+ * were blessed, while smaller text sat inside the 0.5% tolerance looking fine.
+ *
+ * Registering a bundled font (Arimo, OFL, metric-compatible with Arial) under
+ * the SAME family name fixes that at the resolution layer: document-registered
+ * faces shadow installed fonts of the same family in CSS font matching, so
+ * every platform now shapes and rasterizes identical outlines while the scene
+ * specs stay exactly what the tool produces. Awaited before any scene renders —
+ * an unloaded FontFace falls back to the system font, which is this bug again,
+ * nondeterministically.
+ */
+async function loadHarnessFonts(): Promise<void> {
+  const faces = [
+    new FontFace('Arial', `url(${new URL('./fonts/arimo-latin-400-normal.woff2', import.meta.url)})`, { weight: '400' }),
+    new FontFace('Arial', `url(${new URL('./fonts/arimo-latin-700-normal.woff2', import.meta.url)})`, { weight: '700' }),
+  ];
+  for (const face of faces) document.fonts.add(await face.load());
+}
+
 async function main(): Promise<void> {
   // No wall clock on an offline render: `requestAnimationFrame` in an offscreen
   // Electron window is throttled (and can stop firing once occluded), so the
   // media-repaint coalescer flushes synchronously here. See repaintScheduler.ts.
   setMediaRepaintScheduler(syncFlushScheduler);
   try {
+    await loadHarnessFonts();
     const backends = window.harnessBridge.config.backends;
     /*
       Debug-only scene filter. Empty means every scene, which is what the gate
