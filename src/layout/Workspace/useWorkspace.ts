@@ -59,6 +59,7 @@ import {
   positionSamplerFor,
 } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { beginViewportGesture, endViewportGesture, gestureAnimEdit } from '@core/workspace/viewportGesture';
 import { parentWorld2DAt } from '@core/scene/layerSpace';
 import { Matrix } from '@motion/scene';
 import { useTextEditStore } from '@stores/textEditStore';
@@ -1436,6 +1437,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     );
 
     const onDown = (e: PointerEvent): void => {
+      // One anim/scene transaction per pointer gesture — every write between
+      // here and pointerup batches (see viewportGesture.ts). Ending any stale
+      // gesture first keeps a lost pointerup (capture failed, window switch)
+      // from leaking a permanently-open transaction.
+      endViewportGesture();
+      beginViewportGesture();
       // Any press in the main viewport takes the active viewer back from a
       // secondary pane, so the focus ring always names the viewport that will
       // receive the next keyboard action.
@@ -1693,7 +1700,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         }
       }
       // Info readout (AE Info panel): comp-space position + sampled pixel under
-      // the cursor. Runs for every move regardless of the active tool/drag.
+      // the cursor. The PIXEL sample is hover-only: `samplePixelRgba` costs a
+      // forced layout (getBoundingClientRect) plus a canvas readback, and
+      // paying that on every pointermove of a drag taxes exactly the gesture
+      // that most needs the budget. Position stays live either way.
       {
         const p = local(e);
         const world = controller.ws.screenToWorld(p);
@@ -1701,7 +1711,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         useInfoStore.getState().set({
           x: Math.round(world.x),
           y: Math.round(world.y),
-          rgba: content ? samplePixelRgba(content, p) : null,
+          rgba: e.buttons === 0 && content ? samplePixelRgba(content, p) : null,
           present: true,
         });
       }
@@ -1762,7 +1772,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           // Back through the parent chain: `w` is where the pointer is in COMP
           // space and the x/y tracks hold parent-space values.
           const lp = compToPath(drag.nodeId, playheadTime(), w);
-          runAnimEdit(
+          gestureAnimEdit(
             'Move keyframe',
             () => {
               defaultAnimation.setKeyframe(drag.nodeId, 'x', drag.t, lp.x);
@@ -1775,7 +1785,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           // point is still continuous (AE smooth); Alt-drag breaks and STICKS
           // via Keyframe.continuous so the next non-Alt drag does not remirror.
           const mirror = isPathTangentContinuous(drag.nodeId, drag.t) && !e.altKey;
-          runAnimEdit(
+          gestureAnimEdit(
             'Adjust path tangent',
             () => setPathTangent(drag.nodeId, drag.t, part, compToPath(drag.nodeId, playheadTime(), w), mirror),
             `mptan:${drag.nodeId}:${drag.t}:${part}`,
@@ -1792,6 +1802,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       }
     };
     const onUp = (e: PointerEvent): void => {
+      // Close the gesture FIRST: every early-returning branch below is part of
+      // the same pointer gesture, and the final writes all happened on the
+      // preceding moves. Records the drag's single undo command and fires the
+      // one deferred structural bump.
+      endViewportGesture();
       try {
         if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
       } catch {
@@ -1980,6 +1995,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       toolSub();
       cancelSmoothDolly();
       controller.ws.cancelTransientInput();
+      // Unmounting mid-drag must not leak an open gesture transaction.
+      endViewportGesture();
       useUIStore.getState().setDragging(false);
       overlay.style.cursor = '';
     };

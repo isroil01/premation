@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type KeyboardEvent } from 'react';
 import { cn } from '@utils/cn';
 import { useActiveWorkspace, useWorkspaceStore, useProjectStore } from '@stores/projectStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
@@ -143,7 +143,10 @@ export function WorkspaceViewport({
   className,
 }: WorkspaceViewportProps): JSX.Element {
   const time     = useActiveWorkspace()?.time ?? 0;
-  const sceneRev = useSceneRevision((s) => s.rev);
+  // Frame-coalesced, NOT the raw rev: this component is the whole viewport
+  // shell — every SVG overlay under it reconciles when it does — and the raw
+  // subscription re-rendered it once per pointermove during a drag.
+  const sceneRev = useSceneRevisionFrame();
   // The blank-comp moment — AE's two ways in, said out loud.
   //
   // Scoped to the ACTIVE composition, not the whole scene graph: this used to

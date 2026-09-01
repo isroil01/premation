@@ -9,7 +9,7 @@ import { useGuidesStore } from '@stores/guidesStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { is3DEnabled, canBe3D } from '@core/scene/threeD';
 import {
   sampleTransform3DAtPlayhead,
@@ -17,6 +17,7 @@ import {
   type Gizmo3DNodeUpdate,
 } from '@core/workspace/ports';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import type { RenderView } from '@core/rendering/RenderBackend';
 import { Project3D, type Vec3 } from '@motion/scene';
@@ -62,15 +63,21 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
   // (an animated/orbited camera otherwise leaves the gizmo at frame 0's view).
   const time = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
 
-  // Re-render on ANY scene mutation (canvas drags, inspector edits, undo…) so
-  // the gizmo tracks the object it is attached to. Without this, moving the
-  // object only sometimes moved the gizmo (whenever something else happened to
-  // trigger a render).
-  useSceneRevision((s) => s.rev);
+  // Re-render on scene mutation (canvas drags, inspector edits, undo…) so the
+  // gizmo tracks the object it is attached to — frame-coalesced: the raw rev
+  // subscription re-rendered this hook (and the whole SVG overlay under it)
+  // once per POINTER EVENT during a drag. See useSceneRevisionFrame.
+  useSceneRevisionFrame();
 
   const [hoverHandle, setHoverHandle] = useState<GizmoHandleType | null>(null);
   const [activeHandle, setActiveHandle] = useState<GizmoHandleType | null>(null);
   const [dragState, setDragState] = useState<DragState3D | null>(null);
+  // The LIVE drag state the pointer handlers read and write. React state is a
+  // rAF-coalesced mirror for the HUD — keeping `dragState` itself out of the
+  // handler effect's deps is what stops every pointermove from tearing down
+  // and re-attaching the stage/window listeners.
+  const dragRef = useRef<DragState3D | null>(null);
+  const dragHudRaf = useRef<number | null>(null);
 
   // Filter selected nodes to those with 3D enabled (AE multi-layer 3D selection).
   //
@@ -212,6 +219,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
       const stagePt = getStageLocal(e);
       const compPt = getCompLocal(stagePt);
 
+      const dragState = dragRef.current;
       if (dragState && dragState.active) {
         // Drag in progress — calculate updated 3D transform
         const ray = Project3D.unprojectScreenRay(compPt.x, compPt.y, camera, orthoView, compWidth, compHeight);
@@ -333,13 +341,21 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
         }));
         applyGizmo3DTransforms(updates);
 
-        setDragState({
+        // Live truth into the ref; the React mirror (which the measurement
+        // HUD renders from) syncs at most once per frame.
+        dragRef.current = {
           ...dragState,
           currentPos3D: newPos,
           currentRot3D: newRot,
           currentScale3D: newScale,
           mouseScreen: stagePt,
-        });
+        };
+        if (dragHudRaf.current === null) {
+          dragHudRaf.current = requestAnimationFrame(() => {
+            dragHudRaf.current = null;
+            setDragState(dragRef.current);
+          });
+        }
         return;
       }
 
@@ -405,8 +421,12 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
         const startRot = { ...first.rot };
         const startScale = { scaleX: first.scale.scaleX, scaleY: first.scale.scaleY, scaleZ: 1 };
 
+        // One anim/scene transaction for the whole gizmo drag (viewportGesture)
+        // — applyGizmo3DTransforms is called per pointermove and would
+        // otherwise pay a full engine snapshot + structural scene walk each.
+        beginViewportGesture();
         setActiveHandle(hit);
-        setDragState({
+        const start: DragState3D = {
           active: true,
           handle: hit,
           startPos3D: startPos,
@@ -419,16 +439,24 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
           startMouseComp: compPt,
           mouseScreen: stagePt,
           initialNodeStates,
-        });
+        };
+        dragRef.current = start;
+        setDragState(start);
       }
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      if (dragState && dragState.active) {
+      if (dragRef.current && dragRef.current.active) {
         try {
           stage.releasePointerCapture(e.pointerId);
         } catch {
           /* best-effort */
+        }
+        endViewportGesture();
+        dragRef.current = null;
+        if (dragHudRaf.current !== null) {
+          cancelAnimationFrame(dragHudRaf.current);
+          dragHudRaf.current = null;
         }
         setActiveHandle(null);
         setDragState(null);
@@ -448,8 +476,22 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
       stage.removeEventListener('pointerdown', onPointerDown, { capture: true } as EventListenerOptions);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      // Rebinding (or unmounting) mid-drag must close the gesture transaction.
+      if (dragRef.current) {
+        endViewportGesture();
+        dragRef.current = null;
+      }
+      if (dragHudRaf.current !== null) {
+        cancelAnimationFrame(dragHudRaf.current);
+        dragHudRaf.current = null;
+      }
     };
-  }, [is3D, singleId, dragState, axisMode, camera3dMode, customViews, compWidth, compHeight, time]);
+    // `dragState` is deliberately NOT a dep — the handlers read `dragRef`, so
+    // listeners survive a whole drag instead of re-attaching per pointermove.
+    // `selectedIds` (not just `singleId`) because onPointerDown snapshots the
+    // selection's nodes: a multi-select change that keeps the same primary id
+    // must still rebind the closure.
+  }, [is3D, singleId, selectedIds, axisMode, camera3dMode, customViews, compWidth, compHeight, time]);
 
   return {
     is3D,

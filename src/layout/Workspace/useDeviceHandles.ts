@@ -25,7 +25,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { isCustomViewId } from '@core/workspace/customViews';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import { viewDragToWorldDelta } from '@core/workspace/ports';
@@ -63,7 +63,7 @@ export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) 
   // subscription above) and on time, so a keyframed camera's dot tracks it.
   // Deliberately the same collector the hit test calls: a dot the pointer can
   // see but not grab is worse than no dot at all.
-  const sceneRev = useSceneRevision((s) => s.rev);
+  const sceneRev = useSceneRevisionFrame();
   const handles = useMemo(
     () => collectDeviceHandles(time, compWidth, compHeight, viewingThrough),
     [time, compWidth, compHeight, sceneRev, camera3dMode, viewingThrough],

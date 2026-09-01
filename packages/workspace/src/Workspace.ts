@@ -406,7 +406,12 @@ export class Workspace implements InputSink {
     this.reconcile();
   }
   onPointerMove(e: PointerInput): void {
-    this.updateHover(e.position);
+    // No hover resolution mid-drag: the drag target is already fixed, and the
+    // hit test's `ensureFresh` rebuilds the whole spatial index — which the
+    // drag's own scene writes re-dirty every event, so hovering while dragging
+    // paid an O(nodes) rebuild per pointermove for a highlight nobody can see.
+    // Hover recomputes on the first move after release.
+    if (!this.input.isDragging) this.updateHover(e.position);
     this.tools.onPointerMove(e);
     this.reconcile();
   }
@@ -555,12 +560,32 @@ export class Workspace implements InputSink {
    * it, so tools and callers can never disagree about the answer.
    */
   snapRect(rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect> {
-    const { targets, thresholdWorld } = this.buildSnapTargets(
-      R.inflate(rect, this.camera.screenDistanceToWorld(this.snap.getSettings().thresholdPx) + 4),
-      excludeIds,
-    );
+    const region = R.inflate(rect, this.camera.screenDistanceToWorld(this.snap.getSettings().thresholdPx) + 4);
+    // During a drag, snap targets are rebuilt at most once per REGION, not once
+    // per pointermove. The per-move rebuild was O(scene): the drag's own scene
+    // write dirties the spatial index every event, so `hitTestRegion` inside
+    // `buildSnapTargets` re-enumerated every node per move — and the answers
+    // never change mid-drag (the moving layers are excluded; everything else
+    // holds still). The cache covers a screen-plus of travel and rebuilds when
+    // the drag leaves it or the zoom changes (the threshold is zoom-relative).
+    if (this.input.isDragging) {
+      const zoom = this.camera.zoom;
+      const c = this.dragSnapCache;
+      if (c && c.zoom === zoom && R.containsRect(c.region, region)) {
+        return this.snap.snapRect(rect, c.targets, c.thresholdWorld);
+      }
+      const wide = R.inflate(region, this.camera.screenDistanceToWorld(1500));
+      const built = this.buildSnapTargets(wide, excludeIds);
+      this.dragSnapCache = { region: wide, zoom, targets: built.targets, thresholdWorld: built.thresholdWorld };
+      return this.snap.snapRect(rect, built.targets, built.thresholdWorld);
+    }
+    this.dragSnapCache = null;
+    const { targets, thresholdWorld } = this.buildSnapTargets(region, excludeIds);
     return this.snap.snapRect(rect, targets, thresholdWorld);
   }
+
+  /** Per-gesture snap-target cache — see `snapRect`. */
+  private dragSnapCache: { region: Rect; zoom: number; targets: SnapTarget[]; thresholdWorld: number } | null = null;
 
   /** Assemble grid + guide + object snap targets for a world region. */
   private buildSnapTargets(
