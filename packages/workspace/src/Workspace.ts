@@ -666,11 +666,16 @@ export class Workspace implements InputSink {
 
     const activeTool = this.tools.activeTool;
     const ctx = this.makeToolContext();
+    const hoveredHandle = activeTool?.hoveredHandleId?.() ?? null;
+    const decorate = (h: { id: string; position: Vec2; kind: OverlayHandle['kind'] }): OverlayHandle => ({
+      id: h.id,
+      position: this.worldToScreen(h.position),
+      kind: h.kind,
+      ...(h.id === hoveredHandle ? { hovered: true } : {}),
+    });
     const handles: OverlayHandle[] = activeTool?.getHandles
-      ? activeTool.getHandles(ctx).map((h) => ({ id: h.id, position: this.worldToScreen(h.position), kind: h.kind }))
-      : this.selectionController
-          .handles()
-          .map((h) => ({ id: h.id, position: this.worldToScreen(h.position), kind: h.kind }));
+      ? activeTool.getHandles(ctx).map(decorate)
+      : this.selectionController.handles().map(decorate);
 
     const marqueeWorld = this.selectionController.marqueeRect;
     const marquee = marqueeWorld ? this.worldRectToScreen(marqueeWorld) : null;
@@ -700,7 +705,12 @@ export class Workspace implements InputSink {
         })
       : undefined;
 
-    return { selectionBounds, selectionBoxes, handles, marquee, snapLines, guides, hoveredBounds, hoveredCorners, pendingPath };
+    // The active drag's numeric readout (Δ / size / angle) — the 2D twin of
+    // the 3D gizmo's measurement badge. Screen-anchored beside the pointer.
+    const hud = activeTool?.getHud?.(ctx) ?? null;
+    const dragHud = hud ? { anchor: this.worldToScreen(hud.anchorWorld), lines: hud.lines } : null;
+
+    return { selectionBounds, selectionBoxes, handles, marquee, snapLines, guides, hoveredBounds, hoveredCorners, pendingPath, dragHud };
   }
 
   /** Project an oriented box's four corners into screen space, one by one. */

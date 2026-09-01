@@ -38,11 +38,11 @@ describe('viewportGesture', () => {
     endViewportGesture();
 
     const history = getCommandSystem().getHistory();
-    const top = history.peek();
-    expect(top).not.toBeNull();
+    const top = history.peek() as import('@core/animation/animationCommands').AnimEditCommand;
+    expect(top).toBeTruthy();
     expect(defaultAnimation.sample('g1', 'x', 0)).toBe(500);
     // One undo restores the pre-drag world — no 49 intermediate steps.
-    top!.undo();
+    top.undo();
     expect(defaultAnimation.sample('g1', 'x', 0)).toBeUndefined();
   });
 

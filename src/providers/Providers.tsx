@@ -9,6 +9,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Application } from '@core/application/Application';
+import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
   applyPreferencesToDocument,
   usePreferenceStore,
@@ -2270,6 +2271,19 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true,
             isChecked: () => useGuidesStore.getState().rulers,
             execute: () => useGuidesStore.getState().toggleRulers(),
+          });
+          registry.register({
+            // WorkspaceController.fitSelection existed with ZERO consumers —
+            // the port comment even said "retained for fit-to-selection".
+            // Shift+F, since bare letters are tool shortcuts in the viewport
+            // and AE itself never shipped this (its users lobby for it).
+            id: asCommandId('view.fitSelection'), label: 'Fit Selection in View', icon: 'frame',
+            shortcut: { key: 'f', shift: true },
+            enabled: () => useSelectionStore.getState().ids.length > 0,
+            execute: () => {
+              getWorkspaceController().fitSelection();
+              getWorkspaceController().requestRender();
+            },
           });
           registry.register({
             // The ViewportTools tooltip has advertised this chord all along —

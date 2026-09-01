@@ -683,6 +683,7 @@ export interface Transform3DValues {
   rotation: number;
   scaleX: number;
   scaleY: number;
+  scaleZ: number;
 }
 
 /**
@@ -706,7 +707,18 @@ export function sampleTransform3DAtPlayhead(node: SceneNode): Transform3DValues 
     rotation: av.get('rotation') ?? g?.rotationDeg ?? 0,
     scaleX: av.get('scaleX') ?? av.get('scale') ?? g?.scaleX ?? 1,
     scaleY: av.get('scaleY') ?? av.get('scale') ?? g?.scaleY ?? 1,
+    // Depth scale: the Z cube on the scale gizmo writes it, buildSnapshot's
+    // affineAt composes it, extrusion bodies stretch along it. Static read is
+    // straight off the Transform props — readNode3D predates the property.
+    scaleZ: av.get('scaleZ') ?? staticScaleZOf(node),
   };
+}
+
+/** The Transform component's static scaleZ (1 when absent — flat layers). */
+function staticScaleZOf(node: SceneNode): number {
+  const t = node.components.find((c) => c.type === 'Transform');
+  const v = t ? (t.props as Record<string, unknown>).scaleZ : undefined;
+  return typeof v === 'number' && Number.isFinite(v) ? v : 1;
 }
 
 /**
@@ -723,6 +735,7 @@ const GIZMO_TRACK_GROUPS: Record<keyof Transform3DValues, readonly string[]> = {
   rotation: ['rotation'],
   scaleX: ['scaleX', 'scaleY', 'scale'],
   scaleY: ['scaleX', 'scaleY', 'scale'],
+  scaleZ: ['scaleZ'],
 };
 
 export interface Gizmo3DNodeUpdate {

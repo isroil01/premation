@@ -542,15 +542,16 @@ export function WorkspaceViewport({
         {/* View-only right pane (AE's 2 Views) — its own canvas + backend. */}
         {viewLayout === '2' && <SecondaryViewPane />}
 
-        {/* View-only cells of the 2×2 "4 Views" grid. The top-left quadrant is
-            the interactive stage above (shrunk via right/bottom:50%); these
-            three panes fill the remaining quadrants, each its own GL context.
-            Only cells 1–3 exist here — cell 0 IS the interactive stage, so
-            selection / gizmos / camera-nav stay confined to the top-left, like
-            AE's single active viewport. `key` guarantees each pane's backend is
-            disposed and rebuilt on layout change rather than reused across
-            positions. Thin dividers = borders on the right-column / bottom-row
-            cells (no doubling), matching --color-border. */}
+        {/* Cells 1–3 of the 2×2 "4 Views" grid. The top-left quadrant is the
+            interactive stage above (shrunk via right/bottom:50%); these three
+            panes fill the remaining quadrants, each its own GL context. The
+            panes are FULLY INTERACTIVE — shared selection, undoable edits,
+            per-pane framing (see SecondaryViewPane.tsx, which documents the
+            upgrade; an earlier version of this comment called them view-only).
+            `key` guarantees each pane's backend is disposed and rebuilt on
+            layout change rather than reused across positions. Thin dividers =
+            borders on the right-column / bottom-row cells (no doubling),
+            matching --color-border. */}
         {viewLayout === '4' && (
           <>
             <SecondaryViewPane

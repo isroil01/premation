@@ -79,6 +79,10 @@ export class SelectTool implements Tool {
   private startMatrix: Mat.Mat2D | null = null;
   private appliedDelta: Vec2 = { x: 0, y: 0 };
   private excludeIds: Set<string> = new Set();
+  /** Live drag readout (Δ / size / angle) — see Tool.getHud. */
+  private hud: { anchorWorld: Vec2; lines: readonly string[] } | null = null;
+  /** Grip under the cursor (idle only) — drives the overlay's lit grip. */
+  private hoverHandleId: string | null = null;
   // Transform (single-node) state.
   private transformId: NodeId | null = null;
   private transformPivot: Vec2 = { x: 0, y: 0 };
@@ -135,6 +139,13 @@ export class SelectTool implements Tool {
     // diagonal promises an axis the drag will not follow.
     if (this.mode !== 'idle') return;
     const handle = this.pickHandle(e.screen, ctx);
+    // Feed the overlay too, so the grip itself lights up — cursor-only hover
+    // reads as "maybe" where a lit grip reads as "grabbable" (the 3D gizmo's
+    // handles have highlighted on hover all along; the 2D grips never did).
+    if (handle !== this.hoverHandleId) {
+      this.hoverHandleId = handle;
+      ctx.requestRender();
+    }
     this.cursorPop?.();
     if (handle) {
       this.cursorPop = ctx.cursor.pushOverride(
@@ -147,6 +158,11 @@ export class SelectTool implements Tool {
     this.cursorPop = this.inRotateRing(e.screen, ctx)
       ? ctx.cursor.pushOverride('rotate' as CursorType)
       : null;
+  }
+
+  /** Grip under the cursor while idle — the overlay lights it up. */
+  hoveredHandleId(): string | null {
+    return this.hoverHandleId;
   }
 
   /** Rotation (radians) of the single selected layer, 0 for anything else. */
@@ -266,6 +282,14 @@ export class SelectTool implements Tool {
         const step = Math.PI / 12;
         next = Math.round(next / step) * step;
       }
+      {
+        // Normalized to (-180, 180] so a long spin reads like AE's rotation
+        // property rather than an odometer.
+        let deg = ((next * 180) / Math.PI) % 360;
+        if (deg > 180) deg -= 360;
+        if (deg <= -180) deg += 360;
+        this.hud = { anchorWorld: e.currentWorld, lines: [`${deg.toFixed(1)}°`] };
+      }
       ctx.execute(commands.rotateNode(this.transformId, next, this.transformPivot));
       ctx.requestRender();
       return;
@@ -365,6 +389,14 @@ export class SelectTool implements Tool {
         // are. Only sent in size mode; the handler falls back to scaling when
         // the layer has no authored size to write (an image, a video, a precomp).
         const size = resizesSize ? { x: local.width, y: local.height } : undefined;
+        // Size mode reads in the layer's own units (what it writes); scale
+        // mode reads as the Scale percentage the drag is recording.
+        this.hud = {
+          anchorWorld: e.currentWorld,
+          lines: resizesSize
+            ? [`${Math.round(local.width)} × ${Math.round(local.height)}`]
+            : [`${Math.round(scale.x * 100)}% × ${Math.round(scale.y * 100)}%`],
+        };
         ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center, size));
         ctx.requestRender();
         return;
@@ -372,6 +404,7 @@ export class SelectTool implements Tool {
 
       // No local box to work in (a node kind that reports none). Falls back to
       // the world-AABB path every layer used before, still correct unrotated.
+      // (HUD set below, after the new bounds exist.)
       const bounds = e.modifiers.alt
         ? resizeBounds(this.startBounds, this.downHandle, e.currentWorld, true, undefined, e.modifiers.shift)
         : resizeBoundsAboutPivot(
@@ -388,12 +421,29 @@ export class SelectTool implements Tool {
         y: from.height > 0 ? base.y * (bounds.height / from.height) : base.y,
       };
       const center = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+      this.hud = {
+        anchorWorld: e.currentWorld,
+        lines: [`${Math.round(bounds.width)} × ${Math.round(bounds.height)}`],
+      };
       ctx.execute(commands.resizeNode(this.transformId, bounds, scale, center));
       ctx.requestRender();
       return;
     }
     if (this.mode === 'move' && this.startBounds && this.moveIds.length) {
       let total = e.totalWorld;
+      /*
+       * Shift = axis lock (AE/Figma/Illustrator): the move constrains to the
+       * DOMINANT axis of the total travel, re-evaluated live so crossing the
+       * 45° diagonal flips the lock — hold Shift and steer, no release
+       * needed. Applied before snapping, and the locked axis is re-zeroed
+       * after it, so a guide on the free axis still snaps while the locked
+       * axis cannot be dragged off zero by a nearby target.
+       */
+      const lockAxis = e.modifiers.shift
+        ? (Math.abs(total.x) >= Math.abs(total.y) ? 'x' : 'y')
+        : null;
+      if (lockAxis === 'x') total = { x: total.x, y: 0 };
+      else if (lockAxis === 'y') total = { x: 0, y: total.y };
       const movedBounds = R.translate(this.startBounds, total);
       /*
        * Ctrl/Cmd SUSPENDS snapping for as long as it is held.
@@ -411,14 +461,23 @@ export class SelectTool implements Tool {
         ? { delta: { x: 0, y: 0 }, lines: [] }
         : ctx.snapRect(movedBounds, this.excludeIds);
       total = { x: total.x + snap.delta.x, y: total.y + snap.delta.y };
+      // Locked axis stays locked — see the Shift note above.
+      if (lockAxis === 'x') total = { x: total.x, y: 0 };
+      else if (lockAxis === 'y') total = { x: 0, y: total.y };
       const inc = { x: total.x - this.appliedDelta.x, y: total.y - this.appliedDelta.y };
       if (inc.x !== 0 || inc.y !== 0) {
         ctx.execute(commands.moveNodes(this.moveIds, inc));
         this.appliedDelta = total;
       }
+      const fmt = (v: number): string => `${v >= 0 ? '+' : ''}${Math.round(v)}`;
+      this.hud = { anchorWorld: e.currentWorld, lines: [`${fmt(total.x)}, ${fmt(total.y)}`] };
       ctx.setSnapLines(snap.lines);
       ctx.requestRender();
     }
+  }
+
+  getHud(): { anchorWorld: Vec2; lines: readonly string[] } | null {
+    return this.hud;
   }
 
   onDragEnd(_e: ToolDragEvent, ctx: ToolContext): void {
@@ -426,6 +485,7 @@ export class SelectTool implements Tool {
       ctx.selection.endMarquee(_e.modifiers);
     }
     ctx.setSnapLines([]);
+    this.hud = null;
     this.mode = 'idle';
     this.downNodeId = null;
     this.downHandle = null;

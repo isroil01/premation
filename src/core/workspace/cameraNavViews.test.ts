@@ -81,8 +81,15 @@ afterEach(() => {
 });
 
 describe('findNavTarget', () => {
-  it("'active' without a camera layer → null (unchanged legacy gate)", () => {
+  it("'active' without a camera layer → the default-view promotion target", () => {
+    // AE's default view orbits without a camera (the first orbit lands in a
+    // custom view); demanding Layer ▸ New ▸ Camera first was pure friction.
+    // The straight-on 'front' seed is what keeps the first swing continuous.
     add3DShape();
+    expect(findNavTarget()).toEqual({ kind: 'ortho', view: 'front' });
+  });
+
+  it("'active' with no 3D content at all → null (nothing to move around)", () => {
     expect(findNavTarget()).toBeNull();
   });
 

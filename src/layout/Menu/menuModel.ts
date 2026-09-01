@@ -259,6 +259,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.snapToGrid', label: 'Snap to Grid' },
       { commandId: 'view.rulers', label: 'Toggle Rulers' },
       { commandId: 'view.safeAreas', label: 'Toggle Safe Areas' },
+      { commandId: 'view.fitSelection', label: 'Fit Selection in View' },
       { separator: true },
       { commandId: BuiltinCommands.ResetLayout, label: 'Reset Layout' },
       { commandId: BuiltinCommands.SwitchTheme, label: 'Switch Theme' },

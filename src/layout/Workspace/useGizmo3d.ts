@@ -41,7 +41,7 @@ export interface DragState3D {
     id: string;
     pos: Vec3;
     rot: { rotX: number; rotY: number; rotZ: number };
-    scale: { scaleX: number; scaleY: number };
+    scale: { scaleX: number; scaleY: number; scaleZ: number };
   }>;
 }
 
@@ -111,7 +111,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
     if (idx === 0) {
       firstRot = { rotX: tv.rotationX, rotY: tv.rotationY, rotZ: tv.rotation };
-      firstScale = { scaleX: tv.scaleX, scaleY: tv.scaleY, scaleZ: 1 };
+      firstScale = { scaleX: tv.scaleX, scaleY: tv.scaleY, scaleZ: tv.scaleZ };
     }
   });
 
@@ -270,10 +270,39 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
             deltaDeg = ((a1 - a0) * 180) / Math.PI;
             if (deltaDeg > 180) deltaDeg -= 360;
             if (deltaDeg < -180) deltaDeg += 360;
-          } else if (handle === 'rot_x') {
-            deltaDeg = -(stagePt.y - dragState.startMouseScreen.y) * 0.5;
           } else {
-            deltaDeg = (stagePt.x - dragState.startMouseScreen.x) * 0.5;
+            // rot_x / rot_y: TRUE arc-following, like rot_z above — intersect
+            // the pointer ray with the ring's plane at grab time and now, and
+            // take the angle between the two hits about the centre in the
+            // plane's own basis. The old raw mouse-travel × 0.5°/px neither
+            // followed the ring under the cursor nor scaled with zoom. The
+            // travel mapping survives as the fallback when the ring is
+            // edge-on (the plane intersection degenerates there).
+            const axis = handle === 'rot_x' ? basis.x : basis.y;
+            const u = handle === 'rot_x' ? basis.y : basis.z;
+            const v = handle === 'rot_x' ? basis.z : basis.x;
+            const edgeOn =
+              Math.abs(ray.direction.x * axis.x + ray.direction.y * axis.y + ray.direction.z * axis.z) < 0.08;
+            const ray0 = Project3D.unprojectScreenRay(
+              dragState.startMouseComp.x, dragState.startMouseComp.y,
+              camera, orthoView, compWidth, compHeight,
+            );
+            const hitNow = edgeOn ? null : Project3D.intersectRayPlane(ray, dragState.startPos3D, axis);
+            const hit0 = edgeOn ? null : Project3D.intersectRayPlane(ray0, dragState.startPos3D, axis);
+            if (hitNow && hit0) {
+              const C = dragState.startPos3D;
+              const ang = (p: Vec3): number => Math.atan2(
+                (p.x - C.x) * v.x + (p.y - C.y) * v.y + (p.z - C.z) * v.z,
+                (p.x - C.x) * u.x + (p.y - C.y) * u.y + (p.z - C.z) * u.z,
+              );
+              deltaDeg = ((ang(hitNow) - ang(hit0)) * 180) / Math.PI;
+              if (deltaDeg > 180) deltaDeg -= 360;
+              if (deltaDeg < -180) deltaDeg += 360;
+            } else if (handle === 'rot_x') {
+              deltaDeg = -(stagePt.y - dragState.startMouseScreen.y) * 0.5;
+            } else {
+              deltaDeg = (stagePt.x - dragState.startMouseScreen.x) * 0.5;
+            }
           }
 
           // Shift key snaps rotation to 15° increments (AE standard)
@@ -284,19 +313,23 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
           if (handle === 'rot_x') newRot.rotX = dragState.startRot3D.rotX + deltaDeg;
           else if (handle === 'rot_y') newRot.rotY = dragState.startRot3D.rotY + deltaDeg;
           else newRot.rotZ = dragState.startRot3D.rotZ + deltaDeg;
-        } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_center') {
+        } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_z' || handle === 'scale_center') {
           // Each handle follows the axis it points along. Every scale handle used
           // to read `stagePt.x` only, so the VERTICAL Y-scale handle grew when you
-          // dragged sideways and ignored vertical motion entirely.
+          // dragged sideways and ignored vertical motion entirely. The Z cube
+          // reads vertical travel (its arrow leans toward the viewer, so "up =
+          // bigger" is the only direction that always exists on screen); it was
+          // drawn-but-dead before scaleZ was plumbed through the ports.
           const dxPx = stagePt.x - dragState.startMouseScreen.x;
           const dyPx = stagePt.y - dragState.startMouseScreen.y;
           const travel =
-            handle === 'scale_y' ? -dyPx
+            handle === 'scale_y' || handle === 'scale_z' ? -dyPx
             : handle === 'scale_center' ? (dxPx - dyPx) / 2
             : dxPx;
           const factor = Math.max(0.05, 1 + travel * 0.01);
           if (handle === 'scale_x' || handle === 'scale_center') newScale.scaleX = dragState.startScale3D.scaleX * factor;
           if (handle === 'scale_y' || handle === 'scale_center') newScale.scaleY = dragState.startScale3D.scaleY * factor;
+          if (handle === 'scale_z') newScale.scaleZ = dragState.startScale3D.scaleZ * factor;
         }
 
         const deltaX = newPos.x - dragState.startPos3D.x;
@@ -312,6 +345,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
         // update below multiplied both axes by 1.
         const scaleFactorX = newScale.scaleX / Math.max(0.001, dragState.startScale3D.scaleX);
         const scaleFactorY = newScale.scaleY / Math.max(0.001, dragState.startScale3D.scaleY);
+        const scaleFactorZ = newScale.scaleZ / Math.max(0.001, dragState.startScale3D.scaleZ);
 
         // Apply to all selected 3D nodes through ports' dual write path: props
         // with a lit stopwatch (or Auto-Keyframe on) keyframe at the playhead —
@@ -334,9 +368,13 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
             ...(isRotHandle && (handle === 'rot_z' || handle === 'rot_outer')
               ? { rotation: st.rot.rotZ + deltaRotZ }
               : {}),
-            ...(isScaleHandle
+            // Z scale only from ITS handle, and X/Y only from theirs: writing
+            // an unchanged scaleZ:1 (or scaleX) alongside would put a keyframe
+            // on a track the drag never touched under Auto-Keyframe.
+            ...(isScaleHandle && handle !== 'scale_z'
               ? { scaleX: st.scale.scaleX * scaleFactorX, scaleY: st.scale.scaleY * scaleFactorY }
               : {}),
+            ...(handle === 'scale_z' ? { scaleZ: st.scale.scaleZ * scaleFactorZ } : {}),
           },
         }));
         applyGizmo3DTransforms(updates);
@@ -405,7 +443,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
               id: node.id,
               pos: { x: tv.x, y: tv.y, z: tv.z },
               rot: { rotX: tv.rotationX, rotY: tv.rotationY, rotZ: tv.rotation },
-              scale: { scaleX: tv.scaleX, scaleY: tv.scaleY },
+              scale: { scaleX: tv.scaleX, scaleY: tv.scaleY, scaleZ: tv.scaleZ },
             };
           });
         if (initialNodeStates.length === 0) return;
@@ -419,7 +457,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
         };
         const first = initialNodeStates[0]!;
         const startRot = { ...first.rot };
-        const startScale = { scaleX: first.scale.scaleX, scaleY: first.scale.scaleY, scaleZ: 1 };
+        const startScale = { scaleX: first.scale.scaleX, scaleY: first.scale.scaleY, scaleZ: first.scale.scaleZ };
 
         // One anim/scene transaction for the whole gizmo drag (viewportGesture)
         // — applyGizmo3DTransforms is called per pointermove and would
