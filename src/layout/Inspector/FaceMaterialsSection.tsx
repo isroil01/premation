@@ -14,6 +14,7 @@
 import { ColorPicker } from '@components/ColorPicker';
 import { ValueField } from '@components/ValueField';
 import { Icon } from '@components/Icon';
+import { Button } from '@components/Button';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNode3D } from '@core/scene/threeD';
@@ -67,32 +68,28 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
         <span style={{ fontSize: 'var(--font-size-micro)', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
           Face Materials
         </span>
-        <button
-          type="button"
+        <Button
+          size="xs"
+          variant={pickMode ? 'primary' : 'ghost'}
           onClick={() => faceSel.setEnabled(!pickMode)}
           title={pickMode
             ? 'Stop picking faces on canvas — clicks select layers again'
             : 'Click a side of the object on canvas to select it'}
           aria-pressed={pickMode}
-          style={{
-            height: 18, padding: '0 6px', marginRight: 'auto', marginLeft: 8,
-            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
-            background: pickMode ? 'var(--color-accent)' : 'var(--color-surface-0)',
-            color: pickMode ? '#fff' : 'var(--color-text-tertiary)',
-            border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer',
-          }}
+          leftIcon={<Icon name="mouse-pointer" size="sm" />}
+          style={{ marginRight: 'auto', marginLeft: 8 }}
         >
-          <Icon name="mouse-pointer" size="sm" /> Pick
-        </button>
+          Pick
+        </Button>
         {anyOverride && (
-          <button
-            type="button"
+          <Button
+            size="xs"
+            variant="ghost"
             onClick={() => clearNodeFaceMaterials(nodeId)}
             title="Back to one colour for the whole object"
-            style={{ height: 18, padding: '0 6px', fontSize: 'var(--font-size-micro)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
           >
             Reset
-          </button>
+          </Button>
         )}
       </div>
 
@@ -125,14 +122,15 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
                 aria-label={`${label} face color`}
               />
               {custom ? (
-                <button
-                  type="button"
+                <Button
+                  size="xs"
+                  variant="ghost"
                   onClick={() => setNodeFaceMaterial(nodeId, kind, null)}
                   title={`Track the layer fill again instead of a fixed ${label.toLowerCase()} colour`}
-                  style={{ height: 18, width: 18, display: 'grid', placeItems: 'center', background: 'transparent', color: 'var(--color-text-tertiary)', border: 'none', cursor: 'pointer' }}
+                  aria-label={`Reset ${label.toLowerCase()} face colour`}
                 >
                   <Icon name="close" size="sm" />
-                </button>
+                </Button>
               ) : (
                 // Derived from the layer fill: the gain is what shades it.
                 <ValueField

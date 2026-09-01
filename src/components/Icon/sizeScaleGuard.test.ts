@@ -153,12 +153,18 @@ describe('type sizes come from the token scale', () => {
     const offenders: string[] = [];
     for (const file of files) {
       if (!/\.tsx$/.test(file)) continue;
-      for (const line of readFileSync(file, 'utf8').split('\n')) {
-        // Only inline STYLE objects. `fontSize` on a text layer is that layer's
-        // own property — content the user set, not chrome — and it has to stay
-        // a number that arithmetic can be done on.
-        if (!line.includes('style={{')) continue;
-        const m = /fontSize:\s*(\d+)(?![\d.])/.exec(line);
+      const src = readFileSync(file, 'utf8');
+      // Whole style OBJECTS, not single lines. Only inline STYLE objects —
+      // `fontSize` on a text layer is that layer's own property (content the
+      // user set, not chrome) and has to stay a number arithmetic can use.
+      // The old scan inspected a line only when it contained `style={{`, and
+      // every real offender sat on a CONTINUATION line of a multi-line style
+      // object — the check matched zero true positives while raw `fontSize:
+      // 10` chrome accumulated. Non-greedy to the first `}}` misses values
+      // after a nested object; that under-match still catches the whole
+      // offender class the audit found, where zero were caught before.
+      for (const block of src.matchAll(/style=\{\{[\s\S]*?\}\}/g)) {
+        const m = /fontSize:\s*(\d+)(?![\d.])/.exec(block[0]);
         if (m) offenders.push(`${rel(file)}: fontSize: ${m[1]}`);
       }
     }

@@ -8,6 +8,7 @@
 import { useMemo } from 'react';
 import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
+import { Button } from '@components/Button';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -139,13 +140,13 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <KfRow nodeId={nodeId} prop="poiX" label="Target X" value={num(poiXRaw, compWidth / 2)} unit="px" onStatic={(v) => setPoiX(v)} />
                 <KfRow nodeId={nodeId} prop="poiY" label="Target Y" value={num(poiYRaw, compHeight / 2)} unit="px" onStatic={(v) => setPoiY(v)} />
                 <KfRow nodeId={nodeId} prop="poiZ" label="Target Z" value={num(poiZRaw, 0)} unit="px" onStatic={(v) => setPoiZ(v)} />
-                <button
-                  type="button"
+                <Button
+                  size="xs"
+                  variant="ghost"
                   onClick={() => { setPoiX(undefined); setPoiY(undefined); setPoiZ(undefined); }}
-                  style={{ height: 20, padding: '0 8px', fontSize: 'var(--font-size-micro)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Remove target (aim by angle)
-                </button>
+                </Button>
               </>
             ) : (
               <>
@@ -154,13 +155,13 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                   it can never aim at a layer sitting at a different depth. A target
                   aims it in real 3D.
                 </p>
-                <button
-                  type="button"
+                <Button
+                  size="xs"
+                  variant="secondary"
                   onClick={() => { setPoiX(compWidth / 2); setPoiY(compHeight / 2); setPoiZ(0); }}
-                  style={{ height: 22, padding: '0 10px', fontSize: 'var(--font-size-micro)', fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Add target
-                </button>
+                </Button>
               </>
             )}
           </>

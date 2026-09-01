@@ -47,7 +47,7 @@ export function LayerSwitchesControls({ nodeId }: { nodeId: string }): JSX.Eleme
       {motionBlur && (
         <div className={styles.maskControls} style={{ padding: '8px', background: 'var(--color-surface-1)', borderRadius: 4, display: 'flex', flexDirection: 'column', gap: '8px', alignItems: 'stretch' }}>
           <label className={styles.blendLabel} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="checkbox" checked={mb.enabled} onChange={(e) => mb.setEnabled(e.currentTarget.checked)} />
+            <Switch checked={mb.enabled} onChange={(e) => mb.setEnabled(e.currentTarget.checked)} aria-label="Comp motion blur enabled" />
             Comp enabled
           </label>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
