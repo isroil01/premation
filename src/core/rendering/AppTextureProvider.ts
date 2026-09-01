@@ -1724,6 +1724,16 @@ export class AppTextureProvider implements TextureProvider {
     if (!(nativeW > 0) || !(nativeH > 0)) return;
     // Bake at the displayed size, never above native. See `ImageBakeSpec.targetScale`.
     const { w, h } = bakeSize(nativeW, nativeH, bake);
+    // Full change-signature BEFORE any pixel work. When the GPU already holds
+    // this exact bake (same frame, size, effect params, mask geometry, fields)
+    // the whole CPU chain — drawImage, deinterlace, matte, applyEffectChain —
+    // is skipped, not just the upload. This is what makes a paused repaint of
+    // a CPU-baked video layer free. The mask term is the GEOMETRY, not the old
+    // path count: an animated mask must re-bake even when its count is stable.
+    const fxSig = bake.effects.map((e) => `${e.type}:${e.enabled !== false ? 1 : 0}:${JSON.stringify(e.params ?? {})}`).join('|');
+    const maskSig = bake.mask && bake.mask.paths.length > 0 ? `:m${JSON.stringify(bake.mask)}` : '';
+    const frameSig = `vb:${timeSec.toFixed(4)}:${w}x${h}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}:f${fields ?? ''}`;
+    if (this.frameEntries.get(key)?.signature === frameSig) return;
     try {
       const canvas = this.ensureCanvas('work', w, h);
       const ctx = canvas.getContext('2d');
@@ -1769,8 +1779,6 @@ export class AppTextureProvider implements TextureProvider {
         bake.fillOpacity ?? 1,
         bake.mask,
       );
-      const fxSig = bake.effects.map((e) => `${e.type}:${e.enabled !== false ? 1 : 0}:${JSON.stringify(e.params ?? {})}`).join('|');
-      const maskSig = bake.mask ? `:m${bake.mask.paths.length}` : '';
       // Frame entries win over video entries in get(), so the baked canvas is
       // what the compositor samples while the video element stays alive for the
       // next seek. Copy out of the pooled work surface before upload — into a
@@ -1784,7 +1792,7 @@ export class AppTextureProvider implements TextureProvider {
       oc.globalCompositeOperation = 'copy';
       oc.drawImage(canvas, 0, 0);
       oc.globalCompositeOperation = 'source-over';
-      this.setFrame(key, out, `vb:${timeSec.toFixed(4)}:${w}x${h}:${fxSig}${maskSig}:fo${bake.fillOpacity ?? 1}:f${fields ?? ''}`);
+      this.setFrame(key, out, frameSig);
     } catch {
       // Bake failed — fall back to the raw element frame so the layer still
       // shows pixels (the bake path skipped the normal upload).

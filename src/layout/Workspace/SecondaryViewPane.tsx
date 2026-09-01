@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Gizmo3D } from '@motion/workspace';
 import { useActiveWorkspace } from '@stores/projectStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode } from '@stores/guidesStore';
 import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
@@ -59,7 +59,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const time = useActiveWorkspace()?.time ?? 0;
-  const sceneRev = useSceneRevision((s) => s.rev);
+  const sceneRev = useSceneRevisionFrame();
   const storeMode = useGuidesStore((s) => s.secondaryViewMode);
   const storeSetMode = useGuidesStore((s) => s.setSecondaryViewMode);
   // Explicit props win (4-up cells bound to a quadViewModes slot); otherwise
@@ -211,7 +211,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
           top: 6,
           right: 8,
           zIndex: 2,
-          fontSize: 11,
+          fontSize: 'var(--font-size-xs)',
           padding: '2px 4px',
           background: 'var(--color-panel, rgba(20,22,28,0.85))',
           color: 'var(--color-text, #ddd)',
@@ -233,7 +233,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
           top: 6,
           left: 8,
           zIndex: 2,
-          fontSize: 10,
+          fontSize: 'var(--font-size-micro)',
           letterSpacing: '0.04em',
           textTransform: 'uppercase',
           color: 'var(--color-text-muted, rgba(255,255,255,0.55))',

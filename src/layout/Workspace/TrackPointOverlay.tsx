@@ -24,7 +24,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useTrackerStore } from '@stores/trackerStore';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -62,7 +62,9 @@ function confidenceAlpha(confidence: number): number {
 }
 
 export function TrackPointOverlay(): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // Frame-coalesced — visual tracking only; the raw rev re-rendered per
+  // pointer event during drags and defeated the mapping memo below.
+  const sceneTick = useSceneRevisionFrame();
   const ids = useSelectionStore((s) => s.ids);
   const nodeId = useTrackerStore((s) => s.nodeId);
   const armed = useTrackerStore((s) => s.armed);
@@ -91,7 +93,7 @@ export function TrackPointOverlay(): JSX.Element | null {
   const mapping = useMemo(
     () => (active ? layerScreenMapping(active, time, comp, camera) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-    [active, time, comp.width, comp.height, useSceneRevision((s) => s.rev)],
+    [active, time, comp.width, comp.height, sceneTick],
   );
 
   const sourceToScreen = useMemo(() => {

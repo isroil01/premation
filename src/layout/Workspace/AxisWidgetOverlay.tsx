@@ -12,7 +12,7 @@ import React from 'react';
 import { useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore } from '@stores/guidesStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
@@ -31,7 +31,7 @@ const AXIS_PX = 16;
 const LABEL_PX = 21;
 
 export const AxisWidgetOverlay: React.FC = () => {
-  useSceneRevision((s) => s.rev);
+  useSceneRevisionFrame();
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
   // Scoped like the renderer's, so the overlay never draws a different camera

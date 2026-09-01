@@ -55,7 +55,10 @@
 .feelButton {
   flex: 1;
   min-width: 0;
-  padding: 4px 6px;
+  /* On the control-height scale, not height-by-padding, so the segments line
+     up with every neighbouring control instead of landing between sizes. */
+  height: var(--control-height-xs, 20px);
+  padding: 0 6px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -67,6 +70,11 @@
 
 .feelButton:hover {
   color: var(--color-text-primary);
+}
+
+.feelButton:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus-ring);
 }
 
 .feelButton[data-active='true'] {
@@ -104,6 +112,16 @@
 .action:hover:not(:disabled) {
   background: var(--color-surface-3);
   border-color: var(--color-border);
+}
+
+.action:active:not(:disabled) {
+  background: var(--color-surface-1);
+}
+
+.action:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
 }
 
 .action:disabled {

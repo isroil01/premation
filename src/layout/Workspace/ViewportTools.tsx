@@ -39,7 +39,8 @@ import styles from './ViewportTools.module.css';
 
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
-import { useSceneRevision, bumpScene } from '@stores/sceneStore';
+import { bumpScene } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useUIStore } from '@stores/uiStore';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { CAMERA_VIEW_LABEL } from '@layout/TopNav/ViewControls';
@@ -116,7 +117,7 @@ export function ViewportTools(): JSX.Element {
 
   // Scene mutations (3D switches, camera/light inserts) must refresh the
   // availability checks below.
-  useSceneRevision((s) => s.rev);
+  useSceneRevisionFrame();
 
   // Re-render when selection or animation changes so the contextual motion
   // buttons appear/disappear correctly.

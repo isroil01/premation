@@ -63,6 +63,46 @@ export function cubicValueAt(v0: number, v1: number, v2: number, v3: number, u: 
 }
 
 /**
+ * Last-served segment index per keyframe ARRAY (not per track object — every
+ * mutation path builds a fresh array, so a stale cursor can never outlive the
+ * data it indexed). Playback and export sample monotonically, so the next query
+ * almost always lands in the same or the following segment; the cursor turns
+ * those into O(1) and the binary search below only runs on real jumps.
+ */
+const segmentCursor = new WeakMap<readonly Keyframe[], number>();
+
+/**
+ * Smallest segment index i (0..n-2) with kfs[i].t <= t <= kfs[i+1].t. The
+ * caller guarantees first.t < t < last.t. "Smallest" matches what the old
+ * linear scan returned, so degenerate duplicate-time keyframes keep resolving
+ * to the same segment they always did.
+ */
+function segmentIndexFor(kfs: readonly Keyframe[], t: number): number {
+  const hi0 = kfs.length - 2;
+  const cached = segmentCursor.get(kfs);
+  if (cached !== undefined && cached >= 0 && cached <= hi0) {
+    if (kfs[cached]!.t <= t && t <= kfs[cached + 1]!.t && (cached === 0 || t > kfs[cached]!.t)) {
+      return cached;
+    }
+    const next = cached + 1;
+    if (next <= hi0 && kfs[next]!.t < t && t <= kfs[next + 1]!.t) {
+      segmentCursor.set(kfs, next);
+      return next;
+    }
+  }
+  // Binary search: smallest i with t <= kfs[i+1].t.
+  let lo = 0;
+  let hi = hi0;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (kfs[mid + 1]!.t >= t) hi = mid;
+    else lo = mid + 1;
+  }
+  segmentCursor.set(kfs, lo);
+  return lo;
+}
+
+/**
  * Sample a property track at time `t`.
  * - Before the first / after the last keyframe: clamps to the endpoint value.
  * - Between keyframes: interpolates with the segment's easing. When the segment
@@ -79,34 +119,30 @@ export function sampleTrack(track: PropertyTrack, t: number): number | undefined
   if (t <= first.t) return first.value;
   if (t >= last.t) return last.value;
 
-  for (let i = 0; i < kfs.length - 1; i++) {
-    const a = kfs[i]!;
-    const b = kfs[i + 1]!;
-    if (t >= a.t && t <= b.t) {
-      const kind = a.easing ?? 'linear';
-      // Hold/step holds the start value UP TO — but not AT — the next keyframe:
-      // at exactly b.t the arriving keyframe's authored value wins, the same as
-      // every other easing (which reaches b.value at local=1). Without the
-      // `t < b.t` guard a held keyframe that lands on a frame showed its target
-      // one frame late — the classic off-by-one at an interior keyframe (the
-      // last-keyframe clamp above hid it for the final key only).
-      if (kind === 'step' || kind === 'hold') return t < b.t ? a.value : b.value;
-      const span = b.t - a.t;
-      const local = span <= 0 ? 0 : (t - a.t) / span;
-      const eased =
-        (kind === 'bezier' || kind === 'autoBezier' || kind === 'continuousBezier') && a.bezier
-          ? cubicBezierEase(a.bezier, local)
-          : ease(kind, local);
-      if (a.so !== undefined || b.si !== undefined) {
-        const third = (b.value - a.value) / 3; // linear default for the missing side
-        const c1 = a.value + (a.so ?? third);
-        const c2 = b.value + (b.si ?? -third);
-        return cubicValueAt(a.value, c1, c2, b.value, eased);
-      }
-      return a.value + (b.value - a.value) * eased;
-    }
+  const i = segmentIndexFor(kfs, t);
+  const a = kfs[i]!;
+  const b = kfs[i + 1]!;
+  const kind = a.easing ?? 'linear';
+  // Hold/step holds the start value UP TO — but not AT — the next keyframe:
+  // at exactly b.t the arriving keyframe's authored value wins, the same as
+  // every other easing (which reaches b.value at local=1). Without the
+  // `t < b.t` guard a held keyframe that lands on a frame showed its target
+  // one frame late — the classic off-by-one at an interior keyframe (the
+  // last-keyframe clamp above hid it for the final key only).
+  if (kind === 'step' || kind === 'hold') return t < b.t ? a.value : b.value;
+  const span = b.t - a.t;
+  const local = span <= 0 ? 0 : (t - a.t) / span;
+  const eased =
+    (kind === 'bezier' || kind === 'autoBezier' || kind === 'continuousBezier') && a.bezier
+      ? cubicBezierEase(a.bezier, local)
+      : ease(kind, local);
+  if (a.so !== undefined || b.si !== undefined) {
+    const third = (b.value - a.value) / 3; // linear default for the missing side
+    const c1 = a.value + (a.so ?? third);
+    const c2 = b.value + (b.si ?? -third);
+    return cubicValueAt(a.value, c1, c2, b.value, eased);
   }
-  return last.value;
+  return a.value + (b.value - a.value) * eased;
 }
 
 /**
@@ -164,6 +200,92 @@ export function applyRoving(kfs: Keyframe[]): Keyframe[] {
     i = j;
   }
   return out;
+}
+
+/**
+ * Reposition roving keyframes on a PAIRED x/y track for constant speed along
+ * the 2D SPATIAL path — After Effects' actual "Rove Across Time". Per-track
+ * `applyRoving` roves each axis by its own |value| distance, which is only
+ * constant-speed while the path is axis-aligned: on a curved path, x and y
+ * roved independently disagree about where the keyframe belongs and the dot
+ * speeds up through every bend. Here each segment's true arc length is
+ * measured by sampling the 2D trajectory (easing + spatial tangents included —
+ * the traced point set is retime-invariant, only speed along it changes), and
+ * both axes are retimed together from the cumulative arc.
+ *
+ * Returns null when the two tracks don't share an aligned grid (same count,
+ * same times, same roving flags) — the caller falls back to per-track roving,
+ * which is the only meaningful reading of a half-roved pair. Pure.
+ */
+export function applyRovingSpatial(
+  xKfs: Keyframe[],
+  yKfs: Keyframe[],
+): { x: Keyframe[]; y: Keyframe[] } | null {
+  if (xKfs.length !== yKfs.length || xKfs.length < 3) return null;
+  for (let i = 0; i < xKfs.length; i++) {
+    if (xKfs[i]!.t !== yKfs[i]!.t) return null;
+    if ((xKfs[i]!.roving === true) !== (yKfs[i]!.roving === true)) return null;
+  }
+  const xs = xKfs.map((k) => ({ ...k }));
+  const ys = yKfs.map((k) => ({ ...k }));
+
+  /** 2D arc length of one keyframe-to-keyframe segment, by dense sampling. */
+  const segArc = (i: number): number => {
+    const tx: PropertyTrack = { nodeId: '', prop: 'x', keyframes: [xs[i]!, xs[i + 1]!] };
+    const ty: PropertyTrack = { nodeId: '', prop: 'y', keyframes: [ys[i]!, ys[i + 1]!] };
+    const t0 = xs[i]!.t;
+    const t1 = xs[i + 1]!.t;
+    // A zero-width segment still has geometric length if values jump; the
+    // straight-line distance is exactly its arc.
+    if (!(t1 > t0)) {
+      return Math.hypot(xs[i + 1]!.value - xs[i]!.value, ys[i + 1]!.value - ys[i]!.value);
+    }
+    const N = 64;
+    let len = 0;
+    let px = 0;
+    let py = 0;
+    for (let s = 0; s <= N; s++) {
+      const tt = t0 + ((t1 - t0) * s) / N;
+      const vx = sampleTrack(tx, tt)!;
+      const vy = sampleTrack(ty, tt)!;
+      if (s > 0) len += Math.hypot(vx - px, vy - py);
+      px = vx;
+      py = vy;
+    }
+    return len;
+  };
+
+  let i = 0;
+  while (i < xs.length) {
+    if (!xs[i]!.roving) { i++; continue; }
+    const startAnchor = i - 1;
+    let j = i;
+    while (j < xs.length && xs[j]!.roving) j++;
+    const endAnchor = j;
+    if (startAnchor < 0 || endAnchor >= xs.length) { i = j; continue; } // unbounded run
+    // Cumulative arc across the run's segments, measured BEFORE any retiming
+    // in this run mutates segment spans (values never change, so segment
+    // geometry is stable; only the sampling parameter needs the original
+    // spans, and segArc reads times off the copies — so measure first).
+    let total = 0;
+    const cum: number[] = [0];
+    for (let k = startAnchor; k < endAnchor; k++) {
+      total += segArc(k);
+      cum.push(total);
+    }
+    const a = xs[startAnchor]!;
+    const b = xs[endAnchor]!;
+    const tSpan = b.t - a.t;
+    const runLen = endAnchor - i;
+    for (let k = 0; k < runLen; k++) {
+      const frac = total > 0 ? cum[k + 1]! / total : (k + 1) / (runLen + 1);
+      const nt = a.t + frac * tSpan;
+      xs[i + k]!.t = nt;
+      ys[i + k]!.t = nt;
+    }
+    i = j;
+  }
+  return { x: xs, y: ys };
 }
 
 /**

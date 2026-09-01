@@ -23,19 +23,80 @@ import { layerSubpaths } from './raster/subpaths';
  * Bump when the hashing scheme OR the rasterizer's pixel output semantics
  * change, so textures cached under a prior scheme are never reused across the
  * change. Folded into the digest input.
+ * v3: structural hasher (float bits + word-mixed FNV) replaced
+ * JSON.stringify + per-character FNV. The old scheme built a fresh multi-KB
+ * string per layer per frame — on a 600-layer comp the hash alone cost as much
+ * as the whole rest of buildSnapshot (measured ~14.5µs/layer, half of it the
+ * charCodeAt loop over stringified float text).
  */
-export const CONTENT_HASH_VERSION = 2;
+export const CONTENT_HASH_VERSION = 3;
 
-/** FNV-1a 32-bit — cheap, deterministic, no crypto. (Mirrors the renderer's
- *  `hashString`; kept local so app-side hashing doesn't depend on a renderer
- *  internal.) */
-function fnv1a(s: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
+// ── Structural FNV-1a (word-granular) ────────────────────────────────
+// Same determinism contract as the old string FNV, an order of magnitude
+// cheaper: numbers hash as their two Float64 bit-words (2 mixes instead of
+// ~20 charCodeAt rounds of decimal text), and no intermediate string is ever
+// built. Type tags keep 1, "1" and [1] distinct. Object keys hash too, so
+// {a:1} ≠ {b:1}. Key ORDER matters exactly as it did for JSON.stringify —
+// contentOf constructs every object with a fixed literal order, which is the
+// same assumption the JSON scheme already leaned on.
+
+const f64Scratch = new Float64Array(1);
+const u32Scratch = new Uint32Array(f64Scratch.buffer);
+
+const TAG_NULL = 0x6e756c6c; // 'null'
+const TAG_UNDEF = 0x756e6465;
+const TAG_FALSE = 0x66616c73;
+const TAG_TRUE = 0x74727565;
+const TAG_NUM = 0x6e756d62;
+const TAG_STR = 0x73747200;
+const TAG_ARR = 0x61727200;
+const TAG_OBJ = 0x6f626a00;
+const TAG_END = 0x656e6400;
+
+// The mix is written inline everywhere (`h = Math.imul(h ^ w, 0x01000193)`)
+// rather than through a helper: this leaf runs hundreds of times per layer per
+// frame and the call itself was the measurable cost.
+function hashUnknown(h: number, v: unknown): number {
+  if (v === null) return Math.imul(h ^ TAG_NULL, 0x01000193);
+  switch (typeof v) {
+    case 'undefined':
+      return Math.imul(h ^ TAG_UNDEF, 0x01000193);
+    case 'boolean':
+      return Math.imul(h ^ (v ? TAG_TRUE : TAG_FALSE), 0x01000193);
+    case 'number':
+      f64Scratch[0] = v;
+      h = Math.imul(h ^ TAG_NUM, 0x01000193);
+      h = Math.imul(h ^ u32Scratch[0]!, 0x01000193);
+      return Math.imul(h ^ u32Scratch[1]!, 0x01000193);
+    case 'string': {
+      h = Math.imul(h ^ TAG_STR, 0x01000193);
+      h = Math.imul(h ^ v.length, 0x01000193);
+      for (let i = 0; i < v.length; i++) h = Math.imul(h ^ v.charCodeAt(i), 0x01000193);
+      return h;
+    }
+    case 'object': {
+      if (Array.isArray(v)) {
+        h = Math.imul(h ^ TAG_ARR, 0x01000193);
+        h = Math.imul(h ^ v.length, 0x01000193);
+        for (let i = 0; i < v.length; i++) h = hashUnknown(h, v[i]);
+        return Math.imul(h ^ TAG_END, 0x01000193);
+      }
+      h = Math.imul(h ^ TAG_OBJ, 0x01000193);
+      const o = v as Record<string, unknown>;
+      for (const k in o) {
+        const val = o[k];
+        // JSON.stringify dropped undefined-valued keys; keep that shape so
+        // optional fields present-but-undefined hash like absent ones.
+        if (val === undefined) continue;
+        h = Math.imul(h ^ TAG_STR, 0x01000193);
+        for (let i = 0; i < k.length; i++) h = Math.imul(h ^ k.charCodeAt(i), 0x01000193);
+        h = hashUnknown(h, val);
+      }
+      return Math.imul(h ^ TAG_END, 0x01000193);
+    }
+    default:
+      return Math.imul(h ^ TAG_UNDEF, 0x01000193);
   }
-  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 /** The content-only projection of a layer, in a fixed key order (deterministic
@@ -101,5 +162,6 @@ function contentOf(layer: RenderLayer): unknown {
 
 /** Stable content digest for a fully-resolved vector RenderLayer. */
 export function contentHashOf(layer: RenderLayer): string {
-  return fnv1a(JSON.stringify(contentOf(layer)));
+  const h = hashUnknown(0x811c9dc5, contentOf(layer));
+  return (h >>> 0).toString(16).padStart(8, '0');
 }

@@ -22,7 +22,7 @@ function Warning({ text }: { text: string }): JSX.Element {
         display: 'flex',
         gap: 6,
         alignItems: 'flex-start',
-        fontSize: 10,
+        fontSize: 'var(--font-size-micro)',
         lineHeight: 1.45,
         color: '#ffb703',
         background: 'rgba(255, 183, 3, 0.08)',
@@ -43,7 +43,7 @@ function Row({ label, value }: { label: string; value: string }): JSX.Element {
       <span className={styles.popoverLabel}>{label}</span>
       <span
         style={{
-          fontSize: 11,
+          fontSize: 'var(--font-size-xs)',
           color: 'var(--color-text-secondary)',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -90,7 +90,7 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
       <p
         style={{
           margin: '12px 0 8px',
-          fontSize: 10,
+          fontSize: 'var(--font-size-micro)',
           lineHeight: 1.5,
           color: 'var(--color-text-tertiary)',
         }}
@@ -108,7 +108,7 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
           background: 'var(--color-surface-3)',
           border: '1px solid var(--color-border)',
           color: 'var(--color-text-primary)',
-          fontSize: 11,
+          fontSize: 'var(--font-size-xs)',
           padding: '6px',
           borderRadius: 4,
           cursor: 'pointer',
@@ -141,7 +141,7 @@ export function RevertSvgRow({ onRevert }: { onRevert: () => void }): JSX.Elemen
           background: 'var(--color-surface-3)',
           border: '1px solid var(--color-border)',
           color: 'var(--color-text-primary)',
-          fontSize: 11,
+          fontSize: 'var(--font-size-xs)',
           padding: '6px',
           borderRadius: 4,
           cursor: 'pointer',

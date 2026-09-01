@@ -239,7 +239,14 @@ export function findNavTarget(): NavTarget | null {
     return sceneHasAny3D() ? { kind: 'ortho', view: mode as OrthoView } : null;
   }
   const nav = findCameraNav();
-  return nav ? { kind: 'scene', ...nav } : null;
+  if (nav) return { kind: 'scene', ...nav };
+  // No camera layer: the default view still navigates. AE's own default view
+  // promotes to a custom view on the first orbit rather than demanding a
+  // camera, and so does this — the same promotion an orbited axis view makes,
+  // seeded from the straight-on 'front' angles so the scene doesn't jump.
+  // (The "add a Camera layer" toast now only appears when there is no 3D
+  // content to move around at all.)
+  return sceneHasAny3D() ? { kind: 'ortho', view: 'front' } : null;
 }
 
 function readView(viewId: CustomViewId) {

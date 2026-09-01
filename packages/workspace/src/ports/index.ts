@@ -195,6 +195,12 @@ export interface WorkspaceOverlay {
   hoveredCorners: Corners | null;
   /** Bezier path currently being drawn by a tool (e.g. PenTool). Screen-space. */
   pendingPath?: readonly BezierPoint[];
+  /**
+   * Numeric readout for the drag in progress — Δx/Δy for a move, W×H or
+   * scale % for a resize, degrees for a rotate. Anchored at the pointer in
+   * screen px; the host paints it as a measurement badge.
+   */
+  dragHud?: { anchor: Vec2; lines: readonly string[] } | null;
 }
 
 export interface OverlayHandle {
@@ -202,6 +208,8 @@ export interface OverlayHandle {
   position: Vec2;
   /** 'resize' | 'rotate' = bounding box handle, 'point' = vertex, 'tangent-in' | 'tangent-out' = bezier handle, 'anchor' = pan-behind pivot */
   kind: 'resize' | 'rotate' | 'point' | 'tangent-in' | 'tangent-out' | 'anchor';
+  /** Under the cursor right now — the painter lights it up. */
+  hovered?: boolean;
 }
 
 export interface OverlayGuide {

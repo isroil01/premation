@@ -340,7 +340,7 @@ export function TextSection({ nodeId }: { nodeId: string }): JSX.Element | null 
             className={styles.presetChip}
             style={{
               padding: '2px 5px',
-              fontSize: 10,
+              fontSize: 'var(--font-size-micro)',
               color: sourceAnimated ? 'var(--color-primary, #4c8dff)' : undefined,
             }}
             title={sourceAnimated

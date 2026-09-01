@@ -9,6 +9,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { Application } from '@core/application/Application';
+import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
   applyPreferencesToDocument,
   usePreferenceStore,
@@ -106,6 +107,8 @@ import {
   timeReverseKeyframes,
   easyEaseAll,
   sequenceLayers,
+  applySmoother,
+  applyWiggler,
 } from '@core/animation/keyframeAssistants';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
@@ -676,6 +679,78 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
         if (!id) return;
         if (easyEaseAll(id)) notify('Eased all keyframes', 'success');
         else notify('Layer has no keyframes yet', 'warning');
+      },
+    },
+    {
+      /**
+       * AE Animation ▸ Keyframe Assistant ▸ The Smoother. Aimed at baked
+       * tracks (motion sketch, tracking, audio keyframes, expression bakes):
+       * keeps the fewest keyframes that stay within the tolerance and smooths
+       * their tangents.
+       */
+      id: asCommandId('animation.smoother'),
+      label: 'The Smoother…',
+      icon: 'track',
+      enabled: () => {
+        const id = useSelectionStore.getState().ids[0];
+        return !!id && defaultAnimation.animatedProps(id).some(
+          (p) => (defaultAnimation.getTrackKeyframes(id, p)?.length ?? 0) >= 3,
+        );
+      },
+      execute: async () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        const raw = await customPrompt(
+          'The Smoother',
+          'Replace dense keyframes with the fewest that keep each curve within this tolerance (in the property’s own units — px for position), then smooth the survivors’ tangents.',
+          '5',
+          { placeholder: 'e.g. 5', confirmLabel: 'Smooth' },
+        );
+        if (raw === null) return;
+        const tolerance = Number(raw);
+        if (!Number.isFinite(tolerance) || tolerance <= 0) {
+          notify('Tolerance must be a number above 0', 'warning');
+          return;
+        }
+        const r = applySmoother(id, tolerance);
+        if (!r) { notify('Needs a track with 3+ keyframes', 'warning'); return; }
+        notify(`Smoothed ${r.tracks} track${r.tracks === 1 ? '' : 's'}: ${r.before} → ${r.after} keyframes`, 'success');
+      },
+    },
+    {
+      /**
+       * AE Animation ▸ Keyframe Assistant ▸ The Wiggler, baked as editable
+       * keyframes on position (x/y get independent seeds so the wobble is 2D).
+       * The `wiggle()` expression stays the live alternative; this one leaves
+       * keys you can drag.
+       */
+      id: asCommandId('animation.wiggler'),
+      label: 'The Wiggler…',
+      icon: 'track',
+      enabled: () => {
+        const id = useSelectionStore.getState().ids[0];
+        return !!id && (['x', 'y'] as const).some(
+          (p) => (defaultAnimation.getTrackKeyframes(id, p)?.length ?? 0) >= 2,
+        );
+      },
+      execute: async () => {
+        const id = useSelectionStore.getState().ids[0];
+        if (!id) return;
+        const raw = await customPrompt(
+          'The Wiggler',
+          'Bake a deterministic wobble into the animated position: wobbles per second, then peak deviation in px — e.g. "5, 25". Authored keyframes keep their times and values.',
+          '5, 25',
+          { placeholder: 'frequency, amplitude', confirmLabel: 'Wiggle' },
+        );
+        if (raw === null) return;
+        const [f, a] = raw.split(/[,\s]+/).filter(Boolean).map(Number);
+        if (!Number.isFinite(f) || !Number.isFinite(a) || f! <= 0 || a === 0) {
+          notify('Enter frequency (per second, above 0) and amplitude (px, not 0)', 'warning');
+          return;
+        }
+        const r = applyWiggler(id, { frequency: f!, amplitude: a! });
+        if (!r) { notify('Animate position first (2+ keyframes on x or y)', 'warning'); return; }
+        notify(`Wiggled ${r.tracks === 2 ? 'x and y' : 'position'} — ${r.added} keyframes added`, 'success');
       },
     },
     {
@@ -2196,6 +2271,19 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true,
             isChecked: () => useGuidesStore.getState().rulers,
             execute: () => useGuidesStore.getState().toggleRulers(),
+          });
+          registry.register({
+            // WorkspaceController.fitSelection existed with ZERO consumers —
+            // the port comment even said "retained for fit-to-selection".
+            // Shift+F, since bare letters are tool shortcuts in the viewport
+            // and AE itself never shipped this (its users lobby for it).
+            id: asCommandId('view.fitSelection'), label: 'Fit Selection in View', icon: 'frame',
+            shortcut: { key: 'f', shift: true },
+            enabled: () => useSelectionStore.getState().ids.length > 0,
+            execute: () => {
+              getWorkspaceController().fitSelection();
+              getWorkspaceController().requestRender();
+            },
           });
           registry.register({
             // The ViewportTools tooltip has advertised this chord all along —

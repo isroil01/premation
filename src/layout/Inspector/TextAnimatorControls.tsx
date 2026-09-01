@@ -485,7 +485,7 @@ function ExpressionSelectorBody({
             width: '100%',
             resize: 'vertical',
             fontFamily: 'var(--font-mono, monospace)',
-            fontSize: 11,
+            fontSize: 'var(--font-size-xs)',
             padding: 6,
             borderRadius: 'var(--radius-sm)',
             border: '1px solid var(--color-border)',

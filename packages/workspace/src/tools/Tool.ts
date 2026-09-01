@@ -120,6 +120,17 @@ export interface Tool {
   /** Optional: allow the tool to yield its own overlay handles. */
   getHandles?(ctx: ToolContext): readonly OverlayHandle[];
 
+  /**
+   * Optional: a live numeric readout for the drag in progress — Δx/Δy for a
+   * move, W×H or scale % for a resize, degrees for a rotate. Painted by the
+   * host as a badge beside the pointer (the 2D twin of the 3D gizmo's
+   * measurement HUD). Null when no drag is measuring anything.
+   */
+  getHud?(ctx: ToolContext): { anchorWorld: Vec2; lines: readonly string[] } | null;
+
+  /** Optional: id of the overlay handle under the cursor, for hover styling. */
+  hoveredHandleId?(): string | null;
+
   onPointerDown?(e: ToolPointerEvent, ctx: ToolContext): void;
   onPointerMove?(e: ToolPointerEvent, ctx: ToolContext): void;
   onPointerUp?(e: ToolPointerEvent, ctx: ToolContext): void;

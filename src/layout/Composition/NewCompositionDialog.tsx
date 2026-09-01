@@ -116,7 +116,7 @@ function NewComposition({ close }: { close: () => void }): JSX.Element {
             background: '#1c1c1f',
             border: '1px solid #333',
             color: '#fff',
-            fontSize: 12,
+            fontSize: 'var(--font-size-sm)',
             padding: '6px 8px',
             borderRadius: 4,
             cursor: 'pointer',

@@ -217,7 +217,11 @@ export class WorkspaceController {
 
   /** Frame the current selection (falls back to fit-all). */
   fitSelection(): void {
-    this.ws.zoomToSelection(64, 260);
+    // Duration 0 — INSTANT, like fitComposition. The animated variant needs
+    // someone to drive `ws.tick(dt)` per frame and nothing in the editor
+    // does, so a non-zero duration here parks the camera mid-flight forever
+    // (the reason this method sat unused: it looked broken when tried).
+    this.ws.zoomToSelection(64, 0);
   }
 
   // ── Per-view framing ─────────────────────────────────────────────

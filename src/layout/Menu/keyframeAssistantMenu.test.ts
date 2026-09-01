@@ -9,6 +9,8 @@ const ASSISTANTS: ReadonlyArray<string> = [
   'animation.easyEaseAll',
   'animation.timeReverseKeyframes',
   'animation.exponentialScale',
+  'animation.smoother',
+  'animation.wiggler',
   'animation.sequenceLayerBars',
   'animation.sequenceLayers',
   'animation.motionSketch',

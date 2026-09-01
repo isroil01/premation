@@ -20,7 +20,7 @@ export type {
 // ── Interpolation / sampling ──────────────────────────────────────
 export {
   cubicBezierEase, ease, sampleTrack, upsertKeyframe,
-  sampleSpeed, applyRoving,
+  sampleSpeed, applyRoving, applyRovingSpatial,
   cubicValueAt, smoothTrackTangents, clearTrackTangents,
   EASY_EASE_BEZIER, EASY_EASE_OUT_BEZIER, EASY_EASE_IN_BEZIER,
 } from './interpolate';

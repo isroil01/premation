@@ -63,7 +63,7 @@ describe('sampleTransform3DAtPlayhead', () => {
   it('returns base transform props when nothing is animated', () => {
     const tv = sampleTransform3DAtPlayhead(defaultSceneGraph.getNode(NODE)!);
     expect(tv).toEqual({
-      x: 100, y: 200, z: 0, rotationX: 0, rotationY: 0, rotation: 0, scaleX: 1, scaleY: 1,
+      x: 100, y: 200, z: 0, rotationX: 0, rotationY: 0, rotation: 0, scaleX: 1, scaleY: 1, scaleZ: 1,
     });
   });
 

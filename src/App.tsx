@@ -1451,7 +1451,7 @@ function EditorShellInner(): JSX.Element {
                     <Icon name="search" size="sm" />
                     Search
                     <kbd style={{
-                      fontFamily: 'var(--font-family-mono)', fontSize: 10,
+                      fontFamily: 'var(--font-family-mono)', fontSize: 'var(--font-size-micro)',
                       padding: '0 4px', borderRadius: 4, background: 'var(--color-surface-3)',
                       color: 'var(--color-text-secondary)',
                     }}>⌘⇧P</kbd>

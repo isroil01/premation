@@ -17,6 +17,7 @@ import { flattenComposition } from '@core/scene/sceneDerive';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
 import { ValueField } from '@components/ValueField';
+import { Button } from '@components/Button';
 import styles from './TransformSection.module.css';
 import { KeyframeRow } from './KeyframeRow';
 
@@ -184,8 +185,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
             return (
               <>
                 <div className={styles.popoverRow}>
-                  <button
-                    type="button"
+                  <Button
+                    size="xs"
+                    variant="secondary"
                     onClick={() => {
                       // Enable a two-node camera aimed at the comp centre; from
                       // here the camera always LOOKS AT this target.
@@ -193,10 +195,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
                       setPoiY(compHeight / 2);
                       setPoiZ(0);
                     }}
-                    style={{ height: 22, padding: '0 10px', fontSize: 'var(--font-size-micro)', fontWeight: 600, background: 'var(--color-surface-0)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                   >
                     Enable target (two-node camera)
-                  </button>
+                  </Button>
                 </div>
                 <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
                   A two-node camera always aims at a Point of Interest — move the
@@ -212,18 +213,18 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
               <KeyframeRow nodeId={nodeId} prop="poiY" label="Target Y" value={typeof poiYRaw === 'number' ? poiYRaw : compHeight / 2} unit="px" onStatic={(v) => setPoiY(v)} />
               <KeyframeRow nodeId={nodeId} prop="poiZ" label="Target Z" value={typeof poiZRaw === 'number' ? poiZRaw : 0} unit="px" onStatic={(v) => setPoiZ(v)} />
               <div className={styles.popoverRow} style={{ marginTop: 2 }}>
-                <button
-                  type="button"
+                <Button
+                  size="xs"
+                  variant="ghost"
                   onClick={() => {
                     // Back to a one-node (free) camera: drop the POI props.
                     setPoiX(undefined);
                     setPoiY(undefined);
                     setPoiZ(undefined);
                   }}
-                  style={{ height: 20, padding: '0 8px', fontSize: 'var(--font-size-micro)', background: 'var(--color-surface-0)', color: 'var(--color-text-tertiary)', border: '1px solid var(--color-border-subtle)', borderRadius: 4, cursor: 'pointer' }}
                 >
                   Remove target (free camera)
-                </button>
+                </Button>
               </div>
             </>
           );
@@ -294,8 +295,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
         <div className={styles.popoverRow} style={{ marginTop: 4 }}>
           <span className={styles.popoverLabel}>View</span>
-          <button
-            type="button"
+          <Button
+            size="xs"
+            variant="secondary"
             onClick={() => {
               // Back to the default framing: comp centre, pulled back by the
               // focal length so the comp plane renders exactly 1:1, no orbit.
@@ -305,20 +307,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
               setYaw(0);
               setPitch(0);
             }}
-            style={{
-              height: 22,
-              padding: '0 10px',
-              fontSize: 10,
-              fontWeight: 600,
-              background: 'var(--color-surface-0)',
-              color: 'var(--color-text-secondary)',
-              border: '1px solid var(--color-border-subtle)',
-              borderRadius: 4,
-              cursor: 'pointer',
-            }}
           >
             Reset camera
-          </button>
+          </Button>
         </div>
 
         <div className={styles.subhead} style={{ marginTop: 8 }}>3D layers</div>
@@ -332,24 +323,9 @@ export function CameraSection({ nodeId }: { nodeId: string }): JSX.Element | nul
               : `${threeDCount} of ${contentLayers.length} layers are 3D`}
           </span>
           {threeDCount < contentLayers.length && contentLayers.length > 0 && (
-            <button
-              type="button"
-              onClick={enableAll3D}
-              style={{
-                height: 22,
-                padding: '0 10px',
-                fontSize: 10,
-                fontWeight: 600,
-                background: 'var(--color-primary-subtle)',
-                color: 'var(--color-primary)',
-                border: '1px solid var(--color-primary)',
-                borderRadius: 4,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
+            <Button size="xs" variant="primary" onClick={enableAll3D} style={{ whiteSpace: 'nowrap' }}>
               Make all 3D
-            </button>
+            </Button>
           )}
         </div>
         <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>

@@ -5,6 +5,11 @@
  * the NodeInspector below renders keyframeable rows for them and the renderer
  * projects the layer through the composition camera (perspective scale +
  * parallax + tilt). Turning it off removes them and the layer is flat 2D again.
+ *
+ * Material rows are label + styled slider + scrubbable ValueField. The old
+ * shape — a bare <input type="range"> with NO numeric readout — meant seven of
+ * the eight material properties could not be seen or typed at all, which was
+ * the single largest control gap against AE's Material Options.
  */
 
 import { Switch } from '@components/Switch';
@@ -15,7 +20,8 @@ import { is3DEnabled, set3DEnabled, canBe3D, readNode3D, setNodeExtrusionDepth, 
 import { hasTextComponent } from '@core/text/textAnimators';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { useUIStore } from '@stores/uiStore';
-import styles from './ParentControl.module.css';
+import parentStyles from './ParentControl.module.css';
+import s from './ThreeDControl.module.css';
 import { FaceMaterialsSection } from './FaceMaterialsSection';
 
 import {
@@ -29,29 +35,49 @@ import {
   MATERIAL_PCT_DEFAULTS,
 } from '@core/scene/material';
 
-/** One 0–100 material response row — the six of them share this shape. */
-function MaterialSlider({
+/**
+ * One material response row: label, slider, and a scrubbable/typable number.
+ * Slider and field write through the same handler, so they can never disagree.
+ */
+function MaterialRow({
   label,
   value,
+  min = 0,
+  max = 100,
+  unit = '%',
   onChange,
 }: {
   label: string;
   value: number;
+  min?: number;
+  max?: number;
+  unit?: string;
   onChange: (v: number) => void;
 }): JSX.Element {
   return (
-    <div className={styles.row}>
-      <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>{label}</span>
+    <div className={s.row}>
+      <span className={s.label}>{label}</span>
       <input
         type="range"
-        min={0}
-        max={100}
+        className={s.slider}
+        min={min}
+        max={max}
         step={1}
         value={value}
         onChange={(e) => onChange(Number(e.currentTarget.value))}
-        aria-label={label}
-        style={{ width: 90 }}
+        aria-label={`${label} slider`}
       />
+      <span className={s.value}>
+        <ValueField
+          value={value}
+          min={min}
+          max={max}
+          step={1}
+          unit={unit}
+          onChange={onChange}
+          aria-label={label}
+        />
+      </span>
     </div>
   );
 }
@@ -73,9 +99,9 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
   const isTextLayer = hasTextComponent(node);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-      <div className={styles.row}>
-        <span className={styles.label}>3D Layer</span>
+    <div className={s.stack}>
+      <div className={parentStyles.row}>
+        <span className={parentStyles.label}>3D Layer</span>
         <Switch
           checked={on}
           onChange={(e) => {
@@ -92,13 +118,11 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
       </div>
 
       {on && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', paddingLeft: 8, borderLeft: '2px solid var(--color-border-subtle, rgba(255,255,255,0.1))', marginTop: 4 }}>
-          <span style={{ fontSize: 'var(--font-size-micro)', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>
-            Geometry Options
-          </span>
+        <div className={s.subPanel}>
+          <span className={s.groupHeader}>Geometry Options</span>
           {isTextLayer && (
-            <div className={styles.row}>
-              <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Per-character 3D</span>
+            <div className={s.row}>
+              <span className={s.label}>Per-character 3D</span>
               <Switch
                 checked={isPerChar3D(node)}
                 onChange={(e) => setNodePerChar3D(nodeId, e.currentTarget.checked)}
@@ -106,8 +130,8 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
               />
             </div>
           )}
-          <div className={styles.row}>
-            <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Extrusion Depth</span>
+          <div className={s.row}>
+            <span className={s.label}>Extrusion Depth</span>
             <ValueField
               value={three.extrusionDepth}
               min={0}
@@ -119,8 +143,8 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
             />
           </div>
           {three.extrusionDepth > 0 && (
-            <div className={styles.row}>
-              <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Bevel Depth</span>
+            <div className={s.row}>
+              <span className={s.label}>Bevel Depth</span>
               <ValueField
                 value={three.bevelDepth}
                 min={0}
@@ -133,19 +157,14 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
             </div>
           )}
           <FaceMaterialsSection nodeId={nodeId} />
-          {/* One slider shape for every 0–100 material response, so the block
-              reads as one control group instead of six near-identical rows. */}
-          <span style={{ fontSize: 'var(--font-size-micro)', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2, marginTop: 4 }}>
-            Material Options
-          </span>
+          <span className={s.groupHeader}>Material Options</span>
           {/* Tri-states, not switches: `Only` is what shadow-catcher setups are
               built from — a layer that throws or catches a shadow without
               rendering itself — and a boolean cannot express it. */}
-          <div className={styles.row}>
-            <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Casts Shadows</span>
+          <div className={s.row}>
+            <span className={s.label}>Casts Shadows</span>
             <select
-              className={styles.select}
-              style={{ width: 78, fontSize: 'var(--font-size-xs)' }}
+              className={s.select}
               value={material.castsShadowsMode}
               onChange={(e) => setNodeShadowMode(nodeId, 'castsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
               aria-label="Casts shadows"
@@ -155,11 +174,10 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
               <option value="only">Only</option>
             </select>
           </div>
-          <div className={styles.row}>
-            <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Accepts Shadows</span>
+          <div className={s.row}>
+            <span className={s.label}>Accepts Shadows</span>
             <select
-              className={styles.select}
-              style={{ width: 78, fontSize: 'var(--font-size-xs)' }}
+              className={s.select}
               value={material.acceptsShadowsMode}
               onChange={(e) => setNodeShadowMode(nodeId, 'acceptsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
               aria-label="Accepts shadows"
@@ -170,18 +188,18 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
             </select>
           </div>
           {material.shadowOnly && (
-            <p style={{ margin: '2px 0 4px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+            <p className={s.hint}>
               “Only” hides the layer itself — it stays in the scene purely as a
               shadow caster or catcher.
             </p>
           )}
-          <MaterialSlider
+          <MaterialRow
             label="Light Transmission"
             value={material.lightTransmission}
             onChange={(v) => setNodeMaterialPct(nodeId, 'lightTransmission', v, MATERIAL_PCT_DEFAULTS.lightTransmission)}
           />
-          <div className={styles.row}>
-            <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Accepts Lights</span>
+          <div className={s.row}>
+            <span className={s.label}>Accepts Lights</span>
             <Switch
               checked={material.acceptsLights}
               onChange={(e) => setNodeAcceptsLights(nodeId, e.currentTarget.checked)}
@@ -190,12 +208,12 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
           </div>
           {material.acceptsLights && (
             <>
-              <MaterialSlider
+              <MaterialRow
                 label="Ambient"
                 value={material.ambient}
                 onChange={(v) => setNodeMaterialPct(nodeId, 'ambient', v, MATERIAL_PCT_DEFAULTS.ambient)}
               />
-              <MaterialSlider
+              <MaterialRow
                 label="Diffuse"
                 value={material.diffuse}
                 onChange={(v) => setNodeMaterialPct(nodeId, 'diffuse', v, MATERIAL_PCT_DEFAULTS.diffuse)}
@@ -204,45 +222,40 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
                   default; Physical is Cook-Torrance/GGX — AE's Advanced 3D
                   model — where Roughness replaces Shininess and Metal means
                   "reflects its own colour, no diffuse". */}
-              <div className={styles.row}>
-                <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Shading</span>
+              <div className={s.row}>
+                <span className={s.label}>Shading</span>
                 <select
+                  className={s.select}
                   value={material.shading}
                   onChange={(e) => setNodeShadingModel(nodeId, e.currentTarget.value === 'pbr' ? 'pbr' : 'phong')}
                   aria-label="Shading model"
-                  style={{ width: 90, fontSize: 'var(--font-size-xs)' }}
                 >
                   <option value="phong">Phong</option>
                   <option value="pbr">Physical (PBR)</option>
                 </select>
               </div>
-              <MaterialSlider
+              <MaterialRow
                 label="Specular"
                 value={material.specular}
                 onChange={(v) => setNodeSpecular(nodeId, v)}
               />
               {material.shading === 'pbr' ? (
-                <MaterialSlider
+                <MaterialRow
                   label="Roughness"
                   value={material.roughness}
                   onChange={(v) => setNodeMaterialPct(nodeId, 'roughness', v, MATERIAL_PCT_DEFAULTS.roughness)}
                 />
               ) : (
-                <div className={styles.row}>
-                  <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)' }}>Shininess</span>
-                  <input
-                    type="range"
-                    min={1}
-                    max={128}
-                    step={1}
-                    value={material.shininess}
-                    onChange={(e) => setNodeShininess(nodeId, Number(e.currentTarget.value))}
-                    aria-label="Shininess"
-                    style={{ width: 90 }}
-                  />
-                </div>
+                <MaterialRow
+                  label="Shininess"
+                  value={material.shininess}
+                  min={1}
+                  max={128}
+                  unit=""
+                  onChange={(v) => setNodeShininess(nodeId, v)}
+                />
               )}
-              <MaterialSlider
+              <MaterialRow
                 label="Metal"
                 value={material.metal}
                 onChange={(v) => setNodeMaterialPct(nodeId, 'metal', v, MATERIAL_PCT_DEFAULTS.metal)}
@@ -252,7 +265,7 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
                   look broken. (Under PBR a metal also loses its diffuse, so it
                   is never invisible there.) */}
               {material.specular === 0 && material.shading !== 'pbr' && (
-                <p style={{ margin: '0 0 4px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+                <p className={s.hint}>
                   Metal tints the specular highlight — raise Specular to see it.
                 </p>
               )}
@@ -271,4 +284,3 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
 }
 
 export default ThreeDControl;
-

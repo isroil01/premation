@@ -21,7 +21,11 @@ import styles from './SceneControls.module.css';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
 const CAMERA_TOOLS: ReadonlyArray<{ id: CameraTool; icon: IconName; label: string }> = [
-  { id: 'orbit', icon: 'orbit', label: 'Orbit Around Cursor' },
+  // "Orbit Around Camera POI", because that is what orbitCameraBy actually
+  // pivots on. The old label promised AE's "Orbit Around Cursor", which picks
+  // the scene point under the pointer — a different (unimplemented) pivot; a
+  // tool must not advertise a behaviour it does not have.
+  { id: 'orbit', icon: 'orbit', label: 'Orbit Around Camera POI' },
   { id: 'pan', icon: 'pan-camera', label: 'Pan Camera' },
   { id: 'dolly', icon: 'perspective', label: 'Dolly Camera (towards/away)' },
 ];

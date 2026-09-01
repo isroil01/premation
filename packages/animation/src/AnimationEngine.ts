@@ -8,7 +8,7 @@
  */
 
 import type { PropPath, PropertyTrack, SceneValueSnapshot, EasingKind, BezierHandles, Keyframe } from './types';
-import { sampleTrack, upsertKeyframe, applyRoving, smoothTrackTangents, clearTrackTangents } from './interpolate';
+import { sampleTrack, upsertKeyframe, applyRoving, applyRovingSpatial, smoothTrackTangents, clearTrackTangents } from './interpolate';
 import { compileExpression, type CompiledExpression, type ExprContext, type ExprResult } from './expressions';
 import {
   sampleDataTrack,
@@ -513,11 +513,31 @@ export class AnimationEngine {
     this.notifyChange(nodeId);
   }
 
-  /** Toggle a keyframe's roving flag and re-time the track for constant speed. */
+  /** Toggle a keyframe's roving flag and re-time the track for constant speed.
+   *  On a position axis whose sibling track shares the same keyframe grid, the
+   *  pair roves together along the 2D spatial ARC (AE's Rove Across Time);
+   *  roving x and y independently by their own value distance is constant-speed
+   *  only on an axis-aligned path. The UI toggles both axes of a merged
+   *  Position row in turn, and the paired retime is deterministic on the same
+   *  input, so the second call is a no-op rather than a double-move. */
   setRoving(nodeId: string, prop: PropPath, t: number, roving: boolean): void {
     const track = this.tracks.get(nodeId)?.get(prop);
     if (!track) return;
     const flagged = track.keyframes.map((k) => (k.t === t ? { ...k, roving } : { ...k }));
+    const sibling: PropPath | null = prop === 'x' ? 'y' : prop === 'y' ? 'x' : null;
+    const sibTrack = sibling ? this.tracks.get(nodeId)?.get(sibling) : undefined;
+    if (sibTrack) {
+      const sibFlagged = sibTrack.keyframes.map((k) => (k.t === t ? { ...k, roving } : { ...k }));
+      const paired = prop === 'x'
+        ? applyRovingSpatial(flagged, sibFlagged)
+        : applyRovingSpatial(sibFlagged, flagged);
+      if (paired) {
+        track.keyframes = prop === 'x' ? paired.x : paired.y;
+        sibTrack.keyframes = prop === 'x' ? paired.y : paired.x;
+        this.notifyChange(nodeId);
+        return;
+      }
+    }
     track.keyframes = applyRoving(flagged);
     this.notifyChange(nodeId);
   }
@@ -615,6 +635,16 @@ export class AnimationEngine {
    * Returns `undefined` when neither keyframes nor an expression apply.
    */
   sample(nodeId: string, prop: PropPath, t: number): number | undefined {
+    // Fast path: no enabled expression on THIS property means no cycle is
+    // possible from here, so skip the visited-Set + try/catch machinery — this
+    // is the per-property-per-frame hot path and the Set alone dominated it.
+    // Expression chains that *reach* a plain property go through
+    // sampleInternal directly (layerAt → crossLayerValue) and keep their guards.
+    const entry = this.expressions.get(nodeId)?.get(prop);
+    if (!entry?.enabled) {
+      const track = this.tracks.get(nodeId)?.get(prop);
+      return (track ? sampleTrack(track, t) : undefined) ?? this.baseValueProvider(nodeId, prop);
+    }
     try {
       return this.sampleInternal(nodeId, prop, t, new Set(), 0);
     } catch (e) {
@@ -743,13 +773,22 @@ export class AnimationEngine {
    *  Used by per-layer time remapping (each layer samples at its own time). */
   evaluateNode(nodeId: string, t: number): Map<PropPath, number> {
     const values = new Map<PropPath, number>();
-    const props = new Set<PropPath>([
-      ...(this.tracks.get(nodeId)?.keys() ?? []),
-      ...(this.expressions.get(nodeId)?.keys() ?? []),
-    ]);
-    for (const prop of props) {
-      const v = this.sample(nodeId, prop, t);
-      if (v !== undefined) values.set(prop, v);
+    // Iterate the two key sources directly instead of unioning them through a
+    // throwaway Set — this runs once per node per frame.
+    const byProp = this.tracks.get(nodeId);
+    const byExpr = this.expressions.get(nodeId);
+    if (byProp) {
+      for (const prop of byProp.keys()) {
+        const v = this.sample(nodeId, prop, t);
+        if (v !== undefined) values.set(prop, v);
+      }
+    }
+    if (byExpr) {
+      for (const prop of byExpr.keys()) {
+        if (byProp?.has(prop)) continue;
+        const v = this.sample(nodeId, prop, t);
+        if (v !== undefined) values.set(prop, v);
+      }
     }
     return values;
   }

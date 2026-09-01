@@ -17,7 +17,7 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { is3DEnabled } from '@core/scene/threeD';
@@ -60,7 +60,7 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   // than the one the frame was rendered through.
   const compRootId = useCompositionStore((s) => s.id);
   const time = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
-  const sceneRev = useSceneRevision((s) => s.rev);
+  const sceneRev = useSceneRevisionFrame();
 
   // Draft 3D turns shadows / DOF / motion blur OFF and the spatial aids ON —
   // that pairing is the point of the mode, so the ground plane is forced rather

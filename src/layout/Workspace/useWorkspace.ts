@@ -59,6 +59,7 @@ import {
   positionSamplerFor,
 } from '@core/motion/motionPath';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { beginViewportGesture, endViewportGesture, gestureAnimEdit } from '@core/workspace/viewportGesture';
 import { parentWorld2DAt } from '@core/scene/layerSpace';
 import { Matrix } from '@motion/scene';
 import { useTextEditStore } from '@stores/textEditStore';
@@ -1436,6 +1437,12 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     );
 
     const onDown = (e: PointerEvent): void => {
+      // One anim/scene transaction per pointer gesture — every write between
+      // here and pointerup batches (see viewportGesture.ts). Ending any stale
+      // gesture first keeps a lost pointerup (capture failed, window switch)
+      // from leaking a permanently-open transaction.
+      endViewportGesture();
+      beginViewportGesture();
       // Any press in the main viewport takes the active viewer back from a
       // secondary pane, so the focus ring always names the viewport that will
       // receive the next keyboard action.
@@ -1693,7 +1700,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         }
       }
       // Info readout (AE Info panel): comp-space position + sampled pixel under
-      // the cursor. Runs for every move regardless of the active tool/drag.
+      // the cursor. The PIXEL sample is hover-only: `samplePixelRgba` costs a
+      // forced layout (getBoundingClientRect) plus a canvas readback, and
+      // paying that on every pointermove of a drag taxes exactly the gesture
+      // that most needs the budget. Position stays live either way.
       {
         const p = local(e);
         const world = controller.ws.screenToWorld(p);
@@ -1701,7 +1711,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         useInfoStore.getState().set({
           x: Math.round(world.x),
           y: Math.round(world.y),
-          rgba: content ? samplePixelRgba(content, p) : null,
+          rgba: e.buttons === 0 && content ? samplePixelRgba(content, p) : null,
           present: true,
         });
       }
@@ -1747,6 +1757,18 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           guideCursorRef.current = false;
         }
       }
+      // Motion-path handle hover (idle only): light the dot before the press.
+      if (e.buttons === 0 && useGuidesStore.getState().motionPathVisible) {
+        const hover = hitMotionPathKeyframe(controller, local(e));
+        if (
+          (hover?.nodeId ?? null) !== (mpHover?.nodeId ?? null) ||
+          hover?.t !== mpHover?.t ||
+          hover?.part !== mpHover?.part
+        ) {
+          mpHover = hover;
+          controller.requestRender();
+        }
+      }
       const drag = mpDragRef.current;
       if (drag) {
         const w = controller.ws.screenToWorld(local(e));
@@ -1762,7 +1784,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           // Back through the parent chain: `w` is where the pointer is in COMP
           // space and the x/y tracks hold parent-space values.
           const lp = compToPath(drag.nodeId, playheadTime(), w);
-          runAnimEdit(
+          gestureAnimEdit(
             'Move keyframe',
             () => {
               defaultAnimation.setKeyframe(drag.nodeId, 'x', drag.t, lp.x);
@@ -1775,7 +1797,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
           // point is still continuous (AE smooth); Alt-drag breaks and STICKS
           // via Keyframe.continuous so the next non-Alt drag does not remirror.
           const mirror = isPathTangentContinuous(drag.nodeId, drag.t) && !e.altKey;
-          runAnimEdit(
+          gestureAnimEdit(
             'Adjust path tangent',
             () => setPathTangent(drag.nodeId, drag.t, part, compToPath(drag.nodeId, playheadTime(), w), mirror),
             `mptan:${drag.nodeId}:${drag.t}:${part}`,
@@ -1792,6 +1814,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       }
     };
     const onUp = (e: PointerEvent): void => {
+      // Close the gesture FIRST: every early-returning branch below is part of
+      // the same pointer gesture, and the final writes all happened on the
+      // preceding moves. Records the drag's single undo command and fires the
+      // one deferred structural bump.
+      endViewportGesture();
       try {
         if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
       } catch {
@@ -1948,6 +1975,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     // Info readout: clear the pixel/position when the cursor leaves the canvas.
     const onLeave = (): void => {
       useInfoStore.getState().clear();
+      if (mpHover) {
+        mpHover = null;
+        controller.requestRender();
+      }
       if (!camNav && !roiDragRef.current && !guideDragRef.current && !altHintCursor) {
         guideCursorRef.current = false;
         restoreCursor();
@@ -1980,6 +2011,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       toolSub();
       cancelSmoothDolly();
       controller.ws.cancelTransientInput();
+      // Unmounting mid-drag must not leak an open gesture transaction.
+      endViewportGesture();
       useUIStore.getState().setDragging(false);
       overlay.style.cursor = '';
     };
@@ -2588,11 +2621,20 @@ function paintOverlay(
         // 8px filled square with a 1px contrasting outline: squares read as
         // precise where circles read as a design tool, and the fill/outline
         // contrast is what keeps them visible over both light and dark artwork.
-        ctx.fillStyle = '#fff';
-        ctx.strokeStyle = handleAccent;
+        // Hovered: 10px, accent-filled, with a soft halo — "grabbable", said
+        // by the grip itself rather than only by the cursor.
+        const r = h.hovered ? 5 : 4;
+        if (h.hovered) {
+          ctx.beginPath();
+          ctx.arc(h.position.x, h.position.y, 9, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.18)';
+          ctx.fill();
+        }
+        ctx.fillStyle = h.hovered ? handleAccent : '#fff';
+        ctx.strokeStyle = h.hovered ? '#fff' : handleAccent;
         ctx.lineWidth = 1;
-        ctx.fillRect(h.position.x - 4, h.position.y - 4, 8, 8);
-        ctx.strokeRect(h.position.x - 4, h.position.y - 4, 8, 8);
+        ctx.fillRect(h.position.x - r, h.position.y - r, r * 2, r * 2);
+        ctx.strokeRect(h.position.x - r, h.position.y - r, r * 2, r * 2);
       }
     }
   }
@@ -2726,6 +2768,40 @@ function paintOverlay(
   if (guidesState.rulers && controller) {
     paintRulers(ctx, controller, cssW, cssH);
   }
+
+  // Drag measurement badge (the 2D twin of the 3D gizmo's HUD): Δx/Δy while
+  // moving, W×H or scale % while resizing, degrees while rotating. Drawn last
+  // so nothing paints over the numbers, offset below-right of the pointer so
+  // the artwork being manipulated stays visible.
+  if (overlay.dragHud && overlay.dragHud.lines.length > 0) {
+    const hud = overlay.dragHud;
+    ctx.save();
+    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+    const padX = 6;
+    const lineH = 15;
+    let textW = 0;
+    for (const line of hud.lines) textW = Math.max(textW, ctx.measureText(line).width);
+    const w = Math.ceil(textW) + padX * 2;
+    const h = hud.lines.length * lineH + 6;
+    // Keep the badge on-canvas when the pointer runs against an edge.
+    const bx = Math.min(Math.max(4, hud.anchor.x + 14), cssW - w - 4);
+    const by = Math.min(Math.max(4, hud.anchor.y + 16), cssH - h - 4);
+    ctx.beginPath();
+    // node-canvas (jsdom tests) predates roundRect; square corners there.
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(bx, by, w, h, 4);
+    else ctx.rect(bx, by, w, h);
+    ctx.fillStyle = 'rgba(20, 22, 26, 0.92)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.textBaseline = 'middle';
+    hud.lines.forEach((line, i) => {
+      ctx.fillText(line, bx + padX, by + 3 + lineH * i + lineH / 2);
+    });
+    ctx.restore();
+  }
 }
 
 /**
@@ -2761,6 +2837,15 @@ function compToPath(nodeId: string, time: number, p: { x: number; y: number }): 
  * Handles are tested first: they can sit close to the point and are the finer
  * target. Used to start an on-canvas motion-path drag.
  */
+/**
+ * Motion-path handle under the idle cursor — the painter enlarges/halos it so
+ * a dot answers "grabbable?" before the press (the path handles had cursor
+ * feedback nowhere and visual feedback nowhere). Written by the viewport's
+ * pointermove (idle only), read by paintMotionPath, cleared on pointerleave.
+ * Left in place when a drag begins, so the dragged handle stays lit.
+ */
+let mpHover: { nodeId: string; t: number; part: 'point' | 'in' | 'out' } | null = null;
+
 function hitMotionPathKeyframe(
   controller: WorkspaceController,
   screen: { x: number; y: number },
@@ -3048,17 +3133,24 @@ function paintMotionPath(
   // keyframe dots so the points stay the primary target.
   for (const k of motionPathTangents(node)) {
     const p = toS(k);
-    for (const h of [k.out, k.in]) {
+    for (const [part, h] of [['out', k.out], ['in', k.in]] as const) {
       if (!h) continue;
       const s = toS({ ...h, t: k.t });
+      const hovered = mpHover !== null && mpHover.nodeId === nodeId
+        && Math.abs(mpHover.t - k.t) < 1e-9 && mpHover.part === part;
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
       ctx.lineTo(s.x, s.y);
-      ctx.strokeStyle = 'rgba(120,170,255,0.55)';
+      ctx.strokeStyle = hovered ? 'rgba(160,200,255,0.9)' : 'rgba(120,170,255,0.55)';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.fillStyle = 'rgba(120,170,255,1)';
-      ctx.fillRect(s.x - 2.5, s.y - 2.5, 5, 5);
+      ctx.fillStyle = hovered ? '#fff' : 'rgba(120,170,255,1)';
+      const r = hovered ? 3.5 : 2.5;
+      ctx.fillRect(s.x - r, s.y - r, r * 2, r * 2);
+      if (hovered) {
+        ctx.strokeStyle = 'rgba(120,170,255,1)';
+        ctx.strokeRect(s.x - r, s.y - r, r * 2, r * 2);
+      }
     }
   }
 
@@ -3088,11 +3180,20 @@ function paintMotionPath(
     // 2. Draw keyframe markers (distinct larger dots with white center & blue border)
     for (const k of motionPathKeyframes(node)) {
       const s = toS(k);
+      const hovered = mpHover !== null && mpHover.nodeId === nodeId
+        && Math.abs(mpHover.t - k.t) < 1e-9 && mpHover.part === 'point';
+      if (hovered) {
+        // Halo behind the dot — "grabbable", said before the press.
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, kfRadius + 4, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(120,170,255,0.25)';
+        ctx.fill();
+      }
       ctx.beginPath();
-      ctx.arc(s.x, s.y, kfRadius, 0, Math.PI * 2);
-      ctx.fillStyle = '#fff';
+      ctx.arc(s.x, s.y, hovered ? kfRadius + 1 : kfRadius, 0, Math.PI * 2);
+      ctx.fillStyle = hovered ? 'rgba(120,170,255,1)' : '#fff';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(100, 160, 255, 1)';
+      ctx.strokeStyle = hovered ? '#fff' : 'rgba(100, 160, 255, 1)';
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }

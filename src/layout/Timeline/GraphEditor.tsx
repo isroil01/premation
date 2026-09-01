@@ -40,7 +40,7 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { Icon } from '@components/Icon';
-import { defaultAnimation, makeKeyframeId, parseKeyframeId } from '@motion/animation';
+import { defaultAnimation, makeKeyframeId, parseKeyframeId, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection } from '@core/animation/easingSelection';
@@ -1136,6 +1136,23 @@ export function GraphEditor({
     applyEasingToSelection(preset);
   }, []);
 
+  // Which quick-ease pill matches the selected keyframe's ACTUAL easing, so
+  // the applied one lights up (`iconBtnActive` existed in the CSS unused —
+  // the pills never showed state, which read as "did that click work?").
+  const bezierEq = (a?: readonly number[], b?: readonly number[]): boolean =>
+    !!a && !!b && a.length === 4 && b.length === 4 &&
+    a.every((v, i) => Math.abs(v - b[i]!) < 1e-6);
+  const activePreset: EasingPreset | null = !selectedKfData
+    ? null
+    : isHoldEasing(selectedKfData.easing) ? 'Hold'
+    : selectedKfData.easing === 'bezier' && bezierEq(selectedKfData.bezier, EASY_EASE_BEZIER) ? 'Ease'
+    : selectedKfData.easing === 'bezier' && bezierEq(selectedKfData.bezier, EASY_EASE_IN_BEZIER) ? 'EaseIn'
+    : selectedKfData.easing === 'bezier' && bezierEq(selectedKfData.bezier, EASY_EASE_OUT_BEZIER) ? 'EaseOut'
+    : !selectedKfData.easing || selectedKfData.easing === 'linear' ? 'Linear'
+    : null;
+  const pillClass = (preset: EasingPreset): string | undefined =>
+    activePreset === preset ? styles.iconBtnActive : styles.iconBtn;
+
   // Axis labels follow the selected track (or the first one).
   const axisTrack = selectedKfData
     ? sampledPaths.find((p) => p.nodeId === selectedKfData.nodeId && p.prop === selectedKfData.prop)
@@ -1231,22 +1248,24 @@ export function GraphEditor({
           <Icon name="graph-speed" size="sm" /> Speed
         </button>
 
-        {/* Quick Ease Presets Group */}
+        {/* Quick Ease Presets Group — aria-pressed + the active class reflect
+            the selected keyframe's real easing, so the pills answer "which one
+            is applied?" instead of only "which ones exist?". */}
         {selectedKfData && (
           <div className={styles.btnGroup}>
-            <button type="button" className={styles.iconBtn} onClick={() => handleApplyPreset('Ease')} title="Easy Ease (F9)">
+            <button type="button" className={pillClass('Ease')} aria-pressed={activePreset === 'Ease'} aria-label="Easy Ease" onClick={() => handleApplyPreset('Ease')} title="Easy Ease (F9)">
               <Icon name="ease" size="sm" />
             </button>
-            <button type="button" className={styles.iconBtn} onClick={() => handleApplyPreset('EaseIn')} title="Easy Ease In (Shift+F9)">
+            <button type="button" className={pillClass('EaseIn')} aria-pressed={activePreset === 'EaseIn'} aria-label="Easy Ease In" onClick={() => handleApplyPreset('EaseIn')} title="Easy Ease In (Shift+F9)">
               <Icon name="arrow-right" size="sm" />
             </button>
-            <button type="button" className={styles.iconBtn} onClick={() => handleApplyPreset('EaseOut')} title="Easy Ease Out (Ctrl+Shift+F9)">
+            <button type="button" className={pillClass('EaseOut')} aria-pressed={activePreset === 'EaseOut'} aria-label="Easy Ease Out" onClick={() => handleApplyPreset('EaseOut')} title="Easy Ease Out (Ctrl+Shift+F9)">
               <Icon name="arrow-left" size="sm" />
             </button>
-            <button type="button" className={styles.iconBtn} onClick={() => handleApplyPreset('Linear')} title="Linear">
+            <button type="button" className={pillClass('Linear')} aria-pressed={activePreset === 'Linear'} aria-label="Linear interpolation" onClick={() => handleApplyPreset('Linear')} title="Linear">
               <Icon name="line" size="sm" />
             </button>
-            <button type="button" className={styles.iconBtn} onClick={() => handleApplyPreset('Hold')} title="Toggle Hold">
+            <button type="button" className={pillClass('Hold')} aria-pressed={activePreset === 'Hold'} aria-label="Hold interpolation" onClick={() => handleApplyPreset('Hold')} title="Toggle Hold">
               <Icon name="keyframe" size="sm" />
             </button>
           </div>

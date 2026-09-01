@@ -130,6 +130,18 @@ export const RETIRED_CLAIMS: readonly RetiredClaim[] = [
       'They ship as a visible toolbar cluster (SceneControls.tsx CAMERA_TOOLS) plus the C-key cycle, and are keyframe-aware through applyNodePropsKeyframed.',
     patterns: [/camera tools[^.]{0,40}(missing|do not exist|keyboard-only)/i, /no camera (orbit|navigation) tools/i],
   },
+  {
+    claim: 'There is no DOF code in packages/renderer',
+    reality:
+      'The renderer owns two DOF shaders: coc-blur (per-pixel CoC from four corner radii, planned by planDofCocCorners in dofStrips.ts) and bokeh (polygonal iris gather), both dispatched by CompositionPass. The claim was true until the corner-CoC path shipped; retired 2026-09-01.',
+    patterns: [/no DOF code in `?packages\/renderer`?/i],
+  },
+  {
+    claim: 'A layer spanning a range of depths gets one uniform DOF blur, not a gradient',
+    reality:
+      'coc-blur interpolates the blur radius per pixel across the quad from corner CoC radii. Still per-layer (no cross-layer depth-buffer gather) — state THAT gap instead.',
+    patterns: [/one uniform blur/i, /per-layer uniform blur/i],
+  },
 ];
 
 /** Every `.md` in the repo that is ours to police. */

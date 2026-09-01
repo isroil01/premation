@@ -69,7 +69,7 @@ import { resolveTextPath, resolveTextPathMask, flattenMaskPath } from '@core/tex
 import { bracketFrames } from './videoFrameCache';
 import { footageSourceOf, applyLoop } from '@core/source/sourceInfo';
 import { slotFitOf, coverUvRect } from '@core/template/mediaSlots';
-import { readSceneCamera, readSceneDof, dofBlurPx, dofIrisParams } from '@core/scene/camera3d';
+import { readSceneCamera, readSceneDof, dofBlurPx, dofIrisParams, activeCameraNode, cameraFromNode } from '@core/scene/camera3d';
 import { planDofCocCorners, layerCornerDepths } from './dofStrips';
 import { expandCompInstances, instanceSourceOf, isCompInstanceRoot, readCompRef, readCompCollapse } from '@core/scene/compInstance';
 import { applyOverridesToComponents, overriddenPropsFor, readCompOverrides, type OverrideValue } from '@core/scene/compInstanceOverrides';
@@ -1342,6 +1342,45 @@ export function buildSnapshot(
     ? (p: { x: number; y: number; z: number }) => Project3D.projectOrtho(p, orthoView, comp.width, comp.height)
     : (p: { x: number; y: number; z: number }) => Project3D.projectPoint(p, camera!);
 
+  /*
+    Camera motion blur. `moves()` inspects only a layer's OWN animated props and
+    `project` is built once per frame from the camera at `t` — so a static 3D
+    layer under a fully keyframed camera pan rendered perfectly sharp while its
+    animated neighbour blurred. The fix is two-sided: an animated active camera
+    (a) extends the motion gate to every 3D layer, and (b) supplies a PER-SAMPLE
+    projector, so each sub-frame sample projects through the camera's own pose
+    at that sample's comp time. The camera NODE is resolved once (it cannot
+    change across one shutter) and its resolved pose is memoized per sample
+    time, since every 3D layer shares the same sub-frame cameras.
+    Ortho/custom views have no scene camera, so there is nothing to blur there;
+    the camera's parent chain is sampled at frame time like every other parent
+    (the documented static-chain approximation).
+  */
+  const cameraMotionNode = !orthoView && !customCamera && motionBlur
+    ? activeCameraNode(graph, comp.rootId, { isLiveAt })
+    : null;
+  const cameraAnimated =
+    cameraMotionNode !== null &&
+    CAMERA_MOTION_PROPS.some((p) => anim.isAnimated(cameraMotionNode.id, p));
+  const subFrameCameras = new Map<number, ReturnType<typeof cameraFromNode>>();
+  const projectAtTime = cameraAnimated && cameraMotionNode
+    ? (tc: number): ((p: { x: number; y: number; z: number }) => Project3D.Projected) => {
+        let cam = subFrameCameras.get(tc);
+        if (!cam) {
+          cam = cameraFromNode(
+            cameraMotionNode,
+            comp.width,
+            comp.height,
+            (id, p) => anim.sample(id, p, tc),
+            toWorldPoint,
+          );
+          subFrameCameras.set(tc, cam);
+        }
+        const fixed = cam;
+        return (p) => Project3D.projectPoint(p, fixed);
+      }
+    : null;
+
   // Depth of field: layers blur by how far their depth sits from the camera's
   // focus distance (linear ramp, capped at `strength` px). Orthographic views
   // have no lens, so DOF is off.
@@ -2163,6 +2202,9 @@ export function buildSnapshot(
       rX: number, rY: number, rZ: number,
       sX: number, sY: number,
       sZ = 1,
+      // Camera motion blur: a sub-frame sample projects through the camera's
+      // pose at ITS time, not the frame's. Defaults to the frame projector.
+      proj: (p: { x: number; y: number; z: number }) => Project3D.Projected = project,
     ): { matrix: readonly [number, number, number, number, number, number]; O: Project3D.Projected; world: import('@motion/scene').Matrix4 } => {
       const L = Matrix4Math.compose({
         position: { x: wx, y: wy, z: wz },
@@ -2183,9 +2225,9 @@ export function buildSnapshot(
       // world = parentChain · local. With no 3D ancestor `parent3d` is null and
       // this is exactly the matrix that was composed before.
       const M = parent3d ? Matrix4Math.multiply(parent3d, L) : L;
-      const O = project(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
-      const X = project(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
-      const Y = project(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
+      const O = proj(Matrix4Math.transformPoint(M, { x: 0, y: 0, z: 0 }));
+      const X = proj(Matrix4Math.transformPoint(M, { x: 1, y: 0, z: 0 }));
+      const Y = proj(Matrix4Math.transformPoint(M, { x: 0, y: 1, z: 0 }));
       return { matrix: [X.x - O.x, X.y - O.y, Y.x - O.x, Y.y - O.y, O.x, O.y], O, world: M };
     };
 
@@ -3012,7 +3054,11 @@ export function buildSnapshot(
       ? { ...motionBlur, enabled: true, shutterAngle: forcedBlur.shutterAngle, samples: forcedBlur.samples }
       : motionBlur;
     const blurOptIn = forcedBlur ? true : (motionBlur?.enabled === true && readNodeMotionBlur(node));
-    if (blurCfg && blurOptIn && moves(anim, node.id)) {
+    // A 3D layer also moves ON SCREEN when the camera does — a static card
+    // under a keyframed pan must blur exactly like a moving card under a
+    // static camera. 2D layers are outside the camera's space and keep the
+    // own-motion gate.
+    if (blurCfg && blurOptIn && (moves(anim, node.id) || (is3D && cameraAnimated))) {
       // 3D layers need a matrix per sample (see affineAt). The sub-frame world
       // position is the layer's world position plus its own local delta over
       // the shutter — the parent chain is treated as static across the
@@ -3021,7 +3067,7 @@ export function buildSnapshot(
       const localY = (a?.get('y') as number | undefined) ?? base.y;
       const localRot = (a?.get('rotation') as number | undefined) ?? base.rotation;
       const matrixAt = is3D
-        ? (ti: number): readonly [number, number, number, number, number, number] => {
+        ? (ti: number, tc: number): readonly [number, number, number, number, number, number] => {
             const sc = anim.sample(node.id, 'scale', ti);
             // `own*` is the local transform when a 3D ancestor drives this
             // layer and the parent-composed world otherwise, so the same
@@ -3037,6 +3083,11 @@ export function buildSnapshot(
               ownRot + ((anim.sample(node.id, 'rotation', ti) ?? localRot) - localRot),
               sc ?? anim.sample(node.id, 'scaleX', ti) ?? ownScaleX,
               sc ?? anim.sample(node.id, 'scaleY', ti) ?? ownScaleY,
+              scaleZ,
+              // The sub-frame camera, when the camera itself is animated. Note
+              // the COMP time `tc`, not the remapped `ti`: time remap retimes
+              // the layer's own animation, never the camera's clock.
+              projectAtTime ? projectAtTime(tc) : project,
             ).matrix;
           }
         : undefined;
@@ -4178,6 +4229,18 @@ export function buildSnapshot(
   };
 }
 
+/**
+ * Every camera property whose animation moves the VIEW — the camera-side twin
+ * of `moves()` below. Mirrors what `cameraFromNode` actually samples; a prop
+ * added there without being added here is a camera move that never blurs.
+ */
+export const CAMERA_MOTION_PROPS = [
+  'x', 'y', 'z', 'focalLength',
+  'orbitYaw', 'orbitPitch',
+  'poiX', 'poiY', 'poiZ',
+  'orientationX', 'orientationY', 'orientationZ',
+] as const;
+
 /** True when a node animates a transform property (so motion blur has motion). */
 function moves(anim: AnimationEngine, nodeId: string): boolean {
   // The 3D channels were missing, so motion blur NEVER fired on 3D motion: a card
@@ -4202,10 +4265,11 @@ function sampleMotion(
   t: number,
   cfg: MotionBlurConfig,
   remap: (tt: number) => number,
-  /** 3D only: the projected affine at a sample time. Without it the backend
-   *  would use the layer's single baked matrix for every sample and blur
-   *  nothing. */
-  matrixAt?: (ti: number) => readonly [number, number, number, number, number, number],
+  /** 3D only: the projected affine at (layer source time, comp time). Without
+   *  it the backend would use the layer's single baked matrix for every sample
+   *  and blur nothing. The comp time is what the sub-frame CAMERA samples at —
+   *  time remap retimes the layer, never the camera. */
+  matrixAt?: (ti: number, tc: number) => readonly [number, number, number, number, number, number],
 ): MotionSample[] {
   const limit = cfg.adaptiveSampleLimit ?? 128;
   // Probe the shutter endpoints to size the sample count to on-screen travel.
@@ -4213,7 +4277,17 @@ function sampleMotion(
   // near-static layers; AE's adaptive limit exists for the same reason.
   const probe = motionBlurSampleTimes(t, cfg.fps, cfg.shutterAngle, 2, cfg.shutterPhase ?? -90, limit);
   let travelPx = 0;
-  if (probe.length >= 2) {
+  if (probe.length >= 2 && matrixAt) {
+    // 3D: measure PROJECTED travel — it is what lands on screen. The raw x/y
+    // probe below reads zero for a card flip (rotationY only), a depth push
+    // (z only) and every camera move, so exactly the showiest 3D motion was
+    // sampled at the static-layer floor and strobed.
+    const ta = probe[0]!;
+    const tb = probe[probe.length - 1]!;
+    const ma = matrixAt(remap(ta), ta);
+    const mb = matrixAt(remap(tb), tb);
+    travelPx = Math.hypot(mb[4]! - ma[4]!, mb[5]! - ma[5]!);
+  } else if (probe.length >= 2) {
     const a = remap(probe[0]!);
     const b = remap(probe[probe.length - 1]!);
     const xa = anim.sample(nodeId, 'x', a) ?? base.x;
@@ -4236,7 +4310,7 @@ function sampleMotion(
       scaleX: sc ?? anim.sample(nodeId, 'scaleX', ti) ?? base.scaleX,
       scaleY: sc ?? anim.sample(nodeId, 'scaleY', ti) ?? base.scaleY,
       opacity: (op !== undefined ? op / 100 : base.opacity) * g,
-      ...(matrixAt ? { matrix: matrixAt(ti) } : {}),
+      ...(matrixAt ? { matrix: matrixAt(ti, tc) } : {}),
     };
   });
 }

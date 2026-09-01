@@ -49,7 +49,7 @@ import { readGeometry, localBounds, makeHitTestLocal, isDrawableKind as drawable
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { defaultAnimation } from '@motion/animation';
 import { drawToolOptions } from '@motion/workspace';
-import { runAnimEdit } from '@core/animation/animationCommands';
+import { gestureAnimEdit, gestureSceneBump } from '@core/workspace/viewportGesture';
 import { useProjectStore } from '@stores/projectStore';
 import { getRemappedTime, getTimelineController, governingClipsFor } from '@core/timeline/TimelineController';
 import { is3DEnabled, readNode3D } from '@core/scene/threeD';
@@ -683,6 +683,7 @@ export interface Transform3DValues {
   rotation: number;
   scaleX: number;
   scaleY: number;
+  scaleZ: number;
 }
 
 /**
@@ -706,7 +707,18 @@ export function sampleTransform3DAtPlayhead(node: SceneNode): Transform3DValues 
     rotation: av.get('rotation') ?? g?.rotationDeg ?? 0,
     scaleX: av.get('scaleX') ?? av.get('scale') ?? g?.scaleX ?? 1,
     scaleY: av.get('scaleY') ?? av.get('scale') ?? g?.scaleY ?? 1,
+    // Depth scale: the Z cube on the scale gizmo writes it, buildSnapshot's
+    // affineAt composes it, extrusion bodies stretch along it. Static read is
+    // straight off the Transform props — readNode3D predates the property.
+    scaleZ: av.get('scaleZ') ?? staticScaleZOf(node),
   };
+}
+
+/** The Transform component's static scaleZ (1 when absent — flat layers). */
+function staticScaleZOf(node: SceneNode): number {
+  const t = node.components.find((c) => c.type === 'Transform');
+  const v = t ? (t.props as Record<string, unknown>).scaleZ : undefined;
+  return typeof v === 'number' && Number.isFinite(v) ? v : 1;
 }
 
 /**
@@ -723,6 +735,7 @@ const GIZMO_TRACK_GROUPS: Record<keyof Transform3DValues, readonly string[]> = {
   rotation: ['rotation'],
   scaleX: ['scaleX', 'scaleY', 'scale'],
   scaleY: ['scaleX', 'scaleY', 'scale'],
+  scaleZ: ['scaleZ'],
 };
 
 export interface Gizmo3DNodeUpdate {
@@ -763,7 +776,7 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): v
   }
 
   if (keyed.length > 0) {
-    runAnimEdit(
+    gestureAnimEdit(
       'Keyframe 3D Transform',
       () => {
         for (const k of keyed) defaultAnimation.setKeyframe(k.nodeId, k.prop, k.lt, k.value);
@@ -774,7 +787,7 @@ export function applyGizmo3DTransforms(updates: readonly Gizmo3DNodeUpdate[]): v
     );
   }
 
-  if (changed) bumpScene();
+  if (changed) gestureSceneBump();
 }
 
 /**
@@ -820,7 +833,7 @@ export function applyNodePropsKeyframed(
   }
 
   if (keyed.length > 0) {
-    runAnimEdit(
+    gestureAnimEdit(
       'Keyframe Camera',
       () => {
         for (const k of keyed) defaultAnimation.setKeyframe(nodeId, k.prop, lt, k.value);
@@ -828,7 +841,7 @@ export function applyNodePropsKeyframed(
       mergeKey,
     );
   }
-  if (changed) bumpScene();
+  if (changed) gestureSceneBump();
 }
 
 /**
@@ -979,7 +992,7 @@ function moveNodes(payload: MoveNodesPayload, viewOf?: () => Camera3dMode): void
 
   let changed = false;
   if (toKey.length > 0) {
-    runAnimEdit(
+    gestureAnimEdit(
       'Keyframe Position',
       () => {
         for (const node of toKey) {
@@ -1050,7 +1063,7 @@ function moveNodes(payload: MoveNodesPayload, viewOf?: () => Camera3dMode): void
     }
     changed = true;
   }
-  if (changed) bumpScene();
+  if (changed) gestureSceneBump();
 }
 
 function createNode(payload: CreateNodePayload): void {
@@ -1256,7 +1269,7 @@ function resizeNode(payload: ResizeNodePayload): void {
   const keyScale = !sizing && (autoKeyframe || hasAnyTrack(node.id, ['scaleX', 'scaleY', 'scale']));
 
   if (keyPos || keyScale || keySize) {
-    runAnimEdit(
+    gestureAnimEdit(
       'Keyframe Resize',
       () => {
         if (keyPos) {
@@ -1292,7 +1305,7 @@ function resizeNode(payload: ResizeNodePayload): void {
     defaultSceneGraph.writeProp(node.id, cid, 'scaleX', localScaleX);
     defaultSceneGraph.writeProp(node.id, cid, 'scaleY', localScaleY);
   }
-  bumpScene();
+  gestureSceneBump();
 }
 
 function rotateNode(payload: RotateNodePayload): void {
@@ -1309,7 +1322,7 @@ function rotateNode(payload: RotateNodePayload): void {
   const deg = (payload.rotation * 180) / Math.PI - parentSpaceOf(node.id, rawTime).rotationDeg;
 
   if (autoKeyframe || hasAnyTrack(node.id, ['rotation'])) {
-    runAnimEdit(
+    gestureAnimEdit(
       'Keyframe Rotate',
       () => {
         // Layer-local time — no toLayerTime on top (see moveNodes).
@@ -1320,7 +1333,7 @@ function rotateNode(payload: RotateNodePayload): void {
   }
 
   defaultSceneGraph.writeProp(node.id, cid, 'rotation', deg);
-  bumpScene();
+  gestureSceneBump();
 }
 
 function moveAnchor(payload: MoveAnchorPayload): void {
@@ -1344,7 +1357,7 @@ function updateNodePath(payload: UpdateNodePathPayload): void {
   const geomComponent = node.components.find((c) => c.type === 'Geometry');
   if (geomComponent) {
     defaultSceneGraph.writeProp(node.id, geomComponent.id, 'points', payload.points);
-    bumpScene();
+    gestureSceneBump();
   }
 }
 
@@ -1361,7 +1374,7 @@ function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
   // Comp time — the same base `keyframeMask` uses from the Effects panel, so
   // canvas edits and the panel's keyframe button land on the same keyframes.
   setMaskPoints(payload.id as string, payload.maskId, payload.points as MaskPoint[], getTimelineController().currentSeconds);
-  bumpScene();
+  gestureSceneBump();
 }
 
 /**

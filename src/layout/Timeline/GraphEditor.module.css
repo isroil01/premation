@@ -163,32 +163,52 @@
   border-left: 1px solid var(--color-border-strong);
 }
 
-.iconBtn {
+/* Base for BOTH states — .iconBtnActive is used ALONE by the ease pills
+   (`pillClass` swaps classes the way the mode tabs do), so it must carry the
+   whole box, not just the tint. */
+.iconBtn,
+.iconBtnActive {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 24px;
-  height: 22px;
+  height: var(--control-height-sm, 22px);
   padding: 0;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-sm, 3px);
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
   cursor: pointer;
-  transition: all 0.12s ease;
+  transition: all var(--motion-duration-fast, 120ms) ease;
 }
 
-.iconBtn:hover {
+.iconBtn:hover,
+.iconBtnActive:hover {
   background: var(--color-hover);
   color: var(--color-text-primary);
   border-color: var(--color-border-strong);
 }
 
+.iconBtn:active,
+.iconBtnActive:active {
+  background: var(--color-hover);
+  transform: translateY(0.5px);
+}
+
+.iconBtn:focus-visible,
+.iconBtnActive:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+/* The applied easing: lit like the active mode tab, with a subtle plate so
+   it reads at a glance among five near-identical glyphs. */
 .iconBtnActive {
-  background: transparent;
   color: var(--color-primary);
-  border-color: transparent;
+  background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
 }
 
 .fieldLabel {

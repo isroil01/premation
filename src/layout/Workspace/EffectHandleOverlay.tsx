@@ -26,7 +26,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useSceneRevision } from '@stores/sceneStore';
+import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useActiveWorkspace } from '@stores/projectStore';
@@ -55,7 +55,10 @@ const VERTEX_R = 5;
 const TANGENT_R = 3.5;
 
 export function EffectHandleOverlay(): JSX.Element | null {
-  useSceneRevision((s) => s.rev);
+  // Frame-coalesced: a drag bumps the revision per pointer event, and this
+  // overlay only needs to track it visually. Also the memo key below — the raw
+  // rev changed per event, so the memos never hit during a drag.
+  const sceneTick = useSceneRevisionFrame();
   const ids = useSelectionStore((s) => s.ids);
   const activeNode = useEffectHandleStore((s) => s.nodeId);
   const activeEffect = useEffectHandleStore((s) => s.effectId);
@@ -89,7 +92,7 @@ export function EffectHandleOverlay(): JSX.Element | null {
     }
     return collectEffectHandles(effect.type, params, geom.width, geom.height);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
-  }, [effect, geom?.width, geom?.height, nodeId, layerT, useSceneRevision((s) => s.rev)]);
+  }, [effect, geom?.width, geom?.height, nodeId, layerT, sceneTick]);
 
   const camera = getWorkspaceController().ws.camera;
 
@@ -104,7 +107,7 @@ export function EffectHandleOverlay(): JSX.Element | null {
   const mapping = useMemo(
     () => (nodeId ? layerScreenMapping(nodeId, time, comp, camera) : null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton
-    [nodeId, time, comp.width, comp.height, useSceneRevision((s) => s.rev)],
+    [nodeId, time, comp.width, comp.height, sceneTick],
   );
 
   const toScreen = useMemo(() => {
