@@ -32,6 +32,7 @@ import {
   setNodeShininess,
   setNodeSpecular,
   setNodeShadingModel,
+  setNodeToonBands,
   MATERIAL_PCT_DEFAULTS,
 } from '@core/scene/material';
 
@@ -221,17 +222,22 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
               {/* Reflectance model. Phong is the original look and the
                   default; Physical is Cook-Torrance/GGX — AE's Advanced 3D
                   model — where Roughness replaces Shininess and Metal means
-                  "reflects its own colour, no diffuse". */}
+                  "reflects its own colour, no diffuse". Toon is cel shading:
+                  the same lighting quantized into hard bands. */}
               <div className={s.row}>
                 <span className={s.label}>Shading</span>
                 <select
                   className={s.select}
                   value={material.shading}
-                  onChange={(e) => setNodeShadingModel(nodeId, e.currentTarget.value === 'pbr' ? 'pbr' : 'phong')}
+                  onChange={(e) => setNodeShadingModel(
+                    nodeId,
+                    e.currentTarget.value === 'pbr' ? 'pbr' : e.currentTarget.value === 'toon' ? 'toon' : 'phong',
+                  )}
                   aria-label="Shading model"
                 >
                   <option value="phong">Phong</option>
                   <option value="pbr">Physical (PBR)</option>
+                  <option value="toon">Toon (Cel)</option>
                 </select>
               </div>
               <MaterialRow
@@ -239,13 +245,14 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
                 value={material.specular}
                 onChange={(v) => setNodeSpecular(nodeId, v)}
               />
-              {material.shading === 'pbr' ? (
+              {material.shading === 'pbr' && (
                 <MaterialRow
                   label="Roughness"
                   value={material.roughness}
                   onChange={(v) => setNodeMaterialPct(nodeId, 'roughness', v, MATERIAL_PCT_DEFAULTS.roughness)}
                 />
-              ) : (
+              )}
+              {material.shading === 'phong' && (
                 <MaterialRow
                   label="Shininess"
                   value={material.shininess}
@@ -253,6 +260,16 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
                   max={128}
                   unit=""
                   onChange={(v) => setNodeShininess(nodeId, v)}
+                />
+              )}
+              {material.shading === 'toon' && (
+                <MaterialRow
+                  label="Bands"
+                  value={material.toonBands}
+                  min={2}
+                  max={8}
+                  unit=""
+                  onChange={(v) => setNodeToonBands(nodeId, v)}
                 />
               )}
               <MaterialRow

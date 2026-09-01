@@ -203,16 +203,20 @@ describe('one-sided shading: CPU and GPU agree on what the flag means', () => {
     expect(one![0]).toBeLessThan(two![0]);
   });
 
-  it('the shader reads the flag from eyeLit.w, and 2 means one-sided', () => {
+  it('the shader reads the flag from eyeLit.w: 2/4 one-sided, 3/4 toon', () => {
     // The encoding is load-bearing in two places that cannot see each other:
     // `packShade3D` writes it, four shade blocks read it. Both are pinned so a
     // change to either shows up here rather than as a lighting difference.
+    // 1 = two-sided, 2 = one-sided, 3/4 = their toon twins (cel-quantized).
     const uniforms = readSource('../packages/renderer/src/pipeline/uniforms.ts');
-    expect(uniforms).toMatch(/out\[o \+ 3\] = shade\.oneSided \? 2 : 1;/);
+    expect(uniforms).toMatch(/out\[o \+ 3\] = toon \? \(shade\.oneSided \? 4 : 3\) : shade\.oneSided \? 2 : 1;/);
     const shaders = readSource('../packages/renderer/src/shaders/builtin.ts');
-    // Every shade block derives it, and every lambert/specular term uses it.
-    expect((shaders.match(/twoSided = select\(1\.0, 0\.0, obj\.eyeLit\.w > 1\.5\)/g) ?? []).length).toBe(2);
-    expect((shaders.match(/twoSided = eyeLit\.w > 1\.5 \? 0\.0 : 1\.0/g) ?? []).length).toBe(2);
+    // Every shade block derives one-sidedness from 2-or-4 and toon from >2.5,
+    // and every lambert/specular term uses the derived flag.
+    expect((shaders.match(/let oneS = \(obj\.eyeLit\.w > 1\.5 && obj\.eyeLit\.w < 2\.5\) \|\| obj\.eyeLit\.w > 3\.5;/g) ?? []).length).toBe(2);
+    expect((shaders.match(/twoSided = \(\(eyeLit\.w > 1\.5 && eyeLit\.w < 2\.5\) \|\| eyeLit\.w > 3\.5\) \? 0\.0 : 1\.0/g) ?? []).length).toBe(2);
+    // All four blocks quantize under the toon flag.
+    expect((shaders.match(/toonFlag/g) ?? []).length).toBeGreaterThanOrEqual(12);
     // 4 blocks x (aim + toLight + Phong specular + PBR N·L + PBR N·V + PBR N·H).
     // The PBR branch must honour the flag in every dot product it takes, or a
     // one-sided extrusion wall would light from behind under GGX while staying

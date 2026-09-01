@@ -93,11 +93,15 @@ export interface MaterialOptions {
    * geometry, Schlick Fresnel with F0 blended from dielectric 4 % toward the
    * surface colour by `metal`, and energy-conserving diffuse — the model AE's
    * Advanced 3D renderer and every current real-time engine use. Roughness
-   * replaces shininess there. Default `phong` so no existing scene changes.
+   * replaces shininess there. `toon` is cel shading: Blinn-Phong terms
+   * quantized into `toonBands` hard steps — the cartoon look AE has no 3D
+   * answer to at all. Default `phong` so no existing scene changes.
    */
-  shading: 'phong' | 'pbr';
+  shading: 'phong' | 'pbr' | 'toon';
   /** PBR roughness, 0–100 (0 mirror, 100 matte). Read only when `shading` is `pbr`. */
   roughness: number;
+  /** Cel bands, 2–8. Read only when `shading` is `toon`. */
+  toonBands: number;
 }
 
 /** The Material Options a keyframe track can drive. Mirrors the registry's
@@ -171,17 +175,28 @@ export function readNodeMaterial(node: SceneNode, av?: ReadonlyMap<string, numbe
     metal: pct(p.metal, 0),
     specular: pct(p.specular, 0),
     shininess: typeof p.shininess === 'number' ? Math.max(1, p.shininess) : 32,
-    shading: p.shadingModel === 'pbr' ? 'pbr' : 'phong',
+    shading: p.shadingModel === 'pbr' ? 'pbr' : p.shadingModel === 'toon' ? 'toon' : 'phong',
     roughness: pct(p.roughness, 50),
+    toonBands: typeof p.toonBands === 'number' ? Math.max(2, Math.min(8, Math.round(p.toonBands))) : 3,
   };
 }
 
 /** Switch a layer's 3D reflectance model. */
-export function setNodeShadingModel(nodeId: string, shading: 'phong' | 'pbr'): void {
+export function setNodeShadingModel(nodeId: string, shading: 'phong' | 'pbr' | 'toon'): void {
   const node = defaultSceneGraph.getNode(nodeId);
   const t = node?.components.find((c) => c.type === 'Transform');
   if (!node || !t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'shadingModel', shading === 'pbr' ? 'pbr' : undefined);
+  defaultSceneGraph.writeProp(nodeId, t.id, 'shadingModel', shading === 'phong' ? undefined : shading);
+  bumpScene();
+}
+
+/** Cel band count for the toon model, 2–8 (3 is the unstored default). */
+export function setNodeToonBands(nodeId: string, bands: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const t = node?.components.find((c) => c.type === 'Transform');
+  if (!t) return;
+  const v = Math.max(2, Math.min(8, Math.round(bands)));
+  defaultSceneGraph.writeProp(nodeId, t.id, 'toonBands', v !== 3 ? v : undefined);
   bumpScene();
 }
 

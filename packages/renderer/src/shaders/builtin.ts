@@ -4063,7 +4063,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     out lit identically on both, which is what "it doesn't read as a solid"
     actually was. Only an extrusion's walls and back cap set 2.
   */
-  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
+  // 3 and 4 are the TOON twins of 1 and 2 — same lighting math, quantized
+  // into hard cel bands at the tail (see packShade3D).
+  let toonFlag = obj.eyeLit.w > 2.5;
+  let oneS = (obj.eyeLit.w > 1.5 && obj.eyeLit.w < 2.5) || obj.eyeLit.w > 3.5;
+  let twoSided = select(1.0, 0.0, oneS);
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
@@ -4078,7 +4082,9 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   // AE meaning — 0 is no highlight, 1 is a lacquer. A metal reflects its own
   // colour; the metal slider blends between the two.
   let F0 = mix(vec3<f32>(0.08 * obj.shadeParams.y), baseRgb, metal);
-  let shin = max(obj.shadeParams.z, 1.0);
+  // Toon: shadeParams.z carries the band count, not a shininess — shade with
+  // a fixed tight exponent so the stepped highlight stays a crisp blob.
+  let shin = select(max(obj.shadeParams.z, 1.0), 32.0, toonFlag);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
@@ -4171,6 +4177,13 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
+  if (toonFlag) {
+    // Cel quantization: round both responses into hard bands. Rounding (not
+    // flooring) keeps full black and full white reachable at the extremes.
+    let bands = max(2.0, obj.shadeParams.z);
+    diff = floor(diff * bands + vec3<f32>(0.5)) / bands;
+    spec = floor(spec * bands + vec3<f32>(0.5)) / bands;
+  }
   if (pbr) {
     // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
     // an intensity-scaled highlight, so specI does not apply.
@@ -4229,8 +4242,10 @@ in vec3 vWorld;
 out vec4 frag;
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
-  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
-  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
+  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided; 3/4 = the toon
+  // twins of 1/2, quantized at the tail. See the WGSL twin.
+  bool toonFlag = eyeLit.w > 2.5;
+  float twoSided = ((eyeLit.w > 1.5 && eyeLit.w < 2.5) || eyeLit.w > 3.5) ? 0.0 : 1.0;
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
@@ -4243,7 +4258,8 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   // F0: 8 % × Specular Intensity for dielectrics (0.5 → the canonical 4 %),
   // the surface colour for metals.
   vec3 F0 = mix(vec3(0.08 * shadeParams.y), baseRgb, metal);
-  float shin = max(shadeParams.z, 1.0);
+  // Toon: shadeParams.z is the band count — use a fixed tight highlight.
+  float shin = toonFlag ? 32.0 : max(shadeParams.z, 1.0);
   vec3 diff = vec3(0.0);
   vec3 spec = vec3(0.0);
   for (int i = 0; i < 8; i++) {
@@ -4330,6 +4346,12 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
+  if (toonFlag) {
+    // Cel quantization — see the WGSL twin.
+    float bands = max(2.0, shadeParams.z);
+    diff = floor(diff * bands + vec3(0.5)) / bands;
+    spec = floor(spec * bands + vec3(0.5)) / bands;
+  }
   if (pbr) {
     return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
   }
@@ -4401,7 +4423,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     out lit identically on both, which is what "it doesn't read as a solid"
     actually was. Only an extrusion's walls and back cap set 2.
   */
-  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
+  // 3 and 4 are the TOON twins of 1 and 2 — same lighting math, quantized
+  // into hard cel bands at the tail (see packShade3D).
+  let toonFlag = obj.eyeLit.w > 2.5;
+  let oneS = (obj.eyeLit.w > 1.5 && obj.eyeLit.w < 2.5) || obj.eyeLit.w > 3.5;
+  let twoSided = select(1.0, 0.0, oneS);
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
@@ -4416,7 +4442,9 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   // AE meaning — 0 is no highlight, 1 is a lacquer. A metal reflects its own
   // colour; the metal slider blends between the two.
   let F0 = mix(vec3<f32>(0.08 * obj.shadeParams.y), baseRgb, metal);
-  let shin = max(obj.shadeParams.z, 1.0);
+  // Toon: shadeParams.z carries the band count, not a shininess — shade with
+  // a fixed tight exponent so the stepped highlight stays a crisp blob.
+  let shin = select(max(obj.shadeParams.z, 1.0), 32.0, toonFlag);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
@@ -4509,6 +4537,13 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
+  if (toonFlag) {
+    // Cel quantization: round both responses into hard bands. Rounding (not
+    // flooring) keeps full black and full white reachable at the extremes.
+    let bands = max(2.0, obj.shadeParams.z);
+    diff = floor(diff * bands + vec3<f32>(0.5)) / bands;
+    spec = floor(spec * bands + vec3<f32>(0.5)) / bands;
+  }
   if (pbr) {
     // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
     // an intensity-scaled highlight, so specI does not apply.
@@ -4526,8 +4561,10 @@ const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; v
 const GLSL_SHADE3D_FN = /* glsl */ `
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
-  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
-  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
+  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided; 3/4 = the toon
+  // twins of 1/2, quantized at the tail. See the WGSL twin.
+  bool toonFlag = eyeLit.w > 2.5;
+  float twoSided = ((eyeLit.w > 1.5 && eyeLit.w < 2.5) || eyeLit.w > 3.5) ? 0.0 : 1.0;
   vec3 N = normalize(model[2].xyz);
   int count = int(shadeParams.x + 0.5);
   float specI = shadeParams.y;
@@ -4540,7 +4577,8 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   // F0: 8 % × Specular Intensity for dielectrics (0.5 → the canonical 4 %),
   // the surface colour for metals.
   vec3 F0 = mix(vec3(0.08 * shadeParams.y), baseRgb, metal);
-  float shin = max(shadeParams.z, 1.0);
+  // Toon: shadeParams.z is the band count — use a fixed tight highlight.
+  float shin = toonFlag ? 32.0 : max(shadeParams.z, 1.0);
   vec3 diff = vec3(0.0);
   vec3 spec = vec3(0.0);
   for (int i = 0; i < 8; i++) {
@@ -4627,6 +4665,12 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     }
   }
   diff = clamp(diff, vec3(0.0), vec3(4.0));
+  if (toonFlag) {
+    // Cel quantization — see the WGSL twin.
+    float bands = max(2.0, shadeParams.z);
+    diff = floor(diff * bands + vec3(0.5)) / bands;
+    spec = floor(spec * bands + vec3(0.5)) / bands;
+  }
   if (pbr) {
     return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
   }

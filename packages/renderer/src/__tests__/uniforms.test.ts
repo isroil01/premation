@@ -113,6 +113,23 @@ describe('packShade3D (per-fragment 3D lighting tail)', () => {
     expect(out[22]).toBeCloseTo(20, 6);
   });
 
+  it('toon rides the lit flag (3/4) and the shininess slot carries the bands', () => {
+    const out = new Float32Array(SHADE3D_FLOATS);
+    packShade3D(out, 0, {
+      model: new Array(16).fill(0), eye: [0, 0, 0], specular: 0.4, shininess: 20,
+      toonBands: 4, lights: [light()],
+    });
+    expect(out[19]).toBe(3); // lit flag: toon two-sided
+    expect(out[22]).toBe(4); // bands in the shininess slot
+    const oneSided = new Float32Array(SHADE3D_FLOATS);
+    packShade3D(oneSided, 0, {
+      model: new Array(16).fill(0), eye: [0, 0, 0], specular: 0, shininess: 1,
+      toonBands: 9, oneSided: true, lights: [light()],
+    });
+    expect(oneSided[19]).toBe(4); // toon one-sided
+    expect(oneSided[22]).toBe(8); // bands clamp to 8
+  });
+
   it('filters zero-gain lights and truncates at MAX_LIGHTS3D', () => {
     const lights = [
       light({ gain: 0 }),

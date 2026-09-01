@@ -1447,6 +1447,7 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         shininess: layer.shade3d.shininess,
         ...(layer.shade3d.metal ? { metal: layer.shade3d.metal } : {}),
         ...(layer.shade3d.roughness !== undefined ? { roughness: layer.shade3d.roughness } : {}),
+        ...(layer.shade3d.toonBands !== undefined ? { toonBands: layer.shade3d.toonBands } : {}),
         ...(layer.shade3d.oneSided ? { oneSided: true } : {}),
         ...(layer.shade3d.ambient !== undefined ? { ambient: layer.shade3d.ambient } : {}),
         ...(layer.shade3d.diffuse !== undefined ? { diffuse: layer.shade3d.diffuse } : {}),

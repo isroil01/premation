@@ -254,6 +254,9 @@ export interface RenderLayer {
     metal?: number;
     /** PBR roughness 0..1. Present ⇒ the GGX model; absent ⇒ Blinn-Phong. */
     roughness?: number;
+    /** Cel bands (2–8). Present ⇒ toon: Blinn-Phong terms quantized to hard
+     *  steps. Mutually exclusive with `roughness` (buildSnapshot sets one). */
+    toonBands?: number;
     /** Light this surface from one side. Set only by an extrusion's walls and
      *  back cap, which bound a volume — see `lightShading.ndotl`. */
     oneSided?: boolean;

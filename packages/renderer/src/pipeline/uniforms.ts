@@ -162,6 +162,15 @@ export interface Shade3D {
    */
   roughness?: number;
   /**
+   * Cel bands, 2–8. PRESENT selects toon shading: the Blinn-Phong diffuse and
+   * specular quantize into this many hard steps. Rides the lit flag (3 = toon
+   * two-sided, 4 = toon one-sided) and the shininess slot (bands are ≥ 2, so
+   * they are unambiguous there) — zero std140 layout changes, the same trick
+   * `roughness` and `oneSided` already use. Mutually exclusive with
+   * `roughness`; when both arrive, toon wins (it claimed the slot).
+   */
+  toonBands?: number;
+  /**
    * Light this surface from ONE side: `max(dot(N, L), 0)` instead of
    * `abs(dot(N, L))`.
    *
@@ -191,17 +200,23 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
   out[o + 0] = shade.eye[0];
   out[o + 1] = shade.eye[1];
   out[o + 2] = shade.eye[2];
-  // Lit flag: 1 = two-sided, 2 = one-sided. A third value in an existing slot
-  // rather than a new one, so the std140 layout of the shade tail is unchanged
-  // and no other packer or shader moves.
-  out[o + 3] = shade.oneSided ? 2 : 1;
+  // Lit flag: 1 = two-sided, 2 = one-sided, 3 = TOON two-sided, 4 = TOON
+  // one-sided. New values in an existing slot rather than a new one, so the
+  // std140 layout of the shade tail is unchanged and no other packer or
+  // shader moves.
+  const toon = shade.toonBands !== undefined;
+  out[o + 3] = toon ? (shade.oneSided ? 4 : 3) : shade.oneSided ? 2 : 1;
   o += 4;
   const lights = shade.lights.filter((l) => l.gain > 0).slice(0, MAX_LIGHTS3D);
   out[o + 0] = lights.length;
   out[o + 1] = shade.specular;
   // −roughness selects GGX in the shader; see `Shade3D.roughness`. Clamped
-  // away from 0 so the sign survives: roughness 0 packs as −0.001.
-  out[o + 2] = shade.roughness !== undefined ? -Math.max(0.001, Math.min(1, shade.roughness)) : shade.shininess;
+  // away from 0 so the sign survives: roughness 0 packs as −0.001. Under the
+  // toon flag this slot carries the band count instead (≥ 2, so a shader
+  // reading it as shininess by mistake would still floor sanely).
+  out[o + 2] = toon
+    ? Math.max(2, Math.min(8, Math.round(shade.toonBands!)))
+    : shade.roughness !== undefined ? -Math.max(0.001, Math.min(1, shade.roughness)) : shade.shininess;
   // shadeParams.w — spare padding until now, so Metal costs no layout change.
   out[o + 3] = shade.metal ?? 0;
   o += 4;

@@ -640,6 +640,8 @@ export interface Renderable {
       metal?: number;
       /** PBR roughness 0..1. Present ⇒ GGX model — see `Shade3D.roughness`. */
       roughness?: number;
+      /** Cel bands 2–8. Present ⇒ toon quantization — see `Shade3D.toonBands`. */
+      toonBands?: number;
       /** Per-quad Lambert gain fallback (adapter-computed). */
       quadGain?: readonly [number, number, number];
       /** Light this surface from one side — see `Shade3D.oneSided`. Set by an

@@ -1786,6 +1786,7 @@ export class CompositionPass extends RenderPass {
         shininess: s.shininess,
         ...(s.metal ? { metal: s.metal } : {}),
         ...(s.roughness !== undefined ? { roughness: s.roughness } : {}),
+        ...(s.toonBands !== undefined ? { toonBands: s.toonBands } : {}),
         // Carried explicitly, like `metal` above. This object is built
         // field-by-field from `r.threeD.shade`, so a field added to that type
         // and not named here is silently dropped — and for a depth-eligible
