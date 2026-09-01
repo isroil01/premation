@@ -54,6 +54,7 @@ import { readNodeMaterial } from '@core/scene/material';
 import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
 import { extrusionOutlineFor, extrusionMeshFor } from '@core/scene/extrusionMesh';
 import { readNodeModelRef, modelPrimitiveFor } from '@core/scene/modelMesh';
+import { environmentRig, presetSh } from '@core/scene/environmentLight';
 import { isColorEffect } from '@core/effects/effectColorMatrix';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { faceEffectsFor } from '@core/scene/faceEffects';
@@ -1435,7 +1436,7 @@ export function buildSnapshot(
     for (const n of nodes) {
       if (readNodeKind(n) !== 'light') continue;
       const lt = readNodeLight(n);
-      if (!lt.shadows || lt.type === 'ambient') continue;
+      if (!lt.shadows || lt.type === 'ambient' || lt.type === 'environment') continue;
       const av = valuesOf(n.id);
       const wp = nodeWorldPosition(n);
       out.push({
@@ -1538,6 +1539,46 @@ export function buildSnapshot(
     const lt = readNodeLight(n);
     const av = valuesOf(n.id);
     const wp = nodeWorldPosition(n);
+    if (lt.type === 'environment') {
+      /*
+        Environment light: expand the SH probe into its derived rig (one
+        ambient floor + up to six axis parallels) so image-based lighting
+        rides the EXISTING light array — both shading paths, both shader
+        dialects, zero renderer changes. Direction is encoded the way every
+        targeted parallel is: source far along the arrival axis, aimed at the
+        comp centre. Env lights never cast 2.5D shadows and never wash.
+      */
+      const envRot = av.get('envRotation') ?? lt.envRotation;
+      const envIntensity = av.get('intensity') ?? lt.intensity;
+      const centre = { x: comp.width / 2, y: comp.height / 2, z: 0 };
+      for (const rl of environmentRig(presetSh(lt.envPreset), envIntensity, envRot)) {
+        if (rl.kind === 'ambient') {
+          sceneLights.push({
+            ...lt,
+            type: 'ambient', color: rl.color, intensity: rl.intensity,
+            shadows: false, falloff: 'none', poi: null,
+            x: centre.x, y: centre.y, z: 0,
+          });
+        } else {
+          const FAR = 100000;
+          // The engine's parallel `aim` (poi − position) is the direction LIT
+          // NORMALS FACE, not the light's travel direction — pinned by the
+          // shadeLayer sign test in environmentLight.test.ts, which caught
+          // the first encoding lighting the ground from the sky's slot. So
+          // the position sits OPPOSITE the arrival axis: aim = `from`.
+          sceneLights.push({
+            ...lt,
+            type: 'parallel', color: rl.color, intensity: rl.intensity,
+            shadows: false, falloff: 'none',
+            x: centre.x - rl.from!.x * FAR,
+            y: centre.y - rl.from!.y * FAR,
+            z: 0 - rl.from!.z * FAR,
+            poi: centre,
+          });
+        }
+      }
+      continue;
+    }
     sceneLights.push({
       ...lt,
       intensity: av.get('intensity') ?? lt.intensity,
@@ -1782,6 +1823,11 @@ export function buildSnapshot(
     if (kind === 'light') {
       const av = valuesOf(node.id);
       const lt = readNodeLight(node);
+      // An environment light LIGHTS but never GLOWS: it has no position to
+      // wash from — its whole contribution is the rig expanded into
+      // sceneLights above. Emitting the point-glow here painted a radial
+      // bloom for a light that is everywhere.
+      if (lt.type === 'environment') continue;
       // PROJECT the glow through the current view. The wash used to be emitted
       // at the light's raw comp x/y, so it ignored both the light's depth and
       // the active view entirely: switch to Left view and every layer moved

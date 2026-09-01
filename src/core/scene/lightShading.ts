@@ -110,7 +110,9 @@ export function planeNormalOf(world: ArrayLike<number>): readonly [number, numbe
  *  default. Each is a place the two models could disagree, and a WGSL/GLSL pair
  *  is the worst place to keep a default in step with TypeScript. */
 export interface ShaderLight {
-  type: SceneLight['type'];
+  /** The four RENDERABLE types. 'environment' never reaches the shader — it
+   *  is expanded into ambient+parallel entries before collection. */
+  type: Exclude<SceneLight['type'], 'environment'>;
   color: { r: number; g: number; b: number };
   gain: number;
   x: number;
@@ -157,6 +159,10 @@ function resolvedAim(light: SceneLight): readonly [number, number, number] {
 export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[] {
   const out: ShaderLight[] = [];
   for (const light of lights) {
+    // Environment lights are a PROBE, not a shader light: buildSnapshot
+    // expands them into ambient+parallel entries before collection. One that
+    // leaks through unexpanded must be dropped, not mis-shaded as a point.
+    if (light.type === 'environment') continue;
     const gain = Math.max(0, light.intensity / 100);
     if (gain <= 0) continue;
     const c = Color.fromHex(light.color);
@@ -166,7 +172,7 @@ export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[]
     // `shadeLayer`; expressed once, in absolute radians, for both consumers.
     const featherPct = light.coneFeather === undefined ? 0.2 : Math.max(0, light.coneFeather) / 100;
     out.push({
-      type: light.type,
+      type: light.type as Exclude<SceneLight['type'], 'environment'>,
       color: { r: c.r, g: c.g, b: c.b },
       gain,
       x: light.x,

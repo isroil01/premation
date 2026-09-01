@@ -37,6 +37,9 @@ describe('lights', () => {
       shadowDarkness: 100,
       shadowDiffusion: 0,
       poi: null,
+      // Environment-light fields (no-ops on the four classic types).
+      envPreset: 'studio',
+      envRotation: 0,
     });
   });
 
@@ -233,3 +236,64 @@ describe('lights', () => {
     });
   });
 });
+
+describe('environment light', () => {
+  function envLight(id: string, preset = 'sky'): SceneNode {
+    const n = light(id);
+    const p = n.components[0]!.props as Record<string, unknown>;
+    p.lightType = 'environment';
+    p.envPreset = preset;
+    p.intensity = 100;
+    return n;
+  }
+
+  /** lights3d only ships when something 3D is there to be lit. */
+  function shape3d(id: string): SceneNode {
+    return {
+      id, name: id, parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 200, y: 200 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        { id: `${id}_t`, type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 200, y: 200, z: 0, rotation: 0, width: 50, height: 50, acceptsLights: true } },
+        { id: `${id}_s`, type: 'Style', props: { opacity: 100, fill: '#3aa' } },
+      ],
+    } as unknown as SceneNode;
+  }
+
+  it('expands into an ambient floor + directional deviations in lights3d', () => {
+    const g = new SceneGraph();
+    g.addNode(envLight('E'));
+    g.addNode(shape3d('S'));
+    const snap = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
+    const lights = snap.lights3d ?? [];
+    expect(lights.length).toBeGreaterThanOrEqual(2);
+    expect(lights.some((l) => l.type === 'ambient')).toBe(true);
+    expect(lights.some((l) => l.type === 'parallel')).toBe(true);
+    // Nothing claims to be an 'environment' downstream — the probe expands
+    // BEFORE collection (toShaderLights would drop it, mis-typed).
+    expect(lights.every((l) => l.type !== ('environment' as never))).toBe(true);
+  });
+
+  it('draws no wash layer — an environment lights, it does not glow', () => {
+    const g = new SceneGraph();
+    g.addNode(envLight('E'));
+    const snap = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
+    expect(snap.layers.some((l) => l.light)).toBe(false);
+    expect(snap.layers.some((l) => l.id.startsWith('E'))).toBe(false);
+  });
+
+  it('keyframed envRotation swings the rig (animated sky)', () => {
+    const g = new SceneGraph();
+    g.addNode(envLight('E', 'sunset'));
+    g.addNode(shape3d('S'));
+    const anim = new AnimationEngine();
+    anim.setKeyframe('E', 'envRotation', 0, 0);
+    anim.setKeyframe('E', 'envRotation', 2, 180);
+    const at0 = buildSnapshot(g, anim, 0, undefined, undefined, undefined, undefined, COMP).lights3d ?? [];
+    const at2 = buildSnapshot(g, anim, 2, undefined, undefined, undefined, undefined, COMP).lights3d ?? [];
+    const horizGains = (ls: typeof at0): number[] =>
+      ls.filter((l) => l.type === 'parallel' && Math.abs(l.aimY) < 0.01).map((l) => Math.round(l.gain * 1000));
+    expect(horizGains(at0).length).toBeGreaterThan(0);
+    expect(horizGains(at2)).not.toEqual(horizGains(at0));
+  });
+});
+

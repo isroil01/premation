@@ -1120,6 +1120,8 @@ export interface LightSeed {
   coneFeather?: number;
   /** Cast 2.5D drop-shadows from this light. */
   castShadows?: boolean;
+  /** Environment only: which procedural sky feeds the probe. */
+  envPreset?: 'studio' | 'sky' | 'sunset';
 }
 
 /** Insert a Light layer */
@@ -1141,6 +1143,11 @@ export function insertLight(seed: LightSeed = {}): void {
     if (seed.type && seed.type !== 'point') t.props.lightType = seed.type;
     if (seed.type === 'spot' && typeof seed.coneAngle === 'number') t.props.lightCone = seed.coneAngle;
     if (seed.type === 'spot' && typeof seed.coneFeather === 'number') t.props.lightConeFeather = seed.coneFeather;
+    if (seed.type === 'environment') {
+      t.props.envPreset = seed.envPreset ?? 'studio';
+      // Keyframeable spin about the vertical axis (an animated sky).
+      t.props.envRotation = 0;
+    }
     // Cast shadows ON for a NEW light unless the caller says otherwise.
     //
     // `readNodeLight` treats a missing prop as false, so adding a light did

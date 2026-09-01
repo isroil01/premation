@@ -47,6 +47,9 @@ export interface ModelPrimitiveEntry {
   /** Object URL of the base colour texture for THIS session, or null. */
   textureUrl: string | null;
   doubleSided: boolean;
+  /** glTF pbrMetallicRoughness factors (0..1). */
+  metallic: number;
+  roughness: number;
 }
 
 interface ModelEntry {
@@ -113,6 +116,8 @@ export function primitiveToEntry(
     fill: `#${hex(f[0])}${hex(f[1])}${hex(f[2])}${hex(f[3])}`,
     textureUrl,
     doubleSided: material?.doubleSided === true,
+    metallic: material?.metallicFactor ?? 0,
+    roughness: material?.roughnessFactor ?? 0.5,
   };
 }
 

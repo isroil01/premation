@@ -163,6 +163,14 @@ export function buildModelLayout(
             width: b ? Math.max(1, b.maxX - b.minX) : 100,
             height: b ? Math.max(1, b.maxY - b.minY) : 100,
             ...(entry?.textureUrl ? { src: entry.textureUrl } : {}),
+            // The file's PBR intent lands directly in Material Options, so an
+            // imported model shades with Cook-Torrance/GGX out of the box —
+            // and the panel's sliders edit exactly what the exporter wrote.
+            acceptsLights: true,
+            shadingModel: 'pbr',
+            metal: Math.round((entry?.metallic ?? 0) * 100),
+            roughness: Math.round((entry?.roughness ?? 0.5) * 100),
+            specular: 40,
           },
           style: { opacity: 100, ...(entry && !entry.textureUrl ? { fill: entry.fill } : {}) },
           model: ref,

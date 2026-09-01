@@ -127,7 +127,9 @@ export function collectSceneGizmos(opts: CollectGizmosOptions): SceneGizmo[] {
       out.push(
         SceneGizmos.buildLightGizmo({
           nodeId: node.id,
-          type: lt.type,
+          // Environment lights have no position/cone to visualise — the
+          // ambient chrome (a simple badge) is the honest gizmo for them.
+          type: lt.type === 'environment' ? 'ambient' : lt.type,
           position,
           radius: values.get('radius') ?? lt.radius,
           cone: values.get('lightCone') ?? lt.cone,

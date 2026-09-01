@@ -40,6 +40,9 @@ export interface GltfMaterial {
   /** Index into `images`, or null. (Resolved through textures[].source.) */
   baseColorImage: number | null;
   doubleSided: boolean;
+  /** 0..1 (spec defaults: fully metallic, fully rough). */
+  metallicFactor: number;
+  roughnessFactor: number;
 }
 
 export interface GltfImage {
@@ -117,6 +120,8 @@ interface GltfJson {
     pbrMetallicRoughness?: {
       baseColorFactor?: number[];
       baseColorTexture?: { index: number };
+      metallicFactor?: number;
+      roughnessFactor?: number;
     };
   }[];
   meshes?: { name?: string; primitives: GltfJsonPrimitive[] }[];
@@ -243,6 +248,10 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
       baseColorFactor: [f[0] ?? 1, f[1] ?? 1, f[2] ?? 1, f[3] ?? 1],
       baseColorImage: image !== null && image !== undefined && images[image] ? image : null,
       doubleSided: m.doubleSided === true,
+      // Spec defaults are 1/1 (fully metallic, fully rough) — honoured, not
+      // softened: an exporter that MEANT non-metal writes metallicFactor 0.
+      metallicFactor: typeof pbr.metallicFactor === 'number' ? pbr.metallicFactor : 1,
+      roughnessFactor: typeof pbr.roughnessFactor === 'number' ? pbr.roughnessFactor : 1,
     };
   });
 

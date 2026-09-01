@@ -110,6 +110,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
   const [coneAngleDeg, setConeAngleDeg] = useState(45);
   const [coneFeather, setConeFeather] = useState(50);
   const [castShadows, setCastShadows] = useState(false);
+  const [envPreset, setEnvPreset] = useState<'studio' | 'sky' | 'sunset'>('studio');
 
   const create = (): void => {
     insertLight({
@@ -119,7 +120,8 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
       color,
       coneAngle: type === 'spot' ? coneAngleDeg : undefined,
       coneFeather: type === 'spot' ? coneFeather : undefined,
-      castShadows,
+      castShadows: type === 'environment' ? false : castShadows,
+      envPreset: type === 'environment' ? envPreset : undefined,
     });
     close();
   };
@@ -146,6 +148,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
               <option value="point">Point (radiates everywhere)</option>
               <option value="spot">Spot (directional cone)</option>
               <option value="ambient">Ambient (uniform wash)</option>
+              <option value="environment">Environment (image-based sky)</option>
             </select>
           </label>
           <label className={styles.field}>
@@ -175,6 +178,21 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
                 <ValueField value={coneFeather} onChange={setConeFeather} min={0} max={100} unit="%" aria-label="Cone feather" />
               </label>
             </>
+          )}
+          {type === 'environment' && (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Sky</span>
+              <select
+                className={styles.select}
+                value={envPreset}
+                onChange={(e) => setEnvPreset(e.target.value as 'studio' | 'sky' | 'sunset')}
+                aria-label="Environment preset"
+              >
+                <option value="studio">Studio (soft top light)</option>
+                <option value="sky">Day sky (blue above)</option>
+                <option value="sunset">Sunset (warm horizon)</option>
+              </select>
+            </label>
           )}
         </div>
       </div>

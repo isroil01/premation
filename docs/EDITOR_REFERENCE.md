@@ -66,7 +66,7 @@ rediscovered in git history and believed a second time.
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
-| Light types | 4 | `src/core/scene/light.ts` → `LightType` |
+| Light types | 5 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
@@ -225,9 +225,19 @@ operator: it consumes a mask and emits glyph placement, so it neither accepts no
 produces the chain's currency. AE models this the same way (Text → Path Options).
 
 ### 3D
-Classic 3D: cameras, 4 light types (point/ambient/spot/parallel) with AE falloff
-curves and cone feather, extrusion with bevels, face materials, ortho views,
-quad view. See §4 for what "3D" does **not** mean here.
+Classic 3D: cameras, 5 light types (point/ambient/spot/parallel/environment)
+with AE falloff curves and cone feather, extrusion with bevels, face materials,
+ortho views, quad view. See §4 for what "3D" does **not** mean here.
+
+**Environment light** (2026-09-01, `core/scene/environmentLight.ts`): an
+image-based sky — a preset equirect (studio / day sky / sunset) projected onto
+band-2 spherical harmonics, expanded at snapshot time into a derived rig (one
+ambient irradiance floor + up to six axis-deviation parallels) that rides the
+EXISTING 8-slot light array. Zero renderer changes; works under Phong and PBR;
+`envRotation` is keyframeable (an animated sky). It lights, it never glows —
+no wash layer. Honest limit: an irradiance probe, not a reflection map —
+mirror surfaces get coloured highlights, not mirrored scenery. AE has no
+equivalent of any kind.
 
 **glTF model import ships** (2026-09-01, `core/media/gltf.ts` +
 `core/scene/modelImport.ts`): drop a `.glb` (or embedded-URI `.gltf`) into the

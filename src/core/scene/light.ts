@@ -9,7 +9,7 @@
 
 import type { SceneNode } from '@core/types';
 
-export type LightType = 'point' | 'ambient' | 'spot' | 'parallel';
+export type LightType = 'point' | 'ambient' | 'spot' | 'parallel' | 'environment';
 
 /**
  * AE's falloff curve. `none` is the legacy behaviour (a plain radius ramp) and
@@ -55,6 +55,10 @@ export interface Light {
    * at a different depth.
    */
   poi: { x: number; y: number; z: number } | null;
+  /** Environment only: which procedural sky feeds the SH probe. */
+  envPreset: 'studio' | 'sky' | 'sunset';
+  /** Environment only: spin about the vertical axis, degrees (keyframeable). */
+  envRotation: number;
 }
 
 /** The unstored defaults — anything equal to these adds nothing to file. */
@@ -72,7 +76,7 @@ export const LIGHT_DEFAULTS = {
 const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
 
 function lightType(v: unknown): LightType {
-  return v === 'ambient' || v === 'spot' || v === 'parallel' ? v : 'point';
+  return v === 'ambient' || v === 'spot' || v === 'parallel' || v === 'environment' ? v : 'point';
 }
 
 /** Read a light's config from its components (defaults when unset). Colour
@@ -98,6 +102,8 @@ export function readNodeLight(node: SceneNode): Light {
   let poiX: number | undefined;
   let poiY: number | undefined;
   let poiZ: number | undefined;
+  let envPreset: 'studio' | 'sky' | 'sunset' = 'studio';
+  let envRotation = 0;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
     if (typeof p.lightType === 'string') type = lightType(p.lightType);
@@ -115,6 +121,8 @@ export function readNodeLight(node: SceneNode): Light {
     if (typeof p.poiY === 'number') poiY = p.poiY;
     if (typeof p.poiZ === 'number') poiZ = p.poiZ;
     if (p.castShadows === true || p.castShadows === 1) shadows = true;
+    if (p.envPreset === 'studio' || p.envPreset === 'sky' || p.envPreset === 'sunset') envPreset = p.envPreset;
+    envRotation = num(p.envRotation, envRotation);
   }
   // Any ONE POI component present means the light is aimed in 3D; the others
   // default to 0 rather than the whole POI being discarded.
@@ -123,6 +131,7 @@ export function readNodeLight(node: SceneNode): Light {
     type, color, intensity, radius, angle, cone, coneFeather,
     falloff, falloffDistance, shadows, shadowDarkness, shadowDiffusion,
     poi: hasPOI ? { x: poiX ?? 0, y: poiY ?? 0, z: poiZ ?? 0 } : null,
+    envPreset, envRotation,
   };
 }
 
