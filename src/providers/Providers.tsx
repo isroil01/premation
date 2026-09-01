@@ -80,6 +80,7 @@ import {
   installSmartAnimateCommandSync,
 } from '@core/animation/smartAnimateCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
+import { buildIk3DCommands } from '@core/scene/ikCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
@@ -1066,6 +1067,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildSpeedRampCommands(),
     ...buildSmartAnimateCommands(),
     ...buildReframeCommands(),
+    ...buildIk3DCommands(),
   ];
 }
 

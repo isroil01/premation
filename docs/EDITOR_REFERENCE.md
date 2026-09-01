@@ -265,7 +265,29 @@ walk cycle, a gizmo drag on a bone, or hand-set keyframes all deform the mesh
 identically. Skinned poses upload under pose-hashed GPU buffer keys (identical
 poses — a paused playhead, a looping cycle — reuse one buffer). A deleted
 joint layer falls back to the rigid bind pose rather than half-deforming.
-Morph targets are the remaining tier.
+
+**Morph targets blend live** (`core/scene/modelMorph.ts`): a primitive's
+POSITION/NORMAL target deltas blend on the mesh layer's animatable
+`morph0…morphN-1` props (a file's baked 'weights' clip, keyframed sliders and
+the graph editor all drive the same numbers), then feed the skinning pass —
+the glTF order, so a face morphs AND rides its skeleton. Blends upload under
+weight-hashed buffer keys like skinned poses.
+
+**Toon (cel) shading** is a third reflectance model beside Phong and PBR
+(Material Options → Shading → Toon): the same per-fragment lighting quantized
+into 2–8 hard bands (Bands slider), with a fixed tight specular blob. It
+rides the existing lit-flag/shininess uniform slots — zero layout changes —
+and applies to anything on the depth-tested lit path, imported models
+included. AE has no 3D cel shading at all.
+
+**3D IK on any parented 3D layers** (`core/scene/boneIK3d.ts`): a damped CCD
+solver over a chain of 3D nulls — exactly what a glTF skeleton imports as.
+Two palette commands: *Pose 3D IK Chain at Target* (one-shot, at the
+playhead) and *Bake 3D IK to Target* (solve every frame against the target
+layer's ANIMATED position and land real rotation keyframes on the joints —
+animate one null, bake, the limb follows; the result is ordinary keyframes).
+Select the chain tip, then Ctrl/Cmd-click the target. The effector keeps its
+own rotation, so FK on the wrist survives IK on the arm.
 
 ### Rigging
 Bone skeleton with **FK, IK and FABRIK**, weight painting, vertex weight editing,
