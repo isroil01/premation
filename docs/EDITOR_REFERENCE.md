@@ -247,9 +247,25 @@ path as extrusions, so imported models depth-sort, light per-fragment (Phong or
 PBR via Material Options) and keyframe with the standard gizmo. The source .glb
 persists as a data: URL inside the scene document (every edition's save path
 carries it; re-parsed on open by `modelHydrate`), which is why imports above
-20 MB warn about document weight. Triangles + base-colour materials/textures
-only for now; skins, animation clips and morph targets are the next tiers, and
-a `.gltf` referencing external files is refused with "export as .glb".
+20 MB warn about document weight. A `.gltf` referencing external files is
+refused with "export as .glb".
+
+**Animation clips bake to real keyframes** (`core/scene/modelAnimation.ts`):
+the file's first clip lands on the node layers' own x/y/z / rotation / scale
+tracks at import — visible in the timeline, editable in the graph editor,
+retimable with speed ramps. Sparse rotation spans densify along the slerp arc
+(~15 samples/s) and every baked euler unwraps toward its predecessor so a spin
+never snaps back 360° at the ±180° seam. Extra clips are reported in the
+import toast, not silently dropped.
+
+**Skinned meshes deform live** (`core/scene/modelSkinning.ts`): JOINTS_0 /
+WEIGHTS_0 primitives CPU-skin at snapshot time against their joint layers'
+CURRENT world matrices — the joints are ordinary imported nulls, so a baked
+walk cycle, a gizmo drag on a bone, or hand-set keyframes all deform the mesh
+identically. Skinned poses upload under pose-hashed GPU buffer keys (identical
+poses — a paused playhead, a looping cycle — reuse one buffer). A deleted
+joint layer falls back to the rigid bind pose rather than half-deforming.
+Morph targets are the remaining tier.
 
 ### Rigging
 Bone skeleton with **FK, IK and FABRIK**, weight painting, vertex weight editing,

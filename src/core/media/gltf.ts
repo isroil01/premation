@@ -2,11 +2,12 @@
  * glTF 2.0 / GLB parser — pure, dependency-free, decode-only.
  *
  * Reads the subset a compositor needs to DRAW a model: triangle primitives
- * (positions / normals / UV0 / indices), pbrMetallicRoughness materials with a
- * base colour factor and optional base colour texture, embedded images, and
- * the node hierarchy with TRS transforms. Everything else — skins, animations,
- * morph targets, extensions — is deliberately ignored for now (they are later
- * tiers, and ignoring unknown fields is what the glTF spec says to do).
+ * (positions / normals / UV0 / indices, plus JOINTS_0/WEIGHTS_0), materials
+ * with a base colour factor and optional base colour texture, embedded images,
+ * the node hierarchy with TRS transforms, TRS animation clips, and skins with
+ * inverse bind matrices. Everything else — morph targets, extensions — is
+ * deliberately ignored for now (they are later tiers, and ignoring unknown
+ * fields is what the glTF spec says to do).
  *
  * Container support: `.glb` (binary container, JSON + BIN chunks) and `.gltf`
  * JSON whose buffers/images are EMBEDDED data: URIs. External .bin/.png URIs
@@ -31,6 +32,10 @@ export interface GltfPrimitive {
   indices: Uint32Array;
   /** Index into `materials`, or null for the spec's default material. */
   material: number | null;
+  /** JOINTS_0: 4 joint indices per vertex (into the skin's joints), or null. */
+  joints: Float32Array | null;
+  /** WEIGHTS_0: 4 weights per vertex (raw; may not sum to 1), or null. */
+  weights: Float32Array | null;
 }
 
 export interface GltfMaterial {
@@ -54,11 +59,20 @@ export interface GltfNode {
   name: string;
   children: number[];
   mesh: number | null;
+  /** Index into `skins` when this node's mesh is skinned, or null. */
+  skin: number | null;
   /** Translation (glTF units). */
   t: [number, number, number];
   /** Rotation quaternion, x y z w (glTF order). */
   r: [number, number, number, number];
   s: [number, number, number];
+}
+
+export interface GltfSkin {
+  /** Node indices acting as joints, in JOINTS_0 order. */
+  joints: number[];
+  /** 16 floats per joint (column-major, glTF space), or null → identity. */
+  inverseBindMatrices: Float32Array | null;
 }
 
 export type GltfInterpolation = 'LINEAR' | 'STEP' | 'CUBICSPLINE';
@@ -89,6 +103,7 @@ export interface ParsedGltf {
   roots: number[];
   /** TRS animation clips ('weights' morph channels are skipped for now). */
   animations: GltfAnimation[];
+  skins: GltfSkin[];
 }
 
 // ── GLB container ─────────────────────────────────────────────────────
@@ -147,9 +162,10 @@ interface GltfJson {
   }[];
   meshes?: { name?: string; primitives: GltfJsonPrimitive[] }[];
   nodes?: {
-    name?: string; children?: number[]; mesh?: number;
+    name?: string; children?: number[]; mesh?: number; skin?: number;
     translation?: number[]; rotation?: number[]; scale?: number[]; matrix?: number[];
   }[];
+  skins?: { joints?: number[]; inverseBindMatrices?: number }[];
   scenes?: { nodes?: number[] }[];
   scene?: number;
   animations?: {
@@ -300,12 +316,18 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
         const normals = normalsAttr !== undefined
           ? readAccessorF32(normalsAttr)
           : generateNormals(positions, indices);
+        const jointsAttr = p.attributes.JOINTS_0;
+        const weightsAttr = p.attributes.WEIGHTS_0;
         return {
           positions,
           normals,
           uvs,
           indices,
           material: p.material ?? null,
+          // Skinning attributes travel together — one without the other is a
+          // malformed export better rendered rigid than half-skinned.
+          joints: jointsAttr !== undefined && weightsAttr !== undefined ? readAccessorF32(jointsAttr) : null,
+          weights: jointsAttr !== undefined && weightsAttr !== undefined ? readAccessorF32(weightsAttr) : null,
         };
       }),
   }));
@@ -327,9 +349,18 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
       name: n.name ?? `node ${i}`,
       children: n.children ?? [],
       mesh: n.mesh ?? null,
+      skin: n.skin ?? null,
       t, r, s,
     };
   });
+
+  // Skins: joints + inverse bind matrices (16 floats each, glTF space).
+  const skins: GltfSkin[] = (g.skins ?? []).map((sk) => ({
+    joints: sk.joints ?? [],
+    inverseBindMatrices: sk.inverseBindMatrices !== undefined
+      ? readAccessorF32(sk.inverseBindMatrices)
+      : null,
+  }));
 
   // Animations → flat channels with decoded time/value streams.
   const animations: GltfAnimation[] = (g.animations ?? []).map((an, ai) => {
@@ -363,7 +394,7 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
     roots = nodes.map((_, i) => i).filter((i) => !claimed.has(i));
   }
 
-  return { meshes, materials, images, nodes, roots, animations };
+  return { meshes, materials, images, nodes, roots, animations, skins };
 }
 
 /** Area-weighted vertex normals for a mesh that ships none. */

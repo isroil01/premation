@@ -62,7 +62,7 @@ export interface ModelLayerSpec {
   /** Style props (leafs only). */
   style?: Record<string, unknown>;
   /** Model reference (leafs only). */
-  model?: { mesh: number; prim: number };
+  model?: { mesh: number; prim: number; skin?: number };
   /** The glTF node this null stands for — animation channels target it. */
   gltfNode?: number;
 }
@@ -147,7 +147,7 @@ export function buildModelLayout(
     if (n.mesh !== null) {
       const mesh = parsed.meshes[n.mesh];
       mesh?.primitives.forEach((_p, pi) => {
-        const ref = { mesh: n.mesh!, prim: pi };
+        const ref = { mesh: n.mesh!, prim: pi, ...(n.skin !== null ? { skin: n.skin } : {}) };
         const entry = modelPrimitiveFor({ modelKey, ...ref });
         growWorldBox(world, ref);
         const b = entry?.bbox;
@@ -287,7 +287,20 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
       components.push({
         id: `${id}_model`,
         type: MODEL_COMPONENT,
-        props: { modelKey, mesh: spec.model.mesh, prim: spec.model.prim },
+        props: {
+          modelKey,
+          mesh: spec.model.mesh,
+          prim: spec.model.prim,
+          ...(spec.model.skin !== undefined ? { skin: spec.model.skin } : {}),
+        },
+      });
+    } else if (spec.gltfNode !== undefined) {
+      // Node nulls persist their glTF index so skinning can find joints by
+      // stable identity across sessions (layer ids are minted per session).
+      components.push({
+        id: `${id}_model`,
+        type: MODEL_COMPONENT,
+        props: { modelKey, gltfNode: spec.gltfNode },
       });
     }
     const node: SceneNode = {

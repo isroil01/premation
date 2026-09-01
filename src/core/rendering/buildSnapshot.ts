@@ -32,7 +32,8 @@ import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core
 import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
 import { localMatrix, worldTransformOf, worldMatrixOf, localUnderParent, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
-import { parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
+import { parentWorld3d, resolveNode3DTransform, composeNodeWorld3d } from '@core/scene/nodeMatrix';
+import { skinnedMeshFor, type SkinResolvers } from '@core/scene/modelSkinning';
 import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
@@ -1073,6 +1074,22 @@ export function buildSnapshot(
       },
       parent3dCache,
     );
+
+  // Skinned-model pose resolution: joint layers' world matrices through the
+  // SAME local/parent resolvers as 3D parenting, so a skin follows its joints
+  // wherever keyframes, gizmo drags, or reparenting put them this frame.
+  const jointMapCache = new Map<string, Map<number, string> | null>();
+  const skinResolvers: SkinResolvers = {
+    nodeById,
+    parentOf,
+    jointWorld: (layerId) => {
+      const local = local3DOf(layerId);
+      if (!local) return null;
+      const own = composeNodeWorld3d(local);
+      const p3 = parent3dOf(layerId);
+      return p3 ? Matrix4Math.multiply(p3, own) : own;
+    },
+  };
 
   // Precomp routing: a layer whose node sits inside a precomp group
   // is collected into that group's texture instead of the top-level comp. The
@@ -3830,6 +3847,12 @@ export function buildSnapshot(
       const mMat = readNodeMaterial(node, a);
       const mLit = mMat.acceptsLights && sceneLights.length > 0;
       const textured = !!modelEntry.textureUrl && layer.kind === 'image' && !!layer.src;
+      // Skinned primitive: swap in pose-deformed vertices under a pose-hashed
+      // buffer key. Unresolvable pose (joint layer deleted, degenerate matrix)
+      // → rigid bind pose, visible and honest.
+      const skinned = modelRef && modelEntry.skinData && world3d
+        ? skinnedMeshFor(node, modelRef, modelEntry, world3d as import('@motion/scene').Matrix4, skinResolvers, jointMapCache)
+        : null;
       modelMeshLayer = {
         ...layer,
         // Same scrub as the extrusion carrier: features the mesh path cannot
@@ -3847,8 +3870,8 @@ export function buildSnapshot(
         lighting: undefined,
         shade3d: undefined,
         extrudedMesh: {
-          key: modelEntry.key,
-          vertices: modelEntry.vertices,
+          key: skinned ? skinned.key : modelEntry.key,
+          vertices: skinned ? skinned.vertices : modelEntry.vertices,
           indices: modelEntry.indices,
           ranges: [{
             role: modelEntry.doubleSided ? 'front' : 'side',

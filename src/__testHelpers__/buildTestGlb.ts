@@ -32,6 +32,63 @@ export function buildGlbBytes(json: unknown, bin: Uint8Array | null): ArrayBuffe
   return out;
 }
 
+/**
+ * A skinned bar: 4 vertices along +Y (glTF space), the bottom pair bound to
+ * joint node 1 (at the origin) and the top pair to joint node 2 (bind pose at
+ * y=1, inverse bind T(0,−1,0)). Node 0 carries the mesh + skin. Moving the
+ * tip joint must carry the top vertices and leave the bottom ones alone.
+ */
+export function buildSkinnedBarGlb(): ArrayBuffer {
+  const positions = new Float32Array([-0.1, 0, 0, 0.1, 0, 0, -0.1, 2, 0, 0.1, 2, 0]);
+  const joints = new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+  const weights = new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]);
+  const indices = new Uint16Array([0, 1, 2, 1, 3, 2]);
+  const ibm = new Float32Array(32);
+  ibm.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 0); // joint 0: identity
+  ibm.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1], 16); // joint 1: T(0,−1,0)
+  const posOff = 0;
+  const jntOff = posOff + positions.byteLength;
+  const wgtOff = jntOff + joints.byteLength;
+  const idxOff = wgtOff + weights.byteLength;
+  const ibmOff = idxOff + indices.byteLength;
+  const bin = new Uint8Array(ibmOff + ibm.byteLength);
+  bin.set(new Uint8Array(positions.buffer), posOff);
+  bin.set(joints, jntOff);
+  bin.set(new Uint8Array(weights.buffer), wgtOff);
+  bin.set(new Uint8Array(indices.buffer), idxOff);
+  bin.set(new Uint8Array(ibm.buffer), ibmOff);
+  const json = {
+    asset: { version: '2.0' },
+    buffers: [{ byteLength: bin.length }],
+    bufferViews: [
+      { buffer: 0, byteOffset: posOff, byteLength: positions.byteLength },
+      { buffer: 0, byteOffset: jntOff, byteLength: joints.byteLength },
+      { buffer: 0, byteOffset: wgtOff, byteLength: weights.byteLength },
+      { buffer: 0, byteOffset: idxOff, byteLength: indices.byteLength },
+      { buffer: 0, byteOffset: ibmOff, byteLength: ibm.byteLength },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 4, type: 'VEC3' },
+      { bufferView: 1, componentType: 5121, count: 4, type: 'VEC4' },
+      { bufferView: 2, componentType: 5126, count: 4, type: 'VEC4' },
+      { bufferView: 3, componentType: 5123, count: 6, type: 'SCALAR' },
+      { bufferView: 4, componentType: 5126, count: 2, type: 'MAT4' },
+    ],
+    meshes: [
+      { name: 'bar', primitives: [{ attributes: { POSITION: 0, JOINTS_0: 1, WEIGHTS_0: 2 }, indices: 3 }] },
+    ],
+    skins: [{ joints: [1, 2], inverseBindMatrices: 4 }],
+    nodes: [
+      { name: 'skin-mesh', mesh: 0, skin: 0 },
+      { name: 'root-joint', children: [2] },
+      { name: 'tip-joint', translation: [0, 1, 0] },
+    ],
+    scenes: [{ nodes: [0, 1] }],
+    scene: 0,
+  };
+  return buildGlbBytes(json, bin);
+}
+
 /** A red 2×2 quad (z=0, glTF space) under root→leaf nodes with TRS. */
 export function buildQuadGlb(): ArrayBuffer {
   const positions = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);

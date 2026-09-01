@@ -31,6 +31,8 @@ export interface ModelPrimitiveRef {
   modelKey: string;
   mesh: number;
   prim: number;
+  /** Index into the model's skins when the primitive's node is skinned. */
+  skin?: number;
 }
 
 /** One converted primitive, renderer-ready. */
@@ -50,11 +52,22 @@ export interface ModelPrimitiveEntry {
   /** glTF pbrMetallicRoughness factors (0..1). */
   metallic: number;
   roughness: number;
+  /** Per-vertex skinning attributes (4 joints + 4 weights each), or null. */
+  skinData: { joints: Uint16Array; weights: Float32Array } | null;
+}
+
+/** One skin, compositor-ready: joint node indices + CONJUGATED inverse binds. */
+export interface ModelSkin {
+  /** glTF node indices acting as joints, in JOINTS_0 order. */
+  joints: number[];
+  /** 16 floats per joint, already conjugated into compositor space (F·B·F). */
+  invBind: Float32Array;
 }
 
 interface ModelEntry {
   primitives: Map<string, ModelPrimitiveEntry>; // `${mesh}:${prim}`
   textureUrls: string[]; // parallel to parsed images
+  skins: ModelSkin[];
 }
 
 const registry = new Map<string, ModelEntry>();
@@ -99,6 +112,23 @@ export function primitiveToEntry(
     if (py < minY) minY = py; if (py > maxY) maxY = py;
     if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
   }
+  // Skin attributes: joints as u16, weights renormalized to sum 1 (exporters
+  // quantize; a drifting sum scales the whole vertex, visibly).
+  let skinData: ModelPrimitiveEntry['skinData'] = null;
+  if (prim.joints && prim.weights && prim.joints.length === vcount * 4 && prim.weights.length === vcount * 4) {
+    const joints = new Uint16Array(vcount * 4);
+    const weights = new Float32Array(vcount * 4);
+    for (let i = 0; i < vcount; i++) {
+      const o = i * 4;
+      const sum = prim.weights[o]! + prim.weights[o + 1]! + prim.weights[o + 2]! + prim.weights[o + 3]!;
+      const inv = sum > 1e-6 ? 1 / sum : 0;
+      for (let c = 0; c < 4; c++) {
+        joints[o + c] = prim.joints[o + c]!;
+        weights[o + c] = inv > 0 ? prim.weights[o + c]! * inv : (c === 0 ? 1 : 0);
+      }
+    }
+    skinData = { joints, weights };
+  }
   const material = prim.material !== null ? parsed.materials[prim.material] : undefined;
   const f = material?.baseColorFactor ?? [1, 1, 1, 1];
   const hex = (v: number): string => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
@@ -118,7 +148,26 @@ export function primitiveToEntry(
     doubleSided: material?.doubleSided === true,
     metallic: material?.metallicFactor ?? 0,
     roughness: material?.roughnessFactor ?? 0.5,
+    skinData,
   };
+}
+
+/**
+ * Conjugate a glTF-space matrix into compositor space: B̃ = F·B·F with
+ * F = diag(1,−1,−1,1). Because F is diagonal ±1, each element just picks up
+ * sign(row)·sign(col) — y/z rows and columns flip against x/w.
+ */
+export function conjugateGltfMatrix(m: Float32Array | number[], offset = 0): number[] {
+  const s = [1, -1, -1, 1];
+  const out = new Array<number>(16);
+  for (let col = 0; col < 4; col++) {
+    for (let row = 0; row < 4; row++) {
+      // `0 + v` never mints -0 the way `-1 * 0` does — quarantine it.
+      const v = (m[offset + col * 4 + row] ?? 0) * s[row]! * s[col]!;
+      out[col * 4 + row] = v === 0 ? 0 : v;
+    }
+  }
+  return out;
 }
 
 /**
@@ -146,8 +195,25 @@ export function registerModel(modelKey: string, bytes: ArrayBuffer): boolean {
       if (entry) primitives.set(`${mi}:${pi}`, entry);
     });
   });
-  registry.set(modelKey, { primitives, textureUrls });
+  // Skins: conjugate every inverse bind into compositor space once, here —
+  // the per-frame skinning path multiplies matrices, never converts them.
+  const skins: ModelSkin[] = parsed.skins.map((sk) => {
+    const invBind = new Float32Array(sk.joints.length * 16);
+    for (let j = 0; j < sk.joints.length; j++) {
+      const conv = sk.inverseBindMatrices
+        ? conjugateGltfMatrix(sk.inverseBindMatrices, j * 16)
+        : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      invBind.set(conv, j * 16);
+    }
+    return { joints: [...sk.joints], invBind };
+  });
+  registry.set(modelKey, { primitives, textureUrls, skins });
   return true;
+}
+
+/** The registered skin for a model, or null. */
+export function modelSkinFor(modelKey: string, skinIndex: number): ModelSkin | null {
+  return registry.get(modelKey)?.skins[skinIndex] ?? null;
 }
 
 export function isModelRegistered(modelKey: string): boolean {
@@ -171,13 +237,32 @@ export function clearModelRegistry(): void {
 
 // ── Component readers ─────────────────────────────────────────────────
 
-/** A primitive layer's { modelKey, mesh, prim }, or null. */
+/** A primitive layer's { modelKey, mesh, prim, skin? }, or null. */
 export function readNodeModelRef(node: SceneNode): ModelPrimitiveRef | null {
   for (const c of node.components) {
     if (c.type !== MODEL_COMPONENT) continue;
     const p = c.props as Record<string, unknown>;
     if (typeof p.modelKey === 'string' && typeof p.mesh === 'number' && typeof p.prim === 'number') {
-      return { modelKey: p.modelKey, mesh: p.mesh, prim: p.prim };
+      return {
+        modelKey: p.modelKey,
+        mesh: p.mesh,
+        prim: p.prim,
+        ...(typeof p.skin === 'number' ? { skin: p.skin } : {}),
+      };
+    }
+  }
+  return null;
+}
+
+/** An imported NULL's glTF node index ({ modelKey, gltfNode }), or null.
+ *  This is what lets skinning find a joint's layer after save/reload —
+ *  layer ids are minted fresh per session, glTF node indices are not. */
+export function readNodeGltfIndex(node: SceneNode): { modelKey: string; gltfNode: number } | null {
+  for (const c of node.components) {
+    if (c.type !== MODEL_COMPONENT) continue;
+    const p = c.props as Record<string, unknown>;
+    if (typeof p.modelKey === 'string' && typeof p.gltfNode === 'number') {
+      return { modelKey: p.modelKey, gltfNode: p.gltfNode };
     }
   }
   return null;

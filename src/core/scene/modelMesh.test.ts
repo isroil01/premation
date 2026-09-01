@@ -26,6 +26,8 @@ function parsedWith(positions: number[], opts: { uvs?: number[]; material?: numb
         uvs: opts.uvs ? new Float32Array(opts.uvs) : null,
         indices: new Uint32Array(Array.from({ length: positions.length / 3 }, (_, i) => i)),
         material: opts.material ?? null,
+        joints: null,
+        weights: null,
       }],
     }],
     materials: [
@@ -35,6 +37,7 @@ function parsedWith(positions: number[], opts: { uvs?: number[]; material?: numb
     nodes: [],
     roots: [],
     animations: [],
+    skins: [],
   };
 }
 
