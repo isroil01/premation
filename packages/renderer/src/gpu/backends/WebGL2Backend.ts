@@ -35,7 +35,7 @@ import type {
   VertexBufferLayout,
   IndexFormat,
 } from '../types';
-import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING } from '../types';
+import { AO_SAMPLER_BINDING, AO_TEXTURE_BINDING, ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING } from '../types';
 import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
@@ -783,6 +783,14 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // edge rather than as a soft one.
     let shadowSampler: WebGLSampler | null = null;
     let shadowUnit = -1;
+    // A THIRD exception, and the one that is not about filtering. `solid3d`
+    // declares no layer texture at all, so `sampler` below stays null and the
+    // broadcast never runs — which would leave the AO unit with its default
+    // NEAREST_MIPMAP_LINEAR min filter, i.e. INCOMPLETE, i.e. sampling
+    // (0,0,0,1). Black AO erases the ambient term of every unlit-textured 3D
+    // solid in the comp; carrying the AO sampler explicitly is what stops it.
+    let aoSampler: WebGLSampler | null = null;
+    let aoUnit = -1;
     for (const e of (group.native as { entries: BindGroupResource[] }).entries) {
       if ('buffer' in e) {
         const nb = e.buffer.native as NativeBuffer;
@@ -798,11 +806,14 @@ class WebGL2PassEncoder implements RenderPassEncoder {
         if (uni) gl.uniform1i(uni, texIndex);
         if (e.binding === ENV_TEXTURE_BINDING) envUnit = texIndex;
         if (e.binding === SHADOW_TEXTURE_BINDING) shadowUnit = texIndex;
+        if (e.binding === AO_TEXTURE_BINDING) aoUnit = texIndex;
         texIndex += 1;
       } else if (e.binding === ENV_SAMPLER_BINDING) {
         envSampler = e.sampler.native as WebGLSampler;
       } else if (e.binding === SHADOW_SAMPLER_BINDING) {
         shadowSampler = e.sampler.native as WebGLSampler;
+      } else if (e.binding === AO_SAMPLER_BINDING) {
+        aoSampler = e.sampler.native as WebGLSampler;
       } else {
         sampler = e.sampler.native as WebGLSampler;
       }
@@ -821,6 +832,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // when the draw also carries a layer sampler.
     if (envSampler && envUnit >= 0) gl.bindSampler(envUnit, envSampler);
     if (shadowSampler && shadowUnit >= 0) gl.bindSampler(shadowUnit, shadowSampler);
+    if (aoSampler && aoUnit >= 0) gl.bindSampler(aoUnit, aoSampler);
   }
   setVertexBuffer(_slot: number, buffer: BufferHandle): void {
     this.vertexBuffer = buffer.native as NativeBuffer;

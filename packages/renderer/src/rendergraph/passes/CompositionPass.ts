@@ -1,12 +1,13 @@
 import { Color } from '../../core/math/Color';
 import { Mat3 } from '../../core/math/Mat3';
 import { Rect } from '../../core/math/geometry';
-import { depthEligible3D, type Renderable, type RenderableEffect, type RenderableSdf } from '../../scene/FrameScene';
+import { depthEligible3D, type Renderable, type RenderableEffect, type RenderableSdf, type SsaoSettings } from '../../scene/FrameScene';
 import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
 import type { TextureHandle, SamplerHandle, BufferHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D, emitShadowCaster } from './passUtils';
+import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D, emitShadowCaster, emitSsao, emitSsaoBlur } from './passUtils';
 import { addTransformedBox, boxIsEmpty, emptyBox, shadowCameraFor, shadowMapSizeOf, type ShadowCamera, type WorldBox } from './shadowMap';
+import { ssaoBufferSize, ssaoCameraFor, ssaoFarFor, ssaoIntensityOf, ssaoRadiusOf, SSAO_SAMPLES } from './ssao';
 import { BLUR_MATERIAL, BOKEH_MATERIAL, COC_BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
 import { packBlur, packBokeh, packCocBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
 import { ENV_SPEC_LEVELS } from '../../pipeline/uniforms';
@@ -208,6 +209,17 @@ function effectSpreadPx(effects: readonly RenderableEffect[]): number {
   }
   return max;
 }
+
+/**
+ * The identity model matrix, column-major.
+ *
+ * Used for exactly one thing: `mvp3dFor(viewport, camera3d, IDENTITY_MODEL)` is
+ * world → the camera's clip, which is what a screen-space buffer has to be
+ * looked up through. Written out rather than derived, because it is the same
+ * matrix the run's own draws are built on top of and a second derivation is a
+ * second thing to keep in step.
+ */
+const IDENTITY_MODEL: readonly number[] = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 
 /** Gaussian extent the blur shader actually samples, in radii. */
 /**
@@ -1895,6 +1907,190 @@ export class CompositionPass extends RenderPass {
     return { texture, sampler: this.shadowSampler(ctx) };
   }
 
+  /**
+   * The AO buffer's stand-in when a run has no SSAO.
+   *
+   * Always returns something, for exactly the reason `shadowFallback` does: the
+   * lit-3d materials DECLARE bindings 11/12, and an incomplete bind group is a
+   * WebGPU validation failure where an unsampled 1x1 texel is free. WHITE, so a
+   * draw that reached the sampler by mistake would read "nothing is occluded"
+   * rather than erase every ambient term in the comp.
+   */
+  private aoFallback(ctx: RenderPassContext): { texture: TextureHandle; sampler: SamplerHandle } {
+    const { resources } = ctx.services;
+    const key = 'texture:ssao-none';
+    const had = resources.has('textures', key);
+    const texture = resources.texture(key, { label: 'ssao-none', width: 1, height: 1, format: 'rgba8unorm' }, true);
+    if (!had) {
+      resources.writeTexture(texture, { type: 'buffer', data: new Uint8Array([255, 255, 255, 255]), width: 1, height: 1 });
+    }
+    return { texture, sampler: this.aoSampler(ctx) };
+  }
+
+  /** LINEAR + clamp, the opposite of the shadow map's rule and for the opposite
+   *  reason: the AO buffer holds a plain 0..1 factor at (usually) half
+   *  resolution, so it is MEANT to be filtered on the way back up. Clamp, so a
+   *  fragment at the very edge of the frame does not wrap to the far side. */
+  private aoSampler(ctx: RenderPassContext): SamplerHandle {
+    return ctx.services.resources.sampler(
+      'sampler:ssao',
+      { label: 'ssao', min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' },
+      /* pinned */ true,
+    );
+  }
+
+  /**
+   * Render this run's ambient-occlusion buffer: a linear-depth prepass from the
+   * CAMERA, a hemisphere estimate, and a bilateral 4x4 blur.
+   *
+   * Returns null — and the run then renders exactly as it did before SSAO
+   * existed — when the comp has not turned it on, when the run holds no
+   * geometry, or when the run sits entirely behind the camera. Those are
+   * refusals, not failures: an AO buffer of nothing would darken nothing at the
+   * cost of three passes.
+   *
+   * Rendered BEFORE the main pass opens, like the shadow map, because the
+   * result is a texture the main pass samples and no backend lets one pass read
+   * the target another is still writing.
+   */
+  private renderSsao(
+    ctx: RenderPassContext,
+    group: ReadonlyArray<Renderable>,
+    settings: SsaoSettings,
+  ): { texture: TextureHandle; sampler: SamplerHandle; strength: number } | null {
+    const { services, viewport } = ctx;
+    const camera3d = ctx.scene.camera3d!;
+    const intensity = ssaoIntensityOf(settings.intensity);
+    if (!settings.enabled || intensity <= 0) return null;
+    const occluders = group.filter((r) => r.threeD?.model && r.opacity > 0);
+    if (occluders.length === 0) return null;
+    const box = this.runWorldBox(group);
+    if (boxIsEmpty(box)) return null;
+    const cam = ssaoCameraFor(camera3d.view);
+    const far = ssaoFarFor(box, cam);
+    if (far <= 0) return null;
+    const invFar = 1 / far;
+
+    const quality: 'half' | 'full' = settings.quality === 'full' ? 'full' : 'half';
+    const size = ssaoBufferSize(viewport.pixelSize.width, viewport.pixelSize.height, quality);
+    const key = `${size.width}x${size.height}`;
+
+    /*
+      Three targets, all pinned and keyed by SIZE: the depth prepass, the raw
+      estimate and the blurred result. One set per resolution serves every run
+      in the frame, because a run consumes its buffer before the next one is
+      drawn — the same lifetime the shadow map has.
+
+      The prepass carries a depth attachment (it must resolve WHICH surface is
+      nearest at each texel) and is deliberately NOT multisampled: a sampleable
+      per-texel depth is the entire point, and multisampling it would put back
+      the resolve problem this pass exists to route around.
+    */
+    const depthRt = services.resources.renderTarget(
+      `ssao-depth:${key}`,
+      { label: `ssao-depth:${key}`, width: size.width, height: size.height, format: 'rgba8unorm', depth: true },
+      /* pinned */ true,
+    );
+    // White = a distance past the far plane, so an untouched texel says "no
+    // geometry here" and the estimate answers unoccluded there.
+    const depthEnc = beginSizedPass(
+      ctx, 'ssao-depth', { target: depthRt, clear: Color.white() }, size.width, size.height, { clearDepth: 1 },
+    );
+    const depthCmds = new CommandBuffer();
+    for (const r of occluders) {
+      const model = r.threeD!.model;
+      const mvp = mvp3dFor(viewport, camera3d, model);
+      if (r.extrudedMesh) {
+        const bufs = this.meshBuffers(ctx, r);
+        for (const range of r.extrudedMesh.ranges) {
+          if (range.count === 0) continue;
+          emitShadowCaster(depthCmds, mvp, model, cam.axis, invFar, cam.origin, {
+            ...bufs, firstIndex: range.first, indexCount: range.count,
+          });
+        }
+        continue;
+      }
+      // A quad contributes its full rectangle, not its alpha — the same
+      // limitation the shadow caster pass states, and for the same reason:
+      // reading the texture would mean a second material set.
+      emitShadowCaster(depthCmds, mvp, model, cam.axis, invFar, cam.origin);
+    }
+    services.quad.execute(depthEnc, depthCmds);
+    depthEnc.end();
+    const depthTex = services.backend.renderTargetTexture(depthRt);
+    if (!depthTex) return null;
+
+    // Camera space → clip: the run's own draw matrix with the model and the
+    // view taken off. The estimate un-projects through it and re-projects
+    // through it, so its two directions cannot drift.
+    const proj = Mat4.multiply(
+      Mat4.fromMat3(viewport.camera.viewProjectionMatrix()),
+      Mat4.fromArray(camera3d.projection),
+    );
+    const uv = targetSampleUv(ctx);
+    const nearest = services.resources.sampler(
+      'ssao-depth',
+      // NEAREST for the same reason the shadow map's is: these texels are a
+      // 24-bit distance packed across rgb, and a bilinear blend of two of them
+      // decodes to a number that is neither.
+      { label: 'ssao-depth', min: 'nearest', mag: 'nearest', addressU: 'clamp', addressV: 'clamp' },
+      /* pinned */ true,
+    );
+    const radius = ssaoRadiusOf(settings.radius);
+
+    const aoRt = services.resources.renderTarget(
+      `ssao-raw:${key}`,
+      { label: `ssao-raw:${key}`, width: size.width, height: size.height, format: 'rgba8unorm' },
+      /* pinned */ true,
+    );
+    const aoEnc = beginSizedPass(ctx, 'ssao', { target: aoRt, clear: Color.white() }, size.width, size.height);
+    const aoCmds = new CommandBuffer();
+    emitSsao(aoCmds, screenMvp(), uv, depthTex, nearest, proj, {
+      radius,
+      intensity,
+      far,
+      // Bias in WORLD units, proportional to the radius: a fixed one is either
+      // useless at a 500 px radius or eats the whole term at a 5 px one. The
+      // floor keeps a very small radius off the quantisation step.
+      bias: Math.max(0.05, radius * 0.02),
+      width: size.width,
+      height: size.height,
+      samples: SSAO_SAMPLES[quality],
+    });
+    services.quad.execute(aoEnc, aoCmds);
+    aoEnc.end();
+    const aoTex = services.backend.renderTargetTexture(aoRt);
+    if (!aoTex) return null;
+
+    const blurRt = services.resources.renderTarget(
+      `ssao-blur:${key}`,
+      { label: `ssao-blur:${key}`, width: size.width, height: size.height, format: 'rgba8unorm' },
+      /* pinned */ true,
+    );
+    const blurEnc = beginSizedPass(ctx, 'ssao-blur', { target: blurRt, clear: Color.white() }, size.width, size.height);
+    const blurCmds = new CommandBuffer();
+    emitSsaoBlur(blurCmds, screenMvp(), uv, aoTex, nearest, depthTex, {
+      texelX: 1 / size.width,
+      texelY: 1 / size.height,
+      far,
+      // The bilateral cut-off: a neighbour further than one radius away in
+      // depth is a different surface, so it contributes nothing. Tying it to
+      // the radius rather than to a constant is what keeps the blur honest at
+      // every scene scale.
+      depthRange: radius,
+    });
+    services.quad.execute(blurEnc, blurCmds);
+    blurEnc.end();
+    const blurTex = services.backend.renderTargetTexture(blurRt);
+    if (!blurTex) return null;
+
+    // The estimate already applied `intensity` to the occlusion it measured, so
+    // the shade tail's strength is a plain 1 — one scale, applied once, in the
+    // pass that can see the whole hemisphere rather than in the one that can
+    // only see the result.
+    return { texture: blurTex, sampler: this.aoSampler(ctx), strength: 1 };
+  }
+
   /** NEAREST + clamp. Not negotiable: the map's texels are a 24-bit depth packed
    *  across rgb, and a bilinear blend of two of them decodes to a number that is
    *  neither — visible as speckle along every shadow edge. */
@@ -2018,6 +2214,33 @@ export class CompositionPass extends RenderPass {
     const shadow = shadowRun
       ? { texture: shadowRun.texture, sampler: shadowRun.sampler }
       : this.shadowFallback(ctx);
+    /*
+      Ambient occlusion, for the whole run.
+
+      Rendered here, beside the shadow map, and for the same three reasons: the
+      result is a texture the main pass samples, the pass that samples it cannot
+      also be writing it, and the buffer describes the RUN rather than any layer
+      in it. The `aoFlipV` derivation is the shadow map's exactly — the lookup
+      coordinate comes from the camera's own NDC, where +1 is the top of the
+      viewport on both backends, and only WebGL2's bottom-up render targets need
+      the flip.
+    */
+    const ssaoRun = ctx.scene.ssao?.enabled && ctx.scene.camera3d
+      ? this.renderSsao(ctx, group, ctx.scene.ssao)
+      : null;
+    const ao = ssaoRun
+      ? { texture: ssaoRun.texture, sampler: ssaoRun.sampler }
+      : this.aoFallback(ctx);
+    // World → the MAIN camera's clip: where a fragment lands in the AO buffer.
+    // The run's own draw matrix with the model taken off, so a re-projected
+    // world position lands on the pixel that drew it.
+    const aoTail = ssaoRun
+      ? {
+        matrix: mvp3dFor(viewport, camera3d, IDENTITY_MODEL),
+        strength: ssaoRun.strength,
+        flipV: shadowFlipV,
+      }
+      : undefined;
     const shadowTail = shadowRun
       ? {
         matrix: shadowRun.camera.matrix,
@@ -2092,6 +2315,12 @@ export class CompositionPass extends RenderPass {
         // no second gate: a shadow catcher turned off packs the block as zeros
         // and reads exactly as it did before this existed.
         ...(shadowTail && s.acceptsShadows !== false ? { shadow: shadowTail } : {}),
+        // Attached to every lit surface in the run, unconditionally: AO is
+        // contact darkening of AMBIENT light, and there is no per-layer switch
+        // for it because there is no per-layer question — a surface either has
+        // neighbours close enough to occlude it or it does not, and the buffer
+        // already answered that. Absent (no `aoTail`) packs the block as zeros.
+        ...(aoTail ? { ao: aoTail } : {}),
         lights: scaledLights,
       };
     };
@@ -2104,6 +2333,7 @@ export class CompositionPass extends RenderPass {
     let cmds = new CommandBuffer();
     cmds.env = env;
     cmds.shadow = shadow;
+    cmds.ao = ao;
     let depthCleared = false;
     // True when `cmds` holds a queued draw sampling the resolved-effect texture
     // in LAYER_TARGET — that draw must execute before LAYER_TARGET is reused.
@@ -2119,6 +2349,7 @@ export class CompositionPass extends RenderPass {
       // would queue incomplete bind groups.
       cmds.env = env;
       cmds.shadow = shadow;
+      cmds.ao = ao;
       depthCleared = true;
       pendingResolved = false;
     };

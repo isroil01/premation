@@ -159,13 +159,18 @@ describe('the binding contract', () => {
     expect(material.layout.find((e) => e.binding === SHADOW_SAMPLER_BINDING)?.type).toBe('sampler');
   });
 
-  it.each(LIT_3D)('$name names uShadowTex LAST, after uEnvTex', ({ material }) => {
+  it.each(LIT_3D)('$name names uShadowTex after uEnvTex, at the SCENE-level tail', ({ material }) => {
     // QuadRenderer pushes texture entries in ascending binding order and the
     // WebGL2 backend assigns units in that order, so `glslSamplers` is a
     // positional list that must line up one-to-one.
+    //
+    // The tail is three long, not two, since SSAO took 11/12 (see
+    // AO_TEXTURE_BINDING). The claim is unchanged and is the one that matters:
+    // the SCENE-level samplers come last, in binding order, after every
+    // per-layer slot — so adding a per-layer texture can never renumber them.
     const textures = material.layout.filter((e) => e.type === 'texture').map((e) => e.binding);
     expect(material.glslSamplers!.length).toBe(textures.length);
-    expect(material.glslSamplers!.slice(-2)).toEqual(['uEnvTex', 'uShadowTex']);
+    expect(material.glslSamplers!.slice(-3)).toEqual(['uEnvTex', 'uShadowTex', 'uSsaoTex']);
     expect([...textures].sort((a, b) => a - b)).toEqual(textures);
   });
 

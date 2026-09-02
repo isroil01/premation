@@ -4,10 +4,12 @@
   gap: var(--space-2);
 }
 
+/* One gutter (`--space-5`) for everything, matching the Properties sections. */
 .panelRoot {
   display: flex;
   flex-direction: column;
-  padding: 8px;
+  gap: var(--space-5);
+  padding: var(--space-5);
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -16,84 +18,115 @@
   color: var(--color-text-primary);
 }
 
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupLabel {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+/* Six align buttons in one row, two distribute buttons in another — the same
+   column width in both, so the two rows read as one grid. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(6, var(--control-height-lg));
+  gap: var(--space-1);
 }
 
 .button {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-secondary);
-  border-radius: var(--radius-sm);
-  height: var(--control-height-row);
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .button:hover:not(:disabled) {
-  background: var(--color-surface-3);
-  border-color: var(--color-border-strong);
+  background: var(--color-hover);
   color: var(--color-text-primary);
 }
 
+.button:active:not(:disabled) {
+  background: var(--color-surface-2);
+}
+
+.button:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
 .button:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
+  opacity: 0.35;
+  cursor: default;
 }
 
 .targetRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 2px;
+  gap: var(--space-3);
 }
 
-.targetLabel {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-secondary);
-}
-
-.targetToggles {
-  display: flex;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
+/* Segmented switch: one well, the chosen segment raised one step. */
+.segmented {
+  display: inline-flex;
   padding: 2px;
   gap: 2px;
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
 }
 
-.targetBtn {
-  background: transparent;
+.segment {
+  height: var(--control-height-xs);
+  padding: 0 var(--space-3);
   border: none;
-  outline: none;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: var(--control-height-sm);
-  padding: 0 8px;
   border-radius: var(--radius-sm);
-  cursor: pointer;
+  background: transparent;
   color: var(--color-text-tertiary);
+  font-family: inherit;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
-  transition: var(--motion-hover-transition);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.targetBtn:hover {
+.segment:hover {
   color: var(--color-text-primary);
-  background: var(--color-surface-2);
 }
 
-.targetBtnActive {
-  composes: targetBtn;
+.segment:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+.segmentActive {
   background: var(--color-surface-2);
   color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold);
 }
 
+.hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-tertiary);
+}

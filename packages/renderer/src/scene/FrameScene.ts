@@ -850,6 +850,32 @@ export interface FrameScene {
    * is the gate that keeps every other scene bit-identical.
    */
   envMap?: EnvironmentMap;
+  /**
+   * Screen-space ambient occlusion for depth-eligible 3D runs.
+   *
+   * A COMPOSITION setting rather than a per-layer one, and that is what it
+   * describes: AO is contact darkening between whatever happens to be near
+   * whatever else, which no single layer can own. Absent (the default) means
+   * every 3D run renders exactly as it did before AO existed — the shade tail's
+   * `aoParams` packs as zeros and the shader multiplies its ambient term by a
+   * literal 1.0.
+   */
+  ssao?: SsaoSettings;
+}
+
+/** Composition-level SSAO, as the renderer needs it. Mirrors the authored
+ *  `CompositionSettings.ssao` (kept independent so the renderer package does
+ *  not import the app's store types). */
+export interface SsaoSettings {
+  enabled: boolean;
+  /** Hemisphere radius in COMP PX — the same unit every other spatial number
+   *  on the 3D path uses, so a radius means a fixed size in the scene rather
+   *  than a fixed size on screen. */
+  radius: number;
+  /** How much of the ambient term full occlusion removes, 0..2. */
+  intensity: number;
+  /** Buffer resolution: 'half' (the default) or 'full'. */
+  quality: 'half' | 'full';
 }
 
 /**

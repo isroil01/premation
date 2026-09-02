@@ -13,7 +13,7 @@ import { serializeProject, parseProject } from '@core/persistence/ProjectSeriali
 import { applyWeightPaint, emptyWeightPaint, paintWeights } from './weightPaint';
 import { sampleDataTrack, type DataTrack } from '@motion/animation';
 import type { PuppetRig } from './puppet';
-import type { SkeletonRig } from './skeletonCommands';
+import { bindPoseBones, type SkeletonRig } from './skeletonCommands';
 import type { VertexWeight } from './skinning';
 
 /** Round trip anything through the real project serializer. */
@@ -63,6 +63,40 @@ describe('skeleton rig round trip', () => {
       meshExpansion: 4,
     };
     expect(roundTrip(skel)).toEqual(skel);
+  });
+
+  it('preserves the captured bind pose and per-bone influence radius', () => {
+    const skel: SkeletonRig = {
+      bones: [
+        // Posed: `rotation` has moved since the bind was captured.
+        { id: 'b1', parentId: null, length: 50, x: -10, y: 0, rotation: 1.1, influenceRadius: 42 },
+        { id: 'b2', parentId: 'b1', length: 40, x: 50, y: 0, rotation: -0.25 },
+      ],
+      bindPose: [
+        { id: 'b1', parentId: null, length: 50, x: -10, y: 0, rotation: 0, influenceRadius: 42 },
+        { id: 'b2', parentId: 'b1', length: 40, x: 50, y: 0, rotation: 0 },
+      ],
+      meshDensity: 14,
+      meshExpansion: 4,
+    };
+    const after = roundTrip(skel);
+    expect(after).toEqual(skel);
+    // The whole point of storing it: the bind must NOT come back as the pose.
+    expect(after.bindPose![0]!.rotation).toBe(0);
+    expect(after.bones[0]!.rotation).toBe(1.1);
+  });
+
+  it('a rig saved before bindPose existed loads with no bind pose at all', () => {
+    // The back-compat contract: absence means "`bones` IS the bind pose", so an
+    // old document must not gain the field on the way through.
+    const legacy: SkeletonRig = {
+      bones: [{ id: 'b1', parentId: null, length: 50, x: 0, y: 0, rotation: 0.4 }],
+      meshDensity: 14,
+      meshExpansion: 4,
+    };
+    const after = roundTrip(legacy);
+    expect(after.bindPose).toBeUndefined();
+    expect(bindPoseBones(after)).toBe(after.bones);
   });
 });
 

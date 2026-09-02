@@ -136,7 +136,7 @@ import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, i
 import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { findNavTarget } from '@core/workspace/cameraNav';
-import { insertNull, moveNodeInStack } from '@core/scene/parenting';
+import { insertNull, arrangeNodes } from '@core/scene/parenting';
 import { createNullsFromPath, pathVertices } from '@core/scene/nullsFromPaths';
 import { createShapesFromText, canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { autoTraceLayer } from '@core/effects/autoTrace';
@@ -1657,53 +1657,35 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         void rigLogoForAnimation();
       },
     },
-    // Arrange (z-order): a layer draws on top of the ones added before it, so a
-    // newly-imported background lands in front and hides everything. These give
-    // explicit stacking control (Figma/Illustrator chords: Ctrl/Cmd+] / [).
-    {
-      id: asCommandId('layer.bringToFront'),
-      label: 'Bring to Front',
-      icon: 'arrow-up',
-      shortcut: { key: ']', meta: true, shift: true },
+    /*
+      Arrange (z-order): a layer draws on top of the ones added before it, so a
+      newly-imported background lands in front and hides everything. These give
+      explicit stacking control (Figma/Illustrator chords: Ctrl/Cmd+] / [).
+
+      Each one hands `arrangeNodes` the WHOLE selection rather than looping a
+      single-layer move over it. The loop was wrong for any multi-selection —
+      the layers leapfrogged each other (Bring Forward over two adjacent layers
+      was a net no-op, Send to Back came out reversed) and each iteration landed
+      its own undo step. `reorderSiblings` documents the block rules.
+
+      The notice follows the RETURN value, so a layer already at the front no
+      longer reports having been brought forward.
+    */
+    ...([
+      ['layer.bringToFront', 'Bring to Front', 'arrow-up', 'front', 'Brought to front', { key: ']', meta: true, shift: true }],
+      ['layer.bringForward', 'Bring Forward', 'chevron-up', 'forward', 'Brought forward', { key: ']', meta: true }],
+      ['layer.sendBackward', 'Send Backward', 'chevron-down', 'backward', 'Sent backward', { key: '[', meta: true }],
+      ['layer.sendToBack', 'Send to Back', 'arrow-down', 'back', 'Sent to back', { key: '[', meta: true, shift: true }],
+    ] as const).map(([id, label, icon, action, message, shortcut]) => ({
+      id: asCommandId(id),
+      label,
+      icon,
+      shortcut,
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'front');
-        notify('Brought to front', 'info');
+        if (arrangeNodes(useSelectionStore.getState().ids, action)) notify(message, 'info');
       },
-    },
-    {
-      id: asCommandId('layer.bringForward'),
-      label: 'Bring Forward',
-      icon: 'chevron-up',
-      shortcut: { key: ']', meta: true },
-      enabled: () => useSelectionStore.getState().count() > 0,
-      execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'forward');
-        notify('Brought forward', 'info');
-      },
-    },
-    {
-      id: asCommandId('layer.sendBackward'),
-      label: 'Send Backward',
-      icon: 'chevron-down',
-      shortcut: { key: '[', meta: true },
-      enabled: () => useSelectionStore.getState().count() > 0,
-      execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'backward');
-        notify('Sent backward', 'info');
-      },
-    },
-    {
-      id: asCommandId('layer.sendToBack'),
-      label: 'Send to Back',
-      icon: 'arrow-down',
-      shortcut: { key: '[', meta: true, shift: true },
-      enabled: () => useSelectionStore.getState().count() > 0,
-      execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'back');
-        notify('Sent to back', 'info');
-      },
-    },
+    })),
     {
       id: asCommandId('effect.blur'),
       label: 'Fast Box Blur',
@@ -2634,8 +2616,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // to see or restore any of it. Only meaningful for a cloud project:
           // snapshots live on the backend, keyed by project id.
           // In the local edition this command stays unregistered: snapshots live
-          // in the project bundle instead, surfaced by VersionHistorySection in
-          // the inspector. Registering it would put a permanently-disabled menu
+          // in the project bundle instead, surfaced by VersionHistorySection —
+          // registered in `inspectorSections.ts` behind `versionHistoryAvailable()`
+          // (local edition + an open .motion bundle). Registering this would put a
+          // permanently-disabled menu
           // item next to a feature that does work.
           if (cloudProjectsEnabled()) {
             registry.register({

@@ -9,9 +9,9 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, SCENE_BLIT_LUT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL, MESH3D_PBR_MATERIAL, SHADOW_DEPTH_MATERIAL, SHADOW_DEPTH_MESH_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, SCENE_BLIT_LUT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL, MESH3D_PBR_MATERIAL, SHADOW_DEPTH_MATERIAL, SHADOW_DEPTH_MESH_MATERIAL, SSAO_MATERIAL, SSAO_BLUR_MATERIAL } from '../../shaders/Material';
 import { TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
-import { packSolid, packTextured, packSceneBlitLut, packDeformedMesh, packSolid3D, packTextured3D, packMesh3DPbr, packShadowDepth, type SolidShape, type ColorTransform, type Shade3D, type PbrMapParams } from '../../pipeline/uniforms';
+import { packSolid, packTextured, packSceneBlitLut, packDeformedMesh, packSolid3D, packTextured3D, packMesh3DPbr, packShadowDepth, packSsao, packSsaoBlur, type SolidShape, type ColorTransform, type Shade3D, type PbrMapParams } from '../../pipeline/uniforms';
 import { HARDWARE_SRGB_UPLOADS, LINEAR_INTERMEDIATE_STORAGE } from '../../shaders/linearWorkingSpace';
 import { getActiveViewerLut } from '../../shaders/colorPipeline';
 
@@ -28,23 +28,27 @@ const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
 
 /**
  * The PASS-WIDE bind-group fields for a lit-3d draw: the environment map at
- * 7/8 and the run's shadow map at 9/10. Spread into every `emit*3D` item,
- * because those materials DECLARE all four — a draw that omitted them would be
- * an incomplete bind group on WebGPU rather than a quietly unlit one.
+ * 7/8, the run's shadow map at 9/10 and its AO buffer at 11/12. Spread into
+ * every `emit*3D` item, because those materials DECLARE all six — a draw that
+ * omitted them would be an incomplete bind group on WebGPU rather than a
+ * quietly unlit one.
  *
- * Both are properties of the SCENE and the RUN rather than of the layer, which
- * is why they ride the buffer instead of four more parameters on helpers that
- * already take ten.
+ * All three are properties of the SCENE and the RUN rather than of the layer,
+ * which is why they ride the buffer instead of six more parameters on helpers
+ * that already take ten.
  */
 function envBinding(cmds: CommandBuffer): {
   envTexture?: TextureHandle;
   envSampler?: SamplerHandle;
   shadowTexture?: TextureHandle;
   shadowSampler?: SamplerHandle;
+  aoTexture?: TextureHandle;
+  aoSampler?: SamplerHandle;
 } {
   return {
     ...(cmds.env ? { envTexture: cmds.env.texture, envSampler: cmds.env.sampler } : {}),
     ...(cmds.shadow ? { shadowTexture: cmds.shadow.texture, shadowSampler: cmds.shadow.sampler } : {}),
+    ...(cmds.ao ? { aoTexture: cmds.ao.texture, aoSampler: cmds.ao.sampler } : {}),
   };
 }
 
@@ -80,6 +84,57 @@ export function emitShadowCaster(
         indexFormat: geometry.indexFormat,
       }
       : {}),
+  });
+}
+
+/**
+ * Queue the SSAO estimate: one full-screen quad over the run's linear-depth
+ * prepass. Blend `none` — the result is an occlusion FACTOR, and blending two
+ * factors produces a third that is not one.
+ */
+export function emitSsao(
+  cmds: CommandBuffer,
+  mvp: Mat3,
+  uvRect: Rect,
+  depthTexture: TextureHandle,
+  sampler: SamplerHandle,
+  proj: Mat4,
+  params: { radius: number; intensity: number; far: number; bias: number; width: number; height: number; samples: number },
+): void {
+  cmds.add({
+    batchKey: `ssao|${depthTexture.id}`,
+    material: SSAO_MATERIAL,
+    blend: 'none',
+    uniforms: packSsao(
+      mvp, uvRect, proj,
+      params.radius, params.intensity, params.far, params.bias,
+      params.width, params.height, params.samples,
+    ),
+    texture: depthTexture,
+    sampler,
+  });
+}
+
+/** Queue the bilateral 4x4 that cancels the estimate's rotation noise. The
+ *  depth prepass rides the mask slot (binding 3) — it is the bilateral guide,
+ *  not a mask, but it is the same slot and the material names it. */
+export function emitSsaoBlur(
+  cmds: CommandBuffer,
+  mvp: Mat3,
+  uvRect: Rect,
+  aoTexture: TextureHandle,
+  sampler: SamplerHandle,
+  depthTexture: TextureHandle,
+  params: { texelX: number; texelY: number; far: number; depthRange: number },
+): void {
+  cmds.add({
+    batchKey: `ssao-blur|${aoTexture.id}|${depthTexture.id}`,
+    material: SSAO_BLUR_MATERIAL,
+    blend: 'none',
+    uniforms: packSsaoBlur(mvp, uvRect, params.texelX, params.texelY, params.far, params.depthRange),
+    texture: aoTexture,
+    sampler,
+    maskTexture: depthTexture,
   });
 }
 

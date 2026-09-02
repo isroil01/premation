@@ -131,15 +131,29 @@ export const isMeta = (e: KeyboardEvent): boolean => e.metaKey || e.ctrlKey;
  *   • AZERTY, bare Digit1 → `e.key === '&'`, so the existing bare-digit chords
  *     (`1`/`2` for 3D views) did not fire there either.
  *
- * `e.code` is layout- and modifier-independent, so the digit row is resolved
- * from it. Scoped to `Digit0`–`Digit9` deliberately: letters already behave
+ *   • US layout, Ctrl+Shift+] → `e.key === '}'`. So the ARRANGE chords
+ *     `{ key: ']', meta: true, shift: true }` (Bring to Front) and its `[`
+ *     twin (Send to Back) could never fire either: the dispatcher built
+ *     `Ctrl+Shift+}` and no binding claims that. Both entries were in the Layer
+ *     menu with their chords printed beside them, and only the two UNSHIFTED
+ *     ones (Bring Forward / Send Backward) actually worked.
+ *
+ * `e.code` is layout- and modifier-independent, so the digit row and the
+ * bracket keys are resolved from it. Scoped to `Digit0`–`Digit9`,
+ * `BracketLeft` and `BracketRight` deliberately: letters already behave
  * (Shift+A gives 'A', which `chordKey` lowercases), and remapping the whole
  * keyboard to physical codes would change every existing chord on non-US
- * layouts — a much larger behaviour change than this fixes.
+ * layouts — a much larger behaviour change than this fixes. Nothing but the
+ * four arrange commands binds `[` or `]`, so the bracket branch cannot reach
+ * any other chord.
  */
 function chordKeyFromEvent(e: KeyboardEvent): string {
-  const m = /^Digit([0-9])$/.exec(e.code ?? '');
-  return m && e.key !== m[1] ? m[1]! : e.key;
+  const code = e.code ?? '';
+  const m = /^Digit([0-9])$/.exec(code);
+  if (m && e.key !== m[1]) return m[1]!;
+  const bracket = code === 'BracketLeft' ? '[' : code === 'BracketRight' ? ']' : null;
+  if (bracket && e.key !== bracket) return bracket;
+  return e.key;
 }
 
 export const chordFromEvent = (e: KeyboardEvent): import('@app-types/common').KeyChord => ({

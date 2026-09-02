@@ -242,6 +242,24 @@ export const ENV_SAMPLER_BINDING = 8;
 export const SHADOW_TEXTURE_BINDING = 9;
 export const SHADOW_SAMPLER_BINDING = 10;
 
+/**
+ * Bind slots the AMBIENT-OCCLUSION map occupies on every lit-3d material.
+ *
+ * 11 and 12, immediately past the shadow pair, and for the third time the same
+ * reason: AO is a property of the RUN — one screen-space buffer every receiver
+ * in the depth group reads — not of the layer, so it sits past the mask (3), a
+ * plugin origin (4) and the mesh PBR set (3-6) where no per-layer slot arriving
+ * later can renumber it.
+ *
+ * Declared beside the other two because the WebGL2 backend must recognise the
+ * SAMPLER slot by number as well: this one is LINEAR-clamp, and an unlit
+ * material (solid3d) carries no layer sampler at all, so there is no broadcast
+ * sampler for its AO unit to inherit. Without its own slot the unit would be
+ * INCOMPLETE and sample (0,0,0,1) — black AO, i.e. every ambient term erased.
+ */
+export const AO_TEXTURE_BINDING = 11;
+export const AO_SAMPLER_BINDING = 12;
+
 export interface PipelineDescriptor {
   label?: string;
   shader: ShaderModuleHandle;

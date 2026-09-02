@@ -596,6 +596,27 @@ describe('add / change / remove are ONE undo entry each', () => {
       });
   });
 
+  it('changing the ALIGNMENT moves the region to one side of the cut, in one entry', () => {
+    butt();
+    return addTransition('a', 'b', 'crossDissolve', 8, 'centred')
+      .then(() => {
+        const id = useTransitionStore.getState().list(compId())[0]?.id ?? '';
+        const start = historyLength();
+        return setTransition(compId(), id, { alignment: 'startAtCut' }).then((res) => {
+          expect(res.ok).toBe(true);
+          expect(historyLength()).toBe(start + 1);
+          // 'startAtCut' puts the whole 8 frames AFTER the cut, so the left bar
+          // stops extending and the right one reaches back the full duration.
+          // Centred put 4 either side; if the alignment were ignored (as every
+          // caller ignored it before the menu existed) these would still be
+          // CUT + 4 and CUT - 4.
+          expect(useTransitionStore.getState().list(compId())[0]?.alignment).toBe('startAtCut');
+          expect(barOf('a').end).toBe(CUT + 8);
+          expect(barOf('b').start).toBe(CUT);
+        });
+      });
+  });
+
   it('removing restores the cut and is one entry', () => {
     butt();
     return addTransition('a', 'b', 'crossDissolve', 8, 'centred').then(() => {

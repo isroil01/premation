@@ -17,6 +17,7 @@ import type { HitTester } from '../hit/HitTester';
 import type { OverlayHandle } from '../ports';
 import type { CursorManager, CursorType } from '../cursor/CursorManager';
 import type { SnapEngine, SnapTarget, SnapResult, SnapLine } from '../snap/SnapEngine';
+import type { SizeCandidate } from '../snap/smartGuides';
 import type { Grid } from '../grid/Grid';
 import type { Guides } from '../guides/Guides';
 import type { CommandPort, SceneGraphPort, WorkspaceCommand } from '../ports';
@@ -96,6 +97,15 @@ export interface ToolContext {
   buildSnapTargets(region: Rect, excludeIds?: ReadonlySet<string>): { targets: SnapTarget[]; thresholdWorld: number };
   /** Convenience: run snapping on a rect using freshly-built targets. */
   snapRect(rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect>;
+  /**
+   * Neighbours this rect is nearly the same size as — the equal-SIZE half of
+   * smart guides, for RESIZE gestures.
+   *
+   * Advisory, not applied: a resize holds a point fixed (the opposite edge,
+   * the anchor, or the centre under Alt) and only the tool knows which, so the
+   * tool grows the box itself. At most one match per axis, nearest first.
+   */
+  sizeMatches(rect: Rect, excludeIds?: ReadonlySet<string>): readonly SizeCandidate[];
 }
 
 /**

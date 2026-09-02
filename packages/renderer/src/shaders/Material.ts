@@ -15,7 +15,7 @@ import type {
   TextureFormat,
   VertexBufferLayout,
 } from '../gpu/types';
-import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING } from '../gpu/types';
+import { AO_SAMPLER_BINDING, AO_TEXTURE_BINDING, ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING } from '../gpu/types';
 import { makeKey } from '../utils/ids';
 import { QUAD_LAYOUT } from '../resources/Geometry';
 import type { ShaderCache } from './ShaderCache';
@@ -435,9 +435,11 @@ export const SOLID3D_MATERIAL: MaterialDescriptor = {
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
     { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: AO_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: AO_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
   // The env map is this material's ONLY texture, so it lands on unit 0 here.
-  glslSamplers: ['uEnvTex', 'uShadowTex'],
+  glslSamplers: ['uEnvTex', 'uShadowTex', 'uSsaoTex'],
   depth: { test: true, write: true },
 };
 
@@ -453,8 +455,10 @@ export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
     { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: AO_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: AO_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex'],
+  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex', 'uSsaoTex'],
   depth: { test: true, write: true },
 };
 
@@ -489,8 +493,10 @@ export const TEXTURED3D_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
     { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: AO_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: AO_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex'],
+  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex', 'uSsaoTex'],
   depth: { test: true, write: false },
 };
 
@@ -512,10 +518,12 @@ export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
     { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: AO_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: AO_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
   // Three textures now, past what the backend's two-name guess can reach —
   // so name them all, in the order QuadRenderer pushes the entries.
-  glslSamplers: ['uTex', 'uMaskTex', 'uEnvTex', 'uShadowTex'],
+  glslSamplers: ['uTex', 'uMaskTex', 'uEnvTex', 'uShadowTex', 'uSsaoTex'],
   depth: { test: true, write: true },
 };
 
@@ -589,6 +597,40 @@ export const SHADOW_DEPTH_MESH_MATERIAL: MaterialDescriptor = {
   depth: { test: true, write: true },
 };
 
+/**
+ * The SSAO estimate: a full-screen quad reading the run's linear-depth prepass.
+ *
+ * No depth state at all — it is a screen-space pass over a buffer that already
+ * resolved occlusion, and asking it to depth-test would mean carrying a depth
+ * attachment it has nothing to write.
+ */
+export const SSAO_MATERIAL: MaterialDescriptor = {
+  shader: 'ssao',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+  ],
+};
+
+/**
+ * The bilateral 4x4 blur. Two textures: the AO estimate at 1 and the SAME depth
+ * prepass at 3 (the `maskTexture` slot), which is what makes it bilateral —
+ * without the depth it could only box-blur across every silhouette in the frame.
+ */
+export const SSAO_BLUR_MATERIAL: MaterialDescriptor = {
+  shader: 'ssao-blur',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+  ],
+  glslSamplers: ['uTex', 'uDepthTex'],
+};
+
 /** Depth-tested solid-colour extruded mesh (walls / bevels / back cap). */
 export const MESH3D_SOLID_MATERIAL: MaterialDescriptor = {
   shader: 'mesh3d-solid',
@@ -599,8 +641,10 @@ export const MESH3D_SOLID_MATERIAL: MaterialDescriptor = {
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
     { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: AO_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: AO_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uEnvTex', 'uShadowTex'],
+  glslSamplers: ['uEnvTex', 'uShadowTex', 'uSsaoTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };
@@ -617,8 +661,10 @@ export const MESH3D_TEXTURED_MATERIAL: MaterialDescriptor = {
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
     { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: AO_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: AO_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex'],
+  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex', 'uSsaoTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };
@@ -652,10 +698,12 @@ export const MESH3D_PBR_MATERIAL: MaterialDescriptor = {
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
     { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: AO_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: AO_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
   // Bindings 3–6 are CLAIMED by the map set; the environment atlas took 7/8,
   // which is exactly the "anything else starts at 7" this note anticipated.
-  glslSamplers: ['uTex', 'uNormalTex', 'uMRTex', 'uAOTex', 'uEmissiveTex', 'uEnvTex', 'uShadowTex'],
+  glslSamplers: ['uTex', 'uNormalTex', 'uMRTex', 'uAOTex', 'uEmissiveTex', 'uEnvTex', 'uShadowTex', 'uSsaoTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };

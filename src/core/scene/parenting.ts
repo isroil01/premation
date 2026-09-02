@@ -418,22 +418,34 @@ export function insertNull(): void {
 export function reorderNode(nodeId: string, toIndex: number): boolean {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return false;
-  const parentId: string = (node as any).parent ?? 'comp_root';
-  // Access the engine node for the parent to mutate childIds directly
-  const parentEngNode = (defaultSceneGraph as any).engine?.(parentId);
-  if (!parentEngNode) return false;
-  const kids: string[] = Array.isArray(parentEngNode.custom.childIds)
-    ? (parentEngNode.custom.childIds as string[])
-    : [];
+  const parentId: string = node.parent ?? COMP_ROOT;
+  const kids = defaultSceneGraph.getChildOrder(parentId);
   const fromIndex = kids.indexOf(nodeId);
   if (fromIndex === -1) return false;
   // Splice out then insert at new position
   kids.splice(fromIndex, 1);
   const dest = Math.max(0, Math.min(kids.length, fromIndex < toIndex ? toIndex - 1 : toIndex));
   kids.splice(dest, 0, nodeId);
-  parentEngNode.custom.childIds = kids;
-  getEventBus().emit('AnimationChanged', { nodeId });
+  if (!defaultSceneGraph.setChildOrder(parentId, kids)) return false;
+  announceStackChange();
   return true;
+}
+
+/**
+ * Announce a change of STACKING ORDER.
+ *
+ * `bumpScene` is the whole announcement: it emits `SceneGraphChanged`, which is
+ * what re-derives the Scene tree, re-runs `syncFromScene` and re-derives the
+ * timeline rows, and what history schedules a `'scene'` entry on.
+ *
+ * These helpers used to ALSO emit `AnimationChanged`. Nothing animated, and the
+ * extra event cost an undo step: history treats a change of event key as a
+ * change of action, so `AnimationChanged` + `SceneGraphChanged` committed the
+ * pending entry mid-command — which is how one Arrange over a multi-selection
+ * became one undo step per layer.
+ */
+function announceStackChange(): void {
+  bumpScene();
 }
 
 /**
@@ -455,51 +467,117 @@ export function moveNodeAdjacent(
     if (!reparentNode(dragId, targetParent)) return false;
   }
   const parentId = targetParent ?? COMP_ROOT;
-  const parentEng = (defaultSceneGraph as any).engine?.(parentId);
-  if (!parentEng) return false;
-  const kids: string[] = Array.isArray(parentEng.custom.childIds)
-    ? (parentEng.custom.childIds as string[])
-    : [];
+  const kids = defaultSceneGraph.getChildOrder(parentId);
   const from = kids.indexOf(dragId);
   if (from !== -1) kids.splice(from, 1);
   let idx = kids.indexOf(targetId);
   if (idx === -1) idx = kids.length;
   if (pos === 'after') idx += 1;
   kids.splice(idx, 0, dragId);
-  parentEng.custom.childIds = kids;
-  getEventBus().emit('AnimationChanged', { nodeId: dragId });
-  bumpScene();
+  if (!defaultSceneGraph.setChildOrder(parentId, kids)) return false;
+  announceStackChange();
   return true;
 }
 
-export function moveNodeInStack(nodeId: string, action: 'front' | 'back' | 'forward' | 'backward'): boolean {
-  const node = defaultSceneGraph.getNode(nodeId);
-  if (!node) return false;
-  const parentId = node.parent ?? 'comp_root';
-  const parentEngNode = (defaultSceneGraph as any).engine?.(parentId);
-  if (!parentEngNode) return false;
-  const kids: string[] = Array.isArray(parentEngNode.custom.childIds)
-    ? [...parentEngNode.custom.childIds]
-    : [];
-  const fromIndex = kids.indexOf(nodeId);
-  if (fromIndex === -1) return false;
+/** The arrange verbs, in the stacking direction each one moves. */
+export type StackAction = 'front' | 'back' | 'forward' | 'backward';
 
-  kids.splice(fromIndex, 1);
+/**
+ * Reorder ONE sibling list. Pure: takes the current child order and the ids
+ * being moved, returns the new order. Exported for the tests that pin the
+ * multi-selection rules without standing a scene graph up.
+ *
+ * `kids` is back-to-front (index 0 = back-most), so "forward" moves an id
+ * toward the END of the array.
+ *
+ * A multi-selection moves as a BLOCK and keeps its internal order. Doing it one
+ * layer at a time — which is what every call site used to do, by looping
+ * `moveNodeInStack` over the selection — is wrong in two ways that cancel out
+ * into nonsense: Bring Forward over two adjacent layers moved the lower one up
+ * past the upper one and then the upper one back down past it, for a net no-op;
+ * and Send to Back moved each in turn to index 0, so the selection came out
+ * REVERSED.
+ */
+export function reorderSiblings(
+  kids: ReadonlyArray<string>,
+  ids: ReadonlyArray<string>,
+  action: StackAction,
+): string[] {
+  const sel = new Set(ids.filter((id) => kids.includes(id)));
+  if (sel.size === 0) return [...kids];
+  const next = [...kids];
 
-  if (action === 'front') {
-    kids.push(nodeId);
-  } else if (action === 'back') {
-    kids.unshift(nodeId);
-  } else if (action === 'forward') {
-    const dest = Math.min(kids.length, fromIndex + 1);
-    kids.splice(dest, 0, nodeId);
-  } else if (action === 'backward') {
-    const dest = Math.max(0, fromIndex - 1);
-    kids.splice(dest, 0, nodeId);
+  if (action === 'front' || action === 'back') {
+    // Relative order is the array's own, not the selection's: the caller hands
+    // us a selection in click order, and Bring to Front must not re-stack the
+    // layers among themselves.
+    const moved = next.filter((id) => sel.has(id));
+    const rest = next.filter((id) => !sel.has(id));
+    return action === 'front' ? [...rest, ...moved] : [...moved, ...rest];
   }
 
-  parentEngNode.custom.childIds = kids;
-  getEventBus().emit('AnimationChanged', { nodeId });
-  bumpScene();
-  return true;
+  // One step. Walking from the destination end means a run of selected layers
+  // shuffles as a unit and stops as a unit when it reaches the top (or bottom):
+  // a selected layer only swaps with an UNSELECTED neighbour, so members never
+  // leapfrog each other and the block cannot pass through itself.
+  if (action === 'forward') {
+    for (let i = next.length - 2; i >= 0; i--) {
+      if (sel.has(next[i]!) && !sel.has(next[i + 1]!)) {
+        [next[i], next[i + 1]] = [next[i + 1]!, next[i]!];
+      }
+    }
+  } else {
+    for (let i = 1; i < next.length; i++) {
+      if (sel.has(next[i]!) && !sel.has(next[i - 1]!)) {
+        [next[i], next[i - 1]] = [next[i - 1]!, next[i]!];
+      }
+    }
+  }
+  return next;
+}
+
+/**
+ * Arrange (z-order) for a whole selection — the one implementation behind Layer
+ * ▸ Arrange, its Ctrl/Cmd+[ / ] chords, the Scene panel's context menu and the
+ * viewport's.
+ *
+ * Siblings only, and per parent: layers are grouped by their parent and each
+ * group is reordered within its OWN child list, so arranging a mixed selection
+ * never lifts a layer out of the group or precomp it lives in.
+ *
+ * Returns true when the order actually changed — the callers use it so a layer
+ * already at the front does not claim to have been brought forward. ONE
+ * `bumpScene` for the whole call, which is one undo entry.
+ */
+export function arrangeNodes(ids: ReadonlyArray<string>, action: StackAction): boolean {
+  const byParent = new Map<string, string[]>();
+  for (const id of ids) {
+    const node = defaultSceneGraph.getNode(id);
+    if (!node) continue;
+    const parentId = node.parent ?? COMP_ROOT;
+    const group = byParent.get(parentId);
+    if (group) group.push(id);
+    else byParent.set(parentId, [id]);
+  }
+
+  let changed = false;
+  for (const [parentId, group] of byParent) {
+    const kids = defaultSceneGraph.getChildOrder(parentId);
+    const next = reorderSiblings(kids, group, action);
+    if (next.length !== kids.length || next.every((id, i) => id === kids[i])) continue;
+    if (defaultSceneGraph.setChildOrder(parentId, next)) changed = true;
+  }
+
+  if (changed) announceStackChange();
+  return changed;
+}
+
+/**
+ * Arrange a SINGLE layer. Thin wrapper over {@link arrangeNodes} — kept because
+ * a handful of callers (and the AI/plugin surfaces) speak one layer at a time.
+ * Anything driven by the SELECTION must call `arrangeNodes` with the whole list
+ * instead of looping this: see `reorderSiblings` for what the loop did.
+ */
+export function moveNodeInStack(nodeId: string, action: StackAction): boolean {
+  return arrangeNodes([nodeId], action);
 }

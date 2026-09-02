@@ -65,6 +65,7 @@ import { PrimitiveSection, hasPrimitiveSection } from './PrimitiveSection';
 import { ShapeEffects } from './ShapeEffects';
 import { SvgSection } from './SvgSection';
 import { TextAnimatorControls } from './TextAnimatorControls';
+import { VersionHistorySection, versionHistoryAvailable } from './VersionHistorySection';
 import {
   LayerStylesWithPresetsSection,
   NullInfoSection,
@@ -75,7 +76,32 @@ import {
 /** Resolved per node, because two of them genuinely vary by layer. */
 type PerNode<T> = T | ((nodeId: string) => T);
 
-export type InspectorCategory = 'all' | 'layout' | 'style' | 'content' | 'motion';
+/**
+ * The Properties panel's sub-tabs. Every section belongs to exactly one.
+ *
+ * The panel used to show every section for the selected layer in one accordion
+ * — eight headers for a plain shape — so the first screen was a wall of
+ * uppercase titles and the property you wanted was somewhere below the fold.
+ * Four groups, in the order you edit: where it is, how it looks, what kind of
+ * layer it is (and how it composites), and what moves it.
+ *
+ * A tab only appears when the selected layer has at least one section in it
+ * (`inspectorCategoriesFor`), and the search box reads across all four, so
+ * splitting does not bring back the "which tab owns this property" guessing
+ * that sank the old Transform / Style / Settings split.
+ */
+export type InspectorCategory = 'transform' | 'style' | 'layer' | 'animation';
+
+export const INSPECTOR_CATEGORIES: ReadonlyArray<{ id: InspectorCategory; label: string }> = [
+  { id: 'transform', label: 'Transform' },
+  { id: 'style', label: 'Style' },
+  { id: 'layer', label: 'Layer' },
+  { id: 'animation', label: 'Animation' },
+];
+
+export function categoryLabel(id: InspectorCategory): string {
+  return INSPECTOR_CATEGORIES.find((c) => c.id === id)?.label ?? id;
+}
 
 export interface InspectorSectionDef {
   /**
@@ -85,8 +111,8 @@ export interface InspectorSectionDef {
   id: string;
   title: PerNode<string>;
   icon?: PerNode<IconName>;
-  /** High-level domain category for the segmented domain filter rail. */
-  category?: InspectorCategory;
+  /** Which Properties sub-tab draws this section. */
+  category: InspectorCategory;
   /** Whether this section belongs on the given layer at all. */
   appliesTo: (nodeId: string) => boolean;
   Component: ComponentType<{ nodeId: string }>;
@@ -139,7 +165,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'transform',
     title: 'Transform',
     icon: 'move',
-    category: 'layout',
+    category: 'transform',
     defaultOpen: true,
     keywords: 'position scale rotation opacity anchor size 3d',
     appliesTo: (id) => kindOf(id) !== 'audio',
@@ -173,7 +199,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'primitive3d',
     title: 'Primitive',
     icon: 'cube',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'primitive sphere box cylinder cone torus capsule mesh',
     appliesTo: hasPrimitiveSection,
@@ -191,7 +217,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
       return findLayerKind(kind)?.kind.label ?? splitKind(kind)?.kindId ?? 'Layer';
     },
     icon: (id) => (findLayerKind(kindOf(id) ?? '')?.kind.icon as IconName) ?? 'plugin',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'settings camera light particle audio volume',
     appliesTo: (id) => splitKind(kindOf(id) ?? '') !== null,
@@ -201,7 +227,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'custom',
     title: 'Camera Settings',
     icon: 'camera',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'settings camera light particle audio volume',
     appliesTo: isKind('camera'),
@@ -211,7 +237,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'custom',
     title: 'Light Settings',
     icon: 'light',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'settings camera light particle audio volume',
     appliesTo: isKind('light'),
@@ -221,7 +247,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'custom',
     title: 'Particle Settings',
     icon: 'sparkles',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'settings camera light particle audio volume',
     appliesTo: isKind('particle'),
@@ -231,7 +257,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'custom',
     title: 'Audio Settings',
     icon: 'audio',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'settings camera light particle audio volume',
     appliesTo: isKind('audio'),
@@ -241,7 +267,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'svg',
     title: 'SVG Layer',
     icon: 'shape',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'svg vector path import',
     appliesTo: isKind('svg'),
@@ -251,7 +277,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'media',
     title: 'Media Settings',
     icon: 'image',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'source trim speed fit crop volume',
     appliesTo: (id) => kindOf(id) === 'image' || kindOf(id) === 'video',
@@ -261,7 +287,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'precomp',
     title: 'Pre-composition',
     icon: 'folder',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'precompose group children focus',
     appliesTo: isKind('group'),
@@ -271,7 +297,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'info',
     title: 'Null Object',
     icon: 'info',
-    category: 'content',
+    category: 'layer',
     defaultOpen: true,
     keywords: 'null object controller',
     appliesTo: isKind('null'),
@@ -281,7 +307,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'animators',
     title: 'Text Animators',
     icon: 'sparkles',
-    category: 'content',
+    category: 'animation',
     defaultOpen: false,
     keywords: 'text animator range selector',
     appliesTo: isKind('text'),
@@ -303,7 +329,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'pathOps',
     title: 'Pathfinder',
     icon: 'shape',
-    category: 'content',
+    category: 'layer',
     // Open by default: it is a row of four buttons, and the whole point of
     // moving the booleans out of a right-click submenu was that you should not
     // have to go looking for them.
@@ -319,7 +345,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'geometry',
     title: 'Audio Waveform',
     icon: 'audio',
-    category: 'content',
+    category: 'layer',
     defaultOpen: false,
     keywords: 'path trim repeater round corners wiggle stroke',
     appliesTo: isKind('shape'),
@@ -335,7 +361,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'morph',
     title: 'Morph Targets',
     icon: 'sparkles',
-    category: 'content',
+    category: 'animation',
     defaultOpen: false,
     keywords: 'morph blend shape target model',
     appliesTo: (id) => {
@@ -348,7 +374,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'ik3d',
     title: '3D IK',
     icon: 'crosshair',
-    category: 'motion',
+    category: 'animation',
     defaultOpen: false,
     keywords: 'ik inverse kinematics chain pose bake',
     appliesTo: isIk3DTip,
@@ -360,7 +386,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'compositing',
     title: 'Compositing & Switches',
     icon: 'layers',
-    category: 'motion',
+    category: 'layer',
     defaultOpen: false,
     // Four of the old SECTION_KEYWORDS entries — `compositing`, `layerSwitches`,
     // `parenting` and `time` — all named controls this ONE section holds. Three
@@ -393,7 +419,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'modifierStack',
     title: 'Modifiers',
     icon: 'sparkles',
-    category: 'motion',
+    category: 'animation',
     keywords: 'modifier stack delay noise spring stagger',
     appliesTo: hasModifierStackSection,
     Component: ModifierStackSection,
@@ -407,18 +433,48 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     id: 'audioDriver',
     title: 'Audio Driver',
     icon: 'audio',
-    category: 'motion',
+    category: 'animation',
     keywords: 'audio driver react beat amplitude band music',
     appliesTo: hasAudioDriverSection,
     Component: AudioDriverSection,
   },
+
+  // ── Local version history ──────────────────────────────────────
+  /*
+   * The one PROJECT-scoped row in a layer-scoped list, and last for that
+   * reason.
+   *
+   * It reads the open `.motion` bundle's snapshots, not the selected layer —
+   * `appliesTo` ignores its argument, which is why it is here rather than
+   * merged into another section. It earns the exception by being the only
+   * surface local-first builds have for the version store: `VersionHistoryPanel`
+   * is the CLOUD history and shows nothing without a server project. Outside a
+   * local-first bundle `versionHistoryAvailable` is false and the row does not
+   * appear, so the default build's inspector is unchanged.
+   */
+  {
+    id: 'versionHistory',
+    title: 'Version History',
+    icon: 'history',
+    category: 'layer',
+    defaultOpen: false,
+    keywords: 'version history snapshot restore revision checkpoint bundle',
+    appliesTo: versionHistoryAvailable,
+    Component: VersionHistorySection,
+  },
 ];
 
-/** The sections that belong on one layer, in registry order, optionally filtered by category. */
-export function inspectorSectionsFor(nodeId: string, category: InspectorCategory = 'all'): InspectorSectionDef[] {
+/** The sections that belong on one layer, in registry order, optionally one sub-tab of them. */
+export function inspectorSectionsFor(nodeId: string, category: InspectorCategory | 'all' = 'all'): InspectorSectionDef[] {
   if (!defaultSceneGraph.getNode(nodeId)) return [];
   return INSPECTOR_SECTIONS.filter((s) => {
-    if (category !== 'all' && s.category && s.category !== category) return false;
+    if (category !== 'all' && s.category !== category) return false;
     return s.appliesTo(nodeId);
   });
+}
+
+/** The sub-tabs that have at least one section for this layer, in display order. */
+export function inspectorCategoriesFor(nodeId: string): InspectorCategory[] {
+  const present = new Set(inspectorSectionsFor(nodeId).map((s) => s.category));
+  return INSPECTOR_CATEGORIES.map((c) => c.id).filter((id) => present.has(id));
 }

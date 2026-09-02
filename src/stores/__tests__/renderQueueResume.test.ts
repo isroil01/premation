@@ -23,6 +23,10 @@ const fakeRender = {
   run: mockRun,
   finish: mockFinish,
   dispose: mockDispose,
+  // The staging dir this render owns. Real renders have one so a pause can be
+  // written down and picked up after a restart; a fake without it is not a
+  // `ResumableVideoRender` and the store would rightly fail the job.
+  stagingJobId: () => 'staging-fake',
 };
 
 jest.mock('@core/export/exportManager', () => ({

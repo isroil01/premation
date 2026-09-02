@@ -178,6 +178,18 @@ export function TranscriptPanel(): JSX.Element {
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const words = transcript?.words ?? [];
 
+  /*
+   * How many chips are guesses.
+   *
+   * The panel used to say "word timings are estimated within each segment"
+   * unconditionally, because they always were. Now whisper is asked for word
+   * granularity too, so most transcripts have real per-word times and the
+   * apology is a lie. Counting rather than testing a flag on the transcript:
+   * `wordsFromCues` falls back PER CUE, so a transcript can be part exact and
+   * part estimated, and the line should say which.
+   */
+  const estimatedCount = useMemo(() => words.filter((w) => w.estimated).length, [words]);
+
   const filtered = useMemo(
     () => (query.trim() === '' ? words : words.filter((w) => wordMatchesQuery(w, query))),
     [words, query],
@@ -498,7 +510,12 @@ export function TranscriptPanel(): JSX.Element {
             : `Transcribed ${formatShortTime(transcript.range.start)}–${formatShortTime(transcript.range.end)}`}
           {transcript.edited ? ' · edited' : ''}
           {' · '}
-          {words.length} words · word timings are estimated within each segment
+          {words.length} words
+          {estimatedCount > 0
+            ? estimatedCount === words.length
+              ? ' · word timings are estimated within each segment'
+              : ` · ${estimatedCount} word timings are estimated within their segment`
+            : ''}
           {' · not saved with the project'}
         </div>
       )}
@@ -571,7 +588,10 @@ export function TranscriptPanel(): JSX.Element {
                     playingWordId === word.id && styles.wordPlaying,
                   )}
                   aria-pressed={selectedSet.has(word.id)}
-                  title={`${formatShortTime(word.start)} – ${formatShortTime(word.end)} (estimated)`}
+                  title={
+                    `${formatShortTime(word.start)} – ${formatShortTime(word.end)}`
+                    + (word.estimated ? ' (estimated)' : '')
+                  }
                   onPointerDown={(e) => onWordPointerDown(word, e)}
                   onPointerEnter={() => onWordPointerEnter(word)}
                 >

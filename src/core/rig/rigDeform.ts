@@ -37,7 +37,7 @@ import { computeWorldTransforms, computeBindInverses, boneRoot, boneTip } from '
 import { type Mat2D, apply, invert, multiply } from './mat2d';
 import { solveTwoBone, solveFabrik, anglesFromJoints, type Vec2 } from './ik';
 import { boneSegments, type BoneSegment } from './autoWeight';
-import { geodesicAutoWeights, weightsAtPoint } from './geodesicWeights';
+import { geodesicAutoWeights, meshSeamBand, weightsAtPoint } from './geodesicWeights';
 import { skinVertex, type SkinVertex, type VertexWeight } from './skinning';
 import { applyWeightPaint, weightPaintMatches, type WeightPaintMap } from './weightPaint';
 
@@ -193,6 +193,12 @@ export interface SkeletonBinding {
    * `segments` alone would silently reintroduce Euclidean cross-gap bleed.
    */
   mesh: DeformedMesh;
+  /**
+   * Seam width the weights were built with. Carried so the point helpers weight
+   * an off-mesh point with the SAME blend width the vertices used, instead of
+   * re-deriving it and quietly disagreeing.
+   */
+  band: number;
 }
 
 /** Deterministic signature of a skeleton's REST pose (binding identity). */
@@ -200,7 +206,10 @@ function restBonesKey(bones: readonly Bone[]): string {
   return bones
     .map(
       (b) =>
-        `${b.id}|${b.parentId ?? ''}|${b.length}|${b.x}|${b.y}|${b.rotation}|${b.scaleX ?? 1}|${b.scaleY ?? 1}`,
+        // Every field the binding is computed FROM belongs here, influence
+        // radius included — it changes the weights without moving a bone, so
+        // leaving it out silently served a stale binding.
+        `${b.id}|${b.parentId ?? ''}|${b.length}|${b.x}|${b.y}|${b.rotation}|${b.scaleX ?? 1}|${b.scaleY ?? 1}|${b.influenceRadius ?? ''}`,
     )
     .join(';');
 }
@@ -267,7 +276,14 @@ export function getSkeletonBinding(
     weights[i] = livePaint ? applyWeightPaint(auto[i]!, i, livePaint) : auto[i]!;
   }
 
-  const binding: SkeletonBinding = { weights, bindWorld, bindInverse, segments, mesh: restMesh };
+  const binding: SkeletonBinding = {
+    weights,
+    bindWorld,
+    bindInverse,
+    segments,
+    mesh: restMesh,
+    band: meshSeamBand(restMesh, segments),
+  };
   if (perMesh.size >= BINDING_CACHE_CAP) {
     const oldest = perMesh.keys().next().value;
     if (oldest !== undefined) perMesh.delete(oldest);
@@ -309,7 +325,15 @@ export function skinRigVertices(
 // Point skinning — overlay helpers (pin dots, pointer mapping)
 // ────────────────────────────────────────────────────────────────────────────
 
-/** Blended skinning matrix Σ wᵢ·(poseᵢ·bindInvᵢ) at a set of weights (or null). */
+/**
+ * Blended skinning matrix Σ wᵢ·(poseᵢ·bindInvᵢ) at a set of weights (or null).
+ *
+ * Mirrors `skinVertex` exactly, PARTIAL weights included: a total below 1
+ * spends the shortfall on the identity, which is the matrix form of "the rest
+ * of this point stays at its bind position". Without that the overlay's point
+ * helpers would snap a partially-bound point onto its bones while the artwork
+ * under it faded back to rest.
+ */
 function blendedMatrix(
   weights: readonly VertexWeight[],
   poseWorld: Map<string, Mat2D>,
@@ -328,7 +352,11 @@ function blendedMatrix(
     total += weight;
   }
   if (total === 0) return null;
-  return [a / total, b / total, c / total, d / total, e / total, f / total];
+  if (total >= 1 - 1e-6) {
+    return [a / total, b / total, c / total, d / total, e / total, f / total];
+  }
+  const rest = 1 - total;
+  return [a + rest, b, c, d + rest, e, f];
 }
 
 /**
@@ -342,7 +370,7 @@ export function skinPointAt(
   binding: SkeletonBinding,
   poseWorld: Map<string, Mat2D>,
 ): Vec2 {
-  const w = weightsAtPoint(binding.mesh, binding.weights, restAnchor, binding.segments);
+  const w = weightsAtPoint(binding.mesh, binding.weights, restAnchor, binding.segments, binding.band);
   const m = blendedMatrix(w, poseWorld, binding.bindInverse);
   if (!m) return { x: source.x, y: source.y };
   return apply(m, source.x, source.y);
@@ -383,7 +411,7 @@ export function unskinPoint(
 ): Vec2 {
   let guess: Vec2 = { x: posed.x, y: posed.y };
   for (let i = 0; i < UNSKIN_ITERATIONS; i++) {
-    const w = weightsAtPoint(binding.mesh, binding.weights, guess, binding.segments);
+    const w = weightsAtPoint(binding.mesh, binding.weights, guess, binding.segments, binding.band);
     const m = blendedMatrix(w, poseWorld, binding.bindInverse);
     if (!m) return guess;
     guess = apply(invert(m), posed.x, posed.y);

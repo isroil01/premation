@@ -1986,6 +1986,10 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
     // path: with no 3D layer there is nothing to reflect in, and shipping the
     // atlas anyway would upload a texture no draw binds.
     ...(has3d && snapshot.envMap ? { envMap: snapshot.envMap } : {}),
+    // Ambient occlusion, handed straight through. Gated on `has3d` like every
+    // other depth-path field: with no 3D layer there is no run to prepass, and
+    // the pass would render three targets for nothing.
+    ...(has3d && snapshot.ssao?.enabled ? { ssao: snapshot.ssao } : {}),
   };
 }
 

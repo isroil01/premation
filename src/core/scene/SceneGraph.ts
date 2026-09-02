@@ -416,6 +416,43 @@ export class SceneGraph {
     return out;
   }
 
+  /**
+   * The child ORDER of a node — the single authority for stacking.
+   *
+   * Index 0 is the BACK-most sibling (painted first); the last entry is the
+   * FRONT-most. Every consumer of z-order derives from this array: the painter
+   * order in `buildSnapshot`, the viewport's hit-test z-index, and — reversed,
+   * because both list front-first — the Scene tree and the timeline rows.
+   *
+   * Exposed as a typed pair with {@link setChildOrder} because the ordering
+   * helpers used to reach through `(graph as any).engine(id).custom.childIds`,
+   * which is both untyped and an invitation to mutate the live array in place.
+   * Returns a COPY, so a caller cannot half-apply a reorder.
+   */
+  getChildOrder(id: ID): ID[] {
+    const e = this.engine(id);
+    const kids = e?.custom.childIds;
+    return Array.isArray(kids) ? [...(kids as ID[])] : [];
+  }
+
+  /**
+   * Replace a node's child order. Returns false when the node is unknown.
+   *
+   * Deliberately order-only: it rejects anything that is not a permutation of
+   * the current children, so a reordering bug can shuffle the stack but can
+   * never drop a layer out of the document or smuggle a foreign id in.
+   */
+  setChildOrder(id: ID, next: ReadonlyArray<ID>): boolean {
+    const e = this.engine(id);
+    if (!e) return false;
+    const current = Array.isArray(e.custom.childIds) ? (e.custom.childIds as ID[]) : [];
+    if (next.length !== current.length) return false;
+    const have = new Set(current);
+    for (const c of next) if (!have.delete(c)) return false;
+    e.custom.childIds = [...next];
+    return true;
+  }
+
   /** Number of nodes in the graph. */
   get size(): number {
     return this.scene.size - 1; // exclude the engine root

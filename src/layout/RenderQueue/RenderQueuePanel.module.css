@@ -312,3 +312,30 @@
   color: var(--color-text-muted);
   flex-shrink: 0;
 }
+
+/*
+ * ── Restored from the last session ──────────────────────────────
+ *
+ * A notice, not an alert. These jobs are good news — their frames survived —
+ * but they appeared without anyone adding them this session, so the strip has
+ * to be visible enough that the queue does not look like it invented work.
+ * Warning-tinted rather than danger-tinted: nothing is wrong, something is
+ * waiting.
+ */
+.resumeBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--color-surface-2));
+  border-bottom: 1px solid var(--color-border-strong);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  flex-shrink: 0;
+}
+
+.resumeBannerText {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}

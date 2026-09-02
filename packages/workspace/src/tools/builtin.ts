@@ -245,6 +245,10 @@ export class SelectTool implements Tool {
       this.startScale = rn
         ? { x: Math.hypot(rn.worldMatrix.a, rn.worldMatrix.b), y: Math.hypot(rn.worldMatrix.c, rn.worldMatrix.d) }
         : { x: 1, y: 1 };
+      // Equal-size snapping measures the layer against its NEIGHBOURS; without
+      // this the layer being resized is one of its own neighbours and matches
+      // its own width at every size.
+      this.excludeIds = new Set([this.transformId]);
       return;
     }
     if (this.downNodeId === null) {
@@ -323,11 +327,23 @@ export class SelectTool implements Tool {
           ? { x: from.x + from.width / 2, y: from.y + from.height / 2 }
           : Mat.apply(inv, this.transformPivot ?? e.startWorld);
 
-        const local = e.modifiers.alt
+        const dragged = e.modifiers.alt
           ? resizeBounds(from, this.downHandle, pointerLocal, true, undefined, e.modifiers.shift)
           : resizeBoundsAboutPivot(
               from, this.downHandle, pointerLocal, pivotLocal, undefined, e.modifiers.shift,
             );
+
+        // Equal-SIZE snapping. The local box is in the LAYER's units, so the
+        // conversion to the world size a neighbour is measured in is the scale
+        // the drag started from (`base`); the fixed point is whatever this
+        // gesture is holding still, so the snap grows the box the same way the
+        // drag does.
+        const local = this.snapEqualSize(ctx, dragged, base, {
+          fixed: e.modifiers.alt
+            ? { x: from.x + from.width / 2, y: from.y + from.height / 2 }
+            : pivotLocal,
+          uniform: e.modifiers.shift,
+        });
 
         /*
          * Ctrl (⌘ on macOS) switches the drag from SCALE to SIZE.
@@ -405,7 +421,7 @@ export class SelectTool implements Tool {
       // No local box to work in (a node kind that reports none). Falls back to
       // the world-AABB path every layer used before, still correct unrotated.
       // (HUD set below, after the new bounds exist.)
-      const bounds = e.modifiers.alt
+      const draggedBounds = e.modifiers.alt
         ? resizeBounds(this.startBounds, this.downHandle, e.currentWorld, true, undefined, e.modifiers.shift)
         : resizeBoundsAboutPivot(
             this.startBounds,
@@ -415,6 +431,11 @@ export class SelectTool implements Tool {
             undefined,
             e.modifiers.shift,
           );
+      // Already world units here, so the local→world scale is 1:1.
+      const bounds = this.snapEqualSize(ctx, draggedBounds, { x: 1, y: 1 }, {
+        fixed: e.modifiers.alt ? R.center(this.startBounds) : this.transformPivot,
+        uniform: e.modifiers.shift,
+      });
       const from = this.startBounds;
       const scale = {
         x: from.width > 0 ? base.x * (bounds.width / from.width) : base.x,
@@ -474,6 +495,84 @@ export class SelectTool implements Tool {
       ctx.setSnapLines(snap.lines);
       ctx.requestRender();
     }
+  }
+
+  /**
+   * Equal-SIZE snapping for a resize drag.
+   *
+   * `equalSizeCandidates` has always known the exact delta that would make the
+   * dragged layer as wide (or as tall) as a neighbour; until now only the
+   * overlay read it, so the highlight lit up while the drag sailed past. This
+   * applies it.
+   *
+   * Three things the gesture already decided are respected rather than
+   * re-derived, because re-deriving them is how a snap starts fighting the
+   * drag:
+   *
+   *  • **The fixed point.** Whatever the gesture holds still — the anchor, or
+   *    the box centre under Alt — is passed in, and the box is scaled ABOUT it.
+   *    So a centre-anchored resize stays centred and an anchored one keeps its
+   *    anchor, without this having to know which it was.
+   *  • **Aspect lock.** Under Shift both axes take the SAME factor, so the
+   *    snap lands one axis on the neighbour's size and the other follows the
+   *    locked ratio. Snapping one axis alone would silently break the lock.
+   *  • **Which axes the handle moves.** An `e` handle changes width only, so a
+   *    height match is ignored (unless Shift has tied the two together) — a
+   *    magnet must not resize an axis the user is not dragging.
+   *
+   * `scale` converts the box's units to world units (the units neighbours are
+   * measured in): the layer's start scale for the local-space path, 1 for the
+   * world-AABB fallback. For a ROTATED layer this compares the layer's oriented
+   * size — what the W×H readout shows — against a neighbour's axis-aligned
+   * box; exact when the layer is unrotated, which is when the comparison is
+   * one the user can see.
+   */
+  private snapEqualSize(
+    ctx: ToolContext,
+    box: Rect,
+    scale: Vec2,
+    opts: { fixed: Vec2; uniform: boolean },
+  ): Rect {
+    const EPS = 1e-6;
+    const handle = this.downHandle;
+    if (!handle) return box;
+    const sx = Math.abs(scale.x);
+    const sy = Math.abs(scale.y);
+    const w = Math.abs(box.width);
+    const h = Math.abs(box.height);
+    if (sx <= EPS || sy <= EPS || w <= EPS || h <= EPS) return box;
+
+    const movesX = handle === 'w' || handle === 'e' || handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se';
+    const movesY = handle === 'n' || handle === 's' || handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se';
+    // Under aspect lock either grip drives both axes, so both are in play.
+    const liveX = opts.uniform ? movesX || movesY : movesX;
+    const liveY = opts.uniform ? movesX || movesY : movesY;
+    if (!liveX && !liveY) return box;
+
+    // The probe only needs the right SIZE — `equalSizeCandidates` ignores
+    // position — but it is placed on the live selection so the neighbour query
+    // looks in the right part of the world.
+    const near = ctx.selection.selectionBounds() ?? this.startBounds;
+    if (!near) return box;
+    const probe = R.rect(near.x, near.y, w * sx, h * sy);
+    const matches = ctx.sizeMatches(probe, this.excludeIds);
+    const best = matches.find((m) => (m.axis === 'x' ? liveX : liveY));
+    if (!best) return box;
+
+    // Back out of world units into the box's own.
+    const target = best.size / (best.axis === 'x' ? sx : sy);
+    const factor = target / (best.axis === 'x' ? w : h);
+    if (!Number.isFinite(factor) || factor <= EPS) return box;
+    const fx = best.axis === 'x' || opts.uniform ? factor : 1;
+    const fy = best.axis === 'y' || opts.uniform ? factor : 1;
+
+    const { fixed } = opts;
+    return {
+      x: fixed.x + (box.x - fixed.x) * fx,
+      y: fixed.y + (box.y - fixed.y) * fy,
+      width: box.width * fx,
+      height: box.height * fy,
+    };
   }
 
   getHud(): { anchorWorld: Vec2; lines: readonly string[] } | null {

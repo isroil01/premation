@@ -24,10 +24,21 @@ function resolveChildren(item: MenuItemModel): ReadonlyArray<MenuItemModel> {
   return typeof c === 'function' ? c() : c;
 }
 
+/** Every item in a list, submenus included, depth-first. */
+function walk(items: ReadonlyArray<MenuItemModel>): MenuItemModel[] {
+  const out: MenuItemModel[] = [];
+  for (const it of items) {
+    out.push(it);
+    out.push(...walk(resolveChildren(it)));
+  }
+  return out;
+}
+
+/** Locate an entry by label at ANY depth of a group — `3D Primitive` lives under `New`. */
 function findItem(groupId: string, label: string): MenuItemModel {
   const group = APP_MENU.find((g) => g.id === groupId);
   if (!group) throw new Error(`no ${groupId} menu group`);
-  const item = group.items.find((it) => it.label === label);
+  const item = walk(group.items).find((it) => it.label === label);
   if (!item) throw new Error(`no “${label}” entry in the ${groupId} menu`);
   return item;
 }
@@ -63,8 +74,8 @@ describe('menu submenus', () => {
     expect(kids.findIndex((k) => k.separator)).toBe(4);
   });
 
-  it('Layer ▸ New 3D Primitive covers every kind insert3DPrimitive accepts', () => {
-    const ids = resolveChildren(findItem('layer', 'New 3D Primitive')).map((k) => k.commandId);
+  it('Layer ▸ New ▸ 3D Primitive covers every kind insert3DPrimitive accepts', () => {
+    const ids = resolveChildren(findItem('layer', '3D Primitive')).map((k) => k.commandId);
     expect(ids).toEqual([
       'layer.new3d.cube',
       'layer.new3d.sphere',
@@ -78,7 +89,7 @@ describe('menu submenus', () => {
   });
 
   it('Scene Edit Detection sits under Layer, where AE puts it', () => {
-    const ids = APP_MENU.find((g) => g.id === 'layer')?.items.map((i) => i.commandId) ?? [];
+    const ids = walk(APP_MENU.find((g) => g.id === 'layer')?.items ?? []).map((i) => i.commandId);
     expect(ids).toContain('layer.sceneEditDetect.markers');
     expect(ids).toContain('layer.sceneEditDetect.split');
   });
@@ -124,6 +135,24 @@ describe('menu submenus', () => {
       expect(providers).toContain(`bakeId: '${id}'`);
     }
     expect(providers).toContain("asCommandId('workspace.saveAs')");
+  });
+
+  it('keeps every top-level group short enough to fit on screen', () => {
+    // The reason submenus exist here at all: Animation ran 30 entries to the
+    // bottom of the window. A group that grows past this folds a family.
+    for (const group of APP_MENU) {
+      const topLevel = group.items.filter((it) => !it.separator).length;
+      expect({ group: group.id, topLevel, ok: topLevel <= 14 }).toEqual({ group: group.id, topLevel, ok: true });
+    }
+  });
+
+  it('a submenu parent is a container, never an action', () => {
+    for (const group of APP_MENU) {
+      for (const it of walk(group.items)) {
+        if (!it.children) continue;
+        expect({ label: it.label, commandId: it.commandId }).toEqual({ label: it.label, commandId: undefined });
+      }
+    }
   });
 
   it('lists no command twice inside one submenu', () => {

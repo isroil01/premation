@@ -95,26 +95,29 @@ function discoverSectionComponents(): Array<[string, unknown]> {
  * Sections that NOTHING mounts. This is debt, written down.
  *
  * Separate from `EMBEDDED` on purpose: an embedded section is a design
- * decision, and one of these is a component nobody can reach. Both were found
+ * decision, and one of these is a component nobody can reach. Two were found
  * by this suite the day it was written, which is the argument for the suite —
  * each had a host once, each lost it in a change that touched only the host,
  * and neither failure was visible from anywhere.
  *
- * Neither is deleted here because deleting a component is a behaviour decision
- * with an owner, and this change was a refactor with a no-behaviour-change
- * rule. Fixing one means either mounting it again or removing it; leaving it
- * in this list forever is the option that is NOT fine.
+ * Both have since been settled, in the two different ways a stranded section
+ * can be:
+ *
+ *   • `TextSection` was DELETED. `CharacterPanel` had grown the same font,
+ *     size, tracking, leading, box-text and path controls as a dock tab, so
+ *     the section was a second copy nobody could reach and nobody could see
+ *     drift.
+ *   • `VersionHistorySection` was REGISTERED (`versionHistory`, gated on
+ *     `versionHistoryAvailable`). It is not a duplicate of
+ *     `VersionHistoryPanel`: that panel is the cloud history and this reads the
+ *     `.motion` bundle on disk, so deleting it would have removed the only
+ *     local-first surface for a version store that already exists.
+ *
+ * The map is EMPTY, and staying empty is the point: an entry here is a
+ * component nobody can reach, and the fix is to mount it or remove it. Leaving
+ * one in this list forever is the option that is NOT fine.
  */
-const UNMOUNTED: Readonly<Record<string, string>> = {
-  TextSection:
-    'Superseded by CharacterPanel, which renders the same font / size / tracking / ' +
-    'leading controls as a dock tab. Nothing imports this. Either delete it or make ' +
-    'the Character panel render it, so the two cannot drift.',
-  VersionHistorySection:
-    'Used to render in the Properties panel extras strip beside the mograph and ' +
-    'template fields; only a comment in Providers.tsx still refers to it. Local ' +
-    'version history has no surface in the app while this is unmounted.',
-};
+const UNMOUNTED: Readonly<Record<string, string>> = {};
 
 const SUBJECTS = discoverSectionComponents();
 const REGISTERED = new Set<unknown>(INSPECTOR_SECTIONS.map((s) => s.Component));
@@ -173,8 +176,11 @@ describe('the exemption lists do not rot', () => {
   });
 
   it('POSITIVE CONTROL: the unmounted list is not silently absorbing the directory', () => {
-    // If this ever trips, sections are being stranded faster than they are
-    // being fixed and the guard has become a ledger of failures.
-    expect(Object.keys(UNMOUNTED).length).toBeLessThanOrEqual(3);
+    // The ceiling used to be three, with two names under it. Both have been
+    // settled — one deleted, one registered — so the honest ceiling is now
+    // ONE: a single new stranding is a thing someone is mid-way through
+    // fixing, and a second means they are arriving faster than they are being
+    // fixed and the guard has become a ledger of failures.
+    expect(Object.keys(UNMOUNTED).length).toBeLessThanOrEqual(1);
   });
 });

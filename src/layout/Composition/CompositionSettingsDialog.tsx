@@ -23,6 +23,7 @@ import {
 } from '@core/paint/fill';
 import { openModal } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
+import { resolveSsao, type SsaoSettings } from '@stores/projectStore';
 import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
 import { useColorManagementStore, type IntermediateBitDepth } from '@stores/colorManagementStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
@@ -97,6 +98,17 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   const groundLevel = Number.isFinite(s.groundLevel) ? (s.groundLevel as number) : 0;
   const setGroundLevel = (v: number): void => s.update({ groundLevel: v });
   const showSkyBackdrop = s.showSkyBackdrop === true;
+  /*
+    Ambient occlusion.
+
+    Read through `resolveSsao` so an absent block (every document written before
+    this group existed) reads as the defaults and NOTHING is written until the
+    user actually changes something. `patchSsao` then writes the whole object,
+    because the store's sanitizer validates it as a whole — see the note there
+    on why a NaN radius is not a cosmetic problem.
+  */
+  const ssao = resolveSsao(s.comp());
+  const patchSsao = (patch: Partial<SsaoSettings>): void => s.update({ ssao: { ...ssao, ...patch } });
 
   // ── Background paint (solid / linear / radial) ──────────────────────
   const bgPaint: FillPaint = s.backgroundPaint ?? solidFill(s.background);
@@ -540,6 +552,75 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
                   aria-label="Ground level"
                 />
               </label>
+            </div>
+
+            <div className={styles.section}>
+              <div className={styles.label}>Ambient occlusion</div>
+              <p className={styles.hint}>
+                Contact darkening between 3D surfaces that are close together —
+                the dark seam where a box meets the floor. It dims AMBIENT light
+                only: a lamp already has a shadow to say what it cannot see, and
+                darkening it twice is how AO turns into grime. Off by default,
+                and a composition that leaves it off renders exactly as it did
+                before this existed.
+              </p>
+              <div className={styles.colorCardRow}>
+                <span className={styles.colorCardLabel}>Enable</span>
+                <Switch
+                  checked={ssao.enabled}
+                  onChange={(e) => patchSsao({ enabled: e.target.checked })}
+                  aria-label="Enable ambient occlusion"
+                />
+              </div>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Radius</span>
+                <ValueField
+                  value={ssao.radius}
+                  onChange={(v) => patchSsao({ radius: v })}
+                  min={1}
+                  max={2000}
+                  step={5}
+                  unit="px"
+                  disabled={!ssao.enabled}
+                  aria-label="Ambient occlusion radius"
+                />
+              </label>
+              <p className={styles.hint}>
+                How far a surface looks for something occluding it, in
+                COMPOSITION px — a fixed size in the scene, not on screen, so
+                zooming the viewport does not change how deep a crevice reads.
+              </p>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Intensity</span>
+                <ValueField
+                  value={ssao.intensity}
+                  onChange={(v) => patchSsao({ intensity: v })}
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  disabled={!ssao.enabled}
+                  aria-label="Ambient occlusion intensity"
+                />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Quality</span>
+                <select
+                  className={styles.selectInput}
+                  value={ssao.quality}
+                  disabled={!ssao.enabled}
+                  onChange={(e) => patchSsao({ quality: e.target.value === 'full' ? 'full' : 'half' })}
+                  aria-label="Ambient occlusion quality"
+                >
+                  <option value="half">Half resolution (faster)</option>
+                  <option value="full">Full resolution</option>
+                </select>
+              </label>
+              <p className={styles.hint}>
+                Half is the right default: AO is a low-frequency term and the
+                shader magnifies it smoothly on the way back, so the buffer
+                costs a quarter of the pixels for very nearly the same picture.
+                Full is for a still where the contact edge is the subject.
+              </p>
             </div>
 
             <div className={styles.section}>

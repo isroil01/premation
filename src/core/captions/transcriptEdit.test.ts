@@ -66,6 +66,93 @@ describe('wordsFromCues', () => {
     expect(wordsFromCues([cue(0, 1, 'hi')]).every((w) => w.estimated)).toBe(true);
   });
 
+  describe('with the provider’s own word timings', () => {
+    it('uses them verbatim and stops calling them estimates', () => {
+      // The estimator would put the boundary at 1.4 (weights 6 and 4 across
+      // 0–2); the real timing says the pause is at 1.5, and a real pause is
+      // not a character count.
+      const words = wordsFromCues(
+        [cue(0, 2, 'hello world')],
+        [
+          { text: 'hello', start: 0.1, end: 0.8 },
+          { text: 'world', start: 1.5, end: 1.9 },
+        ],
+      );
+      expect(words.map((w) => [w.start, w.end])).toEqual([[0.1, 0.8], [1.5, 1.9]]);
+      expect(words.every((w) => w.estimated)).toBe(false);
+      // The TEXT still comes from the cue, so punctuation the word list drops
+      // is not silently lost from the transcript.
+      expect(words.map((w) => w.text)).toEqual(['hello', 'world']);
+    });
+
+    it('keeps the cue’s punctuation while taking the timing', () => {
+      const words = wordsFromCues(
+        [cue(0, 2, 'Hello, world!')],
+        [
+          { text: 'Hello', start: 0.2, end: 0.6 },
+          { text: 'world', start: 1.1, end: 1.6 },
+        ],
+      );
+      expect(words.map((w) => w.text)).toEqual(['Hello,', 'world!']);
+      expect(words[0]?.start).toBe(0.2);
+      expect(words.every((w) => w.estimated)).toBe(false);
+    });
+
+    it('claims a word by its MIDPOINT, so an edge word poking past the cue counts', () => {
+      const words = wordsFromCues(
+        [cue(0, 2, 'one two')],
+        [
+          { text: 'one', start: 0, end: 0.5 },
+          // Ends past the cue; its midpoint (1.9) is still inside.
+          { text: 'two', start: 1.7, end: 2.1 },
+        ],
+      );
+      expect(words.every((w) => w.estimated)).toBe(false);
+      expect(words[1]?.end).toBe(2.1);
+    });
+
+    it('skips a provider word the segment text merged, rather than giving up', () => {
+      const words = wordsFromCues(
+        [cue(0, 3, 'well known fact')],
+        [
+          { text: 'well', start: 0, end: 0.4 },
+          { text: '-', start: 0.4, end: 0.4 },
+          { text: 'known', start: 0.5, end: 1.0 },
+          { text: 'fact', start: 1.2, end: 1.8 },
+        ],
+      );
+      expect(words.map((w) => w.start)).toEqual([0, 0.5, 1.2]);
+      expect(words.every((w) => w.estimated)).toBe(false);
+    });
+
+    it('falls back to the estimate for a cue whose words do not line up', () => {
+      const words = wordsFromCues(
+        [cue(0, 2, 'hello there world')],
+        [{ text: 'goodbye', start: 0.1, end: 0.9 }],
+      );
+      expect(words.every((w) => w.estimated)).toBe(true);
+      expect(words[0]?.start).toBe(0);
+      expect(words[2]?.end).toBe(2);
+    });
+
+    it('falls back PER CUE — one bad segment does not spoil the good ones', () => {
+      const words = wordsFromCues(
+        [cue(0, 2, 'one two'), cue(3, 5, 'three four')],
+        [
+          { text: 'one', start: 0.1, end: 0.6 },
+          { text: 'two', start: 0.9, end: 1.4 },
+          // Nothing for the second cue.
+        ],
+      );
+      expect(words.filter((w) => w.cueIndex === 0).every((w) => w.estimated)).toBe(false);
+      expect(words.filter((w) => w.cueIndex === 1).every((w) => w.estimated)).toBe(true);
+    });
+
+    it('is the old function when the word list is empty', () => {
+      expect(wordsFromCues([cue(0, 2, 'a b c')], [])).toEqual(wordsFromCues([cue(0, 2, 'a b c')]));
+    });
+  });
+
   it('carries the cue index so words can be regrouped', () => {
     const words = wordsFromCues([cue(0, 1, 'one'), cue(2, 3, 'two')]);
     expect(words.map((w) => w.cueIndex)).toEqual([0, 1]);

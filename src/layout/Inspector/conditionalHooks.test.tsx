@@ -100,10 +100,16 @@ describe("the discovery found real subjects", () => {
   });
 
   it("includes the sections that have actually broken this way", () => {
-    // Named here as a floor, not as the list: these three are the ones with a
+    // Named here as a floor, not as the list: these are the ones with a
     // recorded incident. If the discovery stops finding them it has broken.
+    //
+    // `TextSection` was a third. It is deleted — `CharacterPanel` had
+    // superseded it and nothing mounted it — and its name is not replaced
+    // here: `CharacterPanel` takes no `nodeId`, so it is not a subject of this
+    // suite at all, and naming it would be a floor that quietly matches
+    // nothing. Two named sections still hold the discovery honest.
     const names = SECTIONS.map(([n]) => n);
-    for (const want of ["AppearanceSection.AppearanceSection", "TextSection.TextSection", "BoneControls.BoneControls"]) {
+    for (const want of ["AppearanceSection.AppearanceSection", "BoneControls.BoneControls"]) {
       expect({ want, found: names.includes(want) }).toEqual({ want, found: true });
     }
   });

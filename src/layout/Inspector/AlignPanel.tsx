@@ -3,19 +3,31 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { alignNodes, type AlignMode } from '@core/scene/alignNodes';
 import { Icon, type IconName } from '@components/Icon';
+import { cn } from '@utils/cn';
 import styles from './AlignSection.module.css';
 
 const ALIGN_ACTIONS: { id: AlignMode; icon: IconName; label: string }[] = [
-  { id: 'left',          icon: 'align-left',           label: 'Align Left' },
-  { id: 'center-h',     icon: 'align-center',          label: 'Align Centers (Horizontal)' },
-  { id: 'right',        icon: 'align-right',           label: 'Align Right' },
-  { id: 'top',          icon: 'align-top',             label: 'Align Top' },
-  { id: 'middle-v',     icon: 'align-middle',          label: 'Align Centers (Vertical)' },
-  { id: 'bottom',       icon: 'align-bottom',          label: 'Align Bottom' },
+  { id: 'left',      icon: 'align-left',   label: 'Align Left' },
+  { id: 'center-h',  icon: 'align-center', label: 'Align Horizontal Centers' },
+  { id: 'right',     icon: 'align-right',  label: 'Align Right' },
+  { id: 'top',       icon: 'align-top',    label: 'Align Top' },
+  { id: 'middle-v',  icon: 'align-middle', label: 'Align Vertical Centers' },
+  { id: 'bottom',    icon: 'align-bottom', label: 'Align Bottom' },
+];
+
+const DISTRIBUTE_ACTIONS: { id: AlignMode; icon: IconName; label: string }[] = [
   { id: 'distribute-h', icon: 'distribute-horizontal', label: 'Distribute Horizontally' },
   { id: 'distribute-v', icon: 'distribute-vertical',   label: 'Distribute Vertically' },
 ];
 
+/**
+ * Align — two rows of flat icon buttons under one "relative to" switch.
+ *
+ * The buttons are ghost controls in a grid, not eight bordered boxes: a panel
+ * whose every control is outlined reads as a form, and this is a toolbar.
+ * Disabled buttons stay in place (dimmed) so the grid never reflows as the
+ * selection changes.
+ */
 export function AlignPanel(): JSX.Element {
   const selectedIds = useSelectionStore((s) => s.ids);
   const [alignTo, setAlignTo] = useState<'selection' | 'composition'>('selection');
@@ -23,68 +35,79 @@ export function AlignPanel(): JSX.Element {
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
 
+  const alignMin = alignTo === 'composition' ? 1 : 2;
+  const distributeMin = alignTo === 'composition' ? 2 : 3;
+  const count = selectedIds.length;
+
+  const run = (mode: AlignMode): void => alignNodes([...selectedIds], mode, alignTo, compWidth, compHeight);
+
+  const renderButton = (a: { id: AlignMode; icon: IconName; label: string }, min: number): JSX.Element => {
+    const disabled = count < min;
+    const hint = disabled ? ` — select ${min}+ layers` : '';
+    return (
+      <button
+        key={a.id}
+        type="button"
+        className={styles.button}
+        aria-label={a.label}
+        title={`${a.label}${hint}`}
+        disabled={disabled}
+        onClick={() => run(a.id)}
+      >
+        <Icon name={a.icon} size="md" />
+      </button>
+    );
+  };
+
   return (
     <div className={styles.panelRoot}>
       <div className={styles.targetRow}>
-        <span className={styles.targetLabel}>Align Layers to:</span>
-        <div className={styles.targetToggles}>
+        <span className={styles.groupLabel}>Relative to</span>
+        <div className={styles.segmented} role="radiogroup" aria-label="Align relative to">
           <button
             type="button"
-            className={alignTo === 'selection' ? styles.targetBtnActive : styles.targetBtn}
+            role="radio"
+            aria-checked={alignTo === 'selection'}
+            className={cn(styles.segment, alignTo === 'selection' && styles.segmentActive)}
             onClick={() => setAlignTo('selection')}
-            title="Align relative to selected layers bounding box"
+            title="Align to the selection's bounding box"
           >
-            <Icon name="select-all" size="sm" />
-            <span>Selection</span>
+            Selection
           </button>
           <button
             type="button"
-            className={alignTo === 'composition' ? styles.targetBtnActive : styles.targetBtn}
+            role="radio"
+            aria-checked={alignTo === 'composition'}
+            className={cn(styles.segment, alignTo === 'composition' && styles.segmentActive)}
             onClick={() => setAlignTo('composition')}
-            title="Align relative to active composition canvas boundaries"
+            title="Align to the composition frame"
           >
-            <Icon name="solid" size="sm" />
-            <span>Composition</span>
+            Composition
           </button>
         </div>
       </div>
 
-      <div style={{ fontSize: 'var(--font-size-micro)', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '8px 0 4px' }}>
-        Align &amp; Distribute
-      </div>
-
-      <div className={styles.grid}>
-        {ALIGN_ACTIONS.map((a) => {
-          const isDistribute = a.id.startsWith('distribute');
-          const isDisabled = isDistribute
-            ? (alignTo === 'composition' ? selectedIds.length < 2 : selectedIds.length < 3)
-            : (alignTo === 'composition' ? selectedIds.length < 1 : selectedIds.length < 2);
-
-          const titleTip = isDistribute
-            ? `${a.label}${alignTo === 'composition' ? ' (select 2+ layers)' : ' (select 3+ layers)'}`
-            : `${a.label}${alignTo === 'composition' ? '' : ' (select 2+ layers)'}`;
-
-          return (
-            <button
-              key={a.id}
-              type="button"
-              className={styles.button}
-              aria-label={a.label}
-              title={titleTip}
-              disabled={isDisabled}
-              onClick={() => alignNodes([...selectedIds], a.id, alignTo, compWidth, compHeight)}
-            >
-              <Icon name={a.icon} size="md" />
-            </button>
-          );
-        })}
-      </div>
-
-      {selectedIds.length === 0 && (
-        <div style={{ marginTop: 12, textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 'var(--font-size-xs)' }}>
-          Select layers on the canvas or timeline to align and distribute.
+      <div className={styles.group}>
+        <span className={styles.groupLabel}>Align</span>
+        <div className={styles.grid} role="group" aria-label="Align">
+          {ALIGN_ACTIONS.map((a) => renderButton(a, alignMin))}
         </div>
-      )}
+      </div>
+
+      <div className={styles.group}>
+        <span className={styles.groupLabel}>Distribute</span>
+        <div className={styles.grid} role="group" aria-label="Distribute">
+          {DISTRIBUTE_ACTIONS.map((a) => renderButton(a, distributeMin))}
+        </div>
+      </div>
+
+      <p className={styles.hint}>
+        {count === 0
+          ? 'Select layers on the canvas or in the timeline to align them.'
+          : alignTo === 'selection'
+            ? 'Aligns the selected layers to each other. Distribute needs three or more.'
+            : 'Aligns each selected layer to the composition frame.'}
+      </p>
     </div>
   );
 }

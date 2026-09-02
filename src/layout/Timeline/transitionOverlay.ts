@@ -26,9 +26,44 @@
  */
 
 import type { TimelineTrack, TimelineClip } from './TimelineModel';
-import type { TransitionRecord, TransitionKind } from '@core/timeline/transitionStore';
+import type {
+  TransitionRecord,
+  TransitionKind,
+  TransitionAlignment,
+} from '@core/timeline/transitionStore';
 import { TRANSITION_SHORT } from '@core/timeline/transitionStore';
 import { transitionOverlaps, transitionRegion } from '@core/timeline/transitions';
+
+/**
+ * Where a transition sits relative to the cut it spans, in cycle order.
+ *
+ * The record has carried `alignment` since transitions shipped and every entry
+ * point hard-coded 'centred', so two thirds of the model were unreachable from
+ * the UI. Centred leads the cycle because it is the default and what a
+ * dissolve usually wants; the two one-sided placements follow.
+ *
+ * Here rather than in `Timeline.tsx` because the clip context menu offers the
+ * same three by name, and two lists of the same three eventually disagree
+ * about their labels.
+ */
+export const TRANSITION_ALIGNMENTS: readonly TransitionAlignment[] = [
+  'centred',
+  'startAtCut',
+  'endAtCut',
+];
+
+/** Human labels for `TRANSITION_ALIGNMENTS`. */
+export const TRANSITION_ALIGNMENT_LABEL: Record<TransitionAlignment, string> = {
+  centred: 'Centred',
+  startAtCut: 'Start at cut',
+  endAtCut: 'End at cut',
+};
+
+/** The next alignment in the cycle — wraps, so clicking forever is harmless. */
+export function nextTransitionAlignment(current: TransitionAlignment): TransitionAlignment {
+  const i = TRANSITION_ALIGNMENTS.indexOf(current);
+  return TRANSITION_ALIGNMENTS[(i + 1) % TRANSITION_ALIGNMENTS.length] ?? 'centred';
+}
 
 export interface TransitionBox {
   id: string;

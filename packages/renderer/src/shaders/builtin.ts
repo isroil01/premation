@@ -4035,6 +4035,8 @@ struct Object {
   shadeParams : vec4<f32>,
   lights : array<vec4<f32>, 32>,
   envParams : vec4<f32>,
+  aoMatrix : mat4x4<f32>,
+  aoParams : vec4<f32>,
   shadowMatrix : mat4x4<f32>,
   shadowAxis : vec4<f32>,
   shadowOrigin : vec4<f32>,
@@ -4052,6 +4054,13 @@ struct Object {
 // and a bilinear blend of two packed depths is not a depth.
 @group(0) @binding(9) var shadowTex : texture_2d<f32>;
 @group(0) @binding(10) var shadowSmp : sampler;
+
+// The run's ambient-occlusion buffer, 11/12. Its own sampler for the opposite
+// reason the shadow map has one: this one must be LINEAR (it is a half-res
+// image being magnified), and solid3d carries no layer sampler at all for the
+// backend to broadcast, so an AO unit without its own would be incomplete.
+@group(0) @binding(11) var ssaoMap : texture_2d<f32>;
+@group(0) @binding(12) var ssaoMapSmp : sampler;
 `;
 
 const WGSL_SHADE3D_FN = /* wgsl */ `
@@ -4167,6 +4176,35 @@ fn shadowFactor(world : vec3<f32>) -> f32 {
   return 1.0 - (1.0 - lit / 9.0) * obj.shadowParams.x;
 }
 
+/*
+  Screen-space ambient occlusion — the run's own depth prepass, resolved.
+
+  aoParams: x = STRENGTH, how much of the ambient term full occlusion removes.
+  Zero for every comp that has not turned SSAO on, which is the whole gate: the
+  block below returns exactly 1.0 there and the ambient accumulation multiplies
+  by it, and x * 1.0 is x in IEEE — so those frames render the arithmetic they
+  rendered before AO existed, to the byte. y = 1 when the lookup must flip v
+  (WebGL2, which writes render targets bottom-up), the OPPOSITE convention to
+  targetSampleUv and for the same reason shadowParams.w is: the coordinate
+  comes from the camera's own NDC, where +1 is the top of the viewport on both
+  backends.
+
+  Outside the buffer the answer is UNOCCLUDED. Guessing "occluded" off-screen
+  would darken the border of every comp, which is worse than no AO at all.
+*/
+fn aoFactor(world : vec3<f32>) -> f32 {
+  if (obj.aoParams.x < 0.0005) { return 1.0; }
+  let clip = obj.aoMatrix * vec4<f32>(world, 1.0);
+  if (clip.w <= 1e-6) { return 1.0; }
+  var uv = (clip.xy / clip.w) * 0.5 + vec2<f32>(0.5);
+  if (obj.aoParams.y > 0.5) { uv.y = 1.0 - uv.y; }
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return 1.0; }
+  // Explicit LOD, like envFetch and the shadow tap: the buffer has no mip
+  // chain, and an implicit derivative inside this gate is illegal in WGSL.
+  let occ = textureSampleLevel(ssaoMap, ssaoMapSmp, uv, 0.0).r;
+  return clamp(1.0 - (1.0 - occ) * obj.aoParams.x, 0.0, 1.0);
+}
+
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   if (obj.eyeLit.w < 0.5) { return baseRgb; }
   /*
@@ -4212,6 +4250,9 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   let shTerm = shadowFactor(world);
   let shadowIdx = i32(obj.shadowOrigin.w + 0.5);
   let shadowOn = obj.shadowParams.x > 0.0005;
+  // Sampled once, beside the shadow term and for the same reasons: it is a fact
+  // about this fragment, and a tap per light would be seven wasted.
+  let aoTerm = aoFactor(world);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
@@ -4222,7 +4263,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     let misc2 = obj.lights[i * 4 + 3];
     let lType = i32(posType.w + 0.5);
     let gain = colGain.w;
-    if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
+    // AMBIENT — and the one place the AO term is applied. Multiplied AT the
+    // accumulation rather than over the sum afterwards, so with AO off (aoTerm
+    // exactly 1.0) the additions happen in the same order and the same values
+    // as they always did: x * 1.0 == x, and a reordered float sum is not.
+    if (lType == 0) { diff = diff + colGain.rgb * gain * aoTerm; continue; }
     var toLight = vec3<f32>(0.0, 0.0, -1.0);
     var atten = 1.0;
     var lambert = 1.0;
@@ -4360,7 +4405,7 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
 `;
 
 // GLSL twins of the above (UBO tail + light model), same layout contract.
-const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };`;
+const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 aoMatrix; vec4 aoParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };`;
 
 const GLSL_SHADE3D_FN = /* glsl */ `
 
@@ -4418,6 +4463,20 @@ float shadowFactor(vec3 world) {
   return 1.0 - (1.0 - lit / 9.0) * shadowParams.x;
 }
 
+// Screen-space ambient occlusion. See the WGSL twin for the full note; the two
+// must stay identical term for term, including the off-buffer answer.
+uniform sampler2D uSsaoTex;
+float aoFactor(vec3 world) {
+  if (aoParams.x < 0.0005) return 1.0;
+  vec4 clip = aoMatrix * vec4(world, 1.0);
+  if (clip.w <= 1e-6) return 1.0;
+  vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+  if (aoParams.y > 0.5) uv.y = 1.0 - uv.y;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+  float occ = textureLod(uSsaoTex, uv, 0.0).r;
+  return clamp(1.0 - (1.0 - occ) * aoParams.x, 0.0, 1.0);
+}
+
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
   // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided; 3/4 = the toon
@@ -4442,6 +4501,8 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
   float shTerm = shadowFactor(world);
   int shadowIdx = int(shadowOrigin.w + 0.5);
   bool shadowOn = shadowParams.x > 0.0005;
+  // Sampled once, beside the shadow term — see the WGSL twin.
+  float aoTerm = aoFactor(world);
   vec3 diff = vec3(0.0);
   vec3 spec = vec3(0.0);
   for (int i = 0; i < 8; i++) {
@@ -4452,7 +4513,9 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     vec4 misc2 = lights[i * 4 + 3];
     int lType = int(posType.w + 0.5);
     float gain = colGain.w;
-    if (lType == 0) { diff += colGain.rgb * gain; continue; }
+    // AMBIENT — the one term AO multiplies. At the accumulation, not over the
+    // sum, so aoTerm == 1.0 leaves the float additions bit-identical.
+    if (lType == 0) { diff += colGain.rgb * gain * aoTerm; continue; }
     vec3 toLight = vec3(0.0, 0.0, -1.0);
     float atten = 1.0;
     float lambert = 1.0;
@@ -4581,6 +4644,8 @@ struct Object {
   shadeParams : vec4<f32>,
   lights : array<vec4<f32>, 32>,
   envParams : vec4<f32>,
+  aoMatrix : mat4x4<f32>,
+  aoParams : vec4<f32>,
   shadowMatrix : mat4x4<f32>,
   shadowAxis : vec4<f32>,
   shadowOrigin : vec4<f32>,
@@ -4596,6 +4661,12 @@ struct Object {
 // The shadow map, 9/10 — see the note on the textured twin's block.
 @group(0) @binding(9) var shadowTex : texture_2d<f32>;
 @group(0) @binding(10) var shadowSmp : sampler;
+
+// The ambient-occlusion buffer, 11/12 — see the note on the textured twin's
+// block. This material has no layer sampler at all, which is exactly why the AO
+// sampler cannot be inherited and has to be declared.
+@group(0) @binding(11) var ssaoMap : texture_2d<f32>;
+@group(0) @binding(12) var ssaoMapSmp : sampler;
 
 struct VOut {
   @builtin(position) pos : vec4<f32>,
@@ -4645,7 +4716,7 @@ fn fs(@location(0) local : vec2<f32>, @location(1) world : vec3<f32>) -> @locati
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 aoMatrix; vec4 aoParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };
 out vec2 vLocal;
 out vec3 vWorld;
 void main() {
@@ -4656,7 +4727,7 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 aoMatrix; vec4 aoParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };
 in vec2 vLocal;
 in vec3 vWorld;
 out vec4 frag;
@@ -4844,6 +4915,384 @@ out vec4 frag;
 ${SHADOW_PACK_GLSL}
 void main() {
   frag = packShadowDepth(dot(vWorld - origin.xyz, axis.xyz) * axis.w);
+}
+`,
+  },
+};
+
+/*
+  -- Screen-space ambient occlusion ------------------------------------------
+
+  ## Why this needs a prepass of its own at all
+
+  SSAO wants a sampleable depth buffer, and a 3D run has none. Every
+  depth-eligible run draws into a MULTISAMPLED target (see MSAA_SAMPLES and the
+  3D face-seam note): WebGPU cannot sample a multisampled depth attachment
+  through an ordinary texture binding, and WebGL2's sampleable depth texture is
+  legal only on a non-MSAA framebuffer -- the completeness trap the DOF gather
+  work already paid for once. So the depth is re-rasterised into a COLOUR
+  target instead, which is renderable and sampleable on both backends without
+  asking either of those questions.
+
+  And it is re-rasterised by the SHADOW CASTER shaders, unchanged: point their
+  axis at the camera's forward and their origin at the eye, and the linear
+  distance they already pack 24-bit across rgb IS camera-space z. One producer,
+  two consumers, and no second packing convention to keep in step.
+
+  ## What the two passes below do
+
+  ssao       un-projects that depth to a camera-space position, reconstructs a
+             normal from its four neighbours, walks a cosine hemisphere around
+             it and asks the buffer whether each sample is behind something.
+  ssao-blur  removes the 4x4 noise the rotation leaves, bilaterally, so the
+             result does not bleed across a silhouette.
+
+  ## Why the randomness is an integer hash
+
+  Because the pixels are GOLDEN. fract(sin(x)) is the classic choice and it is
+  not portable -- the sine of a large argument is where drivers disagree most --
+  and a clock would make the frame irreproducible by construction. This is the
+  same u32 hash the Dissolve shader uses, on BUFFER-PIXEL indices, so the same
+  buffer pixel gets the same rotation on every driver and every run.
+*/
+const SSAO_SAMPLE_CAP = 16;
+
+/** Unpack the caster shaders' 24-bit rgb distance -- the inverse of
+ *  `packShadowDepth`, written out per dialect so neither can drift. */
+const SSAO_UNPACK_WGSL = /* wgsl */ `
+fn unpackLinear(c : vec4<f32>) -> f32 {
+  return dot(c.rgb, vec3<f32>(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+}
+`;
+const SSAO_UNPACK_GLSL = /* glsl */ `
+float unpackLinear(vec4 c) {
+  return dot(c.rgb, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+}
+`;
+
+/** The AO estimate: hemisphere sampling against the linear-depth prepass. */
+const SSAO: ShaderSource = {
+  name: 'ssao',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+  params2 : vec4<f32>,
+  proj : mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${SSAO_UNPACK_WGSL}
+// Field coordinate -> texture coordinate. uvRect carries the backend's V
+// orientation, so going through it is what makes one piece of arithmetic
+// correct on a bottom-up and a top-down render target alike.
+fn texUvOf(q : vec2<f32>) -> vec2<f32> { return obj.uvRect.xy + q * obj.uvRect.zw; }
+fn rawDepthAt(q : vec2<f32>) -> f32 {
+  return unpackLinear(textureSampleLevel(tex, smp, texUvOf(q), 0.0));
+}
+/*
+  Field coordinate -> camera space, at a known linear depth.
+
+  obj.proj is camera space -> CLIP, so this is its inverse restricted to the
+  plane z = depth -- solved rather than inverted, because the only unknowns are
+  x and y and the 2x2 system for them is exact:
+
+    clip.x = K00*x + K10*y + K20*z + K30      ndc.x = clip.x / w
+    clip.y = K01*x + K11*y + K21*z + K31      ndc.y = clip.y / w
+    w      = K23*z + K33
+
+  which covers BOTH camera families this app has without a branch: a
+  perspective projection leaves w = z (K23 = 1, K33 = 0) and an ortho one
+  leaves w = 1 (K23 = 0, K33 = 1).
+*/
+fn viewPosOf(q : vec2<f32>, z : f32) -> vec3<f32> {
+  let ndc = vec2<f32>(q.x * 2.0 - 1.0, 1.0 - q.y * 2.0);
+  let K = obj.proj;
+  let w = K[2].w * z + K[3].w;
+  let rx = ndc.x * w - K[2].x * z - K[3].x;
+  let ry = ndc.y * w - K[2].y * z - K[3].y;
+  let det0 = K[0].x * K[1].y - K[1].x * K[0].y;
+  let det = select(det0, 1e-6, abs(det0) < 1e-12);
+  return vec3<f32>(
+    (K[1].y * rx - K[1].x * ry) / det,
+    (K[0].x * ry - K[0].y * rx) / det,
+    z,
+  );
+}
+// Camera space -> field coordinate, plus the clip w so a sample behind the
+// camera can be rejected instead of wrapping to the far side of the screen.
+fn projectQ(p : vec3<f32>) -> vec3<f32> {
+  let c = obj.proj * vec4<f32>(p, 1.0);
+  let iw = 1.0 / max(c.w, 1e-6);
+  return vec3<f32>(c.x * iw * 0.5 + 0.5, 0.5 - c.y * iw * 0.5, c.w);
+}
+// The Dissolve hash -- u32 only, so every driver agrees bit for bit.
+fn aoHash(px : u32, py : u32, key : u32) -> f32 {
+  var h = (px + 1u) * 374761393u + (py + 1u) * 668265263u + (key + 1u) * 2246822519u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h = h ^ (h >> 16u);
+  return f32(h) / 4294967296.0;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let q = (uv - obj.uvRect.xy) / obj.uvRect.zw;
+  let raw = rawDepthAt(q);
+  // The prepass clears to WHITE, which decodes just short of 1 -- "no geometry
+  // here". Answering UNOCCLUDED there is what keeps the background clean.
+  if (raw > 0.9995) { return vec4<f32>(1.0, 1.0, 1.0, 1.0); }
+  let far = obj.params.z;
+  let z = raw * far;
+  let P = viewPosOf(q, z);
+  let dq = vec2<f32>(1.0 / max(obj.params2.x, 1.0), 1.0 / max(obj.params2.y, 1.0));
+  // Normal from the NEARER neighbour on each axis, not from a plain central
+  // difference: across a silhouette the far neighbour belongs to another
+  // surface, and averaging the two tilts the normal into the gap -- which is
+  // exactly where AO is most visible.
+  let zR = rawDepthAt(q + vec2<f32>(dq.x, 0.0)) * far;
+  let zL = rawDepthAt(q - vec2<f32>(dq.x, 0.0)) * far;
+  let zD = rawDepthAt(q + vec2<f32>(0.0, dq.y)) * far;
+  let zU = rawDepthAt(q - vec2<f32>(0.0, dq.y)) * far;
+  var dpx = viewPosOf(q + vec2<f32>(dq.x, 0.0), zR) - P;
+  if (abs(zL - z) < abs(zR - z)) { dpx = P - viewPosOf(q - vec2<f32>(dq.x, 0.0), zL); }
+  var dpy = viewPosOf(q + vec2<f32>(0.0, dq.y), zD) - P;
+  if (abs(zU - z) < abs(zD - z)) { dpy = P - viewPosOf(q - vec2<f32>(0.0, dq.y), zU); }
+  let cr = cross(dpy, dpx);
+  if (dot(cr, cr) < 1e-12) { return vec4<f32>(1.0, 1.0, 1.0, 1.0); }
+  // cross(dpy, dpx) faces the camera: camera space is +x right, +y DOWN and
+  // +z away, so a plane facing the viewer gives -z from this order.
+  let N = normalize(cr);
+  // The rotation is keyed on the buffer pixel MOD 4, which is what makes the
+  // noise pattern four texels wide and the 4x4 blur an exact cancellation.
+  let px = u32(clamp(floor(q.x * obj.params2.x), 0.0, 16777215.0)) % 4u;
+  let py = u32(clamp(floor(q.y * obj.params2.y), 0.0, 16777215.0)) % 4u;
+  let rot = aoHash(px, py, 0u) * 6.2831853;
+  // A tangent basis; which tangent is chosen does not matter, only that it is
+  // perpendicular to N -- the kernel is rotationally symmetric about it.
+  let upv = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(N.z) > 0.9);
+  let T = normalize(cross(upv, N));
+  let B = cross(N, T);
+  let n = max(1.0, obj.params2.z);
+  let radius = obj.params.x;
+  var occ = 0.0;
+  for (var i = 0; i < ${SSAO_SAMPLE_CAP}; i = i + 1) {
+    if (f32(i) >= n) { break; }
+    let fi = f32(i);
+    let u = (fi + 0.5) / n;
+    // Cosine-weighted hemisphere by the concentric-disk identity: radius
+    // sqrt(u) on the disk, height sqrt(1-u) above it.
+    let a = fi * 2.3999632 + rot;
+    let rr = sqrt(u);
+    let dir = T * (rr * cos(a)) + B * (rr * sin(a)) + N * sqrt(max(0.0, 1.0 - u));
+    // Samples crowd toward the origin, so contact darkening reads as CONTACT
+    // rather than as a uniform haze out at the radius.
+    let sp = P + dir * (radius * mix(0.25, 1.0, u * u));
+    let sq = projectQ(sp);
+    if (sq.z <= 1e-6 || sq.x < 0.0 || sq.x > 1.0 || sq.y < 0.0 || sq.y > 1.0) { continue; }
+    let sceneRaw = rawDepthAt(sq.xy);
+    if (sceneRaw > 0.9995) { continue; }
+    let sceneZ = sceneRaw * far;
+    // Range check: an occluder far in FRONT of this fragment is a different
+    // object, not a crevice wall, and counting it is what smears AO haloes
+    // around every silhouette.
+    let range = smoothstep(0.0, 1.0, radius / max(abs(z - sceneZ), 1e-4));
+    if (sceneZ <= sp.z - obj.params.w) { occ = occ + range; }
+  }
+  let ao = clamp(1.0 - (occ / n) * obj.params.y, 0.0, 1.0);
+  return vec4<f32>(ao, ao, ao, 1.0);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; mat4 proj; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; mat4 proj; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SSAO_UNPACK_GLSL}
+// Field coordinate -> texture coordinate -- see the WGSL twin.
+vec2 texUvOf(vec2 q) { return uvRect.xy + q * uvRect.zw; }
+float rawDepthAt(vec2 q) { return unpackLinear(textureLod(uTex, texUvOf(q), 0.0)); }
+// Field coordinate -> camera space -- the same 2x2 solve as the WGSL twin.
+vec3 viewPosOf(vec2 q, float z) {
+  vec2 ndc = vec2(q.x * 2.0 - 1.0, 1.0 - q.y * 2.0);
+  float w = proj[2].w * z + proj[3].w;
+  float rx = ndc.x * w - proj[2].x * z - proj[3].x;
+  float ry = ndc.y * w - proj[2].y * z - proj[3].y;
+  float det0 = proj[0].x * proj[1].y - proj[1].x * proj[0].y;
+  float det = abs(det0) < 1e-12 ? 1e-6 : det0;
+  return vec3(
+    (proj[1].y * rx - proj[1].x * ry) / det,
+    (proj[0].x * ry - proj[0].y * rx) / det,
+    z
+  );
+}
+vec3 projectQ(vec3 p) {
+  vec4 c = proj * vec4(p, 1.0);
+  float iw = 1.0 / max(c.w, 1e-6);
+  return vec3(c.x * iw * 0.5 + 0.5, 0.5 - c.y * iw * 0.5, c.w);
+}
+// The Dissolve hash -- must match the WGSL branch above exactly.
+float aoHash(uint px, uint py, uint key) {
+  uint h = (px + 1u) * 374761393u + (py + 1u) * 668265263u + (key + 1u) * 2246822519u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h = h ^ (h >> 16u);
+  return float(h) / 4294967296.0;
+}
+void main() {
+  vec2 q = (vUv - uvRect.xy) / uvRect.zw;
+  float raw = rawDepthAt(q);
+  if (raw > 0.9995) { frag = vec4(1.0); return; }
+  float far = params.z;
+  float z = raw * far;
+  vec3 P = viewPosOf(q, z);
+  vec2 dq = vec2(1.0 / max(params2.x, 1.0), 1.0 / max(params2.y, 1.0));
+  float zR = rawDepthAt(q + vec2(dq.x, 0.0)) * far;
+  float zL = rawDepthAt(q - vec2(dq.x, 0.0)) * far;
+  float zD = rawDepthAt(q + vec2(0.0, dq.y)) * far;
+  float zU = rawDepthAt(q - vec2(0.0, dq.y)) * far;
+  vec3 dpx = viewPosOf(q + vec2(dq.x, 0.0), zR) - P;
+  if (abs(zL - z) < abs(zR - z)) dpx = P - viewPosOf(q - vec2(dq.x, 0.0), zL);
+  vec3 dpy = viewPosOf(q + vec2(0.0, dq.y), zD) - P;
+  if (abs(zU - z) < abs(zD - z)) dpy = P - viewPosOf(q - vec2(0.0, dq.y), zU);
+  vec3 cr = cross(dpy, dpx);
+  if (dot(cr, cr) < 1e-12) { frag = vec4(1.0); return; }
+  vec3 N = normalize(cr);
+  uint px = uint(clamp(floor(q.x * params2.x), 0.0, 16777215.0)) % 4u;
+  uint py = uint(clamp(floor(q.y * params2.y), 0.0, 16777215.0)) % 4u;
+  float rot = aoHash(px, py, 0u) * 6.2831853;
+  vec3 upv = abs(N.z) > 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+  vec3 T = normalize(cross(upv, N));
+  vec3 B = cross(N, T);
+  float n = max(1.0, params2.z);
+  float radius = params.x;
+  float occ = 0.0;
+  for (int i = 0; i < ${SSAO_SAMPLE_CAP}; i++) {
+    if (float(i) >= n) break;
+    float fi = float(i);
+    float u = (fi + 0.5) / n;
+    float a = fi * 2.3999632 + rot;
+    float rr = sqrt(u);
+    vec3 dir = T * (rr * cos(a)) + B * (rr * sin(a)) + N * sqrt(max(0.0, 1.0 - u));
+    vec3 sp = P + dir * (radius * mix(0.25, 1.0, u * u));
+    vec3 sq = projectQ(sp);
+    if (sq.z <= 1e-6 || sq.x < 0.0 || sq.x > 1.0 || sq.y < 0.0 || sq.y > 1.0) continue;
+    float sceneRaw = rawDepthAt(sq.xy);
+    if (sceneRaw > 0.9995) continue;
+    float sceneZ = sceneRaw * far;
+    float range = smoothstep(0.0, 1.0, radius / max(abs(z - sceneZ), 1e-4));
+    if (sceneZ <= sp.z - params.w) occ += range;
+  }
+  float ao = clamp(1.0 - (occ / n) * params.y, 0.0, 1.0);
+  frag = vec4(ao, ao, ao, 1.0);
+}
+`,
+  },
+};
+
+/** The bilateral 4x4 that cancels the estimate's per-pixel rotation. */
+const SSAO_BLUR: ShaderSource = {
+  name: 'ssao-blur',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var depthTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${SSAO_UNPACK_WGSL}
+fn texUvOf(q : vec2<f32>) -> vec2<f32> { return obj.uvRect.xy + q * obj.uvRect.zw; }
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let q = (uv - obj.uvRect.xy) / obj.uvRect.zw;
+  let far = obj.params.z;
+  let z0 = unpackLinear(textureSampleLevel(depthTex, smp, texUvOf(q), 0.0)) * far;
+  var acc = 0.0;
+  var wsum = 0.0;
+  // -2..+1: four consecutive texels, exactly one period of the rotation tile.
+  for (var y = -2; y <= 1; y = y + 1) {
+    for (var x = -2; x <= 1; x = x + 1) {
+      let sq = q + vec2<f32>(f32(x) * obj.params.x, f32(y) * obj.params.y);
+      let suv = texUvOf(sq);
+      let z = unpackLinear(textureSampleLevel(depthTex, smp, suv, 0.0)) * far;
+      // Bilateral: a neighbour on another surface contributes nothing, which
+      // is what stops the AO under an object leaking onto what is behind it.
+      let w = max(0.0, 1.0 - abs(z - z0) / max(obj.params.w, 1e-4));
+      acc = acc + textureSampleLevel(tex, smp, suv, 0.0).r * w;
+      wsum = wsum + w;
+    }
+  }
+  // Every neighbour rejected leaves the centre tap, never a divide by zero.
+  let ao = select(textureSampleLevel(tex, smp, uv, 0.0).r, acc / wsum, wsum > 1e-4);
+  return vec4<f32>(ao, ao, ao, 1.0);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+uniform sampler2D uDepthTex;
+in vec2 vUv;
+out vec4 frag;
+${SSAO_UNPACK_GLSL}
+vec2 texUvOf(vec2 q) { return uvRect.xy + q * uvRect.zw; }
+void main() {
+  vec2 q = (vUv - uvRect.xy) / uvRect.zw;
+  float far = params.z;
+  float z0 = unpackLinear(textureLod(uDepthTex, texUvOf(q), 0.0)) * far;
+  float acc = 0.0;
+  float wsum = 0.0;
+  for (int y = -2; y <= 1; y++) {
+    for (int x = -2; x <= 1; x++) {
+      vec2 sq = q + vec2(float(x) * params.x, float(y) * params.y);
+      vec2 suv = texUvOf(sq);
+      float z = unpackLinear(textureLod(uDepthTex, suv, 0.0)) * far;
+      float w = max(0.0, 1.0 - abs(z - z0) / max(params.w, 1e-4));
+      acc += textureLod(uTex, suv, 0.0).r * w;
+      wsum += w;
+    }
+  }
+  float ao = wsum > 1e-4 ? acc / wsum : textureLod(uTex, vUv, 0.0).r;
+  frag = vec4(ao, ao, ao, 1.0);
 }
 `,
   },
@@ -5148,7 +5597,11 @@ function withPbrMaps(fn: string, lang: 'wgsl' | 'glsl'): string {
         ],
         ['let metal = obj.shadeParams.w;', 'let metal = clamp(obj.shadeParams.w * metalMul, 0.0, 1.0);'],
         ['let rough = clamp(-obj.shadeParams.z, 0.02, 1.0);', 'let rough = clamp(-obj.shadeParams.z * roughMul, 0.02, 1.0);'],
-        ['if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }', 'if (lType == 0) { diff = diff + colGain.rgb * gain * ao; continue; }'],
+        // The AMBIENT site now carries the screen-space AO term as well, so the
+        // map multiplies ON TOP of it rather than replacing it. Two different
+        // occlusions: `aoTerm` is what the SCENE hides from this fragment, `ao`
+        // is what the MODEL's own author baked into its texture.
+        ['if (lType == 0) { diff = diff + colGain.rgb * gain * aoTerm; continue; }', 'if (lType == 0) { diff = diff + colGain.rgb * gain * aoTerm * ao; continue; }'],
       ]
     : [
         [
@@ -5157,7 +5610,7 @@ function withPbrMaps(fn: string, lang: 'wgsl' | 'glsl'): string {
         ],
         ['float metal = shadeParams.w;', 'float metal = clamp(shadeParams.w * metalMul, 0.0, 1.0);'],
         ['float rough = clamp(-shadeParams.z, 0.02, 1.0);', 'float rough = clamp(-shadeParams.z * roughMul, 0.02, 1.0);'],
-        ['if (lType == 0) { diff += colGain.rgb * gain; continue; }', 'if (lType == 0) { diff += colGain.rgb * gain * ao; continue; }'],
+        ['if (lType == 0) { diff += colGain.rgb * gain * aoTerm; continue; }', 'if (lType == 0) { diff += colGain.rgb * gain * aoTerm * ao; continue; }'],
       ];
   let out = fn;
   for (const [from, to] of edits) out = subOnce(out, from, to, `withPbrMaps(${lang})`);
@@ -5897,6 +6350,12 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   // Shadow-map casters. No `-linear` twin and no premultiply handling: neither
   // samples a texture — they write a packed distance, not a colour.
   SHADOW_DEPTH, SHADOW_DEPTH_MESH,
+  // Ambient occlusion. Beside the casters because they SHARE the prepass: SSAO
+  // reads exactly what shadow-depth writes, with the camera's axis in the
+  // light's place. Neither of these samples a layer texture either -- the
+  // estimate reads a packed distance and the blur reads its own output -- so
+  // neither takes a `-linear` twin.
+  SSAO, SSAO_BLUR,
   // The six families that sample a layer texture. Every one un-premultiplies.
   // Upload (`srgb`) and RT (`linear`) variants: linear storage keeps graph RTs
   // in working space, so a copy must not run the upload decode.

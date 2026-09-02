@@ -25,7 +25,15 @@
 
 import type { TimelineTrack, TimelineClip } from './TimelineModel';
 import type { TransitionRecord } from '@core/timeline/transitionStore';
-import { layoutTransitions, pickCutBars, durationFromEdgeDrag, barsByNode } from './transitionOverlay';
+import {
+  layoutTransitions,
+  pickCutBars,
+  durationFromEdgeDrag,
+  barsByNode,
+  nextTransitionAlignment,
+  TRANSITION_ALIGNMENTS,
+  TRANSITION_ALIGNMENT_LABEL,
+} from './transitionOverlay';
 
 const FPS = 30;
 
@@ -217,5 +225,32 @@ describe('durationFromEdgeDrag', () => {
     // zero- or negative-length transition is a cut; the way to make one is to
     // delete the record.
     expect(durationFromEdgeDrag(box, 'end', 0.5, 'centred', FPS)).toBe(1);
+  });
+});
+
+describe('alignment cycle', () => {
+  it('steps centred → start-at-cut → end-at-cut and wraps', () => {
+    expect(nextTransitionAlignment('centred')).toBe('startAtCut');
+    expect(nextTransitionAlignment('startAtCut')).toBe('endAtCut');
+    expect(nextTransitionAlignment('endAtCut')).toBe('centred');
+  });
+
+  it('reaches every alignment, so no value is unreachable from the bracket', () => {
+    // The whole point of the toggle: two of the three used to be unreachable
+    // from the UI. Walking the cycle has to visit all of them.
+    const seen = new Set<string>();
+    let a: (typeof TRANSITION_ALIGNMENTS)[number] = 'centred';
+    for (let i = 0; i < TRANSITION_ALIGNMENTS.length; i += 1) {
+      seen.add(a);
+      a = nextTransitionAlignment(a);
+    }
+    expect(seen).toEqual(new Set(TRANSITION_ALIGNMENTS));
+    expect(a).toBe('centred'); // back where it started
+  });
+
+  it('has a label for every alignment', () => {
+    for (const value of TRANSITION_ALIGNMENTS) {
+      expect(TRANSITION_ALIGNMENT_LABEL[value]).toBeTruthy();
+    }
   });
 });

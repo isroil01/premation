@@ -17,6 +17,7 @@ import { interiorStyleScenes } from './interiorStyles';
 import { textScenes } from './text';
 import { textScaleVanishScenes, textScaleBisectScenes } from './textScaleVanish';
 import { threeDScenes } from './threeD';
+import { ssaoScenes } from './ssao';
 import { motionScenes } from './motion';
 import { precompScenes } from './precomp';
 import { generativeScenes } from './generative';
@@ -53,6 +54,10 @@ export const SCENES: Scene[] = [
   ...textScaleVanishScenes,
   ...textScaleBisectScenes,
   ...threeDScenes,
+  // Ambient occlusion. Its own family rather than a member of the 3D one
+  // because its subject is a COMPOSITION setting: the pair differs by a
+  // field on the comp record, not by anything in the scene graph.
+  ...ssaoScenes,
   // Extrusion. Separate from the 3D family because the subject is a real
   // multi-face SOLID rather than a plane in space, and the question these ask
   // — which of the synthesized faces an effect reached — has no meaning for a

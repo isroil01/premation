@@ -18,7 +18,8 @@ import { angleOf } from '@core/rig/mat2d';
 import { applyIk, ikChainIds, type IkTargetResolved } from '@core/rig/rigDeform';
 import {
   readNodeSkeleton, addBone, deleteBone, setIKTarget, setWeightPaint,
-  previewSkeleton, recordSkeletonPose, type SkeletonRig,
+  previewSkeleton, recordSkeletonPose, bindPoseBones, captureBindPose,
+  type SkeletonRig,
 } from '@core/rig/skeletonCommands';
 import {
   controllerPosition, controllerDragKind,
@@ -289,7 +290,15 @@ export function BoneOverlay(): JSX.Element | null {
 
   // Posed mesh + binding: what the renderer will actually draw, and the weight
   // field the heatmap and the paint brush both read.
-  const binding = getSkeletonBinding(restMesh, bones, skel?.weightPaint);
+  // BIND to the rig's rest pose, POSE with the live one. On a rig that has
+  // never been posed statically these are the same array.
+  //
+  // It also stops the binding cache thrashing: a static pose drag rewrites
+  // `bones` on every pointermove, so keying the binding off them re-solved the
+  // geodesic field per frame. The bind pose does not move during a drag, so the
+  // key is stable and the cache hits.
+  const bindBones = bindPoseBones(skel);
+  const binding = getSkeletonBinding(restMesh, bindBones, skel?.weightPaint);
   const posedVertices = bones.length > 0
     ? skinRigVertices(binding, worldTransforms, restMesh.vertices)
     : restMesh.vertices;
@@ -466,8 +475,13 @@ export function BoneOverlay(): JSX.Element | null {
     local: { x: number; y: number },
     rotation: number,
   ) => {
-    const current = readNodeSkeleton(defaultSceneGraph.getNode(node.id)!);
-    if (!current) return;
+    const raw = readNodeSkeleton(defaultSceneGraph.getNode(node.id)!);
+    if (!raw) return;
+    // Pin the bind pose before the first posed value lands in `bones`. Without
+    // this the rig's rest pose follows the drag, `pose · bindInverse` collapses
+    // to the identity, and the artwork sits perfectly still while the bone
+    // swings — the default gesture (auto-keyframe off) deforming nothing.
+    const current = captureBindPose(raw);
     const next: SkeletonRig = kind === 'ik'
       ? {
           ...current,

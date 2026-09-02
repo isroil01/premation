@@ -285,9 +285,9 @@ export function CharacterPanel(): JSX.Element {
   return (
     <div className={styles.root}>
       {/* Target Status Banner */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-secondary)', paddingBottom: 2, borderBottom: '1px solid var(--color-border)' }}>
-        <span style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Character</span>
-        <span style={{ color: hasTarget ? 'var(--color-selection, #2988ff)' : 'var(--color-text-muted)' }}>
+      <div className={styles.panelHead}>
+        <span className={styles.panelHeadTitle}>Character</span>
+        <span className={hasTarget ? styles.panelHeadStatusOn : styles.panelHeadStatus}>
           {hasTarget ? node?.name || 'Selected Text' : 'Default Preset'}
         </span>
       </div>
@@ -340,12 +340,11 @@ export function CharacterPanel(): JSX.Element {
             onChange={handleFamilyChange}
           />
         </div>
-        <div style={{ flex: '0 0 80px', minWidth: 0 }}>
+        <div className={styles.fontSizeCell}>
           <select
             value={activeWeight}
             onChange={(e) => handleWeightChange(e.target.value)}
-            className={styles.fontSelect}
-            style={{ width: '100%' }}
+            className={`${styles.fontSelect} ${styles.fullWidth}`}
           >
             {availableWeights.map((w) => (
               <option key={w} value={String(w)}>{WEIGHT_LABELS[w] ?? String(w)}</option>
@@ -387,11 +386,11 @@ export function CharacterPanel(): JSX.Element {
           </button>
         </div>
 
-        <div className={styles.col} style={{ justifyContent: 'center' }}>
-          <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+        <div className={`${styles.col} ${styles.colCentered}`}>
+          <span className={styles.swatchTitle}>
             {activeFamily}
           </span>
-          <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-muted)' }}>
+          <span className={styles.swatchHint}>
             {WEIGHT_LABELS[Number(activeWeight)] ?? 'Regular'} · {activeStyle === 'italic' ? 'Italic' : 'Normal'}
           </span>
         </div>
@@ -591,27 +590,26 @@ export function CharacterPanel(): JSX.Element {
       {/* Box Text Option */}
       {hasTarget && (
         <div className={styles.controlRow}>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+          <label className={styles.inlineCheck}>
             <Checkbox
               checked={typeof boxWidth === 'number' && boxWidth > 0}
               onChange={() => {
                 if (typeof boxWidth === 'number' && boxWidth > 0) setBoxWidth(0);
                 else setBoxWidth(400);
               }}
-              style={{ width: 13, height: 13 }}
+              className={styles.inlineCheckBox}
             />
-            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>Box Text Wrap</span>
+            <span className={styles.inlineCheckLabel}>Box Text Wrap</span>
           </label>
           {typeof boxWidth === 'number' && boxWidth > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <div className={styles.inlineField}>
               <input
                 type="number"
                 value={boxWidth}
                 onChange={(e) => setBoxWidth(Math.max(50, Number(e.target.value)))}
-                className={styles.metricInput}
-                style={{ width: 50, border: '1px solid var(--color-field-border)', borderRadius: 3, padding: '2px 4px' }}
+                className={`${styles.metricInput} ${styles.inlineNumber}`}
               />
-              <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-muted)' }}>px</span>
+              <span className={styles.unit}>px</span>
             </div>
           )}
         </div>
@@ -620,7 +618,7 @@ export function CharacterPanel(): JSX.Element {
       {/* Path Options (Mask text path riding) */}
       {hasTarget && maskPaths.length > 0 && (
         <div className={styles.controlRow}>
-          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)', fontWeight: 600 }}>Path:</span>
+          <span className={styles.inlineLabel}>Path</span>
           <select
             value={activePathId}
             onChange={(e) => {
@@ -629,8 +627,7 @@ export function CharacterPanel(): JSX.Element {
               if (!id) setTextPath(primary, null);
               else updateTextPath(primary, { ...(textPathCfg ?? defaultTextPath()), pathId: id });
             }}
-            className={styles.fontSelect}
-            style={{ width: 110, height: 22 }}
+            className={`${styles.fontSelect} ${styles.pathSelect}`}
           >
             <option value="">None</option>
             {maskPaths.map((p, i) => (

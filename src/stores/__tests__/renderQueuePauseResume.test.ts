@@ -65,6 +65,10 @@ function makeFakeRender(total = TOTAL) {
         discard: async () => undefined,
       };
     },
+    // The staging dir this render owns — what makes a pause survive a restart
+    // and not merely a stopped loop. A fake without it is not a
+    // `ResumableVideoRender`, and the store would rightly fail the job.
+    stagingJobId: () => 'staging-fake',
     async dispose() {
       disposeCount++;
       events.push('dispose');

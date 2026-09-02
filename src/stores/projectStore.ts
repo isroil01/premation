@@ -111,6 +111,56 @@ export interface CompositionSettings {
    * reads this.
    */
   showSkyBackdrop?: boolean;
+  /**
+   * AMBIENT OCCLUSION — contact darkening for the comp's 3D runs.
+   *
+   * Per-COMPOSITION and not per-layer, because that is what the effect is: how
+   * much light reaches a point given everything ELSE near it. No layer owns
+   * that question, and a per-layer switch would be a switch on the wrong noun.
+   *
+   * ABSENT by default, and the whole object is absent rather than present-with-
+   * `enabled: false`. A stated default would be written into every comp record
+   * the first time a project is saved, which is a change to every document on
+   * disk for a feature nobody turned on. Read it through `resolveSsao`.
+   */
+  ssao?: SsaoSettings;
+}
+
+/** Composition Settings ▸ World ▸ Ambient Occlusion. */
+export interface SsaoSettings {
+  enabled: boolean;
+  /** Hemisphere radius in COMP PX — a fixed size in the SCENE, not on screen,
+   *  so zooming the viewport does not change how deep a crevice reads. */
+  radius: number;
+  /** How much of the ambient term full occlusion removes, 0..2. */
+  intensity: number;
+  /** Buffer resolution. 'half' is the default: AO is low-frequency and the
+   *  shader magnifies it through a linear sampler on the way back. */
+  quality: 'half' | 'full';
+}
+
+/** The values an absent `ssao` block means. */
+export const DEFAULT_SSAO: SsaoSettings = {
+  enabled: false,
+  radius: 40,
+  intensity: 1,
+  quality: 'half',
+};
+
+/**
+ * Resolve a composition's ambient occlusion, filling in the defaults for
+ * documents saved before it existed. Every consumer goes through here, so a
+ * partially-written block can never reach the shader as a NaN radius.
+ */
+export function resolveSsao(comp: Pick<CompositionSettings, 'ssao'> | undefined): SsaoSettings {
+  const s = comp?.ssao;
+  if (!s) return DEFAULT_SSAO;
+  return {
+    enabled: s.enabled === true,
+    radius: Number.isFinite(s.radius) ? s.radius : DEFAULT_SSAO.radius,
+    intensity: Number.isFinite(s.intensity) ? s.intensity : DEFAULT_SSAO.intensity,
+    quality: s.quality === 'full' ? 'full' : 'half',
+  };
 }
 
 /** The composition's light direction, with the pre-global-light defaults. */

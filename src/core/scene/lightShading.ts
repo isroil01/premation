@@ -66,6 +66,30 @@ export type Rgb = readonly [number, number, number];
 
 const DEG = Math.PI / 180;
 
+/**
+ * A resolved 3D aim expressed as a COMP-PLANE angle, in degrees — or null when
+ * the aim has no comp-plane component to express.
+ *
+ * The flat half of the light pipeline still speaks in one number: the glow
+ * wash is a quad whose ROTATION aims a cone baked around +X, and the gizmo's
+ * fallback aim is the same degree value. Without this the two halves resolved
+ * a targeted light differently — the shader and the per-quad Lambert term took
+ * `poi − position` (see `lightAim3D`) while the wash took `lightAngle + world
+ * rotation`, so a spot with a target lit one way and GLOWED another, and since
+ * the glow is what you actually see, a targeted spot appeared not to aim at
+ * its target at all.
+ *
+ * Null for an aim pointing straight into or out of the screen: its comp-plane
+ * projection is a point, so there is no direction to swing a flat cone to.
+ * Callers keep their untargeted angle there — a light aimed at the viewer has
+ * no honest wedge, and the landed-pool projection is what draws that case
+ * properly anyway.
+ */
+export function aimToCompAngleDeg(aim: readonly [number, number, number]): number | null {
+  if (Math.hypot(aim[0], aim[1]) < 1e-9) return null;
+  return Math.atan2(aim[1], aim[0]) / DEG;
+}
+
 /** Cap on the accumulated multiplier — keeps stacked lights from blowing out
  *  to Infinity while still allowing over-brightening (>1). */
 const MAX_GAIN = 4;

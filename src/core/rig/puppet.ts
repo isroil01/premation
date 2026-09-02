@@ -1,6 +1,7 @@
 import type { SceneNode } from '../types';
 import { earClip, subdivide, polygonArea } from './mesh';
 import { splitBendPins, driverRestMesh, applyBendPins, solveDeform } from './bendPins';
+import { buildAlphaOutlineGeometry } from './alphaMesh';
 
 /**
  * What a pin controls. After Effects ships five Puppet tools; we keep the same
@@ -176,6 +177,17 @@ export interface DeformedMesh {
    * array, which is exact, rather than re-blending an approximation of it.
    */
   pinVertexIndices: Record<string, number>;
+  /**
+   * Which mesher produced this. The AUTHORING OVERLAY needs it: AE's gold
+   * lattice is drawn as boxes (a grid cell's diagonal omitted), and that rule
+   * only makes sense on a grid. Applied to an outline mesh it keeps whichever
+   * edges happen to be axis-aligned and drops the rest, which draws a scatter
+   * of disconnected dashes over the artwork.
+   *
+   * Optional so a mesh built by older code (or by a test) still type-checks;
+   * absent reads as 'grid', which is what every such mesh is.
+   */
+  layout?: 'grid' | 'outline';
 }
 
 /** Read a node's puppet rig from its fx component. */
@@ -290,12 +302,30 @@ export function buildRestMesh(
   silhouette?: PuppetSilhouette,
   coverage?: PuppetCoverageMask,
 ): DeformedMesh {
-  // Silhouette mode ear-clips the outline itself rather than culling a grid.
-  // Falls back to the grid when there is no usable closed outline, so the mode
-  // is always safe to leave on.
-  if (rig.meshMode === 'silhouette' && silhouette && silhouette.points.length >= 3) {
-    const built = buildSilhouetteMesh(width, height, pad, rig, silhouette);
-    if (built) return built;
+  // Silhouette mode meshes the OUTLINE rather than culling a grid. A vector
+  // path ear-clips its own outline; an image layer has no path, so its alpha
+  // coverage mask is traced, simplified, expanded and Delaunay-triangulated
+  // (`alphaMesh.ts`) — that is what makes a limb its own triangle strip instead
+  // of a square neighbourhood of the bounding box, and therefore what makes
+  // dragging a hand pin bend the arm instead of smearing the torso.
+  //
+  // Both fall back to the grid when the outline is unusable, so the mode is
+  // always safe to leave on.
+  if (rig.meshMode === 'silhouette') {
+    if (silhouette && silhouette.points.length >= 3) {
+      const built = buildSilhouetteMesh(width, height, pad, rig, silhouette);
+      if (built) return built;
+    } else if (coverage && coverage.cols > 0 && coverage.rows > 0 && coverage.cells.length > 0) {
+      const geom = buildAlphaOutlineGeometry(
+        width,
+        height,
+        pad,
+        rig.meshDensity ?? 22,
+        rig.meshExpansion ?? 0,
+        coverage,
+      );
+      if (geom) return finishRestMesh(geom.vertices, geom.triangles, geom.numVertices, rig, 'outline');
+    }
   }
   const expansion = rig.meshExpansion ?? 0;
   const density = rig.meshDensity ?? 22; // default 22x22 subdivisions for clean joint detail
@@ -497,7 +527,7 @@ export function buildRestMesh(
     }
   }
 
-  return finishRestMesh(vertices, triangles, numVertices, rig);
+  return finishRestMesh(vertices, triangles, numVertices, rig, 'grid');
 }
 
 /**
@@ -511,6 +541,7 @@ function finishRestMesh(
   triangles: Uint16Array,
   numVertices: number,
   rig: PuppetRig,
+  layout: 'grid' | 'outline' = 'grid',
 ): DeformedMesh {
   // 3. Find closest mesh vertex for each pin
   const pinRestPositions: Record<string, { x: number; y: number }> = {};
@@ -592,6 +623,7 @@ function finishRestMesh(
     pinRestPositions,
     weights,
     pinVertexIndices,
+    layout,
   };
 }
 
@@ -699,7 +731,7 @@ function buildSilhouetteMesh(
     triangles[ti++] = b;
     triangles[ti++] = c;
   }
-  return finishRestMesh(vertices, triangles, numVertices, rig);
+  return finishRestMesh(vertices, triangles, numVertices, rig, 'outline');
 }
 
 const DEG_TO_RAD = Math.PI / 180;
@@ -996,7 +1028,10 @@ export function getCachedRestMesh(
 ): DeformedMesh {
   const pinsKey = rig.pins.map((p) => `${p.id}:${p.x}:${p.y}`).join(',');
   const covKey = coverage?.key ?? 'nocov';
-  const key = `${nodeId}:${width}:${height}:${pad}:${rig.meshExpansion ?? 0}:${rig.meshDensity ?? 22}:${silhouetteKey(silhouette)}:${covKey}:${pinsKey}`;
+  // `meshMode` belongs in the key for the same reason density does: it selects a
+  // DIFFERENT mesh from identical inputs. It was missing, so toggling Grid ⇄
+  // Outline in the inspector hit the cached entry and appeared to do nothing.
+  const key = `${nodeId}:${width}:${height}:${pad}:${rig.meshExpansion ?? 0}:${rig.meshDensity ?? 22}:${rig.meshMode ?? 'grid'}:${silhouetteKey(silhouette)}:${covKey}:${pinsKey}`;
 
   const cached = restMeshCache.get(key);
   if (cached) {
@@ -1043,10 +1078,13 @@ export function silhouetteFromPathPoints(
  * Closed outline of an alpha coverage mask, in the same centred local space
  * as pins and `buildRestMesh`.
  *
- * Image layers have no path geometry, so silhouette mode used to fall through
- * to a bbox grid and a pin on a hand pulled empty transparent corners — the
- * PNG "crashed" instead of bending like AE Puppet Pin. Tracing the occupied
- * cells gives ear-clip a body-shaped polygon.
+ * SUPERSEDED for meshing by `alphaMesh.ts`, and deliberately kept: this returns
+ * the RAW staircase of occupied-cell corners, which is a faithful outline and a
+ * terrible polygon to ear-clip (168 points for a torso-plus-arm, triangulating
+ * into long slivers that ARAP flips — the original "torn PNG" report). The
+ * mesher traces, SIMPLIFIES, expands and Delaunay-fills instead. This stays as
+ * the cheap "what shape is the alpha" query and as the counter-example the
+ * regression test pins the failure on.
  *
  * Returns undefined when the mask is empty or the outline cannot be closed.
  */
@@ -1111,11 +1149,17 @@ export function silhouetteFromCoverage(
 }
 
 /**
- * The outline `buildRestMesh` should triangulate.
+ * The outline `buildRestMesh` should EAR-CLIP.
  *
- * A closed path always wins. Image layers keep their alpha as a coverage MASK
- * for grid culling rather than an ear-clipped outline — tracing occupancy
- * produced sliver triangles that read as a broken blueprint, not AE's lattice.
+ * A closed vector path always wins, and it is the only thing that ever wins:
+ * an image layer returns undefined here and keeps its alpha as a coverage MASK.
+ * That is not because an image gets no outline — in `'silhouette'` mode it now
+ * gets a much better one — but because the two go through different meshers.
+ * Handing the raw traced occupancy to `earClip` (which is what returning it
+ * here would do) produces sliver triangles that ARAP then shreds; see
+ * `silhouetteFromCoverage` below and the counter-example in
+ * `puppetCharacterTear.test.ts`. The image route is `alphaMesh.ts`, reached
+ * from `buildRestMesh` off the coverage mask directly.
  */
 export function resolvePuppetSilhouette(
   pathSil: PuppetSilhouette | undefined,

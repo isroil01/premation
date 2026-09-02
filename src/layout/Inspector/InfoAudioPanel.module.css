@@ -1,90 +1,136 @@
 .root {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 10px;
   background: var(--color-panel);
   color: var(--color-text-primary);
   font-family: inherit;
   font-size: var(--font-size-xs);
   box-sizing: border-box;
   width: 100%;
-  max-width: 100%;
   min-width: 0;
   overflow-y: auto;
 }
 
-.card {
+/* Groups are separated by a rule, not boxed. One gutter throughout. */
+.group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-field-border);
-  border-radius: var(--radius-control);
-  padding: 8px 10px;
-  box-sizing: border-box;
-  width: 100%;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
-.cardHeader {
+.group:last-child {
+  border-bottom: none;
+}
+
+.groupHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: var(--control-height-sm);
+}
+
+.groupLabel {
   font-size: var(--font-size-micro);
-  font-weight: 700;
-  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 6px 12px;
-  width: 100%;
-  box-sizing: border-box;
+.status {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
 }
 
-.statRow {
+.statusLive {
+  color: var(--color-success);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--font-size-xs);
+  gap: var(--space-3);
+  min-height: var(--control-height-row);
   min-width: 0;
 }
 
-.statKey {
-  color: var(--color-text-tertiary);
-  font-weight: 600;
-  flex-shrink: 0;
+.key {
+  flex: none;
+  color: var(--color-text-secondary);
 }
 
-.statVal {
+.value {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   color: var(--color-text-primary);
-  font-family: monospace;
-  font-weight: 500;
-  min-width: 0;
+  font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.colorSwatch {
-  width: 14px;
-  height: 14px;
-  border-radius: 2px;
-  border: 1px solid var(--color-border);
-  display: inline-block;
-  vertical-align: middle;
-  margin-right: 4px;
+.mono {
+  font-family: var(--font-family-mono);
 }
 
-/* Audio VU Meter */
+.colorSwatch {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  display: inline-block;
+  flex: none;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.iconBtn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.iconBtn:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.iconBtnMuted {
+  color: var(--color-danger);
+}
+
+/* ── Peak meter ────────────────────────────────────────────────── */
 .meterTrack {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  margin: 4px 0;
+  gap: var(--space-2);
   width: 100%;
   box-sizing: border-box;
 }
@@ -92,60 +138,61 @@
 .channelRow {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
-  box-sizing: border-box;
 }
 
 .channelLabel {
-  font-size: var(--font-size-micro);
-  font-weight: 700;
-  color: var(--color-text-muted);
+  flex: none;
   width: 12px;
-  flex-shrink: 0;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
 }
 
+/* A recessed well carrying the full green → amber → red scale, like every
+   hardware meter. The LEVEL is drawn by uncovering it: `.meterCover` is the
+   well colour, anchored right, scaled to (1 − level). A transform rather than
+   a width, so a live meter never forces layout at 60Hz — and the red end is
+   only revealed when the level actually reaches it. */
 .meterBar {
+  position: relative;
   flex: 1;
   min-width: 0;
-  height: 10px;
-  background: var(--color-surface-0);
-  border-radius: 2px;
+  height: 8px;
+  background: linear-gradient(90deg, var(--color-success) 0%, var(--color-warning) 70%, var(--color-danger) 90%);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-field-border);
   overflow: hidden;
-  position: relative;
-  border: 1px solid var(--color-border);
 }
 
-.meterFill {
-  height: 100%;
-  background: linear-gradient(90deg, #22c55e 0%, #eab308 70%, #ef4444 90%);
-  transition: width 60ms linear;
+.meterCover {
+  position: absolute;
+  inset: 0;
+  background: var(--color-surface-0);
+  transform-origin: right center;
+  transition: transform 60ms linear;
 }
 
 .scaleRow {
   display: flex;
   justify-content: space-between;
+  padding-left: calc(12px + var(--space-3));
   font-size: var(--font-size-micro);
+  font-family: var(--font-family-mono);
   color: var(--color-text-muted);
-  font-family: monospace;
-  padding: 0 16px 0 18px;
-  box-sizing: border-box;
-  width: 100%;
-}
-
-.volumeRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-  width: 100%;
-  box-sizing: border-box;
 }
 
 .volumeSlider {
   flex: 1;
   min-width: 0;
   height: 4px;
-  accent-color: var(--color-selection);
+  accent-color: var(--color-primary);
   cursor: pointer;
+}
+
+.volumeValue {
+  flex: none;
+  min-width: 44px;
+  justify-content: flex-end;
 }

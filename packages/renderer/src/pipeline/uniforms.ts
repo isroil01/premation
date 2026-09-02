@@ -137,11 +137,34 @@ export const ENV_SPEC_BAND_HEIGHT = 128;
  */
 export const SHADOW3D_FLOATS = MAT4_STD140_FLOATS + 4 + 4 + 4;
 
+/**
+ * Floats the AMBIENT-OCCLUSION block occupies: mat4 aoMatrix (16) + vec4
+ * aoParams (4).
+ *
+ * Placed BEFORE the shadow block, not after it, and that ordering is a
+ * contract rather than a preference: `shadowMaps.test.ts` reads the shadow
+ * block as "the last SHADOW3D_FLOATS floats of the tail" and asserts that
+ * turning a shadow on moves nothing outside them. Appending AO past the shadow
+ * block would silently make that assertion read AO floats instead, which is
+ * the kind of drift the test exists to catch — so AO goes in front and the
+ * shadow block stays last.
+ *
+ * `aoMatrix` is world → the MAIN camera's clip, the same matrix the run's
+ * draws are rasterised with. The AO buffer is a SCREEN-space image, so the
+ * shader has to find this fragment in it; re-projecting the world position is
+ * how `shadowFactor` already finds a fragment in the shadow map, and it costs
+ * no change to any `shade3d` signature (WGSL cannot read a fragment's screen
+ * position without threading `@builtin(position)` through nine entry points).
+ *
+ * Zeros mean "no AO", which is what every comp without `ssao.enabled` packs.
+ */
+export const AO3D_FLOATS = MAT4_STD140_FLOATS + 4;
+
 /** Floats occupied by the shade tail appended to every 3d material uniform:
  *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×4 vec4)
- *  + vec4 envParams (4) + the shadow-map block (28). */
+ *  + vec4 envParams (4) + the AO block (20) + the shadow-map block (28). */
 export const SHADE3D_FLOATS =
-  MAT4_STD140_FLOATS + 4 + 4 + MAX_LIGHTS3D * LIGHT3D_VEC4S * 4 + 4 + SHADOW3D_FLOATS;
+  MAT4_STD140_FLOATS + 4 + 4 + MAX_LIGHTS3D * LIGHT3D_VEC4S * 4 + 4 + AO3D_FLOATS + SHADOW3D_FLOATS;
 
 /** One scene light in the shader's terms. Structurally compatible with the
  *  FrameScene `SceneLight3D` DTO (kept independent so the pipeline layer does
@@ -268,6 +291,35 @@ export interface Shade3D {
    * material that refuses shadows rather than packing a term the shader would
    * then have to gate a second time.
    */
+  /**
+   * SCREEN-SPACE AMBIENT OCCLUSION: the run's own linear-depth prepass, turned
+   * into an occlusion buffer and multiplied into this surface's AMBIENT term.
+   *
+   * ABSENT is the default and packs the whole AO block as zeros, which the
+   * shader reads as "off" and skips entirely — so every comp that has not
+   * turned `ssao` on runs byte-identical arithmetic to the version before AO
+   * existed. Exactly the gate `env` and `shadow` use, for the same reason.
+   *
+   * Ambient only, and deliberately: AO is a visibility term for light arriving
+   * from EVERYWHERE, which is what an ambient light is. A direct light already
+   * has a visibility term — its shadow — and darkening it a second time by a
+   * screen-space guess is how AO turns into grime.
+   */
+  ao?: {
+    /** World → the MAIN camera's CLIP, column-major: where this fragment lands
+     *  in the screen-space AO buffer. Same matrix the run rasterises with. */
+    matrix: ArrayLike<number>;
+    /**
+     * How much of the ambient term full occlusion removes, 0..1.
+     *
+     * This IS the enable flag, like `shadow.darkness`: AO that removes nothing
+     * is no AO, so one number says both things and the shader gates on it.
+     */
+    strength: number;
+    /** 1 when the backend writes render targets bottom-up (WebGL2), so the AO
+     *  lookup flips v; 0 on WebGPU. Same derivation as `shadow.flipV`. */
+    flipV: boolean;
+  };
   shadow?: {
     /** World → light CLIP, column-major. The receiver divides by w for the
      *  map's UV; the caster pass rasterises with the same matrix, so the two
@@ -365,12 +417,25 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
   // left (shadeParams.w became Metal). Zeros mean "no environment map", which
   // is what an absent `env` leaves behind and what every pre-existing scene
   // packs; the shader's reflection block is gated on x alone.
-  const envAt = end - SHADOW3D_FLOATS - 4;
+  const envAt = end - SHADOW3D_FLOATS - AO3D_FLOATS - 4;
   if (shade.env) {
     out[envAt + 0] = 1;
     out[envAt + 1] = shade.env.intensity;
     out[envAt + 2] = shade.env.rotationRad;
     out[envAt + 3] = shade.env.scale;
+  }
+  // The AO block, between envParams and the shadow block. Zeros unless the
+  // comp turned SSAO on AND the run actually produced a buffer — `strength` is
+  // both the gate and the amount, so a zero here leaves the shader's ambient
+  // term exactly the product it was before AO existed.
+  const aoAt = envAt + 4;
+  if (shade.ao && shade.ao.strength > 0) {
+    for (let i = 0; i < 16; i++) out[aoAt + i] = shade.ao.matrix[i] ?? 0;
+    const a = aoAt + MAT4_STD140_FLOATS;
+    out[a + 0] = Math.max(0, Math.min(1, shade.ao.strength));
+    out[a + 1] = shade.ao.flipV ? 1 : 0;
+    out[a + 2] = 0;
+    out[a + 3] = 0;
   }
   // The shadow block, the LAST 28 floats. Zeros unless this draw both receives
   // shadows AND the run rendered a map — and unless the light the map came
@@ -379,7 +444,7 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
   if (shade.shadow) {
     const shadowIndex = lights.findIndex((l) => l.shadowed === true);
     if (shadowIndex >= 0) {
-      let s = envAt + 4;
+      let s = aoAt + AO3D_FLOATS;
       for (let i = 0; i < 16; i++) out[s + i] = shade.shadow.matrix[i] ?? 0;
       s += MAT4_STD140_FLOATS;
       out[s + 0] = shade.shadow.axis[0];
@@ -632,6 +697,81 @@ export function packBlur(
   out[o + 1] = dirY;
   out[o + 2] = radiusPx;
   out[o + 3] = 0;
+  return out;
+}
+
+/**
+ * The SSAO estimate pass: mat3 mvp + uvRect + params(radius, intensity, far,
+ * bias) + params2(width, height, sampleCount, 0) + mat4 proj.
+ *
+ * `proj` is CAMERA-space → clip, not world → clip. The pass works entirely in
+ * camera space: it un-projects the prepass's linear depth into a view position,
+ * walks a hemisphere around it in world units, and projects each sample BACK
+ * through this same matrix to find where it lands in the buffer. One matrix
+ * serves both directions, which is what keeps the un-projection and the
+ * re-projection from drifting — the identical reason `shadowCameraFor` produces
+ * one camera for the caster pass and the receiving shader.
+ *
+ * `radius`, `far` and `bias` are all in WORLD (comp px) units, because that is
+ * the space the depth buffer stores and the only one in which a radius means a
+ * fixed size in the scene rather than a fixed size on screen.
+ */
+export function packSsao(
+  mvp: Mat3,
+  uvRect: Rect,
+  proj: Mat4,
+  radius: number,
+  intensity: number,
+  far: number,
+  bias: number,
+  width: number,
+  height: number,
+  sampleCount: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + MAT4_STD140_FLOATS);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = radius;
+  out[o + 1] = intensity;
+  out[o + 2] = far;
+  out[o + 3] = bias;
+  out[o + 4] = width;
+  out[o + 5] = height;
+  out[o + 6] = sampleCount;
+  out[o + 7] = 0;
+  packMat4(proj, out, o + 8);
+  return out;
+}
+
+/**
+ * The SSAO blur pass: mat3 mvp + uvRect + params(texelX, texelY, far, depth
+ * range).
+ *
+ * A 4×4 box, and the 4 is not a taste decision: the estimate pass rotates its
+ * kernel by a hash of the buffer pixel MOD 4, so the noise it leaves has a
+ * period of exactly four texels in each axis. Averaging four consecutive texels
+ * therefore averages one whole period and removes the pattern completely — a
+ * 3×3 or a 5×5 would leave a residue of it.
+ *
+ * `depth range` makes it BILATERAL: a neighbour whose linear depth is further
+ * than this from the centre's is a different surface, and averaging across the
+ * silhouette is what makes AO bleed out past the object that cast it.
+ */
+export function packSsaoBlur(
+  mvp: Mat3,
+  uvRect: Rect,
+  texelX: number,
+  texelY: number,
+  far: number,
+  depthRange: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = texelX;
+  out[o + 1] = texelY;
+  out[o + 2] = far;
+  out[o + 3] = depthRange;
   return out;
 }
 

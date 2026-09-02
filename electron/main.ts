@@ -19,6 +19,15 @@ import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
 import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
 import { CLI_HELP, cliArgs, parseCli, type CliInvocation } from './cliArgs';
 import { runCliAndExit } from './cliRender';
+import {
+  inspectJob,
+  jobDir as resumeJobDir,
+  listResumableJobs as listResumableJobDirs,
+  scanStagedFrames,
+  writeManifest,
+  type AdoptedRenderJob,
+  type ResumableRenderJob,
+} from './renderResume';
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -398,11 +407,33 @@ function registerBlobIpc(): void {
  *  - The finished file is moved to the user's chosen path with `render:save` —
  *    it is never read back through the renderer, so a 2 GB output costs nothing.
  *
- * Frames are staged to a per-job temp dir; `render:encode` muxes on demand and
+ * Frames are staged to a per-job dir; `render:encode` muxes on demand and
  * `render:cleanJob` removes the dir.
+ *
+ * Those staged frames now survive a RESTART, which is the whole reason this
+ * section grew a manifest. The `jobId → dir` map below is in-memory, so before
+ * `resume.json` existed a relaunched app could not name — let alone reach — the
+ * directory holding a nearly-finished render: `render:stageFrame` answered
+ * `unknown render job` for the old id and 900 real frames were dead weight on
+ * disk. `render:listResumableJobs` finds those directories again and
+ * `render:adoptJob` puts one back in the map under its original id, at which
+ * point every other handler here works on it exactly as if it had never been
+ * interrupted. See electron/renderResume.ts.
  */
 function registerRenderIpc(): void {
   const jobs = new Map<string, string>();
+  /**
+   * Where staging dirs live.
+   *
+   * `app.getPath('temp')` was the old home, and it is the wrong one for work
+   * that must outlast the process: /tmp is cleared on boot on Linux, and every
+   * platform's temp is fair game for a cleaner. userData is the app's own
+   * storage — the same place the settings blob and the thumbnail cache live —
+   * so a render paused on Friday is still there on Monday. `cleanJob`,
+   * `discardJob` and the stale-dir prune in `listResumableJobs` are what keep
+   * it from growing without bound.
+   */
+  const stagingRoot = (): string => path.join(app.getPath('userData'), 'render-staging');
   /** Running ffmpeg children per job, so `render:cancel` can kill them. */
   const running = new Map<string, ReturnType<typeof spawn>>();
   /**
@@ -480,29 +511,22 @@ function registerRenderIpc(): void {
    * instead of producing an empty file that looks like a successful export.
    */
   const stagedFrames = async (dir: string): Promise<{ count: number; ext: 'jpg' | 'png' }> => {
-    const files = await readdir(dir);
-    const index = (re: RegExp): number[] =>
-      files
-        .map((f) => re.exec(f))
-        .filter((m): m is RegExpExecArray => !!m)
-        .map((m) => Number(m[1]));
-    const png = index(/^frame_(\d+)\.png$/i);
-    const jpg = index(/^frame_(\d+)\.jpg$/i);
-    const chosen = png.length > jpg.length ? { nums: png, ext: 'png' as const } : { nums: jpg, ext: 'jpg' as const };
+    // The scan itself is shared with the resume path (renderResume.ts), which
+    // needs the same "how far does the sequence run unbroken" answer without
+    // throwing — a resume's whole job is to fill the gap this refuses to encode
+    // over. Two copies of the frame-name regex is how those two answers drift.
+    const scan = await scanStagedFrames(dir);
     // CONTIGUITY, not just count: ffmpeg's image2 demuxer stops at the first
     // missing index and still exits 0 — a gap at frame 500 of 1000 shipped a
     // half-length video while this reported the full count. Fail loudly with
     // the missing frame named instead.
-    const nums = new Set(chosen.nums);
-    for (let i = 0; i < chosen.nums.length; i++) {
-      if (!nums.has(i)) {
-        throw new Error(
-          `Staged frame ${i} is missing (${chosen.nums.length} frames on disk) — `
-          + 'the encode would silently truncate there. Re-run the export.',
-        );
-      }
+    if (scan.contiguous < scan.indices.length) {
+      throw new Error(
+        `Staged frame ${scan.contiguous} is missing (${scan.indices.length} frames on disk) — `
+        + 'the encode would silently truncate there. Re-run the export.',
+      );
     }
-    return { count: chosen.nums.length, ext: chosen.ext };
+    return { count: scan.indices.length, ext: scan.ext };
   };
 
   /**
@@ -668,12 +692,78 @@ function registerRenderIpc(): void {
     proxyJobs.clear();
   });
 
-  handle('render:beginJob', async () => {
+  /**
+   * Open a staging dir for a render.
+   *
+   * `info` is what makes the dir resumable: without it nothing on disk says
+   * what these frames were for, and a relaunched app can only delete them. It
+   * is optional because the argument-less call is the shape every existing
+   * caller uses (the Export dialog's one-shot renders, the headless CLI) and
+   * those genuinely do not want to be resumed — a `premation render` that
+   * exited is not something a later editor session should offer to finish.
+   */
+  handle('render:beginJob', async (_e, info?: { spec?: unknown; format?: string; totalFrames?: number }) => {
     const jobId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
-    const dir = path.join(app.getPath('temp'), `motion-render-${jobId}`);
+    const dir = resumeJobDir(stagingRoot(), jobId);
     await mkdir(dir, { recursive: true });
     jobs.set(jobId, dir);
+    if (info && typeof info.format === 'string') {
+      await writeManifest(dir, {
+        jobId,
+        spec: info.spec ?? null,
+        format: info.format,
+        totalFrames: typeof info.totalFrames === 'number' ? info.totalFrames : 0,
+        stagedFrames: 0,
+        createdAt: Date.now(),
+      });
+    }
     return jobId;
+  });
+
+  /** Previous sessions' renders that still have frames on disk. */
+  handle('render:listResumableJobs', async (): Promise<ResumableRenderJob[]> => {
+    const found = await listResumableJobDirs(stagingRoot());
+    // A job this process already owns is not "from a previous session" — it is
+    // the render currently running, and offering it back would have the queue
+    // adopt a directory its own live sink is still writing into.
+    return found.filter((j) => !jobs.has(j.jobId));
+  });
+
+  /**
+   * Re-register a previous session's dir under its ORIGINAL id.
+   *
+   * Same id on purpose: every other handler here is keyed by it, so once this
+   * returns, `stageFrame`, `encode`, `save` and `cleanJob` all work on the
+   * half-finished render with no second code path. The reply says exactly how
+   * many contiguous frames are really present, counted off the files rather
+   * than trusted from the manifest — a crash can leave the tally ahead of the
+   * frames, and resuming one frame late writes a video with a hole in it.
+   */
+  handle('render:adoptJob', async (_e, jobId: string): Promise<AdoptedRenderJob | null> => {
+    const root = stagingRoot();
+    const adopted = await inspectJob(root, jobId);
+    if (!adopted) return null;
+    jobs.set(jobId, resumeJobDir(root, jobId));
+    return adopted;
+  });
+
+  /**
+   * Throw away one staging dir — the "no, don't finish that" answer.
+   *
+   * Distinct from `cleanJob`, which reclaims a job that FINISHED. This one is
+   * reachable for an id the process has never seen, because that is the whole
+   * point: the queue is discarding something a previous session left behind.
+   */
+  handle('render:discardJob', async (_e, jobId: string) => {
+    running.get(jobId)?.kill();
+    running.delete(jobId);
+    const dir = jobs.get(jobId) ?? resumeJobDir(stagingRoot(), jobId);
+    jobs.delete(jobId);
+    try {
+      await rm(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore cleanup errors */
+    }
   });
 
   /** Pre-export HDR capability — Export dialog shows HEVC vs H.264 High 10 before encode. */

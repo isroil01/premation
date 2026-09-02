@@ -16,7 +16,7 @@
  * (Discard) with its own confirmation, because it is a separate decision.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { EmptyState } from '@components/EmptyState';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -94,8 +94,26 @@ export function RenderQueuePanel(): JSX.Element {
   const clearFinished = useRenderQueueStore((s) => s.clearFinished);
   const outputDir = useRenderQueueStore((s) => s.outputDir);
   const chooseOutputDir = useRenderQueueStore((s) => s.chooseOutputDir);
+  const restoreFromLastSession = useRenderQueueStore((s) => s.restoreFromLastSession);
 
   const [showDialog, setShowDialog] = useState(false);
+
+  /*
+    Read back what the last session left, the first time anyone opens the queue.
+
+    Frames staged by a render that was interrupted are still on disk — the whole
+    point of encoding once at the end — and until this ran, nothing in a new
+    process could name the directory holding them. The action is idempotent and
+    the store remembers it has run, so mounting this panel twice (or in a second
+    window) restores nothing twice.
+
+    Here rather than at app boot deliberately: a user who never opens the Render
+    Queue does not need their settings blob parsed and their staging root walked
+    on every launch, and the answer is identical whenever it is asked.
+  */
+  useEffect(() => {
+    void restoreFromLastSession();
+  }, [restoreFromLastSession]);
 
   /**
    * Whether a stopped render can come back at all.
@@ -194,6 +212,10 @@ export function RenderQueuePanel(): JSX.Element {
   // Half-rendered jobs holding a staging dir. They change what the main button
   // means (Resume All, not Render All) and are what Discard would destroy.
   const resumableCount = jobs.filter((j) => j.status === 'paused' || j.status === 'stopped').length;
+  // Jobs whose frames were staged by a PREVIOUS run of the app. They are
+  // ordinary stopped jobs to the runner, but they deserve to be named: a queue
+  // that silently repopulated itself after a crash would look like a bug.
+  const fromLastSession = jobs.filter((j) => j._adopt);
 
   return (
     <div className={styles.root}>
@@ -275,6 +297,39 @@ export function RenderQueuePanel(): JSX.Element {
           <Icon name="close" size="sm" /> Clear Done
         </button>
       </div>
+
+      {/*
+        The one thing the panel has to SAY rather than merely show.
+
+        These jobs did not come from this session, and their progress bars are
+        describing files written by a process that no longer exists. Announcing
+        that, with the count of frames already on disk, is the difference
+        between "the app remembered my render" and "why is this here".
+      */}
+      {fromLastSession.length > 0 && (
+        <div className={styles.resumeBanner}>
+          <Icon name="history" size="sm" />
+          <span className={styles.resumeBannerText}>
+            {fromLastSession.length} render{fromLastSession.length !== 1 ? 's' : ''} from your last
+            session {fromLastSession.length !== 1 ? 'have' : 'has'} frames already on disk
+            {' — '}
+            {fromLastSession
+              .map((j) => `${j.compositionName} at frame ${j.resumeFrame ?? 0}`)
+              .join(', ')}
+            .
+          </span>
+          {!isRunning && (
+            <button
+              type="button"
+              className={styles.toolbarBtnPrimary}
+              onClick={startAll}
+              title="Continue these renders from the frame they stopped on"
+            >
+              <Icon name="play" size="sm" /> Resume from last session
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Job list ─────────────────────────────────────────────── */}
       <div className={styles.jobList}>
@@ -382,11 +437,11 @@ export function RenderQueuePanel(): JSX.Element {
                   className={`${styles.statusChip} ${statusClass(job.status)}`}
                   title={
                     job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
-                      ? `${job.resumeFrame} frames already rendered — resumes at frame ${job.resumeFrame}`
+                      ? `${job.resumeFrame} frames already rendered${job._adopt ? ' by your last session' : ''} — resumes at frame ${job.resumeFrame}`
                       : undefined
                   }
                 >
-                  {statusLabel(job.status)}
+                  {job._adopt ? 'Last session' : statusLabel(job.status)}
                   {job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
                     ? ` · frame ${job.resumeFrame}`
                     : ''}

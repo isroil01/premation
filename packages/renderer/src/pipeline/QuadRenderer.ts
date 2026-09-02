@@ -9,7 +9,7 @@
 import type { CommandBuffer } from '../commands/DrawCommand';
 import type { RenderBackend, RenderPassEncoder } from '../gpu/RenderBackend';
 import type { ResourceManager } from '../gpu/ResourceManager';
-import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING, type TextureFormat } from '../gpu/types';
+import { AO_SAMPLER_BINDING, AO_TEXTURE_BINDING, ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING, type TextureFormat } from '../gpu/types';
 import { QUAD_VERTEX_COUNT, unitQuadBuffer } from '../resources/Geometry';
 import type { MaterialSystem } from '../shaders/Material';
 
@@ -91,6 +91,12 @@ export class QuadRenderer {
         // and `uShadowTex` is simply the next name in the declared list.
         if (item.shadowTexture) entries.push({ binding: SHADOW_TEXTURE_BINDING, texture: item.shadowTexture });
         if (item.shadowSampler) entries.push({ binding: SHADOW_SAMPLER_BINDING, sampler: item.shadowSampler });
+        // Bindings 11/12: the run's AO buffer and its LINEAR sampler. Last
+        // again, and for the third time the same reason — every texture unit
+        // handed out above keeps the number it already had, and `uSsaoTex` is
+        // simply the next name in the material's declared sampler list.
+        if (item.aoTexture) entries.push({ binding: AO_TEXTURE_BINDING, texture: item.aoTexture });
+        if (item.aoSampler) entries.push({ binding: AO_SAMPLER_BINDING, sampler: item.aoSampler });
 
         const p = item.pbrTextures;
         const bg = this.resources.bindGroup(
@@ -109,6 +115,9 @@ export class QuadRenderer {
           // And once more for the shadow map: the fallback far texel and a real
           // map are two different textures at the same binding.
           + `:${item.shadowTexture?.id ?? 0}`
+          // And for the AO buffer: the fallback white texel and a real buffer
+          // are two different textures at the same binding.
+          + `:${item.aoTexture?.id ?? 0}`
           + `:${idx}`,
           { pipeline, entries },
         );

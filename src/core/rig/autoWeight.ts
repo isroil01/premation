@@ -15,6 +15,8 @@ export interface BoneSegment {
   id: string;
   a: Vec2; // world root
   b: Vec2; // world tip
+  /** `Bone.influenceRadius`, carried through. Absent = unlimited reach. */
+  radius?: number;
 }
 
 /** Shortest distance from point `p` to segment `a`→`b`. */
@@ -34,7 +36,12 @@ export function boneSegments(bones: readonly Bone[], world: Map<string, Mat2D>):
   for (const bone of bones) {
     const m = world.get(bone.id);
     if (!m) continue;
-    segs.push({ id: bone.id, a: boneRoot(m), b: boneTip(m, bone.length) });
+    segs.push({
+      id: bone.id,
+      a: boneRoot(m),
+      b: boneTip(m, bone.length),
+      ...(bone.influenceRadius !== undefined ? { radius: bone.influenceRadius } : {}),
+    });
   }
   return segs;
 }

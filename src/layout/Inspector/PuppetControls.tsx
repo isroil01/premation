@@ -47,6 +47,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   const density = rig?.meshDensity ?? 22;
   const expansion = rig?.meshExpansion ?? 0;
   const solver = rig?.solver ?? 'arap';
+  const meshMode = rig?.meshMode ?? 'grid';
   const pins = rig?.pins ?? [];
 
   const hasStiffness = pins.some((p) => (p.stiffness ?? 0) > 0);
@@ -76,8 +77,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           <div className={styles.presetGroup}>
             <button
               type="button"
-              className={`${styles.presetButton} ${expansion === 0 ? styles.presetButtonActive : ''}`}
-              title="Tight mesh with zero expansion — prevents limbs from pulling the torso"
+              className={`${styles.presetButton} ${meshMode === 'silhouette' ? styles.presetButtonActive : ''}`}
+              title="Traces the artwork's outline and fills it with triangles (AE's Puppet mesh) — a limb becomes its own strip, so pinning a hand bends the arm instead of dragging the body."
               onClick={() =>
                 // Density 20, not 22: the ⚓ Anchor toggle gives a pin stiffness
                 // 10, and any stiffness lowers the ARAP exact-solve cap to 21 —
@@ -95,7 +96,7 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
             </button>
             <button
               type="button"
-              className={`${styles.presetButton} ${expansion > 0 ? styles.presetButtonActive : ''}`}
+              className={`${styles.presetButton} ${meshMode !== 'silhouette' ? styles.presetButtonActive : ''}`}
               title="Softer mesh with padding — ideal for shapes and banners"
               onClick={() =>
                 updatePuppetSettings(nodeId, {
@@ -169,7 +170,12 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </div>
 
         <div className={styles.paramRow}>
-          <span className={styles.paramLabel}>Expansion</span>
+          <span
+            className={styles.paramLabel}
+            title="How far past the artwork's edge the mesh reaches, in pixels. A few px catches a soft or antialiased edge the alpha trace clips."
+          >
+            Expansion
+          </span>
           <Slider
             value={expansion}
             min={0}

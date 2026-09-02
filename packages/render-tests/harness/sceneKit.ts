@@ -13,6 +13,7 @@ import type { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 import type { MotionBlurConfig } from '@core/effects/motionBlur';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
+import type { SsaoConfig } from '@core/rendering/RenderBackend';
 
 export interface SceneComp {
   width: number;
@@ -29,6 +30,16 @@ export interface SceneComp {
   /** Referenced-comp size resolver for placed compositions (COMP_REF_PROP) —
    *  the same hook the editor passes (see compSizes.ts). */
   compSizeOf?: (id: string) => { width: number; height: number } | undefined;
+  /**
+   * Composition Settings > World > Ambient Occlusion, threaded straight into
+   * `buildSnapshot` like every other field here.
+   *
+   * Optional and absent everywhere else, which is the point: SSAO is a comp
+   * setting, so the only way a scene can exercise it is to author one, and
+   * the only way every OTHER scene can prove it is untouched is for this to
+   * stay absent there.
+   */
+  ssao?: SsaoConfig;
 }
 
 export interface SceneMeta {

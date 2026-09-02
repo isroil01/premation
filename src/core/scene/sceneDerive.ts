@@ -39,6 +39,22 @@ export function flattenScene(graph: SceneGraph): SceneNode[] {
 }
 
 /**
+ * A node's children in STACK order — FRONT-most first.
+ *
+ * The scene graph stores children back-to-front (index 0 paints first, so it is
+ * the bottom of the stack); the Scene tree and the timeline both list the
+ * front-most layer at the TOP, as After Effects does. That single `reverse` was
+ * written out at both call sites, which is one place too many for a convention
+ * that every other consumer of z-order has to agree with.
+ *
+ * The graph's child array stays the authority: this is a projection of it, not
+ * a second ordering.
+ */
+export function stackOrderedChildren(graph: SceneGraph, parentId: string): SceneNode[] {
+  return [...graph.getChildren(parentId)].reverse();
+}
+
+/**
  * The nodes belonging to ONE composition: `rootId` and its descendants.
  *
  * Compositions are separate root subtrees in a single scene graph, so anything

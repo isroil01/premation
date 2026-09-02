@@ -358,15 +358,35 @@ async function generateImage(
   return { ok: true, base64: image.base64, mime: image.mime };
 }
 
+/** One timed span of speech — a segment or a single word. */
+export interface TimedSpan {
+  start: number;
+  end: number;
+  text: string;
+}
+
 export type TranscribeResult =
-  | { ok: true; cues: Array<{ start: number; end: number; text: string }>; language?: string }
+  | {
+      ok: true;
+      cues: TimedSpan[];
+      /**
+       * Per-WORD timings, when the model returned them.
+       *
+       * Absent (or empty) when it did not, which the renderer treats as
+       * "estimate them from the segments" — the behaviour that shipped. Never
+       * a substitute for `cues`: captions are segments, and a caption per word
+       * is a stroboscope.
+       */
+      words?: TimedSpan[];
+      language?: string;
+    }
   | { ok: false; code: string; message: string };
 
 /** A `verbose_json` segment list, defended against a response that is not one. */
-function parseWhisperSegments(parsed: unknown): Array<{ start: number; end: number; text: string }> | null {
+export function parseWhisperSegments(parsed: unknown): TimedSpan[] | null {
   const body = parsed as { segments?: unknown; text?: unknown };
   if (!Array.isArray(body?.segments)) return null;
-  const cues: Array<{ start: number; end: number; text: string }> = [];
+  const cues: TimedSpan[] = [];
   for (const raw of body.segments) {
     const seg = raw as { start?: unknown; end?: unknown; text?: unknown };
     if (typeof seg.start !== 'number' || typeof seg.end !== 'number' || typeof seg.text !== 'string') continue;
@@ -375,6 +395,34 @@ function parseWhisperSegments(parsed: unknown): Array<{ start: number; end: numb
     cues.push({ start: seg.start, end: seg.end, text });
   }
   return cues;
+}
+
+/**
+ * The `words` array of a `verbose_json` response, or [] when there is none.
+ *
+ * Separate from the segments and non-fatal by design: word granularity is a
+ * bonus, not a requirement. A model or an account that returns segments and no
+ * words still produces captions — the renderer falls back to estimating word
+ * times inside each segment, which is what it did before this was asked for.
+ *
+ * The field is named `word` (not `text`) in the response, which is the one
+ * detail that makes a copy of the segment parser wrong here.
+ */
+export function parseWhisperWords(parsed: unknown): TimedSpan[] {
+  const body = parsed as { words?: unknown };
+  if (!Array.isArray(body?.words)) return [];
+  const out: TimedSpan[] = [];
+  for (const raw of body.words) {
+    const w = raw as { start?: unknown; end?: unknown; word?: unknown; text?: unknown };
+    // `text` is accepted as well: it is what a couple of whisper-compatible
+    // servers emit, and reading both costs one `??`.
+    const token = typeof w.word === 'string' ? w.word : typeof w.text === 'string' ? w.text : null;
+    if (typeof w.start !== 'number' || typeof w.end !== 'number' || token === null) continue;
+    const text = token.trim();
+    if (text === '') continue;
+    out.push({ start: w.start, end: Math.max(w.start, w.end), text });
+  }
+  return out;
 }
 
 /**
@@ -431,8 +479,21 @@ async function transcribeAudio(
   form.append('file', new Blob([copy], { type: 'audio/wav' }), filename || 'audio.wav');
   form.append('model', TRANSCRIBE_MODEL);
   form.append('response_format', 'verbose_json');
-  // Segment granularity is what turns a transcript into captions.
+  /*
+   * BOTH granularities, and segment is not optional.
+   *
+   * Segments are what turn a transcript into captions — one time range per
+   * sentence, which is what a caption is. Words are what the Transcript
+   * panel's chips want: asking for segments alone left it dividing each
+   * segment's duration across its words by character count, chips that look
+   * exact and are not.
+   *
+   * Asking for `word` ALONE would be the trap: whisper then returns no
+   * `segments` array at all and captions would break. Asking for both is one
+   * request and one price.
+   */
   form.append('timestamp_granularities[]', 'segment');
+  form.append('timestamp_granularities[]', 'word');
   // A declared language is a real accuracy gain and stops the model guessing;
   // absent, whisper detects one. Validated as a short code so it cannot smuggle
   // anything into the body.
@@ -475,8 +536,16 @@ async function transcribeAudio(
   if (cues.length === 0) {
     return { ok: false, code: 'empty', message: 'No speech was found in that audio.' };
   }
+  const words = parseWhisperWords(parsed);
   const language_ = (parsed as { language?: unknown }).language;
-  return { ok: true, cues, ...(typeof language_ === 'string' ? { language: language_ } : {}) };
+  return {
+    ok: true,
+    cues,
+    // Omitted rather than sent empty, so "the model gave no word timings" and
+    // "it gave an empty list" are the same thing to the renderer.
+    ...(words.length > 0 ? { words } : {}),
+    ...(typeof language_ === 'string' ? { language: language_ } : {}),
+  };
 }
 
 export function registerAiProxyIpc(): void {

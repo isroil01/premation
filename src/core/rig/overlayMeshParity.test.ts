@@ -179,6 +179,59 @@ describe('§12.3 — overlay mesh matches the rendered mesh (image layers)', () 
   });
 });
 
+/**
+ * The SKELETON-only branch of `nodeRestMesh`, which is a separate code path from
+ * the puppet one above and had the same class of drift: only `meshDensity` and
+ * `meshExpansion` crossed from `SkeletonRig` into `getCachedRestMesh`, so a
+ * bone-rigged PNG asking for the alpha-outline mesh silently got the bbox grid —
+ * on BOTH sides, and identically, which is why nothing caught it. Now that
+ * `meshMode` is forwarded, the two forwardings must stay equal, and a vertex
+ * index means the same artwork in the overlay's weight heatmap and the render.
+ */
+describe('overlay mesh matches the rendered mesh (BONE-only image layers)', () => {
+  beforeEach(() => {
+    clearImageCoverageCache();
+  });
+
+  const SKEL = {
+    bones: [
+      { id: 'upper', parentId: null, length: 30, x: -30, y: 0, rotation: 0 },
+      { id: 'fore', parentId: 'upper', length: 30, x: 30, y: 0, rotation: 0 },
+    ],
+    ikTargets: [],
+    meshDensity: 12,
+    meshExpansion: 0,
+  } as const;
+
+  function bonedScene(meshMode?: 'grid' | 'silhouette') {
+    const graph = new SceneGraph();
+    const node = imageNode('img');
+    graph.addNode(node);
+    graph.setSkeleton('img', { ...SKEL, bones: SKEL.bones.map((b) => ({ ...b })), ...(meshMode ? { meshMode } : {}) });
+    return { graph, anim: new AnimationEngine(), node: graph.getNode('img')! };
+  }
+
+  for (const meshMode of [undefined, 'grid', 'silhouette'] as const) {
+    it(`agrees in ${meshMode ?? 'unset'} mesh mode`, () => {
+      const { graph, anim, node } = bonedScene(meshMode);
+      primeImageCoverageCache(SRC, bandMask());
+      const overlay = overlayMesh(node);
+      const rendered = snapshotMesh(graph, anim);
+      // Same vertex COUNT is the load-bearing claim: a weight override and the
+      // heatmap are both stored against an index.
+      expect(overlay.vertices.length).toBe(rendered.vertices.length);
+      expect(overlay.triangles.length).toBe(rendered.triangles.length);
+    });
+  }
+
+  it('outline mode actually selects a different mesh from grid', () => {
+    primeImageCoverageCache(SRC, bandMask());
+    const grid = overlayMesh(bonedScene('grid').node);
+    const outline = overlayMesh(bonedScene('silhouette').node);
+    expect(outline.vertices.length).not.toBe(grid.vertices.length);
+  });
+});
+
 describe('rigMeshInputs resolution rules', () => {
   beforeEach(() => {
     clearImageCoverageCache();

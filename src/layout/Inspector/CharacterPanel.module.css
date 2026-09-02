@@ -87,9 +87,9 @@
 }
 
 .sourceStopwatchActive {
-  background: var(--color-selection) !important;
-  color: var(--color-primary-foreground) !important;
-  border-color: var(--color-selection) !important;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
+  border-color: var(--color-primary);
 }
 
 .contentTextarea {
@@ -118,8 +118,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 4px 8px;
-  background: rgba(41, 136, 255, 0.12);
-  border: 1px solid rgba(41, 136, 255, 0.3);
+  background: var(--color-primary-subtle);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 30%, transparent);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   color: var(--color-selection);
@@ -337,8 +337,8 @@
 }
 
 .fauxBtnActive {
-  background: var(--color-selection) !important;
-  color: var(--color-primary-foreground) !important;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
 }
 
 /* ── Path Options & Checkbox Row ── */
@@ -418,8 +418,8 @@
 }
 
 .alignBtnActive {
-  background: var(--color-selection) !important;
-  color: var(--color-primary-foreground) !important;
+  background: var(--color-primary);
+  color: var(--color-primary-foreground);
 }
 
 .emptyHint {
@@ -428,4 +428,104 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   line-height: 1.4;
+}
+
+
+/* ── Panel head + the small inline helpers that used to be style attributes ── */
+.panelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+}
+
+.panelHeadTitle {
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-uppercase);
+  color: var(--color-text-tertiary);
+}
+
+.panelHeadStatus {
+  color: var(--color-text-muted);
+}
+
+.panelHeadStatusOn {
+  color: var(--color-text-secondary);
+}
+
+.fontSizeCell {
+  flex: 0 0 80px;
+  min-width: 0;
+}
+
+.fullWidth {
+  width: 100%;
+}
+
+.colCentered {
+  justify-content: center;
+}
+
+.swatchTitle {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.swatchHint,
+.unit {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-muted);
+}
+
+.inlineCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+
+.inlineCheckBox {
+  width: 13px;
+  height: 13px;
+}
+
+.inlineCheckLabel,
+.inlineLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.inlineLabel {
+  font-weight: var(--font-weight-medium);
+}
+
+.inlineField {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.inlineNumber {
+  width: 50px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
+}
+
+.pathSelect {
+  width: 110px;
+  height: var(--control-height-sm);
+}
+
+.sectionTitleSpaced {
+  margin-top: var(--space-3);
+}
+
+.metricCellWide {
+  grid-column: span 2;
 }

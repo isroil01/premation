@@ -76,12 +76,17 @@ import { openKeyframeVelocityDialog } from '@layout/Timeline/KeyframeVelocityDia
 import {
   addTransition,
   removeTransition,
+  setTransition,
   transitionAtCut,
   compIdForTransition,
   DEFAULT_TRANSITION_FRAMES,
   TRANSITION_KINDS,
   TRANSITION_LABEL,
 } from '@core/timeline/transitions';
+import {
+  TRANSITION_ALIGNMENTS,
+  TRANSITION_ALIGNMENT_LABEL,
+} from '@layout/Timeline/transitionOverlay';
 import {
   TIMELINE_EDIT_MODES,
   setTimelineEditMode,
@@ -1501,6 +1506,35 @@ function EditorShellInner(): JSX.Element {
       },
       ...(existingTransition && cut
         ? [
+            /*
+             * Alignment — where the transition sits relative to the cut.
+             *
+             * The record has carried this since transitions shipped and every
+             * entry point wrote 'centred', so the other two placements existed
+             * only in the type. A submenu of three named values next to the
+             * bracket's click-to-cycle: the same property, picked rather than
+             * stepped, for when you know which one you want. One undo entry
+             * each, because `setTransition` re-materializes the transition
+             * inside a single history entry.
+             */
+            {
+              id: 'transition-alignment',
+              label: 'Alignment',
+              children: TRANSITION_ALIGNMENTS.map((alignment) => ({
+                id: `transition-alignment-${alignment}`,
+                label: `${TRANSITION_ALIGNMENT_LABEL[alignment]}${
+                  existingTransition.alignment === alignment ? '  ✓' : ''
+                }`,
+                onSelect: () => {
+                  if (existingTransition.alignment === alignment) return;
+                  void setTransition(compIdForTransition(cut), existingTransition.id, {
+                    alignment,
+                  }).then((res) => {
+                    if (!res.ok) void customAlert('Transition', res.reason);
+                  });
+                },
+              })),
+            },
             {
               id: 'remove-transition',
               label: `Remove ${TRANSITION_LABEL[existingTransition.kind]}`,

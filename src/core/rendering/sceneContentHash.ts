@@ -98,15 +98,25 @@ export function sceneContentHash(graph: HashableGraph, anim: AnimationEngine): s
   const h = new Hasher();
 
   // ── Scene ────────────────────────────────────────────────────────
-  // Collected then SORTED by id: `traverse` order follows tree structure, and
-  // reordering siblings is itself a change we want to see — but it arrives via
-  // each node's own `parent`, not via visit order. Sorting makes the hash
-  // independent of how the walk happens to be implemented.
+  // Collected then SORTED by id, so the hash is independent of how the walk
+  // happens to be implemented.
+  //
+  // Which is why each node carries its own CHILD ORDER into the row. This used
+  // to claim sibling order "arrives via each node's own `parent`", and that is
+  // false: stacking order lives in the PARENT's child array and nowhere else.
+  // A Bring Forward / Send Backward / drag-reorder changes no node's parent, no
+  // transform and no prop, so every row came out byte-identical and the hash
+  // did not move — the viewport frame cache then blitted the pre-reorder frame
+  // and the canvas kept the old stacking order while the Scene tree and the
+  // timeline (which read the graph directly) showed the new one. Reported as
+  // "I selected the layer underneath and Bring Forward does nothing".
   const rows: string[] = [];
   graph.traverse((n) => {
     const parts: string[] = [
       n.id,
       String(n.parent ?? ''),
+      // Z-ORDER. Back-to-front, the scene graph's one authority for stacking.
+      stableStringify([...((n as unknown as { children?: string[] }).children ?? [])]),
       n.visible === false ? '0' : '1',
       n.locked ? '1' : '0',
       (n as unknown as { solo?: boolean }).solo ? '1' : '0',

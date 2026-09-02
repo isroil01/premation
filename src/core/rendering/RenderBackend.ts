@@ -663,6 +663,32 @@ export interface RenderSnapshot {
    * can use it. Absent means the shader's reflection block never runs.
    */
   envMap?: EnvironmentSpecularMap;
+  /**
+   * Screen-space ambient occlusion, as the composition authored it.
+   *
+   * Emitted only when the comp turned it on AND the frame has a 3D layer that
+   * could use it — the renderer's own gate is `enabled`, and passing a disabled
+   * block would still cost the snapshot a key on every frame of every project
+   * that never opted in. Absent means the shade tail packs zeros and every 3D
+   * run renders exactly as it did before AO existed.
+   */
+  ssao?: SsaoConfig;
+}
+
+/**
+ * Composition-level SSAO. Structurally the renderer's `SsaoSettings` DTO,
+ * restated here for the reason `EnvironmentSpecularMap` is — this layer's
+ * snapshot type is the app's own contract — but the field NAMES must match,
+ * because `snapshotToFrameScene` hands the object straight through.
+ */
+export interface SsaoConfig {
+  enabled: boolean;
+  /** Hemisphere radius in COMP PX. */
+  radius: number;
+  /** How much of the ambient term full occlusion removes, 0..2. */
+  intensity: number;
+  /** Buffer resolution — 'half' (the default) or 'full'. */
+  quality: 'half' | 'full';
 }
 
 /**

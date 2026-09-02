@@ -47,7 +47,7 @@ import {
 } from '@core/captions/captionLayers';
 import {
   TranscribeError,
-  transcribeComposition,
+  transcribeCompositionDetailed,
   transcriptionAvailable,
 } from '@core/captions/transcribe';
 import {
@@ -149,9 +149,9 @@ export async function runTranscription(scope: TranscribeScope = transcribeScope(
     // optimistically after a tick so the label is not stuck on "Mixing" for
     // the whole upload. Coarse, and labelled as coarse in the UI.
     const flip = setTimeout(() => useTranscriptStore.getState().setPhase('transcribing'), 400);
-    let cues: Cue[];
+    let spoken: Awaited<ReturnType<typeof transcribeCompositionDetailed>>;
     try {
-      cues = await transcribeComposition({
+      spoken = await transcribeCompositionDetailed({
         startSec: scope.start,
         endSec: scope.end,
         rootId,
@@ -160,7 +160,9 @@ export async function runTranscription(scope: TranscribeScope = transcribeScope(
       clearTimeout(flip);
     }
     const transcript: CompTranscript = {
-      words: wordsFromCues(cues),
+      // The provider's own word timings when it gave them; estimated inside
+      // each segment when it did not. `wordsFromCues` decides that per cue.
+      words: wordsFromCues(spoken.cues, spoken.words),
       source: 'transcribed',
       range: { start: scope.start, end: scope.end },
       edited: false,

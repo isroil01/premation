@@ -34,7 +34,7 @@ import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renameLayer } from '@core/scene/renameLayer';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
-import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
+import { flattenComposition, readNodeKind, stackOrderedChildren } from '@core/scene/sceneDerive';
 import {
   toggleSelectedLocked,
   toggleSelectedSolo,
@@ -46,7 +46,7 @@ import {
 } from '@core/scene/sceneInsert';
 import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { reparentNode, moveNodeAdjacent, canReparent, moveNodeInStack } from '@core/scene/parenting';
+import { reparentNode, moveNodeAdjacent, canReparent, arrangeNodes } from '@core/scene/parenting';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor, nodesWithLabelColor } from '@core/scene/labelColor';
 import { deleteComposition, duplicateComposition } from '@core/composition/compositionOps';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
@@ -97,8 +97,9 @@ const KIND_COLOR: Record<SceneKind, string> = {
 function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
   const kind = readNodeKind(node);
   // Stacking convention (matches the timeline): the TOP entry is the
-  // FRONT-most layer, so children list reversed from child (paint) order.
-  const children = [...defaultSceneGraph.getChildren(node.id)].reverse().map(toTreeNode);
+  // FRONT-most layer. `stackOrderedChildren` is that one convention, shared
+  // with `deriveTimelineTracks` so the tree and the timeline rows cannot drift.
+  const children = stackOrderedChildren(defaultSceneGraph, node.id).map(toTreeNode);
   
   let iconName: IconName = KIND_ICON[kind];
   if (kind === 'shape') {
@@ -173,8 +174,10 @@ function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
   };
 }
 
-/** Build the Scene tree from the live scene graph (single source of truth). */
-function sceneGraphToTree(): TreeNode<SceneNodeData>[] {
+/** Build the Scene tree from the live scene graph (single source of truth).
+ *  Exported for the layer-ordering tests, which assert what this panel LISTS
+ *  after an arrange without standing the whole React tree up. */
+export function sceneGraphToTree(): TreeNode<SceneNodeData>[] {
   return defaultSceneGraph.getRoots().map(toTreeNode);
 }
 
@@ -443,11 +446,15 @@ export function ScenePanel(): JSX.Element {
     openContextMenu(e.clientX, e.clientY, [
       { id: 'rename', label: 'Rename', onSelect: () => setRenamingId(id) },
       { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
+      // `arrangeNodes` over the WHOLE selection, never a loop over it — the
+      // loop moved a multi-selection one layer at a time and the members
+      // leapfrogged each other (see `reorderSiblings`). Same call the Layer ▸
+      // Arrange commands and the viewport's context menu make.
       { id: 'arrange', label: 'Arrange', children: [
-        { id: 'arr-front', label: 'Bring to Front', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'front'); } },
-        { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'forward'); } },
-        { id: 'arr-backward', label: 'Send Backward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'backward'); } },
-        { id: 'arr-back', label: 'Send to Back', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'back'); } },
+        { id: 'arr-front', label: 'Bring to Front', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'front'); } },
+        { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'forward'); } },
+        { id: 'arr-backward', label: 'Send Backward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'backward'); } },
+        { id: 'arr-back', label: 'Send to Back', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'back'); } },
       ] },
       { id: 'sep1', separator: true },
       { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: () => toggleVisible(id) },

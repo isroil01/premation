@@ -33,7 +33,7 @@ import {
   type MaterialDescriptor,
 } from '../shaders/Material';
 import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING } from '../gpu/types';
-import { packSolid3D, packTextured3D, SHADE3D_FLOATS, SHADOW3D_FLOATS, type Shade3D } from '../pipeline/uniforms';
+import { packSolid3D, packTextured3D, AO3D_FLOATS, SHADE3D_FLOATS, SHADOW3D_FLOATS, type Shade3D } from '../pipeline/uniforms';
 import type { Mat4 } from '../core/math/Mat4';
 import type { Rect } from '../core/math/geometry';
 import type { Color } from '../core/math/Color';
@@ -75,7 +75,7 @@ describe('the gate: no environment light ⇒ the arithmetic that shipped before'
   it('packs envParams as four zeros when the shade carries no env', () => {
     const out = packSolid3D(MVP4, COLOR, 1, undefined, LIT);
     // Zero x is what the shader tests, so this IS the gate.
-    const envAt = out.length - SHADOW3D_FLOATS - 4;
+    const envAt = out.length - SHADOW3D_FLOATS - AO3D_FLOATS - 4;
     expect([...out.slice(envAt, envAt + 4)]).toEqual([0, 0, 0, 0]);
   });
 
@@ -94,10 +94,10 @@ describe('the gate: no environment light ⇒ the arithmetic that shipped before'
       env: { intensity: 0.75, rotationRad: 0.5, scale: 2.5 },
     });
     expect(withEnv.length).toBe(without.length);
-    const envAt = without.length - SHADOW3D_FLOATS - 4;
+    const envAt = without.length - SHADOW3D_FLOATS - AO3D_FLOATS - 4;
     expect([...withEnv.slice(0, envAt)]).toEqual([...without.slice(0, envAt)]);
     expect([...withEnv.slice(envAt, envAt + 4)]).toEqual([1, 0.75, 0.5, 2.5]);
-    expect([...withEnv.slice(envAt + 4)]).toEqual(new Array(SHADOW3D_FLOATS).fill(0));
+    expect([...withEnv.slice(envAt + 4)]).toEqual(new Array(AO3D_FLOATS + SHADOW3D_FLOATS).fill(0));
   });
 
   it('reserves exactly one vec4 for it in the shade tail', () => {
@@ -108,8 +108,8 @@ describe('the gate: no environment light ⇒ the arithmetic that shipped before'
     const noShade = packSolid3D(MVP4, COLOR, 1);
     // No shade at all ⇒ a zero-filled tail ⇒ the lit flag, the env flag AND the
     // shadow flag all off.
-    expect([...noShade.slice(noShade.length - SHADOW3D_FLOATS - 4)])
-      .toEqual(new Array(SHADOW3D_FLOATS + 4).fill(0));
+    expect([...noShade.slice(noShade.length - SHADOW3D_FLOATS - AO3D_FLOATS - 4)])
+      .toEqual(new Array(SHADOW3D_FLOATS + AO3D_FLOATS + 4).fill(0));
   });
 
   it.each(SHADE_SHADERS.map((s) => s.name))('%s gates its reflection on envParams.x', (name) => {
@@ -155,7 +155,7 @@ describe('the binding contract', () => {
     expect(smp?.type).toBe('sampler');
   });
 
-  it.each(LIT_3D)('$name names every sampler, in texture-binding order, env then shadow last', ({ material }) => {
+  it.each(LIT_3D)('$name names every sampler, in texture-binding order, env then shadow then AO last', ({ material }) => {
     const textures = material.layout.filter((e) => e.type === 'texture').map((e) => e.binding);
     // QuadRenderer pushes texture entries in ascending binding order, and the
     // WebGL2 backend assigns units in that order — so the names must be the
@@ -163,7 +163,7 @@ describe('the binding contract', () => {
     // last two, in that order, on every lit-3d material.
     expect(material.glslSamplers).toBeDefined();
     expect(material.glslSamplers!.length).toBe(textures.length);
-    expect(material.glslSamplers!.slice(-2)).toEqual(['uEnvTex', 'uShadowTex']);
+    expect(material.glslSamplers!.slice(-3)).toEqual(['uEnvTex', 'uShadowTex', 'uSsaoTex']);
     expect([...textures].sort((a, b) => a - b)).toEqual(textures);
   });
 

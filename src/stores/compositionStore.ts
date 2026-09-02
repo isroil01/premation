@@ -13,7 +13,7 @@
  */
 
 import { useMemo } from 'react';
-import { useProjectStore, DEFAULT_GLOBAL_LIGHT, type CompositionSettings } from './projectStore';
+import { useProjectStore, DEFAULT_GLOBAL_LIGHT, DEFAULT_SSAO, type CompositionSettings } from './projectStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
 import { isEnvironmentPresetId, DEFAULT_ENVIRONMENT_PRESET } from '@core/scene/environmentLight';
 
@@ -35,7 +35,13 @@ function compKeyFor(c: CompositionSettings): string {
   // style-bound shadow move, and a key without it means dragging the light
   // changes the snapshot but never triggers the repaint that shows it.
   const light = `${c.globalLightAngle ?? ''}/${c.globalLightAltitude ?? ''}`;
-  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}:${light}`;
+  // AO must be in this key for the same reason the global light is: it changes
+  // pixels and nothing else in the key moves when it does, so without it
+  // dragging the Intensity slider updates the record and never repaints.
+  const ao = c.ssao
+    ? `${c.ssao.enabled ? 1 : 0}/${c.ssao.radius}/${c.ssao.intensity}/${c.ssao.quality}`
+    : '';
+  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}:${light}:${ao}`;
 }
 
 export const DEFAULT_COMPOSITION: CompositionSettings = {
@@ -109,6 +115,29 @@ export function sanitize(patch: Partial<CompositionSettings>): Partial<Compositi
   // way to tell why.
   if (patch.groundLevel !== undefined) {
     out.groundLevel = Number.isFinite(patch.groundLevel) ? patch.groundLevel : 0;
+  }
+  /*
+    World ▸ Ambient Occlusion.
+
+    Sanitized as a WHOLE OBJECT rather than field by field, because that is how
+    it is written: the dialog patches `{ ssao: { ...current, radius } }`, so a
+    single bad number arriving alongside three good ones must not be able to
+    reach the shader. A NaN radius there is not a cosmetic problem — it makes
+    every hemisphere sample land at NaN and the buffer comes back black, which
+    erases the ambient light of the whole comp.
+
+    `undefined` passes straight through and CLEARS the block, which is what the
+    "off, and forget you were ever here" path needs: a comp that never opted in
+    must keep writing no key at all.
+  */
+  if (patch.ssao !== undefined) {
+    const v = patch.ssao;
+    out.ssao = {
+      enabled: v.enabled === true,
+      radius: Number.isFinite(v.radius) ? Math.max(1, Math.min(2000, v.radius)) : DEFAULT_SSAO.radius,
+      intensity: Number.isFinite(v.intensity) ? Math.max(0, Math.min(2, v.intensity)) : DEFAULT_SSAO.intensity,
+      quality: v.quality === 'full' ? 'full' : 'half',
+    };
   }
   return out;
 }

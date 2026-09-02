@@ -33,7 +33,7 @@ import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
   packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D, packShadowDepth,
   packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock,
-  packBokeh, packCocBlur, packSceneBlitLut, packMesh3DPbr,
+  packBokeh, packCocBlur, packSceneBlitLut, packMesh3DPbr, packSsao, packSsaoBlur,
 } from '../pipeline/uniforms';
 import type { Mat3 } from '../core/math/Mat3';
 import type { Mat4 } from '../core/math/Mat4';
@@ -160,6 +160,12 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   // share one packer because they differ only in vertex layout.
   { shader: 'shadow-depth', pack: () => packShadowDepth(MVP4, MVP4 as unknown as number[], [0, 0, 1], 0.001, [0, 0, 0]) },
   { shader: 'shadow-depth-mesh', pack: () => packShadowDepth(MVP4, MVP4 as unknown as number[], [0, 0, 1], 0.001, [0, 0, 0]) },
+  // The SSAO pair. Their blocks are their own — the estimate carries a mat4
+  // (camera space to clip, used in BOTH directions) after three vec4s, and the
+  // blur carries one vec4 — so a field added to either must land on both sides
+  // here or the pass reads a radius where it expects a far plane.
+  { shader: 'ssao', pack: () => packSsao(MVP, RECT, MVP4, 40, 1, 1000, 1, 512, 512, 16) },
+  { shader: 'ssao-blur', pack: () => packSsaoBlur(MVP, RECT, 1 / 512, 1 / 512, 1000, 40) },
   { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
   { shader: 'bokeh', pack: () => packBokeh(MVP, RECT, 0.001, 0.001, 8, 6, 0.5, 1) },
   { shader: 'coc-blur', pack: () => packCocBlur(MVP, RECT, RECT, 0.001, 0.001, [1, 2, 3, 4], 6, 0.5, 1) },

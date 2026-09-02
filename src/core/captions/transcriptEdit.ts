@@ -12,19 +12,24 @@
  * a cut lands mid-syllable. So it lives here, pure, and the panel does the
  * scene work with the answers.
  *
- * ── Why words are DERIVED, not transcribed ───────────────────────────────
- * The provider this app talks to (`electron/aiProxy.ts`) asks whisper for
- * `timestamp_granularities[]=segment`, so what comes back is one time range per
- * SENTENCE. There are no word timings in the response, and pretending otherwise
- * would be the worst kind of wrong: chips that look exact and are not.
+ * ── Where a word's time comes from ────────────────────────────────────────
+ * `electron/aiProxy.ts` asks whisper for BOTH `timestamp_granularities[]`
+ * values, so a response normally carries one time range per sentence AND one
+ * per word. When the words are there `wordsFromCues` uses them verbatim and
+ * `TranscriptWord.estimated` is false — the chips are then as exact as the
+ * model is, and the panel stops apologising for them.
  *
- * `wordsFromCues` therefore states its estimate openly — it divides a segment's
- * duration across its words in proportion to how long each word is to say,
- * approximated by character count. That is good enough for the two jobs the
- * word chips have (seek near a word, select a run of words to cut) and it is
- * honest about being an estimate: `TranscriptWord.estimated` says so, and the
- * panel labels it. If segment timings are ever joined by word timings, this is
- * the one function that changes.
+ * They are not always there: a whisper-compatible endpoint may return segments
+ * only, and a transcript rebuilt from caption layers has nothing but cues. So
+ * the estimate stays as the fallback: divide the segment's duration across its
+ * words in proportion to how long each is to say, approximated by character
+ * count. Good enough for the two jobs the chips have (seek near a word, select
+ * a run to cut), and honest about being an estimate — `estimated` says so and
+ * the panel labels exactly those chips.
+ *
+ * The fallback is decided PER CUE, not per transcript: a model that timed nine
+ * sentences and lost the tenth should leave nine exact and one estimated,
+ * rather than throwing away nine good answers.
  *
  * ── The joining gap ──────────────────────────────────────────────────────
  * Two words the user selected are almost never mathematically adjacent — the
@@ -49,6 +54,19 @@ export interface TranscriptWord {
   readonly cueIndex: number;
   /** True when the timing was interpolated inside a segment rather than given. */
   readonly estimated: boolean;
+}
+
+/**
+ * A word timing exactly as the provider gave it — no interpolation.
+ *
+ * Distinct from `TranscriptWord`: this has no id, no cue index and no
+ * `estimated` flag, because it is a measurement rather than a chip. It is what
+ * a transcription result carries and what `wordsFromCues` consumes.
+ */
+export interface SpokenWord {
+  readonly text: string;
+  readonly start: number;
+  readonly end: number;
 }
 
 /** A half-open interval of composition time, in seconds. */
@@ -92,18 +110,87 @@ export function normalizeWordText(text: string): string {
 }
 
 /**
- * Split cues into words, estimating a time for each.
+ * Line up a cue's tokens with the provider's word timings, or give up.
  *
- * Weight is `characters + 1` — the +1 is the space, and without it a segment of
- * one-letter words distributes its time almost entirely to the last one. A cue
- * whose text is only whitespace contributes nothing rather than a zero-length
- * word, which would otherwise be an unclickable chip.
+ * All-or-nothing per cue, and deliberately so: a half-matched sentence would
+ * produce chips where some are exact and the rest are estimated relative to
+ * boundaries that are now wrong — worse than estimating the whole sentence
+ * consistently.
+ *
+ * The walk skips forward over unmatched provider words rather than requiring a
+ * 1:1 list. Whisper occasionally emits a word the segment text merges (a
+ * hyphenated pair, a stray token), and refusing the whole segment over one
+ * extra entry would throw away timings that are otherwise perfect. It cannot
+ * skip a TOKEN, though — a token with no provider word behind it has no real
+ * time, so that cue falls back.
  */
-export function wordsFromCues(cues: readonly Cue[]): TranscriptWord[] {
+function alignSpokenWords(
+  tokens: readonly string[],
+  spoken: readonly SpokenWord[],
+): SpokenWord[] | null {
+  if (spoken.length < tokens.length) return null;
+  const picked: SpokenWord[] = [];
+  let at = 0;
+  for (const token of tokens) {
+    const want = normalizeWordText(token);
+    let j = at;
+    while (j < spoken.length && normalizeWordText((spoken[j] as SpokenWord).text) !== want) j += 1;
+    if (j >= spoken.length) return null;
+    picked.push(spoken[j] as SpokenWord);
+    at = j + 1;
+  }
+  return picked;
+}
+
+/**
+ * Split cues into words, using the provider's own timings where it gave them.
+ *
+ * `spoken` is the provider's word list for the WHOLE transcript, in the same
+ * time base as `cues`; the words belonging to each cue are the ones whose
+ * midpoint falls inside it. Omit it (or pass an empty list) and every word is
+ * estimated — which is what a caption-rebuilt transcript gets.
+ *
+ * The estimate's weight is `characters + 1`: the +1 is the space, and without
+ * it a segment of one-letter words distributes its time almost entirely to the
+ * last one. A cue whose text is only whitespace contributes nothing rather than
+ * a zero-length word, which would otherwise be an unclickable chip.
+ */
+export function wordsFromCues(
+  cues: readonly Cue[],
+  spoken: readonly SpokenWord[] = [],
+): TranscriptWord[] {
   const out: TranscriptWord[] = [];
   for (const [cueIndex, cue] of cues.entries()) {
     const tokens = cue.text.split(/\s+/).filter((t) => t.length > 0);
     if (tokens.length === 0) continue;
+
+    /*
+     * Claimed by MIDPOINT rather than by containment: whisper's word spans
+     * routinely poke a few milliseconds past the segment they belong to (and
+     * `deoverlap` has already trimmed the segments, which widens the gap), so
+     * a containment test would drop exactly those edge words and fall back on
+     * a sentence whose timings were fine.
+     */
+    const mine = spoken.filter((w) => {
+      const mid = (w.start + w.end) / 2;
+      return mid >= cue.start - EPSILON && mid <= cue.end + EPSILON;
+    });
+    const aligned = mine.length > 0 ? alignSpokenWords(tokens, mine) : null;
+    if (aligned) {
+      for (const [i, token] of tokens.entries()) {
+        const w = aligned[i] as SpokenWord;
+        out.push({
+          id: `w${cueIndex}_${i}`,
+          text: token,
+          start: w.start,
+          end: Math.max(w.start, w.end),
+          cueIndex,
+          estimated: false,
+        });
+      }
+      continue;
+    }
+
     const span = Math.max(0, cue.end - cue.start);
     const weights = tokens.map((t) => t.length + 1);
     const total = weights.reduce((a, b) => a + b, 0);

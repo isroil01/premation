@@ -65,7 +65,7 @@ import '@core/scene/environmentImage';
 import { isColorEffect } from '@core/effects/effectColorMatrix';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { faceEffectsFor } from '@core/scene/faceEffects';
-import { shadeLayer, planeNormalOf, toShaderLights, lightAim3D, type SceneLight } from '@core/scene/lightShading';
+import { shadeLayer, planeNormalOf, toShaderLights, lightAim3D, aimToCompAngleDeg, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
 import { contentAwareFillAt } from '@core/effects/contentAwareFillVideo';
 import { resolvePathOps, applyPathOpChain, shapeOutline, type PolyRun } from '@core/scene/pathOps';
@@ -98,14 +98,14 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 const DEG = Math.PI / 180;
 import type { MotionSample } from './RenderBackend';
 import type { AnimationEngine } from '@motion/animation';
-import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint } from './RenderBackend';
+import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint, SsaoConfig } from './RenderBackend';
 import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, resolvePuppetSilhouette, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { resolveLivePins } from '../rig/livePins';
 import { resolveActiveIkTargets } from '../rig/liveIkTargets';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
-import { readNodeSkeleton } from '../rig/skeletonCommands';
+import { readNodeSkeleton, bindPoseBones } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
 import { resolveLiveBones } from '../rig/liveBones';
 import { applyIk, getSkeletonBinding, skinRigVertices, type IkTargetResolved } from '../rig/rigDeform';
@@ -158,6 +158,21 @@ export interface SnapshotComp {
    * headless paths never set it, so their output is untouched.
    */
   customViewCamera?: Project3D.Camera3D;
+  /**
+   * Screen-space AMBIENT OCCLUSION, from Composition Settings > World.
+   *
+   * Optional, and absent on every document that predates it -- which is the
+   * whole compatibility story: the renderer's gate is `enabled`, an absent
+   * block never reaches the shade tail, and a comp that never opted in packs
+   * the identical uniform bytes it packed before AO existed.
+   *
+   * Rides on `comp` rather than on its own parameter for the reason
+   * `forExport` does: `buildSnapshot` recurses for a comp INSTANCE and
+   * spreads `{...comp}` into that call, so a field here propagates into
+   * nested comps for free -- which is what a look belonging to the
+   * composition should do.
+   */
+  ssao?: SsaoConfig;
   /**
    * Draft 3D (AE's lightning bolt): skip depth-of-field blur and all lighting
    * (light washes, Lambert shading, cast shadows) for a fast interactive
@@ -1290,8 +1305,14 @@ export function buildSnapshot(
    *
    * WORLD rotation, not local, so a spot parented to a spinning null sweeps
    * with the rig — the same parent-awareness `nodeWorldPosition` gives the
-   * origin. A TARGETED light is unaffected: a POI is a real 3D aim and wins
-   * over `angle` outright (see `lightAim3D`), exactly as in AE.
+   * origin.
+   *
+   * This is the UNTARGETED aim, and only that. A POI is a real 3D aim and wins
+   * over `angle` outright, exactly as in AE — resolved once at the
+   * `sceneLights` push below (`lightAim3D` → `aimToCompAngleDeg`), which every
+   * consumer including the wash then reads back off the resolved light. Do not
+   * call this at a render site: a targeted light called here aims at Direction,
+   * which is the bug this note used to claim was impossible.
    */
   const nodeLightAimDeg = (n: SceneNode, lt: { angle: number }): number => {
     const base = valuesOf(n.id).get('lightAngle') ?? lt.angle;
@@ -1645,7 +1666,7 @@ export function buildSnapshot(
       }
       continue;
     }
-    sceneLights.push({
+    const resolved: SceneLight = {
       ...lt,
       intensity: av.get('intensity') ?? lt.intensity,
       radius: av.get('radius') ?? lt.radius,
@@ -1684,8 +1705,34 @@ export function buildSnapshot(
       x: wp.x,
       y: wp.y,
       z: wp.z,
-    });
-    sceneLightById.set(n.id, sceneLights[sceneLights.length - 1]!);
+    };
+    /*
+      ONE resolved aim, and this is where it is resolved.
+
+      A targeted light's direction is `poi − position` in real 3D, and both
+      those numbers only exist HERE — the world position and the parent-lifted
+      target. The per-fragment shader and the per-quad Lambert term already
+      read it (`lightAim3D` wins over `angle` inside `shadeLayer` and
+      `toShaderLights`), and so does the viewport cone gizmo. The glow WASH did
+      not: it aimed its quad with `nodeLightAimDeg`, i.e. Direction + world
+      rotation, which a POI is supposed to override outright.
+
+      So a targeted spot lit its 3D layers at the target while its visible cone
+      stayed pinned to Direction — moving the light re-aimed the shading and
+      the gizmo and left the glow pointing the old way, which reads as "only
+      the blueprint points at the target". Folding the comp-plane angle of the
+      resolved aim back into `angle` is what makes the flat consumer read the
+      same aim as the 3D ones instead of re-deriving its own.
+
+      An aim perpendicular to the comp plane has no comp angle at all
+      (`aimToCompAngleDeg` returns null); it keeps the untargeted value, and the
+      landed-pool projection below is what draws that case honestly.
+    */
+    const aim3 = lightAim3D(resolved);
+    const aimedDeg = aim3 ? aimToCompAngleDeg(aim3) : null;
+    if (aimedDeg !== null) resolved.angle = aimedDeg;
+    sceneLights.push(resolved);
+    sceneLightById.set(n.id, resolved);
   }
 
   const withShadow = (f: string | undefined, lx: number, ly: number): string | undefined => {
@@ -1928,7 +1975,14 @@ export function buildSnapshot(
       // CPU — a scrub of Direction, or any rotation keyframe, re-baked on every
       // frame. Rotating the renderable instead makes the sweep a matrix change,
       // and lets the texture be cached across the whole rotation.
-      const aimDeg = nodeLightAimDeg(node, lt);
+      // The SAME light the shading reads, not a second derivation of it. Its
+      // `angle` is already the resolved aim: the target's comp-plane direction
+      // when the light has one, Direction + world rotation when it does not.
+      // Re-deriving here is exactly how the wash came to point along Direction
+      // while the shader, the Lambert term and the cone gizmo pointed at the
+      // target. (A light that never reached `sceneLights` — draft 3D, which
+      // draws no wash at all — keeps the untargeted sum as the fallback.)
+      const aimDeg = sceneLightById.get(node.id)?.angle ?? nodeLightAimDeg(node, lt);
       const shape = {
         falloff: lt.falloff,
         radius: av?.get('radius') ?? lt.radius,
@@ -2959,7 +3013,18 @@ export function buildSnapshot(
       // density/expansion off its own config.
       const meshRig = hasPuppet
         ? puppetRig!
-        : { pins: [], meshDensity: skelRig!.meshDensity, meshExpansion: skelRig!.meshExpansion };
+        : {
+            pins: [],
+            meshDensity: skelRig!.meshDensity,
+            meshExpansion: skelRig!.meshExpansion,
+            // Forwarded so a bone-only layer can reach the alpha-OUTLINE mesh.
+            // Without it the skeleton is pinned to the bbox grid whatever the rig
+            // asks for, and a thin arm has no triangles of its own to bend.
+            // `nodeRestMesh` forwards the same field; the two must stay equal or
+            // the overlay's weight heatmap addresses different vertices from the
+            // render (overlayMeshParity covers exactly this).
+            meshMode: skelRig!.meshMode,
+          };
       const w = layer.width ?? 100;
       const h = layer.height ?? 100;
       const silhouette = resolvePuppetSilhouette(pathSilhouette, coverage, w, h, meshRig.meshMode);
@@ -3008,7 +3073,10 @@ export function buildSnapshot(
         // Weights bound once per (mesh × rest skeleton) and cached — not
         // recomputed per frame. Skinning positions come from the (possibly
         // puppet-deformed) vertex buffer; weights always from rest positions.
-        const binding = getSkeletonBinding(restMesh, skelRig!.bones, skelRig!.weightPaint);
+        // BIND to the rig's stored rest pose (`bones` itself when it has never
+        // been posed statically), POSE with the live/solved one. Binding to the
+        // posed bones would make every pose·bindInverse the identity.
+        const binding = getSkeletonBinding(restMesh, bindPoseBones(skelRig!), skelRig!.weightPaint);
         deformedVertices = skinRigVertices(binding, poseWorld, deformedVertices);
       }
 
@@ -4485,6 +4553,11 @@ export function buildSnapshot(
     // The atlas is memoised on the SKY alone (intensity and rotation are
     // shader uniforms), so this is a map lookup on every frame but the first —
     // which is what lets a keyframed environment cost nothing per frame.
+    // Ambient occlusion. Carried only with a 3D layer to occlude and only
+    // when the comp actually turned it on: a disabled block would add a key
+    // to every snapshot of every project that never opted in, and the
+    // renderer would then have to re-derive "off" from it every frame.
+    ...(has3d && comp.ssao?.enabled ? { ssao: comp.ssao } : {}),
     ...(has3d && envReflect && envReflect.intensity > 0
       ? {
         envMap: {

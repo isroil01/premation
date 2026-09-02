@@ -75,6 +75,20 @@ export interface DrawItem {
    *  a 24-bit depth packed across rgb and a filtered blend of two of them is not
    *  a depth. That is why it cannot be the layer's sampler. */
   shadowSampler?: SamplerHandle;
+  /**
+   * The run's ambient-occlusion buffer, at bindings 11/12.
+   *
+   * Bound on EVERY lit-3d draw for the same reason {@link envTexture} and
+   * {@link shadowTexture} are: the shader skips it on a zero `aoParams.x`, and
+   * making the BINDING the switch would mean a second pipeline per 3d material
+   * to say what one uniform already says. A run without SSAO binds the shared
+   * 1x1 white texel — "nothing occludes anything" — which is never sampled.
+   */
+  aoTexture?: TextureHandle;
+  /** Sampler for {@link aoTexture} — LINEAR-clamp, because the buffer is
+   *  usually half resolution and is being magnified. It cannot be the layer's:
+   *  `solid3d` has no layer sampler for the backend to broadcast. */
+  aoSampler?: SamplerHandle;
   /** Optional custom geometry for mesh rendering. */
   vertexBuffer?: BufferHandle;
   indexBuffer?: BufferHandle;
@@ -120,6 +134,16 @@ export class CommandBuffer {
    * a binding its material does not declare.
    */
   shadow?: { texture: TextureHandle; sampler: SamplerHandle };
+
+  /**
+   * The ambient-occlusion buffer every lit-3d draw in this buffer binds.
+   *
+   * A property of the PASS, like `env` and `shadow`: a depth run renders one
+   * screen-space AO image and every receiver in the run reads that same
+   * texture. The `emit*3D` helpers stamp it onto their items, so a 2D draw
+   * never acquires a binding its material does not declare.
+   */
+  ao?: { texture: TextureHandle; sampler: SamplerHandle };
 
   add(item: DrawItem): void {
     this.items.push(item);

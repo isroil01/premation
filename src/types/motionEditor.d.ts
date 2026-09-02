@@ -143,7 +143,19 @@ export interface AiImageRequest {
  * See `@core/captions/transcribe`.
  */
 export type AiTranscribeResult =
-  | { ok: true; cues: Array<{ start: number; end: number; text: string }>; language?: string }
+  | {
+      ok: true;
+      cues: Array<{ start: number; end: number; text: string }>;
+      /**
+       * Per-WORD timings, when the model returned them.
+       *
+       * Same time base as `cues`. Absent when the model gave none, which the
+       * caller treats as "estimate word times inside each segment" — the
+       * behaviour that shipped before word granularity was requested.
+       */
+      words?: Array<{ start: number; end: number; text: string }>;
+      language?: string;
+    }
   | { ok: false; code: string; message: string };
 
 export type AiImageResult =
@@ -216,6 +228,40 @@ export type UpdateStatus =
   | { kind: 'ready'; version: string }
   | { kind: 'unsupported'; reason: string }
   | { kind: 'error'; message: string };
+
+/*
+  ★ The two shapes below are DUPLICATED from electron/renderResume.ts, for the
+  same reason `UpdateStatus` is duplicated from electron/updaterPolicy.ts: the
+  renderer must not import main-process sources (they pull in `electron`, which
+  does not resolve in a browser build) and main must not import from `src/`.
+  `renderResumeContract.test.ts` compares the two copies as text.
+
+  `spec` is `unknown` on both sides deliberately. It is the render queue's own
+  `RenderJobSpec`, round-tripped through JSON on disk by a process that never
+  reads a field of it — so main is in no position to promise its shape back, and
+  `renderQueueStore` validates what it gets.
+*/
+
+/** A previous session's render that still has frames on disk. */
+export interface ResumableRenderJob {
+  jobId: string;
+  spec: unknown;
+  format: string;
+  totalFrames: number;
+  stagedFrames: number;
+  createdAt: number;
+}
+
+/** A re-registered job: its dir is live again under the same id. */
+export interface AdoptedRenderJob {
+  jobId: string;
+  spec: unknown;
+  format: string;
+  totalFrames: number;
+  stagedFrames: number;
+  nextFrame: number;
+  frameExt: 'jpg' | 'png';
+}
 
 export interface MotionEditorApi {
   readonly platform: string;
@@ -379,7 +425,24 @@ export interface MotionEditorApi {
   };
 
   render?: {
-    beginJob?(): Promise<string>;
+    /**
+     * Open a staging dir. `info` is what makes the render RESUMABLE across a
+     * restart: it is written to `resume.json` in the dir, so a later session can
+     * find the frames and know what they were for. Omitted, the job stages
+     * exactly as before and is never offered back — which is right for one-shot
+     * exports and for the headless CLI.
+     */
+    beginJob?(info?: { spec?: unknown; format?: string; totalFrames?: number }): Promise<string>;
+    /** Renders a previous session left half-staged on disk, newest first. */
+    listResumableJobs?(): Promise<ResumableRenderJob[]>;
+    /**
+     * Re-register one of those dirs under its ORIGINAL id, so `stageFrame` and
+     * `encode` reach it again, and report how many contiguous frames are really
+     * there. Null when the id names nothing resumable.
+     */
+    adoptJob?(jobId: string): Promise<AdoptedRenderJob | null>;
+    /** Delete a staging dir the queue decided not to finish. */
+    discardJob?(jobId: string): Promise<void>;
     stageFrame?(jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png'): Promise<void>;
     stageAudio?(jobId: string, bytes: Uint8Array): Promise<void>;
     encode?(

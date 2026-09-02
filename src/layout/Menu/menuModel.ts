@@ -3,6 +3,14 @@
  * bound to a command id. This is the extension point: future engines append
  * items (or whole groups) here, and the CommandRegistry supplies the label /
  * enabled state / shortcut, so the menu bar stays a thin renderer.
+ *
+ * SHAPE. Each top-level group is meant to fit on screen without scrolling —
+ * roughly what After Effects and Premiere manage: the handful of entries a
+ * user reaches for constantly stay at the top level, and every long family
+ * (five reframe aspects, five caption verbs, eight keyframe assistants…)
+ * collapses into a parent carrying `children`. `menuSubmenus.test.ts` pins
+ * the ceiling, so a group that grows past it has to fold something rather
+ * than run off the bottom of the window again.
  */
 
 import { BuiltinCommands } from '@core/commands/Command';
@@ -82,6 +90,13 @@ export interface MenuGroupModel {
   items: MenuItemModel[];
 }
 
+/**
+ * Label of the Layer ▸ New submenu. `useAppMenuGroups` appends plugin layer
+ * kinds inside it, so the two files agree on the name through this constant
+ * rather than through a string that has to be kept in step by hand.
+ */
+export const LAYER_NEW_SUBMENU_LABEL = 'New';
+
 export const APP_MENU: MenuGroupModel[] = [
   {
     id: 'file',
@@ -149,10 +164,17 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: BuiltinCommands.DuplicateSelected, label: 'Duplicate' },
       { separator: true },
-      // Text-based editing: delete the selected transcript words' time range
-      // from every layer, closing the gap.
-      { commandId: 'transcript.deleteSelection', label: 'Delete Transcript Selection' },
-      { commandId: 'transcript.selectFillers', label: 'Select Filler Words' },
+      {
+        // Text-based editing. Both act on the transcript panel's selection
+        // rather than on layers — delete the selected words' time range from
+        // every layer, closing the gap; or select the filler words to delete.
+        // Folded beside Delete because that is the verb they refine.
+        label: 'Transcript',
+        children: [
+          { commandId: 'transcript.deleteSelection', label: 'Delete Transcript Selection' },
+          { commandId: 'transcript.selectFillers', label: 'Select Filler Words' },
+        ],
+      },
       { commandId: BuiltinCommands.DeleteSelected, label: 'Delete' },
     ],
   },
@@ -166,84 +188,127 @@ export const APP_MENU: MenuGroupModel[] = [
       // start cards and the Composition panel menu, so the menu was simply
       // missing an entry for a working feature.
       { commandId: 'comp.new', label: 'New Composition…' },
-      { commandId: 'comp.multicam', label: 'New Multicam from Selected Assets…' },
-      // Both act on FOOTAGE rather than on the open comp, which is why they sit
-      // beside New Composition rather than under Layer: the result of each is a
-      // composition that did not exist before (or, for Assemble on a layer, a
-      // comp whose whole cut did not exist before).
-      { commandId: 'comp.newFromSelectedClips', label: 'New Composition from Selected Clips…' },
-      { commandId: 'comp.assembleFromFootage', label: 'Assemble from Footage…' },
+      {
+        // All three act on FOOTAGE rather than on the open comp, which is why
+        // they sit beside New Composition rather than under Layer: the result
+        // of each is a composition that did not exist before (or, for Assemble
+        // on a layer, a comp whose whole cut did not exist before).
+        label: 'New From Footage',
+        children: [
+          { commandId: 'comp.multicam', label: 'New Multicam from Selected Assets…' },
+          { commandId: 'comp.newFromSelectedClips', label: 'New Composition from Selected Clips…' },
+          { commandId: 'comp.assembleFromFootage', label: 'Assemble from Footage…' },
+        ],
+      },
+      { separator: true },
       { commandId: 'comp.settings', label: 'Composition Settings…' },
       { commandId: 'comp.delete', label: 'Delete Composition' },
-      { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
       { separator: true },
-      // One entry per target shape rather than a dialog: the only input is the
-      // aspect, and this way the whole feature is reachable by typing '9:16'
-      // into the command palette. Each greys itself out for a comp already at
-      // that aspect, which would have nothing to pan within.
-      { commandId: 'comp.autoReframe.9:16', label: 'Auto-Reframe to 9:16 Vertical' },
-      { commandId: 'comp.autoReframe.1:1', label: 'Auto-Reframe to 1:1 Square' },
-      { commandId: 'comp.autoReframe.4:5', label: 'Auto-Reframe to 4:5 Portrait' },
-      { commandId: 'comp.autoReframe.16:9', label: 'Auto-Reframe to 16:9 Widescreen' },
-      { commandId: 'comp.autoReframe.4:3', label: 'Auto-Reframe to 4:3 Classic' },
-      { separator: true },
-      // Captions sit under Composition rather than Layer: they are a property
-      // of the whole comp (its spoken words), and every one of these acts on
-      // all of them at once, not on a selection.
-      { commandId: 'captions.import', label: 'Import Captions…' },
-      { commandId: 'captions.generate', label: 'Generate Captions from Audio' },
-      { commandId: 'captions.exportSrt', label: 'Export Captions (.srt)…' },
-      { commandId: 'captions.exportVtt', label: 'Export Captions (.vtt)…' },
-      { commandId: 'captions.clear', label: 'Remove All Captions' },
-      { separator: true },
-      // The transcript panel's verbs: the same spoken words, as an editable list.
-      { commandId: 'transcript.transcribe', label: 'Transcribe Composition' },
-      { commandId: 'transcript.addCaptions', label: 'Transcript to Captions' },
-      { commandId: 'transcript.exportSrt', label: 'Export Transcript (.srt)…' },
-      { commandId: 'transcript.exportVtt', label: 'Export Transcript (.vtt)…' },
+      {
+        // One entry per target shape rather than a dialog: the only input is
+        // the aspect, and this way the whole feature is reachable by typing
+        // '9:16' into the command palette. Each greys itself out for a comp
+        // already at that aspect, which would have nothing to pan within.
+        label: 'Auto-Reframe',
+        children: [
+          { commandId: 'comp.autoReframe.9:16', label: '9:16 Vertical' },
+          { commandId: 'comp.autoReframe.1:1', label: '1:1 Square' },
+          { commandId: 'comp.autoReframe.4:5', label: '4:5 Portrait' },
+          { commandId: 'comp.autoReframe.16:9', label: '16:9 Widescreen' },
+          { commandId: 'comp.autoReframe.4:3', label: '4:3 Classic' },
+        ],
+      },
+      {
+        // Captions sit under Composition rather than Layer: they are a
+        // property of the whole comp (its spoken words), and every one of
+        // these acts on all of them at once, not on a selection.
+        label: 'Captions',
+        children: [
+          { commandId: 'captions.import', label: 'Import…' },
+          { commandId: 'captions.generate', label: 'Generate from Audio' },
+          { commandId: 'captions.exportSrt', label: 'Export .srt…' },
+          { commandId: 'captions.exportVtt', label: 'Export .vtt…' },
+          { commandId: 'captions.clear', label: 'Remove All' },
+        ],
+      },
+      {
+        // The transcript panel's verbs: the same spoken words, as an editable list.
+        label: 'Transcript',
+        children: [
+          { commandId: 'transcript.transcribe', label: 'Transcribe Composition' },
+          { commandId: 'transcript.addCaptions', label: 'Convert to Captions' },
+          { commandId: 'transcript.exportSrt', label: 'Export .srt…' },
+          { commandId: 'transcript.exportVtt', label: 'Export .vtt…' },
+        ],
+      },
       { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
       { commandId: 'comp.copyFrame', label: 'Copy Frame to Clipboard' },
+      { separator: true },
+      // A demo-scene loader, not a composition verb — last, below a rule, so
+      // it does not read as part of the working set above it.
+      { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
     ],
   },
   {
     id: 'layer',
     label: 'Layer',
     items: [
-      { commandId: 'layer.newText', label: 'New Text Layer' },
-      { commandId: 'layer.newSolid', label: 'New Solid Layer…' },
-      { commandId: 'layer.newCamera', label: 'New Camera Layer' },
-      { commandId: 'layer.newLight', label: 'New Light Layer' },
-      { commandId: 'layer.newNull', label: 'New Null Object' },
-      { commandId: 'layer.newAdjustment', label: 'New Adjustment Layer' },
       {
-        // The 3D inserts existed only in the TopNav "+" dropdown — a place you
-        // browse rather than search. They belong beside the other New entries.
-        label: 'New 3D Primitive',
+        // Everything that creates a layer, under one parent — the shape AE
+        // uses (Layer ▸ New ▸ …), and the one `useAppMenuGroups` extends with
+        // plugin layer kinds, so a plugin's layer sits beside Text and Solid
+        // rather than under a menu named after the mechanism providing it.
+        label: LAYER_NEW_SUBMENU_LABEL,
         children: [
-          { commandId: 'layer.new3d.cube', label: 'Cube' },
-          { commandId: 'layer.new3d.sphere', label: 'Sphere' },
-          { commandId: 'layer.new3d.cylinder', label: 'Cylinder' },
-          { commandId: 'layer.new3d.plane', label: 'Plane' },
-          { commandId: 'layer.new3d.cone', label: 'Cone' },
-          { commandId: 'layer.new3d.torus', label: 'Torus' },
-          { commandId: 'layer.new3d.capsule', label: 'Capsule' },
-          { commandId: 'layer.new3d.box', label: 'Box (mesh)' },
+          { commandId: 'layer.newText', label: 'Text' },
+          { commandId: 'layer.newSolid', label: 'Solid…' },
+          { commandId: 'layer.newCamera', label: 'Camera' },
+          { commandId: 'layer.newLight', label: 'Light' },
+          { commandId: 'layer.newNull', label: 'Null Object' },
+          { commandId: 'layer.newAdjustment', label: 'Adjustment Layer' },
+          { separator: true },
+          {
+            // The 3D inserts existed only in the TopNav "+" dropdown — a place
+            // you browse rather than search. They belong beside the other New
+            // entries.
+            label: '3D Primitive',
+            children: [
+              { commandId: 'layer.new3d.cube', label: 'Cube' },
+              { commandId: 'layer.new3d.sphere', label: 'Sphere' },
+              { commandId: 'layer.new3d.cylinder', label: 'Cylinder' },
+              { commandId: 'layer.new3d.plane', label: 'Plane' },
+              { commandId: 'layer.new3d.cone', label: 'Cone' },
+              { commandId: 'layer.new3d.torus', label: 'Torus' },
+              { commandId: 'layer.new3d.capsule', label: 'Capsule' },
+              { commandId: 'layer.new3d.box', label: 'Box (mesh)' },
+            ],
+          },
         ],
       },
       { separator: true },
-      { commandId: 'layer.bringToFront', label: 'Bring to Front' },
-      { commandId: 'layer.bringForward', label: 'Bring Forward' },
-      { commandId: 'layer.sendBackward', label: 'Send Backward' },
-      { commandId: 'layer.sendToBack', label: 'Send to Back' },
-      { separator: true },
+      {
+        label: 'Arrange',
+        children: [
+          { commandId: 'layer.bringToFront', label: 'Bring to Front' },
+          { commandId: 'layer.bringForward', label: 'Bring Forward' },
+          { commandId: 'layer.sendBackward', label: 'Send Backward' },
+          { commandId: 'layer.sendToBack', label: 'Send to Back' },
+        ],
+      },
       { commandId: 'layer.precompose', label: 'Pre-compose…' },
       { separator: true },
-      { commandId: 'layer.nullsFromPath', label: 'Create Nulls From Path Points' },
-      { commandId: 'layer.nullsFromPathLive', label: 'Create Nulls From Path Points (Points Follow Nulls)' },
-      { commandId: 'layer.shapesFromText', label: 'Create Shapes From Text' },
-      { commandId: 'layer.autoTrace', label: 'Auto-trace…' },
-      { separator: true },
+      {
+        // Derive new layers from the selection — nulls from a path's points,
+        // shapes from text, a traced outline from footage.
+        label: 'Create',
+        children: [
+          { commandId: 'layer.nullsFromPath', label: 'Nulls From Path Points' },
+          { commandId: 'layer.nullsFromPathLive', label: 'Nulls From Path Points (Points Follow Nulls)' },
+          { commandId: 'layer.shapesFromText', label: 'Shapes From Text' },
+          { commandId: 'layer.autoTrace', label: 'Auto-trace…' },
+        ],
+      },
       {
         /**
          * Boolean path ops. Both engines shipped complete and lived in ONE
@@ -266,24 +331,33 @@ export const APP_MENU: MenuGroupModel[] = [
         ],
       },
       { separator: true },
-      // AE puts Scene Edit Detection under Layer, and so did the code's own
-      // comment on the clip menu — which was the only place it could be run.
-      { commandId: 'layer.sceneEditDetect.markers', label: 'Scene Edit Detection → Markers' },
-      { commandId: 'layer.sceneEditDetect.split', label: 'Scene Edit Detection → Split Clips' },
+      {
+        // AE puts Scene Edit Detection under Layer, and so did the code's own
+        // comment on the clip menu — which was the only place it could be run.
+        label: 'Scene Edit Detection',
+        children: [
+          { commandId: 'layer.sceneEditDetect.markers', label: 'Markers' },
+          { commandId: 'layer.sceneEditDetect.split', label: 'Split Clips' },
+        ],
+      },
     ],
   },
   {
     id: 'effect',
     label: 'Effect',
     items: [
+      // Short enough to stay flat; ruled into families so it scans like AE's
+      // Effect menu rather than like the order the shaders were written in.
       { commandId: 'effect.blur', label: 'Fast Box Blur' },
-      { commandId: 'effect.glow', label: 'Glow' },
+      { separator: true },
       { commandId: 'effect.brightness', label: 'Brightness & Contrast' },
       { commandId: 'effect.contrast', label: 'Contrast' },
       { commandId: 'effect.saturate', label: 'Hue/Saturation' },
+      { commandId: 'effect.hue', label: 'Hue Rotate' },
+      { separator: true },
+      { commandId: 'effect.glow', label: 'Glow' },
       { commandId: 'effect.grayscale', label: 'Grayscale' },
       { commandId: 'effect.sepia', label: 'Sepia' },
-      { commandId: 'effect.hue', label: 'Hue Rotate' },
     ],
   },
   {
@@ -291,47 +365,89 @@ export const APP_MENU: MenuGroupModel[] = [
     id: 'animation',
     label: 'Animation',
     items: [
+      // The three eases stay at the top level: they are the entries a user
+      // reaches for on every other keyframe, and AE keeps them there too.
       { commandId: 'anim.easyEase', label: 'Easy Ease' },
       { commandId: 'anim.easyEaseIn', label: 'Easy Ease In' },
       { commandId: 'anim.easyEaseOut', label: 'Easy Ease Out' },
+      {
+        label: 'Keyframe Interpolation',
+        children: [
+          { commandId: 'anim.interpLinear', label: 'Linear' },
+          { commandId: 'anim.interpHold', label: 'Hold' },
+        ],
+      },
+      {
+        // AE Animation ▸ Keyframe Assistant — engines lived in the palette /
+        // TopNav only; this menu is where AE muscle memory looks first.
+        label: 'Keyframe Assistant',
+        children: [
+          { commandId: 'animation.easyEaseAll', label: 'Easy Ease All Keyframes' },
+          { commandId: 'animation.timeReverseKeyframes', label: 'Time-Reverse Keyframes' },
+          { commandId: 'animation.exponentialScale', label: 'Exponential Scale' },
+          { commandId: 'animation.smoother', label: 'The Smoother…' },
+          { commandId: 'animation.wiggler', label: 'The Wiggler…' },
+          { separator: true },
+          // The two that act across LAYERS rather than within one property's
+          // keyframes, below a rule.
+          { commandId: 'animation.sequenceLayerBars', label: 'Sequence Layers…' },
+          { commandId: 'animation.sequenceLayers', label: 'Stagger Animations…' },
+        ],
+      },
       { separator: true },
-      { commandId: 'anim.interpLinear', label: 'Linear Interpolation' },
-      { commandId: 'anim.interpHold', label: 'Hold Interpolation' },
-      { separator: true },
-      // AE Animation ▸ Keyframe Assistant — engines lived in the palette / TopNav
-      // only; this menu is where AE muscle memory looks first.
-      { commandId: 'animation.easyEaseAll', label: 'Easy Ease All Keyframes' },
-      { commandId: 'animation.timeReverseKeyframes', label: 'Time-Reverse Keyframes' },
-      { commandId: 'animation.exponentialScale', label: 'Exponential Scale' },
-      { commandId: 'animation.smoother', label: 'The Smoother…' },
-      { commandId: 'animation.wiggler', label: 'The Wiggler…' },
-      { commandId: 'animation.sequenceLayerBars', label: 'Sequence Layers…' },
-      { commandId: 'animation.sequenceLayers', label: 'Stagger Animations…' },
-      { separator: true },
-      { commandId: 'dynamics.bakePhysics', label: 'Bake Physics to Keyframes…' },
-      { commandId: 'dynamics.bakeParticles', label: 'Bake Particles to Layers…' },
-      { separator: true },
-      // Creates animation on layers that have none — the counterpart to
-      // Stagger Animations above, which only offsets keyframes that exist.
-      { commandId: 'animation.animateIn', label: 'Animate In' },
-      { commandId: 'animation.animateOut', label: 'Animate Out' },
-      { commandId: 'animation.motionFeel.snappy', label: 'Motion Feel: Snappy' },
-      { commandId: 'animation.motionFeel.smooth', label: 'Motion Feel: Smooth' },
-      { commandId: 'animation.motionFeel.bouncy', label: 'Motion Feel: Bouncy' },
-      { commandId: 'animation.animateInOnBeats', label: 'Animate In on Beats' },
-      { commandId: 'audio.markBeats', label: 'Markers on Beats' },
-      { commandId: 'audio.removeSilence', label: 'Remove Silence…' },
-      { commandId: 'audio.duckMusic', label: 'Duck Under Voice…' },
-      { separator: true },
-      { commandId: 'time.speedRamp.quarter', label: 'Speed Ramp to 25%' },
-      { commandId: 'time.speedRamp.normal', label: 'Speed Ramp back to 100%' },
+      {
+        // Creates animation on layers that have none — the counterpart to
+        // Stagger Animations above, which only offsets keyframes that exist.
+        label: 'Animate',
+        children: [
+          { commandId: 'animation.animateIn', label: 'Animate In' },
+          { commandId: 'animation.animateOut', label: 'Animate Out' },
+          { separator: true },
+          {
+            label: 'Motion Feel',
+            children: [
+              { commandId: 'animation.motionFeel.snappy', label: 'Snappy' },
+              { commandId: 'animation.motionFeel.smooth', label: 'Smooth' },
+              { commandId: 'animation.motionFeel.bouncy', label: 'Bouncy' },
+            ],
+          },
+        ],
+      },
+      {
+        // Everything driven by the comp's sound: the beat-driven verbs, the
+        // two edits that read the waveform, and the bake to keyframes.
+        label: 'Audio',
+        children: [
+          { commandId: 'animation.animateInOnBeats', label: 'Animate In on Beats' },
+          { commandId: 'audio.markBeats', label: 'Markers on Beats' },
+          { separator: true },
+          { commandId: 'audio.removeSilence', label: 'Remove Silence…' },
+          { commandId: 'audio.duckMusic', label: 'Duck Under Voice…' },
+          { separator: true },
+          { commandId: 'animation.convertAudioToKeyframes', label: 'Convert Audio to Keyframes' },
+        ],
+      },
+      {
+        label: 'Time',
+        children: [
+          { commandId: 'time.speedRamp.quarter', label: 'Speed Ramp to 25%' },
+          { commandId: 'time.speedRamp.normal', label: 'Speed Ramp back to 100%' },
+        ],
+      },
+      {
+        // The three that turn something procedural into plain keyframes.
+        label: 'Bake',
+        children: [
+          { commandId: 'dynamics.bakePhysics', label: 'Bake Physics to Keyframes…' },
+          { commandId: 'dynamics.bakeParticles', label: 'Bake Particles to Layers…' },
+          {
+            commandId: 'animation.convertExpressionToKeyframes',
+            label: 'Convert Expression to Keyframes',
+          },
+        ],
+      },
       { separator: true },
       { commandId: 'animation.motionSketch', label: 'Motion Sketch' },
-      { commandId: 'animation.convertAudioToKeyframes', label: 'Convert Audio to Keyframes' },
-      {
-        commandId: 'animation.convertExpressionToKeyframes',
-        label: 'Convert Expression to Keyframes',
-      },
     ],
   },
   {
@@ -342,14 +458,20 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: BuiltinCommands.ToggleRightInspector, label: 'Toggle Inspector' },
       { commandId: BuiltinCommands.ToggleTimeline, label: 'Toggle Timeline' },
       { separator: true },
-      { commandId: 'view.grid', label: 'Show Grid' },
-      { commandId: 'view.proportionalGrid', label: 'Show Proportional Grid' },
-      { commandId: 'view.snapToGrid', label: 'Snap to Grid' },
-      { commandId: 'view.rulers', label: 'Toggle Rulers' },
-      { commandId: 'view.safeAreas', label: 'Toggle Safe Areas' },
+      {
+        label: 'Guides & Grid',
+        children: [
+          { commandId: 'view.grid', label: 'Show Grid' },
+          { commandId: 'view.proportionalGrid', label: 'Show Proportional Grid' },
+          { commandId: 'view.snapToGrid', label: 'Snap to Grid' },
+          { commandId: 'view.rulers', label: 'Toggle Rulers' },
+          { commandId: 'view.safeAreas', label: 'Toggle Safe Areas' },
+        ],
+      },
       // A PREVIEW setting, like the guides above it: proxies change what the
       // viewport decodes and nothing about what an export writes.
       { commandId: 'view.useProxies', label: 'Use Proxies' },
+      { separator: true },
       { commandId: 'view.fitSelection', label: 'Fit Selection in View' },
       { commandId: 'timeline.zoomToFit', label: 'Fit Composition in Timeline' },
       { commandId: 'timeline.zoomToWorkArea', label: 'Fit Work Area in Timeline' },
@@ -364,11 +486,18 @@ export const APP_MENU: MenuGroupModel[] = [
         ],
       },
       { separator: true },
-      { commandId: 'preview.cacheWorkArea', label: 'Cache Work Area Now' },
-      { commandId: 'preview.purgeRam', label: 'Purge RAM Preview' },
-      { commandId: 'preview.purgeDisk', label: 'Purge Disk Cache' },
+      {
+        label: 'Cache',
+        children: [
+          { commandId: 'preview.cacheWorkArea', label: 'Cache Work Area Now' },
+          { commandId: 'preview.purgeRam', label: 'Purge RAM Preview' },
+          { commandId: 'preview.purgeDisk', label: 'Purge Disk Cache' },
+        ],
+      },
       { separator: true },
-      { commandId: BuiltinCommands.ResetLayout, label: 'Reset Layout' },
+      // No Reset Layout here: Window ▸ Workspace owns it, beside the layout
+      // presets it resets to. It was listed in both, which is two menu entries
+      // for one command.
       { commandId: BuiltinCommands.SwitchTheme, label: 'Switch Theme' },
     ],
   },

@@ -12,7 +12,12 @@
 import type { Vec2 } from '../math/Vec2';
 import type { Rect } from '../math/Rect';
 import * as R from '../math/Rect';
-import { spacingCandidates, type SpacingCandidate } from './smartGuides';
+import {
+  spacingCandidates,
+  equalSizeCandidates,
+  type SpacingCandidate,
+  type SizeCandidate,
+} from './smartGuides';
 
 export interface SnapSettings {
   enabled: boolean;
@@ -217,6 +222,39 @@ export class SnapEngine {
     const snappedRect = R.translate(rect, { x: dx, y: dy });
     const result = this.buildResult(snappedRect, { x: dx, y: dy }, xMatch, yMatch, R.center(rect));
     return { ...result, snapped: result.snapped || spacing.length > 0, spacing };
+  }
+
+  /**
+   * Equal-SIZE matches for a rect that is being RESIZED — the size half of
+   * smart guides, and the half a move gesture can only light up.
+   *
+   * A resize is not a translation, so this cannot ride along in `snapRect`:
+   * the caller owns the fixed point (the opposite edge, the anchor, or the
+   * centre under Alt) and is the only thing that can grow the box while
+   * keeping it. So the engine answers the measuring question — "which
+   * neighbour is this box nearly as wide/tall as, and by how much" — and the
+   * tool applies it.
+   *
+   * At most one per axis, nearest first: two competing sizes on one axis
+   * cannot both be applied. Gated on the same settings as the rest of smart
+   * guides, so turning them off (or object snapping off, or snapping off)
+   * takes this with them.
+   */
+  sizeMatches(
+    rect: Rect,
+    others: readonly Rect[],
+    thresholdWorld: number,
+  ): SizeCandidate[] {
+    const s = this.settings;
+    if (!s.enabled || !s.smartGuides || !s.toObjects) return [];
+    const out: SizeCandidate[] = [];
+    const seen = new Set<'x' | 'y'>();
+    for (const c of equalSizeCandidates(rect, others, thresholdWorld)) {
+      if (seen.has(c.axis)) continue;
+      seen.add(c.axis);
+      out.push(c);
+    }
+    return out;
   }
 
   private allowed(source: SnapSource): boolean {

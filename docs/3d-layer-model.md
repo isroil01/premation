@@ -163,10 +163,16 @@ Adding a target is the fix, and the inspector says so.
 
 The untargeted aim is **Direction plus the layer's world rotation**. Rotating a
 light turns the fixture, exactly as rotating any other layer turns it, and a spot
-parented to a spinning null sweeps with the rig. Summed once, in
-`buildSnapshot`'s `nodeLightAimDeg`, so the glow, the per-quad shading, the
-per-fragment shader and the viewport cone gizmo cannot disagree. A **targeted**
-light ignores rotation outright: a POI is a real 3D aim and wins.
+parented to a spinning null sweeps with the rig. That untargeted sum lives in
+`buildSnapshot`'s `nodeLightAimDeg`. A **targeted** light ignores rotation
+outright: a POI is a real 3D aim and wins — resolved ONCE where the light is
+pushed onto `sceneLights` (`normalize(poi − worldPos)`, with the comp-plane
+angle derived from it by `aimToCompAngleDeg`), and the glow wash, the per-quad
+shading, the per-fragment shader and the viewport cone gizmo all read that one
+resolved light. Corrected 2026-09-03: the wash used to read the untargeted sum,
+so a targeted spot's visible cone stayed pinned to Direction while everything
+else re-aimed — "only the blueprint points at the target". Pinned by
+`buildSnapshotLightAim.test.ts`.
 
 **Falloff**: None (default — the legacy hard radius cutoff and linear ramp) /
 Smooth / Inverse Square Clamped. The curves reach *past* the radius, where the

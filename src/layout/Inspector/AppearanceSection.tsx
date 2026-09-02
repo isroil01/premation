@@ -590,7 +590,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
           section previews the real paint stack and covers all four categories
           plus 3D materials. */}
       <div className={styles.inlineRows}>
-        {/* Text layers own Character Color in TextSection. Editing paint fill
+        {/* Text layers own Character Color in CharacterPanel. Editing paint fill
             here wrote the same prop and looked like a duplicate background
             picker — hide Fill chrome on text; Stroke remains. */}
         {!textComp && (

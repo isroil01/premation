@@ -41,12 +41,19 @@ import { collectClipCuts, findClipCutNear, type ClipCut } from './clipCuts';
 import { useTimelineEditModeStore } from './timelineEditMode';
 import { TimelineTools } from './TimelineTools';
 import { TransitionPalette, readTransitionDrag, isTransitionDrag } from './transitionPalette';
-import { layoutTransitions, durationFromEdgeDrag, type TransitionBox } from './transitionOverlay';
+import {
+  layoutTransitions,
+  durationFromEdgeDrag,
+  nextTransitionAlignment,
+  TRANSITION_ALIGNMENT_LABEL,
+  type TransitionBox,
+} from './transitionOverlay';
 import { installTransitionCommands } from './transitionCommands';
 import {
   useTransitionStore,
   addTransition,
   removeTransition,
+  setTransition,
   previewTransition,
   commitTransitionPreview,
   compIdForTransition,
@@ -1311,6 +1318,29 @@ function Timeline({
       window.removeEventListener('pointerup', onUp);
     };
   }, [allTransitions, lanesTimeAt]);
+
+  /**
+   * Cycle a transition's alignment — the bracket's kind label is the switch.
+   *
+   * A click rather than a submenu on the bracket itself: the three placements
+   * are one property with three values, and the bracket redraws to the new
+   * shape immediately, so cycling reads as "try the next one" instead of
+   * needing a menu round-trip. The context menu still offers the three by name
+   * for anyone who wants to pick rather than step.
+   */
+  const cycleTransitionAlignment = useCallback(
+    (id: string): void => {
+      const rec = allTransitions.find((t) => t.id === id);
+      if (!rec) return;
+      setSelectedTransitionId(id);
+      void setTransition(compIdForTransition(rec), rec.id, {
+        alignment: nextTransitionAlignment(rec.alignment),
+      }).then((res) => {
+        if (!res.ok) setTransitionError(res.reason);
+      });
+    },
+    [allTransitions],
+  );
 
   /**
    * Delete removes the SELECTED transition and nothing else.
@@ -2617,6 +2647,10 @@ function Timeline({
                 independently of the two it joins. The ends are grips. */}
             {transitionBoxes.map((box) => {
               const selected = box.id === selectedTransitionId;
+              // The layout box carries only geometry; the alignment lives on
+              // the record, which is also what the toggle writes back to.
+              const alignment =
+                allTransitions.find((t) => t.id === box.id)?.alignment ?? 'centred';
               return (
                 <div
                   key={box.id}
@@ -2629,7 +2663,7 @@ function Timeline({
                     height: (box.bottomRow - box.topRow + 1) * trackHeight,
                   }}
                   title={`${TRANSITION_LABEL[box.kind]} — drag an end to change its length, Delete to remove`}
-                  aria-label={`${TRANSITION_LABEL[box.kind]} transition`}
+                  aria-label={`${TRANSITION_LABEL[box.kind]} transition, ${TRANSITION_ALIGNMENT_LABEL[alignment].toLowerCase()}`}
                   onPointerDown={(e) => {
                     // Stopped so the press does not also start a clip drag or a
                     // marquee on the lane beneath.
@@ -2643,7 +2677,22 @@ function Timeline({
                     aria-hidden
                     onPointerDown={(e) => onTransitionEdgeDown(box, 'start', e)}
                   />
-                  <span className={styles.transitionLabel}>{box.label}</span>
+                  {/* The kind label doubles as the alignment toggle: one
+                      click steps centred → start-at-cut → end-at-cut, and the
+                      bracket redraws where it now sits. */}
+                  <button
+                    type="button"
+                    className={cn(styles.transitionLabel, styles.transitionAlign)}
+                    data-alignment={alignment}
+                    title={`${TRANSITION_LABEL[box.kind]} · ${TRANSITION_ALIGNMENT_LABEL[alignment]} — click to change alignment`}
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      cycleTransitionAlignment(box.id);
+                    }}
+                  >
+                    {box.label}
+                  </button>
                   <div
                     className={styles.transitionGrip}
                     data-edge="end"

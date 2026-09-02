@@ -30,7 +30,12 @@ import { CoordinateSystem } from './coordinates/CoordinateSystem';
 import { Grid, type GridState } from './grid/Grid';
 import { Guides, type Guide, type GuideAxis } from './guides/Guides';
 import { SnapEngine, type SnapSettings, type SnapTarget, type SnapLine, type SnapResult } from './snap/SnapEngine';
-import { measureBetween, smartGuides as computeSmartGuides, type Gap } from './snap/smartGuides';
+import {
+  measureBetween,
+  smartGuides as computeSmartGuides,
+  type Gap,
+  type SizeCandidate,
+} from './snap/smartGuides';
 import { HitTester, type HitOptions } from './hit/HitTester';
 import { SelectionController } from './selection/SelectionController';
 import { CursorManager } from './cursor/CursorManager';
@@ -572,6 +577,8 @@ export class Workspace implements InputSink {
         this.buildSnapTargets(region, excludeIds),
       snapRect: (rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect> =>
         this.snapRect(rect, excludeIds),
+      sizeMatches: (rect: Rect, excludeIds?: ReadonlySet<string>): readonly SizeCandidate[] =>
+        this.sizeMatches(rect, excludeIds),
     };
   }
 
@@ -583,6 +590,29 @@ export class Workspace implements InputSink {
    * it, so tools and callers can never disagree about the answer.
    */
   snapRect(rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect> {
+    const { targets, thresholdWorld, bounds } = this.snapInputs(rect, excludeIds);
+    return this.snap.snapRect(rect, targets, thresholdWorld, bounds);
+  }
+
+  /**
+   * Equal-SIZE matches for a rect being RESIZED, against the same neighbours
+   * alignment snapping would use.
+   *
+   * Separate from `snapRect` because a resize is not a translation: only the
+   * caller knows which point the gesture holds fixed, so it applies the size
+   * change itself. Shares `snapInputs`' per-gesture cache, so asking this on
+   * every pointermove of a resize costs no more than a move drag does.
+   */
+  sizeMatches(rect: Rect, excludeIds?: ReadonlySet<string>): SizeCandidate[] {
+    const { thresholdWorld, bounds } = this.snapInputs(rect, excludeIds);
+    return this.snap.sizeMatches(rect, bounds, thresholdWorld);
+  }
+
+  /** Targets + neighbours + threshold for a rect, through the drag cache. */
+  private snapInputs(
+    rect: Rect,
+    excludeIds?: ReadonlySet<string>,
+  ): { targets: SnapTarget[]; thresholdWorld: number; bounds: Rect[] } {
     const region = R.inflate(rect, this.camera.screenDistanceToWorld(this.snap.getSettings().thresholdPx) + 4);
     // During a drag, snap targets are rebuilt at most once per REGION, not once
     // per pointermove. The per-move rebuild was O(scene): the drag's own scene
@@ -595,7 +625,7 @@ export class Workspace implements InputSink {
       const zoom = this.camera.zoom;
       const c = this.dragSnapCache;
       if (c && c.zoom === zoom && R.containsRect(c.region, region)) {
-        return this.snap.snapRect(rect, c.targets, c.thresholdWorld, c.bounds);
+        return { targets: c.targets, thresholdWorld: c.thresholdWorld, bounds: c.bounds };
       }
       const wide = R.inflate(region, this.camera.screenDistanceToWorld(1500));
       const built = this.buildSnapTargets(wide, excludeIds);
@@ -606,11 +636,10 @@ export class Workspace implements InputSink {
         thresholdWorld: built.thresholdWorld,
         bounds: built.bounds,
       };
-      return this.snap.snapRect(rect, built.targets, built.thresholdWorld, built.bounds);
+      return built;
     }
     this.dragSnapCache = null;
-    const { targets, thresholdWorld, bounds } = this.buildSnapTargets(region, excludeIds);
-    return this.snap.snapRect(rect, targets, thresholdWorld, bounds);
+    return this.buildSnapTargets(region, excludeIds);
   }
 
   /**
@@ -854,7 +883,10 @@ export class Workspace implements InputSink {
     }
 
     const spans: SmartGuideSpan[] = gaps.map((g) => this.gapToSpan(g, equalSpans.has(g)));
-    if (spans.length === 0) return null;
+    // An equal-SIZE match with no measurable gap anywhere is still worth
+    // drawing — a resize that just landed on a neighbour's width has chrome to
+    // show even when nothing is beside the layer to measure a distance to.
+    if (spans.length === 0 && sizeMatchRects.length === 0) return null;
     return { spans, sizeMatches: sizeMatchRects.map((r) => this.worldRectToScreen(r)), measuring };
   }
 

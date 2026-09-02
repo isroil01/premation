@@ -107,7 +107,7 @@ import {
   precomposeSelected,
 } from '@core/scene/sceneInsert';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { moveNodeInStack } from '@core/scene/parenting';
+import { arrangeNodes } from '@core/scene/parenting';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace } from '@core/scene/facePicking';
@@ -2254,11 +2254,14 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
   return [
     { id: 'rename', label: 'Rename…', onSelect: renameNode },
     { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
+    // One call for the whole selection — see `reorderSiblings` for what looping
+    // over it did to a multi-selection. Same helper the Layer menu and the
+    // Scene panel's context menu use.
     { id: 'arrange', label: 'Arrange', children: [
-      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'front'); } },
-      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'forward'); } },
-      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'backward'); } },
-      { id: 'arr-back', label: 'Send to Back', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'back'); } },
+      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'front'); } },
+      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'forward'); } },
+      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'backward'); } },
+      { id: 'arr-back', label: 'Send to Back', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'back'); } },
     ] },
     { id: 'sep0', separator: true },
     { id: 'kf', label: 'Add Keyframe', children: [
