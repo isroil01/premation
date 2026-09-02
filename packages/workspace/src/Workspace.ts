@@ -30,6 +30,7 @@ import { CoordinateSystem } from './coordinates/CoordinateSystem';
 import { Grid, type GridState } from './grid/Grid';
 import { Guides, type Guide, type GuideAxis } from './guides/Guides';
 import { SnapEngine, type SnapSettings, type SnapTarget, type SnapLine, type SnapResult } from './snap/SnapEngine';
+import { measureBetween, smartGuides as computeSmartGuides, type Gap } from './snap/smartGuides';
 import { HitTester, type HitOptions } from './hit/HitTester';
 import { SelectionController } from './selection/SelectionController';
 import { CursorManager } from './cursor/CursorManager';
@@ -49,6 +50,8 @@ import type {
   WorkspaceCommand,
   WorkspaceNode,
   WorkspaceOverlay,
+  SmartGuideOverlayData,
+  SmartGuideSpan,
   OverlayHandle,
   OverlayGuide,
 } from './ports';
@@ -105,6 +108,13 @@ export class Workspace implements InputSink {
   private focused = false;
   private hovered: NodeId | null = null;
   private snapLines: SnapLine[] = [];
+  /**
+   * Alt-hover measuring: while true, the overlay measures the distance from the
+   * selection to whatever is hovered, with no drag in flight. Set by the host
+   * (which owns the keyboard), because the engine is only fed the keys the host
+   * decides to forward and Alt is not one of them.
+   */
+  private measureHover = false;
   private prevCamera: CameraState;
   private initialized = false;
   private restoreTemporaryAfterDrag = false;
@@ -334,6 +344,19 @@ export class Workspace implements InputSink {
 
   setSnap(patch: Partial<SnapSettings>): void {
     this.snap.setSettings(patch);
+  }
+
+  /**
+   * Turn Alt-hover measuring on or off (the host owns the Alt key).
+   *
+   * Idempotent, and only repaints when the flag actually flips — Alt auto-repeats
+   * while held, and repainting the whole overlay per repeat is a needless frame.
+   */
+  setMeasureHover(active: boolean): void {
+    if (this.measureHover === active) return;
+    this.measureHover = active;
+    this.pushOverlay();
+    this.renderer.markDirty();
   }
 
   // ── Overlay / state (public API) ─────────────────────────────────
@@ -572,28 +595,48 @@ export class Workspace implements InputSink {
       const zoom = this.camera.zoom;
       const c = this.dragSnapCache;
       if (c && c.zoom === zoom && R.containsRect(c.region, region)) {
-        return this.snap.snapRect(rect, c.targets, c.thresholdWorld);
+        return this.snap.snapRect(rect, c.targets, c.thresholdWorld, c.bounds);
       }
       const wide = R.inflate(region, this.camera.screenDistanceToWorld(1500));
       const built = this.buildSnapTargets(wide, excludeIds);
-      this.dragSnapCache = { region: wide, zoom, targets: built.targets, thresholdWorld: built.thresholdWorld };
-      return this.snap.snapRect(rect, built.targets, built.thresholdWorld);
+      this.dragSnapCache = {
+        region: wide,
+        zoom,
+        targets: built.targets,
+        thresholdWorld: built.thresholdWorld,
+        bounds: built.bounds,
+      };
+      return this.snap.snapRect(rect, built.targets, built.thresholdWorld, built.bounds);
     }
     this.dragSnapCache = null;
-    const { targets, thresholdWorld } = this.buildSnapTargets(region, excludeIds);
-    return this.snap.snapRect(rect, targets, thresholdWorld);
+    const { targets, thresholdWorld, bounds } = this.buildSnapTargets(region, excludeIds);
+    return this.snap.snapRect(rect, targets, thresholdWorld, bounds);
   }
 
-  /** Per-gesture snap-target cache — see `snapRect`. */
-  private dragSnapCache: { region: Rect; zoom: number; targets: SnapTarget[]; thresholdWorld: number } | null = null;
+  /**
+   * Per-gesture snap-target cache — see `snapRect`.
+   *
+   * `bounds` are the neighbours' whole rects, kept alongside the 1-D targets
+   * derived from them: equal-SPACING needs the boxes themselves (a gap is
+   * between two edges of two different rects), and re-querying the hit tester
+   * for them per pointermove is the O(scene) cost this cache exists to avoid.
+   */
+  private dragSnapCache: {
+    region: Rect;
+    zoom: number;
+    targets: SnapTarget[];
+    thresholdWorld: number;
+    bounds: Rect[];
+  } | null = null;
 
   /** Assemble grid + guide + object snap targets for a world region. */
   private buildSnapTargets(
     region: Rect,
     excludeIds?: ReadonlySet<string>,
-  ): { targets: SnapTarget[]; thresholdWorld: number } {
+  ): { targets: SnapTarget[]; thresholdWorld: number; bounds: Rect[] } {
     const settings = this.snap.getSettings();
     const targets: SnapTarget[] = [];
+    let objectBounds: Rect[] = [];
     if (settings.enabled) {
       // NOT gated on `grid.visible`. After Effects keeps Show Grid and Snap to
       // Grid as independent commands and snaps to a hidden grid; `toGrid` IS
@@ -614,10 +657,11 @@ export class Workspace implements InputSink {
           bounds.push(n.worldBounds);
         }
         targets.push(...SnapEngine.objectTargets(bounds));
+        objectBounds = bounds;
       }
     }
     const thresholdWorld = this.camera.screenDistanceToWorld(settings.thresholdPx);
-    return { targets, thresholdWorld };
+    return { targets, thresholdWorld, bounds: objectBounds };
   }
 
   private updateHover(screen: Vec2): void {
@@ -710,7 +754,134 @@ export class Workspace implements InputSink {
     const hud = activeTool?.getHud?.(ctx) ?? null;
     const dragHud = hud ? { anchor: this.worldToScreen(hud.anchorWorld), lines: hud.lines } : null;
 
-    return { selectionBounds, selectionBoxes, handles, marquee, snapLines, guides, hoveredBounds, hoveredCorners, pendingPath, dragHud };
+    return {
+      selectionBounds,
+      selectionBoxes,
+      handles,
+      marquee,
+      snapLines,
+      guides,
+      hoveredBounds,
+      hoveredCorners,
+      pendingPath,
+      dragHud,
+      smartGuides: this.buildSmartGuides(),
+    };
+  }
+
+  /**
+   * The measurement chrome for the gesture in flight — distances to the nearest
+   * neighbour on each side, any equal-spacing run the drag is sitting in, and
+   * neighbours of matching size.
+   *
+   * Computed HERE rather than in the tools because it is a property of where
+   * the selection currently is, not of how it got there: a resize, a move, a
+   * nudge from another surface and an Alt-hover all want the same answer, and
+   * the tools would each have to grow their own copy of it.
+   *
+   * Returns null unless something is actually happening — no gesture and no
+   * Alt-hover means no chrome, which is the whole reason the canvas stays calm.
+   */
+  private buildSmartGuides(): SmartGuideOverlayData | null {
+    const settings = this.snap.getSettings();
+    if (!settings.smartGuides) return null;
+    const dragging = this.input.isDragging;
+    // Between gestures the neighbour list is worthless — layers may have been
+    // added, deleted or moved since — so it is dropped rather than staled.
+    if (!dragging) this.smartNeighbours = null;
+    const measuring = !dragging && this.measureHover;
+    if (!dragging && !measuring) return null;
+    // A marquee is a drag, but nothing is being POSITIONED by it — measuring
+    // the stationary selection while the user rubber-bands around it is chrome
+    // about something that is not happening.
+    if (dragging && this.selectionController.marquee.active) return null;
+    const bounds = this.selectionController.selectionBounds();
+    if (!bounds) return null;
+
+    let gaps: Gap[] = [];
+    let sizeMatchRects: Rect[] = [];
+    const equalSpans = new Set<Gap>();
+
+    if (measuring) {
+      // Alt-hover: measure to ONE named box — whatever the pointer is over —
+      // and say nothing about anything else. Hovering a selected layer would
+      // measure it against itself, so that case draws nothing.
+      const id = this.hovered;
+      if (!id) return null;
+      const selected = new Set<string>(this.selectionPort.get());
+      if (selected.has(id)) return null;
+      const node = this.scene.getNode(id);
+      if (!node) return null;
+      gaps = measureBetween(bounds, node.worldBounds);
+      if (gaps.length === 0) return null;
+    } else {
+      const selected = new Set<string>(this.selectionPort.get());
+      /*
+       * The neighbours are cached for the length of the gesture.
+       *
+       * Nothing but the selection moves during a drag, so re-querying the hit
+       * tester per frame buys nothing and costs an index rebuild every time —
+       * the drag's own scene writes dirty it on every pointermove. Same reason
+       * `dragSnapCache` exists; this one is keyed on the camera and the
+       * selection instead of a region, because the query covers the whole
+       * visible world and only those two can change what it would return.
+       */
+      const cam = this.camera.getState();
+      const key = `${cam.zoom}|${cam.center.x}|${cam.center.y}|${[...selected].sort().join(',')}`;
+      let others: Rect[];
+      if (this.smartNeighbours && this.smartNeighbours.key === key) {
+        others = this.smartNeighbours.bounds;
+      } else {
+        others = [];
+        const region = this.camera.visibleWorldRect();
+        for (const n of this.hitTester.hitTestRegion(region, 'intersect', { includeLocked: true })) {
+          if (selected.has(n.id)) continue;
+          others.push(n.worldBounds);
+        }
+        this.smartNeighbours = { key, bounds: others };
+      }
+      if (others.length === 0) return null;
+      const radius = this.camera.screenDistanceToWorld(settings.thresholdPx);
+      const info = computeSmartGuides(bounds, others, radius);
+      gaps = [...info.gaps];
+      for (const c of info.spacing) {
+        for (const span of c.spans) {
+          gaps.push(span);
+          equalSpans.add(span);
+        }
+      }
+      sizeMatchRects = info.sizes.map((m) => m.other);
+    }
+
+    const spans: SmartGuideSpan[] = gaps.map((g) => this.gapToSpan(g, equalSpans.has(g)));
+    if (spans.length === 0) return null;
+    return { spans, sizeMatches: sizeMatchRects.map((r) => this.worldRectToScreen(r)), measuring };
+  }
+
+  /** Per-gesture neighbour cache for `buildSmartGuides`. */
+  private smartNeighbours: { key: string; bounds: Rect[] } | null = null;
+
+  /** One measured gap → screen geometry + a composition-pixel label. */
+  private gapToSpan(g: Gap, equal: boolean): SmartGuideSpan {
+    const label = `${Math.round(g.distance)}`;
+    if (g.axis === 'x') {
+      return {
+        axis: 'x',
+        from: this.worldToScreen({ x: g.from, y: 0 }).x,
+        to: this.worldToScreen({ x: g.to, y: 0 }).x,
+        cross: this.worldToScreen({ x: 0, y: g.cross }).y,
+        label,
+        equal,
+      };
+    }
+    return {
+      axis: 'y',
+      from: this.worldToScreen({ x: 0, y: g.from }).y,
+      to: this.worldToScreen({ x: 0, y: g.to }).y,
+      cross: this.worldToScreen({ x: g.cross, y: 0 }).x,
+      label,
+      equal,
+    };
   }
 
   /** Project an oriented box's four corners into screen space, one by one. */

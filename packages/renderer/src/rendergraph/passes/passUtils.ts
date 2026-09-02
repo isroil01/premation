@@ -9,9 +9,9 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, SCENE_BLIT_LUT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, SCENE_BLIT_LUT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL, MESH3D_PBR_MATERIAL } from '../../shaders/Material';
 import { TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
-import { packSolid, packTextured, packSceneBlitLut, packDeformedMesh, packSolid3D, packTextured3D, type SolidShape, type ColorTransform, type Shade3D } from '../../pipeline/uniforms';
+import { packSolid, packTextured, packSceneBlitLut, packDeformedMesh, packSolid3D, packTextured3D, packMesh3DPbr, type SolidShape, type ColorTransform, type Shade3D, type PbrMapParams } from '../../pipeline/uniforms';
 import { HARDWARE_SRGB_UPLOADS, LINEAR_INTERMEDIATE_STORAGE } from '../../shaders/linearWorkingSpace';
 import { getActiveViewerLut } from '../../shaders/colorPipeline';
 
@@ -25,6 +25,16 @@ import { getActiveViewerLut } from '../../shaders/colorPipeline';
 // per draw.
 
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
+
+/**
+ * The env-map bind-group fields for a lit-3d draw, from the buffer's pass-wide
+ * environment. Spread into every `emit*3D` item: those materials DECLARE
+ * bindings 7/8, so a draw that omitted them would be an incomplete bind group
+ * on WebGPU rather than a quietly unlit one.
+ */
+function envBinding(cmds: CommandBuffer): { envTexture?: TextureHandle; envSampler?: SamplerHandle } {
+  return cmds.env ? { envTexture: cmds.env.texture, envSampler: cmds.env.sampler } : {};
+}
 
 /** RT copies skip the upload decode only while intermediates stay linear. */
 function rtLinear(sampleLinear: boolean): boolean {
@@ -98,6 +108,7 @@ export function emitSolid3D(
     material: SOLID3D_MATERIAL,
     blend,
     uniforms: packSolid3D(mvp, color, opacity, shape, shade),
+    ...envBinding(cmds),
   });
 }
 
@@ -127,6 +138,7 @@ export function emitTextured3D(
     uniforms: packTextured3D(mvp, uvRect, tint, opacity, color, shade, texturedSkipsDecode(sampleLinear)),
     texture,
     sampler,
+    ...envBinding(cmds),
   });
 }
 
@@ -145,7 +157,44 @@ export function emitMesh3D(
   geometry: { vertexBuffer: BufferHandle; indexBuffer: BufferHandle; indexFormat: 'uint16' | 'uint32'; firstIndex: number; indexCount: number },
   shade?: Shade3D,
   textured?: { texture: TextureHandle; sampler: SamplerHandle; uvRect?: Rect; color?: ColorTransform; sampleLinear?: boolean },
+  /**
+   * The rest of a glTF material's maps. Only meaningful alongside `textured`
+   * (base colour is binding 1 of the same layout); a model with maps but no
+   * base-colour texture binds white there, exactly as the CPU side arranges.
+   */
+  pbr?: {
+    normal: TextureHandle;
+    metallicRoughness: TextureHandle;
+    occlusion: TextureHandle;
+    emissive: TextureHandle;
+    params: PbrMapParams;
+  },
 ): void {
+  if (textured && pbr) {
+    const lin = texturedSkipsDecode(textured.sampleLinear ?? false);
+    cmds.add({
+      batchKey: `mesh3d-pbr|${textured.texture.id}|${pbr.normal.id}|${pbr.metallicRoughness.id}`
+        + `|${pbr.occlusion.id}|${pbr.emissive.id}|${blend}`,
+      material: MESH3D_PBR_MATERIAL,
+      blend,
+      uniforms: packMesh3DPbr(mvp, textured.uvRect ?? FULL_UV, color, opacity, textured.color, shade, lin, pbr.params),
+      texture: textured.texture,
+      sampler: textured.sampler,
+      pbrTextures: {
+        normal: pbr.normal,
+        metallicRoughness: pbr.metallicRoughness,
+        occlusion: pbr.occlusion,
+        emissive: pbr.emissive,
+      },
+      ...envBinding(cmds),
+      vertexBuffer: geometry.vertexBuffer,
+      indexBuffer: geometry.indexBuffer,
+      indexCount: geometry.indexCount,
+      firstIndex: geometry.firstIndex,
+      indexFormat: geometry.indexFormat,
+    });
+    return;
+  }
   if (textured) {
     const lin = texturedSkipsDecode(textured.sampleLinear ?? false);
     cmds.add({
@@ -155,6 +204,7 @@ export function emitMesh3D(
       uniforms: packTextured3D(mvp, textured.uvRect ?? FULL_UV, color, opacity, textured.color, shade, lin),
       texture: textured.texture,
       sampler: textured.sampler,
+      ...envBinding(cmds),
       vertexBuffer: geometry.vertexBuffer,
       indexBuffer: geometry.indexBuffer,
       indexCount: geometry.indexCount,
@@ -168,6 +218,7 @@ export function emitMesh3D(
     material: MESH3D_SOLID_MATERIAL,
     blend,
     uniforms: packTextured3D(mvp, FULL_UV, color, opacity, undefined, shade, false),
+    ...envBinding(cmds),
     vertexBuffer: geometry.vertexBuffer,
     indexBuffer: geometry.indexBuffer,
     indexCount: geometry.indexCount,
@@ -199,6 +250,7 @@ export function emitMaskedTextured3D(
     texture,
     sampler,
     maskTexture,
+    ...envBinding(cmds),
   });
 }
 

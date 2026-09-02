@@ -30,6 +30,18 @@ import {
   SRGB_TRANSFER_GLSL,
   SRGB_TRANSFER_WGSL,
 } from './linearWorkingSpace';
+import { ENV_SPEC_LEVELS, ENV_SPEC_BAND_HEIGHT } from '../pipeline/uniforms';
+
+/**
+ * The environment atlas layout, as SHADER LITERALS.
+ *
+ * Interpolated rather than declared as a module-scope WGSL `const`: what WGSL
+ * allows at module scope has moved under this codebase before (`let` there is
+ * now an error), and a literal produced from the same TS constant the packer
+ * reads cannot drift from it either way.
+ */
+const ENV_LEVELS_LIT = `${ENV_SPEC_LEVELS}.0`;
+const ENV_INSET_LIT = String(0.5 / ENV_SPEC_BAND_HEIGHT);
 export { LINEAR_WORKING_SPACE, LINEAR_INTERMEDIATE_STORAGE } from './linearWorkingSpace';
 
 // Solid-colored quad with an optional SDF mask so shapes render with real
@@ -4030,8 +4042,14 @@ struct Object {
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
   lights : array<vec4<f32>, 32>,
+  envParams : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
+
+// Specular environment map: the roughness bands, stacked. Bindings 7/8 —
+// clear of the mask (3), a plugin origin (4) and the mesh PBR set (3-6).
+@group(0) @binding(7) var envTex : texture_2d<f32>;
+@group(0) @binding(8) var envSmp : sampler;
 
 struct VOut {
   @builtin(position) pos : vec4<f32>,
@@ -4046,6 +4064,63 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
   o.local = pos;
   o.world = (obj.model * vec4<f32>(pos, 0.0, 1.0)).xyz;
   return o;
+}
+
+
+/*
+  Image-based reflections — the split-sum approximation.
+
+  envParams: x = enabled (0 for every scene without an environment light,
+  which is what makes this whole block a no-op there), y = intensity, z = the
+  environment rotation in RADIANS, w = the atlas HDR decode scale.
+
+  envSpecular is textureLod written out by hand: the map is ONE 2D texture
+  holding the roughness levels as equirect bands stacked vertically, so a
+  fractional level is two taps and a mix. A real mip chain would be tidier and
+  is not available - neither backend's writeTexture uploads past level 0.
+*/
+fn envUv(dir : vec3<f32>, level : f32) -> vec2<f32> {
+  // Inverse of the projector's equirectDir (core/scene/environmentLight.ts):
+  // phi sweeps about the compositor's vertical axis with phi = 0 facing +z,
+  // theta measures from "up" (-y). Rotating the environment by +a is sampling
+  // it at -a - the same convention environmentRig counter-rotates its axes
+  // with, so the reflection and the SH light rig turn together.
+  let phi = atan2(dir.x, dir.z) - obj.envParams.z;
+  // No wrap here: the env sampler REPEATS in u, so a rotation may push this
+  // outside [0,1] and the hardware brings it back — including across the seam,
+  // which a fract() would break by clamping the bilinear tap at the edge.
+  let u = phi * 0.15915494309189535;
+  let v = acos(clamp(-dir.y, -1.0, 1.0)) * 0.31830988618379069;
+  // Half-texel inset, or a direction at a pole bilinearly taps the NEXT
+  // roughness band stacked below this one.
+  let vy = clamp(v, ${ENV_INSET_LIT}, 1.0 - ${ENV_INSET_LIT});
+  return vec2<f32>(u, (level + vy) / ${ENV_LEVELS_LIT});
+}
+
+fn envFetch(dir : vec3<f32>, level : f32) -> vec3<f32> {
+  // Explicit LOD (not textureSample) so this stays legal inside the gate's
+  // conditional: WGSL's uniformity analysis rejects implicit derivatives
+  // there, and there is nothing to derive from anyway.
+  let c = textureSampleLevel(envTex, envSmp, envUv(dir, level), 0.0).rgb;
+  // sqrt transfer + one scale - see EnvSpecularMap's encoding note.
+  return c * c * obj.envParams.w;
+}
+
+fn envSpecular(dir : vec3<f32>, roughness : f32) -> vec3<f32> {
+  let lod = clamp(roughness, 0.0, 1.0) * (${ENV_LEVELS_LIT} - 1.0);
+  let l0 = floor(lod);
+  return mix(envFetch(dir, l0), envFetch(dir, min(l0 + 1.0, ${ENV_LEVELS_LIT} - 1.0)), lod - l0);
+}
+
+// Karis' analytic environment BRDF (the mobile fit): the split sum's second
+// factor without a BRDF lookup TEXTURE, which would have cost another binding
+// and another upload to describe a surface this smooth.
+fn envBRDF(NdotV : f32, roughness : f32) -> vec2<f32> {
+  let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+  let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+  let r = roughness * c0 + c1;
+  let a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+  return vec2<f32>(-1.04, 1.04) * a004 + r.zw;
 }
 
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
@@ -4184,6 +4259,37 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     diff = floor(diff * bands + vec3<f32>(0.5)) / bands;
     spec = floor(spec * bands + vec3<f32>(0.5)) / bands;
   }
+  /*
+    Image-based reflections. Gated on envParams.x, which is ZERO for every
+    scene that has no environment light — so everything above is untouched and
+    those frames render bit-for-bit as they did before reflections existed.
+
+    Placed after the toon quantization and excluded from it on purpose: cel
+    shading's whole point is a flat, stepped surface, and a mirrored room in
+    the highlight would undo it.
+  */
+  if (obj.envParams.x > 0.5 && !toonFlag) {
+    let Ve = normalize(obj.eyeLit.xyz - world);
+    // A two-sided surface has no outside; face the normal at the viewer so the
+    // reflection is the one that would actually be seen from here.
+    let Ne = select(N, -N, twoSided > 0.5 && dot(N, Ve) < 0.0);
+    let R = reflect(-Ve, Ne);
+    if (pbr) {
+      // Split sum: prefiltered radiance x the analytic env BRDF. A metal takes
+      // the scenery through its own F0 — which IS the base colour, so it
+      // reflects tinted; a dielectric keeps a Fresnel-weighted sheen over a
+      // diffuse that the light loop already computed.
+      let ab = envBRDF(max(dot(Ne, Ve), 1e-4), rough);
+      spec = spec + envSpecular(R, rough) * (F0 * ab.x + vec3<f32>(ab.y)) * obj.envParams.y;
+    } else {
+      // Phong: a plain reflection, which the tail below scales by Specular
+      // Intensity and tints by Metal — so the sliders that already exist mean
+      // "how mirrored", and nothing new appears in the UI. Shininess becomes a
+      // roughness by the usual Phong-to-GGX identity, so a tight highlight
+      // reflects a sharp room and a broad one a soft.
+      spec = spec + envSpecular(R, clamp(sqrt(2.0 / (max(obj.shadeParams.z, 1.0) + 2.0)), 0.02, 1.0)) * obj.envParams.y;
+    }
+  }
   if (pbr) {
     // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
     // an intensity-scaled highlight, so specI does not apply.
@@ -4225,7 +4331,7 @@ fn fs(@location(0) local : vec2<f32>, @location(1) world : vec3<f32>) -> @locati
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; };
 out vec2 vLocal;
 out vec3 vWorld;
 void main() {
@@ -4236,10 +4342,38 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; };
 in vec2 vLocal;
 in vec3 vWorld;
 out vec4 frag;
+
+// Image-based reflections — the split-sum approximation. See the WGSL twin for
+// the full note; the two must stay identical term for term.
+uniform sampler2D uEnvTex;
+vec2 envUv(vec3 dir, float level) {
+  float phi = atan(dir.x, dir.z) - envParams.z;
+  float u = phi * 0.15915494309189535;
+  float v = acos(clamp(-dir.y, -1.0, 1.0)) * 0.31830988618379069;
+  float vy = clamp(v, ${ENV_INSET_LIT}, 1.0 - ${ENV_INSET_LIT});
+  return vec2(u, (level + vy) / ${ENV_LEVELS_LIT});
+}
+vec3 envFetch(vec3 dir, float level) {
+  vec3 c = textureLod(uEnvTex, envUv(dir, level), 0.0).rgb;
+  return c * c * envParams.w;
+}
+vec3 envSpecular(vec3 dir, float roughness) {
+  float lod = clamp(roughness, 0.0, 1.0) * (${ENV_LEVELS_LIT} - 1.0);
+  float l0 = floor(lod);
+  return mix(envFetch(dir, l0), envFetch(dir, min(l0 + 1.0, ${ENV_LEVELS_LIT} - 1.0)), lod - l0);
+}
+vec2 envBRDF(float NdotV, float roughness) {
+  vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+  vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+  vec4 r = roughness * c0 + c1;
+  float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+  return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
   // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided; 3/4 = the toon
@@ -4351,6 +4485,18 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     float bands = max(2.0, shadeParams.z);
     diff = floor(diff * bands + vec3(0.5)) / bands;
     spec = floor(spec * bands + vec3(0.5)) / bands;
+  }
+  // Image-based reflections — see the WGSL twin for the full note.
+  if (envParams.x > 0.5 && !toonFlag) {
+    vec3 Ve = normalize(eyeLit.xyz - world);
+    vec3 Ne = (twoSided > 0.5 && dot(N, Ve) < 0.0) ? -N : N;
+    vec3 R = reflect(-Ve, Ne);
+    if (pbr) {
+      vec2 ab = envBRDF(max(dot(Ne, Ve), 1e-4), rough);
+      spec += envSpecular(R, rough) * (F0 * ab.x + vec3(ab.y)) * envParams.y;
+    } else {
+      spec += envSpecular(R, clamp(sqrt(2.0 / (max(shadeParams.z, 1.0) + 2.0)), 0.02, 1.0)) * envParams.y;
+    }
   }
   if (pbr) {
     return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
@@ -4403,11 +4549,74 @@ struct Object {
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
   lights : array<vec4<f32>, 32>,
+  envParams : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
+
+// Specular environment map: the roughness bands, stacked. Bindings 7/8 —
+// clear of the mask (3), a plugin origin (4) and the mesh PBR set (3-6).
+@group(0) @binding(7) var envTex : texture_2d<f32>;
+@group(0) @binding(8) var envSmp : sampler;
 `;
 
 const WGSL_SHADE3D_FN = /* wgsl */ `
+
+/*
+  Image-based reflections — the split-sum approximation.
+
+  envParams: x = enabled (0 for every scene without an environment light,
+  which is what makes this whole block a no-op there), y = intensity, z = the
+  environment rotation in RADIANS, w = the atlas HDR decode scale.
+
+  envSpecular is textureLod written out by hand: the map is ONE 2D texture
+  holding the roughness levels as equirect bands stacked vertically, so a
+  fractional level is two taps and a mix. A real mip chain would be tidier and
+  is not available - neither backend's writeTexture uploads past level 0.
+*/
+fn envUv(dir : vec3<f32>, level : f32) -> vec2<f32> {
+  // Inverse of the projector's equirectDir (core/scene/environmentLight.ts):
+  // phi sweeps about the compositor's vertical axis with phi = 0 facing +z,
+  // theta measures from "up" (-y). Rotating the environment by +a is sampling
+  // it at -a - the same convention environmentRig counter-rotates its axes
+  // with, so the reflection and the SH light rig turn together.
+  let phi = atan2(dir.x, dir.z) - obj.envParams.z;
+  // No wrap here: the env sampler REPEATS in u, so a rotation may push this
+  // outside [0,1] and the hardware brings it back — including across the seam,
+  // which a fract() would break by clamping the bilinear tap at the edge.
+  let u = phi * 0.15915494309189535;
+  let v = acos(clamp(-dir.y, -1.0, 1.0)) * 0.31830988618379069;
+  // Half-texel inset, or a direction at a pole bilinearly taps the NEXT
+  // roughness band stacked below this one.
+  let vy = clamp(v, ${ENV_INSET_LIT}, 1.0 - ${ENV_INSET_LIT});
+  return vec2<f32>(u, (level + vy) / ${ENV_LEVELS_LIT});
+}
+
+fn envFetch(dir : vec3<f32>, level : f32) -> vec3<f32> {
+  // Explicit LOD (not textureSample) so this stays legal inside the gate's
+  // conditional: WGSL's uniformity analysis rejects implicit derivatives
+  // there, and there is nothing to derive from anyway.
+  let c = textureSampleLevel(envTex, envSmp, envUv(dir, level), 0.0).rgb;
+  // sqrt transfer + one scale - see EnvSpecularMap's encoding note.
+  return c * c * obj.envParams.w;
+}
+
+fn envSpecular(dir : vec3<f32>, roughness : f32) -> vec3<f32> {
+  let lod = clamp(roughness, 0.0, 1.0) * (${ENV_LEVELS_LIT} - 1.0);
+  let l0 = floor(lod);
+  return mix(envFetch(dir, l0), envFetch(dir, min(l0 + 1.0, ${ENV_LEVELS_LIT} - 1.0)), lod - l0);
+}
+
+// Karis' analytic environment BRDF (the mobile fit): the split sum's second
+// factor without a BRDF lookup TEXTURE, which would have cost another binding
+// and another upload to describe a surface this smooth.
+fn envBRDF(NdotV : f32, roughness : f32) -> vec2<f32> {
+  let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+  let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+  let r = roughness * c0 + c1;
+  let a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+  return vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+}
+
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   if (obj.eyeLit.w < 0.5) { return baseRgb; }
   /*
@@ -4544,6 +4753,37 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     diff = floor(diff * bands + vec3<f32>(0.5)) / bands;
     spec = floor(spec * bands + vec3<f32>(0.5)) / bands;
   }
+  /*
+    Image-based reflections. Gated on envParams.x, which is ZERO for every
+    scene that has no environment light — so everything above is untouched and
+    those frames render bit-for-bit as they did before reflections existed.
+
+    Placed after the toon quantization and excluded from it on purpose: cel
+    shading's whole point is a flat, stepped surface, and a mirrored room in
+    the highlight would undo it.
+  */
+  if (obj.envParams.x > 0.5 && !toonFlag) {
+    let Ve = normalize(obj.eyeLit.xyz - world);
+    // A two-sided surface has no outside; face the normal at the viewer so the
+    // reflection is the one that would actually be seen from here.
+    let Ne = select(N, -N, twoSided > 0.5 && dot(N, Ve) < 0.0);
+    let R = reflect(-Ve, Ne);
+    if (pbr) {
+      // Split sum: prefiltered radiance x the analytic env BRDF. A metal takes
+      // the scenery through its own F0 — which IS the base colour, so it
+      // reflects tinted; a dielectric keeps a Fresnel-weighted sheen over a
+      // diffuse that the light loop already computed.
+      let ab = envBRDF(max(dot(Ne, Ve), 1e-4), rough);
+      spec = spec + envSpecular(R, rough) * (F0 * ab.x + vec3<f32>(ab.y)) * obj.envParams.y;
+    } else {
+      // Phong: a plain reflection, which the tail below scales by Specular
+      // Intensity and tints by Metal — so the sliders that already exist mean
+      // "how mirrored", and nothing new appears in the UI. Shininess becomes a
+      // roughness by the usual Phong-to-GGX identity, so a tight highlight
+      // reflects a sharp room and a broad one a soft.
+      spec = spec + envSpecular(R, clamp(sqrt(2.0 / (max(obj.shadeParams.z, 1.0) + 2.0)), 0.02, 1.0)) * obj.envParams.y;
+    }
+  }
   if (pbr) {
     // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
     // an intensity-scaled highlight, so specI does not apply.
@@ -4556,9 +4796,37 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
 `;
 
 // GLSL twins of the above (UBO tail + light model), same layout contract.
-const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };`;
+const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; };`;
 
 const GLSL_SHADE3D_FN = /* glsl */ `
+
+// Image-based reflections — the split-sum approximation. See the WGSL twin for
+// the full note; the two must stay identical term for term.
+uniform sampler2D uEnvTex;
+vec2 envUv(vec3 dir, float level) {
+  float phi = atan(dir.x, dir.z) - envParams.z;
+  float u = phi * 0.15915494309189535;
+  float v = acos(clamp(-dir.y, -1.0, 1.0)) * 0.31830988618379069;
+  float vy = clamp(v, ${ENV_INSET_LIT}, 1.0 - ${ENV_INSET_LIT});
+  return vec2(u, (level + vy) / ${ENV_LEVELS_LIT});
+}
+vec3 envFetch(vec3 dir, float level) {
+  vec3 c = textureLod(uEnvTex, envUv(dir, level), 0.0).rgb;
+  return c * c * envParams.w;
+}
+vec3 envSpecular(vec3 dir, float roughness) {
+  float lod = clamp(roughness, 0.0, 1.0) * (${ENV_LEVELS_LIT} - 1.0);
+  float l0 = floor(lod);
+  return mix(envFetch(dir, l0), envFetch(dir, min(l0 + 1.0, ${ENV_LEVELS_LIT} - 1.0)), lod - l0);
+}
+vec2 envBRDF(float NdotV, float roughness) {
+  vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+  vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+  vec4 r = roughness * c0 + c1;
+  float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+  return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+
 vec3 shade3d(vec3 world, vec3 baseRgb) {
   if (eyeLit.w < 0.5) return baseRgb;
   // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided; 3/4 = the toon
@@ -4670,6 +4938,18 @@ vec3 shade3d(vec3 world, vec3 baseRgb) {
     float bands = max(2.0, shadeParams.z);
     diff = floor(diff * bands + vec3(0.5)) / bands;
     spec = floor(spec * bands + vec3(0.5)) / bands;
+  }
+  // Image-based reflections — see the WGSL twin for the full note.
+  if (envParams.x > 0.5 && !toonFlag) {
+    vec3 Ve = normalize(eyeLit.xyz - world);
+    vec3 Ne = (twoSided > 0.5 && dot(N, Ve) < 0.0) ? -N : N;
+    vec3 R = reflect(-Ve, Ne);
+    if (pbr) {
+      vec2 ab = envBRDF(max(dot(Ne, Ve), 1e-4), rough);
+      spec += envSpecular(R, rough) * (F0 * ab.x + vec3(ab.y)) * envParams.y;
+    } else {
+      spec += envSpecular(R, clamp(sqrt(2.0 / (max(shadeParams.z, 1.0) + 2.0)), 0.02, 1.0)) * envParams.y;
+    }
   }
   if (pbr) {
     return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
@@ -4891,6 +5171,217 @@ void main() {
   vec4 v = vec4(c.rgb, 1.0);
   vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   vec3 lit = shade3dN(vWorld, vNrm, graded);
+  frag = vec4(lit * c.a, c.a);
+}
+`,
+  },
+};
+
+// ── Textured 3D mesh with the rest of the PBR maps ──────────────────────────
+/*
+  A THIRD mesh variant, not a widening of the second.
+
+  `mesh3d-textured` keeps its exact bind-group layout, its exact uniform block
+  and therefore its exact pixels: a model with nothing but a base-colour
+  texture (and every extrusion, which is the overwhelming majority of what
+  draws through this path) compiles the same shader it did before, so its
+  goldens cannot move. This variant is selected only when a glTF material
+  actually carries a normal / metallic-roughness / occlusion / emissive map.
+
+  ## Why every map samples unconditionally
+
+  The three multiplicative maps have WHITE as their identity — roughness ×1,
+  metallic ×1, occlusion 1, emissive factor ×1 — so a material missing one
+  binds the shared 1×1 white texture and the arithmetic is a no-op. That
+  removes three uniform flags AND, more importantly, keeps `textureSample` and
+  the derivative calls out of conditional control flow, which WGSL's uniformity
+  analysis polices and which this codebase has already been bitten by once (see
+  uniformPackerSize.test.ts's header). Only the normal map needs a flag,
+  because its identity is (0,0,1) in tangent space, not white.
+
+  ## Why the tangent frame is derived, not an attribute
+
+  Per-vertex tangents would need a wider vertex layout, and the mesh vertex
+  buffer is shared with the morph and skinning deformers, which interleave at a
+  fixed 8-float stride — and the WebGL2 backend binds ONE vertex buffer per
+  draw (its `setVertexBuffer` ignores the slot and reconfigures every attribute
+  against the buffer just bound), so a parallel tangent buffer is not available
+  either. The screen-space cotangent frame below (Schüler) reconstructs T and B
+  from the derivatives of position and UV, which is exact per triangle and
+  follows deformed geometry for free — a skinned character's normal map stays
+  glued through its poses without the deformers learning about tangents.
+*/
+function subOnce(text: string, from: string, to: string, where: string): string {
+  if (!text.includes(from)) throw new Error(`${where}: no site matching ${JSON.stringify(from)}`);
+  return text.split(from).join(to);
+}
+
+// Anchored on the END of the block, not on its last field: the shared shade
+// tail grows from time to time, and this must always append AFTER whatever it
+// holds — `packMesh3DPbr` writes these two vec4s past everything `packTextured3D`
+// produced, so a new field landing between them would misalign every read.
+const WGSL_TEX3D_PBR_OBJECT = subOnce(
+  WGSL_TEX3D_OBJECT,
+  '};\n@group(0) @binding(0) var<uniform> obj : Object;',
+  '  pbrParams : vec4<f32>,\n  pbrEmissive : vec4<f32>,\n};\n@group(0) @binding(0) var<uniform> obj : Object;',
+  'WGSL_TEX3D_PBR_OBJECT',
+);
+const GLSL_TEX3D_PBR_UBO = subOnce(
+  GLSL_TEX3D_UBO,
+  '; };',
+  '; vec4 pbrParams; vec4 pbrEmissive; };',
+  'GLSL_TEX3D_PBR_UBO',
+);
+// GLSL links the two stages as one program, and a uniform block whose members
+// differ between them is a LINK error — so the vertex stage takes the widened
+// block too, even though it reads none of the new fields.
+const GLSL_MESH3D_PBR_VS = subOnce(GLSL_MESH3D_VS, GLSL_TEX3D_UBO, GLSL_TEX3D_PBR_UBO, 'GLSL_MESH3D_PBR_VS');
+
+/**
+ * `shade3dN` with per-FRAGMENT metallic / roughness / occlusion.
+ *
+ * The uniform factors stay where they are — a metallic-roughness map is a
+ * MULTIPLIER on `pbrMetallicRoughness`'s factors per the glTF spec, and those
+ * factors already ride `shadeParams` because the importer writes them into
+ * Material Options. So the map modulates rather than replaces, and the Material
+ * panel's sliders keep meaning what they mean on an untextured model.
+ *
+ * Occlusion multiplies AMBIENT only (the `lType == 0` accumulation), which is
+ * what an AO map is for: it darkens the light that arrives from everywhere,
+ * not the light that arrives from a direction the surface can see.
+ */
+function withPbrMaps(fn: string, lang: 'wgsl' | 'glsl'): string {
+  const edits: Array<[string, string]> = lang === 'wgsl'
+    ? [
+        [
+          'fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {',
+          'fn shade3dNMR(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>, metalMul : f32, roughMul : f32, ao : f32) -> vec3<f32> {',
+        ],
+        ['let metal = obj.shadeParams.w;', 'let metal = clamp(obj.shadeParams.w * metalMul, 0.0, 1.0);'],
+        ['let rough = clamp(-obj.shadeParams.z, 0.02, 1.0);', 'let rough = clamp(-obj.shadeParams.z * roughMul, 0.02, 1.0);'],
+        ['if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }', 'if (lType == 0) { diff = diff + colGain.rgb * gain * ao; continue; }'],
+      ]
+    : [
+        [
+          'vec3 shade3dN(vec3 world, vec3 nrmIn, vec3 baseRgb) {',
+          'vec3 shade3dNMR(vec3 world, vec3 nrmIn, vec3 baseRgb, float metalMul, float roughMul, float ao) {',
+        ],
+        ['float metal = shadeParams.w;', 'float metal = clamp(shadeParams.w * metalMul, 0.0, 1.0);'],
+        ['float rough = clamp(-shadeParams.z, 0.02, 1.0);', 'float rough = clamp(-shadeParams.z * roughMul, 0.02, 1.0);'],
+        ['if (lType == 0) { diff += colGain.rgb * gain; continue; }', 'if (lType == 0) { diff += colGain.rgb * gain * ao; continue; }'],
+      ];
+  let out = fn;
+  for (const [from, to] of edits) out = subOnce(out, from, to, `withPbrMaps(${lang})`);
+  return out;
+}
+
+const WGSL_SHADE3D_NMR_FN = withPbrMaps(WGSL_SHADE3D_N_FN, 'wgsl');
+const GLSL_SHADE3D_NMR_FN = withPbrMaps(GLSL_SHADE3D_N_FN, 'glsl');
+
+/** Screen-space cotangent frame: T and B from d(position)/d(uv), then the
+ *  tangent-space normal rotated into world space. Derivatives are taken by the
+ *  CALLER, at top level, so this never runs inside conditional control flow. */
+const WGSL_TANGENT_FRAME_FN = /* wgsl */ `
+fn perturbNormal(
+  N : vec3<f32>, tsN : vec3<f32>,
+  dp1 : vec3<f32>, dp2 : vec3<f32>, duv1 : vec2<f32>, duv2 : vec2<f32>,
+) -> vec3<f32> {
+  let dp2perp = cross(dp2, N);
+  let dp1perp = cross(N, dp1);
+  let T = dp2perp * duv1.x + dp1perp * duv2.x;
+  let B = dp2perp * duv1.y + dp1perp * duv2.y;
+  // Degenerate UVs (a seam vertex, a flat-shaded facet with no UV gradient)
+  // leave T and B at zero; the epsilon keeps the reciprocal finite and the
+  // result falls back to N because tsN's z dominates.
+  let invmax = 1.0 / sqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+  return normalize(mat3x3<f32>(T * invmax, B * invmax, N) * tsN);
+}
+`;
+
+const GLSL_TANGENT_FRAME_FN = /* glsl */ `
+vec3 perturbNormal(vec3 N, vec3 tsN, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
+  vec3 dp2perp = cross(dp2, N);
+  vec3 dp1perp = cross(N, dp1);
+  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+  float invmax = 1.0 / sqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+  return normalize(mat3(T * invmax, B * invmax, N) * tsN);
+}
+`;
+
+const MESH3D_PBR: ShaderSource = {
+  name: 'mesh3d-pbr',
+  wgsl: /* wgsl */ `
+${WGSL_TEX3D_PBR_OBJECT}
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var normalTex : texture_2d<f32>;
+@group(0) @binding(4) var mrTex : texture_2d<f32>;
+@group(0) @binding(5) var aoTex : texture_2d<f32>;
+@group(0) @binding(6) var emissiveTex : texture_2d<f32>;
+${WGSL_MESH3D_VS}
+${WGSL_SHADE3D_NMR_FN}
+${WGSL_TANGENT_FRAME_FN}
+@fragment
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
+  let nSample = textureSample(normalTex, smp, uv).xyz;
+  let mrSample = textureSample(mrTex, smp, uv);
+  let aoSample = textureSample(aoTex, smp, uv).r;
+  let eSample = textureSample(emissiveTex, smp, uv).rgb;
+  let dp1 = dpdx(world);
+  let dp2 = dpdy(world);
+  let duv1 = dpdx(uv);
+  let duv2 = dpdy(uv);
+  let Ng = normalize(nrm);
+  let ts = nSample * 2.0 - vec3<f32>(1.0);
+  let scaled = normalize(vec3<f32>(ts.xy * obj.pbrParams.x, max(ts.z, 1e-4)));
+  let N = select(Ng, perturbNormal(Ng, scaled, dp1, dp2, duv1, duv2), obj.pbrParams.z > 0.5);
+  // glTF fixes the channels: G = roughness, B = metallic. AO is R of its own
+  // map (which is very often the same image), lerped by occlusionStrength.
+  let ao = 1.0 + obj.pbrParams.y * (aoSample - 1.0);
+  let emissive = obj.pbrEmissive.rgb * workingFromSample(eSample, 0.0);
+  let lit = shade3dNMR(world, N, graded, mrSample.b, mrSample.g, ao) + emissive;
+  return vec4<f32>(lit * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: GLSL_MESH3D_PBR_VS,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${GLSL_TEX3D_PBR_UBO}
+uniform sampler2D uTex;
+uniform sampler2D uNormalTex;
+uniform sampler2D uMRTex;
+uniform sampler2D uAOTex;
+uniform sampler2D uEmissiveTex;
+in vec2 vUv;
+in vec3 vWorld;
+in vec3 vNrm;
+out vec4 frag;
+${GLSL_SHADE3D_NMR_FN}
+${GLSL_TANGENT_FRAME_FN}
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
+  vec3 nSample = texture(uNormalTex, vUv).xyz;
+  vec4 mrSample = texture(uMRTex, vUv);
+  float aoSample = texture(uAOTex, vUv).r;
+  vec3 eSample = texture(uEmissiveTex, vUv).rgb;
+  vec3 dp1 = dFdx(vWorld);
+  vec3 dp2 = dFdy(vWorld);
+  vec2 duv1 = dFdx(vUv);
+  vec2 duv2 = dFdy(vUv);
+  vec3 Ng = normalize(vNrm);
+  vec3 ts = nSample * 2.0 - vec3(1.0);
+  vec3 scaled = normalize(vec3(ts.xy * pbrParams.x, max(ts.z, 1e-4)));
+  vec3 N = pbrParams.z > 0.5 ? perturbNormal(Ng, scaled, dp1, dp2, duv1, duv2) : Ng;
+  float ao = 1.0 + pbrParams.y * (aoSample - 1.0);
+  vec3 emissive = pbrEmissive.rgb * workingFromSample(eSample, 0.0);
+  vec3 lit = shade3dNMR(vWorld, N, graded, mrSample.b, mrSample.g, ao) + emissive;
   frag = vec4(lit * c.a, c.a);
 }
 `,
@@ -5278,7 +5769,7 @@ function unpremultiplyingSample(base: ShaderSource, src: 'srgb' | 'linear' = 'sr
       fragment = sub(fragment, 'graded = vec3(lr, lg, lb);', 'graded = srgbToLinearRgb(vec3(lr, lg, lb));', 'glsl lut decode');
     }
   } else if (!LINEAR_INTERMEDIATE_STORAGE) {
-    if (base.name === 'textured3d' || base.name === 'mesh3d-textured') {
+    if (base.name === 'textured3d' || base.name === 'mesh3d-textured' || base.name === 'mesh3d-pbr') {
       wgsl = sub(wgsl, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'wgsl encode lit');
       fragment = sub(fragment, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'glsl encode lit');
     } else if (base.name === 'masked-textured3d') {
@@ -5532,6 +6023,11 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   MESH3D_SOLID,
   unpremultiplyingSample(MESH3D_TEXTURED),
   unpremultiplyingSample(MESH3D_TEXTURED, 'linear'),
+  // No `-linear` twin: this variant exists for imported glTF materials, whose
+  // maps are uploaded image files and never render-target copies. A twin would
+  // be a shader nothing can select, and its emissive decode would have to be
+  // stripped by a substitution site that has no other reason to exist.
+  unpremultiplyingSample(MESH3D_PBR),
   TEXTURED_SILHOUETTE,
   SCENE_BLIT,
   SCENE_BLIT_LUT,

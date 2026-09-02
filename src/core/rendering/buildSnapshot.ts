@@ -56,7 +56,8 @@ import { readNodeMaterial } from '@core/scene/material';
 import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
 import { extrusionOutlineFor, extrusionMeshFor } from '@core/scene/extrusionMesh';
 import { readNodeModelRef, modelPrimitiveFor } from '@core/scene/modelMesh';
-import { environmentRigFor } from '@core/scene/environmentLight';
+import { primitiveEntryFor, isPrimitiveMeshNode } from '@core/scene/primitiveLayer';
+import { environmentRigFor, environmentSpecularMap } from '@core/scene/environmentLight';
 // Side-effect import: registers the image → SH decoder, so an environment light
 // pointed at an HDRI resolves it on the first frame that asks rather than only
 // when the inspector happens to be open. See environmentImage.ts.
@@ -1556,6 +1557,20 @@ export function buildSnapshot(
    * of a light's position, which is the bug this file has fixed three times.
    */
   const sceneLightById = new Map<string, SceneLight>();
+  /**
+   * The environment light's REFLECTION half, as the three numbers it takes to
+   * ask for it. The ATLAS itself is fetched at the end, and only if the frame
+   * turned out to have a 3D layer — building it is a real (if memoised) cost,
+   * and a purely 2D comp that happens to carry an environment light must not
+   * pay it for a map nothing can reflect in.
+   *
+   * Read from the same props, on the same frame, as the irradiance rig below,
+   * so the two halves of one environment light can never disagree about which
+   * sky the comp is in. Last environment light wins, matching the rig (which
+   * simply sums, and where a second environment is already a pathological
+   * scene).
+   */
+  let envReflect: { sky: unknown; intensity: number; rotationDeg: number } | undefined;
   for (const n of comp.draft3d ? [] : nodes) {
     if (readNodeKind(n) !== 'light') continue;
     const lt = readNodeLight(n);
@@ -1573,6 +1588,15 @@ export function buildSnapshot(
       const envRot = av.get('envRotation') ?? lt.envRotation;
       const envIntensity = av.get('intensity') ?? lt.intensity;
       const centre = { x: comp.width / 2, y: comp.height / 2, z: 0 };
+      // Reflections strength folds into the intensity the shader gets rather
+      // than riding as a fourth number: the split-sum term is linear in it, so
+      // one multiply here is the whole feature.
+      const envRefl = (av.get('envReflections') ?? lt.envReflections) / 100;
+      envReflect = {
+        sky: lt.envPreset,
+        intensity: Math.max(0, (envIntensity / 100) * envRefl),
+        rotationDeg: envRot,
+      };
       for (const rl of environmentRigFor(lt.envPreset, envIntensity, envRot)) {
         if (rl.kind === 'ambient') {
           sceneLights.push({
@@ -3342,7 +3366,11 @@ export function buildSnapshot(
     let frontInset = 0;
     /** The extrusion mesh drew the front cap itself — do not emit the quad. */
     let frontDrawnByMesh = false;
-    if (is3D && world3d && extrusionDepth > 0) {
+    // A parametric primitive owns its whole surface, so it must not ALSO be
+    // extruded: both carriers would draw, one inside the other. (Extrusion
+    // Depth still shows in the 3D panel for such a layer; it simply has
+    // nothing to sweep.)
+    if (is3D && world3d && extrusionDepth > 0 && !isPrimitiveMeshNode(node)) {
       const isComplexContent =
         layer.kind === 'text' ||
         (layer.kind === 'shape' && layer.primitive !== 'rect' && layer.primitive !== 'ellipse');
@@ -3847,7 +3875,20 @@ export function buildSnapshot(
       scene when the parse lands.
     */
     const modelRef = is3D && world3d ? readNodeModelRef(node) : null;
-    const modelEntry = modelRef ? modelPrimitiveFor(modelRef) : null;
+    /*
+      A PARAMETRIC primitive (sphere / cylinder / cone / torus / capsule / box)
+      is the same thing wearing different clothes: primitiveLayer generates the
+      surface from the numbers on its `Primitive` component and hands back an
+      entry in exactly this shape, so it lands on the identical carrier below —
+      no skin, no morph targets, and its fill comes from the LAYER's own colour
+      rather than a baked-in material. An imported model always wins, since a
+      node cannot honestly be both.
+    */
+    const modelEntry = modelRef
+      ? modelPrimitiveFor(modelRef)
+      : (is3D && world3d
+          ? primitiveEntryFor(node, typeof layer.fill === 'string' ? layer.fill : undefined)
+          : null);
     let modelMeshLayer: RenderLayer | null = null;
     if (modelEntry) {
       const mMat = readNodeMaterial(node, a);
@@ -3895,6 +3936,24 @@ export function buildSnapshot(
             gain: 1,
             ...(textured ? { textured: true } : {}),
           }],
+          // Only when the material actually carries one of them: absent, the
+          // draw keeps the narrow mesh pipeline it has always used, so no
+          // existing scene's pixels can move.
+          ...(modelEntry.maps.normal || modelEntry.maps.metallicRoughness
+            || modelEntry.maps.occlusion || modelEntry.maps.emissive
+            || modelEntry.emissive.some((v) => v !== 0)
+            ? {
+                pbr: {
+                  ...(modelEntry.maps.normal ? { normalSrc: modelEntry.maps.normal } : {}),
+                  ...(modelEntry.maps.metallicRoughness ? { metallicRoughnessSrc: modelEntry.maps.metallicRoughness } : {}),
+                  ...(modelEntry.maps.occlusion ? { occlusionSrc: modelEntry.maps.occlusion } : {}),
+                  ...(modelEntry.maps.emissive ? { emissiveSrc: modelEntry.maps.emissive } : {}),
+                  normalScale: modelEntry.normalScale,
+                  occlusionStrength: modelEntry.occlusionStrength,
+                  emissive: modelEntry.emissive,
+                },
+              }
+            : {}),
         },
       };
       if (mLit) {
@@ -4376,6 +4435,23 @@ export function buildSnapshot(
     view,
     camera3d,
     lights3d,
+    // Only worth carrying with a 3D layer to reflect in — and only when the
+    // environment actually contributes: a zeroed Intensity or Reflections
+    // leaves the shader multiplying the map by 0, which is a texture upload
+    // and a bind for nothing.
+    //
+    // The atlas is memoised on the SKY alone (intensity and rotation are
+    // shader uniforms), so this is a map lookup on every frame but the first —
+    // which is what lets a keyframed environment cost nothing per frame.
+    ...(has3d && envReflect && envReflect.intensity > 0
+      ? {
+        envMap: {
+          ...environmentSpecularMap(envReflect.sky),
+          intensity: envReflect.intensity,
+          rotationDeg: envReflect.rotationDeg,
+        },
+      }
+      : {}),
   };
 }
 

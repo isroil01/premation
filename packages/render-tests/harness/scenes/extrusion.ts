@@ -356,6 +356,67 @@ function meshPathScenes(): Scene[] {
   ];
 }
 
+/**
+ * Image-based REFLECTIONS, as a matched pair.
+ *
+ * The subject is a near-mirror metal dome under an environment light and
+ * nothing else — no key, no fill — so every photon on screen comes from the
+ * environment. The two frames differ in ONE property, the environment's
+ * Reflections percentage:
+ *
+ *   env-reflect-metal      Reflections 100 — the split-sum specular IBL term
+ *                          is on, and the curved wall mirrors the sky's
+ *                          gradient: warm low, cool high, dark at the ground.
+ *   env-reflect-metal-off  Reflections 0 — `envParams.x` still says "a map is
+ *                          bound", but the term multiplies to nothing, so what
+ *                          is left is exactly the SH irradiance rig that
+ *                          shipped before reflections existed.
+ *
+ * The pair is therefore also the GATE's own witness. The off frame is what the
+ * engine drew before this feature, on a subject chosen to make a reflection
+ * maximally visible; if the reflection block ever leaked past its gate, this is
+ * the scene where it would show first and largest.
+ *
+ * `sunset` rather than `studio`: a studio sky is near-grey and its reflection
+ * would be hard to distinguish from a plain specular lift. Sunset has a warm
+ * band on one side of the horizon and a cool sky above, so the mirrored image
+ * has direction — rotating the environment visibly turns it.
+ */
+function envReflectionPair(): Scene[] {
+  const build = (reflections: number): Scene['build'] => (graph) => {
+    graph.addNode(node('dome', {
+      kind: 'shape',
+      position: CENTER,
+      transform: {
+        width: 190, height: 190, shapeType: 'ellipse',
+        extrusionDepth: 90, bevelDepth: 26, bevelStyle: 'convex',
+        rotationY: 32, rotationX: -22, z: 0,
+        acceptsLights: true,
+        // Physical, near-mirror, fully metal: F0 IS the base colour, so the
+        // reflected sky comes back tinted rather than white — which is the
+        // difference between "a metal" and "a shiny plastic" and the thing the
+        // split-sum term exists to get right.
+        shadingModel: 'pbr', roughness: 14, metal: 100, specular: 60,
+      },
+      style: { fill: '#c8b48a' },
+    }));
+    graph.addNode(node('env', {
+      kind: 'light',
+      position: CENTER,
+      transform: {
+        lightType: 'environment', envPreset: 'sunset', envRotation: 35,
+        intensity: 100, envReflections: reflections,
+      },
+      style: { fill: '#ffffff' },
+    }));
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: CAM }));
+  };
+  return [
+    scene('env-reflect-metal', 'A near-mirror metal dome under an environment light — it must MIRROR the sky, not just catch a highlight.', build(100)),
+    scene('env-reflect-metal-off', 'The same dome with Reflections at 0 — the SH irradiance rig alone, i.e. exactly what shipped before reflections.', build(0)),
+  ];
+}
+
 export const extrusionScenes: Scene[] = [
   ...invertPair(),
   ...dofWallPair(),
@@ -363,4 +424,5 @@ export const extrusionScenes: Scene[] = [
   ...sliceDensityScenes(),
   ...oneSidedLightPair(),
   ...meshPathScenes(),
+  ...envReflectionPair(),
 ];

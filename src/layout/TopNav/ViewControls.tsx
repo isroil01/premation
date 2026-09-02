@@ -213,6 +213,8 @@ export function ViewControls(): JSX.Element {
   const toggleGrid     = useGuidesStore((s) => s.toggleGrid);
   const toggleRulers   = useGuidesStore((s) => s.toggleRulers);
   const toggleSafeArea = useGuidesStore((s) => s.toggleSafeArea);
+  const smartGuides = useGuidesStore((s) => s.smartGuides);
+  const toggleSmartGuides = useGuidesStore((s) => s.toggleSmartGuides);
   const setCamera3dMode = useGuidesStore((s) => s.setCamera3dMode);
 
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
@@ -269,6 +271,9 @@ export function ViewControls(): JSX.Element {
           { type: 'checkbox', id: 'grid', label: 'Grid', checked: grid, onChange: toggleGrid },
           { type: 'checkbox', id: 'rulers', label: 'Rulers', checked: rulers, onChange: toggleRulers },
           { type: 'checkbox', id: 'safe-area', label: 'Safe Areas', checked: safeArea, onChange: toggleSafeArea },
+          // Measurement badges, equal-spacing and equal-size snapping while a
+          // drag is in flight; Alt-hover measures between two layers.
+          { type: 'checkbox', id: 'smart-guides', label: 'Smart Guides', checked: smartGuides, onChange: toggleSmartGuides },
           {
             type: 'item',
             id: 'camera-3d',

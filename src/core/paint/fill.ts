@@ -404,6 +404,23 @@ export function applyAlpha(hex: string, opacity: number): string {
   return `#${h(c.r)}${h(c.g)}${h(c.b)}${h(a)}`;
 }
 
+/**
+ * `sampleGradientColor` in the form a `ColorStop` actually stores.
+ *
+ * The sampler answers in CSS `rgba(...)`, which is what a canvas wants and what
+ * a stop must never hold: the inspector's ColorPicker and the on-canvas
+ * gradient gizmo both round-trip a stop's colour through hex, and `rgba(...)`
+ * lands there as the picker's fallback blue. So the one caller that samples the
+ * ramp in order to CREATE a stop from it — clicking the gradient axis to add a
+ * control point at the colour already there — goes through this instead.
+ *
+ * `applyAlpha(c, 1)` is the conversion: it parses (hex or rgba, see `parseHex`)
+ * and re-emits 8-digit hex with the alpha untouched.
+ */
+export function sampleGradientHex(stops: ReadonlyArray<ColorStop>, t: number): string {
+  return applyAlpha(sampleGradientColor(stops, t), 1);
+}
+
 /** A fresh two-stop opacity ramp, opaque throughout. */
 export function defaultOpacityStops(): OpacityStop[] {
   return [

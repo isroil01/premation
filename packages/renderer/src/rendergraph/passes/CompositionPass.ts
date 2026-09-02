@@ -8,6 +8,7 @@ import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D } from './passUtils';
 import { BLUR_MATERIAL, BOKEH_MATERIAL, COC_BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
 import { packBlur, packBokeh, packCocBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
+import { ENV_SPEC_LEVELS } from '../../pipeline/uniforms';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -1749,6 +1750,57 @@ export class CompositionPass extends RenderPass {
    * it; those extra flushes reuse the SAME depth buffer (cleared only on the
    * first sub-pass), so per-pixel intersection is preserved across them.
    */
+  /**
+   * The specular environment texture + sampler this frame's 3d draws bind.
+   *
+   * Always returns something: a comp with no environment light gets a shared
+   * 1x1 black texel, because the lit-3d materials DECLARE bindings 7/8 and an
+   * incomplete bind group is a WebGPU validation failure, where an unsampled
+   * texture is free. The shader never reads it — `envParams.x` is 0 there.
+   *
+   * The upload is keyed by `envMap.id`, which names the SKY: a keyframed
+   * rotation or intensity changes only a uniform, so this uploads nothing
+   * after the first frame that shows a given environment.
+   */
+  private envBindingFor(ctx: RenderPassContext): { texture: TextureHandle; sampler: SamplerHandle } {
+    const { resources } = ctx.services;
+    // Wraps in u so the equirect's longitude seam blends across instead of
+    // clamping to the last texel; clamps in v because the poles are the ends
+    // of the sphere AND because the roughness levels are stacked underneath.
+    const sampler = resources.sampler(
+      'sampler:env-equirect',
+      { label: 'env-equirect', min: 'linear', mag: 'linear', addressU: 'repeat', addressV: 'clamp' },
+      /* pinned */ true,
+    );
+    const map = ctx.scene.envMap;
+    if (!map || map.levels !== ENV_SPEC_LEVELS) {
+      // A map built for a different level count would be sampled with the
+      // shader's baked-in band height and come out sliced. Refuse it rather
+      // than render it wrong; the scene falls back to SH-only lighting.
+      const key = 'texture:env-none';
+      const had = resources.has('textures', key);
+      const texture = resources.texture(key, { label: 'env-none', width: 1, height: 1, format: 'rgba8unorm' }, true);
+      if (!had) {
+        resources.writeTexture(texture, { type: 'buffer', data: new Uint8Array([0, 0, 0, 255]), width: 1, height: 1 });
+      }
+      return { texture, sampler };
+    }
+    const key = `texture:env:${map.id}`;
+    const had = resources.has('textures', key);
+    const texture = resources.texture(
+      key,
+      // NOT displayReferred: the atlas holds a sqrt-encoded LINEAR radiance of
+      // this codebase's own devising, and an sRGB decode at sample would
+      // silently apply a second transfer on top of it.
+      { label: `env:${map.id}`, width: map.width, height: map.height, format: 'rgba8unorm' },
+      /* pinned */ true,
+    );
+    if (!had) {
+      resources.writeTexture(texture, { type: 'buffer', data: map.data, width: map.width, height: map.height });
+    }
+    return { texture, sampler };
+  }
+
   private render3DGroup(
     ctx: RenderPassContext,
     group: ReadonlyArray<Renderable>,
@@ -1758,6 +1810,12 @@ export class CompositionPass extends RenderPass {
     const { viewport, services } = ctx;
     const camera3d = ctx.scene.camera3d!;
     const lights = ctx.scene.lights3d;
+    // Refused (and therefore off) when the atlas layout does not match the
+    // shader's — see `envBindingFor`, which makes the same check for the
+    // texture. The two must agree or a scene would pack a lit `envParams`
+    // against the fallback texel.
+    const envMap = ctx.scene.envMap?.levels === ENV_SPEC_LEVELS ? ctx.scene.envMap : undefined;
+    const env = this.envBindingFor(ctx);
     const targetUv = targetSampleUv(ctx);
     const clampSampler = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     // Per-fragment Accepts-Lights shading: build the shade tail for renderables
@@ -1796,6 +1854,20 @@ export class CompositionPass extends RenderPass {
         // `oneSided` came to be plumbed end-to-end, asserted at the snapshot,
         // and visible in no pixel.
         ...(s.oneSided ? { oneSided: true } : {}),
+        // Image-based reflections. Attached to the SHADE, not to the draw,
+        // because it is the material that decides whether it reflects: toon
+        // never does (a mirrored room would undo the cel banding the model
+        // exists for), and the shader's Phong branch scales the term by
+        // Specular Intensity, so a matte Phong layer reads 0 anyway.
+        ...(envMap && s.toonBands === undefined
+          ? {
+            env: {
+              intensity: envMap.intensity,
+              rotationRad: (envMap.rotationDeg * Math.PI) / 180,
+              scale: envMap.scale,
+            },
+          }
+          : {}),
         lights: scaledLights,
       };
     };
@@ -1806,6 +1878,7 @@ export class CompositionPass extends RenderPass {
     };
 
     let cmds = new CommandBuffer();
+    cmds.env = env;
     let depthCleared = false;
     // True when `cmds` holds a queued draw sampling the resolved-effect texture
     // in LAYER_TARGET — that draw must execute before LAYER_TARGET is reused.
@@ -1816,6 +1889,10 @@ export class CompositionPass extends RenderPass {
       services.quad.execute(enc, cmds);
       enc.end();
       cmds = new CommandBuffer();
+      // The replacement buffer needs it too: the lit-3d materials declare
+      // bindings 7/8 unconditionally, so a sub-pass without this would queue
+      // incomplete bind groups.
+      cmds.env = env;
       depthCleared = true;
       pendingResolved = false;
     };
@@ -1907,6 +1984,41 @@ export class CompositionPass extends RenderPass {
       { label: `ext-index:${r.id}`, sizeBytes: mesh.indices.byteLength, usage: ['index'], data: mesh.indices },
     );
     const tex = r.textureKey ? this.texFor(ctx, r.textureKey) : undefined;
+    /*
+      The glTF map set, resolved once for the whole mesh.
+
+      White stands in for every map the material does not carry — 1.0 is the
+      identity for roughness, metallic, occlusion and the emissive factor, so
+      the shader needs no per-map flag and, more to the point, no conditional
+      `textureSample`. Only the normal map gets a flag, because ITS identity is
+      (0,0,1) rather than white.
+
+      A base-colour texture is not required: a model with a normal map and a
+      flat base colour binds white at slot 1 and lets the range's own colour
+      arrive through the tint, exactly as the solid mesh path does.
+    */
+    const white = ctx.services.textures.get('texture:white');
+    const mapTex = (key: string | undefined) => (key ? this.texFor(ctx, key)?.texture : undefined);
+    // The normal map is resolved once and reused, because the flag has to
+    // agree with what is actually BOUND: a map still decoding falls back to
+    // white, and white read as a tangent-space normal is (1,1,1) — a surface
+    // tilted 45° in both axes, which would light visibly wrong for the frame
+    // or two before the upload lands.
+    const normalTex = mesh.pbr ? mapTex(mesh.pbr.normalKey) : undefined;
+    const pbrSet = mesh.pbr && white
+      ? {
+          normal: normalTex ?? white.texture,
+          metallicRoughness: mapTex(mesh.pbr.metallicRoughnessKey) ?? white.texture,
+          occlusion: mapTex(mesh.pbr.occlusionKey) ?? white.texture,
+          emissive: mapTex(mesh.pbr.emissiveKey) ?? white.texture,
+          params: {
+            normalScale: mesh.pbr.normalScale,
+            occlusionStrength: mesh.pbr.occlusionStrength,
+            hasNormalMap: !!normalTex,
+            emissive: mesh.pbr.emissive,
+          },
+        }
+      : undefined;
     for (const range of mesh.ranges) {
       if (range.count === 0) continue;
       // Lit: the shader shades the flat colour per fragment. Unlit: the fixed
@@ -1923,7 +2035,14 @@ export class CompositionPass extends RenderPass {
         : shade;
       if (range.textured && tex) {
         emitMesh3D(cmds, mvp, Color.white(), r.opacity, r.blend, geometry, rangeShade,
-          { texture: tex.texture, sampler: clampSampler(), uvRect: r.uvRect, color: r.colorMatrix, sampleLinear: !!tex.sampleLinear });
+          { texture: tex.texture, sampler: clampSampler(), uvRect: r.uvRect, color: r.colorMatrix, sampleLinear: !!tex.sampleLinear },
+          pbrSet);
+      } else if (pbrSet && white) {
+        // Untextured base colour with maps: white at slot 1, the material's
+        // colour through the tint.
+        emitMesh3D(cmds, mvp, color, r.opacity, r.blend, geometry, rangeShade,
+          { texture: white.texture, sampler: clampSampler(), color: r.colorMatrix },
+          pbrSet);
       } else {
         emitMesh3D(cmds, mvp, color, r.opacity, r.blend, geometry, rangeShade);
       }

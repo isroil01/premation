@@ -41,6 +41,14 @@ import {
   type EnvironmentSky,
 } from './environmentLight';
 import { flattenScene, readNodeKind } from './sceneDerive';
+import {
+  defaultPrimitiveSpec,
+  isPrimitiveMeshType,
+  makePrimitiveComponent,
+  syncPrimitiveLayerBox,
+  type PrimitiveMeshType,
+  type PrimitiveSpec,
+} from './primitiveLayer';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
 import { DEFAULT_PARTICLE_CONFIG } from '@core/particles/particleSim';
@@ -1179,12 +1187,48 @@ export function insertLight(seed: LightSeed = {}): void {
   bumpScene();
 }
 
-/** Insert a 3D Parametric Primitive Mesh layer (AE 3D Design Space). */
-export function insert3DPrimitive(type: 'cube' | 'sphere' | 'plane' | 'cylinder' = 'cube'): void {
+/** Every kind {@link insert3DPrimitive} accepts. The first two resolve to the
+ *  extrusion / quad paths; the rest are generated meshes (primitiveLayer.ts). */
+export type Primitive3DKind = 'cube' | 'plane' | PrimitiveMeshType;
+
+const PRIMITIVE_3D_LABELS: Record<Primitive3DKind, string> = {
+  cube: '3D Cube',
+  plane: '3D Plane',
+  sphere: '3D Sphere',
+  cylinder: '3D Cylinder',
+  cone: '3D Cone',
+  torus: '3D Torus',
+  capsule: '3D Capsule',
+  box: '3D Box',
+};
+
+/**
+ * Insert a 3D primitive layer (AE 3D Design Space).
+ *
+ * TWO GEOMETRY PATHS, on purpose:
+ *
+ *  • **Cube** and **Plane** stay on the extrusion / quad path. An extruded
+ *    square already IS a real box — watertight walls, caps, a bevel you can
+ *    animate, per-face materials — so routing it through a plain box mesh
+ *    would trade features away for uniformity. A plane is a quad, and a quad
+ *    can carry an image.
+ *
+ *  • Everything CURVED — sphere, cylinder, cone, torus, capsule (and `box`,
+ *    reachable by re-typing one of them in the inspector) — is a generated
+ *    triangle mesh carried by a `Primitive` component. Sweeping an outline
+ *    along z cannot make these: a "sphere" built that way is a capsule, and a
+ *    cylinder built as 20 flat strips shows its facets. See primitiveLayer.ts.
+ *
+ * `spec` overrides the type's defaults (the New 3D Primitive dialog passes the
+ * radius / height / segment counts it collected); a bare call still inserts
+ * the same default object it always did.
+ */
+export function insert3DPrimitive(type: Primitive3DKind = 'cube', spec?: Partial<PrimitiveSpec>): void {
   const rootId = activeCompRootId();
-  const label = type === 'cube' ? '3D Cube' : type === 'sphere' ? '3D Sphere' : type === 'cylinder' ? '3D Cylinder' : '3D Plane';
+  const label = PRIMITIVE_3D_LABELS[type];
   const node = makeNode('shape', label);
   const compSize = useCompositionStore.getState();
+  const mesh = isPrimitiveMeshType(type) ? { ...defaultPrimitiveSpec(type), ...spec, type } : null;
   const t = node.components.find((c) => c.type === 'Transform');
   if (t) {
     t.props.x = compSize.width / 2;
@@ -1197,21 +1241,20 @@ export function insert3DPrimitive(type: 'cube' | 'sphere' | 'plane' | 'cylinder'
     t.props.primitiveType = type;
     t.props.castsShadows = true;
     t.props.acceptsLights = true;
-    // Real extruded geometry: a Cube is a square extruded by its side length; a
-    // Cylinder and a Sphere are both extruded ELLIPSES (`shapeType`), which is
-    // what buildSnapshot's extrusion pass understands.
-    //
-    // "3D Sphere" used to set only `primitiveType`, and nothing in the codebase
-    // reads that prop — so it inserted a flat 240×240 SQUARE. The name-based
-    // fallback (/circle|ellip|dot|orb/) doesn't match "3D Sphere" either. Giving
-    // it an ellipse profile and depth makes it a real, shaded, lit 3D body; it is
-    // a capsule rather than a true sphere until curved meshes exist, which the
-    // label below now says out loud instead of silently shipping a square.
-    if (type === 'sphere' || type === 'cylinder') t.props.shapeType = 'ellipse';
-    if (type === 'cube' || type === 'cylinder') t.props.extrusionDepth = 240;
-    if (type === 'sphere') t.props.extrusionDepth = 240;
+    if (!mesh) {
+      // Real extruded geometry: a Cube is a square extruded by its side length.
+      // (A Plane is the layer's own quad — nothing to add.)
+      if (type === 'cube') t.props.extrusionDepth = 240;
+    }
+  }
+  if (mesh) {
+    node.components.push(makePrimitiveComponent(node.id, mesh));
   }
   defaultSceneGraph.addChild(rootId, node);
+  // The layer box (selection, anchor, gizmo) hugs the generated mesh rather
+  // than the 240×240 placeholder above — done after the node is in the graph
+  // so it goes through the same undoable writeProp path an edit does.
+  if (mesh) syncPrimitiveLayerBox(node.id);
   useSelectionStore.getState().set([node.id]);
   bumpScene();
   useUIStore.getState().notify({

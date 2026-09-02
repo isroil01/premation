@@ -34,7 +34,13 @@ function parsedWith(positions: number[], opts: { uvs?: number[]; material?: numb
       targetNames: [],
     }],
     materials: [
-      { name: 'red', baseColorFactor: [1, 0, 0, 1], baseColorImage: null, doubleSided: true, metallicFactor: 0, roughnessFactor: 0.5 },
+      {
+        name: 'red', baseColorFactor: [1, 0, 0, 1], baseColorImage: null, baseColorTexture: null,
+        doubleSided: true, metallicFactor: 0, roughnessFactor: 0.5,
+        normalTexture: null, normalScale: 1, metallicRoughnessTexture: null,
+        occlusionTexture: null, occlusionStrength: 1,
+        emissiveTexture: null, emissiveFactor: [0, 0, 0], emissiveStrength: 1,
+      },
     ],
     images: [],
     nodes: [],
@@ -129,5 +135,101 @@ describe('helpers', () => {
     expect(a).toBe(modelKeyForBytes(new Uint8Array([1, 2, 3])));
     expect(a).not.toBe(modelKeyForBytes(new Uint8Array([1, 2, 4])));
     expect(a).toMatch(/^gltf-[0-9a-f]{8}-3$/);
+  });
+});
+
+// ── PBR map slots and the baked texture transform ────────────────────
+
+/** A parsed model whose single material carries the given slots. */
+function parsedWithMaterial(material: Partial<ParsedGltf['materials'][number]>): ParsedGltf {
+  const base = parsedWith([0, 0, 0, 1, 0, 0, 0, 1, 0], { uvs: [0, 0, 1, 0, 0, 1], material: 0 });
+  return {
+    ...base,
+    materials: [{ ...base.materials[0]!, ...material }],
+    images: [
+      { bytes: new Uint8Array([1]), mimeType: 'image/png' },
+      { bytes: new Uint8Array([2]), mimeType: 'image/png' },
+      { bytes: new Uint8Array([3]), mimeType: 'image/png' },
+      { bytes: new Uint8Array([4]), mimeType: 'image/png' },
+    ],
+  };
+}
+
+const URLS = ['url-0', 'url-1', 'url-2', 'url-3'];
+
+describe('primitiveToEntry — PBR maps', () => {
+  it('resolves each slot to its own session URL', () => {
+    const entry = primitiveToEntry(parsedWithMaterial({
+      normalTexture: { image: 0, texCoord: 0, transform: null },
+      metallicRoughnessTexture: { image: 1, texCoord: 0, transform: null },
+      occlusionTexture: { image: 2, texCoord: 0, transform: null },
+      emissiveTexture: { image: 3, texCoord: 0, transform: null },
+      normalScale: 0.25,
+      occlusionStrength: 0.5,
+      emissiveFactor: [1, 0.5, 0],
+      emissiveStrength: 2,
+    }), 'k', 0, 0, URLS)!;
+    expect(entry.maps).toEqual({
+      normal: 'url-0', metallicRoughness: 'url-1', occlusion: 'url-2', emissive: 'url-3',
+    });
+    expect(entry.normalScale).toBe(0.25);
+    expect(entry.occlusionStrength).toBe(0.5);
+    // emissiveFactor × KHR_materials_emissive_strength, folded once here so
+    // the shader multiplies one number instead of two.
+    expect(entry.emissive).toEqual([2, 1, 0]);
+  });
+
+  it('leaves every map null on a material that carries none', () => {
+    const entry = primitiveToEntry(parsedWithMaterial({}), 'k', 0, 0, URLS)!;
+    expect(entry.maps).toEqual({ normal: null, metallicRoughness: null, occlusion: null, emissive: null });
+    expect(entry.emissive).toEqual([0, 0, 0]);
+    expect(entry.uvTransform).toBeNull();
+  });
+
+  it('treats an unmintable object URL (jsdom, a failed Blob) as absent', () => {
+    // An empty string would sail through as a texture key and render a hole.
+    const entry = primitiveToEntry(parsedWithMaterial({
+      normalTexture: { image: 0, texCoord: 0, transform: null },
+    }), 'k', 0, 0, [''])!;
+    expect(entry.maps.normal).toBeNull();
+  });
+});
+
+describe('primitiveToEntry — KHR_texture_transform', () => {
+  const withTransform = (t: { offset: [number, number]; rotation: number; scale: [number, number] }) =>
+    primitiveToEntry(parsedWithMaterial({
+      baseColorTexture: { image: 0, texCoord: 0, transform: { ...t, texCoord: null } },
+    }), 'k', 0, 0, URLS)!;
+
+  it('bakes offset and scale into the vertex UVs', () => {
+    const e = withTransform({ offset: [0.25, 0.5], rotation: 0, scale: [2, 4] });
+    // Vertex UVs were (0,0) (1,0) (0,1); u' = 0.25 + 2u, v' = 0.5 + 4v.
+    expect(e.vertices[6]).toBeCloseTo(0.25);
+    expect(e.vertices[7]).toBeCloseTo(0.5);
+    expect(e.vertices[6 + 8]).toBeCloseTo(2.25);
+    expect(e.vertices[7 + 8]).toBeCloseTo(0.5);
+    expect(e.vertices[6 + 16]).toBeCloseTo(0.25);
+    expect(e.vertices[7 + 16]).toBeCloseTo(4.5);
+  });
+
+  it('rotates CLOCKWISE about the UV origin, as the extension specifies', () => {
+    // A quarter turn takes (1,0) to (0,−1): u' = cos·u + sin·v, v' = −sin·u + cos·v.
+    const e = withTransform({ offset: [0, 0], rotation: Math.PI / 2, scale: [1, 1] });
+    expect(e.vertices[6 + 8]).toBeCloseTo(0);
+    expect(e.vertices[7 + 8]).toBeCloseTo(-1);
+    // …and (0,1) to (1,0).
+    expect(e.vertices[6 + 16]).toBeCloseTo(1);
+    expect(e.vertices[7 + 16]).toBeCloseTo(0);
+  });
+
+  it('records what it baked, and drops an identity transform', () => {
+    expect(withTransform({ offset: [0.25, 0], rotation: 0, scale: [1, 1] }).uvTransform)
+      .toEqual({ offsetX: 0.25, offsetY: 0, scaleX: 1, scaleY: 1, rotation: 0 });
+    // Identity: the UVs are untouched and the field says so, so a reader can
+    // tell "remapped" from "the exporter merely wrote the extension".
+    const identity = withTransform({ offset: [0, 0], rotation: 0, scale: [1, 1] });
+    expect(identity.uvTransform).toBeNull();
+    expect(identity.vertices[6]).toBe(0);
+    expect(identity.vertices[6 + 8]).toBe(1);
   });
 });

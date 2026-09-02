@@ -39,6 +39,9 @@ import { AlignPanel } from '@layout/Inspector/AlignPanel';
 import { SwatchesPanel } from '@layout/Swatches';
 import { InfoAudioPanel } from '@layout/Inspector/InfoAudioPanel';
 import { ScopesPanel } from '@layout/Scopes';
+// Imported from the barrel deliberately: it also registers the transcript's
+// commands on load. See `layout/Transcript/index.ts`.
+import { TranscriptPanel } from '@layout/Transcript';
 import { PreviewPanel } from '@layout/Inspector/PreviewPanel';
 import { SourceMonitorPanel } from '@layout/SourceMonitor/SourceMonitorPanel';
 import { TrackerPanel } from '@layout/Inspector/TrackerPanel';
@@ -46,11 +49,13 @@ import { StylePresetsSection } from '@layout/Inspector/StylePresetsSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
 import { TrackMotionSection } from '@layout/Inspector/TrackMotionSection';
 import { AudioDriverSection, hasAudioDriverSection } from '@layout/Inspector/AudioDriverSection';
+import { ModifierStackSection, hasModifierStackSection } from '@layout/Inspector/ModifierStackSection';
 import { SvgSection, RevertSvgRow } from '@layout/Inspector/SvgSection';
 import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { ThreeDControl } from '@layout/Inspector/ThreeDControl';
 import { MaterialSection, hasMaterialSection } from '@layout/Inspector/MaterialSection';
+import { PrimitiveSection, hasPrimitiveSection } from '@layout/Inspector/PrimitiveSection';
 import { ModelSection } from '@layout/Inspector/ModelSection';
 import { Ik3DSection, isIk3DTip } from '@layout/Inspector/Ik3DSection';
 import { nodeMorphTargetCount } from '@core/scene/modelMorph';
@@ -780,6 +785,36 @@ export function AssetsPanel(): JSX.Element {
     const files = e.target.files;
     if (!files || files.length === 0) return;
     const items: Array<{ file: File; folderId: string | null }> = [];
+    // A `.gltf` references sidecar files (.bin, textures) by name, so a
+    // selection holding one is a MODEL drop as a whole: every file goes to the
+    // importer, which picks the model out and resolves the rest against it.
+    const all = Array.from(files);
+    const gltfDrop = all.some((f) => /\.gltf$/i.test(f.name));
+    if (gltfDrop) {
+      try {
+        const { importModelFiles } = await import('@core/scene/modelImport');
+        const sources = await Promise.all(all.map(async (f) => ({
+          name: f.name,
+          path: f.webkitRelativePath || undefined,
+          bytes: await f.arrayBuffer(),
+        })));
+        const result = importModelFiles(sources);
+        const modelName = all.find((f) => /\.gltf$/i.test(f.name))?.name ?? 'model';
+        useUIStore.getState().notify({
+          level: result.warning ? 'warning' : 'success',
+          message: result.warning ?? `Imported “${modelName}” — ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}`,
+          durationMs: result.warning ? 6000 : 3200,
+        });
+      } catch (err) {
+        useUIStore.getState().notify({
+          level: 'error',
+          message: `3D import failed: ${err instanceof Error ? err.message : String(err)}`,
+          durationMs: 6000,
+        });
+      }
+      e.target.value = '';
+      return;
+    }
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (!file) continue;
@@ -1746,6 +1781,22 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
+  // ── 1c. What SHAPE it is (parametric primitive) ──────────────────
+  // Only for layers whose geometry is generated from numbers — a sphere,
+  // cylinder, cone, torus, capsule or box. It sits beside Material because
+  // the two answer the same question about a mesh layer ("what is this
+  // object"), and above the content sections, which for a mesh primitive have
+  // nothing to say: its quad never draws.
+  if (hasPrimitiveSection(nodeId)) {
+    items.push({
+      id: 'primitive3d',
+      title: 'Primitive',
+      icon: 'cube',
+      defaultOpen: true,
+      content: <PrimitiveSection nodeId={nodeId} />,
+    });
+  }
+
   // ── 2. What kind of thing it is & How it looks ──────────────────
   /* Plugin custom layer kind */
   const customKind = splitKind(kind);
@@ -1927,6 +1978,19 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
           </div>
         </>
       ),
+    });
+  }
+
+  // ── Modifier stack ───────────────────────────────────────────────
+  // Same gate as the Audio Driver below, and for the same reason: any layer
+  // with an animatable numeric property can carry a stack, so this is about
+  // properties, not about layer KIND.
+  if (hasModifierStackSection(nodeId)) {
+    items.push({
+      id: 'modifierStack',
+      title: 'Modifiers',
+      icon: 'sparkles',
+      content: <ModifierStackSection nodeId={nodeId} />,
     });
   }
 
@@ -2715,6 +2779,7 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     ...(aiEnabled() ? { ai: () => <AiChatPanel /> } : {}),
     scene:     () => <ScenePanel />,
     assets:    () => <AssetsPanel />,
+    transcript: () => <TranscriptPanel />,
     presets: () => <MotionPresetsPanel />,
     properties: () => <PropertiesPanel />,
     character: () => <CharacterPanel />,

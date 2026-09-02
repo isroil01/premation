@@ -70,6 +70,10 @@ describe('menu submenus', () => {
       'layer.new3d.sphere',
       'layer.new3d.cylinder',
       'layer.new3d.plane',
+      'layer.new3d.cone',
+      'layer.new3d.torus',
+      'layer.new3d.capsule',
+      'layer.new3d.box',
     ]);
   });
 

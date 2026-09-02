@@ -11,10 +11,17 @@
  *
  * Container support: `.glb` (binary container, JSON + BIN chunks) and `.gltf`
  * JSON whose buffers/images are EMBEDDED data: URIs. External .bin/.png URIs
- * are refused with a clear error — this parser runs where there is no baseline
- * to fetch relative files against (browser drop, cloud doc, CLI render), and
- * a model that silently loses its geometry is worse than one that says "please
- * export as .glb".
+ * are refused BY THE PARSER with a clear error — it runs where there is no
+ * baseline to fetch relative files against (browser drop, cloud doc, CLI
+ * render), and a model that silently loses its geometry is worse than one that
+ * says which file is missing.
+ *
+ * The way to import a `.gltf` WITH sidecars is `packGltfToGlb` below: hand it
+ * the .gltf bytes plus a resolver over the other files the user selected and it
+ * rewrites the whole set into one self-contained GLB (single BIN chunk), which
+ * is then exactly the format the rest of the pipeline already parses,
+ * registers, persists in the document and re-parses on open. Nothing
+ * downstream learns a second shape; the sidecar case ends at import.
  *
  * Outputs stay in glTF's own coordinate system (y up, metres); the SCENE-side
  * importer owns the conversion to compositor space, so this file remains a
@@ -40,16 +47,58 @@ export interface GltfPrimitive {
   targets: { positions: Float32Array | null; normals: Float32Array | null }[];
 }
 
+/**
+ * KHR_texture_transform: the affine remap a material applies to the UVs it
+ * feeds one texture slot. Parsed here (it is three numbers and a flag) even
+ * though only the base-colour slot's transform is honoured downstream — see
+ * `ModelPrimitiveEntry.uvTransform`.
+ */
+export interface GltfTextureTransform {
+  offset: [number, number];
+  /** Radians, clockwise about the UV origin — the extension's convention. */
+  rotation: number;
+  scale: [number, number];
+  /** The extension may re-point the slot at another TEXCOORD set. */
+  texCoord: number | null;
+}
+
+/** One texture slot on a material, already resolved to an image index. */
+export interface GltfTextureRef {
+  /** Index into `images`. */
+  image: number;
+  /** TEXCOORD_n the material samples this slot with (spec default 0). */
+  texCoord: number;
+  /** KHR_texture_transform for this slot, or null. */
+  transform: GltfTextureTransform | null;
+}
+
 export interface GltfMaterial {
   name: string;
   /** RGBA 0..1 (spec default 1,1,1,1). */
   baseColorFactor: [number, number, number, number];
   /** Index into `images`, or null. (Resolved through textures[].source.) */
   baseColorImage: number | null;
+  /** The same slot with its texCoord / KHR_texture_transform intact. */
+  baseColorTexture: GltfTextureRef | null;
   doubleSided: boolean;
   /** 0..1 (spec defaults: fully metallic, fully rough). */
   metallicFactor: number;
   roughnessFactor: number;
+  /** Tangent-space normal map (G = +Y, glTF's OpenGL convention). */
+  normalTexture: GltfTextureRef | null;
+  /** `normalTexture.scale` (spec default 1) — scales the map's xy. */
+  normalScale: number;
+  /** Packed ORM-style map: G = roughness, B = metallic (spec fixed channels). */
+  metallicRoughnessTexture: GltfTextureRef | null;
+  /** Ambient occlusion; R channel. Very often the SAME image as the MR map. */
+  occlusionTexture: GltfTextureRef | null;
+  /** `occlusionTexture.strength` (spec default 1). */
+  occlusionStrength: number;
+  emissiveTexture: GltfTextureRef | null;
+  /** RGB 0..1 (spec default 0,0,0 — no emission). */
+  emissiveFactor: [number, number, number];
+  /** KHR_materials_emissive_strength multiplier (default 1). */
+  emissiveStrength: number;
 }
 
 export interface GltfImage {
@@ -117,6 +166,175 @@ const GLB_MAGIC = 0x46546c67; // 'glTF'
 const CHUNK_JSON = 0x4e4f534a; // 'JSON'
 const CHUNK_BIN = 0x004e4942; // 'BIN\0'
 
+/**
+ * A `.gltf` whose companion files were not supplied.
+ *
+ * Carries the URIs verbatim so the caller can NAME them — "missing
+ * scene.bin" is actionable, "export as .glb" is a shrug. Thrown both by the
+ * parser (which never resolves anything) and by `packGltfToGlb` (which
+ * resolves what it was given and reports what it could not).
+ */
+export class GltfSidecarError extends Error {
+  constructor(readonly missing: string[], where?: string) {
+    const list = missing.map((u) => `“${u}”`).join(', ');
+    super(
+      `This .gltf keeps its data in separate files (${list})${where ? ` — ${where}` : ''}. `
+      + 'Select the .gltf together with its .bin and texture files (File ▸ Import 3D Model…), '
+      + 'or re-export the model as a single .glb.',
+    );
+    this.name = 'GltfSidecarError';
+  }
+}
+
+/** Bytes a sidecar URI resolves to, or null when the file was not supplied. */
+export type GltfSidecarResolver = (uri: string) => Uint8Array | null;
+
+function pad4(n: number): number { return (4 - (n % 4)) % 4; }
+
+/** Guess an image mime type from a sidecar file's extension. */
+function mimeForUri(uri: string): string {
+  const ext = /\.([a-z0-9]+)(?:[?#]|$)/i.exec(uri)?.[1]?.toLowerCase();
+  switch (ext) {
+    case 'jpg': case 'jpeg': return 'image/jpeg';
+    case 'webp': return 'image/webp';
+    case 'ktx2': return 'image/ktx2';
+    case 'basis': return 'image/basis';
+    case 'avif': return 'image/avif';
+    default: return 'image/png';
+  }
+}
+
+/**
+ * Fold a `.gltf` plus its sidecars into ONE self-contained GLB.
+ *
+ * Every buffer (external file or data: URI) and every externally-referenced
+ * image is concatenated into a single BIN chunk; bufferViews are re-pointed at
+ * buffer 0 with their offsets shifted, and each embedded image gains a fresh
+ * bufferView. The result is byte-for-byte an ordinary .glb, so it hashes into a
+ * modelKey, registers, persists in the document and re-parses on open through
+ * exactly the paths a real .glb already takes.
+ *
+ * Base64 was the cheaper thing to write (rewrite each `uri` as a data: URI and
+ * keep the JSON) and is rejected here on weight: the document already stores
+ * the model as a data: URL, so base64-inside-base64 would be 1.78× the source
+ * bytes against a real GLB's 1.33×, on every save and autosave.
+ *
+ * Already-GLB input is returned unchanged rather than refused — the caller
+ * hands over whatever the user picked, and "it was already fine" is not an
+ * error.
+ *
+ * @throws GltfSidecarError naming EVERY unresolved uri, not just the first —
+ * one round trip through the file picker should be enough.
+ */
+export function packGltfToGlb(gltfBytes: Uint8Array, resolve: GltfSidecarResolver): ArrayBuffer {
+  if (gltfBytes.byteLength >= 12
+    && new DataView(gltfBytes.buffer, gltfBytes.byteOffset, 12).getUint32(0, true) === GLB_MAGIC) {
+    return gltfBytes.slice().buffer;
+  }
+  let g: GltfJson;
+  try {
+    g = JSON.parse(new TextDecoder().decode(gltfBytes)) as GltfJson;
+  } catch {
+    throw new Error('not a glTF file — the .gltf could not be read as JSON');
+  }
+
+  const missing: string[] = [];
+  const fetchUri = (uri: string): Uint8Array => {
+    if (uri.startsWith('data:')) return decodeDataUri(uri);
+    // Exporters percent-encode spaces and non-ASCII in `uri`; the file the user
+    // picked is named in the DECODED form.
+    let decoded = uri;
+    try { decoded = decodeURIComponent(uri); } catch { /* keep the raw form */ }
+    const bytes = resolve(decoded) ?? resolve(uri);
+    if (!bytes) {
+      missing.push(decoded);
+      return new Uint8Array(0);
+    }
+    return bytes;
+  };
+
+  const buffers = (g.buffers ?? []).map((b, i) => {
+    // Only GLB's buffer 0 may omit `uri` (it IS the BIN chunk). A JSON .gltf
+    // that does so is malformed, and folding it in as zero bytes would produce
+    // a GLB whose geometry silently decodes to the origin — refuse instead.
+    if (b.uri === undefined) throw new Error(`buffer ${i} of this .gltf has no uri — the file is malformed`);
+    return fetchUri(b.uri);
+  });
+  // Images that live outside a bufferView become new views at the tail.
+  const extraImages = (g.images ?? []).map((im) =>
+    im.bufferView === undefined && im.uri !== undefined
+      ? { bytes: fetchUri(im.uri), mimeType: im.mimeType ?? mimeForUri(im.uri) }
+      : null,
+  );
+  if (missing.length > 0) throw new GltfSidecarError([...new Set(missing)]);
+
+  // Lay the blob out, 4-byte aligned so every re-pointed accessor stays legal.
+  const bufferAt: number[] = [];
+  let cursor = 0;
+  for (const b of buffers) {
+    cursor += pad4(cursor);
+    bufferAt.push(cursor);
+    cursor += b.length;
+  }
+  const imageAt: number[] = [];
+  for (const im of extraImages) {
+    if (!im) { imageAt.push(-1); continue; }
+    cursor += pad4(cursor);
+    imageAt.push(cursor);
+    cursor += im.bytes.length;
+  }
+  const bin = new Uint8Array(cursor);
+  buffers.forEach((b, i) => bin.set(b, bufferAt[i]!));
+  extraImages.forEach((im, i) => { if (im) bin.set(im.bytes, imageAt[i]!); });
+
+  const views = (g.bufferViews ?? []).map((v) => ({
+    ...v,
+    buffer: 0,
+    byteOffset: bufferAt[v.buffer]! + (v.byteOffset ?? 0),
+  }));
+  const images = (g.images ?? []).map((im, i) => {
+    const extra = extraImages[i];
+    if (!extra) return im;
+    views.push({ buffer: 0, byteOffset: imageAt[i]!, byteLength: extra.bytes.length });
+    const { uri: _dropped, ...rest } = im;
+    return { ...rest, bufferView: views.length - 1, mimeType: extra.mimeType };
+  });
+
+  const json: GltfJson = {
+    ...g,
+    buffers: [{ byteLength: bin.length }],
+    bufferViews: views,
+    ...(g.images ? { images } : {}),
+  };
+  return buildGlb(new TextEncoder().encode(JSON.stringify(json)), bin);
+}
+
+/** Header + padded JSON chunk + padded BIN chunk. */
+function buildGlb(jsonBytes: Uint8Array, bin: Uint8Array): ArrayBuffer {
+  const jsonPad = pad4(jsonBytes.length);
+  const binPad = pad4(bin.length);
+  const total = 12 + 8 + jsonBytes.length + jsonPad + (bin.length > 0 ? 8 + bin.length + binPad : 0);
+  const out = new ArrayBuffer(total);
+  const dv = new DataView(out);
+  const u8 = new Uint8Array(out);
+  dv.setUint32(0, GLB_MAGIC, true);
+  dv.setUint32(4, 2, true);
+  dv.setUint32(8, total, true);
+  dv.setUint32(12, jsonBytes.length + jsonPad, true);
+  dv.setUint32(16, CHUNK_JSON, true);
+  u8.set(jsonBytes, 20);
+  // JSON pads with SPACES, BIN with zeros — the spec is explicit, and a parser
+  // that trims on whitespace would choke on NULs.
+  for (let i = 0; i < jsonPad; i++) u8[20 + jsonBytes.length + i] = 0x20;
+  if (bin.length > 0) {
+    const at = 20 + jsonBytes.length + jsonPad;
+    dv.setUint32(at, bin.length + binPad, true);
+    dv.setUint32(at + 4, CHUNK_BIN, true);
+    u8.set(bin, at + 8);
+  }
+  return out;
+}
+
 /** Parse a .glb or an embedded-only .gltf from raw bytes. */
 export function parseGltf(data: ArrayBuffer): ParsedGltf {
   const dv = new DataView(data);
@@ -154,15 +372,23 @@ interface GltfJson {
     bufferView?: number; byteOffset?: number; componentType: number; normalized?: boolean;
     count: number; type: string;
   }[];
-  images?: { uri?: string; mimeType?: string; bufferView?: number }[];
+  images?: { uri?: string; mimeType?: string; bufferView?: number; name?: string }[];
   textures?: { source?: number }[];
   materials?: {
     name?: string; doubleSided?: boolean;
     pbrMetallicRoughness?: {
       baseColorFactor?: number[];
-      baseColorTexture?: { index: number };
+      baseColorTexture?: GltfJsonTextureInfo;
       metallicFactor?: number;
       roughnessFactor?: number;
+      metallicRoughnessTexture?: GltfJsonTextureInfo;
+    };
+    normalTexture?: GltfJsonTextureInfo & { scale?: number };
+    occlusionTexture?: GltfJsonTextureInfo & { strength?: number };
+    emissiveTexture?: GltfJsonTextureInfo;
+    emissiveFactor?: number[];
+    extensions?: {
+      KHR_materials_emissive_strength?: { emissiveStrength?: number };
     };
   }[];
   meshes?: {
@@ -184,6 +410,20 @@ interface GltfJson {
     channels?: { sampler: number; target: { node?: number; path: string } }[];
     samplers?: { input: number; output: number; interpolation?: string }[];
   }[];
+}
+
+/** The spec's `textureInfo` shape, plus the one extension we read off it. */
+interface GltfJsonTextureInfo {
+  index: number;
+  texCoord?: number;
+  extensions?: {
+    KHR_texture_transform?: {
+      offset?: number[];
+      rotation?: number;
+      scale?: number[];
+      texCoord?: number;
+    };
+  };
 }
 
 interface GltfJsonPrimitive {
@@ -244,7 +484,7 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
       return glbBin;
     }
     if (b.uri.startsWith('data:')) return decodeDataUri(b.uri);
-    throw new Error(`buffer ${i} references an external file ("${b.uri}") — export as .glb (binary) instead`);
+    throw new GltfSidecarError([b.uri], `buffer ${i}`);
   });
 
   const viewBytes = (viewIndex: number): { bytes: Uint8Array; stride: number | undefined } => {
@@ -309,24 +549,60 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
       const m = /^data:([^;,]+)/.exec(im.uri);
       return { bytes: decodeDataUri(im.uri), mimeType: m?.[1] ?? 'image/png' };
     }
-    throw new Error(`image ${i} references an external file — export as .glb (binary) instead`);
+    throw new GltfSidecarError([im.uri ?? `image ${i}`], `image ${i}`);
   });
+
+  /**
+   * `textureInfo` → a slot resolved to an IMAGE index.
+   *
+   * Returns null when the slot is absent, when textures[].source is missing, or
+   * when the image itself failed to materialise — a material must never point
+   * at an image index the `images` array does not hold, because every consumer
+   * downstream indexes it blind.
+   */
+  const textureRef = (t: GltfJsonTextureInfo | undefined): GltfTextureRef | null => {
+    if (!t || typeof t.index !== 'number') return null;
+    const image = (g.textures ?? [])[t.index]?.source;
+    if (image === undefined || image === null || !images[image]) return null;
+    const kt = t.extensions?.KHR_texture_transform;
+    const transform: GltfTextureTransform | null = kt
+      ? {
+          offset: [kt.offset?.[0] ?? 0, kt.offset?.[1] ?? 0],
+          rotation: typeof kt.rotation === 'number' ? kt.rotation : 0,
+          scale: [kt.scale?.[0] ?? 1, kt.scale?.[1] ?? 1],
+          texCoord: typeof kt.texCoord === 'number' ? kt.texCoord : null,
+        }
+      : null;
+    return { image, texCoord: transform?.texCoord ?? t.texCoord ?? 0, transform };
+  };
 
   // Materials (through textures[].source to an image index).
   const materials: GltfMaterial[] = (g.materials ?? []).map((m, i) => {
     const pbr = m.pbrMetallicRoughness ?? {};
     const f = pbr.baseColorFactor ?? [1, 1, 1, 1];
-    const texIndex = pbr.baseColorTexture?.index;
-    const image = texIndex !== undefined ? (g.textures ?? [])[texIndex]?.source ?? null : null;
+    const base = textureRef(pbr.baseColorTexture);
+    const ef = m.emissiveFactor ?? [0, 0, 0];
     return {
       name: m.name ?? `material ${i}`,
       baseColorFactor: [f[0] ?? 1, f[1] ?? 1, f[2] ?? 1, f[3] ?? 1],
-      baseColorImage: image !== null && image !== undefined && images[image] ? image : null,
+      baseColorImage: base ? base.image : null,
+      baseColorTexture: base,
       doubleSided: m.doubleSided === true,
       // Spec defaults are 1/1 (fully metallic, fully rough) — honoured, not
       // softened: an exporter that MEANT non-metal writes metallicFactor 0.
       metallicFactor: typeof pbr.metallicFactor === 'number' ? pbr.metallicFactor : 1,
       roughnessFactor: typeof pbr.roughnessFactor === 'number' ? pbr.roughnessFactor : 1,
+      normalTexture: textureRef(m.normalTexture),
+      normalScale: typeof m.normalTexture?.scale === 'number' ? m.normalTexture.scale : 1,
+      metallicRoughnessTexture: textureRef(pbr.metallicRoughnessTexture),
+      occlusionTexture: textureRef(m.occlusionTexture),
+      occlusionStrength: typeof m.occlusionTexture?.strength === 'number' ? m.occlusionTexture.strength : 1,
+      emissiveTexture: textureRef(m.emissiveTexture),
+      emissiveFactor: [ef[0] ?? 0, ef[1] ?? 0, ef[2] ?? 0],
+      emissiveStrength:
+        typeof m.extensions?.KHR_materials_emissive_strength?.emissiveStrength === 'number'
+          ? m.extensions.KHR_materials_emissive_strength.emissiveStrength
+          : 1,
     };
   });
 

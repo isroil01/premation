@@ -10,7 +10,7 @@
  *   scene.json      ← doc.scene            (the scene graph)
  *   animation.json  ← doc.animation        (keyframe tracks + expressions)
  *   timeline.json   ← { timelines, motionBlur, guides }   (time domain + render-affecting)
- *   meta.json       ← { comps, comp, swatches, materials }  (composition settings registry — comp = legacy single — plus the project palette and material library)
+ *   meta.json       ← { comps, comp, swatches, materials, transitions }  (composition settings registry — comp = legacy single — plus the project palette, material library and per-cut transitions)
  *   manifest.json   ← BundleManifest       (version + chunk hashes; the index)
  *
  * Every `EditorDocument` field lands in exactly one chunk. `version` is lifted
@@ -53,6 +53,10 @@ interface MetaChunk {
   /** The project's named 3D materials — document metadata for the same reason
    *  the palette is: nothing about a material changes when the playhead moves. */
   materials?: EditorDocument['materials'];
+  /** Per-cut transitions, keyed by comp id. Document metadata like the palette:
+   *  a record describes an EDIT, not a moment, so nothing about it changes when
+   *  the playhead moves and it must not rewrite the `timeline` chunk. */
+  transitions?: EditorDocument['transitions'];
 }
 
 /** Stable JSON serialization used for every chunk (and thus for its hash). */
@@ -89,6 +93,7 @@ export function encodeBundle(doc: EditorDocument, hash: HashFn = hashString): Mo
 
   const meta: MetaChunk = {
     comps: doc.comps, comp: doc.comp, swatches: doc.swatches, materials: doc.materials,
+    transitions: doc.transitions,
   };
   if (!isEmptyChunk(meta)) chunkText[CHUNK.meta] = serialize(meta);
 
@@ -142,6 +147,8 @@ export function decodeBundle(files: Record<string, string>): EditorDocument {
   if (meta.swatches) doc.swatches = meta.swatches;
   // Present-but-empty is meaningful here too — see the swatches note above.
   if (meta.materials) doc.materials = meta.materials;
+  // Present-but-empty is meaningful here too — see the swatches note above.
+  if (meta.transitions) doc.transitions = meta.transitions;
   return doc;
 }
 

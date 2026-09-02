@@ -21,8 +21,12 @@ import { getFloatExrForAsset } from '@core/media/floatExr';
 import {
   registerEnvironmentAssetLoader,
   setEnvironmentAssetSh,
+  setEnvironmentAssetPixels,
+  resampleEquirect,
   shProjectEquirect,
   hasEnvironmentAssetSh,
+  ENV_SPEC_WIDTH,
+  ENV_SPEC_HEIGHT,
 } from './environmentLight';
 
 /**
@@ -97,6 +101,14 @@ export async function ensureEnvironmentSh(assetId: string): Promise<boolean> {
         assetId,
         shProjectEquirect(float.rgba, float.width, float.height, { isLinear: true }),
       );
+      // The same decode also feeds REFLECTIONS: the specular prefilter needs
+      // the picture, not the 27 floats the projection collapses it to. Kept
+      // here (rather than re-decoded on demand) because this is the only place
+      // the full-resolution pixels ever exist.
+      setEnvironmentAssetPixels(
+        assetId,
+        resampleEquirect(float.rgba, float.width, float.height, ENV_SPEC_WIDTH, ENV_SPEC_HEIGHT, { isLinear: true }),
+      );
       bumpScene();
       return true;
     }
@@ -113,6 +125,10 @@ export async function ensureEnvironmentSh(assetId: string): Promise<boolean> {
     setEnvironmentAssetSh(
       assetId,
       shProjectEquirect(decoded.pixels, decoded.width, decoded.height, { isLinear: false }),
+    );
+    setEnvironmentAssetPixels(
+      assetId,
+      resampleEquirect(decoded.pixels, decoded.width, decoded.height, ENV_SPEC_WIDTH, ENV_SPEC_HEIGHT, { isLinear: false }),
     );
     // The rig the renderer already drew this frame used the fallback preset —
     // this is what makes the real sky appear without a user gesture.

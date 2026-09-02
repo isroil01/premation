@@ -109,6 +109,22 @@ export interface TimelineMarkerView {
   duration: number;
 }
 
+/** A clip bar's geometry in FRAMES — `Clip.toJSON()`, named for readers. */
+export interface ClipGeometry {
+  start: number;
+  duration: number;
+  sourceIn: number;
+  sourceDuration: number | null;
+}
+
+/** One bar of one node, addressed the way `captureClipBars` documents. */
+export interface ClipBarSnapshot {
+  nodeId: string;
+  /** Position in `getLayersForNode` order (sorted by start). */
+  index: number;
+  clip: ClipGeometry;
+}
+
 class TimelineCommandAdapter implements IUndoableCommand {
   readonly label: string;
   private readonly cmd: TimelineCommand;
@@ -775,6 +791,153 @@ export class TimelineController {
   rollEditSeconds(leftNodeId: string, rightNodeId: string, deltaSeconds: number): number {
     const fr = this.timeline.getFrameRate();
     return this.rollEdit(leftNodeId, rightNodeId, Math.round(secondsToFrames(deltaSeconds, fr)));
+  }
+
+  // ── Transitions (the OVERLAP a dissolve is drawn on) ─────────────
+
+  /**
+   * The two bars that meet at the cut between two scene nodes, or null.
+   *
+   * The same search a roll uses — deliberately, because a transition and a roll
+   * are two edits on the ONE thing: `rollPair`'s node-id addressing and its
+   * one-frame seam tolerance are exactly what a transition needs, and a second
+   * copy of that search would agree with this one until someone changed one.
+   */
+  cutBarsFor(leftNodeId: string, rightNodeId: string): { left: Layer; right: Layer } | null {
+    return this.rollPair(leftNodeId, rightNodeId);
+  }
+
+  /**
+   * What a transition at a cut has to SPEND, in frames.
+   *
+   * A cross dissolve is not a decoration drawn over two bars — it is an overlap,
+   * and an overlap is bought with source that lies outside the current windows:
+   * the left bar's remaining TAIL and the right bar's remaining HEAD. This is
+   * the same quantity `rollLimits` computes, exposed on its own so the caller
+   * can REFUSE with a number ("3 frames of tail, needs 6") instead of asking
+   * the engine to overlap and silently getting a shorter transition than the
+   * one it just told the user it made.
+   *
+   * `Infinity` for an unbounded source (shapes, text, solids — `sourceDuration
+   * === null`): those genuinely have as much handle as you like. The right
+   * bar's head is additionally capped at its own `start`, because a bar cannot
+   * begin before frame 0 however much media sits behind its in-point.
+   */
+  cutHandlesFor(
+    leftNodeId: string,
+    rightNodeId: string,
+  ): { cutFrame: number; leftTail: number; rightHead: number } | null {
+    const pair = this.rollPair(leftNodeId, rightNodeId);
+    if (!pair) return null;
+    const { left, right } = pair;
+    const leftTail =
+      left.clip.sourceDuration === null
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, left.clip.sourceDuration - left.clip.sourceOut);
+    const rightHead = Math.min(
+      right.clip.sourceDuration === null ? Number.POSITIVE_INFINITY : Math.max(0, right.clip.sourceIn),
+      right.clip.start,
+    );
+    return { cutFrame: left.end, leftTail, rightHead };
+  }
+
+  /**
+   * Overlap the two bars at a cut: the left one grows `leftExtend` frames into
+   * its tail handle, the right one `rightExtend` frames into its head.
+   *
+   * ONE engine history entry for both bars, for the reason `rollEdit` spells
+   * out — two `trimLayer` calls cost two undo presses and show a broken
+   * intermediate edit on the way back out. Callers are expected to have checked
+   * {@link cutHandlesFor} first; the clip clamps still apply, so an unchecked
+   * over-ask quietly produces a shorter overlap rather than footage that does
+   * not exist.
+   */
+  overlapCutBars(
+    leftNodeId: string,
+    rightNodeId: string,
+    leftExtend: number,
+    rightExtend: number,
+  ): boolean {
+    const pair = this.rollBarsUnlocked(leftNodeId, rightNodeId);
+    if (!pair) return false;
+    const { left, right } = pair;
+    const leftTrial = left.clip.clone();
+    const rightTrial = right.clip.clone();
+    if (leftExtend > 0) leftTrial.trimEnd(leftTrial.end + leftExtend);
+    if (rightExtend > 0) rightTrial.trimStart(rightTrial.start - rightExtend);
+    const leftPrev = left.clip.toJSON();
+    const rightPrev = right.clip.toJSON();
+    const leftNext = leftTrial.toJSON();
+    const rightNext = rightTrial.toJSON();
+    if (
+      leftNext.start === leftPrev.start && leftNext.duration === leftPrev.duration &&
+      rightNext.start === rightPrev.start && rightNext.duration === rightPrev.duration
+    ) return false;
+
+    const set = (l: ClipGeometry, r: ClipGeometry): void => {
+      left.clip = Clip.fromJSON(l);
+      right.clip = Clip.fromJSON(r);
+      this.timeline.events.emit('LayerUpdated', { layer: left, changed: 'clip' });
+      this.timeline.events.emit('LayerUpdated', { layer: right, changed: 'clip' });
+    };
+    this.timeline.history.run({
+      label: 'Transition Overlap',
+      do: () => set(leftNext, rightNext),
+      undo: () => set(leftPrev, rightPrev),
+    });
+    this.invalidateLayerIndex();
+    return true;
+  }
+
+  /** `cutBarsFor`, refusing a locked pair. */
+  private rollBarsUnlocked(leftNodeId: string, rightNodeId: string): { left: Layer; right: Layer } | null {
+    const pair = this.rollPair(leftNodeId, rightNodeId);
+    if (!pair || pair.left.locked || pair.right.locked) return null;
+    return pair;
+  }
+
+  /**
+   * Every bar of the given nodes, as plain geometry — the "before" a transition
+   * has to be able to put back.
+   *
+   * Addressed by NODE + INDEX rather than by layer id, and that is the whole
+   * point of the shape: engine layer ids are re-minted by `syncFromScene` after
+   * any scene restore, so a snapshot that captured one would restore nothing
+   * after the first undo that touched the scene. The index is the position in
+   * `getLayersForNode` order (sorted by start), which is stable for as long as
+   * the bars themselves are.
+   */
+  captureClipBars(nodeIds: ReadonlyArray<string>): ClipBarSnapshot[] {
+    const out: ClipBarSnapshot[] = [];
+    for (const nodeId of nodeIds) {
+      const bars = this.getLayersForNode(nodeId);
+      bars.forEach((bar, index) => out.push({ nodeId, index, clip: bar.clip.toJSON() }));
+    }
+    return out;
+  }
+
+  /** Put a {@link captureClipBars} snapshot back, as one engine history entry. */
+  restoreClipBars(snapshot: ReadonlyArray<ClipBarSnapshot>): boolean {
+    const targets: Array<{ layer: Layer; next: ClipGeometry; prev: ClipGeometry }> = [];
+    for (const entry of snapshot) {
+      const layer = this.getLayersForNode(entry.nodeId)[entry.index];
+      if (!layer) continue;
+      targets.push({ layer, next: { ...entry.clip }, prev: layer.clip.toJSON() });
+    }
+    if (targets.length === 0) return false;
+    const set = (pick: 'next' | 'prev'): void => {
+      for (const t of targets) {
+        t.layer.clip = Clip.fromJSON(t[pick]);
+        this.timeline.events.emit('LayerUpdated', { layer: t.layer, changed: 'clip' });
+      }
+      this.invalidateLayerIndex();
+    };
+    this.timeline.history.run({
+      label: 'Restore Clip Geometry',
+      do: () => set('next'),
+      undo: () => set('prev'),
+    });
+    return true;
   }
 
   // ── Time Mapping (Absolute ↔ Layer-BAR-Relative) ────────────────

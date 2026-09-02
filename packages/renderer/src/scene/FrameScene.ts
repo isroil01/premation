@@ -608,6 +608,27 @@ export interface Renderable {
       /** Sample the layer's own texture instead of the flat colour. */
       textured?: boolean;
     }>;
+    /**
+     * An imported glTF material's maps beyond base colour. Present only when
+     * the material carries at least one, which is what selects the `mesh3d-pbr`
+     * pipeline — an extrusion, or a model with nothing but a base-colour
+     * texture, keeps the exact shader (and therefore the exact pixels) it had
+     * before this existed. Keys resolve through the texture registry like any
+     * other; an absent one binds white, the identity for every multiplicative
+     * map (see the shader's note).
+     */
+    pbr?: {
+      normalKey?: string;
+      metallicRoughnessKey?: string;
+      occlusionKey?: string;
+      emissiveKey?: string;
+      /** `normalTexture.scale`. */
+      normalScale: number;
+      /** `occlusionTexture.strength`. */
+      occlusionStrength: number;
+      /** emissiveFactor × KHR_materials_emissive_strength, linear. */
+      emissive: readonly [number, number, number];
+    };
   };
   /**
    * True 3D placement (AE Classic-3D GPU path). `model` is the 16-number
@@ -767,6 +788,51 @@ export interface FrameScene {
   };
   /** Scene lights for per-fragment Accepts-Lights shading in 3D groups. */
   lights3d?: ReadonlyArray<SceneLight3D>;
+  /**
+   * The comp's environment light as a prefiltered REFLECTION map.
+   *
+   * `lights3d` already carries the same environment's low-frequency
+   * IRRADIANCE, as a derived rig of one ambient plus up to six parallels (see
+   * core/scene/environmentLight.ts). That rig says how much light reaches a
+   * surface; it cannot say what the surface mirrors, which is what a smooth
+   * Physical material needs. So this is the second half of one environment,
+   * not a second environment — the two share a rotation and an intensity, and
+   * the shader turns them together.
+   *
+   * Present only when the comp HAS an environment light. Absent packs
+   * `envParams` as zeros and the shader's reflection block never runs, which
+   * is the gate that keeps every other scene bit-identical.
+   */
+  envMap?: EnvironmentMap;
+}
+
+/**
+ * A prefiltered specular environment, as raw texels the pass uploads itself.
+ *
+ * PIXELS rather than a `textureKey`, unlike every other image in this DTO: the
+ * texture registry resolves keys the APP registered, and the environment atlas
+ * is derived (a preset is procedural, and an image sky's atlas is built from a
+ * decode the app throws away) — routing it through the registry would mean
+ * inventing a registration for something no layer references. `id` is what
+ * makes that cheap: the pass keys its GPU texture off it and re-uploads only
+ * when the sky itself changes, so a keyframed rotation costs one uniform.
+ */
+export interface EnvironmentMap {
+  /** Identity of the CONTENT. Same id ⇒ same texels ⇒ no re-upload. */
+  id: string;
+  /** Full atlas size — `levels` equirect bands stacked top to bottom. */
+  width: number;
+  height: number;
+  /** Roughness levels; must equal the renderer's `ENV_SPEC_LEVELS`. */
+  levels: number;
+  /** Multiplier the shader applies after squaring the stored value. */
+  scale: number;
+  /** RGBA8, `width * height * 4` bytes. */
+  data: Uint8Array;
+  /** Environment intensity (Intensity/100 x Reflections/100). */
+  intensity: number;
+  /** Environment rotation in DEGREES, as the light layer stores it. */
+  rotationDeg: number;
 }
 
 /** An empty scene for a given composition. */

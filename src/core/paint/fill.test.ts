@@ -1,5 +1,6 @@
 import {
   sampleGradientColor,
+  sampleGradientHex,
   sortedStops,
   parseHex,
   convertFill,
@@ -118,5 +119,30 @@ describe('readNodeFill', () => {
 
   test('undefined when no fill anywhere', () => {
     expect(readNodeFill(node([{ type: 'Transform', props: { x: 1 } }]))).toBeUndefined();
+  });
+});
+
+describe('sampleGradientHex', () => {
+  const ramp: ColorStop[] = [
+    { id: 'a', offset: 0, color: '#000000' },
+    { id: 'b', offset: 1, color: '#ffffff' },
+  ];
+
+  test('answers in hex, not the sampler`s rgba(...)', () => {
+    // The distinction that matters: a ColorStop stores hex, and a stop created
+    // from an `rgba(...)` string comes back out of the ColorPicker as its
+    // fallback blue. This is the form the on-canvas gradient editor writes when
+    // clicking the axis adds a stop at the colour already there.
+    expect(sampleGradientColor(ramp, 0.5)).toMatch(/^rgba\(/);
+    expect(sampleGradientHex(ramp, 0.5)).toBe('#808080ff');
+  });
+
+  test('preserves a stop`s own alpha', () => {
+    expect(sampleGradientHex([{ id: 'a', offset: 0, color: '#11223380' }], 0.5)).toBe('#11223380');
+  });
+
+  test('clamps outside the stop range', () => {
+    expect(sampleGradientHex(ramp, -1)).toBe('#000000ff');
+    expect(sampleGradientHex(ramp, 2)).toBe('#ffffffff');
   });
 });

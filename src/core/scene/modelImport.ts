@@ -25,7 +25,7 @@
  * centre — so the root's scale/rotation pivot is the model's own middle.
  */
 
-import { parseGltf, type ParsedGltf } from '@core/media/gltf';
+import { parseGltf, packGltfToGlb, type ParsedGltf } from '@core/media/gltf';
 import { bakeClip, bakeWeightTracks } from './modelAnimation';
 import { MORPH_NAMES_PROP } from './modelMorph';
 import { defaultAnimation } from '@motion/animation';
@@ -253,6 +253,89 @@ export function bytesToDataUrl(bytes: Uint8Array, mime = 'model/gltf-binary'): s
     bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
   return `data:${mime};base64,${btoa(bin)}`;
+}
+
+/** Files that match this take the 3D-model door rather than the asset library. */
+export const MODEL_FILE_PATTERN = /\.(glb|gltf)$/i;
+
+/** One file the user handed the importer (the model, or one of its sidecars). */
+export interface ModelSourceFile {
+  /** File name as picked, e.g. `scene.gltf`. */
+  name: string;
+  /** Path relative to the dropped folder (`webkitRelativePath`), when there is one. */
+  path?: string;
+  bytes: ArrayBuffer;
+}
+
+/** Collapse `a/./b`, `a/b/../c` and leading `./` — glTF URIs are relative paths. */
+function normalizeRelPath(p: string): string {
+  const out: string[] = [];
+  for (const seg of p.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { out.pop(); continue; }
+    out.push(seg);
+  }
+  return out.join('/').toLowerCase();
+}
+
+/**
+ * Import a .glb, or a .gltf TOGETHER WITH the files it references.
+ *
+ * A `.gltf` is a manifest: its geometry sits in a `.bin` beside it and its
+ * textures in `.png`/`.jpg` files, addressed by relative URI. The importer has
+ * no filesystem to walk (browser, sandboxed Electron, cloud), so the only
+ * baseline it can resolve against is THE SET THE USER SELECTED — which is why
+ * this takes a list. URIs resolve first against the model's own directory (so a
+ * dropped folder keeps `textures/albedo.png` meaning what it says), then by
+ * bare file name (so a flat multi-select works too, which is what people
+ * actually do).
+ *
+ * `packGltfToGlb` then folds the whole set into one GLB, and from that line on
+ * this is the ordinary single-file import — same key, same registry, same
+ * document storage, same reload path.
+ */
+export function importModelFiles(files: ReadonlyArray<ModelSourceFile>): ModelImportResult {
+  const model = files.find((f) => MODEL_FILE_PATTERN.test(f.name));
+  if (!model) throw new Error('No .glb or .gltf file in the selection.');
+  return importGltfModel(glbFromModelFiles(files), model.name);
+}
+
+/**
+ * The pure half of `importModelFiles`: pick the model out of the selection and
+ * return it as self-contained GLB bytes. Split out so the sidecar resolution —
+ * the part with the interesting failure modes — is testable without a scene
+ * graph, a composition store or a selection.
+ *
+ * @throws GltfSidecarError when a referenced file is genuinely absent.
+ */
+export function glbFromModelFiles(files: ReadonlyArray<ModelSourceFile>): ArrayBuffer {
+  const model = files.find((f) => MODEL_FILE_PATTERN.test(f.name));
+  if (!model) throw new Error('No .glb or .gltf file in the selection.');
+  if (/\.glb$/i.test(model.name)) return model.bytes;
+
+  const byPath = new Map<string, Uint8Array>();
+  const byName = new Map<string, Uint8Array>();
+  for (const f of files) {
+    if (f === model) continue;
+    const bytes = new Uint8Array(f.bytes);
+    if (f.path) byPath.set(normalizeRelPath(f.path), bytes);
+    // First writer wins: two `normal.png`s from different folders are a real
+    // ambiguity, and silently preferring the LAST one seen is the wrong guess
+    // to make quietly. The path lookup above already disambiguates the folder
+    // case, which is the only case where it can be resolved at all.
+    const base = f.name.toLowerCase();
+    if (!byName.has(base)) byName.set(base, bytes);
+  }
+  const dir = model.path ? model.path.split('/').slice(0, -1).join('/') : '';
+  return packGltfToGlb(new Uint8Array(model.bytes), (uri) => {
+    // An absolute URL is a fetch, not a file the user picked — and this
+    // importer deliberately never reaches the network from a document.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(uri)) return null;
+    return byPath.get(normalizeRelPath(`${dir}/${uri}`))
+      ?? byPath.get(normalizeRelPath(uri))
+      ?? byName.get((uri.split('/').pop() ?? uri).toLowerCase())
+      ?? null;
+  });
 }
 
 export interface ModelImportResult {

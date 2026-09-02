@@ -42,6 +42,8 @@ export type {
   OverlayHandle,
   OverlayGuide,
   SnapLine as OverlaySnapLine,
+  SmartGuideSpan,
+  SmartGuideOverlayData,
 } from './ports';
 
 // ── Viewport / camera / coordinates ───────────────────────────────
@@ -62,6 +64,19 @@ export {
   type SnapResult,
   type SnapSource,
 } from './snap/SnapEngine';
+export {
+  nearestGaps,
+  spacingCandidates,
+  equalSizeCandidates,
+  smartGuides,
+  measureBetween,
+  gapBetween,
+  type Gap,
+  type GapSide,
+  type SpacingCandidate,
+  type SizeCandidate,
+  type SmartGuideInfo,
+} from './snap/smartGuides';
 
 // ── Hit testing ───────────────────────────────────────────────────
 export { HitTester, type HitOptions, type HitResult } from './hit/HitTester';

@@ -35,6 +35,7 @@ import type {
   VertexBufferLayout,
   IndexFormat,
 } from '../types';
+import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING } from '../types';
 import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
@@ -66,6 +67,13 @@ interface NativePipeline {
    *  masks, displacement map, colour LUT. Previously never resolved or set, so
    *  every second sampler silently read texture unit 0. */
   tex1Uniform: WebGLUniformLocation | null;
+  /**
+   * Sampler uniforms in TEXTURE-entry order, for a material that DECLARED them
+   * (`MaterialDescriptor.glslSamplers`). Non-empty only for shaders with more
+   * than two textures — the mesh PBR path — because two is as far as the
+   * name-guessing above can reach. When set it supersedes both fields above.
+   */
+  texUniforms: (WebGLUniformLocation | null)[];
 }
 interface NativeRenderTarget {
   /** Single-sample FBO wrapping `texture` — what everything SAMPLES from. */
@@ -411,6 +419,7 @@ export class WebGL2Backend implements RenderBackend {
       depthWrite: desc.depthWrite ?? desc.depthTest === true,
       texUniform,
       tex1Uniform,
+      texUniforms: (desc.samplerNames ?? []).map((n) => gl.getUniformLocation(program, n)),
     } satisfies NativePipeline);
   }
   destroyPipeline(_pipeline: PipelineHandle): void {}
@@ -761,6 +770,12 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // never assigned. That is why masks / displacement never sampled right.
     let texIndex = 0;
     let sampler: WebGLSampler | null = null;
+    // The environment map gets its OWN sampler on its OWN unit. Every other
+    // sampler is broadcast (see below), and the env one must not be: it wraps
+    // in u, and letting it reach unit 0 would silently switch every layer
+    // texture from clamp to repeat.
+    let envSampler: WebGLSampler | null = null;
+    let envUnit = -1;
     for (const e of (group.native as { entries: BindGroupResource[] }).entries) {
       if ('buffer' in e) {
         const nb = e.buffer.native as NativeBuffer;
@@ -769,9 +784,15 @@ class WebGL2PassEncoder implements RenderPassEncoder {
       } else if ('texture' in e) {
         gl.activeTexture(gl.TEXTURE0 + texIndex);
         gl.bindTexture(gl.TEXTURE_2D, glTexture(e.texture.native));
-        const uni = texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform;
+        const declared = this.pipeline?.texUniforms;
+        const uni = declared && declared.length > 0
+          ? declared[texIndex]
+          : (texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform);
         if (uni) gl.uniform1i(uni, texIndex);
+        if (e.binding === ENV_TEXTURE_BINDING) envUnit = texIndex;
         texIndex += 1;
+      } else if (e.binding === ENV_SAMPLER_BINDING) {
+        envSampler = e.sampler.native as WebGLSampler;
       } else {
         sampler = e.sampler.native as WebGLSampler;
       }
@@ -786,6 +807,9 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     if (sampler) {
       for (let u = 0; u < Math.max(1, texIndex); u++) gl.bindSampler(u, sampler);
     }
+    // AFTER the broadcast, so the env unit keeps the wrapping sampler even
+    // when the draw also carries a layer sampler.
+    if (envSampler && envUnit >= 0) gl.bindSampler(envUnit, envSampler);
   }
   setVertexBuffer(_slot: number, buffer: BufferHandle): void {
     this.vertexBuffer = buffer.native as NativeBuffer;

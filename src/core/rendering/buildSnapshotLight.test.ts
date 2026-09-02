@@ -40,6 +40,7 @@ describe('lights', () => {
       // Environment-light fields (no-ops on the four classic types).
       envPreset: 'studio',
       envRotation: 0,
+      envReflections: 100,
     });
   });
 
@@ -279,6 +280,84 @@ describe('environment light', () => {
     const snap = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
     expect(snap.layers.some((l) => l.light)).toBe(false);
     expect(snap.layers.some((l) => l.id.startsWith('E'))).toBe(false);
+  });
+
+  /*
+    The REFLECTION half of the same light. `lights3d` above is the irradiance
+    probe — how much light arrives; `envMap` is the prefiltered radiance a
+    smooth Physical surface mirrors. Both come from one light, one sky and one
+    rotation, and these pin the three conditions under which the second half
+    ships at all — because whenever it does NOT ship, the shader's reflection
+    block is dead and the frame is bit-identical to the engine that predates it.
+  */
+  describe('its reflection map', () => {
+    const snapOf = (g: SceneGraph): ReturnType<typeof buildSnapshot> =>
+      buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
+
+    it('ships beside the rig, carrying the same sky, rotation and intensity', () => {
+      const g = new SceneGraph();
+      const e = envLight('E', 'sunset');
+      (e.components[0]!.props as Record<string, unknown>).envRotation = 40;
+      g.addNode(e);
+      g.addNode(shape3d('S'));
+      const snap = snapOf(g);
+      expect(snap.envMap).toBeDefined();
+      expect(snap.envMap!.rotationDeg).toBe(40);
+      expect(snap.envMap!.intensity).toBeCloseTo(1, 6);
+      expect(snap.envMap!.data.length).toBe(snap.envMap!.width * snap.envMap!.height * 4);
+    });
+
+    it('does not ship without a 3D layer — nothing there to reflect in', () => {
+      const g = new SceneGraph();
+      g.addNode(envLight('E'));
+      expect(snapOf(g).envMap).toBeUndefined();
+    });
+
+    it('does not ship at zero Reflections — the term would multiply to nothing', () => {
+      const g = new SceneGraph();
+      const e = envLight('E');
+      (e.components[0]!.props as Record<string, unknown>).envReflections = 0;
+      g.addNode(e);
+      g.addNode(shape3d('S'));
+      // And this is the user-facing OFF switch: no map bound, `envParams.x`
+      // zero, the shader back to exactly its pre-reflection arithmetic.
+      expect(snapOf(g).envMap).toBeUndefined();
+    });
+
+    it('scales with Reflections independently of the light rig', () => {
+      const build = (refl: number): ReturnType<typeof buildSnapshot> => {
+        const g = new SceneGraph();
+        const e = envLight('E');
+        (e.components[0]!.props as Record<string, unknown>).envReflections = refl;
+        g.addNode(e);
+        g.addNode(shape3d('S'));
+        return snapOf(g);
+      };
+      const full = build(100);
+      const half = build(50);
+      expect(half.envMap!.intensity).toBeCloseTo(full.envMap!.intensity / 2, 6);
+      // The rig is untouched by it: dimming reflections must not dim the scene.
+      expect(half.lights3d).toEqual(full.lights3d);
+    });
+
+    it('shares one atlas across frames, so a keyframed sky re-uploads nothing', () => {
+      const g = new SceneGraph();
+      g.addNode(envLight('E', 'sunset'));
+      g.addNode(shape3d('S'));
+      const anim = new AnimationEngine();
+      anim.setKeyframe('E', 'envRotation', 0, 0);
+      anim.setKeyframe('E', 'envRotation', 2, 180);
+      const at = (t: number): ReturnType<typeof buildSnapshot> =>
+        buildSnapshot(g, anim, t, undefined, undefined, undefined, undefined, COMP);
+      const a = at(0).envMap!;
+      const b = at(2).envMap!;
+      // Same id AND the same buffer object: the renderer keys its GPU texture
+      // off the id, so a per-frame rebuild would re-upload 640 KB every frame
+      // of an animated sky.
+      expect(b.id).toBe(a.id);
+      expect(b.data).toBe(a.data);
+      expect(b.rotationDeg).not.toBe(a.rotationDeg);
+    });
   });
 
   it('keyframed envRotation swings the rig (animated sky)', () => {

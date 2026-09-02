@@ -15,6 +15,7 @@ import type {
   TextureFormat,
   VertexBufferLayout,
 } from '../gpu/types';
+import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING } from '../gpu/types';
 import { makeKey } from '../utils/ids';
 import { QUAD_LAYOUT } from '../resources/Geometry';
 import type { ShaderCache } from './ShaderCache';
@@ -30,6 +31,15 @@ export interface MaterialDescriptor {
   /** Depth-tested material (3D layer path). Pipelines built from it carry
    *  depth state and are only valid inside passes with a depth attachment. */
   depth?: { test: boolean; write: boolean };
+  /**
+   * GLSL sampler uniform names, in the order this material's TEXTURE bind-group
+   * entries appear. WebGL2 has no binding numbers for samplers — it needs the
+   * name to point a uniform at a texture unit — and the backend's built-in
+   * guess (`uTex`, then whichever ONE of `uMaskTex`/`uMapTex`/`uLutTex`/
+   * `uMatteTex` exists) tops out at two textures. A material with more says so
+   * here; WebGPU ignores it and binds by number.
+   */
+  glslSamplers?: string[];
 }
 
 /** Built-in material: solid-colored quad. Uniform block at binding 0. */
@@ -419,7 +429,13 @@ export const NOISE_MATERIAL: MaterialDescriptor = {
 export const SOLID3D_MATERIAL: MaterialDescriptor = {
   shader: 'solid3d',
   topology: 'triangle-list',
-  layout: [{ binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] }],
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+  ],
+  // The env map is this material's ONLY texture, so it lands on unit 0 here.
+  glslSamplers: ['uEnvTex'],
   depth: { test: true, write: true },
 };
 
@@ -431,7 +447,10 @@ export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
     { binding: 1, type: 'texture', stages: ['fragment'] },
     { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
+  glslSamplers: ['uTex', 'uEnvTex'],
   depth: { test: true, write: true },
 };
 
@@ -462,7 +481,10 @@ export const TEXTURED3D_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
     { binding: 1, type: 'texture', stages: ['fragment'] },
     { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
+  glslSamplers: ['uTex', 'uEnvTex'],
   depth: { test: true, write: false },
 };
 
@@ -480,7 +502,12 @@ export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: 1, type: 'texture', stages: ['fragment'] },
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: 3, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
+  // Three textures now, past what the backend's two-name guess can reach —
+  // so name them all, in the order QuadRenderer pushes the entries.
+  glslSamplers: ['uTex', 'uMaskTex', 'uEnvTex'],
   depth: { test: true, write: true },
 };
 
@@ -527,7 +554,12 @@ export const MESH3D_LAYOUT: VertexBufferLayout = {
 export const MESH3D_SOLID_MATERIAL: MaterialDescriptor = {
   shader: 'mesh3d-solid',
   topology: 'triangle-list',
-  layout: [{ binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] }],
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+  ],
+  glslSamplers: ['uEnvTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };
@@ -540,7 +572,10 @@ export const MESH3D_TEXTURED_MATERIAL: MaterialDescriptor = {
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
     { binding: 1, type: 'texture', stages: ['fragment'] },
     { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
+  glslSamplers: ['uTex', 'uEnvTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };
@@ -548,6 +583,36 @@ export const MESH3D_TEXTURED_MATERIAL: MaterialDescriptor = {
 export const MESH3D_TEXTURED_LINEAR_MATERIAL: MaterialDescriptor = {
   ...MESH3D_TEXTURED_MATERIAL,
   shader: 'mesh3d-textured-linear',
+};
+
+/**
+ * Depth-tested mesh carrying a glTF material's full map set.
+ *
+ * A SEPARATE material rather than a widened `MESH3D_TEXTURED_MATERIAL`: a
+ * bind-group layout is part of the pipeline, so adding four texture slots to
+ * the existing one would rebuild the pipeline every extruded layer draws
+ * through — and would mean binding four dummy textures on every extrusion in
+ * every project. Selected only when the model actually has the maps.
+ */
+export const MESH3D_PBR_MATERIAL: MaterialDescriptor = {
+  shader: 'mesh3d-pbr',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'texture', stages: ['fragment'] },
+    { binding: 4, type: 'texture', stages: ['fragment'] },
+    { binding: 5, type: 'texture', stages: ['fragment'] },
+    { binding: 6, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+  ],
+  // Bindings 3–6 are CLAIMED by the map set; the environment atlas took 7/8,
+  // which is exactly the "anything else starts at 7" this note anticipated.
+  glslSamplers: ['uTex', 'uNormalTex', 'uMRTex', 'uAOTex', 'uEmissiveTex', 'uEnvTex'],
+  buffers: [MESH3D_LAYOUT],
+  depth: { test: true, write: true },
 };
 
 export const DEFORMED_MESH_LINEAR_MATERIAL: MaterialDescriptor = {
@@ -619,6 +684,7 @@ export class MaterialSystem {
       topology: material.topology,
       blend,
       colorFormat,
+      ...(material.glslSamplers ? { samplerNames: material.glslSamplers } : {}),
       ...(depth ? { depthTest: depth.test, depthWrite: depth.write, depthFormat: 'depth24plus' as const } : {}),
       ...(samples > 1 ? { samples } : {}),
     });

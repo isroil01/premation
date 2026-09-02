@@ -513,6 +513,24 @@ export interface RenderLayer {
       /** Sample the layer's own texture (image/video back cap) instead of `fill`. */
       textured?: boolean;
     }>;
+    /**
+     * An imported glTF material's maps beyond base colour, as this session's
+     * object URLs. Present only when the material carries at least one — which
+     * is what routes the draw to the wider `mesh3d-pbr` pipeline, leaving every
+     * extrusion and every base-colour-only model on the shader they already
+     * had. The URLs come straight from the mesh registry each frame (they are
+     * session-scoped and never stored in the document), so nothing here needs
+     * the rehydration dance `src` needs.
+     */
+    pbr?: {
+      normalSrc?: string;
+      metallicRoughnessSrc?: string;
+      occlusionSrc?: string;
+      emissiveSrc?: string;
+      normalScale: number;
+      occlusionStrength: number;
+      emissive: [number, number, number];
+    };
   };
   deformedMesh?: {
     vertices: Float32Array;
@@ -617,6 +635,38 @@ export interface RenderSnapshot {
    * typechecks everywhere.
    */
   lights3d?: ReadonlyArray<ShaderLight>;
+  /**
+   * The comp's environment light as a prefiltered REFLECTION map.
+   *
+   * `lights3d` already carries the SAME environment's irradiance, expanded
+   * into a derived rig of one ambient plus up to six parallels. That rig is
+   * what a surface is LIT by; this is what a smooth surface MIRRORS, and the
+   * two are the two halves of one environment light — same rotation, same
+   * intensity, produced side by side in buildSnapshot.
+   *
+   * Emitted only when the comp has an environment light AND a 3D layer that
+   * can use it. Absent means the shader's reflection block never runs.
+   */
+  envMap?: EnvironmentSpecularMap;
+}
+
+/**
+ * A prefiltered specular environment, as raw texels.
+ *
+ * Structurally the renderer's `EnvironmentMap` DTO. Restated here rather than
+ * imported for the same reason `ShaderLight` is not — this layer's snapshot
+ * type is the app's own contract — but the field NAMES must match, because
+ * `snapshotToFrameScene` hands the object straight through.
+ */
+export interface EnvironmentSpecularMap {
+  id: string;
+  width: number;
+  height: number;
+  levels: number;
+  scale: number;
+  data: Uint8Array;
+  intensity: number;
+  rotationDeg: number;
 }
 
 export interface RenderBackend {

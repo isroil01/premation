@@ -5,10 +5,11 @@
  */
 
 import { parseGltf } from '@core/media/gltf';
-import { buildModelLayout, bytesToDataUrl } from './modelImport';
+import { buildModelLayout, bytesToDataUrl, glbFromModelFiles } from './modelImport';
 import { registerModel, clearModelRegistry, modelKeyForBytes } from './modelMesh';
 import { SCENE_KIND_PROP } from './seedDefaultScene';
-import { buildQuadGlb } from '@/__testHelpers__/buildTestGlb';
+import { buildQuadGlb, buildExternalGltfSet } from '@/__testHelpers__/buildTestGlb';
+import { GltfSidecarError } from '@core/media/gltf';
 
 describe('buildModelLayout', () => {
   afterEach(() => clearModelRegistry());
@@ -47,5 +48,60 @@ describe('buildModelLayout', () => {
     expect(url).toMatch(/^data:model\/gltf-binary;base64,/);
     const decoded = Uint8Array.from(atob(url.split(',')[1]!), (c) => c.charCodeAt(0));
     expect(Array.from(decoded)).toEqual([0, 1, 2, 250, 251, 252]);
+  });
+});
+
+describe('glbFromModelFiles — a .gltf and the files beside it', () => {
+  afterEach(() => clearModelRegistry());
+
+  it('resolves sidecars by BARE NAME, which is what a flat multi-select gives', () => {
+    const set = buildExternalGltfSet();
+    const glb = glbFromModelFiles([
+      { name: 'scene.gltf', bytes: set.gltf },
+      { name: 'scene.bin', bytes: set.bin },
+      { name: 'albedo.png', bytes: set.png },
+    ]);
+    const parsed = parseGltf(glb);
+    expect(Array.from(parsed.meshes[0]!.primitives[0]!.positions)).toEqual(set.positions);
+    expect(Array.from(parsed.images[0]!.bytes)).toEqual(Array.from(new Uint8Array(set.png)));
+  });
+
+  it('resolves a folder drop against the MODEL’s own directory', () => {
+    // `textures/albedo.png` means what it says relative to the .gltf, so the
+    // dropped folder's own prefix has to be stripped first.
+    const set = buildExternalGltfSet('data.bin', 'textures/albedo.png');
+    const glb = glbFromModelFiles([
+      { name: 'scene.gltf', path: 'robot/scene.gltf', bytes: set.gltf },
+      { name: 'data.bin', path: 'robot/data.bin', bytes: set.bin },
+      { name: 'albedo.png', path: 'robot/textures/albedo.png', bytes: set.png },
+    ]);
+    expect(parseGltf(glb).images).toHaveLength(1);
+  });
+
+  it('names the file that is missing rather than failing vaguely', () => {
+    const set = buildExternalGltfSet();
+    let err: unknown;
+    try {
+      glbFromModelFiles([
+        { name: 'scene.gltf', bytes: set.gltf },
+        { name: 'albedo.png', bytes: set.png },
+      ]);
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(GltfSidecarError);
+    expect((err as GltfSidecarError).missing).toEqual(['scene.bin']);
+  });
+
+  it('passes a .glb through untouched even when other files came with it', () => {
+    const glb = buildQuadGlb();
+    const out = glbFromModelFiles([
+      { name: 'notes.txt', bytes: new ArrayBuffer(4) },
+      { name: 'model.glb', bytes: glb },
+    ]);
+    expect(new Uint8Array(out)).toEqual(new Uint8Array(glb));
+  });
+
+  it('refuses a selection with no model in it', () => {
+    expect(() => glbFromModelFiles([{ name: 'albedo.png', bytes: new ArrayBuffer(4) }]))
+      .toThrow(/No \.glb or \.gltf/);
   });
 });

@@ -170,6 +170,17 @@ interface GuidesStore extends GuidesSettings {
    * final renders/export never see it.
    */
   draft3d: boolean;
+  /**
+   * Figma-style smart guides: distance badges to the nearest neighbours,
+   * pink hatch bars over equal-spacing runs, and equal-size highlights, drawn
+   * only while a gesture is in flight (or an Alt-hover is measuring).
+   *
+   * On by default — it is the measuring half of snapping and costs nothing when
+   * nothing is being dragged. Session state, deliberately NOT part of
+   * `GuidesSettings`: it is a preference about the CHROME, not project data, so
+   * opening someone else's document must not silently turn a user's guides off.
+   */
+  smartGuides: boolean;
   /** Active left-drag camera tool (C-key cycling), 'none' = selection. */
   cameraTool: CameraTool;
 
@@ -209,6 +220,9 @@ interface GuidesStore extends GuidesSettings {
   setGizmo3dAxisMode: (mode: Gizmo3dAxisMode) => void;
   toggleGroundGridVisible: () => void;
   toggleDraft3d: () => void;
+  /** View ▸ Options ▸ Smart Guides. */
+  toggleSmartGuides: () => void;
+  setSmartGuides: (on: boolean) => void;
   setCameraTool: (tool: CameraTool) => void;
   /** C key: none → orbit → pan → dolly → orbit … */
   cycleCameraTool: () => void;
@@ -268,6 +282,7 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
   gizmo3dAxisMode: 'local',
   groundGridVisible: true,
   draft3d: false,
+  smartGuides: true,
   cameraTool: 'none',
 
   toggleRulers: () => set((s) => ({ rulers: !s.rulers })),
@@ -304,6 +319,8 @@ export const useGuidesStore = create<GuidesStore>((set, get) => ({
   setGizmo3dAxisMode: (mode) => set({ gizmo3dAxisMode: mode }),
   toggleGroundGridVisible: () => set((s) => ({ groundGridVisible: !s.groundGridVisible })),
   toggleDraft3d: () => set((s) => ({ draft3d: !s.draft3d })),
+  toggleSmartGuides: () => set((s) => ({ smartGuides: !s.smartGuides })),
+  setSmartGuides: (on) => set({ smartGuides: on }),
   setCameraTool: (tool) => set({ cameraTool: tool }),
   cycleCameraTool: () =>
     set((s) => ({

@@ -33,7 +33,7 @@ import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
   packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D,
   packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock,
-  packBokeh, packCocBlur, packSceneBlitLut,
+  packBokeh, packCocBlur, packSceneBlitLut, packMesh3DPbr,
 } from '../pipeline/uniforms';
 import type { Mat3 } from '../core/math/Mat3';
 import type { Mat4 } from '../core/math/Mat4';
@@ -149,6 +149,11 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'mesh3d-solid', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'mesh3d-textured', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'mesh3d-textured-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
+  // …and the PBR variant widens that block by two vec4s at the TAIL, which is
+  // exactly the drift this table exists to catch: `packMesh3DPbr` builds on
+  // `packTextured3D`, so a field added to the shared shade tail must land
+  // between them on BOTH sides or every map parameter reads garbage.
+  { shader: 'mesh3d-pbr', pack: () => packMesh3DPbr(MVP4, RECT, COLOR, 1) },
   { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
   { shader: 'bokeh', pack: () => packBokeh(MVP, RECT, 0.001, 0.001, 8, 6, 0.5, 1) },
   { shader: 'coc-blur', pack: () => packCocBlur(MVP, RECT, RECT, 0.001, 0.001, [1, 2, 3, 4], 6, 0.5, 1) },

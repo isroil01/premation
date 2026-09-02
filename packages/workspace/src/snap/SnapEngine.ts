@@ -12,6 +12,7 @@
 import type { Vec2 } from '../math/Vec2';
 import type { Rect } from '../math/Rect';
 import * as R from '../math/Rect';
+import { spacingCandidates, type SpacingCandidate } from './smartGuides';
 
 export interface SnapSettings {
   enabled: boolean;
@@ -21,6 +22,13 @@ export interface SnapSettings {
   /** Also match centers & edges (not just points). */
   toEdges: boolean;
   toCenters: boolean;
+  /**
+   * Figma-style smart guides: equal-spacing snapping plus the measurement
+   * chrome the host draws from it (distance badges, hatch bars, equal-size
+   * highlights). Alignment snapping is unaffected either way — turning this off
+   * takes away the measuring, not the magnet.
+   */
+  smartGuides: boolean;
   /** Snap threshold in screen pixels. */
   thresholdPx: number;
 }
@@ -32,6 +40,7 @@ export const DEFAULT_SNAP_SETTINGS: SnapSettings = {
   toObjects: true,
   toEdges: true,
   toCenters: true,
+  smartGuides: true,
   /*
    * The magnet's reach, in SCREEN px.
    *
@@ -74,6 +83,13 @@ export interface SnapResult<T> {
   /** Whether any axis snapped. */
   snapped: boolean;
   lines: SnapLine[];
+  /**
+   * Equal-spacing snaps that were APPLIED (at most one per axis), for the host
+   * to draw as hatch bars. Empty unless the caller passed neighbour rects and
+   * `smartGuides` is on. Alignment always wins an axis: a box that lines up
+   * with an edge must not be nudged off it to even out a gap.
+   */
+  spacing: readonly SpacingCandidate[];
 }
 
 interface AxisMatch {
@@ -136,7 +152,7 @@ export class SnapEngine {
   /** Snap a single world point. */
   snapPoint(point: Vec2, targets: readonly SnapTarget[], thresholdWorld: number): SnapResult<Vec2> {
     if (!this.settings.enabled) {
-      return { value: point, delta: { x: 0, y: 0 }, snapped: false, lines: [] };
+      return { value: point, delta: { x: 0, y: 0 }, snapped: false, lines: [], spacing: [] };
     }
     const xMatch = this.bestMatch([point.x], targets, 'x', thresholdWorld);
     const yMatch = this.bestMatch([point.y], targets, 'y', thresholdWorld);
@@ -149,9 +165,19 @@ export class SnapEngine {
    * Snap a moving world rect. Considers its left/center/right (x) and
    * top/middle/bottom (y) against the targets, choosing the closest per axis.
    */
-  snapRect(rect: Rect, targets: readonly SnapTarget[], thresholdWorld: number): SnapResult<Rect> {
+  snapRect(
+    rect: Rect,
+    targets: readonly SnapTarget[],
+    thresholdWorld: number,
+    /**
+     * The other objects' world bounds, for equal-SPACING snapping. Optional:
+     * callers that only want alignment (the behaviour that shipped) pass
+     * nothing and get byte-identical results.
+     */
+    others?: readonly Rect[],
+  ): SnapResult<Rect> {
     if (!this.settings.enabled) {
-      return { value: rect, delta: { x: 0, y: 0 }, snapped: false, lines: [] };
+      return { value: rect, delta: { x: 0, y: 0 }, snapped: false, lines: [], spacing: [] };
     }
     const xCoords: number[] = [rect.x];
     const yCoords: number[] = [rect.y];
@@ -165,10 +191,32 @@ export class SnapEngine {
     }
     const xMatch = this.bestMatch(xCoords, targets, 'x', thresholdWorld);
     const yMatch = this.bestMatch(yCoords, targets, 'y', thresholdWorld);
-    const dx = xMatch ? xMatch.target.position - xMatch.movingCoord : 0;
-    const dy = yMatch ? yMatch.target.position - yMatch.movingCoord : 0;
+    let dx = xMatch ? xMatch.target.position - xMatch.movingCoord : 0;
+    let dy = yMatch ? yMatch.target.position - yMatch.movingCoord : 0;
+    /*
+     * Equal spacing, on the axes alignment did not claim.
+     *
+     * An axis that already snapped to an edge/center/guide is LEFT ALONE: two
+     * magnets pulling the same axis in different directions is a fight the user
+     * feels as jitter, and alignment is the stronger promise of the two (it is
+     * what the pink line is already claiming on screen).
+     */
+    const spacing: SpacingCandidate[] = [];
+    if (this.settings.smartGuides && this.settings.toObjects && others && others.length) {
+      const free = R.translate(rect, { x: dx, y: dy });
+      for (const c of spacingCandidates(free, others, thresholdWorld)) {
+        if (c.axis === 'x' && !xMatch && !spacing.some((s) => s.axis === 'x')) {
+          dx += c.delta;
+          spacing.push(c);
+        } else if (c.axis === 'y' && !yMatch && !spacing.some((s) => s.axis === 'y')) {
+          dy += c.delta;
+          spacing.push(c);
+        }
+      }
+    }
     const snappedRect = R.translate(rect, { x: dx, y: dy });
-    return this.buildResult(snappedRect, { x: dx, y: dy }, xMatch, yMatch, R.center(rect));
+    const result = this.buildResult(snappedRect, { x: dx, y: dy }, xMatch, yMatch, R.center(rect));
+    return { ...result, snapped: result.snapped || spacing.length > 0, spacing };
   }
 
   private allowed(source: SnapSource): boolean {
@@ -206,7 +254,7 @@ export class SnapEngine {
     const lines: SnapLine[] = [];
     if (xMatch) lines.push(this.matchToLine(xMatch, anchor));
     if (yMatch) lines.push(this.matchToLine(yMatch, anchor));
-    return { value, delta, snapped: xMatch !== null || yMatch !== null, lines };
+    return { value, delta, snapped: xMatch !== null || yMatch !== null, lines, spacing: [] };
   }
 
   private matchToLine(match: AxisMatch, anchor: Vec2): SnapLine {

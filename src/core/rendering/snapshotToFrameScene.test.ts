@@ -547,4 +547,21 @@ describe('Accepts-Lights routing (per-fragment vs per-quad fold)', () => {
     expect(scene.camera3d?.eye).toEqual([960, 540, -1500]);
     expect(scene.lights3d).toHaveLength(1);
   });
+
+  test('scene passthrough: the environment REFLECTION map reaches the FrameScene', () => {
+    // The other half of the same environment light whose irradiance rides
+    // `lights3d`. Gated on the frame having 3D at all, exactly as the camera
+    // and the lights are — a 2D frame binds no map and the shader's reflection
+    // block stays dead.
+    const cam = { view: IDENTITY_W3D, projection: IDENTITY_W3D, eye: [0, 0, -1000] as const };
+    const envMap = {
+      id: 'sunset|256x128x5', width: 256, height: 640, levels: 5, scale: 1.5,
+      data: new Uint8Array(256 * 640 * 4), intensity: 0.9, rotationDeg: 35,
+    };
+    const lit = snapshotToFrameScene(snapshot([lit3d()], { camera3d: cam, envMap }));
+    expect(lit.envMap?.id).toBe('sunset|256x128x5');
+    expect(lit.envMap?.intensity).toBe(0.9);
+    // No 3D in the frame ⇒ no map, even though the snapshot carries one.
+    expect(snapshotToFrameScene(snapshot([layer({ kind: 'shape' })], { envMap })).envMap).toBeUndefined();
+  });
 });

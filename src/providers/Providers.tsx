@@ -89,6 +89,7 @@ import {
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { buildIk3DCommands } from '@core/scene/ikCommands';
 import { buildBakeCommands } from '@core/simulation/bakeCommands';
+import { buildAudioCommands } from '@core/audio/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
@@ -246,6 +247,61 @@ function reportSave(outcome: SaveOutcome, opts?: { forkedFrom?: string | null })
     'error',
   );
   return false;
+}
+
+/**
+ * `file.import3DModel` — the picker half of the glTF importer.
+ *
+ * A first-class verb rather than "drop it in the Assets panel and hope": a
+ * model is not a library asset, it becomes a LAYER TREE, and — the part the
+ * asset door cannot express — a `.gltf` needs its `.bin` and its textures
+ * selected WITH it. The picker is multi-select and accepts those sidecar types
+ * for exactly that reason; `importModelFiles` works out which of the chosen
+ * files is the model and resolves the rest against it.
+ */
+async function pickAndImport3DModel(): Promise<void> {
+  const files = await new Promise<File[]>((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    // .bin and the image types are the sidecars a .gltf points at; a user who
+    // selects only the .gltf still gets a named, actionable error rather than
+    // a silent half-import.
+    input.accept = '.glb,.gltf,.bin,image/png,image/jpeg,image/webp,model/gltf+json,model/gltf-binary';
+    input.addEventListener('change', () => resolve(Array.from(input.files ?? [])));
+    // Chromium fires this on dismissal; without it the promise never settles
+    // and the command looks like it hung.
+    input.addEventListener('cancel', () => resolve([]));
+    input.click();
+  });
+  if (files.length === 0) return;
+  const { importModelFiles, MODEL_FILE_PATTERN } = await import('@core/scene/modelImport');
+  if (!files.some((f) => MODEL_FILE_PATTERN.test(f.name))) {
+    notify('Select a .glb or .gltf file (with its .bin and textures, if it has them).', 'warning');
+    return;
+  }
+  try {
+    const result = importModelFiles(
+      await Promise.all(files.map(async (f) => ({
+        name: f.name,
+        // Present when the selection came from a folder drop; it is what lets
+        // `textures/albedo.png` resolve as the path it actually is.
+        ...((f as File & { webkitRelativePath?: string }).webkitRelativePath
+          ? { path: (f as File & { webkitRelativePath?: string }).webkitRelativePath }
+          : {}),
+        bytes: await f.arrayBuffer(),
+      }))),
+    );
+    const clip = result.clip
+      ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s)`
+      : '';
+    notify(
+      result.warning ?? `Imported ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}${clip}`,
+      result.warning ? 'warning' : 'success',
+    );
+  } catch (err) {
+    notify(`3D import failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+  }
 }
 
 /** Tool-switching commands — single-key AE shortcuts (V/A/H/Z/W/R/S/P/T/U/E).
@@ -510,12 +566,18 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
 function buildPrimitive3DCommands(): ReadonlyArray<Command> {
   // Mirrors `insert3DPrimitive`'s own parameter union rather than importing a
   // type it does not export — a mismatch is a compile error at the call below.
-  type Kind = 'cube' | 'sphere' | 'plane' | 'cylinder';
+  type Kind = 'cube' | 'sphere' | 'plane' | 'cylinder' | 'cone' | 'torus' | 'capsule' | 'box';
   const kinds: ReadonlyArray<{ id: Kind; label: string; icon: string }> = [
     { id: 'cube', label: '3D Cube', icon: 'cube' },
     { id: 'sphere', label: '3D Sphere', icon: 'sphere' },
     { id: 'cylinder', label: '3D Cylinder', icon: 'cylinder' },
     { id: 'plane', label: '3D Plane', icon: 'square' },
+    // Real curved meshes (primitiveMesh.ts); `box` is the mesh cube, distinct
+    // from `cube`, which stays the bevel-capable extruded rect.
+    { id: 'cone', label: '3D Cone', icon: 'cylinder' },
+    { id: 'torus', label: '3D Torus', icon: 'sphere' },
+    { id: 'capsule', label: '3D Capsule', icon: 'cylinder' },
+    { id: 'box', label: '3D Box (mesh)', icon: 'cube' },
   ];
   return kinds.map(({ id, label, icon }) => ({
     id: asCommandId(`layer.new3d.${id}`),
@@ -1215,6 +1277,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildReframeCommands(),
     ...buildIk3DCommands(),
     ...buildBakeCommands(),
+    ...buildAudioCommands(),
   ];
 }
 
@@ -2308,6 +2371,13 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               const comp = useCompositionStore.getState();
               openExportDialog(comp.durationSeconds, comp.fps);
             },
+          });
+          registry.register({
+            id: asCommandId('file.import3DModel'), label: 'Import 3D Model…', icon: 'cube',
+            // Always available: it creates layers in the active composition,
+            // and there is always an active composition.
+            enabled: () => true,
+            execute: () => { void pickAndImport3DModel(); },
           });
           registry.register({
             id: asCommandId('comp.saveFrame'), label: 'Save Frame As PNG', icon: 'image',

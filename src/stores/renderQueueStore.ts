@@ -62,7 +62,42 @@ function notifyPlugins(info: {
     .catch(() => { /* the host is not up; a render still succeeded */ });
 }
 
-export type RenderStatus = 'queued' | 'rendering' | 'done' | 'failed' | 'skipped';
+/**
+ * Where a job is in its life.
+ *
+ * `paused` and `stopped` are the SAME state mechanically — a render that
+ * stopped feeding frames while its sink stayed open, holding every frame it
+ * had already staged. They differ only in who asked and what the panel says:
+ * `paused` is "I pressed Pause on this job", `stopped` is "I stopped the whole
+ * queue". Both carry `resumeFrame` and both are picked up again, ahead of
+ * anything merely `queued`, by the next Render All.
+ *
+ * Losing the work is now its own verb — Discard — which is the only thing that
+ * disposes a sink and sends a job back to `queued` at 0%.
+ */
+export type RenderStatus =
+  | 'queued'
+  | 'rendering'
+  | 'paused'
+  | 'stopped'
+  | 'done'
+  | 'failed'
+  | 'skipped';
+
+/** A stopped job still holds its staged frames and comes back where it was. */
+export function isResumable(status: RenderStatus): boolean {
+  return status === 'paused' || status === 'stopped';
+}
+
+/**
+ * What the abort that is about to land MEANS.
+ *
+ * The frame loop is stopped the same way in all three cases — one
+ * `AbortController` — so the intent has to travel beside the signal: the loop
+ * reads it when `renderJobOutput` comes back `paused` and decides whether the
+ * open sink is kept (pause/stop) or thrown away (discard).
+ */
+type StopIntent = 'pause' | 'stop' | 'discard';
 
 /**
  * A queued render: what to render (`RenderJobSpec`) plus what a QUEUE has to
@@ -77,6 +112,15 @@ export interface RenderJob extends RenderJobSpec {
   /** Wall-clock render time in ms (set when done or failed). */
   elapsedMs?: number;
   error?: string;
+  /**
+   * The frame a paused/stopped job comes back at, 0-based within its export
+   * range. The panel's honest answer to "how much of this is already on disk".
+   *
+   * Mirrors `_resume.nextOffset` deliberately: `_resume` is a live handle the
+   * UI must not touch, and a plain number is what a status line, a tooltip and
+   * a test can all read.
+   */
+  resumeFrame?: number;
   /**
    * A paused render's live state: the open sink (staged frames intact on disk)
    * and the offset the loop stops resuming at. Present only between a pause and
@@ -100,6 +144,17 @@ interface RenderQueueState {
   outputDir: string | null;
   /** Aborts the in-flight render when the user pauses. */
   _abort: AbortController | null;
+  /** What the pending abort means — see `StopIntent`. */
+  _intent: StopIntent;
+  /**
+   * The job the next loop iteration must pick first.
+   *
+   * Resume is per-job in the panel, but the runner is one serial loop, so
+   * "resume THIS one" cannot be expressed by a status alone when three jobs are
+   * paused. Set by `resumeJob`, consumed by the loop on the iteration that
+   * picks it up.
+   */
+  _resumeTarget: string | null;
 
   addJob: (job: Omit<RenderJob, 'id' | 'status' | 'progress'>) => string;
   removeJob: (id: string) => void;
@@ -110,7 +165,18 @@ interface RenderQueueState {
   /** Native folder picker. Returns the chosen path, or null if cancelled. */
   chooseOutputDir: () => Promise<string | null>;
   startAll: () => void;
+  /** Stop after the current frame, keeping the sink. Job → `paused`. */
   pauseAll: () => void;
+  /** Same, but the whole queue was stopped. Job → `stopped`. */
+  stopAll: () => void;
+  /** The destructive one: kill the encode, delete the staging, back to 0%. */
+  discardAll: () => void;
+  /** Pause one job — only the rendering one can be paused. */
+  pauseJob: (id: string) => void;
+  /** Resume one paused/stopped job, ahead of everything else in the queue. */
+  resumeJob: (id: string) => void;
+  /** Throw away one paused/stopped job's staged frames; it restarts at 0. */
+  discardJobProgress: (id: string) => void;
   skipJob: (id: string) => void;
 }
 
@@ -126,6 +192,8 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
   isRunning: false,
   outputDir: null,
   _abort: null,
+  _intent: 'pause',
+  _resumeTarget: null,
 
   async chooseOutputDir() {
     const dir = (await window.motionEditor?.render?.chooseOutputDir?.()) ?? null;
@@ -157,7 +225,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
     set((s) => ({
       // `_resume` is stripped: it holds a live sink, and two jobs sharing one
       // staging dir would interleave their frames into a single file.
-      jobs: [...s.jobs, { ...src, id: newId, status: 'queued', progress: 0, elapsedMs: undefined, error: undefined, _resume: undefined }],
+      jobs: [...s.jobs, { ...src, id: newId, status: 'queued', progress: 0, elapsedMs: undefined, error: undefined, _resume: undefined, resumeFrame: undefined }],
     }));
   },
 
@@ -177,6 +245,9 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
     set((s) => ({
       isRunning: true,
       _abort: abort,
+      // A fresh run starts with no pending stop; whichever control fires next
+      // stamps its own meaning on this before aborting.
+      _intent: 'pause',
       jobs: s.jobs.map((j) => (j.status === 'failed' ? { ...j, status: 'queued', error: undefined } : j)),
     }));
     // Epoch token: pauseAll flips isRunning while THIS loop is still parked on
@@ -201,10 +272,23 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
 
       for (;;) {
         if (abort.signal.aborted) break;
-        const job = get().jobs.find((j) => j.status === 'queued');
+        // Half-rendered work first, always: a paused/stopped job is holding a
+        // staging dir and an open encoder, and starting an unrelated job ahead
+        // of it means two sinks alive at once for no reason. A job the user
+        // explicitly pressed Resume on jumps even that queue.
+        const all = get().jobs;
+        const target = get()._resumeTarget;
+        const job =
+          (target ? all.find((j) => j.id === target && isResumable(j.status)) : undefined)
+          ?? all.find((j) => isResumable(j.status))
+          ?? all.find((j) => j.status === 'queued');
         if (!job) break;
+        if (job.id === target) set({ _resumeTarget: null });
         const started = Date.now();
-        get().updateJob(job.id, { status: 'rendering', progress: 0 });
+        // Progress SURVIVES: a resumed job is already 40% encoded, and showing
+        // 0% while ffmpeg's staging dir holds 400 frames was the visible half
+        // of pause meaning "start over".
+        get().updateJob(job.id, { status: 'rendering', progress: job._resume ? job.progress : 0 });
         // Coalesce progress writes: the renderer fires per-frame, and each write
         // rebuilds the jobs array and reconciles the panel. Writing only on ≥1%
         // moves (and always on completion) drops that from dozens/sec to ~100
@@ -219,11 +303,21 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
         try {
           const output = await renderJobOutput(job, onProgress, abort.signal, job._resume);
           if (output.kind === 'paused') {
-            // Back to the queue holding its staged frames and its progress —
-            // the whole point. `startAll` picks it up where it stopped.
+            const intent = get()._intent;
+            if (intent === 'discard') {
+              // The only path that throws work away, and only because someone
+              // asked for it by name: the sink is disposed (ffmpeg killed, the
+              // staging dir removed) and the job goes back to the queue at 0.
+              await output.resume.render.dispose().catch(() => undefined);
+              get().updateJob(job.id, { status: 'queued', progress: 0, _resume: undefined, resumeFrame: undefined });
+              break;
+            }
+            // Otherwise the job holds its staged frames and its progress — the
+            // whole point. The next Render All picks it up where it stopped.
             get().updateJob(job.id, {
-              status: 'queued',
+              status: intent === 'stop' ? 'stopped' : 'paused',
               progress: output.resume.nextOffset / output.resume.render.totalFrames,
+              resumeFrame: output.resume.nextOffset,
               _resume: output.resume,
             });
             break;
@@ -251,6 +345,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
             elapsedMs: doneMs,
             outputPath: savedTo,
             _resume: undefined,
+            resumeFrame: undefined,
           });
           // `name`, not `savedTo`: the basename is what a plugin can use, and
           // the directory is something about the user's machine it has no use
@@ -260,8 +355,10 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
           if (abort.signal.aborted) {
             // Non-resumable paths (sequences, browser sinks) still lose their
             // partial work on pause — the resumable path never reaches here
-            // aborted, it returns 'paused' instead.
-            get().updateJob(job.id, { status: 'queued', progress: 0 });
+            // aborted, it returns 'paused' instead. Back to `queued` at 0
+            // rather than `paused`, because "paused at 37%" would be a lie
+            // about a render that has nothing staged to come back to.
+            get().updateJob(job.id, { status: 'queued', progress: 0, resumeFrame: undefined });
             break;
           }
           const failMs = Date.now() - started;
@@ -272,6 +369,7 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
             error: message,
             elapsedMs: failMs,
             _resume: undefined,
+            resumeFrame: undefined,
           });
           notifyPlugins({ status: 'failed', job, fileName: null, elapsedMs: failMs, error: message });
         }
@@ -280,20 +378,74 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => ({
     })();
   },
 
+  /**
+   * Stop the frame loop, keep everything it produced.
+   *
+   * The abort signal stops the loop after the current frame. On the resumable
+   * (desktop) path the sink STAYS OPEN — staged frames survive on disk, the job
+   * keeps `_resume` and `resumeFrame`, and the next Render All picks it up at
+   * the exact frame it stopped on. Non-resumable paths (sequences, browser
+   * streaming sinks) still lose their partial work, as they always did.
+   */
   pauseAll() {
-    // The abort signal stops the frame loop. On the resumable (desktop) path
-    // the sink STAYS OPEN — staged frames survive on disk, the job returns to
-    // the queue carrying `_resume`, and Start picks it up at the exact frame it
-    // stopped on. Non-resumable paths (sequences, browser streaming sinks)
-    // still discard, as they always did.
+    set({ _intent: 'pause' });
     get()._abort?.abort();
     set({ isRunning: false, _abort: null });
+  },
+
+  /** Stop the queue, keeping progress. Identical to pause but for the label. */
+  stopAll() {
+    set({ _intent: 'stop' });
+    get()._abort?.abort();
+    set({ isRunning: false, _abort: null });
+  },
+
+  /**
+   * Abort AND throw the work away — what "Stop" used to do silently.
+   *
+   * Kills the ffmpeg child, deletes the staging dir, and puts the job back at
+   * 0%. Kept as its own control so losing a forty-minute render is something a
+   * user chooses rather than something a button quietly does.
+   */
+  discardAll() {
+    set({ _intent: 'discard' });
+    get()._abort?.abort();
+    set({ isRunning: false, _abort: null });
+    // Anything already parked as paused/stopped is discarded too — Discard
+    // means the queue holds no half-rendered files afterwards.
+    for (const j of get().jobs) {
+      if (isResumable(j.status)) get().discardJobProgress(j.id);
+    }
+  },
+
+  pauseJob(id) {
+    // Only the in-flight job has a loop to stop; the rest are already parked.
+    if (get().jobs.find((j) => j.id === id)?.status !== 'rendering') return;
+    get().pauseAll();
+  },
+
+  resumeJob(id) {
+    const job = get().jobs.find((j) => j.id === id);
+    if (!job || !isResumable(job.status)) return;
+    set({ _resumeTarget: id });
+    get().startAll();
+  },
+
+  discardJobProgress(id) {
+    const job = get().jobs.find((j) => j.id === id);
+    if (!job || !isResumable(job.status)) return;
+    void job._resume?.render.dispose().catch(() => undefined);
+    get().updateJob(id, { status: 'queued', progress: 0, _resume: undefined, resumeFrame: undefined });
   },
 
   skipJob(id) {
     // Skipping a paused job abandons its partial render — release the staging.
     const skipped = get().jobs.find((j) => j.id === id);
     void skipped?._resume?.render.dispose().catch(() => undefined);
-    set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, status: 'skipped', _resume: undefined } : j)) }));
+    set((s) => ({
+      jobs: s.jobs.map((j) =>
+        j.id === id ? { ...j, status: 'skipped', _resume: undefined, resumeFrame: undefined } : j,
+      ),
+    }));
   },
 }));

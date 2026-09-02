@@ -14,7 +14,7 @@ import { Icon, type IconName } from '@components/Icon';
 import { ToolOptionsBar } from './ToolOptionsBar';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { insertPrimitive, insertSolid, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
-import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
+import { openCameraDialog, openLightDialog, openPrimitiveDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { useGuidesStore } from '@stores/guidesStore';
 import { importLottieFile } from '@core/library/lottieLibrary';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
@@ -700,6 +700,9 @@ export function TopNav(): JSX.Element {
                 { type: 'item', id: 'new-3d-cube', label: '3D Cube', icon: 'cube', onSelect: () => insert3DPrimitive('cube') },
                 { type: 'item', id: 'new-3d-sphere', label: '3D Sphere', icon: 'sphere', onSelect: () => insert3DPrimitive('sphere') },
                 { type: 'item', id: 'new-3d-cylinder', label: '3D Cylinder', icon: 'cylinder', onSelect: () => insert3DPrimitive('cylinder') },
+                // The parametrised route to the same family, plus the shapes a
+                // fixed default cannot express (a torus IS its ring/tube ratio).
+                { type: 'item', id: 'new-3d-primitive', label: '3D Primitive…', icon: 'sphere', onSelect: () => openPrimitiveDialog() },
                 { type: 'separator' },
                 { type: 'item', id: 'new-audio', label: 'Audio…', icon: 'audio', onSelect: () => audioInputRef.current?.click() },
                 { type: 'item', id: 'new-image-sequence', label: 'Image Sequence…', icon: 'media', onSelect: () => seqInputRef.current?.click() },

@@ -194,3 +194,131 @@ export function buildQuadGlb(): ArrayBuffer {
   };
   return buildGlbBytes(json, bin);
 }
+
+/**
+ * The three files a 3D app writes when you export .gltf WITHOUT "embed":
+ * the JSON manifest, the `.bin` its accessors read, and one texture. The URIs
+ * are parameters so a test can exercise both the flat multi-select case
+ * (`albedo.png`) and the folder case (`textures/albedo.png`).
+ *
+ * `positions` comes back too, so a test can assert the geometry SURVIVED the
+ * fold into a GLB rather than merely that the fold produced bytes.
+ */
+export function buildExternalGltfSet(
+  bufferUri = 'scene.bin',
+  imageUri = 'albedo.png',
+): { gltf: ArrayBuffer; bin: ArrayBuffer; png: ArrayBuffer; positions: number[] } {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const uvs = new Float32Array([0, 0, 1, 0, 0, 1]);
+  const bin = new Uint8Array(positions.byteLength + uvs.byteLength);
+  bin.set(new Uint8Array(positions.buffer), 0);
+  bin.set(new Uint8Array(uvs.buffer), positions.byteLength);
+  // Just a PNG signature — nothing decodes it in these tests, and a real image
+  // would only add bytes to the repository.
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const json = {
+    asset: { version: '2.0' },
+    buffers: [{ byteLength: bin.length, uri: bufferUri }],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
+      { buffer: 0, byteOffset: positions.byteLength, byteLength: uvs.byteLength },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+      { bufferView: 1, componentType: 5126, count: 3, type: 'VEC2' },
+    ],
+    images: [{ uri: imageUri }],
+    textures: [{ source: 0 }],
+    materials: [{ name: 'skin', pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+    meshes: [{ name: 'tri', primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 }, material: 0 }] }],
+    nodes: [{ name: 'tri', mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+  };
+  const gltfBytes = new TextEncoder().encode(JSON.stringify(json));
+  return {
+    gltf: gltfBytes.buffer.slice(gltfBytes.byteOffset, gltfBytes.byteOffset + gltfBytes.byteLength) as ArrayBuffer,
+    bin: bin.buffer.slice(0) as ArrayBuffer,
+    png: png.buffer.slice(0) as ArrayBuffer,
+    positions: Array.from(positions),
+  };
+}
+
+/**
+ * The red quad again, but its material carries the whole glTF map set —
+ * normal, metallic-roughness, occlusion, emissive — plus an emissive factor.
+ * Four one-byte "images" stand in for real textures: nothing in these tests
+ * decodes them, and distinct bytes make a mis-resolved slot visible.
+ *
+ * Used to pin the RENDER-PATH gate: this model must reach the wider mesh
+ * pipeline, and `buildQuadGlb` (its twin without the maps) must not.
+ */
+export function buildMappedQuadGlb(): ArrayBuffer {
+  const positions = new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]);
+  const normals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  const uvs = new Float32Array([0, 1, 1, 1, 1, 0, 0, 0]);
+  const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+  const imgs = new Uint8Array([11, 22, 33, 44, 55]);
+  const posOff = 0;
+  const nrmOff = posOff + positions.byteLength;
+  const uvOff = nrmOff + normals.byteLength;
+  const idxOff = uvOff + uvs.byteLength;
+  const imgOff = idxOff + indices.byteLength;
+  const bin = new Uint8Array(imgOff + imgs.length);
+  bin.set(new Uint8Array(positions.buffer), posOff);
+  bin.set(new Uint8Array(normals.buffer), nrmOff);
+  bin.set(new Uint8Array(uvs.buffer), uvOff);
+  bin.set(new Uint8Array(indices.buffer), idxOff);
+  bin.set(imgs, imgOff);
+  const json = {
+    asset: { version: '2.0' },
+    buffers: [{ byteLength: bin.length }],
+    bufferViews: [
+      { buffer: 0, byteOffset: posOff, byteLength: positions.byteLength },
+      { buffer: 0, byteOffset: nrmOff, byteLength: normals.byteLength },
+      { buffer: 0, byteOffset: uvOff, byteLength: uvs.byteLength },
+      { buffer: 0, byteOffset: idxOff, byteLength: indices.byteLength },
+      { buffer: 0, byteOffset: imgOff + 0, byteLength: 1 },
+      { buffer: 0, byteOffset: imgOff + 1, byteLength: 1 },
+      { buffer: 0, byteOffset: imgOff + 2, byteLength: 1 },
+      { buffer: 0, byteOffset: imgOff + 3, byteLength: 1 },
+      { buffer: 0, byteOffset: imgOff + 4, byteLength: 1 },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 4, type: 'VEC3' },
+      { bufferView: 1, componentType: 5126, count: 4, type: 'VEC3' },
+      { bufferView: 2, componentType: 5126, count: 4, type: 'VEC2' },
+      { bufferView: 3, componentType: 5123, count: 6, type: 'SCALAR' },
+    ],
+    images: [
+      { bufferView: 4, mimeType: 'image/png' },
+      { bufferView: 5, mimeType: 'image/png' },
+      { bufferView: 6, mimeType: 'image/png' },
+      { bufferView: 7, mimeType: 'image/png' },
+      { bufferView: 8, mimeType: 'image/png' },
+    ],
+    textures: [{ source: 0 }, { source: 1 }, { source: 2 }, { source: 3 }, { source: 4 }],
+    materials: [{
+      name: 'mapped',
+      doubleSided: true,
+      pbrMetallicRoughness: {
+        baseColorFactor: [1, 0, 0, 1],
+        baseColorTexture: { index: 0 },
+        metallicRoughnessTexture: { index: 2 },
+        metallicFactor: 0.2,
+        roughnessFactor: 0.8,
+      },
+      normalTexture: { index: 1, scale: 0.75 },
+      occlusionTexture: { index: 3, strength: 0.6 },
+      emissiveTexture: { index: 4 },
+      emissiveFactor: [0.5, 0.25, 0],
+    }],
+    meshes: [
+      { name: 'quad', primitives: [{ attributes: { POSITION: 0, NORMAL: 1, TEXCOORD_0: 2 }, indices: 3, material: 0 }] },
+    ],
+    nodes: [{ name: 'leaf', mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+  };
+  return buildGlbBytes(json, bin);
+}

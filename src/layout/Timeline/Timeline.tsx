@@ -26,6 +26,8 @@ import {
   type ReactNode,
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
+  type DragEvent as ReactDragEvent,
+  type MouseEvent as ReactMouseEvent,
 } from 'react';
 import { cn } from '@utils/cn';
 import { CacheBars } from './CacheBars';
@@ -38,6 +40,19 @@ import { collectClipSnapTargets, snapClipEdges, snapClipTime, type ClipSnapTarge
 import { collectClipCuts, findClipCutNear, type ClipCut } from './clipCuts';
 import { useTimelineEditModeStore } from './timelineEditMode';
 import { TimelineTools } from './TimelineTools';
+import { TransitionPalette, readTransitionDrag, isTransitionDrag } from './transitionPalette';
+import { layoutTransitions, durationFromEdgeDrag, type TransitionBox } from './transitionOverlay';
+import { installTransitionCommands } from './transitionCommands';
+import {
+  useTransitionStore,
+  addTransition,
+  removeTransition,
+  previewTransition,
+  commitTransitionPreview,
+  compIdForTransition,
+  DEFAULT_TRANSITION_FRAMES,
+  TRANSITION_LABEL,
+} from '@core/timeline/transitions';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { registerTimelineScroll, setTimelineViewportWidth } from './timelineViewport';
 import { scaleSelection, scaleGrip } from './keyframeTimeScale';
@@ -101,6 +116,16 @@ const TIMELINE_TOOLS_HEIGHT = 30;
  */
 const ROLL_GRAB_PX = 6;
 /**
+ * How near a cut a chip has to be dropped, in pixels.
+ *
+ * Wider than the roll's grab radius on purpose: a roll is an edit that must not
+ * fire by accident, while a drop is a deliberate act with a visible target
+ * lighting up before the release — so the drop can afford to be forgiving.
+ */
+const CUT_GRAB_PX = 14;
+/** The width of the strip drawn at a cut while a chip hovers it. */
+const CUT_ZONE_PX = 12;
+/**
  * The track-header column model, in pixels — the TypeScript half of the one in
  * Timeline.module.css. Both halves have to agree.
  *
@@ -151,6 +176,9 @@ export function headerWidthFor(columns: 'switches' | 'modes' | 'both'): number {
 }
 
 const TIMELINE_TOP_PADDING = 6;
+
+/** A stable identity for a cut — it has no id of its own, being emergent. */
+const cutKeyOf = (cut: ClipCut): string => `${cut.leftClipId}|${cut.rightClipId}`;
 const TIMELINE_BOTTOM_PADDING = 12;
 
 /** A virtualized row is either a track summary row, a category accordion row, or a property sub-row. */
@@ -637,6 +665,80 @@ function Timeline({
     return out;
   }, [model.tracks, expanded, revealSet, searchQuery, globalShy, collapsedCategoryKeys]);
 
+  // ── Transitions ────────────────────────────────────────────────
+  /**
+   * Where each TRACK sits in the flattened row list.
+   *
+   * Not `model.tracks.indexOf` — expanded property sub-rows, category headings,
+   * shy layers and the search filter all sit between tracks, so the track's
+   * position in the model and its position on screen are different numbers the
+   * moment anything is open.
+   */
+  const trackRowIndex = useMemo(() => {
+    const map = new Map<string, number>();
+    rows.forEach((row, i) => {
+      if (row.type === 'track') map.set(row.track.id, i);
+    });
+    return map;
+  }, [rows]);
+
+  /**
+   * Every comp's transitions, flattened.
+   *
+   * Comp-agnostic on purpose: this component is only ever handed the ACTIVE
+   * comp's tracks, and `layoutTransitions` drops any record whose two nodes are
+   * not among them — so filtering by comp id here would be a second, weaker copy
+   * of a test the layout already makes, and one more place to be wrong about
+   * which comp is active.
+   */
+  const transitionsByComp = useTransitionStore((s) => s.byComp);
+  const allTransitions = useMemo(
+    () => Object.values(transitionsByComp).flat(),
+    [transitionsByComp],
+  );
+  const transitionBoxes = useMemo(
+    () => layoutTransitions(allTransitions, model.tracks, (id) => trackRowIndex.get(id), model.frameRate || 30),
+    [allTransitions, model.tracks, trackRowIndex, model.frameRate],
+  );
+
+  /** Every cut in the comp — the roll grab, the drop zones and the double-click
+   *  target are all the same set, found once per model change. */
+  const clipCuts = useMemo(
+    () => collectClipCuts(model.tracks, { seamTolerance: 1 / (model.frameRate || 30) }),
+    [model.tracks, model.frameRate],
+  );
+  /** A ref alongside it, so the roll's pointer-down reads the current set
+   *  without the drag listeners being re-bound on every model identity change. */
+  const clipCutsRef = useRef(clipCuts);
+  clipCutsRef.current = clipCuts;
+
+  /** The selected transition — what Delete removes and what draws lit. */
+  const [selectedTransitionId, setSelectedTransitionId] = useState<string | null>(null);
+  /** The cut a chip is currently hovering over, keyed as `left|right`. */
+  const [dropCutKey, setDropCutKey] = useState<string | null>(null);
+  /**
+   * A chip is in flight over the lanes.
+   *
+   * Separate from `dropCutKey` on purpose: every cut lights up faintly as soon
+   * as the drag enters, so the user can SEE where the droppable places are
+   * before aiming at one. Keying that off the hovered cut alone would show
+   * nothing until they had already found a target, which is the moment the
+   * hint stops being useful.
+   */
+  const [chipDragging, setChipDragging] = useState(false);
+  /**
+   * Why the last transition was refused.
+   *
+   * Shown rather than logged: "there is not enough source handle for a 12-frame
+   * dissolve" is the one thing standing between the user and the edit they
+   * asked for, and a silent no-op reads as a broken feature.
+   */
+  const [transitionError, setTransitionError] = useState<string | null>(null);
+
+  // Registered from here, like the fit and edit-mode commands: the feature
+  // ships as one unit and nothing else has to be edited to add a kind.
+  useEffect(() => installTransitionCommands(), []);
+
   // Left margin offset so 0s indicator & playhead head stand clear of header border
   const TIMELINE_LEFT_OFFSET = 8;
 
@@ -1046,6 +1148,195 @@ function Timeline({
   );
   const clearRazorAt = useCallback(() => setRazorAt(null), []);
 
+  // ── Transition gestures ────────────────────────────────────────
+  /**
+   * Apply a kind to a cut, reporting a refusal rather than swallowing it.
+   *
+   * `addTransition` refuses when the source handles cannot pay for the overlap,
+   * and that refusal is the single most important message this feature produces:
+   * without it a dissolve dropped on a cut with no handle simply does nothing,
+   * and the user's conclusion is that the feature is broken rather than that the
+   * clips are already at their ends.
+   */
+  const applyTransition = useCallback(
+    (cut: ClipCut, kind: Parameters<typeof addTransition>[2]): void => {
+      void addTransition(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred').then(
+        (res) => {
+          if (!res.ok) setTransitionError(res.reason);
+          else setSelectedTransitionId(res.record.id);
+        },
+      );
+    },
+    [],
+  );
+
+  /**
+   * The cut under a client point, or null.
+   *
+   * The ROW matters as much as the time: a comp cut to a beat has many bars
+   * ending on the same frame, and `findClipCutNear` needs the row the pointer is
+   * over to tell which of the coincident cuts is meant — the same
+   * disambiguation the roll tool makes, from the same helper.
+   */
+  const lanesCutAt = useCallback(
+    (clientX: number, clientY: number): ClipCut | null => {
+      const lanes = lanesRef.current;
+      if (!lanes) return null;
+      const time = lanesTimeAt(clientX);
+      if (time === null) return null;
+      const rect = lanes.getBoundingClientRect();
+      const y = clientY - rect.top + lanes.scrollTop - rulerHeight - TIMELINE_TOP_PADDING;
+      const rowIndex = Math.floor(y / trackHeight);
+      const row = rowIndex >= 0 ? rows[rowIndex] : undefined;
+      const trackId = row ? row.track.id : null;
+      return findClipCutNear(clipCutsRef.current, time, pps > 0 ? CUT_GRAB_PX / pps : 0, trackId);
+    },
+    [lanesTimeAt, rulerHeight, trackHeight, rows, pps],
+  );
+
+  /**
+   * Chip drag and drop, handled by the LANES rather than by a strip at each cut.
+   *
+   * A drop target drawn at the cut would sit exactly on top of both clips' trim
+   * handles, and an element there swallows the single most likely gesture at a
+   * cut. The lanes already know where the pointer is, so the target is computed
+   * rather than rendered — and the strip that lights up is left purely
+   * decorative.
+   */
+  const onLanesDragOver = useCallback(
+    (e: ReactDragEvent<HTMLDivElement>): void => {
+      if (!isTransitionDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      setChipDragging(true);
+      const cut = lanesCutAt(e.clientX, e.clientY);
+      const key = cut ? cutKeyOf(cut) : null;
+      setDropCutKey((k) => (k === key ? k : key));
+    },
+    [lanesCutAt],
+  );
+
+  const onLanesDrop = useCallback(
+    (e: ReactDragEvent<HTMLDivElement>): void => {
+      const kind = readTransitionDrag(e.dataTransfer);
+      setDropCutKey(null);
+      setChipDragging(false);
+      if (!kind) return;
+      e.preventDefault();
+      const cut = lanesCutAt(e.clientX, e.clientY);
+      setTransitionError(cut ? null : 'Drop a transition on a cut — the point where one clip ends and the next begins.');
+      if (cut) applyTransition(cut, kind);
+    },
+    [lanesCutAt, applyTransition],
+  );
+
+  /** Double-click a cut → the default 12-frame cross dissolve. */
+  const onLanesDoubleClick = useCallback(
+    (e: ReactMouseEvent<HTMLDivElement>): void => {
+      const cut = lanesCutAt(e.clientX, e.clientY);
+      if (!cut) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setTransitionError(null);
+      applyTransition(cut, 'crossDissolve');
+    },
+    [lanesCutAt, applyTransition],
+  );
+
+  /**
+   * Live resize of a transition by dragging one of its ends.
+   *
+   * The preview goes through the SAME materialise path the commit does — not a
+   * cheaper approximation drawn over the top — so what you see mid-drag is the
+   * edit, including the point at which the handles run out and the bracket stops
+   * growing. `previewTransition` records nothing; `commitTransitionPreview`
+   * rewinds to where the drag began and re-applies the final duration as one
+   * undo entry.
+   */
+  const transitionDrag = useRef<
+    null | { id: string; compId: string; edge: 'start' | 'end'; box: TransitionBox; frames: number }
+  >(null);
+
+  const onTransitionEdgeDown = useCallback(
+    (box: TransitionBox, edge: 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>): void => {
+      e.preventDefault();
+      e.stopPropagation();
+      const rec = allTransitions.find((t) => t.id === box.id);
+      if (!rec) return;
+      setSelectedTransitionId(box.id);
+      transitionDrag.current = {
+        id: box.id,
+        compId: compIdForTransition(rec),
+        edge,
+        box,
+        frames: rec.durationFrames,
+      };
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'ew-resize';
+    },
+    [allTransitions],
+  );
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      const d = transitionDrag.current;
+      if (!d) return;
+      const rec = allTransitions.find((t) => t.id === d.id);
+      if (!rec) return;
+      const time = lanesTimeAt(e.clientX);
+      if (time === null) return;
+      const frames = durationFromEdgeDrag(d.box, d.edge, time, rec.alignment, fpsRef.current);
+      if (frames === d.frames) return;
+      d.frames = frames;
+      previewTransition(d.compId, d.id, frames);
+      setDragHud({
+        x: e.clientX,
+        y: e.clientY,
+        lines: [`${TRANSITION_LABEL[rec.kind]}`, `${frames} ${frames === 1 ? 'frame' : 'frames'}`],
+      });
+    };
+    const onUp = (): void => {
+      const d = transitionDrag.current;
+      transitionDrag.current = null;
+      setDragHud(null);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      if (!d) return;
+      void commitTransitionPreview(d.compId, d.id, d.frames);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [allTransitions, lanesTimeAt]);
+
+  /**
+   * Delete removes the SELECTED transition and nothing else.
+   *
+   * Its own listener rather than a branch inside the keyframe one, and it runs
+   * first only when a transition is actually selected — so Delete still deletes
+   * layers and keyframes exactly as it did, and a transition can only be removed
+   * while its bracket is lit.
+   */
+  useEffect(() => {
+    if (!selectedTransitionId) return;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      const rec = allTransitions.find((t) => t.id === selectedTransitionId);
+      if (!rec) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setSelectedTransitionId(null);
+      void removeTransition(compIdForTransition(rec), rec.id);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [selectedTransitionId, allTransitions]);
+
   // Leaving the razor drops its guide line. Without this the line is stranded
   // at the last position the pointer had, over a timeline where clicking does
   // something else entirely.
@@ -1112,7 +1403,7 @@ function Timeline({
           raw === null
             ? null
             : findClipCutNear(
-                collectClipCuts(model.tracks, { seamTolerance: 1 / (model.frameRate || 30) }),
+                clipCutsRef.current,
                 raw,
                 pps > 0 ? ROLL_GRAB_PX / pps : 0,
                 clip.trackId,
@@ -1775,7 +2066,27 @@ function Timeline({
       {/* The edit-tool row, spanning the panel above both columns. */}
       <div className={styles.toolRow} style={{ height: TIMELINE_TOOLS_HEIGHT }}>
         <TimelineTools />
+        {/* The transition chips sit in the SAME strip as the edit tools: both
+            are about what an edit at a cut means, and separating them would put
+            the razor that makes a cut and the dissolve that softens it in two
+            different places. */}
+        <TransitionPalette />
       </div>
+
+      {/* A refusal, spelled out. Dismissed by clicking it or by the next
+          successful transition; deliberately not a modal, because the fix
+          (shorter transition, or trim the clips) is made in the timeline
+          underneath it. */}
+      {transitionError && (
+        <div
+          className={styles.transitionError}
+          role="status"
+          onClick={() => setTransitionError(null)}
+          title="Click to dismiss"
+        >
+          {transitionError}
+        </div>
+      )}
 
       {/* Drag read-out for slip / slide / roll. `position: fixed` in CLIENT
           coordinates: the pointer is captured by the lanes but travels over the
@@ -2149,6 +2460,13 @@ function Timeline({
             className={styles.lanesInner}
             style={{ position: 'absolute', top: rulerHeight, left: 0, right: 0, height: effectiveLanesHeight }}
             onPointerDown={onLanesPointerDown}
+            onDragOver={onLanesDragOver}
+            onDragLeave={() => {
+              setDropCutKey(null);
+              setChipDragging(false);
+            }}
+            onDrop={onLanesDrop}
+            onDoubleClick={onLanesDoubleClick}
           >
             {/* Snap indicator — a vertical line at whatever the in-flight drag
                 latched onto. Without it, snapping is a mystery force: the
@@ -2257,6 +2575,82 @@ function Timeline({
                     onKeyframeContextMenu={onKeyframeContextMenu}
                   />
                 </LaneRow>
+              );
+            })}
+
+            {/* ── Cut markers ─────────────────────────────────────────
+                Purely visual: a narrow strip at every cut that lights while a
+                chip hovers it. It takes NO pointer events, deliberately — the
+                strip sits exactly where both clips' trim handles are, and an
+                interactive element there would eat the one gesture the user is
+                most likely to want at a cut. The drag, the drop and the
+                double-click are all handled by the lanes, which already know
+                where the pointer is. */}
+            {clipCuts.map((cut) => {
+              const topRow = trackRowIndex.get(cut.leftTrackId);
+              const bottomRow = trackRowIndex.get(cut.rightTrackId);
+              if (topRow === undefined || bottomRow === undefined) return null;
+              const first = Math.min(topRow, bottomRow);
+              const last = Math.max(topRow, bottomRow);
+              const key = cutKeyOf(cut);
+              if (!chipDragging) return null;
+              const over = dropCutKey === key;
+              return (
+                <div
+                  key={key}
+                  className={cn(styles.cutZone, over && styles.cutZoneOver)}
+                  style={{
+                    left: TIMELINE_LEFT_OFFSET + cut.time * pps - CUT_ZONE_PX / 2,
+                    width: CUT_ZONE_PX,
+                    top: TIMELINE_TOP_PADDING + first * trackHeight,
+                    height: (last - first + 1) * trackHeight,
+                  }}
+                  aria-hidden
+                />
+              );
+            })}
+
+            {/* ── Transition brackets ─────────────────────────────────
+                A bracket over the overlap rather than a bar in a lane of its
+                own: the transition belongs to BOTH clips, and giving it a row
+                would make it look like a third layer that could be moved
+                independently of the two it joins. The ends are grips. */}
+            {transitionBoxes.map((box) => {
+              const selected = box.id === selectedTransitionId;
+              return (
+                <div
+                  key={box.id}
+                  className={cn(styles.transitionBox, selected && styles.transitionBoxSelected)}
+                  data-kind={box.kind}
+                  style={{
+                    left: TIMELINE_LEFT_OFFSET + box.start * pps,
+                    width: Math.max(2, (box.end - box.start) * pps),
+                    top: TIMELINE_TOP_PADDING + box.topRow * trackHeight,
+                    height: (box.bottomRow - box.topRow + 1) * trackHeight,
+                  }}
+                  title={`${TRANSITION_LABEL[box.kind]} — drag an end to change its length, Delete to remove`}
+                  aria-label={`${TRANSITION_LABEL[box.kind]} transition`}
+                  onPointerDown={(e) => {
+                    // Stopped so the press does not also start a clip drag or a
+                    // marquee on the lane beneath.
+                    e.stopPropagation();
+                    setSelectedTransitionId(box.id);
+                  }}
+                >
+                  <div
+                    className={styles.transitionGrip}
+                    data-edge="start"
+                    aria-hidden
+                    onPointerDown={(e) => onTransitionEdgeDown(box, 'start', e)}
+                  />
+                  <span className={styles.transitionLabel}>{box.label}</span>
+                  <div
+                    className={styles.transitionGrip}
+                    data-edge="end"
+                    aria-hidden
+                    onPointerDown={(e) => onTransitionEdgeDown(box, 'end', e)}
+                  />
+                </div>
               );
             })}
 

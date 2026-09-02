@@ -21,6 +21,7 @@ import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
 import { useSwatchStore, type ProjectSwatch } from '@stores/swatchStore';
 import { useMaterialStore, type NamedMaterial } from '@stores/materialStore';
+import { useTransitionStore, type TransitionRecord } from '@core/timeline/transitionStore';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import { migrateDocument } from '@core/project/migrations';
@@ -68,6 +69,23 @@ export interface EditorDocument {
    * of a registry that has already changed twice.
    */
   materials?: NamedMaterial[];
+  /**
+   * Per-cut transitions, keyed by composition id.
+   *
+   * Authored state that is NOT recoverable from what it produces: the overlap
+   * and the opacity ramps a cross dissolve leaves behind are indistinguishable
+   * from a hand-built overlap and a hand-drawn fade, so a document that carried
+   * only the result would reopen with four transitions that could no longer be
+   * selected, lengthened or removed. Each record also carries the exact state
+   * the cut held BEFORE it was applied, which is what makes removal after a
+   * reload possible at all.
+   *
+   * Optional, so every document written before transitions existed reads back
+   * unchanged — absent means "keep", exactly as `swatches` and `timelines` do,
+   * and `projectDocumentIO.createEmpty` states an empty map explicitly so File ▸
+   * New Project does not inherit the last one's.
+   */
+  transitions?: Record<string, TransitionRecord[]>;
   /**
    * The plugins this document's custom layers depend on.
    *
@@ -143,6 +161,7 @@ export function captureDocument(): EditorDocument {
     colorManagement: useColorManagementStore.getState().settings(),
     swatches: useSwatchStore.getState().list(),
     materials: useMaterialStore.getState().list(),
+    transitions: useTransitionStore.getState().capture(),
     openTabs,
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
     // Absent when empty, so a document with no plugin state reads back
@@ -262,6 +281,10 @@ export function restoreDocument(doc: EditorDocument): void {
   if (doc.colorManagement) useColorManagementStore.getState().restore(doc.colorManagement);
   if (doc.swatches) useSwatchStore.getState().restore(doc.swatches);
   if (doc.materials) useMaterialStore.getState().restore(doc.materials);
+  // Present-but-empty is meaningful ("this project has no transitions"), so the
+  // guard is on the KEY, not on the map's size — a document that states an
+  // empty map must clear the previous project's records rather than keep them.
+  if (doc.transitions) useTransitionStore.getState().restore(doc.transitions);
 
   // The document's media srcs are object URLs from whichever session WROTE it
   // — dead on arrival by definition. Repoint them at the live library by

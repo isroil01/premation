@@ -1,0 +1,74 @@
+/**
+ * Smart-guide chrome.
+ *
+ * One colour runs through all of it — `--color-snap-line`, the same pink the
+ * snap lines are painted in — because measurement and alignment are the same
+ * conversation and giving them two colours would imply two systems. The token
+ * is themed (hot pink on dark, a deeper magenta on light), so nothing here
+ * hardcodes a hex.
+ *
+ * The SVG spans the whole stage and MUST stay pointer-transparent: an `auto`
+ * overlay of this size swallows every viewport gesture — which, since this one
+ * is only ever on screen DURING a gesture, would break the very drag it is
+ * describing.
+ */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  /* Above the interaction canvas, below the 3D gizmo (z 20) and the focus
+     plane (z 21) — those own handles you can grab, and this owns nothing. */
+  z-index: 19;
+  overflow: visible;
+}
+
+/* Dimension line + its end ticks. */
+.dim {
+  stroke: var(--color-snap-line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* Equal-spacing run. The bar is a translucent wash so the artwork underneath
+   stays readable; the hatching is what carries the meaning. */
+.hatch {
+  fill: url(#smartGuideHatch);
+  stroke: var(--color-snap-line);
+  stroke-width: 1;
+  opacity: 0.85;
+}
+
+.hatchLine {
+  stroke: var(--color-snap-line);
+  stroke-width: 2;
+}
+
+/* A neighbour of matching width or height. Dashed so it cannot be mistaken for
+   a selection outline, which is solid. */
+.sizeMatch {
+  fill: none;
+  stroke: var(--color-snap-line);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.9;
+}
+
+/* The number. Micro type on a filled pill, the same badge language as the
+   drag HUD and the focus-plane callout. */
+.badge {
+  fill: var(--color-snap-line);
+  stroke: none;
+}
+
+.badgeText {
+  fill: var(--color-text-on-accent);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  /* Tabular figures so the badge does not twitch in width as the value counts
+     through 111 → 222 during a drag. */
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}

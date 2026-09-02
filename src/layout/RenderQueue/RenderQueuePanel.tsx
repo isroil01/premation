@@ -8,7 +8,12 @@
  *
  * Rendering does not take the app away from you: frames are rasterised between
  * yields to the main thread and, on the desktop, encoded by ffmpeg in a separate
- * process. Pause aborts the in-flight render and kills its encoder.
+ * process.
+ *
+ * Stopping does not take the render away from you either. Pause and Stop halt
+ * the frame loop and KEEP the sink — the staged frames stay on disk and the job
+ * resumes at the frame it stopped on. Throwing that away is a separate control
+ * (Discard) with its own confirmation, because it is a separate decision.
  */
 
 import { useState } from 'react';
@@ -21,6 +26,7 @@ import {
   type OutputFormat,
   type RenderJob,
 } from '@stores/renderQueueStore';
+import { canEncodeLocally } from '@core/export/videoSink';
 import { OutputModuleDialog, type OutputSettings } from './OutputModuleDialog';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { customConfirm } from '@components/Modal/Dialogs';
@@ -42,6 +48,8 @@ function statusClass(s: RenderJob['status']): string {
   switch (s) {
     case 'queued':    return styles.statusQueued ?? '';
     case 'rendering': return styles.statusRendering ?? '';
+    case 'paused':    return styles.statusPaused ?? '';
+    case 'stopped':   return styles.statusPaused ?? '';
     case 'done':      return styles.statusDone ?? '';
     case 'failed':    return styles.statusFailed ?? '';
     case 'skipped':   return styles.statusSkipped ?? '';
@@ -53,6 +61,8 @@ function statusLabel(s: RenderJob['status']): string {
   switch (s) {
     case 'queued':    return 'Queued';
     case 'rendering': return 'Rendering…';
+    case 'paused':    return 'Paused';
+    case 'stopped':   return 'Stopped';
     case 'done':      return 'Done';
     case 'failed':    return 'Failed';
     case 'skipped':   return 'Skipped';
@@ -75,7 +85,11 @@ export function RenderQueuePanel(): JSX.Element {
   const duplicateJob = useRenderQueueStore((s) => s.duplicateJob);
   const skipJob = useRenderQueueStore((s) => s.skipJob);
   const startAll = useRenderQueueStore((s) => s.startAll);
-  const pauseAll = useRenderQueueStore((s) => s.pauseAll);
+  const stopAll = useRenderQueueStore((s) => s.stopAll);
+  const discardAll = useRenderQueueStore((s) => s.discardAll);
+  const pauseJob = useRenderQueueStore((s) => s.pauseJob);
+  const resumeJob = useRenderQueueStore((s) => s.resumeJob);
+  const discardJobProgress = useRenderQueueStore((s) => s.discardJobProgress);
   const clearFinished = useRenderQueueStore((s) => s.clearFinished);
   const outputDir = useRenderQueueStore((s) => s.outputDir);
   const chooseOutputDir = useRenderQueueStore((s) => s.chooseOutputDir);
@@ -83,23 +97,55 @@ export function RenderQueuePanel(): JSX.Element {
   const [showDialog, setShowDialog] = useState(false);
 
   /**
-   * Confirm before aborting. `pauseAll` disposes the sink, which kills ffmpeg
-   * and removes the staging directory — a 40-minute render is gone and restarts
-   * from frame 0. Only asks when a job is actually mid-flight; stopping an
-   * idle-but-running queue has nothing to lose.
+   * Whether a stopped render can come back at all.
+   *
+   * Only the desktop's staging sink can: it writes every frame to a temp dir
+   * and encodes once at the end, so "stopped" is just "the loop is not feeding
+   * it right now". Browser sinks stream their encode as frames arrive — there
+   * is nothing to reopen — and sequence exports build one zip in memory.
+   */
+  const canResumeFormat = canEncodeLocally();
+
+  /**
+   * Stopping keeps the work, so it no longer needs a warning — the only thing
+   * worth saying is which formats CAN'T come back, and that is worth saying
+   * before the click rather than after.
+   *
+   * Sequence exports and the browser's streaming sinks have no staging dir to
+   * resume from, so for those a stop really is a restart. Ask only there.
    */
   const confirmStop = (): void => {
     void (async () => {
-      const active = jobs.some((j) => j.status === 'rendering');
-      if (active) {
+      const active = jobs.find((j) => j.status === 'rendering');
+      const nonResumable =
+        !!active && (active.format.endsWith('-sequence') || !canResumeFormat);
+      if (nonResumable) {
         const ok = await customConfirm(
           'Stop rendering?',
-          'The job in progress will be discarded and restarts from the beginning next time — there is no resume.',
+          `${FORMAT_LABEL[active.format] ?? active.format} renders cannot resume — this job restarts from the beginning next time. Other formats keep their progress.`,
           { confirmLabel: 'Stop rendering', isDanger: true },
         );
         if (!ok) return;
       }
-      pauseAll();
+      stopAll();
+    })();
+  };
+
+  /**
+   * The destructive one, which is why it asks and Stop does not.
+   *
+   * Discard disposes the sink: ffmpeg is killed and its staging directory
+   * removed, so a 40-minute render really is gone and starts again at frame 0.
+   */
+  const confirmDiscard = (): void => {
+    void (async () => {
+      const ok = await customConfirm(
+        'Discard render progress?',
+        'The frames already rendered are deleted and these jobs start again from the beginning. This cannot be undone.',
+        { confirmLabel: 'Discard progress', isDanger: true },
+      );
+      if (!ok) return;
+      discardAll();
     })();
   };
 
@@ -144,6 +190,9 @@ export function RenderQueuePanel(): JSX.Element {
 
   const doneCount = jobs.filter((j) => j.status === 'done').length;
   const queuedCount = jobs.filter((j) => j.status === 'queued').length;
+  // Half-rendered jobs holding a staging dir. They change what the main button
+  // means (Resume All, not Render All) and are what Discard would destroy.
+  const resumableCount = jobs.filter((j) => j.status === 'paused' || j.status === 'stopped').length;
 
   return (
     <div className={styles.root}>
@@ -186,25 +235,40 @@ export function RenderQueuePanel(): JSX.Element {
         )}
 
         {/*
-          "Stop", not "Pause".
+          "Stop (keep progress)" — the label is the promise.
 
-          `pauseAll` aborts: it kills the running ffmpeg child and deletes its
-          staging directory. There is no resume — pressing Render All afterwards
-          restarts every job from frame 0. The button said "Pause", so a user
-          freeing the CPU for ten minutes lost the render instead, and only
-          found out later. Real pause/resume is a separate piece of work; until
-          it exists the control must say what it does.
+          This used to be a plain "Stop" that disposed the sink: ffmpeg killed,
+          staging dir deleted, every job back at frame 0. It now stops feeding
+          frames and leaves the sink open, so Render All continues where it
+          left off. Losing the work is the button next to it, and it asks.
         */}
         <button
           type="button"
           className={styles.toolbarBtnPrimary}
           onClick={isRunning ? confirmStop : startAll}
           disabled={jobs.length === 0}
-          title={isRunning ? 'Stop rendering — discards progress on the current job' : 'Render all queued'}
+          title={
+            isRunning
+              ? 'Stop rendering — the current job keeps its rendered frames and resumes here'
+              : resumableCount > 0
+                ? 'Resume stopped jobs, then render the rest of the queue'
+                : 'Render all queued'
+          }
         >
           <Icon name={isRunning ? 'stop' : 'play'} size="sm" />
-          {isRunning ? 'Stop' : 'Render All'}
+          {isRunning ? 'Stop (keep progress)' : resumableCount > 0 ? 'Resume All' : 'Render All'}
         </button>
+
+        {(isRunning || resumableCount > 0) && (
+          <button
+            type="button"
+            className={styles.toolbarBtnDanger}
+            onClick={confirmDiscard}
+            title="Throw away the frames already rendered — jobs restart from the beginning"
+          >
+            <Icon name="trash" size="sm" /> Discard
+          </button>
+        )}
 
         <button type="button" className={styles.toolbarBtnDanger} onClick={clearFinished} disabled={doneCount === 0}>
           <Icon name="close" size="sm" /> Clear Done
@@ -232,6 +296,39 @@ export function RenderQueuePanel(): JSX.Element {
               </div>
               <div className={styles.cardHeaderRight}>
                 <span className={styles.formatBadge}>{FORMAT_LABEL[job.format] ?? job.format}</span>
+                {/* Pause / Resume, per job — the control the queue never had.
+                    Pausing keeps this job's staged frames and its encoder; the
+                    Resume next to it feeds the SAME sink from that frame. */}
+                {job.status === 'rendering' && (
+                  <button
+                    type="button"
+                    className={styles.removeBtn}
+                    title="Pause this render — keeps the frames already rendered"
+                    onClick={() => pauseJob(job.id)}
+                  >
+                    <Icon name="pause" size="sm" />
+                  </button>
+                )}
+                {(job.status === 'paused' || job.status === 'stopped') && (
+                  <>
+                    <button
+                      type="button"
+                      className={styles.removeBtn}
+                      title={`Resume this render${job.resumeFrame != null ? ` at frame ${job.resumeFrame}` : ''}`}
+                      onClick={() => resumeJob(job.id)}
+                    >
+                      <Icon name="play" size="sm" />
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.removeBtn}
+                      title="Discard this job's rendered frames — it restarts from the beginning"
+                      onClick={() => discardJobProgress(job.id)}
+                    >
+                      <Icon name="trash" size="sm" />
+                    </button>
+                  </>
+                )}
                 <button
                   type="button"
                   className={styles.removeBtn}
@@ -240,7 +337,7 @@ export function RenderQueuePanel(): JSX.Element {
                 >
                   <Icon name="copy" size="sm" />
                 </button>
-                {job.status === 'queued' && (
+                {(job.status === 'queued' || job.status === 'paused' || job.status === 'stopped') && (
                   <button
                     type="button"
                     className={styles.removeBtn}
@@ -278,8 +375,18 @@ export function RenderQueuePanel(): JSX.Element {
               </span>
 
               <div className={styles.statusProgressRow}>
-                <span className={`${styles.statusChip} ${statusClass(job.status)}`}>
+                <span
+                  className={`${styles.statusChip} ${statusClass(job.status)}`}
+                  title={
+                    job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
+                      ? `${job.resumeFrame} frames already rendered — resumes at frame ${job.resumeFrame}`
+                      : undefined
+                  }
+                >
                   {statusLabel(job.status)}
+                  {job.resumeFrame != null && (job.status === 'paused' || job.status === 'stopped')
+                    ? ` · frame ${job.resumeFrame}`
+                    : ''}
                 </span>
                 
                 <div className={styles.progressCell}>
@@ -290,7 +397,14 @@ export function RenderQueuePanel(): JSX.Element {
                     </span>
                   </div>
                   <div className={styles.progressBar}>
-                    <div className={styles.progressFill} style={{ width: `${job.progress * 100}%` }} />
+                    <div
+                      className={
+                        job.status === 'paused' || job.status === 'stopped'
+                          ? `${styles.progressFill} ${styles.progressFillPaused}`
+                          : styles.progressFill
+                      }
+                      style={{ width: `${job.progress * 100}%` }}
+                    />
                   </div>
                 </div>
               </div>
@@ -312,7 +426,8 @@ export function RenderQueuePanel(): JSX.Element {
       {/* ── Footer ───────────────────────────────────────────────── */}
       <div className={styles.footer}>
         <Icon name="queue" size="sm" />
-        {jobs.length} job{jobs.length !== 1 ? 's' : ''} · {queuedCount} queued · {doneCount} done
+        {jobs.length} job{jobs.length !== 1 ? 's' : ''} · {queuedCount} queued
+        {resumableCount > 0 ? ` · ${resumableCount} paused` : ''} · {doneCount} done
         {isRunning && <span style={{ color: 'var(--color-primary)' }}> · Rendering…</span>}
       </div>
     </div>

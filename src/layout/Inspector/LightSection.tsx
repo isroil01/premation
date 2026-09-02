@@ -105,6 +105,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [poiZRaw, setPoiZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiZ');
   const [envPresetRaw, setEnvPreset] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'envPreset');
   const [envRotationRaw, setEnvRotation] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'envRotation');
+  const [envReflRaw, setEnvRefl] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'envReflections');
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
   // The library, for the "Image…" sky. Selected as the whole array (a filtered
@@ -146,15 +147,17 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   // trace is a property the user cannot fix.
   const envAssetMissing = !!envAssetId && !imageAssets.some((a) => a.id === envAssetId);
   const envRotation = num(envRotationRaw, 0);
+  const envReflections = num(envReflRaw, LIGHT_DEFAULTS.envReflections);
   // A light is "targeted" (aimed in 3D) as soon as any POI component exists —
   // the same test readNodeLight applies.
   const hasPOI = [poiXRaw, poiYRaw, poiZRaw].some((v) => typeof v === 'number');
   /*
     An environment light has NO position, no reach and no cone: buildSnapshot
-    reads only its `envPreset`, its `envRotation` and its `intensity`, expands
-    those into the derived ambient+parallel rig, and explicitly skips it for
-    both the glow wash and 2.5D shadow casting. Every other row here would be a
-    control that changes nothing, so none of them are drawn.
+    reads only its `envPreset`, its `envRotation`, its `envReflections` and
+    its `intensity`, expands those into the derived ambient+parallel rig and
+    the prefiltered reflection map, and explicitly skips it for both the glow
+    wash and 2.5D shadow casting. Every other row here would be a control that
+    changes nothing, so none of them are drawn.
   */
   const isEnv = type === 'environment';
   /** point / spot / parallel — the lights that actually sit somewhere. */
@@ -322,6 +325,25 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             value={envRotation}
             unit="°"
             onStatic={(v) => setEnvRotation(v)}
+          />
+        )}
+        {/*
+          Reflections: the strength of the environment's MIRRORED half — the
+          prefiltered specular map a Physical material reflects — as distinct
+          from Intensity, which drives the irradiance rig that lights it. 100
+          is physically matched to Intensity, so the row only ever pulls the
+          reflection away from the light, never invents one; it stores nothing
+          at the default, and a scene that never opens it is unchanged.
+        */}
+        {isEnv && (
+          <KfRow
+            nodeId={nodeId}
+            prop="envReflections"
+            label="Reflections"
+            value={envReflections}
+            unit="%"
+            min={0}
+            onStatic={(v) => setEnvRefl(v !== LIGHT_DEFAULTS.envReflections ? v : undefined)}
           />
         )}
         {positional && (

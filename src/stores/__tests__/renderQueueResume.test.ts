@@ -38,6 +38,13 @@ jest.mock('@core/export/videoSink', () => ({
   canEncodeLocally: () => true,
 }));
 
+// The store tells plugins a render finished through a DYNAMIC import of the
+// whole plugin runtime. Nothing here is about plugins, and compiling that graph
+// inside a 5s test is how this suite times out on a cold cache — stub it.
+jest.mock('@core/plugins/PluginHost', () => ({
+  pluginHost: { notifyRenderFinished: jest.fn() },
+}));
+
 import { useRenderQueueStore, type RenderJob } from '../renderQueueStore';
 import { createResumableVideoRender } from '@core/export/exportManager';
 
@@ -59,11 +66,13 @@ const settle = async (): Promise<void> => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  useRenderQueueStore.setState({ jobs: [], isRunning: false, outputDir: null, _abort: null });
+  useRenderQueueStore.setState({
+    jobs: [], isRunning: false, outputDir: null, _abort: null, _intent: 'pause', _resumeTarget: null,
+  });
 });
 
 describe('pause keeps the render', () => {
-  it('a paused run puts the job back queued with its progress and resume handle', async () => {
+  it('a paused run parks the job as paused with its progress and resume handle', async () => {
     mockRun.mockResolvedValueOnce({ done: false, nextOffset: 40 });
     const s = useRenderQueueStore.getState();
     s.addJob(baseJob);
@@ -72,8 +81,9 @@ describe('pause keeps the render', () => {
       await settle();
     });
     const job = useRenderQueueStore.getState().jobs[0]!;
-    expect(job.status).toBe('queued');
+    expect(job.status).toBe('paused');
     expect(job.progress).toBeCloseTo(0.4);
+    expect(job.resumeFrame).toBe(40);
     expect(job._resume).toEqual({ render: fakeRender, nextOffset: 40 });
     // Nothing was thrown away.
     expect(mockDispose).not.toHaveBeenCalled();

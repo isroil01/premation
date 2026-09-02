@@ -73,6 +73,20 @@ import {
 } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
 import { openKeyframeVelocityDialog } from '@layout/Timeline/KeyframeVelocityDialog';
+import {
+  addTransition,
+  removeTransition,
+  transitionAtCut,
+  compIdForTransition,
+  DEFAULT_TRANSITION_FRAMES,
+  TRANSITION_KINDS,
+  TRANSITION_LABEL,
+} from '@core/timeline/transitions';
+import {
+  TIMELINE_EDIT_MODES,
+  setTimelineEditMode,
+  getTimelineEditMode,
+} from '@layout/Timeline/timelineEditMode';
 import { useCompositionStore } from '@stores/compositionStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readCompRef } from '@core/scene/compInstance';
@@ -108,7 +122,7 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
 import { useAssetStore } from '@stores/assetStore';
-import { customPrompt } from '@components/Modal';
+import { customPrompt, customAlert } from '@components/Modal';
 import { runDocumentEdit } from '@core/commands/documentEdit';
 
 /**
@@ -1285,6 +1299,55 @@ function EditorShellInner(): JSX.Element {
     const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : null;
     const time = nodeId ? getNodeLayerTime(nodeId) : null;
 
+    /*
+     * The cut this clip takes part in, if any.
+     *
+     * Addressed by SCENE NODE and searched across the whole comp, not along one
+     * track, for the reason `clipCuts` documents at length: splitting clones the
+     * node, so the two halves of a cut land on two ADJACENT ROWS rather than on
+     * one, and a same-track search finds nothing at exactly the moment the user
+     * has just made the cut they want to soften.
+     *
+     * The clip's OUT-point wins when it has neighbours on both sides. That is
+     * the cut a right-click on a bar most often means — you reach for a
+     * dissolve while thinking about where this shot ends — and offering both
+     * would need two submenus that are indistinguishable in the menu.
+     */
+    const compBars = layer ? c.layersOfComp() : [];
+    const others = compBars.filter((l) => l.sourceId && l.sourceId !== nodeId && l.id !== layer?.id);
+    /*
+     * "Abuts" is not enough on its own: once a cross dissolve is applied the two
+     * bars OVERLAP by the transition's length, so a search for a seam finds
+     * nothing at exactly the cut the user is right-clicking to remove one from.
+     * A neighbour is therefore any bar that starts inside this one and carries
+     * on past its end (or, before it, ends inside this one having started
+     * earlier) — which covers the touching case and the overlapped one with the
+     * same test. The nearest to the out-point (or in-point) wins.
+     */
+    const nearest = <T,>(list: T[], distance: (item: T) => number): T | undefined =>
+      list.slice().sort((a, b) => distance(a) - distance(b))[0];
+    const neighbourAfter = layer
+      ? nearest(
+          others.filter((l) => l.start > layer.start && l.start <= layer.end && l.end > layer.end),
+          (l) => Math.abs(l.start - layer.end),
+        )
+      : undefined;
+    const neighbourBefore = layer
+      ? nearest(
+          others.filter((l) => l.end < layer.end && l.end >= layer.start && l.start < layer.start),
+          (l) => Math.abs(l.end - layer.start),
+        )
+      : undefined;
+    const cut =
+      nodeId && neighbourAfter?.sourceId
+        ? { leftNodeId: nodeId, rightNodeId: neighbourAfter.sourceId }
+        : nodeId && neighbourBefore?.sourceId
+          ? { leftNodeId: neighbourBefore.sourceId, rightNodeId: nodeId }
+          : null;
+    const existingTransition = cut
+      ? transitionAtCut(compIdForTransition(cut), cut.leftNodeId, cut.rightNodeId)
+      : undefined;
+
     openContextMenu(x, y, [
       {
         id: 'split',
@@ -1405,6 +1468,69 @@ function EditorShellInner(): JSX.Element {
               : []),
           ]
         : []),
+      { id: 'sep-transition', separator: true },
+      /*
+       * Transitions.
+       *
+       * A submenu rather than four flat rows: the four kinds are variants of one
+       * act, and flattening them would push five unrelated items apart in a menu
+       * that is already long. Present-but-DISABLED when the clip has no
+       * neighbour, rather than hidden — "why is there no transition command
+       * here" is a question the greyed row answers and an absent one does not.
+       */
+      {
+        id: 'add-transition',
+        label: 'Add Transition',
+        disabled: !cut,
+        children: TRANSITION_KINDS.map((kind) => ({
+          id: `add-transition-${kind}`,
+          label: TRANSITION_LABEL[kind],
+          onSelect: () => {
+            if (!cut) return;
+            void addTransition(
+              cut.leftNodeId,
+              cut.rightNodeId,
+              kind,
+              DEFAULT_TRANSITION_FRAMES,
+              'centred',
+            ).then((res) => {
+              if (!res.ok) void customAlert('Transition', res.reason);
+            });
+          },
+        })),
+      },
+      ...(existingTransition && cut
+        ? [
+            {
+              id: 'remove-transition',
+              label: `Remove ${TRANSITION_LABEL[existingTransition.kind]}`,
+              onSelect: () => {
+                void removeTransition(compIdForTransition(cut), existingTransition.id);
+              },
+            },
+          ]
+        : []),
+      /*
+       * The five timeline edit tools, reachable from the menu too.
+       *
+       * They already have a lit tool row and a Shift+letter chord each, and
+       * both of those still leave the same gap the row was built to close: you
+       * have to already know the family exists to look for it. A right-click on
+       * the very bar these gestures act on is where someone asks "can I move
+       * just the cut?", so the answer belongs there as well. `TIMELINE_EDIT_MODES`
+       * is the one source for the labels and chords, so a mode cannot exist in
+       * the row and not here.
+       */
+      {
+        id: 'edit-mode',
+        label: 'Timeline Tool',
+        children: TIMELINE_EDIT_MODES.map((def) => ({
+          id: `edit-mode-${def.mode}`,
+          label: `${def.label}${getTimelineEditMode() === def.mode ? '  ✓' : ''}`,
+          shortcut: def.chord,
+          onSelect: () => setTimelineEditMode(def.mode),
+        })),
+      },
       { id: 'sep-del', separator: true },
       /*
        * Two deletes, and they have to read as genuinely different things.

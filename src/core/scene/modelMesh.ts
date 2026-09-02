@@ -52,6 +52,42 @@ export interface ModelPrimitiveEntry {
   /** glTF pbrMetallicRoughness factors (0..1). */
   metallic: number;
   roughness: number;
+  /**
+   * The PBR maps beyond base colour, as this session's object URLs (null where
+   * the material carries none). They resolve through the REGISTRY rather than
+   * through layer props on purpose: object URLs die with the session, and the
+   * base-colour one already needs `modelHydrate` to repoint `src` because it
+   * is the layer's image source. These four are read straight out of the
+   * registry by buildSnapshot every frame, so they never go stale and never
+   * add weight to the saved document.
+   */
+  maps: {
+    normal: string | null;
+    metallicRoughness: string | null;
+    occlusion: string | null;
+    emissive: string | null;
+  };
+  /** `normalTexture.scale` — 1 when the material carries no normal map. */
+  normalScale: number;
+  /** `occlusionTexture.strength`. */
+  occlusionStrength: number;
+  /** emissiveFactor × KHR_materials_emissive_strength, linear 0..n. */
+  emissive: [number, number, number];
+  /**
+   * KHR_texture_transform of the BASE COLOUR slot — ALREADY BAKED into
+   * `vertices`' UVs (see `primitiveToEntry`), so nothing downstream applies it.
+   *
+   * One transform, not four: the mesh path carries a single UV per vertex, and
+   * every exporter that writes the extension writes the same transform on each
+   * slot of a material (it exists to pack an atlas, which packs the whole
+   * material at once). A file that genuinely differs per slot samples its
+   * non-base maps at the base slot's transform — visibly offset rather than
+   * silently ignored, and the parse keeps the per-slot truth for the day a
+   * second UV set exists to carry it.
+   *
+   * Null when the material has no transform, or has an identity one.
+   */
+  uvTransform: { offsetX: number; offsetY: number; scaleX: number; scaleY: number; rotation: number } | null;
   /** Per-vertex skinning attributes (4 joints + 4 weights each), or null. */
   skinData: { joints: Uint16Array; weights: Float32Array } | null;
   /** Morph targets: per-vertex deltas, already basis-converted (xyz triples). */
@@ -93,6 +129,30 @@ export function primitiveToEntry(
 ): ModelPrimitiveEntry | null {
   const prim = parsed.meshes[meshIndex]?.primitives[primIndex];
   if (!prim) return null;
+  const material = prim.material !== null ? parsed.materials[prim.material] : undefined;
+  /*
+    KHR_texture_transform, baked into the UVs here at import.
+
+    The extension is an affine remap (translate · rotate · scale) of the UV a
+    material feeds a texture, and the mesh path carries exactly ONE uv per
+    vertex — so folding it into the vertex data costs nothing per frame and
+    needs no shader variant, no uniform slot and no second UV set. Doing it in
+    the shader instead would have meant a third `mesh3d-*` pipeline for a
+    feature that is three multiplications.
+
+    The BASE COLOUR slot's transform is the one applied, to every map: the
+    extension exists to address a texture atlas, an atlas packs a whole
+    material at once, and every exporter that writes it writes the same numbers
+    on each slot. The parse keeps the per-slot truth (`GltfTextureRef.transform`)
+    for the day a file proves otherwise.
+  */
+  const kt = material?.baseColorTexture?.transform ?? null;
+  const ktActive = !!kt
+    && (kt.offset[0] !== 0 || kt.offset[1] !== 0 || kt.rotation !== 0 || kt.scale[0] !== 1 || kt.scale[1] !== 1);
+  // The extension's rotation is CLOCKWISE about the UV origin, which is why the
+  // sine sign is flipped against the usual counter-clockwise 2×2.
+  const ktCos = kt ? Math.cos(kt.rotation) : 1;
+  const ktSin = kt ? Math.sin(kt.rotation) : 0;
   const vcount = prim.positions.length / 3;
   const vertices = new Float32Array(vcount * MESH_VERTEX_FLOATS);
   let minX = Infinity, minY = Infinity, minZ = Infinity;
@@ -110,8 +170,12 @@ export function primitiveToEntry(
     vertices[o + 3] = prim.normals[i * 3]!;
     vertices[o + 4] = 0 - prim.normals[i * 3 + 1]!;
     vertices[o + 5] = 0 - prim.normals[i * 3 + 2]!;
-    vertices[o + 6] = prim.uvs ? prim.uvs[i * 2]! : 0;
-    vertices[o + 7] = prim.uvs ? prim.uvs[i * 2 + 1]! : 0;
+    const u0 = prim.uvs ? prim.uvs[i * 2]! : 0;
+    const v0 = prim.uvs ? prim.uvs[i * 2 + 1]! : 0;
+    const su = u0 * (kt ? kt.scale[0] : 1);
+    const sv = v0 * (kt ? kt.scale[1] : 1);
+    vertices[o + 6] = ktActive ? kt!.offset[0] + ktCos * su + ktSin * sv : u0;
+    vertices[o + 7] = ktActive ? kt!.offset[1] - ktSin * su + ktCos * sv : v0;
     if (px < minX) minX = px; if (px > maxX) maxX = px;
     if (py < minY) minY = py; if (py > maxY) maxY = py;
     if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
@@ -133,12 +197,16 @@ export function primitiveToEntry(
     }
     skinData = { joints, weights };
   }
-  const material = prim.material !== null ? parsed.materials[prim.material] : undefined;
   const f = material?.baseColorFactor ?? [1, 1, 1, 1];
   const hex = (v: number): string => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
   const textureUrl = material?.baseColorImage !== null && material?.baseColorImage !== undefined
     ? textureUrls[material.baseColorImage] ?? null
     : null;
+  /** A slot's session URL, or null — an empty mint (jsdom) counts as absent. */
+  const mapUrl = (slot: { image: number } | null | undefined): string | null =>
+    (slot ? textureUrls[slot.image] || null : null);
+  const emissiveStrength = material?.emissiveStrength ?? 1;
+  const ef = material?.emissiveFactor ?? [0, 0, 0];
   return {
     vertices,
     // Indices are 16-bit when they fit — half the upload for typical models.
@@ -152,6 +220,26 @@ export function primitiveToEntry(
     doubleSided: material?.doubleSided === true,
     metallic: material?.metallicFactor ?? 0,
     roughness: material?.roughnessFactor ?? 0.5,
+    maps: {
+      normal: mapUrl(material?.normalTexture),
+      metallicRoughness: mapUrl(material?.metallicRoughnessTexture),
+      occlusion: mapUrl(material?.occlusionTexture),
+      emissive: mapUrl(material?.emissiveTexture),
+    },
+    normalScale: material?.normalScale ?? 1,
+    occlusionStrength: material?.occlusionStrength ?? 1,
+    emissive: [
+      (ef[0] ?? 0) * emissiveStrength,
+      (ef[1] ?? 0) * emissiveStrength,
+      (ef[2] ?? 0) * emissiveStrength,
+    ],
+    // Informational: it is ALREADY baked into `vertices`. Recorded so a reader
+    // of an entry can tell a model whose UVs were remapped from one whose
+    // exporter wrote them that way, and an identity is dropped so the field
+    // means "this was transformed" rather than "this had the extension".
+    uvTransform: ktActive
+      ? { offsetX: kt!.offset[0], offsetY: kt!.offset[1], scaleX: kt!.scale[0], scaleY: kt!.scale[1], rotation: kt!.rotation }
+      : null,
     skinData,
     // Morph deltas get the same y/z flip as the base attributes — a delta is
     // a vector, and vectors conjugate exactly like positions under F.

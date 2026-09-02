@@ -702,6 +702,27 @@ export class MotionRendererBackend implements RenderBackend {
           // One bad asset (broken src, rasterization failure, upload error)
           // must not abort texture feeding for the rest of the frame.
           try {
+            // 0. Imported-model PBR maps. Fed BEFORE the base-layer branch and
+            // outside it, because they ride alongside whatever the layer's own
+            // texture is (a model leaf is an image layer when it has a base
+            // colour map and a shape layer when it does not) — and both cases
+            // can carry a normal / roughness / AO / emissive map.
+            const modelMaps = layer.extrudedMesh?.pbr;
+            if (modelMaps) {
+              const feedMap = (suffix: string, src: string | undefined): void => {
+                if (!src) return;
+                const key = `pbrmap:${layer.id}:${suffix}`;
+                activeKeys.add(key);
+                // No fill fallback and no bake: these are DATA maps, not
+                // content. `premultipliedSource` false keeps the upload from
+                // multiplying a normal map by its own (opaque) alpha.
+                this.textures!.setImage(key, src, undefined, false);
+              };
+              feedMap('n', modelMaps.normalSrc);
+              feedMap('m', modelMaps.metallicRoughnessSrc);
+              feedMap('o', modelMaps.occlusionSrc);
+              feedMap('e', modelMaps.emissiveSrc);
+            }
             // 1. Base layer rasterization
             if (layer.particles) {
               // Particle emitter: rasterize the deterministic field for this

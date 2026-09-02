@@ -208,6 +208,22 @@ export interface BindGroupLayoutEntry {
   stages: ShaderStage[];
 }
 
+/**
+ * Bind slots the specular ENVIRONMENT MAP occupies on every lit-3d material.
+ *
+ * 7 and 8, deliberately past everything else: 3 is the mask texture, 4 a
+ * plugin effect's origin texture, and 3-6 are the mesh PBR map set. A
+ * reflection is a property of the SCENE rather than of the layer, so it sits
+ * clear of every per-layer slot and cannot be renumbered by one arriving later.
+ *
+ * Declared here, not in `pipeline/uniforms.ts`, because the WebGL2 backend has
+ * to recognise the SAMPLER slot by number (it binds the env sampler to the env
+ * texture unit ALONE, where every other sampler is broadcast to all units) and
+ * a backend must not reach up into the pipeline layer for a constant.
+ */
+export const ENV_TEXTURE_BINDING = 7;
+export const ENV_SAMPLER_BINDING = 8;
+
 export interface PipelineDescriptor {
   label?: string;
   shader: ShaderModuleHandle;
@@ -220,6 +236,12 @@ export interface PipelineDescriptor {
   colorFormat: TextureFormat;
   /** Optional depth attachment format for this pipeline. */
   depthFormat?: TextureFormat;
+  /**
+   * GLSL sampler uniform names in TEXTURE-entry order (WebGL2 only; WebGPU
+   * binds by number and ignores this). Set by materials with more than the two
+   * textures the backend can name by itself — see `MaterialDescriptor.glslSamplers`.
+   */
+  samplerNames?: string[];
   /** Depth-tested pipeline (3D layer path). When set the pipeline is only
    *  valid inside a render pass that carries a depth attachment (WebGPU bakes
    *  the depth state into the pipeline; WebGL2 applies it at bind time). */

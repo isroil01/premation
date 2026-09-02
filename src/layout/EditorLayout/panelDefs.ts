@@ -66,6 +66,24 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // parameter in this panel, and no other tab already speaks it.
   { id: 'effectControls', title: 'Effect Controls', icon: 'stopwatch', region: 'leftSidebar', weight: 9, closable: false },
   { id: 'assets',      title: 'Assets',    icon: 'image',       region: 'leftSidebar', weight: 8,   closable: false },
+  /**
+   * Text-based editing: the composition's spoken words, as chips you can seek
+   * to, select in runs and DELETE — which cuts that time out of every layer and
+   * closes the gap.
+   *
+   * NOT `onDemand`, and the argument is the one `marketplace` and
+   * `sourceMonitor` already made in this file: the routes that open an
+   * on-demand panel all live in a menu, so a surface nobody knows exists is a
+   * surface nobody summons. This one has the additional problem that its whole
+   * premise — that you can edit video by editing text — is not something a user
+   * goes looking for unless they have already seen it.
+   *
+   * `mic` because it is the only unclaimed glyph that names SPEECH. `type` and
+   * `text-left` are the Character and Paragraph tabs', `audio` and `waves` name
+   * a waveform rather than words, and `voice` aliases the same Phosphor
+   * component as `mic`.
+   */
+  { id: 'transcript',  title: 'Transcript', icon: 'mic',        region: 'leftSidebar', weight: 7,   closable: false },
   { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
   // Both editions — see PANEL_AVAILABILITY / `aiEnabled()`. Local runs BYOK;
   // server runs through the hosted gateway.

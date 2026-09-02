@@ -1824,3 +1824,130 @@
   line-height: 1.45;
   white-space: nowrap;
 }
+
+/* ── Transitions ──────────────────────────────────────────────────
+   A transition belongs to BOTH clips at a cut, so it is drawn as a bracket
+   spanning the two rows rather than as a bar in a lane of its own — a lane
+   would make it look like a third layer that could be moved independently of
+   the two it joins.
+
+   The box sits above the bars and below the playhead: it has to be grabbable
+   over a clip, and it must never hide the one line that says where you are. */
+.transitionBox {
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  padding: 0 2px;
+  border-radius: var(--radius-sm, 3px);
+  /* The bracket reads as an OVERLAP, not as a fill: a solid block would hide
+     both bars' waveforms and thumbnails exactly where the user is judging the
+     edit. Hatching says "these two share this span". */
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 26%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+  border: 1px solid color-mix(in srgb, var(--color-primary) 65%, transparent);
+  /* Left and right edges are the bracket's serifs — heavier, because they are
+     the parts you can actually grab. */
+  border-left-width: 3px;
+  border-right-width: 3px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* The dips borrow the colour they are named after, so four brackets in one comp
+   are told apart at a glance rather than by reading four labels. */
+.transitionBox[data-kind='dipToBlack'] {
+  background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.55) 0 4px, transparent 4px 8px);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.transitionBox[data-kind='dipToWhite'] {
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0 4px, transparent 4px 8px);
+  border-color: rgba(255, 255, 255, 0.75);
+}
+
+.transitionBox[data-kind='wipe'] {
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent, var(--color-primary)) 30%, transparent) 0 5px,
+    transparent 5px 10px
+  );
+  border-color: color-mix(in srgb, var(--color-accent, var(--color-primary)) 70%, transparent);
+}
+
+.transitionBoxSelected {
+  outline: 1px solid var(--color-primary);
+  outline-offset: 1px;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-primary) 55%, transparent);
+}
+
+/* The grips. Wider than they look: the visible serif is the border, and this
+   sits over it so the pointer target is a comfortable 7px without the bracket
+   growing fat enough to hide the frames underneath. */
+.transitionGrip {
+  width: 7px;
+  align-self: stretch;
+  flex: 0 0 auto;
+  cursor: ew-resize;
+  background: transparent;
+}
+
+.transitionGrip:hover {
+  background: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.transitionLabel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  padding: 0 2px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-primary);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+/* ── Cut drop marker ──────────────────────────────────────────────
+   Rendered only while a chip is in flight, and inert: it sits exactly where
+   both clips' trim handles are, so anything interactive here would swallow the
+   gesture a user most often wants at a cut. */
+.cutZone {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  border-radius: 2px;
+  border: 1px dashed color-mix(in srgb, var(--color-text-tertiary) 60%, transparent);
+}
+
+.cutZoneOver {
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border: 1px solid var(--color-primary);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+/* Why a transition was refused. Anchored under the tool row rather than floated
+   over the lanes, because the fix — a shorter transition, or trimming the clips
+   — is made in the timeline it must not cover. */
+.transitionError {
+  position: absolute;
+  z-index: 61;
+  /* Just under the tool row — `TIMELINE_TOOLS_HEIGHT` in TS, 30px. */
+  top: 34px;
+  left: var(--space-3);
+  right: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-danger);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  line-height: 1.45;
+  cursor: pointer;
+}

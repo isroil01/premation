@@ -69,6 +69,17 @@ export interface Light {
   envPreset: EnvironmentSky;
   /** Environment only: spin about the vertical axis, degrees (keyframeable). */
   envRotation: number;
+  /**
+   * Environment only: REFLECTION strength, percent (100 = physically matched
+   * to the light's own intensity).
+   *
+   * Separate from `intensity` because the two halves of an environment light
+   * are separable in practice and not in physics: the SH rig lights a scene,
+   * the prefiltered map mirrors in it, and an art director routinely wants the
+   * second dialled back without darkening the first. 100 is the honest
+   * default, so a scene that never touches this is energy-consistent.
+   */
+  envReflections: number;
 }
 
 /** The unstored defaults — anything equal to these adds nothing to file. */
@@ -81,6 +92,7 @@ export const LIGHT_DEFAULTS = {
   falloffDistance: 500,
   shadowDarkness: 100,
   shadowDiffusion: 0,
+  envReflections: 100,
 } as const;
 
 const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
@@ -114,6 +126,7 @@ export function readNodeLight(node: SceneNode): Light {
   let poiZ: number | undefined;
   let envPreset: EnvironmentSky = DEFAULT_ENVIRONMENT_PRESET;
   let envRotation = 0;
+  let envReflections: number = LIGHT_DEFAULTS.envReflections;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
     if (typeof p.lightType === 'string') type = lightType(p.lightType);
@@ -133,6 +146,7 @@ export function readNodeLight(node: SceneNode): Light {
     if (p.castShadows === true || p.castShadows === 1) shadows = true;
     if (isEnvironmentSky(p.envPreset)) envPreset = p.envPreset;
     envRotation = num(p.envRotation, envRotation);
+    envReflections = num(p.envReflections, envReflections);
   }
   // Any ONE POI component present means the light is aimed in 3D; the others
   // default to 0 rather than the whole POI being discarded.
@@ -141,7 +155,7 @@ export function readNodeLight(node: SceneNode): Light {
     type, color, intensity, radius, angle, cone, coneFeather,
     falloff, falloffDistance, shadows, shadowDarkness, shadowDiffusion,
     poi: hasPOI ? { x: poiX ?? 0, y: poiY ?? 0, z: poiZ ?? 0 } : null,
-    envPreset, envRotation,
+    envPreset, envRotation, envReflections,
   };
 }
 

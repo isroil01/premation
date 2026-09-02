@@ -69,6 +69,8 @@ import { TrackPointOverlay } from './TrackPointOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
 import { AxisWidgetOverlay } from './AxisWidgetOverlay';
 import { FocusPlaneOverlay } from './FocusPlaneOverlay';
+import { SmartGuideOverlay } from './SmartGuideOverlay';
+import { GradientHandleOverlay } from './GradientHandleOverlay';
 import { useGizmo3d } from './useGizmo3d';
 import { useDeviceHandles } from './useDeviceHandles';
 import { useFocusContext } from '@layout/focus/useFocusContext';
@@ -543,6 +545,15 @@ export function WorkspaceViewport({
               is pointer-transparent apart from that one handle, and renders
               nothing at all unless a DOF camera is on show. */}
           <FocusPlaneOverlay />
+          {/* The gradient axis, its end grips and the colour stops. Renders
+              nothing unless the one selected layer has a gradient fill, and
+              only a small swatch chip until the editor is armed. */}
+          <GradientHandleOverlay />
+          {/* Figma-style measurement chrome: distances to the nearest layers,
+              equal-spacing hatch bars, equal-size highlights. Draws only while
+              a gesture is in flight or Alt is measuring, so an idle viewport is
+              untouched by it. */}
+          <SmartGuideOverlay />
           {/* Persistent view-orientation axis widget (whenever the comp is 3D). */}
           <AxisWidgetOverlay />
         </div>

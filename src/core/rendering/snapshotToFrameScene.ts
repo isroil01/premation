@@ -1432,6 +1432,22 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
               gain: r.gain,
               ...(r.textured ? { textured: true } : {}),
             })),
+            // Texture KEYS, matching what MotionRendererBackend feeds under
+            // `pbrmap:<layerId>:*` — the same contract every other textureKey
+            // here follows.
+            ...(layer.extrudedMesh.pbr
+              ? {
+                  pbr: {
+                    ...(layer.extrudedMesh.pbr.normalSrc ? { normalKey: `pbrmap:${layer.id}:n` } : {}),
+                    ...(layer.extrudedMesh.pbr.metallicRoughnessSrc ? { metallicRoughnessKey: `pbrmap:${layer.id}:m` } : {}),
+                    ...(layer.extrudedMesh.pbr.occlusionSrc ? { occlusionKey: `pbrmap:${layer.id}:o` } : {}),
+                    ...(layer.extrudedMesh.pbr.emissiveSrc ? { emissiveKey: `pbrmap:${layer.id}:e` } : {}),
+                    normalScale: layer.extrudedMesh.pbr.normalScale,
+                    occlusionStrength: layer.extrudedMesh.pbr.occlusionStrength,
+                    emissive: layer.extrudedMesh.pbr.emissive,
+                  },
+                }
+              : {}),
           },
         }
       : {}),
@@ -1952,6 +1968,11 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
     dissolveFrame: Math.round((snapshot.time ?? 0) * (snapshot.fps ?? 30)),
     ...(has3d ? { camera3d: snapshot.camera3d } : {}),
     ...(has3d && snapshot.lights3d && snapshot.lights3d.length > 0 ? { lights3d: snapshot.lights3d } : {}),
+    // The reflection half of the same environment light whose irradiance rig
+    // rides `lights3d`. Gated on `has3d` like everything else on the depth
+    // path: with no 3D layer there is nothing to reflect in, and shipping the
+    // atlas anyway would upload a texture no draw binds.
+    ...(has3d && snapshot.envMap ? { envMap: snapshot.envMap } : {}),
   };
 }
 

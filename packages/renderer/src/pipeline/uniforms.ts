@@ -100,9 +100,33 @@ export const MAX_LIGHTS3D = 8;
  *  or the tail silently misaligns. */
 export const LIGHT3D_VEC4S = 4;
 
+/**
+ * Roughness levels in the specular environment atlas (image-based reflections).
+ *
+ * The atlas is one 2D texture with this many equirect bands stacked
+ * vertically, level i prefiltered for roughness i/(N−1). The count is a
+ * SHADER LITERAL (see `envSpecular` in shaders/builtin.ts) because the band
+ * height is 1/N of the texture and WGSL cannot fold a uniform into that
+ * without a dynamic loop — so the producer
+ * (`src/core/scene/environmentLight.ts`) and this must agree, and a map
+ * arriving with a different `levels` is refused rather than sampled wrong.
+ */
+export const ENV_SPEC_LEVELS = 5;
+
+/**
+ * Texels of the equirect BAND each atlas level occupies, vertically.
+ *
+ * The shader needs it for one thing only: insetting v by half a texel so a
+ * direction at a pole does not bilinearly tap into the NEXT roughness level
+ * stacked below it. Must match `ENV_SPEC_HEIGHT` in
+ * `src/core/scene/environmentLight.ts`.
+ */
+export const ENV_SPEC_BAND_HEIGHT = 128;
+
 /** Floats occupied by the shade tail appended to every 3d material uniform:
- *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×4 vec4). */
-export const SHADE3D_FLOATS = MAT4_STD140_FLOATS + 4 + 4 + MAX_LIGHTS3D * LIGHT3D_VEC4S * 4;
+ *  mat4 model (16) + vec4 eye (4) + vec4 shadeParams (4) + lights (8×4 vec4)
+ *  + vec4 envParams (4). */
+export const SHADE3D_FLOATS = MAT4_STD140_FLOATS + 4 + 4 + MAX_LIGHTS3D * LIGHT3D_VEC4S * 4 + 4;
 
 /** One scene light in the shader's terms. Structurally compatible with the
  *  FrameScene `SceneLight3D` DTO (kept independent so the pipeline layer does
@@ -186,6 +210,23 @@ export interface Shade3D {
    * one-sided shading would black the whole stack out under a front light.
    */
   oneSided?: boolean;
+  /**
+   * Image-based REFLECTIONS: the scene's prefiltered environment map is bound,
+   * and the Physical (and Phong) branches add a split-sum specular IBL term.
+   *
+   * ABSENT is the default and packs `envParams` as zeros, which the shader
+   * reads as "off" and skips entirely — so every scene without an environment
+   * light runs byte-identical arithmetic to the version before reflections
+   * existed. That is the whole gate; there is no second switch.
+   */
+  env?: {
+    /** Environment light Intensity/100, times the Reflections strength. */
+    intensity: number;
+    /** Environment rotation, RADIANS (the shader has no degrees). */
+    rotationRad: number;
+    /** HDR decode multiplier for the atlas — see `EnvSpecularMap.scale`. */
+    scale: number;
+  };
   lights: ReadonlyArray<Shade3DLight>;
 }
 
@@ -246,6 +287,18 @@ export function packShade3D(out: Float32Array, floatOffset: number, shade?: Shad
     out[o + 14] = l.falloffMode;
     out[o + 15] = l.falloffDistance;
     o += 16;
+  }
+  // envParams, the LAST vec4 of the tail — appended after the light array
+  // rather than squeezed into a spare slot, because there was no spare one
+  // left (shadeParams.w became Metal). Zeros mean "no environment map", which
+  // is what an absent `env` leaves behind and what every pre-existing scene
+  // packs; the shader's reflection block is gated on x alone.
+  if (shade.env) {
+    const e = end - 4;
+    out[e + 0] = 1;
+    out[e + 1] = shade.env.intensity;
+    out[e + 2] = shade.env.rotationRad;
+    out[e + 3] = shade.env.scale;
   }
   return end;
 }
@@ -360,6 +413,51 @@ export function packTextured3D(
   out[o + 3] = sw;
   o += 4;
   packShade3D(out, o, shade);
+  return out;
+}
+
+/** The scalar half of a glTF material's extra PBR maps (the images bind
+ *  separately; these are the factors the shader applies to them). */
+export interface PbrMapParams {
+  /** `normalTexture.scale` — scales the map's tangent-space xy. */
+  normalScale: number;
+  /** `occlusionTexture.strength` — lerps the AO sample toward 1. */
+  occlusionStrength: number;
+  /** False binds white at the normal slot and the geometric normal is used. */
+  hasNormalMap: boolean;
+  /** emissiveFactor × KHR_materials_emissive_strength, linear. */
+  emissive: readonly [number, number, number];
+}
+
+/**
+ * `mesh3d-pbr`: the textured3d block plus two vec4s of map parameters.
+ *
+ * Appended at the TAIL so every field the shared shade tail reads keeps its
+ * offset — the widened block is the narrow one with more after it, which is why
+ * `withPbrMaps` can rewrite the light loop without touching a single index.
+ */
+export function packMesh3DPbr(
+  mvp: Mat4,
+  uvRect: Rect,
+  tint: Color,
+  opacity: number,
+  color: ColorTransform = IDENTITY_COLOR_TRANSFORM,
+  shade?: Shade3D,
+  sampleLinear = false,
+  pbr: PbrMapParams = { normalScale: 1, occlusionStrength: 1, hasNormalMap: false, emissive: [0, 0, 0] },
+): Float32Array {
+  const base = packTextured3D(mvp, uvRect, tint, opacity, color, shade, sampleLinear);
+  const out = new Float32Array(base.length + 8);
+  out.set(base, 0);
+  const o = base.length;
+  out[o + 0] = pbr.normalScale;
+  out[o + 1] = pbr.occlusionStrength;
+  out[o + 2] = pbr.hasNormalMap ? 1 : 0;
+  out[o + 3] = 0;
+  out[o + 4] = pbr.emissive[0];
+  out[o + 5] = pbr.emissive[1];
+  out[o + 6] = pbr.emissive[2];
+  out[o + 7] = 0;
   return out;
 }
 

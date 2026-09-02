@@ -244,6 +244,8 @@
 .statusDone     { color: var(--color-success); border-color: color-mix(in srgb, var(--color-success) 30%, transparent); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
 .statusFailed   { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 30%, transparent); background: color-mix(in srgb, var(--color-danger) 10%, transparent); }
 .statusSkipped  { color: var(--color-text-muted); border-color: var(--color-border-strong); }
+/* Paused/stopped: work in hand, not work lost — warning, not danger. */
+.statusPaused   { color: var(--color-warning); border-color: color-mix(in srgb, var(--color-warning) 30%, transparent); background: color-mix(in srgb, var(--color-warning) 10%, transparent); }
 
 /* ── Progress bar ────────────────────────────────────────────────── */
 .progressCell {
@@ -281,6 +283,16 @@
   border-radius: var(--radius-full);
   transition: width 0.1s linear;
   animation: shimmer 1.5s infinite linear;
+}
+
+/*
+ * A paused job's bar must not shimmer: the shimmer is the only thing on the
+ * card that says "this is moving", and a bar still crawling under a job that
+ * has stopped is the same lie the old "Pause" button told.
+ */
+.progressFillPaused {
+  animation: none;
+  background: color-mix(in srgb, var(--color-warning) 70%, var(--color-surface-3));
 }
 
 @keyframes shimmer {

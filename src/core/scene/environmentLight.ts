@@ -196,9 +196,16 @@ export const ENVIRONMENT_PRESETS: ReadonlyArray<{ id: EnvironmentPresetId; label
 
 const mix = (a: number, b: number, t: number): number => a + (b - a) * t;
 
-/** Generate a preset's equirect pixels (32×16 is plenty for SH band 2). */
-export function presetPixels(id: EnvironmentPresetId): EnvPixels {
-  const width = 32, height = 16;
+/**
+ * Generate a preset's equirect pixels.
+ *
+ * 32×16 is plenty for SH band 2 and is the DEFAULT for exactly that reason —
+ * changing it would move every existing scene's derived light rig. The
+ * specular prefilter asks for a bigger one (a mirror needs real detail), and
+ * every preset is an analytic function of (u, v), so it resamples exactly
+ * rather than being interpolated up from the probe grid.
+ */
+export function presetPixels(id: EnvironmentPresetId, width = 32, height = 16): EnvPixels {
   const data = new Float32Array(width * height * 3);
   for (let j = 0; j < height; j++) {
     const v = (j + 0.5) / height; // 0 = up, 1 = down
@@ -284,18 +291,22 @@ export interface ShProjectEquirectOptions {
 }
 
 /**
- * Project an arbitrary equirectangular image onto SH9.
+ * Box-average an arbitrary equirect down to `outW × outH` LINEAR float RGB.
  *
  * Accepts interleaved RGB or RGBA (the stride is inferred from the length), in
- * either float linear or 8-bit sRGB, and reuses {@link shProject} for the
- * integral itself so there is exactly one projector and not two.
+ * either float linear or 8-bit sRGB. Box averaging is the right downsample for
+ * both consumers: the SH projection is an integral (a box average is exactly
+ * the partial sum it would have computed over that footprint), and the
+ * specular prefilter is a convolution that starts from band-limited samples.
  */
-export function shProjectEquirect(
+export function resampleEquirect(
   pixels: Float32Array | Uint8ClampedArray | Uint8Array,
   width: number,
   height: number,
+  outWidth: number,
+  outHeight: number,
   opts: ShProjectEquirectOptions = {},
-): Float32Array {
+): EnvPixels {
   const w = Math.max(1, Math.floor(width));
   const h = Math.max(1, Math.floor(height));
   const eightBit = !(pixels instanceof Float32Array);
@@ -305,8 +316,8 @@ export function shProjectEquirect(
   const isLinear = opts.isLinear ?? !eightBit;
   const scale = eightBit ? 1 / 255 : 1;
 
-  const outW = Math.min(ENV_PROJECT_MAX_WIDTH, w);
-  const outH = Math.min(ENV_PROJECT_MAX_HEIGHT, h);
+  const outW = Math.max(1, Math.min(Math.floor(outWidth), w));
+  const outH = Math.max(1, Math.min(Math.floor(outHeight), h));
   const data = new Float32Array(outW * outH * 3);
   for (let j = 0; j < outH; j++) {
     const y0 = Math.floor((j * h) / outH);
@@ -331,7 +342,25 @@ export function shProjectEquirect(
       data[o] = r / n; data[o + 1] = g / n; data[o + 2] = b / n;
     }
   }
-  return shProject({ width: outW, height: outH, data });
+  return { width: outW, height: outH, data };
+}
+
+/**
+ * Project an arbitrary equirectangular image onto SH9.
+ *
+ * Accepts interleaved RGB or RGBA (the stride is inferred from the length), in
+ * either float linear or 8-bit sRGB, and reuses {@link shProject} for the
+ * integral itself so there is exactly one projector and not two.
+ */
+export function shProjectEquirect(
+  pixels: Float32Array | Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  opts: ShProjectEquirectOptions = {},
+): Float32Array {
+  return shProject(resampleEquirect(
+    pixels, width, height, ENV_PROJECT_MAX_WIDTH, ENV_PROJECT_MAX_HEIGHT, opts,
+  ));
 }
 
 // ── Sky selection: a preset id, or `asset:<assetId>` ─────────────────
@@ -464,4 +493,299 @@ export function environmentRigFor(
   if (rigCache.size >= RIG_CACHE_MAX) rigCache.clear();
   rigCache.set(key, rig);
   return rig;
+}
+
+// ── Specular environment map (image-based REFLECTIONS) ───────────────
+
+/**
+ * The SH rig above is an IRRADIANCE probe: it says how much light arrives at a
+ * surface, not what the room looks like. A mirror needs the second thing, so
+ * this builds a small prefiltered RADIANCE map beside it.
+ *
+ * ── Layout ──────────────────────────────────────────────────────────
+ *
+ * One RGBA8 2D texture: {@link ENV_SPEC_LEVELS} equirect levels stacked
+ * VERTICALLY, every level the same {@link ENV_SPEC_WIDTH} x
+ * {@link ENV_SPEC_HEIGHT}. An ATLAS rather than a mip chain because the
+ * renderer's `writeTexture` uploads level 0 only — there is no per-mip upload
+ * on either backend — and equal-sized levels make the shader's level -> v
+ * maths one multiply instead of a per-level rect it would have to be told
+ * about. Level i is prefiltered for roughness i/(LEVELS-1); the shader picks a
+ * fractional level from the material's roughness and lerps its two neighbours,
+ * which is `textureLod` done by hand.
+ *
+ * ── The approximation, stated plainly ───────────────────────────────
+ *
+ * A correct prefilter importance-samples the GGX lobe about each reflection
+ * direction. This instead runs a SEPARABLE GAUSSIAN IN THE EQUIRECT DOMAIN
+ * whose angular sigma is the lobe's alpha = roughness^2. It is right in the
+ * three ways that matter — the blur is measured in ANGLE (the horizontal
+ * kernel widens toward the poles by 1/sin(theta), so a band of sky blurs by
+ * the same solid angle everywhere), it wraps in longitude, and it is monotone
+ * in roughness — and wrong in one: the lobe is isotropic about R here, where a
+ * real GGX lobe stretches at grazing angles. The visible cost is that a rough
+ * metal seen edge-on reflects a slightly too-round blur. Two variance-matched
+ * box passes stand in for the Gaussian, which is what keeps it O(pixels).
+ *
+ * ── Encoding ────────────────────────────────────────────────────────
+ *
+ * RGBA8 with a single `scale` and a square-root transfer: stored =
+ * sqrt(v/scale), decoded = stored^2 * scale. The sqrt buys back the precision
+ * 8 bits lose in the darks (where reflections mostly live) and `scale` carries
+ * the HDR range of an EXR sky that a plain 0..1 store would clip. Nothing here
+ * is sRGB — the texture uploads as raw data (`displayReferred` off), so the
+ * shader reads exactly these numbers back.
+ */
+export const ENV_SPEC_WIDTH = 256;
+export const ENV_SPEC_HEIGHT = 128;
+/**
+ * Roughness levels in the atlas. MUST equal the renderer's `ENV_SPEC_LEVELS`
+ * (packages/renderer/src/pipeline/uniforms.ts), which is baked into the shader
+ * text as a literal because WGSL has no way to read it from a uniform without
+ * a dynamic loop. Pinned by a unit test rather than by comment alone.
+ */
+export const ENV_SPEC_LEVELS = 5;
+
+export interface EnvSpecularMap {
+  /**
+   * Identity of the CONTENT — the sky it was built from plus the layout. The
+   * renderer keys its GPU texture off this and re-uploads only when it
+   * changes, so a keyframed rotation (a uniform) uploads nothing.
+   */
+  id: string;
+  width: number;
+  height: number;
+  levels: number;
+  /** Multiplier the shader applies after squaring the stored value. */
+  scale: number;
+  /** RGBA8, `levels` bands of `width` x `height` stacked top to bottom. */
+  data: Uint8Array;
+}
+
+/**
+ * Box radius (in samples) whose variance matches ONE of two passes summing to
+ * `sigmaSamples` of standard deviation. A box of radius r has variance
+ * ((2r+1)^2 - 1)/12; two of them add, so each carries sigma^2 / 2.
+ */
+function boxRadiusFor(sigmaSamples: number): number {
+  if (!(sigmaSamples > 0)) return 0;
+  return Math.max(0, Math.round((Math.sqrt(6 * sigmaSamples * sigmaSamples + 1) - 1) / 2));
+}
+
+/** One horizontal box pass with a per-row radius, WRAPPING in longitude. */
+function boxRowsWrap(
+  src: Float32Array,
+  w: number,
+  h: number,
+  radiusOf: (row: number) => number,
+): Float32Array {
+  const out = new Float32Array(src.length);
+  // Prefix sums over one row, so a window is a subtraction whatever its width.
+  const pre = new Float32Array((w + 1) * 3);
+  for (let j = 0; j < h; j++) {
+    const base = j * w * 3;
+    const r = Math.min(radiusOf(j), Math.floor(w / 2));
+    if (r <= 0) { out.set(src.subarray(base, base + w * 3), base); continue; }
+    pre[0] = 0; pre[1] = 0; pre[2] = 0;
+    for (let i = 0; i < w; i++) {
+      const o = base + i * 3;
+      const p = (i + 1) * 3;
+      pre[p] = pre[p - 3]! + src[o]!;
+      pre[p + 1] = pre[p - 2]! + src[o + 1]!;
+      pre[p + 2] = pre[p - 1]! + src[o + 2]!;
+    }
+    const t0 = pre[w * 3]!, t1 = pre[w * 3 + 1]!, t2 = pre[w * 3 + 2]!;
+    const n = 2 * r + 1;
+    // Whole revolutions the window makes, and what is left over. n can exceed
+    // w (an even-width row at the pole radius covers the circle and one more),
+    // which is why `full` exists at all rather than being assumed 0.
+    const full = Math.floor(n / w);
+    const rem = n % w;
+    for (let i = 0; i < w; i++) {
+      // Start of the window, brought into [0, w) — a whole-revolution shift
+      // re-indexes the window, it does not enlarge it, so nothing is added
+      // for one. (The first draft added a row total per shift here, which
+      // multiplied a flat sky by four and broke energy conservation.)
+      const a = ((i - r) % w + w) % w;
+      let a0 = full * t0, a1 = full * t1, a2 = full * t2;
+      const b = a + rem;
+      if (b <= w) {
+        a0 += pre[b * 3]! - pre[a * 3]!;
+        a1 += pre[b * 3 + 1]! - pre[a * 3 + 1]!;
+        a2 += pre[b * 3 + 2]! - pre[a * 3 + 2]!;
+      } else {
+        // Wrapped: the tail of the row plus the head of it.
+        const c = b - w;
+        a0 += (t0 - pre[a * 3]!) + pre[c * 3]!;
+        a1 += (t1 - pre[a * 3 + 1]!) + pre[c * 3 + 1]!;
+        a2 += (t2 - pre[a * 3 + 2]!) + pre[c * 3 + 2]!;
+      }
+      const o = base + i * 3;
+      out[o] = a0 / n; out[o + 1] = a1 / n; out[o + 2] = a2 / n;
+    }
+  }
+  return out;
+}
+
+/** One vertical box pass, CLAMPING at the poles (there is nothing past them). */
+function boxColsClamp(src: Float32Array, w: number, h: number, radius: number): Float32Array {
+  const r = Math.min(radius, h - 1);
+  if (r <= 0) return src;
+  const out = new Float32Array(src.length);
+  const pre = new Float32Array((h + 1) * 3);
+  for (let i = 0; i < w; i++) {
+    pre[0] = 0; pre[1] = 0; pre[2] = 0;
+    for (let j = 0; j < h; j++) {
+      const o = (j * w + i) * 3;
+      const p = (j + 1) * 3;
+      pre[p] = pre[p - 3]! + src[o]!;
+      pre[p + 1] = pre[p - 2]! + src[o + 1]!;
+      pre[p + 2] = pre[p - 1]! + src[o + 2]!;
+    }
+    const top = i * 3;
+    const bot = ((h - 1) * w + i) * 3;
+    for (let j = 0; j < h; j++) {
+      const lo = j - r;
+      const hi = j + r + 1;
+      const a = Math.max(0, lo);
+      const b = Math.min(h, hi);
+      // Clamp-to-edge: rows past a pole repeat the first / last row.
+      const head = a - lo;
+      const tail = hi - b;
+      const n = (b - a) + head + tail;
+      const o = (j * w + i) * 3;
+      out[o] = (pre[b * 3]! - pre[a * 3]! + head * src[top]! + tail * src[bot]!) / n;
+      out[o + 1] = (pre[b * 3 + 1]! - pre[a * 3 + 1]! + head * src[top + 1]! + tail * src[bot + 1]!) / n;
+      out[o + 2] = (pre[b * 3 + 2]! - pre[a * 3 + 2]! + head * src[top + 2]! + tail * src[bot + 2]!) / n;
+    }
+  }
+  return out;
+}
+
+/**
+ * Blur an equirect by an ANGULAR sigma (radians), separably.
+ *
+ * The horizontal radius is PER ROW: one texel spans (2pi/w)*sin(theta) radians
+ * of arc, so the kernel has to widen toward the poles to cover the same angle
+ * — without that a uniform sky blurs into a bowtie. The vertical radius is
+ * constant, because one texel is always pi/h.
+ */
+export function blurEquirectAngular(src: EnvPixels, sigmaRad: number): EnvPixels {
+  const { width: w, height: h } = src;
+  if (!(sigmaRad > 0)) return { width: w, height: h, data: src.data.slice() };
+  const ry = boxRadiusFor((sigmaRad * h) / Math.PI);
+  const rowRadius = (j: number): number => {
+    const theta = ((j + 0.5) / h) * Math.PI;
+    return boxRadiusFor((sigmaRad * w) / (2 * Math.PI * Math.max(Math.sin(theta), 1e-3)));
+  };
+  let d: Float32Array = src.data;
+  d = boxRowsWrap(d, w, h, rowRadius);
+  d = boxRowsWrap(d, w, h, rowRadius);
+  d = boxColsClamp(d, w, h, ry);
+  d = boxColsClamp(d, w, h, ry);
+  return { width: w, height: h, data: d };
+}
+
+/** The roughness atlas level `level` is prefiltered for. */
+export function envSpecularLevelRoughness(level: number): number {
+  return ENV_SPEC_LEVELS > 1 ? level / (ENV_SPEC_LEVELS - 1) : 0;
+}
+
+/** Build the stacked, encoded atlas from a base equirect. */
+export function buildEnvSpecularAtlas(base: EnvPixels, id: string): EnvSpecularMap {
+  const w = base.width;
+  const h = base.height;
+  const levels: EnvPixels[] = [];
+  for (let i = 0; i < ENV_SPEC_LEVELS; i++) {
+    const r = envSpecularLevelRoughness(i);
+    // sigma = the GGX alpha = roughness^2. Level 0 is alpha 0 — a mirror, left
+    // exactly as it came in.
+    levels.push(blurEquirectAngular(base, r * r));
+  }
+  let max = 0;
+  for (const lv of levels) {
+    for (let k = 0; k < lv.data.length; k++) if (lv.data[k]! > max) max = lv.data[k]!;
+  }
+  // A pitch-black sky still needs a positive scale, or the encode divides by 0.
+  const scale = Math.max(1e-4, max);
+  const data = new Uint8Array(w * h * ENV_SPEC_LEVELS * 4);
+  let o = 0;
+  for (const lv of levels) {
+    for (let p = 0; p < w * h; p++) {
+      for (let c = 0; c < 3; c++) {
+        const v = Math.sqrt(Math.max(0, lv.data[p * 3 + c]!) / scale);
+        data[o++] = Math.max(0, Math.min(255, Math.round(v * 255)));
+      }
+      data[o++] = 255;
+    }
+  }
+  return { id, width: w, height: h * ENV_SPEC_LEVELS, levels: ENV_SPEC_LEVELS, scale, data };
+}
+
+/**
+ * assetId -> its downsampled LINEAR equirect, kept beside the SH so the
+ * specular prefilter needs no second decode. Filled by the same loader that
+ * fills `assetShCache` (see environmentImage.ts).
+ */
+const assetPixelCache = new Map<string, EnvPixels>();
+
+export function setEnvironmentAssetPixels(assetId: string, px: EnvPixels): void {
+  assetPixelCache.set(assetId, px);
+  specularCache.clear();
+}
+
+export function hasEnvironmentAssetPixels(assetId: string): boolean {
+  return assetPixelCache.has(assetId);
+}
+
+/** Drop one asset's cached equirect (or all of them) — a re-import, or a test. */
+export function clearEnvironmentAssetPixels(assetId?: string): void {
+  if (assetId === undefined) assetPixelCache.clear();
+  else assetPixelCache.delete(assetId);
+  specularCache.clear();
+}
+
+/** The base equirect a sky REFLECTS — a preset, or a decoded image. */
+export function environmentEquirect(sky: unknown): EnvPixels {
+  const assetId = environmentSkyAssetId(sky);
+  if (assetId !== null) {
+    const px = assetPixelCache.get(assetId);
+    if (px) return px;
+    if (assetId !== '') assetLoader?.(assetId);
+    // Same degradation as `environmentSh`: a sky whose image has not landed
+    // reflects the default studio room for this frame, never nothing.
+    return presetPixels(DEFAULT_ENVIRONMENT_PRESET, ENV_SPEC_WIDTH, ENV_SPEC_HEIGHT);
+  }
+  return presetPixels(
+    isEnvironmentPresetId(sky) ? sky : DEFAULT_ENVIRONMENT_PRESET,
+    ENV_SPEC_WIDTH,
+    ENV_SPEC_HEIGHT,
+  );
+}
+
+/** sky key -> its atlas. One entry per sky the project uses. */
+const specularCache = new Map<string, EnvSpecularMap>();
+const SPECULAR_CACHE_MAX = 8;
+
+/**
+ * The prefiltered reflection map for a sky, memoised.
+ *
+ * Depends on the SKY ALONE — intensity and rotation are shader uniforms — so a
+ * keyframed environment rebuilds nothing and re-uploads nothing. The cache key
+ * carries the layout too, so changing the atlas dimensions cannot serve a
+ * stale shape to a shader that expects the new one.
+ */
+export function environmentSpecularMap(sky: unknown): EnvSpecularMap {
+  const assetId = environmentSkyAssetId(sky);
+  // An image sky with no pixels yet IS the default preset this frame; keying
+  // it under its own id would cache the fallback under the image's name and
+  // never rebuild once the decode landed.
+  const resolved = assetId !== null && !assetPixelCache.has(assetId) ? DEFAULT_ENVIRONMENT_PRESET : sky;
+  const key = `${String(resolved)}|${ENV_SPEC_WIDTH}x${ENV_SPEC_HEIGHT}x${ENV_SPEC_LEVELS}`;
+  const hit = specularCache.get(key);
+  if (hit) return hit;
+  const map = buildEnvSpecularAtlas(environmentEquirect(sky), key);
+  if (specularCache.size >= SPECULAR_CACHE_MAX) specularCache.clear();
+  specularCache.set(key, map);
+  return map;
 }

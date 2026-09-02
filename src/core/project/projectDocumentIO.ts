@@ -64,6 +64,9 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
     // Same reason as swatches above: absent means "keep", so a new project
     // would open holding the last one's saved materials.
     materials: [],
+    // And again for transitions: a new project must not open with the previous
+    // one's dissolves still recorded against comp ids it happens to share.
+    transitions: {},
   }),
 
   capture: () => captureDocument(),

@@ -116,6 +116,10 @@ export const APP_MENU: MenuGroupModel[] = [
       { separator: true },
       { commandId: ProjectCommands.Sync, label: 'Sync Project…' },
       { separator: true },
+      // Import sits with Export rather than under Layer: what arrives is a
+      // FILE from outside the project, and the layer tree it becomes is the
+      // consequence, not the request.
+      { commandId: 'file.import3DModel', label: 'Import 3D Model…' },
       { commandId: 'file.export', label: 'Export…' },
       { separator: true },
       // Registered ONLY under `cloudProjectsEnabled()` (see Providers) —
@@ -144,6 +148,11 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: BuiltinCommands.Deselect, label: 'Deselect' },
       { separator: true },
       { commandId: BuiltinCommands.DuplicateSelected, label: 'Duplicate' },
+      { separator: true },
+      // Text-based editing: delete the selected transcript words' time range
+      // from every layer, closing the gap.
+      { commandId: 'transcript.deleteSelection', label: 'Delete Transcript Selection' },
+      { commandId: 'transcript.selectFillers', label: 'Select Filler Words' },
       { commandId: BuiltinCommands.DeleteSelected, label: 'Delete' },
     ],
   },
@@ -187,6 +196,12 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'captions.exportVtt', label: 'Export Captions (.vtt)…' },
       { commandId: 'captions.clear', label: 'Remove All Captions' },
       { separator: true },
+      // The transcript panel's verbs: the same spoken words, as an editable list.
+      { commandId: 'transcript.transcribe', label: 'Transcribe Composition' },
+      { commandId: 'transcript.addCaptions', label: 'Transcript to Captions' },
+      { commandId: 'transcript.exportSrt', label: 'Export Transcript (.srt)…' },
+      { commandId: 'transcript.exportVtt', label: 'Export Transcript (.vtt)…' },
+      { separator: true },
       { commandId: 'comp.saveFrame', label: 'Save Frame As PNG' },
       { commandId: 'comp.copyFrame', label: 'Copy Frame to Clipboard' },
     ],
@@ -210,6 +225,10 @@ export const APP_MENU: MenuGroupModel[] = [
           { commandId: 'layer.new3d.sphere', label: 'Sphere' },
           { commandId: 'layer.new3d.cylinder', label: 'Cylinder' },
           { commandId: 'layer.new3d.plane', label: 'Plane' },
+          { commandId: 'layer.new3d.cone', label: 'Cone' },
+          { commandId: 'layer.new3d.torus', label: 'Torus' },
+          { commandId: 'layer.new3d.capsule', label: 'Capsule' },
+          { commandId: 'layer.new3d.box', label: 'Box (mesh)' },
         ],
       },
       { separator: true },
@@ -301,6 +320,8 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'animation.motionFeel.bouncy', label: 'Motion Feel: Bouncy' },
       { commandId: 'animation.animateInOnBeats', label: 'Animate In on Beats' },
       { commandId: 'audio.markBeats', label: 'Markers on Beats' },
+      { commandId: 'audio.removeSilence', label: 'Remove Silence…' },
+      { commandId: 'audio.duckMusic', label: 'Duck Under Voice…' },
       { separator: true },
       { commandId: 'time.speedRamp.quarter', label: 'Speed Ramp to 25%' },
       { commandId: 'time.speedRamp.normal', label: 'Speed Ramp back to 100%' },
@@ -359,6 +380,7 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.presentation', label: 'Present (Preview)' },
       { separator: true },
       { commandId: 'view.history', label: 'History' },
+      { commandId: 'view.transcript', label: 'Transcript' },
       { commandId: 'view.effectControls', label: 'Effect Controls' },
       { commandId: 'view.renderQueue', label: 'Render Queue' },
       { commandId: 'view.graphEditor', label: 'Graph Editor' },

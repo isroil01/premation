@@ -12,7 +12,7 @@ import { AnimationEngine } from '@motion/animation';
 import type { SceneNode } from '@core/types';
 import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { registerModel, clearModelRegistry, modelKeyForBytes, MODEL_COMPONENT } from '@core/scene/modelMesh';
-import { buildQuadGlb } from '@/__testHelpers__/buildTestGlb';
+import { buildQuadGlb, buildMappedQuadGlb } from '@/__testHelpers__/buildTestGlb';
 
 const COMP = { width: 800, height: 600, background: '#101014' };
 
@@ -81,5 +81,63 @@ describe('buildSnapshot — imported model meshes', () => {
     g.addNode(node);
     const snap = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
     expect(snap.layers.find((l) => l.id.startsWith('m1'))!.extrudedMesh).toBeUndefined();
+  });
+});
+
+/**
+ * The extra glTF maps, and the gate that keeps them from touching anything
+ * else.
+ *
+ * `pbr` on the carrier is what selects the wider `mesh3d-pbr` pipeline in the
+ * renderer. It must appear for a material that HAS maps and be absent for one
+ * that does not — because "absent" is what guarantees every extrusion and
+ * every previously-imported model keeps compiling the shader it already
+ * compiled, and therefore keeps its exact pixels.
+ */
+describe('buildSnapshot — glTF PBR maps on the mesh carrier', () => {
+  const realCreate = (URL as unknown as { createObjectURL?: unknown }).createObjectURL;
+  beforeEach(() => {
+    // jsdom has no createObjectURL, and the registry mints one per image.
+    let n = 0;
+    (URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = () => `blob:img-${n++}`;
+  });
+  afterEach(() => {
+    (URL as unknown as { createObjectURL?: unknown }).createObjectURL = realCreate;
+    clearModelRegistry();
+  });
+
+  it('carries each map’s session URL and the material’s own scalars', () => {
+    const glb = buildMappedQuadGlb();
+    const key = modelKeyForBytes(new Uint8Array(glb));
+    registerModel(key, glb);
+
+    const g = new SceneGraph();
+    g.addNode(modelLayer('m1', key));
+    const snap = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
+    const pbr = snap.layers.find((l) => l.id.startsWith('m1'))!.extrudedMesh!.pbr!;
+
+    // images[0] is base colour; 1 normal, 2 metallic-roughness, 3 occlusion,
+    // 4 emissive — minted in image order.
+    expect(pbr.normalSrc).toBe('blob:img-1');
+    expect(pbr.metallicRoughnessSrc).toBe('blob:img-2');
+    expect(pbr.occlusionSrc).toBe('blob:img-3');
+    expect(pbr.emissiveSrc).toBe('blob:img-4');
+    expect(pbr.normalScale).toBe(0.75);
+    expect(pbr.occlusionStrength).toBe(0.6);
+    expect(pbr.emissive).toEqual([0.5, 0.25, 0]);
+  });
+
+  it('★ leaves `pbr` OFF a model with no maps — the goldens-cannot-move gate', () => {
+    const glb = buildQuadGlb();
+    const key = modelKeyForBytes(new Uint8Array(glb));
+    registerModel(key, glb);
+
+    const g = new SceneGraph();
+    g.addNode(modelLayer('m1', key));
+    const snap = buildSnapshot(g, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, COMP);
+    const mesh = snap.layers.find((l) => l.id.startsWith('m1'))!.extrudedMesh!;
+    expect(mesh.pbr).toBeUndefined();
+    // …and the carrier is otherwise exactly what it was before maps existed.
+    expect(mesh.ranges[0]).toMatchObject({ role: 'front', fill: '#ff0000ff', gain: 1 });
   });
 });
