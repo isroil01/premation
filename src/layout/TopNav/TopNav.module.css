@@ -178,15 +178,28 @@
   gap: var(--space-1);
 }
 
-/* Segmented Ribbon Capsule Group */
+/**
+ * A GROUP IS A RUN OF GLYPHS, NOT A CONTAINER.
+ *
+ * This was a "segmented ribbon capsule": a tinted, bordered, rounded box with
+ * its own padding, holding buttons that each carried a second border and their
+ * own rounded chip. Two frames around every icon — and because both frames
+ * charge the icon rent in padding, the glyph inside them had to shrink to fit
+ * a 40px row. The chrome was eating the thing it was supposed to present.
+ *
+ * So the capsule is gone and the chips with it. What separates one group from
+ * the next is `.toolDivider`, a single rule — which is all the capsule was
+ * communicating anyway, at the cost of four borders and 8px of padding per
+ * group. The glyphs get that space back and are drawn at the `lg` step.
+ */
 .toolGroup {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  padding: 2px;
+  gap: var(--space-2);
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
 }
 
 /* Same two-state pairing as .tool / .toolActive below */
@@ -194,39 +207,33 @@
 .toolDropdownTriggerActive {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  height: 28px;
-  padding: 0 7px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
+  gap: var(--space-1);
+  height: var(--control-height-lg);
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
   font-family: inherit;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: color 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .toolDropdownTrigger {
-  background: transparent;
   color: var(--color-text-secondary);
 }
 
 .toolDropdownTrigger:hover {
-  background: rgba(255, 255, 255, 0.06);
   color: var(--color-text-primary);
 }
 
 .toolDropdownTriggerActive {
-  background: var(--color-surface-3);
   color: var(--color-primary);
-  border-color: transparent;
-  box-shadow: none;
 }
 
 .toolDropdownTriggerActive:hover {
-  background: var(--color-surface-3);
   color: var(--color-primary-hover);
-  border-color: transparent;
 }
 
 .toolDropdownTrigger:focus-visible,
@@ -235,12 +242,17 @@
   outline-offset: 1px;
 }
 
+/* The only thing between two groups now, so it is drawn to be seen. It was
+   `--color-border` at 0.6 opacity: #282828 on a #1d1d1d bar, faded — which
+   read as nothing, and could, because the capsule around each group was doing
+   the separating. With the capsules gone this line IS the grouping, so it
+   takes the strong border token at full opacity and the air the capsules
+   used to reserve. */
 .toolDivider {
   width: 1px;
-  height: 18px;
-  margin: 0 2px;
-  background: var(--color-border-subtle);
-  opacity: 0.6;
+  height: 22px;
+  margin: 0 var(--space-3);
+  background: var(--color-border-strong);
 }
 
 /**
@@ -248,38 +260,36 @@
  */
 .tool,
 .toolActive {
-  width: 28px;
-  height: 28px;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
   display: grid;
   place-items: center;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
   cursor: pointer;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: color 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+              transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .tool {
-  background: transparent;
   color: var(--color-text-secondary);
 }
 
 .tool:hover {
-  background: rgba(255, 255, 255, 0.06);
   color: var(--color-text-primary);
 }
 
-/* ON: Active state highlights icon with clean elevated surface */
+/* ON: colour, not a chip. Which is what SceneControls in this same row has
+   always done — the two halves of the toolbar now agree on what "armed" looks
+   like, where before one lit the glyph and the other boxed it. */
 .toolActive {
-  background: var(--color-surface-3);
   color: var(--color-primary);
-  border-color: transparent;
-  box-shadow: none;
 }
 
 .toolActive:hover {
-  background: var(--color-surface-3);
   color: var(--color-primary-hover);
-  border-color: transparent;
 }
 
 .tool:active,

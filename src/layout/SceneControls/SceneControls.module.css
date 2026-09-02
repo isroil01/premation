@@ -2,118 +2,62 @@
 .sceneControls {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   user-select: none;
 }
 
+/* Matches TopNav .toolDivider exactly — this bar sits inside that row, so a
+   sub-group rule here and a group rule there must be the same line. */
 .divider {
   width: 1px;
-  height: var(--space-6);
-  background: var(--color-border);
-  margin: 0;
+  height: 22px;
+  background: var(--color-border-strong);
+  margin: 0 var(--space-3);
 }
 
-/* Matches TopNav .tool exactly */
-.button {
-  width: var(--control-height-lg);
+/* Matches TopNav .toolDropdownTrigger exactly — this bar sits inside that row
+   and its four menus are the same control as the pointer / pen / shape menus
+   beside them, so they cannot be a second dialect of it. No chip, no border,
+   no radius: the glyph is the control. */
+.trigger,
+.triggerActive {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   height: var(--control-height-lg);
-  display: grid;
-  place-items: center;
-  background: transparent;
-  border: 1px solid transparent;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 0;
   cursor: pointer;
-  border-radius: var(--radius-md);
-  color: var(--color-text-secondary);
-  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
+  font: inherit;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard);
   outline: none;
 }
 
-.button:hover {
-  background: var(--color-surface-3);
+.trigger {
+  color: var(--color-text-secondary);
+}
+
+.trigger:hover {
   color: var(--color-text-primary);
 }
 
-.button:active {
-  transform: scale(0.92);
-}
-
-.button:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-/* Matches TopNav .toolActive */
-.buttonActive {
-  width: var(--control-height-lg);
-  height: var(--control-height-lg);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  border-radius: var(--radius-md);
-  background: transparent;
+.triggerActive {
   color: var(--color-primary);
-  border: 1px solid transparent;
-  transition: var(--motion-hover-transition), transform var(--motion-duration-fast) var(--motion-ease-standard);
-  outline: none;
 }
 
-.buttonActive:hover {
-  background: var(--color-surface-3);
+.triggerActive:hover {
   color: var(--color-primary-hover);
-  border-color: transparent;
 }
 
-.buttonActive:active {
+.trigger:active,
+.triggerActive:active {
   transform: scale(0.92);
 }
 
-.buttonActive:focus-visible {
+.trigger:focus-visible,
+.triggerActive:focus-visible {
   outline: 1px solid var(--color-focus-ring);
   outline-offset: 1px;
-}
-
-.softwareBadge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--font-size-micro);
-  font-weight: 500;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--color-amber-500) 15%, transparent);
-  color: var(--color-amber-500);
-  border: 1px solid color-mix(in srgb, var(--color-amber-500) 30%, transparent);
-  margin-left: 4px;
-}
-
-/* Local / World / View axis space. A letter rather than an icon: the three
-   differ only in orientation, and three near-identical axis glyphs would be
-   harder to tell apart than L / W / V.
-
-   Sized off `--icon-size-sm` — the token its neighbours in this row actually
-   render at — so the letter's box and the glyph's box are the same height.
-
-   It was a flat `--font-size-xl` (16px), reasoned against an 18px icon. Two
-   things were wrong with that. The icons here are `size="sm"`, not `md`; and
-   `--icon-size-sm` drops to 13px under the ≤1366px compact scale, which a
-   fixed 16px cannot follow. Measured in the running app: 16px letters against
-   13px glyphs, the only controls in the toolbar out of step with the rest —
-   and a stroke-filled letterform already reads heavier than an outline at
-   equal height, so the overshoot compounded. Weight 800 rather than 700 keeps
-   the letters' presence at the matched size. */
-.axisGlyph {
-  font-size: var(--icon-size-sm);
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: 0.02em;
-}
-
-.cameraToolLabel {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--color-primary);
-  white-space: nowrap;
-  margin-left: 2px;
 }

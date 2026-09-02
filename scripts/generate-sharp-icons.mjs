@@ -63,9 +63,9 @@ const MAP = {
 
   layout: 'dashboard', crosshair: 'center_focus_strong', theme: 'contrast', undo: 'undo', redo: 'redo',
   'select-all': 'select_all', deselect: 'deselect', 'mouse-pointer': 'arrow_selector_tool',
-  'direct-select': 'near_me', 'pan-behind': 'recenter', 'layer-plus': 'add_box',
+  'direct-select': 'near_me', 'pan-behind': 'recenter', 'layer-plus': null,
   pen: 'ink_pen', type: 'text_fields', square: 'square', circle: 'circle',
-  'mask-square': 'crop_square', 'mask-circle': 'circle', 'mask-pen': 'draw',
+  'mask-square': null, 'mask-circle': null, 'mask-pen': null,
   pencil: 'edit', line: 'shape_line', star: 'star', polygon: 'pentagon', curvature: 'line_curve',
   // Arrows-in / arrows-out rather than the family's `group_work`/`workspaces`,
   // which are both clusters of circles and unreadable as opposites at 13px.
@@ -97,14 +97,15 @@ const MAP = {
   'select-arrow': 'arrow_selector_tool', 'sliders-h': 'tune', brush: 'brush', '3d-focus': 'filter_center_focus',
   loop: 'repeat', 'motion-blur': 'motion_blur', 'trim-in': 'first_page', 'trim-out': 'last_page',
   solid: 'rectangle', 'graph-value': 'show_chart', 'graph-speed': 'speed',
-  export: 'ios_share', history: 'history', share: 'share', link: 'link',
-  'puppet-pin': 'pin', 'push-pin': 'keep', 'puppet-starch': 'keep', 'puppet-bend': '360', 'puppet-advanced': 'transform', 'puppet-overlap': 'layers', bone: 'device_hub',
+  export: 'file_export', history: 'history', share: 'share', link: 'link',
+  'puppet-pin': null, 'push-pin': 'keep', 'puppet-starch': 'texture', 'puppet-bend': '360', 'puppet-advanced': 'transform', 'puppet-overlap': 'layers', bone: null,
   home: 'home', app: 'apps',
   voice: 'graphic_eq', sound: 'volume_up', mic: 'mic', ai: 'star_shine', brain: 'psychology',
   tv: 'tv', tour: 'tour',
   'text-left': 'format_align_left', 'text-center': 'format_align_center', 'text-right': 'format_align_right',
-  orbit: '3d_rotation', 'hand-grab': 'back_hand', 'pan-camera': 'control_camera', perspective: 'zoom_in_map',
-  'axis-3d': 'transform', 'ground-grid': 'grid_4x4',
+  orbit: null, 'hand-grab': 'back_hand', 'pan-camera': 'control_camera', perspective: null,
+  'axis-3d': 'transform', 'ground-grid': null,
+  'axis-local': null, 'axis-world': null, 'axis-view': null,
   'gizmo-universal': null, 'gizmo-position': null, 'gizmo-scale': null, 'gizmo-rotation': null,
   sphere: 'globe', cylinder: 'database',
   'text-3d': 'font_download', 'pop-out': 'picture_in_picture_alt', gpu: 'memory',
@@ -117,7 +118,7 @@ const MAP = {
  * Names with no exact glyph in the family, and what was chosen instead.
  */
 const SUBSTITUTIONS = {
-  bone: 'no bone glyph; `device_hub` is a joint with limbs radiating off it',
+  'puppet-starch': 'no starch glyph; `texture` is the stiffened hatch it paints',
   queue: 'no plain `queue`; `list_alt` is the render-queue panel it opens',
   'text-3d': 'no 3D-text glyph; `font_download` is the boxed glyph mark',
 };
@@ -135,20 +136,106 @@ const HAND_DRAWN = {
     fill: 'M180-840 h200 v140 H180 Z M580-840 h200 v140 H580 Z M180-660 h200 v180 q0 42 29 71 t71 29 q42 0 71-29 t29-71 v-180 h200 v180 q0 124-88 212 t-212 88 q-124 0-212-88 t-88-212 Z',
   },
   'gizmo-position': {
-    d: 'M480-900 L620-670 H340 Z M430-680 H530 V-400 H430 Z M860-180 L580-420 L720-180 Z M455-443 L625-343 L675-257 L505-357 Z M100-180 L240-180 L380-420 Z M505-443 L335-343 L285-257 L455-357 Z M480-480 L550-440 V-360 L480-320 L410-360 V-440 Z',
-    fill: 'M480-900 L620-670 H340 Z M430-680 H530 V-400 H430 Z M860-180 L580-420 L720-180 Z M455-443 L625-343 L675-257 L505-357 Z M100-180 L240-180 L380-420 Z M505-443 L335-343 L285-257 L455-357 Z M480-480 L550-440 V-360 L480-320 L410-360 V-440 Z',
+    // Three arms off a solid hub, all three capped with the SAME terminal so
+    // the mode reads from the cap alone: a triangle = translate.
+    d: 'M395-565 H565 V-395 H395 Z M425-700 H535 V-440 H425 Z M480-880 L620-680 L340-680 Z M440-535 H700 V-425 H440 Z M880-480 L680-340 L680-620 Z M441-519 L519-441 L299-221 L221-299 Z M120-120 L162-360 L360-162 Z',
+    fill: 'M395-565 H565 V-395 H395 Z M425-700 H535 V-440 H425 Z M480-880 L620-680 L340-680 Z M440-535 H700 V-425 H440 Z M880-480 L680-340 L680-620 Z M441-519 L519-441 L299-221 L221-299 Z M120-120 L162-360 L360-162 Z',
   },
   'gizmo-scale': {
-    d: 'M385-880 H575 V-690 H385 Z M430-690 H530 V-400 H430 Z M635-350 H825 V-160 H635 Z M455-443 L645-333 L695-247 L505-357 Z M135-350 H325 V-160 H135 Z M505-443 L315-333 L265-247 L455-357 Z M400-480 H560 V-320 H400 Z',
-    fill: 'M385-880 H575 V-690 H385 Z M430-690 H530 V-400 H430 Z M635-350 H825 V-160 H635 Z M455-443 L645-333 L695-247 L505-357 Z M135-350 H325 V-160 H135 Z M505-443 L315-333 L265-247 L455-357 Z M400-480 H560 V-320 H400 Z',
+    // Same skeleton, square terminals — the box handle every 3D app uses for
+    // scale. Blocky vs pointed is the difference that survives 15px.
+    d: 'M395-565 H565 V-395 H395 Z M425-690 H535 V-440 H425 Z M375-880 H585 V-670 H375 Z M440-535 H690 V-425 H440 Z M670-585 H880 V-375 H670 Z M441-519 L519-441 L299-221 L221-299 Z M100-310 H310 V-100 H100 Z',
+    fill: 'M395-565 H565 V-395 H395 Z M425-690 H535 V-440 H425 Z M375-880 H585 V-670 H375 Z M440-535 H690 V-425 H440 Z M670-585 H880 V-375 H670 Z M441-519 L519-441 L299-221 L221-299 Z M100-310 H310 V-100 H100 Z',
   },
   'gizmo-rotation': {
-    d: 'M480-880 A400 400 0 0 1 880-480 H790 A310 310 0 0 0 480-790 V-880 Z M480-80 A400 400 0 0 1 80-480 H170 A310 310 0 0 0 480-170 V-80 Z M480-940 L600-835 L480-730 Z M480-20 L360-125 L480-230 Z M140-480 C140-370 290-280 480-280 C670-280 820-370 820-480 C820-590 670-680 480-680 C290-680 140-590 140-480 Z M220-480 C220-540 335-595 480-595 C625-595 740-540 740-480 C740-420 625-365 480-365 C335-365 220-420 220-480 Z M430-530 H530 V-430 H430 Z',
-    fill: 'M480-880 A400 400 0 0 1 880-480 H790 A310 310 0 0 0 480-790 V-880 Z M480-80 A400 400 0 0 1 80-480 H170 A310 310 0 0 0 480-170 V-80 Z M480-940 L600-835 L480-730 Z M480-20 L360-125 L480-230 Z M140-480 C140-370 290-280 480-280 C670-280 820-370 820-480 C820-590 670-680 480-680 C290-680 140-590 140-480 Z M220-480 C220-540 335-595 480-595 C625-595 740-540 740-480 C740-420 625-365 480-365 C335-365 220-420 220-480 Z M430-530 H530 V-430 H430 Z',
+    // A ring segment of the same 120-unit weight as the arms, its gap closed
+    // by a head twice that wide, turning about the same hub as its siblings.
+    d: 'M664-742 A320 320 0 1 1 452-799 L462-689 A210 210 0 1 0 600-652 Z M445-884 L666-762 L469-604 Z M395-565 H565 V-395 H395 Z',
+    fill: 'M664-742 A320 320 0 1 1 452-799 L462-689 A210 210 0 1 0 600-652 Z M445-884 L666-762 L469-604 Z M395-565 H565 V-395 H395 Z',
   },
   'gizmo-universal': {
-    d: 'M480-900 L620-670 H340 Z M430-680 H530 V-400 H430 Z M635-350 H825 V-160 H635 Z M455-443 L645-333 L695-247 L505-357 Z M100-180 L240-180 L380-420 Z M505-443 L335-343 L285-257 L455-357 Z M480-710 A290 290 0 0 1 730-270 L665-230 A215 215 0 0 0 480-635 Z M765-195 L770-345 L645-280 Z M410-470 H550 V-330 H410 Z',
-    fill: 'M480-900 L620-670 H340 Z M430-680 H530 V-400 H430 Z M635-350 H825 V-160 H635 Z M455-443 L645-333 L695-247 L505-357 Z M100-180 L240-180 L380-420 Z M505-443 L335-343 L285-257 L455-357 Z M480-710 A290 290 0 0 1 730-270 L665-230 A215 215 0 0 0 480-635 Z M765-195 L770-345 L645-280 Z M410-470 H550 V-330 H410 Z',
+    // The universal manipulator carries ONE OF EACH terminal — triangle,
+    // square, disc — which is exactly what the mode does. That mix, not a
+    // separate silhouette, is what separates it from `gizmo-position`.
+    d: 'M395-565 H565 V-395 H395 Z M425-700 H535 V-440 H425 Z M480-880 L620-680 L340-680 Z M440-535 H660 V-425 H440 Z M640-600 H880 V-360 H640 Z M441-519 L519-441 L299-221 L221-299 Z M95-215 A120 120 0 1 1 335-215 A120 120 0 1 1 95-215 Z',
+    fill: 'M395-565 H565 V-395 H395 Z M425-700 H535 V-440 H425 Z M480-880 L620-680 L340-680 Z M440-535 H660 V-425 H440 Z M640-600 H880 V-360 H640 Z M441-519 L519-441 L299-221 L221-299 Z M95-215 A120 120 0 1 1 335-215 A120 120 0 1 1 95-215 Z',
+  },
+  'mask-square': {
+    // The three MASK tools used to borrow `crop_square` / `circle` / `draw`,
+    // which are the Rectangle, Ellipse and Pen tools sitting four buttons to
+    // their left in the same toolbar — six buttons, three glyphs. A mask is
+    // not its shape, it is a field with that shape cut out of it, so that is
+    // what these draw: one matte, three holes.
+    d: 'M80-880 H880 V-80 H80 Z M220-680 V-280 H740 V-680 Z',
+    fill: 'M80-880 H880 V-80 H80 Z M220-680 V-280 H740 V-680 Z',
+  },
+  'mask-circle': {
+    d: 'M80-880 H880 V-80 H80 Z M230-480 A250 250 0 1 0 730-480 A250 250 0 1 0 230-480 Z',
+    fill: 'M80-880 H880 V-80 H80 Z M230-480 A250 250 0 1 0 730-480 A250 250 0 1 0 230-480 Z',
+  },
+  'mask-pen': {
+    d: 'M80-880 H880 V-80 H80 Z M470-730 L200-420 L560-200 L760-460 Z',
+    fill: 'M80-880 H880 V-80 H80 Z M470-730 L200-420 L560-200 L760-460 Z',
+  },
+  'puppet-pin': {
+    // Material's `pin` is a PIN CODE — it renders the digits 1 2 3 in a box.
+    // The Puppet tool places a PUSH pin, so this is one drawn side-on: cap,
+    // shaft, flange, needle.
+    d: 'M290-880 H670 V-750 H290 Z M375-750 H585 V-560 H375 Z M245-560 H715 V-450 H245 Z M420-450 L540-450 L480-120 Z',
+    fill: 'M290-880 H670 V-750 H290 Z M375-750 H585 V-560 H375 Z M245-560 H715 V-450 H245 Z M420-450 L540-450 L480-120 Z',
+  },
+  'bone': {
+    // Was `device_hub`, a network node with three legs. A bone is two joint
+    // knobs on a shaft, which is also what the rig draws in the viewport.
+    d: 'M125-590 A125 125 0 1 1 375-590 A125 125 0 1 1 125-590 Z M125-370 A125 125 0 1 1 375-370 A125 125 0 1 1 125-370 Z M585-590 A125 125 0 1 1 835-590 A125 125 0 1 1 585-590 Z M585-370 A125 125 0 1 1 835-370 A125 125 0 1 1 585-370 Z M250-550 H710 V-410 H250 Z',
+    fill: 'M125-590 A125 125 0 1 1 375-590 A125 125 0 1 1 125-590 Z M125-370 A125 125 0 1 1 375-370 A125 125 0 1 1 125-370 Z M585-590 A125 125 0 1 1 835-590 A125 125 0 1 1 585-590 Z M585-370 A125 125 0 1 1 835-370 A125 125 0 1 1 585-370 Z M250-550 H710 V-410 H250 Z',
+  },
+  'orbit': {
+    // Was `3d_rotation`, which spells the literal characters "3D" — and the
+    // Draft 3D toggle four buttons along is ALSO a "3D" wordmark. A body with
+    // a ring around it says orbit without spelling anything.
+    d: 'M870-662 A430 210 -25 1 1 90-298 A430 210 -25 1 1 870-662 Z M779-620 A330 105 -25 1 0 181-340 A330 105 -25 1 0 779-620 Z M325-480 A155 155 0 1 1 635-480 A155 155 0 1 1 325-480 Z',
+    fill: 'M870-662 A430 210 -25 1 1 90-298 A430 210 -25 1 1 870-662 Z M779-620 A330 105 -25 1 0 181-340 A330 105 -25 1 0 779-620 Z M325-480 A155 155 0 1 1 635-480 A155 155 0 1 1 325-480 Z',
+  },
+  'perspective': {
+    // Dolly. Was `zoom_in_map` — four arrows pointing inward, which reads as
+    // "collapse". A dolly runs along the view axis in both directions, so
+    // this is one double-headed arrow drawn IN perspective: the near head is
+    // large, the far head small, and the shaft tapers between them.
+    d: 'M70-480 L260-640 L260-560 L620-625 L620-770 L890-480 L620-190 L620-335 L260-400 L260-320 Z',
+    fill: 'M70-480 L260-640 L260-560 L620-625 L620-770 L890-480 L620-190 L620-335 L260-400 L260-320 Z',
+  },
+  'ground-grid': {
+    // Was `grid_4x4`, a flat square grid — which is the 2D grid OVERLAY, a
+    // different control. The ground plane is a plane in perspective, so it is
+    // drawn receding to a vanishing point.
+    d: 'M320-580 L640-580 L900-160 L60-160 Z M400-490 L190-250 L770-250 L560-490 Z M190-415 H770 V-325 H190 Z M440-580 H520 V-160 H440 Z',
+    fill: 'M320-580 L640-580 L900-160 L60-160 Z M400-490 L190-250 L770-250 L560-490 Z M190-415 H770 V-325 H190 Z M440-580 H520 V-160 H440 Z',
+  },
+  'layer-plus': {
+    // Was `add_box` — a plus in a box, which describes "add" and nothing
+    // else. This button adds a LAYER, so the stack is in the glyph.
+    d: 'M70-800 H520 V-660 H70 Z M70-550 H520 V-410 H70 Z M70-300 H520 V-160 H70 Z M655-660 H785 V-300 H655 Z M540-545 H900 V-415 H540 Z',
+    fill: 'M70-800 H520 V-660 H70 Z M70-550 H520 V-410 H70 Z M70-300 H520 V-160 H70 Z M655-660 H785 V-300 H655 Z M540-545 H900 V-415 H540 Z',
+  },
+  'axis-local': {
+    // Local / World / View were three BOLD LETTERS — L, W, V — because three
+    // near-identical axis glyphs were judged harder to tell apart than
+    // initials. That reasoning holds for three glyphs that differ only in
+    // orientation; it does not hold if what differs is the FRAME. So the
+    // tripod is identical in all three and the box around it carries the
+    // meaning: the layer's own bounds here, the world next, the camera's
+    // view last. It also stops the control being English-only.
+    d: 'M80-880 H880 V-80 H80 Z M160-800 V-160 H800 V-800 Z M438-620 H522 V-428 H438 Z M470-512 H650 V-428 H470 Z M450-500 L510-440 L370-300 L310-360 Z',
+    fill: 'M80-880 H880 V-80 H80 Z M160-800 V-160 H800 V-800 Z M438-620 H522 V-428 H438 Z M470-512 H650 V-428 H470 Z M450-500 L510-440 L370-300 L310-360 Z',
+  },
+  'axis-world': {
+    d: 'M80-480 A400 400 0 1 1 880-480 A400 400 0 1 1 80-480 Z M160-480 A320 320 0 1 0 800-480 A320 320 0 1 0 160-480 Z M438-620 H522 V-428 H438 Z M470-512 H650 V-428 H470 Z M450-500 L510-440 L370-300 L310-360 Z',
+    fill: 'M80-480 A400 400 0 1 1 880-480 A400 400 0 1 1 80-480 Z M160-480 A320 320 0 1 0 800-480 A320 320 0 1 0 160-480 Z M438-620 H522 V-428 H438 Z M470-512 H650 V-428 H470 Z M450-500 L510-440 L370-300 L310-360 Z',
+  },
+  'axis-view': {
+    d: 'M300-880 L660-880 L900-80 L60-80 Z M355-800 L120-160 L840-160 L605-800 Z M438-620 H522 V-428 H438 Z M470-512 H650 V-428 H470 Z M450-500 L510-440 L370-300 L310-360 Z',
+    fill: 'M300-880 L660-880 L900-80 L60-80 Z M355-800 L120-160 L840-160 L605-800 Z M438-620 H522 V-428 H438 Z M470-512 H650 V-428 H470 Z M450-500 L510-440 L370-300 L310-360 Z',
   },
 };
 

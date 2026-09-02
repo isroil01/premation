@@ -54,6 +54,10 @@ export const ICON_NAMES = [
   // zoom-in = the Zoom tool, the ground plane was grid = the 2D grid
   // overlay, and the 3D primitives borrowed the shape/text tool glyphs).
   'orbit', 'hand-grab', 'pan-camera', 'perspective', 'axis-3d', 'ground-grid',
+  // The REFERENCE FRAME the gizmo aligns to: one axis tripod drawn inside
+  // three different frames — layer bounds, world, camera view. NB: no
+  // apostrophes here, per the note further down.
+  'axis-local', 'axis-world', 'axis-view',
   'gizmo-universal', 'gizmo-position', 'gizmo-scale', 'gizmo-rotation',
   'sphere', 'cylinder', 'text-3d', 'pop-out', 'gpu',
   // Effect-browser folder vocabulary, one glyph per AE folder.
