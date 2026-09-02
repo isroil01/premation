@@ -19,6 +19,7 @@ export const WorkspaceCommandType = {
   DeleteNodes: 'workspace.deleteNodes',
   UpdateNodePath: 'workspace.updateNodePath',
   UpdateMaskPath: 'workspace.updateMaskPath',
+  CutPaths: 'workspace.cutPaths',
 } as const;
 
 export type WorkspaceCommandTypeName =
@@ -109,6 +110,24 @@ export interface UpdateMaskPathPayload {
   points: BezierPoint[];
 }
 
+/**
+ * Knife: split each layer's outline where the line a→b crosses it.
+ *
+ * The endpoints are WORLD space, not layer space, and deliberately so — one
+ * drag can cut several layers at once, and each of them carries a different
+ * matrix. Converting here would mean picking one of them; the binding layer
+ * converts per layer instead.
+ *
+ * The line is infinite: `a`/`b` say where it lies and which way it runs, not
+ * where the cut stops. A cut that stopped mid-shape would leave a slit, which
+ * a list of closed runs cannot express.
+ */
+export interface CutPathsPayload {
+  ids: readonly NodeId[];
+  a: Vec2;
+  b: Vec2;
+}
+
 export const commands = {
   moveNodes(ids: readonly NodeId[], delta: Vec2): WorkspaceCommand {
     return { type: WorkspaceCommandType.MoveNodes, payload: { ids, delta } satisfies MoveNodesPayload };
@@ -150,5 +169,9 @@ export const commands = {
       type: WorkspaceCommandType.UpdateMaskPath,
       payload: { id, maskId, points } satisfies UpdateMaskPathPayload,
     };
+  },
+  /** Knife: cut every listed layer's outline along the world-space line a→b. */
+  cutPaths(ids: readonly NodeId[], a: Vec2, b: Vec2): WorkspaceCommand {
+    return { type: WorkspaceCommandType.CutPaths, payload: { ids, a, b } satisfies CutPathsPayload };
   },
 };

@@ -1,0 +1,66 @@
+/**
+ * Chrome for the Assemble from Footage dialog.
+ *
+ * Same shape as the keyframe-assistant dialogs (blurb, numeric fields, a
+ * result line, a footer) but its own file: those live behind a live PREVIEW,
+ * and their stylesheet reserves the footer's left edge for saying so. This
+ * dialog cannot preview — the answer takes a decode pass to compute — so the
+ * note there says what the pass will cost instead.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.blurb {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-5);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fieldWide {
+  grid-column: 1 / -1;
+}
+
+.label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hint {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-5);
+}
+
+.footerNote {
+  margin-right: auto;
+  align-self: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}

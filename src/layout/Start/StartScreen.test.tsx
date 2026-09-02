@@ -24,6 +24,8 @@ const removed: string[] = [];
 let current: unknown = null;
 
 jest.mock('@core/services/coreServices', () => ({
+  // The onboarding store asks for settings through this; null = pre-boot.
+  tryCoreServices: () => null,
   getRecentProjects: () => ({
     list: () => list,
     remove: (id: string) => { removed.push(id); list = list.filter((e) => e.id !== id); },

@@ -130,6 +130,7 @@ export {
   PolygonTool,
   StarTool,
   LineTool,
+  KnifeTool,
   PenTool,
   PencilTool,
   BrushTool,
@@ -158,6 +159,7 @@ export {
   type DeleteNodesPayload,
   type UpdateNodePathPayload,
   type UpdateMaskPathPayload,
+  type CutPathsPayload,
 } from './commands/WorkspaceCommands';
 
 // ── In-memory adapters (headless / tests) ─────────────────────────

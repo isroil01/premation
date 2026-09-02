@@ -42,6 +42,8 @@ export interface Gizmo3dOverlayProps {
   gizmoState: 'universal' | 'position' | 'scale' | 'rotation';
   axisMode: 'local' | 'world' | 'view';
   groundGridVisible: boolean;
+  /** Ground plane offset from the comp's bottom edge, comp units (World tab). */
+  groundLevel?: number;
   /** Camera frustums, light cones and 3D layer boxes, in comp space. */
   sceneGizmos: readonly SceneGizmo[];
   /** Draggable camera / light points, drawn as grab dots (see useDeviceHandles). */
@@ -66,6 +68,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
   gizmoState,
   axisMode,
   groundGridVisible,
+  groundLevel,
   sceneGizmos,
   activeHandle,
   hoverHandle,
@@ -221,6 +224,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
         compHeight={compHeight}
         viewTransform={viewTransform}
         groundGridVisible={groundGridVisible}
+        groundLevel={groundLevel}
         sceneGizmos={sceneGizmos}
         deviceHandles={deviceHandles}
         hoveredDeviceHandle={hoveredDeviceHandle}

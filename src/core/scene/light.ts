@@ -8,6 +8,11 @@
  */
 
 import type { SceneNode } from '@core/types';
+import {
+  isEnvironmentSky,
+  DEFAULT_ENVIRONMENT_PRESET,
+  type EnvironmentSky,
+} from './environmentLight';
 
 export type LightType = 'point' | 'ambient' | 'spot' | 'parallel' | 'environment';
 
@@ -55,8 +60,13 @@ export interface Light {
    * at a different depth.
    */
   poi: { x: number; y: number; z: number } | null;
-  /** Environment only: which procedural sky feeds the SH probe. */
-  envPreset: 'studio' | 'sky' | 'sunset';
+  /**
+   * Environment only: which sky feeds the SH probe — one of the procedural
+   * presets, or `asset:<assetId>` naming an imported equirect image (HDRI).
+   * See `EnvironmentSky` for why it is one prefixed string rather than two
+   * props that could contradict each other.
+   */
+  envPreset: EnvironmentSky;
   /** Environment only: spin about the vertical axis, degrees (keyframeable). */
   envRotation: number;
 }
@@ -102,7 +112,7 @@ export function readNodeLight(node: SceneNode): Light {
   let poiX: number | undefined;
   let poiY: number | undefined;
   let poiZ: number | undefined;
-  let envPreset: 'studio' | 'sky' | 'sunset' = 'studio';
+  let envPreset: EnvironmentSky = DEFAULT_ENVIRONMENT_PRESET;
   let envRotation = 0;
   for (const c of node.components) {
     const p = c.props as Record<string, unknown>;
@@ -121,7 +131,7 @@ export function readNodeLight(node: SceneNode): Light {
     if (typeof p.poiY === 'number') poiY = p.poiY;
     if (typeof p.poiZ === 'number') poiZ = p.poiZ;
     if (p.castShadows === true || p.castShadows === 1) shadows = true;
-    if (p.envPreset === 'studio' || p.envPreset === 'sky' || p.envPreset === 'sunset') envPreset = p.envPreset;
+    if (isEnvironmentSky(p.envPreset)) envPreset = p.envPreset;
     envRotation = num(p.envRotation, envRotation);
   }
   // Any ONE POI component present means the light is aimed in 3D; the others

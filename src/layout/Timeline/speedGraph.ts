@@ -24,6 +24,8 @@
  * Everything here is pure so the algebra is testable without a canvas.
  */
 
+import { isHoldKind } from '@core/animation/easingVocabulary';
+
 export type Bezier = [number, number, number, number];
 
 /** Below this an influence is treated as zero-width and the solve is skipped. */
@@ -106,10 +108,13 @@ export function withIncomingInfluence(bezier: Bezier, dv: number, dt: number, in
 
 // ── Keyframe → bezier resolution ──────────────────────────────────
 
-/** Hold keyframes — the scalar engine spells them 'step', the data sampler 'hold'. */
-export function isHoldEasing(easing: string | undefined): boolean {
-  return easing === 'hold' || easing === 'step';
-}
+/**
+ * Hold keyframes — the scalar engine spells them 'step', the data sampler
+ * 'hold'. Kept as a named re-export rather than a second copy of the test: the
+ * two spellings are ONE fact, reconciled in `easingVocabulary` with everything
+ * else the graph editor and the Motion panel used to disagree about.
+ */
+export const isHoldEasing = isHoldKind;
 
 /** The cubic-bezier equivalent of linear — handles at ⅓ along the segment. */
 export const LINEAR_BEZIER: Bezier = [1 / 3, 1 / 3, 2 / 3, 2 / 3];

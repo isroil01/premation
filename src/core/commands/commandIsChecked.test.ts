@@ -47,6 +47,8 @@ const TOGGLES: ReadonlyArray<readonly [string, string]> = [
   ['view.snapToGrid', 'snapToGrid'],
   ['view.rulers', 'rulers'],
   ['view.motionPath', 'motionPathVisible'],
+  // A preview toggle: lives in preferenceStore, not guidesStore.
+  ['view.useProxies', 'useProxies'],
 ];
 
 describe('Command.isChecked', () => {

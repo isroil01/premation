@@ -8,6 +8,7 @@ import { immer } from 'zustand/middleware/immer';
 import { getEventBus } from '@core/events/EventBus';
 import { shortId } from '@utils/lang';
 import type { FillPaint } from '@core/paint/fill';
+import type { EnvironmentPresetId } from '@core/scene/environmentLight';
 
 export interface TabInfo {
   id: string; // The UI tab ID
@@ -76,6 +77,40 @@ export interface CompositionSettings {
    */
   globalLightAngle?: number;
   globalLightAltitude?: number;
+
+  // ── World (Composition Settings ▸ World) ──────────────────────────
+  //
+  // All three are OPTIONAL and all three default to exactly the behaviour that
+  // existed before them, so a document written without them reads back
+  // byte-identical and renders byte-identical. `DEFAULT_COMP_SETTINGS`
+  // deliberately does NOT state them: a stated value would be written into
+  // every new comp record and change every document on disk.
+
+  /**
+   * The sky a NEW environment light starts on (see `insertLight`). A project
+   * shot against one HDRI look wants every probe it adds to begin there rather
+   * than on Studio; this is per-COMP because that is the unit a look belongs
+   * to. Absent = 'studio', the hardcoded default it replaces.
+   */
+  defaultEnvPreset?: EnvironmentPresetId;
+  /**
+   * Where the 3D reference floor sits, as an OFFSET in comp units from the
+   * comp's bottom edge (positive = further down). The ground grid has always
+   * been nailed to y = compHeight; a scene blocked out around a different floor
+   * had no way to say so and the grid read as a lie. Absent or 0 = the legacy
+   * plane, to the pixel.
+   *
+   * Reference geometry only — nothing rendered reads it.
+   */
+  groundLevel?: number;
+  /**
+   * "Show sky as backdrop" — STORED ONLY. The environment probe is an
+   * irradiance field, not a reflection map, so there is nothing to draw behind
+   * the scene yet; the setting exists so a project can carry the intent (and so
+   * the control has a home) and the UI disables it and says so. No renderer
+   * reads this.
+   */
+  showSkyBackdrop?: boolean;
 }
 
 /** The composition's light direction, with the pre-global-light defaults. */

@@ -6,10 +6,13 @@
  * projects the layer through the composition camera (perspective scale +
  * parallax + tilt). Turning it off removes them and the layer is flat 2D again.
  *
- * Material rows are label + styled slider + scrubbable ValueField. The old
- * shape — a bare <input type="range"> with NO numeric readout — meant seven of
- * the eight material properties could not be seen or typed at all, which was
- * the single largest control gap against AE's Material Options.
+ * GEOMETRY ONLY. Material Options, the per-face colour overrides and the
+ * material library all moved to `MaterialSection`, which the inspector mounts
+ * as its own section directly after this one. They were nested two levels deep
+ * inside this panel's 3D sub-panel, under a "Geometry Options" heading they had
+ * nothing to do with — so "what this layer is shaped like" and "what it is made
+ * of" were one scroll of one collapsed group, and the material presets were in
+ * a third panel entirely.
  */
 
 import { Switch } from '@components/Switch';
@@ -34,19 +37,6 @@ import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { useUIStore } from '@stores/uiStore';
 import parentStyles from './ParentControl.module.css';
 import s from './ThreeDControl.module.css';
-import { FaceMaterialsSection } from './FaceMaterialsSection';
-
-import {
-  readNodeMaterial,
-  setNodeAcceptsLights,
-  setNodeMaterialPct,
-  setNodeShadowMode,
-  setNodeShininess,
-  setNodeSpecular,
-  setNodeShadingModel,
-  setNodeToonBands,
-  MATERIAL_PCT_DEFAULTS,
-} from '@core/scene/material';
 
 /** Menu labels for the bevel profiles — the union stays the source of truth. */
 const BEVEL_STYLE_LABELS: Record<BevelStyle, string> = {
@@ -54,53 +44,6 @@ const BEVEL_STYLE_LABELS: Record<BevelStyle, string> = {
   concave: 'Concave',
   convex: 'Convex',
 };
-
-/**
- * One material response row: label, slider, and a scrubbable/typable number.
- * Slider and field write through the same handler, so they can never disagree.
- */
-function MaterialRow({
-  label,
-  value,
-  min = 0,
-  max = 100,
-  unit = '%',
-  onChange,
-}: {
-  label: string;
-  value: number;
-  min?: number;
-  max?: number;
-  unit?: string;
-  onChange: (v: number) => void;
-}): JSX.Element {
-  return (
-    <div className={s.row}>
-      <span className={s.label}>{label}</span>
-      <input
-        type="range"
-        className={s.slider}
-        min={min}
-        max={max}
-        step={1}
-        value={value}
-        onChange={(e) => onChange(Number(e.currentTarget.value))}
-        aria-label={`${label} slider`}
-      />
-      <span className={s.value}>
-        <ValueField
-          value={value}
-          min={min}
-          max={max}
-          step={1}
-          unit={unit}
-          onChange={onChange}
-          aria-label={label}
-        />
-      </span>
-    </div>
-  );
-}
 
 export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
@@ -113,7 +56,6 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
   if (!canBe3D(node)) return null;
 
   const on = is3DEnabled(node);
-  const material = readNodeMaterial(node);
   const three = readNode3D(node);
   // Per-character 3D is a text-only affordance (AE parity).
   const isTextLayer = hasTextComponent(node);
@@ -196,143 +138,6 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
               </select>
             </div>
           )}
-          <FaceMaterialsSection nodeId={nodeId} />
-          <span className={s.groupHeader}>Material Options</span>
-          {/* Tri-states, not switches: `Only` is what shadow-catcher setups are
-              built from — a layer that throws or catches a shadow without
-              rendering itself — and a boolean cannot express it. */}
-          <div className={s.row}>
-            <span className={s.label}>Casts Shadows</span>
-            <select
-              className={s.select}
-              value={material.castsShadowsMode}
-              onChange={(e) => setNodeShadowMode(nodeId, 'castsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
-              aria-label="Casts shadows"
-            >
-              <option value="off">Off</option>
-              <option value="on">On</option>
-              <option value="only">Only</option>
-            </select>
-          </div>
-          <div className={s.row}>
-            <span className={s.label}>Accepts Shadows</span>
-            <select
-              className={s.select}
-              value={material.acceptsShadowsMode}
-              onChange={(e) => setNodeShadowMode(nodeId, 'acceptsShadows', e.currentTarget.value as 'off' | 'on' | 'only')}
-              aria-label="Accepts shadows"
-            >
-              <option value="off">Off</option>
-              <option value="on">On</option>
-              <option value="only">Only</option>
-            </select>
-          </div>
-          {material.shadowOnly && (
-            <p className={s.hint}>
-              “Only” hides the layer itself — it stays in the scene purely as a
-              shadow caster or catcher.
-            </p>
-          )}
-          <MaterialRow
-            label="Light Transmission"
-            value={material.lightTransmission}
-            onChange={(v) => setNodeMaterialPct(nodeId, 'lightTransmission', v, MATERIAL_PCT_DEFAULTS.lightTransmission)}
-          />
-          <div className={s.row}>
-            <span className={s.label}>Accepts Lights</span>
-            <Switch
-              checked={material.acceptsLights}
-              onChange={(e) => setNodeAcceptsLights(nodeId, e.currentTarget.checked)}
-              aria-label="Accepts lights"
-            />
-          </div>
-          {material.acceptsLights && (
-            <>
-              <MaterialRow
-                label="Ambient"
-                value={material.ambient}
-                onChange={(v) => setNodeMaterialPct(nodeId, 'ambient', v, MATERIAL_PCT_DEFAULTS.ambient)}
-              />
-              <MaterialRow
-                label="Diffuse"
-                value={material.diffuse}
-                onChange={(v) => setNodeMaterialPct(nodeId, 'diffuse', v, MATERIAL_PCT_DEFAULTS.diffuse)}
-              />
-              {/* Reflectance model. Phong is the original look and the
-                  default; Physical is Cook-Torrance/GGX — AE's Advanced 3D
-                  model — where Roughness replaces Shininess and Metal means
-                  "reflects its own colour, no diffuse". Toon is cel shading:
-                  the same lighting quantized into hard bands. */}
-              <div className={s.row}>
-                <span className={s.label}>Shading</span>
-                <select
-                  className={s.select}
-                  value={material.shading}
-                  onChange={(e) => setNodeShadingModel(
-                    nodeId,
-                    e.currentTarget.value === 'pbr' ? 'pbr' : e.currentTarget.value === 'toon' ? 'toon' : 'phong',
-                  )}
-                  aria-label="Shading model"
-                >
-                  <option value="phong">Phong</option>
-                  <option value="pbr">Physical (PBR)</option>
-                  <option value="toon">Toon (Cel)</option>
-                </select>
-              </div>
-              <MaterialRow
-                label="Specular"
-                value={material.specular}
-                onChange={(v) => setNodeSpecular(nodeId, v)}
-              />
-              {material.shading === 'pbr' && (
-                <MaterialRow
-                  label="Roughness"
-                  value={material.roughness}
-                  onChange={(v) => setNodeMaterialPct(nodeId, 'roughness', v, MATERIAL_PCT_DEFAULTS.roughness)}
-                />
-              )}
-              {material.shading === 'phong' && (
-                <MaterialRow
-                  label="Shininess"
-                  value={material.shininess}
-                  min={1}
-                  max={128}
-                  unit=""
-                  onChange={(v) => setNodeShininess(nodeId, v)}
-                />
-              )}
-              {material.shading === 'toon' && (
-                <MaterialRow
-                  label="Bands"
-                  value={material.toonBands}
-                  min={2}
-                  max={8}
-                  unit=""
-                  onChange={(v) => setNodeToonBands(nodeId, v)}
-                />
-              )}
-              <MaterialRow
-                label="Metal"
-                value={material.metal}
-                onChange={(v) => setNodeMaterialPct(nodeId, 'metal', v, MATERIAL_PCT_DEFAULTS.metal)}
-              />
-              {/* Metal only shows up in the highlight, so it reads as dead
-                  unless Specular is up. Say so rather than letting the slider
-                  look broken. (Under PBR a metal also loses its diffuse, so it
-                  is never invisible there.) */}
-              {material.specular === 0 && material.shading !== 'pbr' && (
-                <p className={s.hint}>
-                  Metal tints the specular highlight — raise Specular to see it.
-                </p>
-              )}
-            </>
-          )}
-          {/* The "Pro 3D Material Presets" grid lived here. It was a third
-              hard-coded preset grid, in a panel that does not own fill — picking
-              one silently replaced the layer's colour. The same six materials
-              are now in the Style panel's preset registry under "Material",
-              alongside every other look, and they set specular/shininess through
-              the same apply path. */}
         </div>
       )}
     </div>

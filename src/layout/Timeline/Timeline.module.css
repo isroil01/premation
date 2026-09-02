@@ -7,7 +7,14 @@
   position: relative;
   display: grid;
   grid-template-columns: auto auto 1fr;
-  grid-template-rows: minmax(0, 1fr);
+  /*
+   * Two rows now: the edit-tool row spans the full width above everything, and
+   * the header column / resizer / lanes fill the rest. `auto` rather than a
+   * fixed track so the row is exactly as tall as the buttons in it — its height
+   * is also a TS constant (`TIMELINE_TOOLS_HEIGHT`), because the lanes' filler
+   * height is derived from the panel height minus the chrome above them.
+   */
+  grid-template-rows: auto minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1734,4 +1741,86 @@
 }
 .propHeaderSelected {
   background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+
+/* ── Edit-tool row ────────────────────────────────────────────────
+   Spans both columns above the ruler. It carries the panel's top boundary, so
+   it uses the same 2px dark rule the header/lanes division does rather than a
+   third weight of hairline. */
+.toolRow {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: var(--color-panel);
+  border-bottom: 2px solid var(--color-timeline-ruler-border);
+  overflow: hidden;
+}
+
+/* ── Razor guide ──────────────────────────────────────────────────
+   Where a click would cut. Deliberately NOT one of the snap-indicator colours:
+   those report where a drag landed, this predicts where a click will land, and
+   two different meanings sharing a colour is how a user learns to ignore both.
+   Amber is the warning token because a razor is destructive and the line is the
+   only warning before the cut. */
+.razorLine {
+  background: var(--color-danger);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-danger) 70%, transparent);
+  z-index: 6;
+}
+
+/* ── Cursors per edit mode ────────────────────────────────────────
+   Driven by `data-edit-mode` on the root so a mode change repaints every clip
+   bar on every virtualized row without re-rendering any of them.
+
+   `!important` is load-bearing here and nowhere else in this file: `.clip`
+   writes `cursor` as an INLINE style (it depends on whether a drag handler is
+   wired), and an inline declaration beats any selector. The alternative is
+   threading the mode down into the memoized row component and re-rendering
+   every bar on every tool change. */
+.root[data-edit-mode='razor'] .clip,
+.root[data-edit-mode='razor'] .lanes {
+  /* No cursor: url() — a bundled SVG cursor is a second asset pipeline and a
+     silent fallback to `auto` wherever it fails to load. `crosshair` says
+     "place a point precisely", which is what the razor does, and the red guide
+     line carries the rest of the meaning. */
+  cursor: crosshair !important;
+}
+
+.root[data-edit-mode='razor'] .clipHandle {
+  /* The trim handles are inert under the razor — a bar's edge is the one place
+     a cut cannot go — so they must not advertise a resize. */
+  cursor: crosshair !important;
+}
+
+.root[data-edit-mode='slip'] .clip,
+.root[data-edit-mode='slide'] .clip {
+  cursor: ew-resize !important;
+}
+
+.root[data-edit-mode='roll'] .clip {
+  /* `col-resize` is the platform's "move this boundary" glyph — the only one
+     of the three that names a cut rather than a bar. */
+  cursor: col-resize !important;
+}
+
+/* ── Drag read-out (slip / slide / roll) ──────────────────────────
+   Fixed to the viewport and following the pointer, because these three edits
+   move the pointer well outside the lanes that started them. Tabular numerals
+   so the delta does not jitter horizontally as it counts through 9 → 10. */
+.dragHud {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  white-space: nowrap;
 }

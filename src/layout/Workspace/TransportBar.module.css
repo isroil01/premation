@@ -177,11 +177,3 @@
   box-shadow: none;
   transform: scale(0.97);
 }
-
-/* The quality dropdown's trigger carries a label, so it sizes to its text. */
-.qualityBtn {
-  width: auto;
-  padding: 0 6px;
-  gap: 4px;
-  font-size: var(--font-size-xs);
-}

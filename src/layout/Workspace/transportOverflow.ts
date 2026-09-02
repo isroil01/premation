@@ -23,7 +23,7 @@ import type { DropdownItem } from '@components/Dropdown';
  * Each entry is a group, not a single button: splitting the three clip edits
  * across a row and a menu would be worse than having them in either one.
  */
-export const TRANSPORT_DEMOTE_ORDER = ['clipEdits', 'quality', 'loopMarker', 'zoom'] as const;
+export const TRANSPORT_DEMOTE_ORDER = ['clipEdits', 'loopMarker', 'zoom'] as const;
 
 export type TransportGroup = (typeof TRANSPORT_DEMOTE_ORDER)[number];
 

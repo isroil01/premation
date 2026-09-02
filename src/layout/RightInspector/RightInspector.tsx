@@ -19,7 +19,7 @@ export function RightInspector({ renderers, headerExtras, header, className }: R
   const toggleSplit = () => useLayoutStore.getState().toggleSidebarSplit('right');
 
   return (
-    <aside className={cn(styles.root, className)}>
+    <aside className={cn(styles.root, className)} data-tour="inspector">
       {!isCollapsed && header ? <div className={styles.header}>{header}</div> : null}
       {isSplit && !isCollapsed ? (
         <SplitPane

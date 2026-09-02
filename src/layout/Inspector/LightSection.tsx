@@ -21,7 +21,7 @@
  *    position back from the colour, so the two controls stay one value.
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { ColorPicker } from '@components/ColorPicker';
 import { Checkbox } from '@components/Checkbox';
 import { Button } from '@components/Button';
@@ -31,7 +31,17 @@ import { batchHistory } from '@stores/historyStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { LIGHT_DEFAULTS, type LightType, type LightFalloff } from '@core/scene/light';
-import { ENVIRONMENT_PRESETS, type EnvironmentPresetId } from '@core/scene/environmentLight';
+import {
+  ENVIRONMENT_PRESETS,
+  DEFAULT_ENVIRONMENT_PRESET,
+  isEnvironmentPresetId,
+  isEnvironmentSky,
+  environmentSkyAssetId,
+  environmentSkyForAsset,
+  type EnvironmentSky,
+} from '@core/scene/environmentLight';
+import { ensureEnvironmentSh } from '@core/scene/environmentImage';
+import { useAssetStore } from '@stores/assetStore';
 import { kelvinToHex, nearestKelvin, KELVIN_MIN, KELVIN_MAX } from '@core/scene/colorTemperature';
 import { useNodeComponentProp } from '@hooks/useNodeComponentProp';
 import styles from './TransformSection.module.css';
@@ -68,10 +78,6 @@ const LIGHT_PRESETS: LightPreset[] = [
   { label: 'Sunset key', type: 'spot', intensity: 110, kelvin: 2200, falloff: 'smooth', cone: 70, coneFeather: 70, hint: 'Low, wide and orange — a sun near the horizon.' },
 ];
 
-function isEnvPresetId(v: unknown): v is EnvironmentPresetId {
-  return v === 'studio' || v === 'sky' || v === 'sunset';
-}
-
 /** The canonical five-member LightType, matching `readNodeLight`'s coercion. */
 function coerceLightType(v: unknown): LightType {
   return v === 'ambient' || v === 'spot' || v === 'parallel' || v === 'environment' ? v : 'point';
@@ -101,6 +107,22 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [envRotationRaw, setEnvRotation] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'envRotation');
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
+  // The library, for the "Image…" sky. Selected as the whole array (a filtered
+  // one would be a fresh reference on every store read, which re-renders
+  // forever) and narrowed in a memo — the same shape the other asset rows use.
+  const assets = useAssetStore((s) => s.assets);
+  const imageAssets = useMemo(() => assets.filter((a) => a.type === 'image'), [assets]);
+  /**
+   * The asset id this light's sky names, or null when it names a preset.
+   *
+   * Kicking the decode from HERE as well as from the renderer is not
+   * redundancy: picking an image has to project it NOW, and the renderer's own
+   * kick only happens on a frame that reads this light.
+   */
+  const envAssetId = environmentSkyAssetId(envPresetRaw);
+  useEffect(() => {
+    if (envAssetId) void ensureEnvironmentSh(envAssetId);
+  }, [envAssetId]);
   if (!node || !tComp) return null;
 
   const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
@@ -116,7 +138,13 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const darkness = num(darknessRaw, LIGHT_DEFAULTS.shadowDarkness);
   const diffusion = num(diffusionRaw, LIGHT_DEFAULTS.shadowDiffusion);
   const castsShadows = shadowsRaw === true || shadowsRaw === 1;
-  const envPreset: EnvironmentPresetId = isEnvPresetId(envPresetRaw) ? envPresetRaw : 'studio';
+  const envSky: EnvironmentSky = isEnvironmentSky(envPresetRaw) ? envPresetRaw : DEFAULT_ENVIRONMENT_PRESET;
+  /** The Sky menu's value: a preset id, or the one "Image…" entry. */
+  const skyMenuValue = envAssetId === null ? envSky : 'image';
+  // An id the library no longer holds. Offered back as an explicit "(missing)"
+  // entry rather than silently reset, because a sky that vanishes without a
+  // trace is a property the user cannot fix.
+  const envAssetMissing = !!envAssetId && !imageAssets.some((a) => a.id === envAssetId);
   const envRotation = num(envRotationRaw, 0);
   // A light is "targeted" (aimed in 3D) as soon as any POI component exists —
   // the same test readNodeLight applies.
@@ -201,7 +229,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 // one would leave the light silently reading the fallback with
                 // a menu that could not show which preset was in force.
                 if (next === 'environment') {
-                  if (!isEnvPresetId(envPresetRaw)) setEnvPreset('studio');
+                  if (!isEnvironmentSky(envPresetRaw)) setEnvPreset(DEFAULT_ENVIRONMENT_PRESET);
                   if (typeof envRotationRaw !== 'number') setEnvRotation(0);
                 }
               });
@@ -216,20 +244,54 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
           </select>
         </div>
         {isEnv && (
-          <div className={styles.popoverRow}>
-            <span className={styles.popoverLabel}>Sky</span>
-            <select
-              className={styles.select}
-              style={{ width: 150 }}
-              value={envPreset}
-              onChange={(e) => setEnvPreset(e.target.value)}
-              aria-label="Environment preset"
-            >
-              {ENVIRONMENT_PRESETS.map((p) => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
-          </div>
+          <>
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Sky</span>
+              <select
+                className={styles.select}
+                style={{ width: 150 }}
+                value={skyMenuValue}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === 'image') {
+                    // "Image…" opens the picker row below. Landing on the first
+                    // image in the library saves a second pick in the common
+                    // case; an empty library leaves the sky as "image, nothing
+                    // chosen yet" — a real state the row below then asks about,
+                    // rather than the menu silently snapping back to a preset.
+                    setEnvPreset(environmentSkyForAsset(imageAssets[0]?.id ?? ''));
+                  } else if (isEnvironmentPresetId(v)) {
+                    setEnvPreset(v);
+                  }
+                }}
+                aria-label="Environment preset"
+              >
+                {ENVIRONMENT_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+                <option value="image">Image… (HDRI / equirect)</option>
+              </select>
+            </div>
+            {envAssetId !== null && (
+              <div className={styles.popoverRow}>
+                <span className={styles.popoverLabel}>Image</span>
+                <select
+                  className={styles.select}
+                  style={{ width: 150 }}
+                  value={envAssetId}
+                  onChange={(e) => setEnvPreset(environmentSkyForAsset(e.target.value))}
+                  aria-label="Environment image"
+                  title="An equirectangular (2:1 lat-long) image. An imported EXR is projected from its LINEAR float planes; an 8-bit file is linearised from sRGB first."
+                >
+                  <option value="">Choose an image…</option>
+                  {envAssetMissing && <option value={envAssetId}>{`${envAssetId} (missing)`}</option>}
+                  {imageAssets.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </>
         )}
         {!isEnv && (
           <>
@@ -370,7 +432,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               : type === 'parallel'
                 ? 'A directional wash across the frame (like sunlight), brighter on the source side.'
                 : isEnv
-                  ? 'Image-based lighting: the sky is projected onto a spherical-harmonic probe and expanded into an ambient floor plus directional bounces, so 3D layers pick up its colour from every side. It has no position, no reach and casts no shadows — only the sky, its rotation and the intensity matter.'
+                  ? 'Image-based lighting: the sky — a preset, or any equirectangular image or HDRI from the library — is projected onto a spherical-harmonic probe and expanded into an ambient floor plus directional bounces, so 3D layers pick up its colour from every side. It is a low-frequency irradiance probe, not a reflection map. It has no position, no reach and casts no shadows — only the sky, its rotation and the intensity matter.'
                   : 'A point light brightening the layers beneath it (screen blend).'}
           {' '}Numeric parameters are keyframeable.
         </p>

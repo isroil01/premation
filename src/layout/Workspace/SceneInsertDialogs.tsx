@@ -110,7 +110,13 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
   const [coneAngleDeg, setConeAngleDeg] = useState(45);
   const [coneFeather, setConeFeather] = useState(50);
   const [castShadows, setCastShadows] = useState(false);
-  const [envPreset, setEnvPreset] = useState<'studio' | 'sky' | 'sunset'>('studio');
+  // Seeded from the composition's World ▸ default sky, so the dialog opens on
+  // the look the project is working in rather than always on Studio. It is a
+  // starting point, not a lock — the menu below still changes it for this light.
+  const compDefaultSky = useCompositionStore((s) => s.defaultEnvPreset);
+  const [envPreset, setEnvPreset] = useState<'studio' | 'sky' | 'sunset'>(
+    compDefaultSky === 'sky' || compDefaultSky === 'sunset' ? compDefaultSky : 'studio',
+  );
 
   const create = (): void => {
     insertLight({

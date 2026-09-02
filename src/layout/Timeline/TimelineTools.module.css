@@ -1,0 +1,96 @@
+/*
+ * The timeline edit-tool row.
+ *
+ * Sized and coloured off the same tokens `ViewportTools` uses, because the two
+ * rows sit a few pixels apart in the same panel stack and a second set of
+ * button metrics would read as a second kind of control. What differs is
+ * deliberate: these five are a radio group, so they share one strip with no
+ * gaps between them and say "one of five" rather than "five toggles that happen
+ * to be adjacent".
+ */
+
+.tools {
+  --tl-tool-size: var(--control-height-md);
+
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 100%;
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-sans);
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  container-type: inline-size;
+  container-name: tl-tools;
+}
+
+.toolBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tl-tool-size);
+  height: var(--tl-tool-size);
+  padding: 0;
+  background: transparent;
+  /* Transparent border so arming a tool cannot shift the row by a pixel. */
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.toolBtn:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.toolBtn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+}
+
+/*
+ * The armed tool.
+ *
+ * This gets a FILL rather than `ViewportTools`' colour-only active state, and
+ * the difference is the point: those toggles are settings you can verify by
+ * looking at the canvas, while an armed razor changes what your next click
+ * does. A state with that consequence has to be readable across the panel, not
+ * inferred from a slightly bluer glyph.
+ */
+.toolBtnActive {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.toolBtnActive:hover {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+}
+
+.modeLabel {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  letter-spacing: var(--letter-spacing-wide);
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding-left: var(--space-1);
+}
+
+/*
+ * On a narrow panel the word goes before any button does — every tool must stay
+ * reachable, and the name is in each button's tooltip and in the command
+ * palette too, so nothing becomes unfindable when it is dropped.
+ */
+@container tl-tools (max-width: 300px) {
+  .modeLabel {
+    display: none;
+  }
+}

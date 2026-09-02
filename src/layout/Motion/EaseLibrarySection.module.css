@@ -1,11 +1,39 @@
 /* The ease library grid.
  *
- * Deliberately mirrors `.easeChip` in MotionEditorPanel.module.css rather than
+ * Deliberately mirrors `.propChip` in MotionEditorPanel.module.css rather than
  * inventing a second control language: same radius, same border token, same
  * three states, same selected treatment (fill + border carry it, the label
  * stays at full contrast — see the note there for the measured reason).
  * The chips are wider because a curve thumbnail needs the horizontal room a
- * 26px interpolation glyph does not. */
+ * text chip does not.
+ *
+ * Self-contained on purpose: the library is hosted by the graph editor's
+ * toolbar popover now, so it may not reach into the Motion panel's stylesheet
+ * for anything. */
+
+/* Its own copy rather than `composes: sectionLabel from MotionEditorPanel` —
+   the library is hosted by the graph toolbar's popover now, and a section
+   heading that reaches across into another panel's stylesheet for its type
+   would break the moment that panel's own layout changed. */
+.sectionLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.sectionLabel::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--color-border-subtle);
+}
 
 .families {
   display: flex;
@@ -99,6 +127,56 @@
 
 .curveName {
   font-size: var(--font-size-micro);
+}
+
+/* Naming the curve you just dialled in. One line, because it is one field and
+   one verb — a fold or a dialog for two controls would bury the feature. */
+.saveRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.saveInput {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+}
+
+.saveInput:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.saveButton {
+  height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-0);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.saveButton:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  border-color: var(--color-border-strong);
+}
+
+.saveButton:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .note {

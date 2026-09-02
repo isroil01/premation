@@ -67,10 +67,10 @@ rediscovered in git history and believed a second time.
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
 | Light types | 5 | `src/core/scene/light.ts` → `LightType` |
-| Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
+| Canvas tools | 21 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 49 | `src/stores/*.ts` |
+| Stores | 54 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        49 Zustand stores
+                          ├── src/stores/*        54 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components

@@ -20,6 +20,7 @@ import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurS
 import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
 import { useSwatchStore, type ProjectSwatch } from '@stores/swatchStore';
+import { useMaterialStore, type NamedMaterial } from '@stores/materialStore';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import { migrateDocument } from '@core/project/migrations';
@@ -56,6 +57,17 @@ export interface EditorDocument {
    * New Project does not inherit the last one's.
    */
   swatches?: ProjectSwatch[];
+  /**
+   * The project's named 3D materials, in the user's order.
+   *
+   * Authored state on exactly the same terms as `swatches`: a library that
+   * followed the app rather than the file would be the previous project's
+   * library the moment a second file opened. Only USER materials are written —
+   * the built-in six come from the style-preset registry at runtime, and
+   * freezing them into every document would mean each file carried a snapshot
+   * of a registry that has already changed twice.
+   */
+  materials?: NamedMaterial[];
   /**
    * The plugins this document's custom layers depend on.
    *
@@ -130,6 +142,7 @@ export function captureDocument(): EditorDocument {
     guides: useGuidesStore.getState().settings(),
     colorManagement: useColorManagementStore.getState().settings(),
     swatches: useSwatchStore.getState().list(),
+    materials: useMaterialStore.getState().list(),
     openTabs,
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
     // Absent when empty, so a document with no plugin state reads back
@@ -248,6 +261,7 @@ export function restoreDocument(doc: EditorDocument): void {
   if (doc.guides) useGuidesStore.getState().restore(doc.guides);
   if (doc.colorManagement) useColorManagementStore.getState().restore(doc.colorManagement);
   if (doc.swatches) useSwatchStore.getState().restore(doc.swatches);
+  if (doc.materials) useMaterialStore.getState().restore(doc.materials);
 
   // The document's media srcs are object URLs from whichever session WROTE it
   // — dead on arrival by definition. Repoint them at the live library by

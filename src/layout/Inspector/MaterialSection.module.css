@@ -1,0 +1,265 @@
+/**
+ * MaterialSection — the dedicated Material inspector section.
+ *
+ * The row / slider / select / value rules are the ones that used to live in
+ * ThreeDControl.module.css and served the Material Options block there; they
+ * moved with the controls rather than being re-invented, so the two panels
+ * cannot drift into two different-looking sliders.
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+}
+
+.groupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2, 6px);
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: var(--space-1, 4px) 0 2px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+  min-height: var(--control-height-sm, 22px);
+}
+
+.label {
+  flex: 1;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hint {
+  margin: 2px 0 var(--space-1, 4px);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.select {
+  width: 90px;
+  height: var(--control-height-xs, 20px);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary, #ddd);
+  background: var(--color-surface-1, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-sm, 3px);
+  padding: 0 var(--space-1, 4px);
+}
+.select:hover {
+  border-color: var(--color-border, rgba(255, 255, 255, 0.2));
+}
+.select:focus-visible {
+  outline: 2px solid var(--color-accent, #4a8cff);
+  outline-offset: 1px;
+}
+
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 0 0 84px;
+  width: 84px;
+  height: var(--control-height-xs, 20px);
+  background: transparent;
+  cursor: ew-resize;
+}
+.slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--color-text-secondary, #bbb);
+  border: 1px solid var(--color-surface-0, #1c1e22);
+  transition: background var(--motion-duration-fast, 120ms) ease;
+}
+.slider:hover::-webkit-slider-thumb,
+.slider:active::-webkit-slider-thumb {
+  background: var(--color-accent, #4a8cff);
+}
+.slider:focus-visible {
+  outline: 2px solid var(--color-accent, #4a8cff);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm, 3px);
+}
+.slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+.slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-secondary, #bbb);
+  border: 1px solid var(--color-surface-0, #1c1e22);
+}
+
+.value {
+  flex: 0 0 auto;
+  min-width: 46px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ── Library strip ───────────────────────────────────────────────── */
+
+.library {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 6px);
+  padding: var(--space-2, 6px) 0;
+}
+
+.chip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 52px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
+
+.chipBall {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.14));
+  box-shadow: inset 0 -3px 6px rgba(0, 0, 0, 0.45);
+  transition: transform var(--motion-duration-fast, 120ms) ease;
+}
+
+.chip:hover .chipBall {
+  transform: scale(1.08);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-accent, #4a8cff);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 3px);
+}
+
+.chipName {
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+/* Rename / delete ride under the thumbnail rather than over it: an overlay on
+   a 34px circle would cover the very thing being identified. */
+.chipTools {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast, 120ms) ease;
+}
+.chipRow:hover .chipTools,
+.chipTools:focus-within {
+  opacity: 1;
+}
+
+.chipRow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm, 3px);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.iconBtn:hover {
+  background: var(--color-surface-3, rgba(255, 255, 255, 0.1));
+  color: var(--color-text-primary);
+}
+
+/* ── Preview + save form ─────────────────────────────────────────── */
+
+.previewRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 8px);
+  padding: var(--space-1, 4px) 0;
+}
+
+.preview {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+
+.previewMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.saveRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+  padding-bottom: var(--space-1, 4px);
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height-xs, 20px);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary, #ddd);
+  background: var(--color-surface-1, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-sm, 3px);
+  padding: 0 var(--space-1, 4px);
+}
+.nameInput:focus-visible {
+  outline: 2px solid var(--color-accent, #4a8cff);
+  outline-offset: 1px;
+}
+
+.divider {
+  height: 1px;
+  background: var(--color-border-subtle, rgba(255, 255, 255, 0.1));
+  margin: var(--space-2, 6px) 0 var(--space-1, 4px);
+}

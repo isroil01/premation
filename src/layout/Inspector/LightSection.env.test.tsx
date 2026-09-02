@@ -22,6 +22,7 @@ import { SCENE_KIND_PROP } from '@core/scene/seedDefaultScene';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 import { readNodeLight, type LightType } from '@core/scene/light';
 import { ENVIRONMENT_PRESETS } from '@core/scene/environmentLight';
+import { useAssetStore } from '@stores/assetStore';
 import { kelvinToHex, nearestKelvin } from '@core/scene/colorTemperature';
 import type { SceneNode } from '@core/types';
 
@@ -109,8 +110,11 @@ describe('an environment light', () => {
 
     const sky = screen.getByLabelText('Environment preset') as HTMLSelectElement;
     expect(sky.value).toBe('sky');
-    // The ids come from the canonical preset table, not from a copy.
-    expect([...sky.options].map((o) => o.value)).toEqual(ENVIRONMENT_PRESETS.map((p) => p.id));
+    // The ids come from the canonical preset table, not from a copy — followed
+    // by the one non-preset entry, which opens the image picker.
+    expect([...sky.options].map((o) => o.value)).toEqual([...ENVIRONMENT_PRESETS.map((p) => p.id), 'image']);
+    // A preset sky shows no picker: the row exists only for an image sky.
+    expect(screen.queryAllByLabelText('Environment image')).toHaveLength(0);
 
     expect(numRow('Sky rotation')).toBeTruthy();
     expect(numRow('Intensity')).toBeTruthy();
@@ -133,6 +137,56 @@ describe('an environment light', () => {
     mount({ lightType: 'environment', envPreset: 'studio' });
     fireEvent.change(screen.getByLabelText('Environment preset'), { target: { value: 'sunset' } });
     expect(currentLight().envPreset).toBe('sunset');
+  });
+});
+
+/**
+ * An IMAGE sky. The engine reads one prop, `envPreset`, whose `asset:<id>` form
+ * means "project this equirect" — so the assertions go through `readNodeLight`
+ * again rather than against the option strings, and a menu that writes a shape
+ * the engine cannot parse fails here.
+ */
+describe('an environment light lit by an image', () => {
+  const IMG = { id: 'img_hdri', name: 'sunflowers_2k.exr', type: 'image' as const, src: 'blob:hdri', size: 1 };
+
+  beforeEach(() => {
+    useAssetStore.setState({ assets: [IMG] } as never);
+  });
+  afterEach(() => {
+    useAssetStore.setState({ assets: [] } as never);
+  });
+
+  it('picking "Image…" points the sky at a library image', () => {
+    mount({ lightType: 'environment', envPreset: 'studio' });
+    fireEvent.change(screen.getByLabelText('Environment preset'), { target: { value: 'image' } });
+    expect(currentLight().envPreset).toBe(`asset:${IMG.id}`);
+  });
+
+  it('shows the picker, on the chosen asset, by NAME', () => {
+    mount({ lightType: 'environment', envPreset: `asset:${IMG.id}` });
+    // The Sky menu reports "image" rather than falling back to a preset…
+    expect((screen.getByLabelText('Environment preset') as HTMLSelectElement).value).toBe('image');
+    // …and the picker names the file, not the opaque id.
+    const picker = screen.getByLabelText('Environment image') as HTMLSelectElement;
+    expect(picker.value).toBe(IMG.id);
+    expect([...picker.options].find((o) => o.value === IMG.id)?.textContent).toBe(IMG.name);
+  });
+
+  it('an asset that is no longer in the library says so instead of vanishing', () => {
+    mount({ lightType: 'environment', envPreset: 'asset:img_gone' });
+    const picker = screen.getByLabelText('Environment image') as HTMLSelectElement;
+    expect(picker.value).toBe('img_gone');
+    expect([...picker.options].some((o) => o.textContent?.includes('missing'))).toBe(true);
+    // The prop is left alone — a missing sky is repairable, a silently reset
+    // one is not.
+    expect(currentLight().envPreset).toBe('asset:img_gone');
+  });
+
+  it('switching back to a preset drops the image reference entirely', () => {
+    mount({ lightType: 'environment', envPreset: `asset:${IMG.id}` });
+    fireEvent.change(screen.getByLabelText('Environment preset'), { target: { value: 'sunset' } });
+    expect(currentLight().envPreset).toBe('sunset');
+    expect(screen.queryAllByLabelText('Environment image')).toHaveLength(0);
   });
 });
 

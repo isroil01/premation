@@ -40,11 +40,19 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { Icon } from '@components/Icon';
-import { defaultAnimation, makeKeyframeId, parseKeyframeId, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER } from '@motion/animation';
+import { defaultAnimation, makeKeyframeId, parseKeyframeId, expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection } from '@core/animation/easingSelection';
+import {
+  EASING_KINDS,
+  activeEasingKind,
+  applyEasingKindToKeyframes,
+} from '@core/animation/easingVocabulary';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { useEaseClipboardStore } from '@stores/easeClipboardStore';
+import { bumpScene } from '@stores/sceneStore';
+import { EaseLibrarySection } from '@layout/Motion/EaseLibrarySection';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
@@ -128,9 +136,12 @@ interface KfPoint {
   y: number;
   minV: number;
   maxV: number;
-  easing?: string;
+  easing?: EasingKind;
   bezier?: [number, number, number, number];
   continuous?: boolean;
+  roving?: boolean;
+  /** Ends of a track cannot rove — there is nothing to rove BETWEEN. */
+  canRove: boolean;
   inSpeed?: number;
   outSpeed?: number;
   inInfluence?: number;
@@ -564,6 +575,8 @@ export function GraphEditor({
           easing: kf.easing,
           bezier: kf.bezier,
           continuous: kf.continuous,
+          roving: kf.roving,
+          canRove: !!prev && !!next,
           inSpeed: inSpd,
           outSpeed: outSpd,
           inInfluence: inInf,
@@ -1265,6 +1278,104 @@ export function GraphEditor({
     applyEasingToSelection(preset);
   }, []);
 
+  // ── Keyframe-level tools (were the Motion panel's) ────────────
+  /**
+   * What the ease tools write to: the shared keyframe selection, falling back
+   * to the focused diamond. The fallback matters — clicking a curve BODY
+   * focuses a keyframe without necessarily leaving it in the multi-selection,
+   * and a toolbar that then silently did nothing is the bug these buttons had
+   * in the panel (where they only ever touched one keyframe, no matter how
+   * many you had selected).
+   */
+  const targetKfIds = useMemo(() => {
+    const ids = [...selectedKfIds];
+    if (ids.length > 0) return ids;
+    return selectedKf ? [makeKeyframeId(selectedKf.nodeId, selectedKf.prop, selectedKf.t)] : [];
+  }, [selectedKfIds, selectedKf]);
+
+  const copyEase = useEaseClipboardStore((s) => s.copyEase);
+  const pasteEase = useEaseClipboardStore((s) => s.pasteEase);
+  const hasCopiedEase = useEaseClipboardStore((s) => s.copied);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const libraryRef = useRef<HTMLDivElement | null>(null);
+
+  const applyKind = useCallback(
+    (kind: EasingKind) => {
+      applyEasingKindToKeyframes(targetKfIds, kind);
+      bumpScene();
+    },
+    [targetKfIds],
+  );
+
+  /**
+   * Rove across time: the keyframe keeps its VALUE and gives up its TIME, which
+   * the engine re-solves for constant speed between the anchors either side.
+   *
+   * Because roving MOVES the keyframe, and a keyframe id embeds its time, the
+   * ids in the selection go stale the instant this runs — the diamond would
+   * stay put on screen and lose its selection ring. So the new times are read
+   * back and the selection is rewritten, exactly as a drag does.
+   */
+  const toggleRoving = useCallback(() => {
+    if (targetKfIds.length === 0) return;
+    const next = !selectedKfData?.roving;
+    const rewrites: Array<[string, string]> = [];
+    runAnimEdit(next ? 'Rove Across Time' : 'Stop Roving', () => {
+      for (const id of targetKfIds) {
+        const ref = parseKeyframeId(id);
+        if (!ref) continue;
+        let movedTo: number | null = null;
+        for (const prop of expandKeyframeProp(ref.prop)) {
+          const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, prop);
+          if (!kfs) continue;
+          const i = kfs.findIndex((k) => Math.abs(k.t - ref.t) < 1e-6);
+          // Ends have nothing to rove between; skipping them is why a
+          // whole-track selection can be roved in one click.
+          if (i <= 0 || i >= kfs.length - 1) continue;
+          defaultAnimation.setRoving(ref.nodeId, prop, kfs[i]!.t, next);
+          movedTo = defaultAnimation.getTrackKeyframes(ref.nodeId, prop)?.[i]?.t ?? null;
+        }
+        if (movedTo !== null && Math.abs(movedTo - ref.t) > 1e-9) {
+          rewrites.push([id, makeKeyframeId(ref.nodeId, ref.prop, movedTo)]);
+        }
+      }
+    });
+    for (const [oldId, newId] of rewrites) rewriteSelectedKeyframeId(oldId, newId);
+    const focused = rewrites.find(([oldId]) =>
+      selectedKf && oldId === makeKeyframeId(selectedKf.nodeId, selectedKf.prop, selectedKf.t));
+    if (focused && selectedKf) {
+      const t = parseKeyframeId(focused[1])?.t;
+      if (t !== undefined) setSelectedKf({ ...selectedKf, t });
+    }
+    bumpScene();
+  }, [targetKfIds, selectedKfData, selectedKf]);
+
+  // Deselecting takes the whole tool group away with it, so the popover must
+  // not still be "open" when the next keyframe is picked — it would appear
+  // unasked, over a curve, from a click two minutes ago.
+  const hasFocusedKf = !!selectedKf;
+  useEffect(() => {
+    if (!hasFocusedKf) setLibraryOpen(false);
+  }, [hasFocusedKf]);
+
+  // Escape closes the library popover; so does a click anywhere outside it.
+  useEffect(() => {
+    if (!libraryOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setLibraryOpen(false);
+    };
+    const onDown = (e: PointerEvent): void => {
+      const el = libraryRef.current;
+      if (el && e.target instanceof Node && !el.contains(e.target)) setLibraryOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [libraryOpen]);
+
   // Which quick-ease pill matches the selected keyframe's ACTUAL easing, so
   // the applied one lights up (`iconBtnActive` existed in the CSS unused —
   // the pills never showed state, which read as "did that click work?").
@@ -1433,6 +1544,84 @@ export function GraphEditor({
             <button type="button" className={pillClass('Hold')} aria-pressed={activePreset === 'Hold'} aria-label="Hold interpolation" onClick={() => handleApplyPreset('Hold')} title="Toggle Hold">
               <Icon name="keyframe" size="sm" />
             </button>
+          </div>
+        )}
+
+        {/* Keyframe tools. These used to live in the Motion panel, applied to
+            the ONE keyframe it had focused; here they take the whole keyframe
+            selection, which is what the timeline and F9 already operate on. */}
+        {selectedKfData && (
+          <div className={styles.btnGroup}>
+            {/* Interpolation KIND — a different axis from the pills beside it
+                (those pick a named CURVE). See `easingVocabulary`. */}
+            <select
+              className={styles.select}
+              aria-label="Easing kind"
+              title="Interpolation kind for the selected keyframes"
+              value={activeEasingKind(selectedKfData)}
+              onChange={(e) => applyKind(e.target.value as EasingKind)}
+            >
+              {EASING_KINDS.map(({ kind, label }) => (
+                <option key={kind} value={kind}>{label}</option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              className={selectedKfData.roving ? styles.iconBtnActive : styles.iconBtn}
+              aria-pressed={!!selectedKfData.roving}
+              aria-label="Rove across time"
+              disabled={!selectedKfData.canRove}
+              onClick={toggleRoving}
+              title={selectedKfData.canRove
+                ? 'Rove Across Time — the keyframe keeps its value and gives up its time, so the speed through it is constant'
+                : 'The first and last keyframes of a track cannot rove'}
+            >
+              <Icon name="stopwatch" size="sm" />
+            </button>
+
+            <button
+              type="button"
+              className={styles.iconBtn}
+              aria-label="Copy ease"
+              onClick={() => copyEase(makeKeyframeId(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t))}
+              title="Copy this keyframe's easing"
+            >
+              <Icon name="copy" size="sm" />
+            </button>
+            <button
+              type="button"
+              className={styles.iconBtn}
+              aria-label="Paste ease"
+              disabled={!hasCopiedEase}
+              onClick={() => { pasteEase(targetKfIds); bumpScene(); }}
+              title={hasCopiedEase ? 'Paste the copied easing onto the selected keyframes' : 'Nothing copied yet'}
+            >
+              <Icon name="download" size="sm" />
+            </button>
+
+            {/* Anchor wraps the trigger AND the popover: the outside-click
+                dismiss is a capturing pointerdown, so a trigger outside the
+                anchor would close the popover a moment before its own click
+                re-opened it — a button that could never be used to close. */}
+            <div className={styles.libraryAnchor} ref={libraryRef}>
+              <button
+                type="button"
+                className={libraryOpen ? styles.iconBtnActive : styles.iconBtn}
+                aria-expanded={libraryOpen}
+                aria-haspopup="dialog"
+                aria-label="Ease library"
+                onClick={() => setLibraryOpen((v) => !v)}
+                title="Ease library — named curves, applied to the selected keyframes"
+              >
+                <Icon name="curvature" size="sm" />
+              </button>
+              {libraryOpen && (
+                <div className={styles.popover} role="dialog" aria-label="Ease library">
+                  <EaseLibrarySection keyframeIds={targetKfIds} bezier={selectedKfData.bezier} />
+                </div>
+              )}
+            </div>
           </div>
         )}
 

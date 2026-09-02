@@ -19,6 +19,15 @@
  * Each pane keeps its own framing — wheel zooms about the cursor, middle-drag
  * pans — without disturbing the main viewport or its sibling panes.
  *
+ * It carries the full 3D viewport chrome, not just the wireframes: the
+ * transform gizmo ({@link Gizmo3dOverlay}) and the camera focus plane
+ * ({@link FocusPlaneOverlay}) are mounted here against THIS pane's view. That
+ * is the point of an orthographic pane — a Top view is where you push a layer
+ * along X/Z without the depth guesswork the Active Camera makes you do, and
+ * where you pull focus by dragging the plane along the camera's axis. Both were
+ * main-viewport-only until their view became a parameter rather than a global;
+ * see the header of `useGizmo3d`.
+ *
  * By default it binds to the store's `secondaryViewMode` (2-up back-compat).
  * The 4-up caller passes an explicit `mode` + `onModeChange` (bound to one
  * `quadViewModes` cell) and a `style` positioning it into its grid quadrant.
@@ -29,12 +38,16 @@ import { Gizmo3D } from '@motion/workspace';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useSceneRevisionFrame } from '@hooks/useSceneRevisionFrame';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useCompositionStore } from '@stores/compositionStore';
 import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode } from '@stores/guidesStore';
 import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
+import type { RenderView } from '@core/rendering/RenderBackend';
 import { useViewportRenderer } from './useViewportRenderer';
 import { usePaneWorkspace } from './usePaneWorkspace';
-import { paneViewTransform, useSceneRefGeometry } from './useSceneRefGeometry';
-import { SceneGeometryOverlaySvg } from './SceneGeometryOverlay';
+import { paneViewTransform } from './useSceneRefGeometry';
+import { useGizmo3d } from './useGizmo3d';
+import { Gizmo3dOverlay } from './Gizmo3dOverlay';
+import { FocusPlaneOverlay } from './FocusPlaneOverlay';
 
 export interface SecondaryViewPaneProps {
   /** View mode to render. Omit to bind to the store's `secondaryViewMode`. */
@@ -67,9 +80,11 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
   const mode = modeProp ?? storeMode;
   const setMode = onModeChange ?? storeSetMode;
 
-  // Reference geometry for THIS pane's view. Same resolver the interactive
-  // viewport uses, so a camera's frustum lands in the same place in both.
-  const ref = useSceneRefGeometry(mode);
+  // The comp box. Read straight from the store rather than through the
+  // reference-geometry resolver, because the pane's engine needs it BEFORE the
+  // gizmo hook (which is what resolves this pane's geometry now) can run.
+  const compWidth = useCompositionStore((s) => s.width);
+  const compHeight = useCompositionStore((s) => s.height);
   // Measured box, which sizes the pane's camera and positions its SVG chrome.
   const [paneBox, setPaneBox] = useState({ width: 0, height: 0 });
   useEffect(() => {
@@ -84,7 +99,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const viewTransform = paneViewTransform(paneBox.width, paneBox.height, ref.compWidth, ref.compHeight);
+  const viewTransform = paneViewTransform(paneBox.width, paneBox.height, compWidth, compHeight);
 
   // Interaction: this pane's own engine, hit-testing through THIS pane's view.
   const setActive = useGuidesStore((s) => s.setActiveViewPane);
@@ -94,17 +109,38 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
     mode,
     width: paneBox.width,
     height: paneBox.height,
-    compWidth: ref.compWidth,
-    compHeight: ref.compHeight,
+    compWidth,
+    compHeight,
     onActivate,
   });
-  // Chrome positions against the pane's LIVE camera, falling back to the contain
-  // fit before the engine exists. Deriving it separately is what let the 0.92
-  // contain factor drift the two apart once already.
-  const liveView = getRenderView();
-  const chromeTransform = liveView
-    ? { scale: liveView.scale, offsetX: liveView.offsetX, offsetY: liveView.offsetY }
-    : viewTransform;
+  /**
+   * ONE view for every piece of this pane's chrome.
+   *
+   * The pane's LIVE camera, falling back to the contain fit before the engine
+   * exists — deriving it separately is what let the 0.92 contain factor drift
+   * the transform and the pixels apart once already. It is a stable callback
+   * because the gizmo and focus-plane overlays hold it across renders and read
+   * it from pointer handlers; the fallback rides in on a ref so the identity
+   * does not change when the pane is resized.
+   */
+  const fallbackViewRef = useRef(viewTransform);
+  fallbackViewRef.current = viewTransform;
+  const getPaneView = useCallback(
+    (): RenderView => getRenderView() ?? fallbackViewRef.current,
+    [getRenderView],
+  );
+  const chromeTransform = getPaneView();
+
+  /**
+   * This pane's 3D chrome, resolved through ITS mode and ITS transform.
+   *
+   * The hook also resolves the pane's reference geometry (camera, ortho axis,
+   * ground plane, scene wireframes) — the same `useSceneRefGeometry` the pane
+   * used to call for itself, so this is one resolution per pane, not two.
+   * Selection, the axis mode and the write path stay global: dragging a handle
+   * here is the same undoable command it is in the main viewport.
+   */
+  const gizmo3d = useGizmo3d(containerRef, { mode, getView: getPaneView, viewRev: framingRev });
 
   // Render LAST, so it sees this pass's framing. `framingRev` rides in on the
   // revision because panning is not a scene change and nothing else would
@@ -166,22 +202,9 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
           pointerEvents: 'none',
         }}
       />
-      {/* Scene reference geometry. Without it a Top/Front/Right pane shows bare
-          layers — and a flat 3D layer seen edge-on draws no pixels at all, so
-          the pane can look empty when the scene is not. */}
-      {ref.scene3d && paneBox.width > 0 && (
-        <SceneGeometryOverlaySvg
-          camera={ref.camera}
-          orthoView={ref.orthoView}
-          compWidth={ref.compWidth}
-          compHeight={ref.compHeight}
-          viewTransform={chromeTransform}
-          groundGridVisible={ref.groundGridVisible}
-          sceneGizmos={ref.sceneGizmos}
-        />
-      )}
-      {/* Interaction surface. Above the reference geometry so it always receives
-          the pointer, and it draws the selection outline for this view. */}
+      {/* Interaction surface: it draws this view's selection outline and carries
+          the pane's pointer handlers. The 3D chrome that follows paints above it
+          but is pointer-transparent, so it never steals a press. */}
       <svg
         data-pane-interaction=""
         width="100%"
@@ -200,6 +223,29 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
           />
         ))}
       </svg>
+      {/* Scene reference geometry AND the transform gizmo, in one overlay (the
+          gizmo component draws the wireframes beneath its handles). Without the
+          wireframes a Top/Front/Right pane shows bare layers — a flat 3D layer
+          seen edge-on draws no pixels at all, so the pane can look empty when
+          the scene is not. Pointer-transparent: the press is claimed by the
+          gizmo hook's capture-phase listener on this container, not by the SVG. */}
+      {(gizmo3d.scene3d || (gizmo3d.is3D && gizmo3d.singleId)) && paneBox.width > 0 && (
+        <Gizmo3dOverlay
+          {...gizmo3d}
+          nodeId={gizmo3d.singleId ?? null}
+          showGizmo={gizmo3d.is3D && !!gizmo3d.singleId}
+          // The LIVE pane transform, so the handles, the wireframes and the
+          // selection outline above are all positioned from the same numbers in
+          // the same render. (The hook's own copy is a rAF-coalesced mirror.)
+          viewTransform={chromeTransform}
+        />
+      )}
+      {/* The camera focus plane, bound to this pane's view. In a 4-up it draws
+          in the ortho panes and suppresses itself in the Active Camera one —
+          exactly where pulling focus by hand does and does not make sense. */}
+      {paneBox.width > 0 && (
+        <FocusPlaneOverlay mode={mode} getView={getPaneView} viewRev={framingRev} />
+      )}
       <select
         value={mode}
         onChange={(e) => setMode(e.target.value as Camera3dMode)}
@@ -210,7 +256,9 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
           position: 'absolute',
           top: 6,
           right: 8,
-          zIndex: 2,
+          // Above the 3D chrome (gizmo z 20, focus plane z 21) — the wireframes
+          // reach the pane corners and would otherwise be drawn across it.
+          zIndex: 30,
           fontSize: 'var(--font-size-xs)',
           padding: '2px 4px',
           background: 'var(--color-panel, rgba(20,22,28,0.85))',
@@ -232,7 +280,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style }: Secon
           position: 'absolute',
           top: 6,
           left: 8,
-          zIndex: 2,
+          zIndex: 30,
           fontSize: 'var(--font-size-micro)',
           letterSpacing: '0.04em',
           textTransform: 'uppercase',

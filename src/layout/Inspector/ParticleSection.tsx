@@ -6,6 +6,7 @@
  * keyframe via channel tracks through ColorKfRow, like fill/stroke.
  */
 
+import { useState } from 'react';
 import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
 import { useSceneRevision, bumpScene } from '@stores/sceneStore';
@@ -18,12 +19,17 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { ColorKfRow } from './ColorKfRow';
 import { writeTransformProps } from '@core/scene/transformWrite';
+// Same registration-by-import as PhysicsSection: loading this module is what
+// puts `dynamics.bakeParticles` in the command registry.
+import { runParticleBake } from '@core/simulation/bakeCommands';
+import { BakeDialog } from '@core/simulation/BakeDialog';
 import styles from './TransformSection.module.css';
 
 export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
   useAnimationRevision();
   const time = useActiveWorkspace()?.time ?? 0;
+  const [bakeOpen, setBakeOpen] = useState(false);
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const cfg = readNodeParticle(node) ?? DEFAULT_PARTICLE_CONFIG;
@@ -309,6 +315,32 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
               />
             </div>
           </>
+        )}
+
+        {/* Bake: one layer per particle. A refusal above the cap rather than a
+            silent trim — see `bakeParticlesToLayers`. */}
+        <div className={styles.popoverRow}>
+          <div style={{ width: 13 }} />
+          <span className={styles.popoverLabel}>Bake</span>
+          <button
+            type="button"
+            className={styles.select}
+            style={{ width: 110, textAlign: 'left', cursor: 'pointer' }}
+            onClick={() => setBakeOpen(true)}
+            title="Convert each particle into its own keyframed layer and hide the emitter"
+          >
+            Bake to keyframes…
+          </button>
+        </div>
+
+        {bakeOpen && (
+          <BakeDialog
+            open
+            onClose={() => setBakeOpen(false)}
+            title="Bake Particles to Layers"
+            withParticleCap
+            onBake={(opts) => runParticleBake(nodeId, opts)}
+          />
         )}
 
         <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>

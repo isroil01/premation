@@ -35,13 +35,22 @@
  *    `collectSceneGizmos` and `collectDeviceHandles` already apply to the
  *    camera being looked through. Switch to Top / Left / a custom view — which
  *    is where you pull focus in After Effects too.
+ *
+ * ## One overlay per VIEW
+ *
+ * Everything above is stated per view, not per app: the props let a secondary
+ * 2-up / 4-up pane mount its own instance bound to ITS mode and ITS comp →
+ * canvas transform. Mount it with no props and it reads the main viewport, as
+ * it always did. The suppression rule then falls out correctly on its own — a
+ * 4-up of Active / Top / Front / Right draws the plane in the three ortho
+ * panes and not in the one looking down the barrel.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, SceneGizmos } from '@motion/workspace';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useGuidesStore } from '@stores/guidesStore';
+import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -107,11 +116,18 @@ const RING_STYLE: Record<FocusRingKind, { width: number; dash: string; opacity: 
  * well above frame rate, and a setState per event re-renders the whole overlay
  * several times per painted frame during a zoom.
  */
-function useViewTransform(): RenderView {
-  const [view, setView] = useState<RenderView>(() => getWorkspaceController().getView());
+function useViewTransform(getView?: () => RenderView | undefined, viewRev = 0): RenderView {
+  // Behind a ref so a host re-rendering with a fresh closure does not re-attach
+  // the window listeners; `viewRev` is the explicit "resync now" channel for
+  // framing changes no pointer event announces (a pane auto-fitting).
+  const readRef = useRef<() => RenderView>(() => getWorkspaceController().getView());
+  readRef.current = getView
+    ? (): RenderView => getView() ?? IDENTITY_VIEW
+    : (): RenderView => getWorkspaceController().getView();
+  const [view, setView] = useState<RenderView>(() => readRef.current());
   useEffect(() => {
     const sync = (): void => {
-      const v = getWorkspaceController().getView();
+      const v = readRef.current();
       setView((prev) =>
         prev.scale === v.scale && prev.offsetX === v.offsetX && prev.offsetY === v.offsetY ? prev : v,
       );
@@ -134,14 +150,31 @@ function useViewTransform(): RenderView {
       window.removeEventListener('pointermove', queueSync, { capture: true } as EventListenerOptions);
       window.removeEventListener('pointerup', queueSync, { capture: true } as EventListenerOptions);
     };
-  }, []);
+  }, [viewRev]);
   return view;
 }
 
-export function FocusPlaneOverlay(): JSX.Element | null {
+/** Identity view — the fallback while a pane's camera does not exist yet. */
+const IDENTITY_VIEW: RenderView = { scale: 1, offsetX: 0, offsetY: 0 };
+
+/** Which VIEW this overlay belongs to. Omit every field for the main viewport. */
+export interface FocusPlaneOverlayProps {
+  /** View mode to project through. Defaults to `guidesStore.camera3dMode`. */
+  mode?: Camera3dMode;
+  /**
+   * This view's live comp → canvas transform, in CSS px relative to the
+   * overlay's own box. Defaults to the main viewport's controller view.
+   */
+  getView?: () => RenderView | undefined;
+  /** Bumped when `getView` would answer differently (a pane's `framingRev`). */
+  viewRev?: number;
+}
+
+export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPlaneOverlayProps = {}): JSX.Element | null {
   const visibility = useFocusPlaneStore((s) => s.visibility);
   const dragDistance = useFocusPlaneStore((s) => s.dragDistance);
-  const camera3dMode = useGuidesStore((s) => s.camera3dMode);
+  const mainMode = useGuidesStore((s) => s.camera3dMode);
+  const camera3dMode = modeProp ?? mainMode;
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
   const compRootId = useCompositionStore((s) => s.id);
@@ -154,7 +187,7 @@ export function FocusPlaneOverlay(): JSX.Element | null {
   // Frame-coalesced: a focus drag bumps the revision per pointer event and this
   // overlay only has to track it visually.
   const sceneTick = useSceneRevisionFrame();
-  const viewTransform = useViewTransform();
+  const viewTransform = useViewTransform(getView, viewRev);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [hovered, setHovered] = useState(false);
 

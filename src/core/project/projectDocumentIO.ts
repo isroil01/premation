@@ -61,6 +61,9 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
     // an absent key means "keep", so leaving swatches out would hand the new
     // project the previous one's palette.
     swatches: [],
+    // Same reason as swatches above: absent means "keep", so a new project
+    // would open holding the last one's saved materials.
+    materials: [],
   }),
 
   capture: () => captureDocument(),

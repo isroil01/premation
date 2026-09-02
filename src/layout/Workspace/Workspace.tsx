@@ -223,7 +223,9 @@ export function WorkspaceViewport({
     focusKey,
   });
 
-  const gizmo3dProps = useGizmo3d(overlayRef, stageRef);
+  // No view options — the main viewport IS the default view (camera3dMode +
+  // the workspace controller's transform). The secondary panes pass their own.
+  const gizmo3dProps = useGizmo3d(stageRef);
   // Camera / light handles. Mounted AFTER the layer gizmo so its capture-phase
   // listener runs second: where a device handle overlaps a transform handle the
   // layer gizmo claims the press first, which is the more specific intent.

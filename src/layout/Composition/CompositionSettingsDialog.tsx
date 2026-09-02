@@ -28,9 +28,15 @@ import { useColorManagementStore, type IntermediateBitDepth } from '@stores/colo
 import { useViewerLutStore } from '@stores/viewerLutStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { FPS_PRESETS, MAX_DURATION } from '@core/composition/presets';
+import {
+  ENVIRONMENT_PRESETS,
+  DEFAULT_ENVIRONMENT_PRESET,
+  isEnvironmentPresetId,
+  type EnvironmentPresetId,
+} from '@core/scene/environmentLight';
 import styles from './CompositionSettingsDialog.module.css';
 
-type TabId = 'general' | 'background' | 'grid' | 'time' | 'color';
+type TabId = 'general' | 'background' | 'grid' | 'world' | 'time' | 'color';
 
 function CompositionSettings({ close }: { close: () => void }): JSX.Element {
   const s = useCompositionStore();
@@ -75,6 +81,22 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
     getTimelineController().setDurationSeconds(useCompositionStore.getState().durationSeconds);
   };
   const setStartFrame = (startFrame: number): void => s.update({ startFrame });
+
+  // ── World ──────────────────────────────────────────────────────────
+  //
+  // All three are absent on every document written before this tab existed, and
+  // every read here supplies the value that reproduces the old behaviour
+  // exactly — so opening this dialog on an old project and closing it again
+  // changes nothing on disk.
+  const defaultEnvPreset: EnvironmentPresetId = isEnvironmentPresetId(s.defaultEnvPreset)
+    ? s.defaultEnvPreset
+    : DEFAULT_ENVIRONMENT_PRESET;
+  const setDefaultEnvPreset = (v: string): void => {
+    if (isEnvironmentPresetId(v)) s.update({ defaultEnvPreset: v });
+  };
+  const groundLevel = Number.isFinite(s.groundLevel) ? (s.groundLevel as number) : 0;
+  const setGroundLevel = (v: number): void => s.update({ groundLevel: v });
+  const showSkyBackdrop = s.showSkyBackdrop === true;
 
   // ── Background paint (solid / linear / radial) ──────────────────────
   const bgPaint: FillPaint = s.backgroundPaint ?? solidFill(s.background);
@@ -129,6 +151,16 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
         >
           <Icon name="grid" size="sm" />
           Grid & Guides
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'world'}
+          className={`${styles.navTab} ${activeTab === 'world' ? styles.navTabActive : ''}`}
+          onClick={() => setActiveTab('world')}
+        >
+          <Icon name="axis-world" size="sm" />
+          World
         </button>
         <button
           type="button"
@@ -464,10 +496,92 @@ function CompositionSettings({ close }: { close: () => void }): JSX.Element {
           </>
         )}
 
-        {/* TAB 4: TIME — responsive/protected regions (M7) */}
+        {/* TAB 4: WORLD — the comp's 3D environment (per-composition, saved) */}
+        {activeTab === 'world' && (
+          <>
+            <div className={styles.section}>
+              <div className={styles.label}>Default sky</div>
+              <p className={styles.hint}>
+                The sky a NEW environment light starts on. Existing lights keep
+                whatever they were set to — this only decides where the next one
+                begins, so a project working in one look does not re-pick it
+                every time. Each light can still be pointed at its own image.
+              </p>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Sky</span>
+                <select
+                  className={styles.selectInput}
+                  value={defaultEnvPreset}
+                  onChange={(e) => setDefaultEnvPreset(e.target.value)}
+                  aria-label="Default environment sky"
+                >
+                  {ENVIRONMENT_PRESETS.map((p) => (
+                    <option key={p.id} value={p.id}>{p.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className={styles.section}>
+              <div className={styles.label}>Ground level</div>
+              <p className={styles.hint}>
+                Where the 3D reference floor sits, measured DOWN from the
+                composition's bottom edge. 0 is the plane the ground grid has
+                always drawn. Reference geometry only — it moves the grid you
+                block out against, never a rendered pixel.
+              </p>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel}>Offset from comp bottom</span>
+                <ValueField
+                  value={groundLevel}
+                  onChange={setGroundLevel}
+                  step={10}
+                  unit="px"
+                  aria-label="Ground level"
+                />
+              </label>
+            </div>
+
+            <div className={styles.section}>
+              <div className={styles.label}>Backdrop</div>
+              {/*
+                Stored, not implemented — and said so plainly rather than
+                shipped as a switch that appears to work.
+
+                The environment probe is a low-frequency IRRADIANCE field (nine
+                SH coefficients), which is enough to light a surface from every
+                side and nowhere near enough to draw as scenery. Rendering the
+                sky behind the scene needs the full image on a background quad,
+                which is a renderer change this setting does not make. The
+                control exists so the intent has somewhere to live and a
+                document can carry it; the tooltip is the honest part.
+              */}
+              <div
+                className={styles.colorCardRow}
+                title="backdrop rendering is not yet available"
+              >
+                <span className={styles.colorCardLabel}>Show sky as backdrop</span>
+                <Switch
+                  checked={showSkyBackdrop}
+                  disabled
+                  onChange={(e) => s.update({ showSkyBackdrop: e.target.checked })}
+                  aria-label="Show sky as backdrop"
+                  title="backdrop rendering is not yet available"
+                />
+              </div>
+              <p className={styles.hint} style={{ marginTop: 4 }}>
+                Saved with the composition, but nothing draws it yet: the
+                environment light is an irradiance probe, not a reflection or
+                background map.
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* TAB 5: TIME — responsive/protected regions (M7) */}
         {activeTab === 'time' && <ResponsiveTimeSection />}
 
-        {/* TAB 5: COLOR — project working space / display / bit depth */}
+        {/* TAB 6: COLOR — project working space / display / bit depth */}
         {activeTab === 'color' && (
           <>
             <div className={styles.section}>

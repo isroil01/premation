@@ -158,6 +158,12 @@ export const APP_MENU: MenuGroupModel[] = [
       // missing an entry for a working feature.
       { commandId: 'comp.new', label: 'New Composition…' },
       { commandId: 'comp.multicam', label: 'New Multicam from Selected Assets…' },
+      // Both act on FOOTAGE rather than on the open comp, which is why they sit
+      // beside New Composition rather than under Layer: the result of each is a
+      // composition that did not exist before (or, for Assemble on a layer, a
+      // comp whose whole cut did not exist before).
+      { commandId: 'comp.newFromSelectedClips', label: 'New Composition from Selected Clips…' },
+      { commandId: 'comp.assembleFromFootage', label: 'Assemble from Footage…' },
       { commandId: 'comp.settings', label: 'Composition Settings…' },
       { commandId: 'comp.delete', label: 'Delete Composition' },
       { commandId: 'scene.loadBlockTower', label: 'Load: Block Tower' },
@@ -281,7 +287,10 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'animation.smoother', label: 'The Smoother…' },
       { commandId: 'animation.wiggler', label: 'The Wiggler…' },
       { commandId: 'animation.sequenceLayerBars', label: 'Sequence Layers…' },
-      { commandId: 'animation.sequenceLayers', label: 'Stagger Animations (0.3s)' },
+      { commandId: 'animation.sequenceLayers', label: 'Stagger Animations…' },
+      { separator: true },
+      { commandId: 'dynamics.bakePhysics', label: 'Bake Physics to Keyframes…' },
+      { commandId: 'dynamics.bakeParticles', label: 'Bake Particles to Layers…' },
       { separator: true },
       // Creates animation on layers that have none — the counterpart to
       // Stagger Animations above, which only offsets keyframes that exist.
@@ -317,9 +326,26 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.snapToGrid', label: 'Snap to Grid' },
       { commandId: 'view.rulers', label: 'Toggle Rulers' },
       { commandId: 'view.safeAreas', label: 'Toggle Safe Areas' },
+      // A PREVIEW setting, like the guides above it: proxies change what the
+      // viewport decodes and nothing about what an export writes.
+      { commandId: 'view.useProxies', label: 'Use Proxies' },
       { commandId: 'view.fitSelection', label: 'Fit Selection in View' },
       { commandId: 'timeline.zoomToFit', label: 'Fit Composition in Timeline' },
       { commandId: 'timeline.zoomToWorkArea', label: 'Fit Work Area in Timeline' },
+      {
+        label: 'Timeline Tools',
+        children: [
+          { commandId: 'timeline.editMode.select', label: 'Selection Tool' },
+          { commandId: 'timeline.editMode.razor', label: 'Razor Tool' },
+          { commandId: 'timeline.editMode.slip', label: 'Slip Tool' },
+          { commandId: 'timeline.editMode.slide', label: 'Slide Tool' },
+          { commandId: 'timeline.editMode.roll', label: 'Roll Tool' },
+        ],
+      },
+      { separator: true },
+      { commandId: 'preview.cacheWorkArea', label: 'Cache Work Area Now' },
+      { commandId: 'preview.purgeRam', label: 'Purge RAM Preview' },
+      { commandId: 'preview.purgeDisk', label: 'Purge Disk Cache' },
       { separator: true },
       { commandId: BuiltinCommands.ResetLayout, label: 'Reset Layout' },
       { commandId: BuiltinCommands.SwitchTheme, label: 'Switch Theme' },

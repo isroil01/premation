@@ -84,6 +84,32 @@ const PEN_TOOLS: ToolDef[] = [
   { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen' },
 ];
 
+/**
+ * The Knife, appended to the Pen flyout — it EDITS an outline rather than
+ * drawing one, which is why it sits with the pen tools and not the shapes.
+ *
+ * Deliberately NOT an entry in `PEN_TOOLS`. `toolCommands.test.ts` walks that
+ * list and requires a matching `tool.<id>` in `buildToolCommands` — the check
+ * that keeps every toolbar tool rebindable from Customize… and findable in the
+ * palette — and registering `tool.knife` there is outside this change. Listing
+ * the Knife separately keeps that guard TELLING THE TRUTH (it is not yet a
+ * rebindable command) instead of being dodged by a rename; the entry moves into
+ * `PEN_TOOLS` unchanged the moment `{ tool: 'knife', label: 'Knife Tool',
+ * chord: { key: 'k' } }` lands in Providers.
+ *
+ * NO KEYBOARD SHORTCUT until that line lands. `KnifeTool.shortcut` is `k` and is
+ * unique across the builtin set, but `ToolManager.activateByShortcut` is not the
+ * app's tool-key channel — the app only ever feeds Space into the engine
+ * (`useSpaceTransport`) and drives every other tool key from the command
+ * registry. So this flyout item and the Pathfinder section's button are the two
+ * live routes to the Knife today, and the tooltip does not promise a third.
+ */
+const KNIFE_FLYOUT = {
+  tool: 'knife' as Tool,
+  icon: 'scissors' as IconName,
+  label: 'Knife Tool (K) — drag across a shape to cut its path',
+};
+
 const SHAPE_TOOLS: ToolDef[] = [
   { id: 'shape',    icon: 'square',     label: 'Rectangle Tool', shortcut: 'Q' },
   { id: 'ellipse',  icon: 'circle',     label: 'Ellipse Tool', shortcut: 'Shift+Q' },
@@ -144,7 +170,7 @@ function buildAnimateItems(
     // Sequence / stagger live as registered commands (Animation menu + palette);
     // TopNav reuses them so the prompt and undo path stay one.
     { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayerBars')); } },
-    { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayers')); } },
+    { type: 'item', id: 'anim-sequence', label: 'Stagger Animations…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayers')); } },
     { type: 'separator' },
     {
       type: 'item',
@@ -258,8 +284,13 @@ export function TopNav(): JSX.Element {
   const isPointerActive = POINTER_TOOLS.some(t => t.id === activeTool);
   const pointerDropdownTool = POINTER_TOOLS.find(t => t.id === (isPointerActive ? activeTool : lastPointerTool)) || POINTER_TOOLS[0]!;
 
-  const isPenActive = PEN_TOOLS.some(t => t.id === activeTool);
-  const penDropdownTool = PEN_TOOLS.find(t => t.id === (isPenActive ? activeTool : lastPenTool)) || PEN_TOOLS[0]!;
+  // The Knife lights the same trigger as the pen tools it shares a flyout with,
+  // or picking it would leave the toolbar showing no active tool at all.
+  const isKnifeActive = activeTool === KNIFE_FLYOUT.tool;
+  const isPenActive = PEN_TOOLS.some(t => t.id === activeTool) || isKnifeActive;
+  const penDropdownTool = isKnifeActive
+    ? { id: KNIFE_FLYOUT.tool, icon: KNIFE_FLYOUT.icon, label: KNIFE_FLYOUT.label, shortcut: undefined }
+    : PEN_TOOLS.find(t => t.id === (isPenActive ? activeTool : lastPenTool)) || PEN_TOOLS[0]!;
 
   const isShapeActive = SHAPE_TOOLS.some(t => t.id === activeTool);
   const shapeDropdownTool = SHAPE_TOOLS.find(t => t.id === (isShapeActive ? activeTool : lastShapeTool)) || SHAPE_TOOLS[0]!;
@@ -495,18 +526,29 @@ export function TopNav(): JSX.Element {
                   type="button"
                   className={isPenActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${penDropdownTool.label}${penDropdownTool.shortcut ? ` (${penDropdownTool.shortcut})` : ''}`}
+                  data-tour="pen-tool"
                 >
                   <Icon name={penDropdownTool.icon} size="md" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
-              items={PEN_TOOLS.map((t) => ({
-                type: 'item',
-                id: t.id,
-                label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
-                icon: t.icon,
-                onSelect: () => setTool(t.id),
-              }))}
+              items={[
+                ...PEN_TOOLS.map((t) => ({
+                  type: 'item' as const,
+                  id: t.id,
+                  label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
+                  icon: t.icon,
+                  onSelect: () => setTool(t.id),
+                })),
+                { type: 'separator' as const },
+                {
+                  type: 'item' as const,
+                  id: KNIFE_FLYOUT.tool,
+                  label: KNIFE_FLYOUT.label,
+                  icon: KNIFE_FLYOUT.icon,
+                  onSelect: () => setTool(KNIFE_FLYOUT.tool),
+                },
+              ]}
             />
 
             {/* Text Tool */}
@@ -527,6 +569,7 @@ export function TopNav(): JSX.Element {
                   type="button"
                   className={isShapeActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${shapeDropdownTool.label}${shapeDropdownTool.shortcut ? ` (${shapeDropdownTool.shortcut})` : ''}`}
+                  data-tour="shape-tool"
                 >
                   <Icon name={shapeDropdownTool.icon} size="md" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
@@ -782,6 +825,7 @@ export function TopNav(): JSX.Element {
                   type="button"
                   className={styles.exportBtn}
                   title="Export composition…"
+                  data-tour="export"
                   onClick={() => openExportDialog(compDuration, compFps)}
                 >
                   <Icon name="export" size="md" weight="bold" />

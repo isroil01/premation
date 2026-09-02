@@ -250,3 +250,218 @@ export function presetSh(id: EnvironmentPresetId): Float32Array {
   }
   return sh;
 }
+
+// ── Real images: HDRI / equirect stills ──────────────────────────────
+
+/**
+ * The largest equirect the projector ever walks.
+ *
+ * Band-2 SH holds 9 coefficients; a 4K HDRI carries ~8M samples to fit them,
+ * which is ~500× the work for a result that differs in the fourth decimal.
+ * Everything is box-averaged down to this first — and averaging is the RIGHT
+ * downsample here, because the projection is an integral: a box average is
+ * exactly the partial sum it would have computed over that footprint.
+ */
+export const ENV_PROJECT_MAX_WIDTH = 256;
+export const ENV_PROJECT_MAX_HEIGHT = 128;
+
+/** sRGB electro-optical transfer — 8-bit files are ENCODED, not linear. */
+function srgbToLinear(c: number): number {
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+
+export interface ShProjectEquirectOptions {
+  /**
+   * The samples are already LINEAR light. EXR float planes are (see
+   * `@core/media/floatExr`); an 8-bit PNG/JPG is sRGB-encoded and has to be
+   * linearised before it can be integrated, or the sky comes out washed out
+   * and the ground bounce far too bright.
+   *
+   * Defaults to `true` for Float32Array input and `false` for 8-bit input,
+   * which is the right guess for every path in this app.
+   */
+  isLinear?: boolean;
+}
+
+/**
+ * Project an arbitrary equirectangular image onto SH9.
+ *
+ * Accepts interleaved RGB or RGBA (the stride is inferred from the length), in
+ * either float linear or 8-bit sRGB, and reuses {@link shProject} for the
+ * integral itself so there is exactly one projector and not two.
+ */
+export function shProjectEquirect(
+  pixels: Float32Array | Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  opts: ShProjectEquirectOptions = {},
+): Float32Array {
+  const w = Math.max(1, Math.floor(width));
+  const h = Math.max(1, Math.floor(height));
+  const eightBit = !(pixels instanceof Float32Array);
+  // 3 (RGB) or 4 (RGBA); anything else is a malformed buffer and is clamped to
+  // 3 rather than read out of bounds.
+  const stride = Math.max(3, Math.min(4, Math.floor(pixels.length / (w * h)) || 3));
+  const isLinear = opts.isLinear ?? !eightBit;
+  const scale = eightBit ? 1 / 255 : 1;
+
+  const outW = Math.min(ENV_PROJECT_MAX_WIDTH, w);
+  const outH = Math.min(ENV_PROJECT_MAX_HEIGHT, h);
+  const data = new Float32Array(outW * outH * 3);
+  for (let j = 0; j < outH; j++) {
+    const y0 = Math.floor((j * h) / outH);
+    const y1 = Math.max(y0 + 1, Math.floor(((j + 1) * h) / outH));
+    for (let i = 0; i < outW; i++) {
+      const x0 = Math.floor((i * w) / outW);
+      const x1 = Math.max(x0 + 1, Math.floor(((i + 1) * w) / outW));
+      let r = 0, g = 0, b = 0, n = 0;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const o = (y * w + x) * stride;
+          let cr = (pixels[o] ?? 0) * scale;
+          let cg = (pixels[o + 1] ?? 0) * scale;
+          let cb = (pixels[o + 2] ?? 0) * scale;
+          // Linearise BEFORE averaging: averaging encoded values and decoding
+          // afterwards is a different (and wrong) number.
+          if (!isLinear) { cr = srgbToLinear(cr); cg = srgbToLinear(cg); cb = srgbToLinear(cb); }
+          r += cr; g += cg; b += cb; n++;
+        }
+      }
+      const o = (j * outW + i) * 3;
+      data[o] = r / n; data[o + 1] = g / n; data[o + 2] = b / n;
+    }
+  }
+  return shProject({ width: outW, height: outH, data });
+}
+
+// ── Sky selection: a preset id, or `asset:<assetId>` ─────────────────
+
+/**
+ * What an environment light's `envPreset` prop may hold.
+ *
+ * ONE prop rather than a second `envAssetId` beside it, because the two would
+ * otherwise be able to disagree (a preset id AND an asset id both set, with
+ * nothing saying which wins) and every reader would have to invent the same
+ * precedence rule. A prefixed string has exactly one meaning at a time, and
+ * every document written before images existed keeps a bare preset id — so old
+ * scenes read back byte-identical.
+ */
+export const ENV_ASSET_PREFIX = 'asset:';
+export type EnvironmentSky = EnvironmentPresetId | `asset:${string}`;
+/** The sky an environment light falls back to: unset, unknown, or unloadable. */
+export const DEFAULT_ENVIRONMENT_PRESET: EnvironmentPresetId = 'studio';
+
+export function isEnvironmentPresetId(v: unknown): v is EnvironmentPresetId {
+  return v === 'studio' || v === 'sky' || v === 'sunset';
+}
+
+export function isEnvironmentSky(v: unknown): v is EnvironmentSky {
+  return isEnvironmentPresetId(v) || (typeof v === 'string' && v.startsWith(ENV_ASSET_PREFIX));
+}
+
+/**
+ * The asset id a sky names, or null when it names a procedural preset.
+ *
+ * An EMPTY string is a real state, distinct from null: "Image… was chosen but
+ * no asset has been picked yet", which the inspector has to be able to display
+ * without the menu snapping back to a preset.
+ */
+export function environmentSkyAssetId(sky: unknown): string | null {
+  return typeof sky === 'string' && sky.startsWith(ENV_ASSET_PREFIX)
+    ? sky.slice(ENV_ASSET_PREFIX.length)
+    : null;
+}
+
+export function environmentSkyForAsset(assetId: string): EnvironmentSky {
+  return `${ENV_ASSET_PREFIX}${assetId}`;
+}
+
+// ── Derived-rig cache, keyed the way the preset SH is ────────────────
+
+/** assetId → its projected SH. Filled by whoever decodes the image. */
+const assetShCache = new Map<string, Float32Array>();
+/** Bumped whenever `assetShCache` changes, so the rig cache keys go stale. */
+let assetShEpoch = 0;
+
+const RIG_CACHE_MAX = 512;
+const rigCache = new Map<string, readonly EnvRigLight[]>();
+
+type EnvironmentAssetLoader = (assetId: string) => void;
+let assetLoader: EnvironmentAssetLoader | null = null;
+
+/**
+ * Register the async decoder that turns an image asset into SH.
+ *
+ * The projection needs a decoded image, which needs the asset library and the
+ * DOM — neither of which belongs in this module, and both of which would make
+ * its unit tests drag half the app in. So the seam is a callback: the loader
+ * (see `environmentImage.ts`) registers itself, and this module stays pure
+ * maths plus two caches. With no loader registered an image sky simply falls
+ * back to the default preset — which is also what a headless test wants.
+ */
+export function registerEnvironmentAssetLoader(fn: EnvironmentAssetLoader | null): void {
+  assetLoader = fn;
+}
+
+export function setEnvironmentAssetSh(assetId: string, sh: Float32Array): void {
+  assetShCache.set(assetId, sh);
+  assetShEpoch++;
+  rigCache.clear();
+}
+
+export function hasEnvironmentAssetSh(assetId: string): boolean {
+  return assetShCache.has(assetId);
+}
+
+/** Drop one asset's projection (or all of them) — re-import, or a test. */
+export function clearEnvironmentAssetSh(assetId?: string): void {
+  if (assetId === undefined) assetShCache.clear();
+  else assetShCache.delete(assetId);
+  assetShEpoch++;
+  rigCache.clear();
+}
+
+/**
+ * The SH probe for a sky, preset or image.
+ *
+ * An image whose projection is not in hand yet kicks the loader once and
+ * returns the default preset for THIS frame; when the decode lands,
+ * `setEnvironmentAssetSh` invalidates the rig cache and the next frame picks
+ * the real sky up. Never throws, never blocks — a missing or broken file
+ * degrades to a neutral studio sky rather than to an unlit scene.
+ */
+export function environmentSh(sky: unknown): Float32Array {
+  const assetId = environmentSkyAssetId(sky);
+  if (assetId === null) {
+    return presetSh(isEnvironmentPresetId(sky) ? sky : DEFAULT_ENVIRONMENT_PRESET);
+  }
+  const cached = assetShCache.get(assetId);
+  if (cached) return cached;
+  if (assetId !== '') assetLoader?.(assetId);
+  return presetSh(DEFAULT_ENVIRONMENT_PRESET);
+}
+
+/**
+ * The derived rig for a sky at a rotation and intensity — memoised.
+ *
+ * `presetSh` already keeps the PROJECTION off the per-frame path; this keeps
+ * the six irradiance evaluations and the hex encoding off it too, which is
+ * what makes an image sky (whose probe a keyframed rotation re-samples every
+ * frame) cost the same as a preset one. Pure function, so the cache cannot
+ * change what is rendered — only how often it is computed.
+ */
+export function environmentRigFor(
+  sky: unknown,
+  intensityPct: number,
+  rotationDeg: number,
+): readonly EnvRigLight[] {
+  const key = `${String(sky)}|${intensityPct}|${rotationDeg}|${assetShEpoch}`;
+  const hit = rigCache.get(key);
+  if (hit) return hit;
+  const rig = environmentRig(environmentSh(sky), intensityPct, rotationDeg);
+  // Bounded: a keyframed rotation mints a key per frame, so this is a memo with
+  // a ceiling, not a leak.
+  if (rigCache.size >= RIG_CACHE_MAX) rigCache.clear();
+  rigCache.set(key, rig);
+  return rig;
+}

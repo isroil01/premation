@@ -32,6 +32,13 @@ import { openProjectPath } from '@core/project/openProjectPath';
 import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectIO';
 import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import {
+  runNewCompFromClips,
+  runAssembleFromFootage,
+  selectedVideoLayerId,
+  type AssembleTarget,
+} from '@layout/Assets/footageAssembly';
+import { selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
@@ -81,6 +88,7 @@ import {
 } from '@core/animation/smartAnimateCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { buildIk3DCommands } from '@core/scene/ikCommands';
+import { buildBakeCommands } from '@core/simulation/bakeCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
@@ -124,7 +132,6 @@ import { CommandPalette } from '@layout/CommandPalette';
 import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
 import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers, insert3DPrimitive } from '@core/scene/sceneInsert';
-import { assetIdOf } from '@core/source/sourceInfo';
 import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { findNavTarget } from '@core/workspace/cameraNav';
@@ -263,6 +270,7 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'rotate', label: 'Rotate Tool', chord: { key: 'w' } },
     { tool: 'pan-behind', label: 'Pan Behind (Anchor Point) Tool', chord: { key: 'y' } },
     { tool: 'pen', label: 'Pen Tool', chord: { key: 'g' } },
+    { tool: 'knife', label: 'Knife Tool', chord: { key: 'k' } },
     { tool: 'brush', label: 'Brush Tool' },
     { tool: 'text', label: 'Text Tool', chord: { key: 't', meta: true } },
     { tool: 'shape', label: 'Rectangle Tool', chord: { key: 'q' } },
@@ -528,17 +536,27 @@ function buildPrimitive3DCommands(): ReadonlyArray<Command> {
  * The first selected layer whose source is a VIDEO asset — Scene Edit
  * Detection's only valid subject. A still has no cuts, and an audio layer has
  * no frames to compare.
+ *
+ * Now shared with Assemble from Footage, which subjects the same layer to the
+ * same detector; it lives beside that flow so the two cannot drift into
+ * disagreeing about what a video layer is.
  */
-function selectedVideoNodeId(): string | null {
-  const assets = useAssetStore.getState().assets;
-  for (const id of useSelectionStore.getState().ids) {
-    const node = defaultSceneGraph.getNode(id);
-    if (!node) continue;
-    const assetId = assetIdOf(node);
-    if (!assetId) continue;
-    if (assets.find((a) => a.id === assetId)?.type === 'video') return id;
-  }
-  return null;
+const selectedVideoNodeId = selectedVideoLayerId;
+
+/**
+ * What Assemble from Footage would act on: a selected video LAYER first, and
+ * otherwise a video item selected in the Assets panel.
+ *
+ * Layer first because a layer is a stronger statement of intent — the user is
+ * looking at the comp, pointing at the clip in it. The panel selection is the
+ * fallback that makes the command work from the Assets context menu, where
+ * right-clicking a row has already made that row the selection.
+ */
+function assembleTarget(): AssembleTarget | null {
+  const nodeId = selectedVideoLayerId();
+  if (nodeId) return { kind: 'layer', nodeId };
+  const asset = selectedPanelAssets().find((a) => a.type === 'video');
+  return asset ? { kind: 'asset', asset } : null;
 }
 
 /**
@@ -918,7 +936,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
     {
       /** Stagger keyframe timing across selected animated layers (does not move bars). */
       id: asCommandId('animation.sequenceLayers'),
-      label: 'Stagger Animations (0.3s)',
+      label: 'Stagger Animations…',
       icon: 'layers',
       enabled: () => useSelectionStore.getState().ids.length >= 2,
       execute: () => {
@@ -1196,6 +1214,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildSmartAnimateCommands(),
     ...buildReframeCommands(),
     ...buildIk3DCommands(),
+    ...buildBakeCommands(),
   ];
 }
 
@@ -1227,6 +1246,47 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         } catch (e) {
           console.error(e);
         }
+      },
+    },
+    {
+      /**
+       * The rough-cut gesture: pick takes in the bin, get a timeline of them.
+       *
+       * Everything under it already shipped — `createCompositionFromFootage`
+       * for the comp, `sequenceLayerBars` for the layout, `writeCrossfades` for
+       * the dissolve — and doing it by hand was six gestures and six undo
+       * entries, half of which land every clip stacked at frame 0.
+       */
+      id: asCommandId('comp.newFromSelectedClips'),
+      label: 'New Composition from Selected Clips…',
+      icon: 'component',
+      enabled: () => selectedPanelFootage().length > 0,
+      execute: () => {
+        const assets = selectedPanelFootage();
+        if (assets.length === 0) {
+          notify('Select footage in the Assets panel first', 'warning');
+          return;
+        }
+        void runNewCompFromClips(assets);
+      },
+    },
+    {
+      /**
+       * Scene Edit Detection, the splits, the culling and the sequencing as one
+       * act — see `@core/composition/assembleFromFootage`. Acts on a selected
+       * video layer, or on a video item selected in the Assets panel.
+       */
+      id: asCommandId('comp.assembleFromFootage'),
+      label: 'Assemble from Footage…',
+      icon: 'scissors',
+      enabled: () => assembleTarget() !== null,
+      execute: () => {
+        const target = assembleTarget();
+        if (!target) {
+          notify('Select a video layer, or a video item in the Assets panel', 'warning');
+          return;
+        }
+        void runAssembleFromFootage(target);
       },
     },
     ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => ({
@@ -2401,6 +2461,38 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             enabled: () => true,
             isChecked: () => useGuidesStore.getState().rulers,
             execute: () => useGuidesStore.getState().toggleRulers(),
+          });
+          registry.register({
+            /*
+              Use Proxies, comp-wide.
+
+              The preference was always global — one `usePreferenceStore` flag
+              that both viewport hosts read — but the only switch for it sat in
+              the Inspector's Media section, which appears only while a footage
+              LAYER is selected. So a project-wide preview setting could be
+              changed only by first selecting a video, and there was no way at
+              all to see whether it was on.
+
+              Deliberately still that preference and not a new store: the export
+              invariant is enforced by POLARITY (see `@core/assets/proxy`) —
+              only the interactive viewport passes `useProxies` into a snapshot
+              build, and every output path is statically forbidden from even
+              naming it. A second home for the flag would be a second thing that
+              could grow an output-path reader.
+            */
+            id: asCommandId('view.useProxies'), label: 'Use Proxies', icon: 'media',
+            enabled: () => true,
+            isChecked: () => usePreferenceStore.getState().useProxies,
+            execute: () => {
+              const next = !usePreferenceStore.getState().useProxies;
+              usePreferenceStore.getState().set('useProxies', next);
+              notify(
+                next
+                  ? 'Using proxies where they exist — exports always use the originals'
+                  : 'Previewing the original media',
+                'info',
+              );
+            },
           });
           registry.register({
             // WorkspaceController.fitSelection existed with ZERO consumers —

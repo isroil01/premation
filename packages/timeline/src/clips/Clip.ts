@@ -152,3 +152,85 @@ export class Clip {
     return new Clip(data);
   }
 }
+
+/**
+ * ROLL — the two-sided trim at a cut.
+ *
+ * A roll moves the CUT POINT between two abutting clips: the left clip's out
+ * and the right clip's in travel together, so the pair's combined length on the
+ * timeline never changes and no gap ever opens. That is the whole difference
+ * between a roll and the two trims it looks like — trimming the left clip alone
+ * leaves a hole, and trimming both by hand is two undo entries and two chances
+ * to be one frame out.
+ *
+ * It lives here, beside {@link Clip.slip} and {@link Clip.trimEnd}, because it
+ * is the same kind of thing: pure frame geometry over a pair of clips, with no
+ * knowledge of tracks, layers, scene nodes or history. The engine and the UI
+ * both need the LIMITS before they need the edit — the timeline draws a HUD
+ * while you drag and has to know where the roll stops — so the clamp is
+ * exported on its own rather than hidden inside the mutation.
+ */
+
+export interface RollLimits {
+  /** Most negative delta (frames) the cut may take. `<= 0`. */
+  min: number;
+  /** Most positive delta (frames) the cut may take. `>= 0`. */
+  max: number;
+}
+
+/**
+ * How far the cut between `left` and `right` may travel, in frames.
+ *
+ * Four things bound it, and every one of them has bitten a naive
+ * implementation:
+ *
+ *   • the left clip's remaining TAIL HANDLE — source after its out point. An
+ *     unbounded source (`sourceDuration === null`: shapes, text, solids) has an
+ *     infinite one, which is why this is not simply `sourceDuration - sourceOut`.
+ *   • the right clip's remaining HEAD HANDLE — source before its in point, i.e.
+ *     `sourceIn`, again infinite when unbounded.
+ *   • both clips must keep at least `minDuration` frames on the timeline.
+ *   • the cut may not cross frame 0.
+ *
+ * `left.end` is assumed to be the cut; callers that allow a one-frame seam pass
+ * clips that abut within that tolerance and get the same answer.
+ */
+export function rollLimits(left: Clip, right: Clip, minDuration = 1): RollLimits {
+  const INF = Number.POSITIVE_INFINITY;
+  // Growing the left clip eats its tail handle; growing the right clip's head
+  // (= shrinking it from the left) is bounded by its own length.
+  const leftTailHandle = left.sourceDuration === null ? INF : Math.max(0, left.sourceDuration - left.sourceOut);
+  const rightRoom = Math.max(0, right.duration - minDuration);
+  const max = Math.min(leftTailHandle, rightRoom);
+
+  const rightHeadHandle = right.sourceDuration === null ? INF : Math.max(0, right.sourceIn);
+  const leftRoom = Math.max(0, left.duration - minDuration);
+  const floor = Math.max(0, right.start); // the cut cannot go negative
+  const back = Math.min(leftRoom, rightHeadHandle, floor);
+  // `-0` is a real value in JS and `-0 !== 0` under Object.is, so a pinned
+  // limit of zero would compare unequal to the zero every caller writes.
+  const min = back === 0 ? 0 : -back;
+
+  return { min, max };
+}
+
+/**
+ * Apply a roll, clamped by {@link rollLimits}. Returns the delta that was
+ * ACTUALLY applied — 0 when the cut is already against a limit — so a caller
+ * can skip an empty history entry and a HUD can show the truth rather than the
+ * pointer's wish.
+ *
+ * Mutates both clips. `deltaFrames` is truncated: clips are frames, and a
+ * fractional roll would desynchronise the pair by a sub-frame that the next
+ * integer edit then rounds away in one direction only.
+ */
+export function rollClips(left: Clip, right: Clip, deltaFrames: number, minDuration = 1): number {
+  const { min, max } = rollLimits(left, right, minDuration);
+  const d = Math.trunc(Math.max(min, Math.min(max, deltaFrames)));
+  if (d === 0) return 0;
+  // Order matters only for readability — the two calls are independent, and
+  // each was clamped above so neither can clip the other's result.
+  left.trimEnd(left.end + d, minDuration);
+  right.trimStart(right.start + d, minDuration);
+  return d;
+}

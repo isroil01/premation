@@ -26,10 +26,14 @@ import {
   type MoveAnchorPayload,
   type UpdateNodePathPayload,
   type UpdateMaskPathPayload,
+  type CutPathsPayload,
   Mat,
   Rect,
   OBox,
 } from '@motion/workspace';
+import { cutPathsWithLine, runFromPolygon, type CutSubpath, type CutPoint } from '@core/geometry/pathCut';
+import { shapeOutline } from '@core/scene/pathOps';
+import { useHistoryStore } from '@stores/historyStore';
 import { readNodeAnchor, moveAnchorCompensated } from '@core/scene/anchor';
 import { enableContinuousRasterByDefault } from '@core/scene/continuousRaster';
 import { SIZE } from '@core/rendering/buildSnapshot';
@@ -591,7 +595,7 @@ function transformComponentId(node: SceneNode): ID | null {
 }
 
 import { worldMatrixOf } from '@core/scene/worldTransform';
-import { localTransformAt, parentWorld2DAt } from '@core/scene/layerSpace';
+import { localTransformAt, parentWorld2DAt, world2DAt } from '@core/scene/layerSpace';
 import { recordMotionSketchSample, motionSketchNodeId } from '@core/animation/motionSketch';
 import { Matrix } from '@motion/scene';
 
@@ -1377,6 +1381,134 @@ function updateMaskPathCmd(payload: UpdateMaskPathPayload): void {
   gestureSceneBump();
 }
 
+// ── Knife ───────────────────────────────────────────────────────────
+
+/** Normalise a stored anchor: a missing handle collapses onto its vertex. */
+function toCutPoint(p: {
+  x: number; y: number;
+  inX?: number; inY?: number; outX?: number; outY?: number;
+}): CutPoint {
+  return {
+    x: p.x, y: p.y,
+    inX: p.inX ?? p.x, inY: p.inY ?? p.y,
+    outX: p.outX ?? p.x, outY: p.outY ?? p.y,
+  };
+}
+
+/**
+ * A shape layer's outline as runs the knife can cut, in LOCAL space.
+ *
+ * Three storage shapes, in the order `buildSnapshot` resolves them, so the
+ * knife cuts the outline the renderer is actually drawing:
+ *   1. `subpaths` — the multi-run form (an SVG import, a previous cut);
+ *   2. `points` — the single-run shorthand;
+ *   3. neither — a PRIMITIVE that has never been converted to a path.
+ *
+ * Case 3 is the one that makes the tool feel finished: a freshly drawn
+ * rectangle has no stored points at all, and a knife that refused to cut the
+ * shapes the shape tools produce would be a knife for imported art only.
+ */
+function readCutRuns(node: SceneNode): CutSubpath[] | null {
+  const geom = node.components.find((c) => c.type === 'Geometry');
+  const subs = geom?.props.subpaths as
+    | Array<{ points?: Array<Parameters<typeof toCutPoint>[0]>; open?: boolean }>
+    | undefined;
+  if (Array.isArray(subs) && subs.length > 0) {
+    const runs = subs
+      .map((r) => ({ points: (r.points ?? []).map(toCutPoint), open: r.open === true }))
+      .filter((r) => r.points.length >= 2);
+    return runs.length > 0 ? runs : null;
+  }
+  const pts = geom?.props.points as Array<Parameters<typeof toCutPoint>[0]> | undefined;
+  if (Array.isArray(pts) && pts.length >= 2) {
+    return [{ points: pts.map(toCutPoint), open: geom?.props.open === true }];
+  }
+  const g = readGeometry(node);
+  if (!g) return null;
+  // Only the two primitives whose outline `shapeOutline` actually knows. A
+  // polygon or a star would come back as a rectangle, and cutting a shape into
+  // halves of a shape it isn't is worse than not cutting it.
+  const primitive = g.ellipse ? 'ellipse' : 'rect';
+  const shapeType = node.components.find((c) => c.type === 'Transform')?.props.shapeType;
+  if (typeof shapeType === 'string' && shapeType !== 'rect' && shapeType !== 'rectangle' && shapeType !== 'ellipse') {
+    return null;
+  }
+  const outline = shapeOutline(primitive, g.width, g.height, 48);
+  return outline.length >= 3 ? [runFromPolygon(outline)] : null;
+}
+
+/**
+ * Knife — split each targeted layer's outline along a world-space line.
+ *
+ * ONE history entry for the whole gesture, even across several layers: the user
+ * made one drag, and an undo that put back three of five cut layers would be a
+ * worse state than either end of it. `flush` first, for the same reason every
+ * other structural edit does it — a coalescing drag still open would otherwise
+ * absorb this into itself.
+ *
+ * The halves stay on the SAME layer, as sibling runs, which is what the path
+ * model already expresses (it is how a boolean's islands and an imported
+ * icon's counters are stored). Splitting into sibling LAYERS would need new
+ * ids, and layer ids are not stable across a session — so the pieces would be
+ * unreachable by anything holding a reference, expressions included.
+ */
+function cutPaths(payload: CutPathsPayload): void {
+  const time = getTimelineController().currentSeconds;
+  const touched: string[] = [];
+  useHistoryStore.getState().flush();
+
+  for (const rawId of payload.ids) {
+    const id = rawId as string;
+    const node = defaultSceneGraph.getNode(id as ID);
+    if (!node || node.locked) continue;
+    if (readNodeKind(node) !== 'shape') continue;
+    // An animated outline wins over stored geometry every frame, so a cut
+    // written to the static props would simply not appear. Silently doing
+    // nothing is better than writing geometry that never renders.
+    if (defaultAnimation.isAnimated(id, 'path.points')) continue;
+
+    const runs = readCutRuns(node);
+    if (!runs) continue;
+
+    // The drag is measured in WORLD space; stored points are local and centred
+    // on the layer's own origin. One inverse per layer, so a single drag cuts a
+    // rotated child and its unrotated parent along the same visible line.
+    const inv = Matrix.invert(world2DAt(id, time));
+    const a = Matrix.transformPoint(inv, payload.a);
+    const b = Matrix.transformPoint(inv, payload.b);
+
+    const cut = cutPathsWithLine(runs, a, b);
+    // Identity: `cutPathsWithLine` hands back the input array when the line
+    // crossed nothing, so a miss costs no write and no undo entry.
+    if (cut === runs) continue;
+
+    const geom = node.components.find((c) => c.type === 'Geometry');
+    const subpaths = cut.map((r) => ({ points: r.points, open: r.open }));
+    if (geom) {
+      defaultSceneGraph.writeProp(id as ID, geom.id, 'subpaths', subpaths);
+      // `points` and `subpaths` are mutually exclusive (raster/subpaths.ts);
+      // leaving the old flat run behind would let the two disagree about the
+      // layer's shape, with the fill drawn from one and the stroke the other.
+      defaultSceneGraph.writeProp(id as ID, geom.id, 'points', undefined);
+    } else {
+      defaultSceneGraph.addComponent(id as ID, {
+        id: `${id}_g`,
+        type: 'Geometry',
+        props: { subpaths },
+      });
+    }
+    // A cut rectangle is no longer a rectangle. Without this the renderer keeps
+    // drawing the primitive from width/height and the cut is invisible.
+    const transform = node.components.find((c) => c.type === 'Transform');
+    if (transform) defaultSceneGraph.writeProp(id as ID, transform.id, 'shapeType', 'path');
+    touched.push(id);
+  }
+
+  if (touched.length === 0) return;
+  bumpScene();
+  useHistoryStore.getState().record(touched.length > 1 ? `Knife (${touched.length} layers)` : 'Knife');
+}
+
 /**
  * @param viewOf Which view the gestures driving this port come from. Omit for
  *   the main viewport (follows the store). A secondary pane passes its own, so a
@@ -1411,6 +1543,9 @@ export function createCommandPort(viewOf?: () => Camera3dMode): CommandPort {
           break;
         case WorkspaceCommandType.UpdateMaskPath:
           updateMaskPathCmd(command.payload as UpdateMaskPathPayload);
+          break;
+        case WorkspaceCommandType.CutPaths:
+          cutPaths(command.payload as CutPathsPayload);
           break;
         default:
           break;

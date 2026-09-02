@@ -56,7 +56,11 @@ import { readNodeMaterial } from '@core/scene/material';
 import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
 import { extrusionOutlineFor, extrusionMeshFor } from '@core/scene/extrusionMesh';
 import { readNodeModelRef, modelPrimitiveFor } from '@core/scene/modelMesh';
-import { environmentRig, presetSh } from '@core/scene/environmentLight';
+import { environmentRigFor } from '@core/scene/environmentLight';
+// Side-effect import: registers the image → SH decoder, so an environment light
+// pointed at an HDRI resolves it on the first frame that asks rather than only
+// when the inspector happens to be open. See environmentImage.ts.
+import '@core/scene/environmentImage';
 import { isColorEffect } from '@core/effects/effectColorMatrix';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { faceEffectsFor } from '@core/scene/faceEffects';
@@ -1569,7 +1573,7 @@ export function buildSnapshot(
       const envRot = av.get('envRotation') ?? lt.envRotation;
       const envIntensity = av.get('intensity') ?? lt.intensity;
       const centre = { x: comp.width / 2, y: comp.height / 2, z: 0 };
-      for (const rl of environmentRig(presetSh(lt.envPreset), envIntensity, envRot)) {
+      for (const rl of environmentRigFor(lt.envPreset, envIntensity, envRot)) {
         if (rl.kind === 'ambient') {
           sceneLights.push({
             ...lt,

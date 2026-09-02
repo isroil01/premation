@@ -238,3 +238,61 @@ describe('dragging the handle pulls focus', () => {
     expect(focusProp('cam1')).toBeCloseTo(2000, 3);
   });
 });
+
+/**
+ * The same overlay mounted in a 2-up / 4-up secondary pane.
+ *
+ * Everything the gates above describe is stated per VIEW, and until the view
+ * was a parameter there could only ever be one: the mode came off
+ * `guidesStore.camera3dMode` and the transform off the workspace controller, so
+ * an instance inside a Top pane would have drawn the main viewport's Active
+ * Camera geometry on the pane's pixels. These pin the two halves of the fix —
+ * the mode the gates read, and the transform the plane is placed with.
+ */
+describe('bound to a secondary pane’s view', () => {
+  /** The pane's transform: a different zoom AND a different origin. */
+  const PANE_VIEW = { scale: 2, offsetX: 100, offsetY: 50 };
+
+  it('draws for the pane’s own mode while the main viewport suppresses it', () => {
+    defaultSceneGraph.addNode(cameraNode('cam1'));
+    // The MAIN viewport is looking through the camera, where the plane is
+    // suppressed — see the header note. A Top pane is exactly where you would
+    // then want to pull focus, and it must not inherit that suppression.
+    useGuidesStore.getState().setCamera3dMode('active');
+
+    const main = render(<FocusPlaneOverlay />);
+    act(() => undefined);
+    expect(planes(main.container)).toHaveLength(0);
+
+    const pane = render(<FocusPlaneOverlay mode="top" getView={() => PANE_VIEW} />);
+    act(() => undefined);
+    expect(planes(pane.container).length).toBeGreaterThan(0);
+    expect(handle(pane.container)).not.toBeNull();
+  });
+
+  it('suppresses itself in an Active Camera pane, whatever the main viewport shows', () => {
+    defaultSceneGraph.addNode(cameraNode('cam1'));
+    useGuidesStore.getState().setCamera3dMode('top');
+    const pane = render(<FocusPlaneOverlay mode="active" getView={() => PANE_VIEW} />);
+    act(() => undefined);
+    expect(planes(pane.container)).toHaveLength(0);
+  });
+
+  it('places the handle with the pane’s transform, not the controller’s', () => {
+    defaultSceneGraph.addNode(cameraNode('cam1'));
+    // The mocked controller view is 1:1 and unpanned, so the main instance's
+    // handle sits at the raw comp-space projection …
+    const main = render(<FocusPlaneOverlay />);
+    const pane = render(<FocusPlaneOverlay mode="top" getView={() => PANE_VIEW} />);
+    act(() => undefined);
+
+    const at = (c: HTMLElement): { x: number; y: number } => {
+      const h = handle(c)!;
+      return { x: Number(h.getAttribute('cx')), y: Number(h.getAttribute('cy')) };
+    };
+    const compPt = at(main.container);
+    // … and the pane's is the same point through the PANE's comp → canvas map.
+    expect(at(pane.container).x).toBeCloseTo(compPt.x * PANE_VIEW.scale + PANE_VIEW.offsetX, 6);
+    expect(at(pane.container).y).toBeCloseTo(compPt.y * PANE_VIEW.scale + PANE_VIEW.offsetY, 6);
+  });
+});

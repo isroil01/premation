@@ -120,7 +120,7 @@ export function SceneControls(): JSX.Element {
   ];
 
   return (
-    <div className={styles.sceneControls}>
+    <div className={styles.sceneControls} data-tour="scene-3d">
       {/* Camera navigation — Alt uses one temporarily, C cycles. */}
       <Dropdown
         placement="bottom-start"

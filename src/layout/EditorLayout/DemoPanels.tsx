@@ -20,6 +20,7 @@ import { PluginsMarketplacePanel } from '@layout/Plugins/PluginsMarketplacePanel
 import { TreeView, type TreeNode } from '@components/TreeView';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { openSourceMonitor } from '@stores/sourceMonitorStore';
 import { EmptyState } from '@components/EmptyState';
 import { Input } from '@components/Input';
 import { Icon, type IconName } from '@components/Icon';
@@ -37,21 +38,26 @@ import { ParagraphPanel } from '@layout/Inspector/ParagraphPanel';
 import { AlignPanel } from '@layout/Inspector/AlignPanel';
 import { SwatchesPanel } from '@layout/Swatches';
 import { InfoAudioPanel } from '@layout/Inspector/InfoAudioPanel';
+import { ScopesPanel } from '@layout/Scopes';
 import { PreviewPanel } from '@layout/Inspector/PreviewPanel';
+import { SourceMonitorPanel } from '@layout/SourceMonitor/SourceMonitorPanel';
 import { TrackerPanel } from '@layout/Inspector/TrackerPanel';
 import { StylePresetsSection } from '@layout/Inspector/StylePresetsSection';
 import { MediaSection } from '@layout/Inspector/MediaSection';
 import { TrackMotionSection } from '@layout/Inspector/TrackMotionSection';
+import { AudioDriverSection, hasAudioDriverSection } from '@layout/Inspector/AudioDriverSection';
 import { SvgSection, RevertSvgRow } from '@layout/Inspector/SvgSection';
 import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { ThreeDControl } from '@layout/Inspector/ThreeDControl';
+import { MaterialSection, hasMaterialSection } from '@layout/Inspector/MaterialSection';
 import { ModelSection } from '@layout/Inspector/ModelSection';
 import { Ik3DSection, isIk3DTip } from '@layout/Inspector/Ik3DSection';
 import { nodeMorphTargetCount } from '@core/scene/modelMorph';
 import { AiChatPanel } from '@layout/AiChat/AiChatPanel';
 import { aiEnabled } from '@core/config/edition';
 import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
+import { PathOpsSection } from '@layout/Inspector/PathOpsSection';
 import { CameraSection } from '@layout/Inspector/CameraSection';
 import { LightSection } from '@layout/Inspector/LightSection';
 import { CustomLayerSection } from '@layout/Inspector/CustomLayerSection';
@@ -79,6 +85,8 @@ import {
 import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
 import { openFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
+import { runNewCompFromClips, runAssembleFromFootage } from '@layout/Assets/footageAssembly';
+import { setPanelAssetSelection } from '@core/composition/assetSelection';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDialog';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
@@ -558,7 +566,7 @@ export function ScenePanel(): JSX.Element {
       noScroll
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'scene' })}
     >
-      <div className={styles.sceneShell}>
+      <div className={styles.sceneShell} data-tour="scene-panel">
       {/* Compositions live here — not in Assets. Assets = media library. */}
       <div className={styles.compSection}>
         <div className={styles.compSectionHead}>
@@ -998,6 +1006,37 @@ export function AssetsPanel(): JSX.Element {
         onSelect: () => { void createCompositionFromFootage(asset); },
       },
       {
+        // The multi-clip counterpart of the row above: the comp still takes the
+        // FIRST clip's size, duration and rate, but every selected clip lands
+        // in it end-to-end rather than stacked at frame 0. Offered for one clip
+        // too — it is then the same comp with an overlap prompt skipped, and an
+        // entry that appears only above some threshold is an entry people stop
+        // looking for.
+        id: 'comp-from-clips',
+        label: many ? `New Composition from ${count} Clips…` : 'New Composition from Clip…',
+        onSelect: () => {
+          const chosen = orderedAssetIds
+            .filter((id) => (many ? selectedAssetIds.has(id) : id === asset.id))
+            .map((id) => assets.find((x) => x.id === id))
+            .filter((a): a is ImportedAsset => !!a && (a.type === 'video' || a.type === 'image'));
+          void runNewCompFromClips(chosen.length > 0 ? chosen : [asset]);
+        },
+      },
+      {
+        // Single VIDEO only: the detector needs frames to compare, and a batch
+        // version would open N comps and run N decode passes off one click.
+        id: 'assemble-from-footage',
+        label: 'Assemble from Footage…',
+        disabled: many || asset.type !== 'video',
+        onSelect: () => { void runAssembleFromFootage({ kind: 'asset', asset }); },
+      },
+      {
+        id: 'open-source-monitor',
+        label: 'Open in Source Monitor',
+        disabled: many || asset.type === 'image',
+        onSelect: () => { openSourceMonitor(asset); },
+      },
+      {
         id: 'preview',
         label: 'Preview…',
         disabled: many,
@@ -1127,6 +1166,21 @@ export function AssetsPanel(): JSX.Element {
     ? assets.find((x) => x.id === [...selectedAssetIds][0]) ?? null
     : null;
 
+  /*
+    Publish the selection for the commands that act on it.
+
+    "New Composition from Selected Clips" and "Assemble from Footage" are
+    registry commands, so they run from the palette and the menu bar — neither
+    of which is inside this component's tree, and neither of which could
+    otherwise learn what is selected here. Published in ROW order, the same
+    order the panel's own "Add N to Composition" uses, so a comp built from a
+    selection matches what the user is looking at.
+  */
+  const selectionKey = orderedAssetIds.filter((id) => selectedAssetIds.has(id)).join(',');
+  useEffect(() => {
+    setPanelAssetSelection(selectionKey ? selectionKey.split(',') : []);
+  }, [selectionKey]);
+
   return (
     <Panel
       id="assets"
@@ -1219,6 +1273,7 @@ export function AssetsPanel(): JSX.Element {
         style={{ padding: '2px 0' }}
         tabIndex={0}
         data-shortcut-claim="delete backspace Ctrl+a Meta+a Ctrl+Alt+g Meta+Alt+g"
+        data-tour="assets-panel"
         onKeyDown={(e) => {
           if (e.key === 'Delete' || e.key === 'Backspace') {
             if (selectedAssetIds.size === 0) return;
@@ -1676,6 +1731,21 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
+  // ── 1b. What it's made of (Material) ─────────────────────────────
+  // Its own section rather than a fourth nesting level inside the 3D switch:
+  // shading model, the responses that model reads, shadows, and the per-face
+  // overrides are one subject, and the reusable material library needs a
+  // surface of its own. Present only while the layer actually has a material
+  // — i.e. it is 3D — so a flat layer's inspector is unchanged.
+  if (kind !== 'group' && kind !== 'null' && hasMaterialSection(nodeId)) {
+    items.push({
+      id: 'material',
+      title: 'Material',
+      icon: 'sphere',
+      content: <MaterialSection nodeId={nodeId} />,
+    });
+  }
+
   // ── 2. What kind of thing it is & How it looks ──────────────────
   /* Plugin custom layer kind */
   const customKind = splitKind(kind);
@@ -1782,6 +1852,17 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
   }
 
   if (kind === 'shape') {
+    // Pathfinder. Open by default: it is a row of four buttons, and the whole
+    // point of moving the booleans out of a right-click submenu was that you
+    // should not have to go looking for them.
+    items.push({
+      id: 'pathOps', title: 'Pathfinder', icon: 'shape',
+      defaultOpen: true,
+      content: <PathOpsSection />,
+    });
+  }
+
+  if (kind === 'shape') {
     items.push({
       id: 'geometry', title: 'Audio Waveform', icon: 'audio',
       defaultOpen: false,
@@ -1846,6 +1927,18 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
           </div>
         </>
       ),
+    });
+  }
+
+  // ── Audio-reactive driver ────────────────────────────────────────
+  // Not gated on layer KIND — any layer with an animatable numeric property
+  // (transform, an effect parameter, a control slider) can follow the music.
+  if (hasAudioDriverSection(nodeId)) {
+    items.push({
+      id: 'audioDriver',
+      title: 'Audio Driver',
+      icon: 'audio',
+      content: <AudioDriverSection nodeId={nodeId} />,
     });
   }
 
@@ -2629,7 +2722,9 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     align: () => <AlignPanel />,
     swatches: () => <SwatchesPanel />,
     info: () => <InfoAudioPanel />,
+    scopes: () => <ScopesPanel />,
     preview: () => <PreviewPanel />,
+    sourceMonitor: () => <SourceMonitorPanel />,
     tracker: () => <TrackerPanel />,
     rig: () => <RigPanel />,
     motion: () => <MotionEditorPanel />,

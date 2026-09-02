@@ -1,12 +1,14 @@
 /**
- * ThreeDControl — the 3D switch and its Geometry/Material Options groups.
+ * ThreeDControl — the 3D switch and its Geometry Options group.
  *
  * Replaces what was the weakest surface in the app: seven unlabeled raw
  * <input type="range"> elements with no value readout, twenty inline style
  * objects, and rows borrowed from ParentControl whose border-bottom stacked
- * into ten ruled hairlines. Every material response is now label + styled
- * slider + scrubbable ValueField (see MaterialRow), and the group reads as a
- * control group, not a table.
+ * into ten ruled hairlines.
+ *
+ * The slider / value / hint rules that served the Material Options block left
+ * with it, into MaterialSection.module.css — a dead rule in a stylesheet is the
+ * same kind of lie as a stale comment, and this file kept none of them.
  */
 
 .stack {
@@ -51,16 +53,9 @@
   text-overflow: ellipsis;
 }
 
-.hint {
-  margin: 2px 0 var(--space-1, 4px);
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-  line-height: 1.5;
-}
-
-/* The compact select — one class for all three dropdowns in this panel, so
-   Casts/Accepts Shadows and Shading stop being two styled selects and one
-   naked OS control. */
+/* The compact select — Bevel Style is the last dropdown left in this panel,
+   and it keeps the styled shape rather than reverting to a naked OS control.
+   MaterialSection carries the same rule for the ones that moved. */
 .select {
   width: 90px;
   height: var(--control-height-xs, 20px);
@@ -77,62 +72,4 @@
 .select:focus-visible {
   outline: 2px solid var(--color-accent, #4a8cff);
   outline-offset: 1px;
-}
-
-/* Slider: a real styled track/thumb instead of the OS default. Chromium is
-   the only engine this app ships in (Electron + the hosted Chrome build),
-   with the -moz twin kept for dev browsers. */
-.slider {
-  -webkit-appearance: none;
-  appearance: none;
-  flex: 0 0 84px;
-  width: 84px;
-  height: var(--control-height-xs, 20px);
-  background: transparent;
-  cursor: ew-resize;
-}
-.slider::-webkit-slider-runnable-track {
-  height: 3px;
-  border-radius: 2px;
-  background: var(--color-border-subtle, rgba(255, 255, 255, 0.14));
-}
-.slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 10px;
-  height: 10px;
-  margin-top: -3.5px;
-  border-radius: 50%;
-  background: var(--color-text-secondary, #bbb);
-  border: 1px solid var(--color-surface-0, #1c1e22);
-  transition: background var(--motion-duration-fast, 120ms) ease;
-}
-.slider:hover::-webkit-slider-thumb,
-.slider:active::-webkit-slider-thumb {
-  background: var(--color-accent, #4a8cff);
-}
-.slider:focus-visible {
-  outline: 2px solid var(--color-accent, #4a8cff);
-  outline-offset: 1px;
-  border-radius: var(--radius-sm, 3px);
-}
-.slider::-moz-range-track {
-  height: 3px;
-  border-radius: 2px;
-  background: var(--color-border-subtle, rgba(255, 255, 255, 0.14));
-}
-.slider::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--color-text-secondary, #bbb);
-  border: 1px solid var(--color-surface-0, #1c1e22);
-}
-
-/* Snug home for the row's ValueField so eight rows of numbers align. */
-.value {
-  flex: 0 0 auto;
-  min-width: 46px;
-  display: flex;
-  justify-content: flex-end;
 }

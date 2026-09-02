@@ -38,7 +38,15 @@ import { paneViewTransform } from './useSceneRefGeometry';
 import { useUIStore } from '@stores/uiStore';
 
 /** Engine tool ids the panes support. Creation/drawing tools stay in the main
- *  viewport, where the full gesture stack (guides, ROI, motion paths) lives. */
+ *  viewport, where the full gesture stack (guides, ROI, motion paths) lives.
+ *
+ *  This gates the ENGINE's tool only. The 3D chrome a pane also carries — the
+ *  transform gizmo and the camera focus plane (see SecondaryViewPane) — is not
+ *  a tool and is deliberately not listed here: in the main viewport those
+ *  handles are live under every tool, and they claim a press ahead of the
+ *  engine with their own capture-phase listener on the pane's box. Adding them
+ *  to this set would only have switched the pane's engine to a tool that does
+ *  not exist. */
 const PANE_TOOLS = new Set(['select', 'move', 'rotate', 'pan-behind', 'direct-select']);
 
 function buttonName(button: number): PointerInput['button'] {

@@ -15,6 +15,7 @@
 import { useMemo } from 'react';
 import { useProjectStore, DEFAULT_GLOBAL_LIGHT, type CompositionSettings } from './projectStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
+import { isEnvironmentPresetId, DEFAULT_ENVIRONMENT_PRESET } from '@core/scene/environmentLight';
 
 export type { CompositionSettings };
 
@@ -96,6 +97,18 @@ export function sanitize(patch: Partial<CompositionSettings>): Partial<Compositi
   }
   if (patch.globalLightAltitude !== undefined) {
     out.globalLightAltitude = clampInt(patch.globalLightAltitude, 0, 90, DEFAULT_GLOBAL_LIGHT.altitude);
+  }
+  // World ▸ default sky. An unknown id would be written straight through to
+  // every light the comp creates, so it is validated against the registry here
+  // rather than trusted and coerced six layers down.
+  if (patch.defaultEnvPreset !== undefined && !isEnvironmentPresetId(patch.defaultEnvPreset)) {
+    out.defaultEnvPreset = DEFAULT_ENVIRONMENT_PRESET;
+  }
+  // World ▸ ground level. Unbounded (a scene can be blocked out anywhere) but
+  // finite — a NaN here would take the whole reference grid off screen with no
+  // way to tell why.
+  if (patch.groundLevel !== undefined) {
+    out.groundLevel = Number.isFinite(patch.groundLevel) ? patch.groundLevel : 0;
   }
   return out;
 }

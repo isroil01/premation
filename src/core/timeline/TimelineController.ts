@@ -23,6 +23,9 @@ import {
   serializeTimeline,
   applySerializedTimeline,
   Marker,
+  Clip,
+  rollClips,
+  rollLimits,
   type SerializedTimeline,
   type Layer,
 } from '@motion/timeline';
@@ -670,6 +673,108 @@ export class TimelineController {
   slideClip(layerId: string, deltaSeconds: number): void {
     const fr = this.timeline.getFrameRate();
     this.timeline.slideLayer(layerId, Math.round(secondsToFrames(deltaSeconds, fr)));
+  }
+
+  // ── Roll (two-sided trim at a cut) ───────────────────────────────
+
+  /**
+   * The two bars that meet at a cut, addressed by SCENE NODE.
+   *
+   * Node ids, not layer ids, for the reason `splitLayerAtFrame` spells out at
+   * length: engine layer ids are re-minted by `syncFromScene` after any scene
+   * restore, so anything that captures one is stale by its own redo. Node ids
+   * live in the document and survive.
+   *
+   * This also has to search, rather than take bar 0 of each node: splitting
+   * again gives a node several bars, and only one pair of them actually meets.
+   * The seam tolerance is one frame, matching `slideLayer`'s `abuts` — split
+   * halves are exact, but a hand-built edit that is a frame apart is still an
+   * edit the user sees as a cut.
+   */
+  private rollPair(leftNodeId: string, rightNodeId: string): { left: Layer; right: Layer } | null {
+    if (leftNodeId === rightNodeId) return null;
+    const lefts = this.getLayersForNode(leftNodeId);
+    const rights = this.getLayersForNode(rightNodeId);
+    let best: { left: Layer; right: Layer } | null = null;
+    let bestGap = Infinity;
+    for (const left of lefts) {
+      for (const right of rights) {
+        const gap = Math.abs(left.end - right.start);
+        if (gap > 1 || gap >= bestGap) continue;
+        best = { left, right };
+        bestGap = gap;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * How far the cut between two nodes' abutting bars may roll, in frames.
+   * Exposed so the timeline can clamp its drag (and its HUD) to the truth
+   * instead of committing an edit the engine will quietly shorten.
+   */
+  rollLimitsFor(leftNodeId: string, rightNodeId: string): { min: number; max: number } | null {
+    const pair = this.rollPair(leftNodeId, rightNodeId);
+    if (!pair) return null;
+    if (pair.left.locked || pair.right.locked) return { min: 0, max: 0 };
+    return rollLimits(pair.left.clip, pair.right.clip);
+  }
+
+  /**
+   * ROLL EDIT — move the cut between two adjacent clips, in FRAMES.
+   *
+   * The left clip's out-point and the right clip's in-point travel together, so
+   * the pair occupies exactly the same span afterwards and no gap opens. Both
+   * ends are bounded by the source handles actually available (see
+   * {@link rollLimits}); asking for more rolls as far as it can and reports
+   * that, rather than failing or inventing footage.
+   *
+   * ONE history entry covers both bars. Doing this as two `trimLayer` calls —
+   * which is what it looks like — costs two undo presses and leaves a gap in
+   * the middle state, so a Ctrl+Z aimed at the roll shows the user a broken
+   * edit before it shows them the old one. The geometry never touches the scene
+   * graph, so this stays on the engine's own history exactly as trim and slide
+   * do, with no snapshot suspension needed.
+   *
+   * Returns the delta actually applied (0 when nothing moved).
+   */
+  rollEdit(leftNodeId: string, rightNodeId: string, deltaFrames: number): number {
+    const pair = this.rollPair(leftNodeId, rightNodeId);
+    if (!pair) return 0;
+    const { left, right } = pair;
+    if (left.locked || right.locked) return 0;
+
+    // Trial on clones: the applied delta has to be known BEFORE the history
+    // entry is opened, so a clamped-to-zero roll pushes nothing at all.
+    const leftTrial = left.clip.clone();
+    const rightTrial = right.clip.clone();
+    const applied = rollClips(leftTrial, rightTrial, deltaFrames);
+    if (applied === 0) return 0;
+
+    const leftPrev = left.clip.toJSON();
+    const rightPrev = right.clip.toJSON();
+    const leftNext = leftTrial.toJSON();
+    const rightNext = rightTrial.toJSON();
+
+    const set = (l: ReturnType<Clip['toJSON']>, r: ReturnType<Clip['toJSON']>): void => {
+      left.clip = Clip.fromJSON(l);
+      right.clip = Clip.fromJSON(r);
+      this.timeline.events.emit('LayerUpdated', { layer: left, changed: 'clip' });
+      this.timeline.events.emit('LayerUpdated', { layer: right, changed: 'clip' });
+    };
+
+    this.timeline.history.run({
+      label: 'Roll Edit',
+      do: () => set(leftNext, rightNext),
+      undo: () => set(leftPrev, rightPrev),
+    });
+    return applied;
+  }
+
+  /** Roll a cut by a duration in SECONDS — the axis the timeline UI works in. */
+  rollEditSeconds(leftNodeId: string, rightNodeId: string, deltaSeconds: number): number {
+    const fr = this.timeline.getFrameRate();
+    return this.rollEdit(leftNodeId, rightNodeId, Math.round(secondsToFrames(deltaSeconds, fr)));
   }
 
   // ── Time Mapping (Absolute ↔ Layer-BAR-Relative) ────────────────

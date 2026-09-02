@@ -10,7 +10,7 @@
  *   scene.json      ← doc.scene            (the scene graph)
  *   animation.json  ← doc.animation        (keyframe tracks + expressions)
  *   timeline.json   ← { timelines, motionBlur, guides }   (time domain + render-affecting)
- *   meta.json       ← { comps, comp, swatches }  (composition settings registry — comp = legacy single — and the project palette)
+ *   meta.json       ← { comps, comp, swatches, materials }  (composition settings registry — comp = legacy single — plus the project palette and material library)
  *   manifest.json   ← BundleManifest       (version + chunk hashes; the index)
  *
  * Every `EditorDocument` field lands in exactly one chunk. `version` is lifted
@@ -50,6 +50,9 @@ interface MetaChunk {
    *  `timeline`: nothing about a swatch changes when the playhead moves, and
    *  parking it in `timeline` would rewrite that chunk on every rename. */
   swatches?: EditorDocument['swatches'];
+  /** The project's named 3D materials — document metadata for the same reason
+   *  the palette is: nothing about a material changes when the playhead moves. */
+  materials?: EditorDocument['materials'];
 }
 
 /** Stable JSON serialization used for every chunk (and thus for its hash). */
@@ -84,7 +87,9 @@ export function encodeBundle(doc: EditorDocument, hash: HashFn = hashString): Mo
   };
   if (!isEmptyChunk(timeline)) chunkText[CHUNK.timeline] = serialize(timeline);
 
-  const meta: MetaChunk = { comps: doc.comps, comp: doc.comp, swatches: doc.swatches };
+  const meta: MetaChunk = {
+    comps: doc.comps, comp: doc.comp, swatches: doc.swatches, materials: doc.materials,
+  };
   if (!isEmptyChunk(meta)) chunkText[CHUNK.meta] = serialize(meta);
 
   const chunks: Partial<Record<ChunkName, string>> = {};
@@ -135,6 +140,8 @@ export function decodeBundle(files: Record<string, string>): EditorDocument {
   // the test is on the key rather than on truthiness — `[]` must survive the
   // round trip or opening a bundle would restore the previous palette.
   if (meta.swatches) doc.swatches = meta.swatches;
+  // Present-but-empty is meaningful here too — see the swatches note above.
+  if (meta.materials) doc.materials = meta.materials;
   return doc;
 }
 

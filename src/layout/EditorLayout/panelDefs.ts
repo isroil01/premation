@@ -104,7 +104,32 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // know about — the same argument that made `marketplace` permanent.
   { id: 'swatches',    title: 'Swatches',  icon: 'palette',     region: 'rightInspector', weight: 4.55, closable: false },
   { id: 'info',        title: 'Info & Audio', icon: 'info',     region: 'rightInspector', weight: 4.5, closable: false },
+  // Video scopes: waveform, RGB parade, vectorscope, histogram. NOT `onDemand`
+  // — an on-demand panel needs something that opens it (see
+  // `onDemandPanelsReachable.test.ts`), and a measurement surface you have to
+  // already know exists before you can find it is a measurement surface nobody
+  // grades against. `waves` is the one unclaimed glyph that reads as a signal
+  // trace; every other candidate (`graph-value`, `graph-speed`) is already the
+  // Graph panel's, and a tab whose icon names another tab is worse than none.
+  { id: 'scopes',      title: 'Scopes',    icon: 'waves',       region: 'rightInspector', weight: 4.45, closable: false },
   { id: 'preview',     title: 'Preview',   icon: 'play',        region: 'rightInspector', weight: 4.4, closable: false },
+  /**
+   * The SOURCE viewer — one clip, before it is in the edit, with in/out points
+   * and the four verbs that put the marked range into a comp.
+   *
+   * NOT `onDemand`, and the reason is the same one that made `marketplace`
+   * permanent: every route that opens an on-demand panel lives in a menu model
+   * or a command registration, and a viewer nobody can see is a viewer nobody
+   * loads a clip into. It is also the panel the Assets context menu and the
+   * footage dialog's "Open in Source Monitor" hand a clip to — `openPanel` on
+   * a registered-but-closed panel would work, but the first time a user meets
+   * this surface should not require already knowing to summon it.
+   *
+   * `tv` because every other glyph in this rail is spoken for and a monitor is
+   * what this is: `video` and `image` name media KINDS (the Assets panel), and
+   * `play` is the Preview panel's.
+   */
+  { id: 'sourceMonitor', title: 'Source',  icon: 'tv',          region: 'rightInspector', weight: 4.42, closable: false },
   { id: 'tracker',     title: 'Tracker',   icon: 'crosshair',   region: 'rightInspector', weight: 4.2, closable: false },
   { id: 'rig',         title: 'Rigging',   icon: 'bone',        region: 'rightInspector', weight: 3.5, closable: false },
   // `magic-wand`, not `zap`: Lightning is the app's speed/quick-action glyph and

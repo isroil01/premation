@@ -423,6 +423,15 @@ export function particlesFromSoA(
     const genScale = s.generation[i]! >= 0.5 ? Math.max(0, cfg.subSizeScale ?? 0.5) : 1;
     out.push({
       ...(trail ? { trail } : {}),
+      // The SoA's own birth index — stable while the slot lives, which is
+      // exactly the span a baked layer covers. See `Particle.index`.
+      //
+      // Children are NEGATED rather than reported raw: `spawnChildInto` salts
+      // them `parentId·977 + k`, which for parent 0 yields 0…15 — the same
+      // numbers the emitter's first sixteen particles carry. Harmless while
+      // the id was only an RNG salt; a straight collision of IDENTITY for
+      // anything that groups samples by it.
+      index: s.generation[i]! >= 0.5 ? -(s.id[i]! + 1) : s.id[i]!,
       z: s.z[i]!,
       x: s.x[i]!,
       y: s.y[i]!,

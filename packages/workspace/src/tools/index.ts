@@ -23,6 +23,7 @@ export {
   PolygonTool,
   StarTool,
   LineTool,
+  KnifeTool,
   PenTool,
   PencilTool,
   BrushTool,

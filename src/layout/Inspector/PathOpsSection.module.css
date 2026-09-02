@@ -1,0 +1,137 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.modeRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modeLabel {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+.modeToggles {
+  display: flex;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.modeBtn {
+  background: transparent;
+  border: none;
+  outline: none;
+  height: var(--control-height-sm);
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  transition: var(--motion-hover-transition);
+}
+
+.modeBtn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.modeBtnActive {
+  composes: modeBtn;
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.opButton {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  height: var(--control-height-row);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.opButton:hover:not(:disabled) {
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.opButton:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+.actions {
+  display: flex;
+  gap: 4px;
+}
+
+.action {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  height: var(--control-height-row);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.action:hover:not(:disabled) {
+  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.action:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* The Knife is a MODE, not a one-shot: while it is armed the button has to
+   look armed, or the only feedback that the next drag will cut is the cursor. */
+.actionActive {
+  composes: action;
+  background: var(--color-accent-subtle, var(--color-surface-3));
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+}

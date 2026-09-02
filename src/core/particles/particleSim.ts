@@ -150,6 +150,21 @@ export interface Particle {
    * path from BEFORE a bounce.
    */
   trail?: Array<{ x: number; y: number }>;
+  /**
+   * Stable identity across frames — the particle's BIRTH INDEX.
+   *
+   * The renderer never needs it: it paints whatever is alive at t and the
+   * array is rebuilt every frame. The BAKE does, because "one layer per
+   * particle" is a claim about a particle persisting through time, and without
+   * an id the only thing linking frame f's list to frame f+1's is array
+   * position — which shifts the moment one particle dies.
+   *
+   * Ballistic: the emission index `i` (children of a death burst carry
+   * `-(parentIndex·977 + k) - 1`, negative so a child can never collide with a
+   * parent index). Stateful: the slot's `id`, which the SoA already keeps.
+   * Optional so every existing producer and consumer is untouched.
+   */
+  index?: number;
 }
 
 export const DEFAULT_PARTICLE_CONFIG: ParticleConfig = {
@@ -359,6 +374,7 @@ function emitDeathBurst(
     const size = Math.max(0, lerp(cfg.sizeStart, cfg.sizeEnd, a01)) * sizeScale;
     const opacity = lerp(cfg.opacityStart, cfg.opacityEnd, a01);
     out.push({
+      index: -(j + 1),
       x: cx,
       y: cy,
       z: deathZ,
@@ -467,6 +483,7 @@ export function simulateParticles(cfg: ParticleConfig, time: number): Particle[]
     }
 
     out.push({
+      index: i,
       x,
       y,
       size,

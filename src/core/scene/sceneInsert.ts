@@ -35,6 +35,11 @@ import { useUIStore } from '@stores/uiStore';
 import { Project3D } from '@motion/scene';
 import { is3DEnabled } from './threeD';
 import type { LightType } from './light';
+import {
+  isEnvironmentPresetId,
+  DEFAULT_ENVIRONMENT_PRESET,
+  type EnvironmentSky,
+} from './environmentLight';
 import { flattenScene, readNodeKind } from './sceneDerive';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { COMP_REF_PROP, wouldCreateCompCycle } from './compInstance';
@@ -1120,8 +1125,11 @@ export interface LightSeed {
   coneFeather?: number;
   /** Cast 2.5D drop-shadows from this light. */
   castShadows?: boolean;
-  /** Environment only: which procedural sky feeds the probe. */
-  envPreset?: 'studio' | 'sky' | 'sunset';
+  /**
+   * Environment only: which sky feeds the probe (a preset id, or
+   * `asset:<assetId>`). Omitted, the composition's World ▸ default sky decides.
+   */
+  envPreset?: EnvironmentSky;
 }
 
 /** Insert a Light layer */
@@ -1144,7 +1152,14 @@ export function insertLight(seed: LightSeed = {}): void {
     if (seed.type === 'spot' && typeof seed.coneAngle === 'number') t.props.lightCone = seed.coneAngle;
     if (seed.type === 'spot' && typeof seed.coneFeather === 'number') t.props.lightConeFeather = seed.coneFeather;
     if (seed.type === 'environment') {
-      t.props.envPreset = seed.envPreset ?? 'studio';
+      // The composition's World ▸ default sky, when the caller did not name one
+      // — so a project working against a particular look does not start every
+      // new probe on Studio and have to re-pick it. Absent = 'studio', the
+      // literal this replaces.
+      t.props.envPreset = seed.envPreset
+        ?? (isEnvironmentPresetId(compSize.defaultEnvPreset)
+          ? compSize.defaultEnvPreset
+          : DEFAULT_ENVIRONMENT_PRESET);
       // Keyframeable spin about the vertical axis (an animated sky).
       t.props.envRotation = 0;
     }

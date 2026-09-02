@@ -27,7 +27,7 @@ export * from './time';
 // ── Entities ──────────────────────────────────────────────────────
 export { Track, type TrackData, type TrackInit, type TrackFlags, type TrackKind } from './tracks/Track';
 export { Layer, type LayerData, type LayerInit } from './layers/Layer';
-export { Clip, type ClipData } from './clips/Clip';
+export { Clip, type ClipData, rollClips, rollLimits, type RollLimits } from './clips/Clip';
 export { Marker, type MarkerData, type MarkerInit, type MarkerScope } from './markers/Marker';
 export { MarkerList } from './markers/MarkerList';
 

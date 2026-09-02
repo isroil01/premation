@@ -1294,6 +1294,142 @@ export class LineTool implements Tool {
   }
 }
 
+// ── Knife (drag a line; every crossing splits the path) ─────────────
+
+/**
+ * Slice shape layers along a dragged line.
+ *
+ * The tool itself is deliberately thin — it collects two world points, decides
+ * WHICH layers the cut applies to, and submits one command. All the geometry
+ * lives app-side in `core/geometry/pathCut`, because the engine has no opinion
+ * about how a layer stores its outline (points, runs, or a primitive it has
+ * never been converted from) and should not grow one.
+ *
+ * TARGETING. A selection wins, so "cut these two" is expressible. With nothing
+ * selected the cut falls to every layer whose world box the line actually
+ * straddles — the corner test below, not a bounds intersection, because a
+ * diagonal line can clip a box's AABB while passing nowhere near the box. A
+ * knife that silently cut a layer on the far side of the comp would be much
+ * worse than one that needs a selection.
+ *
+ * The submitted line is EXTENDED past both drag endpoints (see the payload's
+ * note): the drag says where to cut, not how far, and stopping short would ask
+ * the path model to hold a shape with a slit in it.
+ */
+export class KnifeTool implements Tool {
+  readonly id = 'knife';
+  readonly label = 'Knife';
+  /**
+   * `k` — free across the whole builtin set (v m h z r q g n l t w y a are
+   * taken), asserted against `createBuiltinTools` rather than assumed.
+   *
+   * NOTE for the host: declaring it here does not make it fire in the editor.
+   * `ToolManager.activateByShortcut` only sees keys the host feeds through
+   * `Workspace.feedKeyDown`, and the app feeds it Space and nothing else —
+   * every other tool key arrives as a registered command chord. This is the
+   * engine-side reservation; the app-side binding is `tool.knife`.
+   */
+  readonly shortcut = 'k';
+  readonly cursor = 'crosshair' as const;
+
+  private start: Vec2 | null = null;
+  private end: Vec2 | null = null;
+
+  /** Preview: the live cut line, painted by the overlay's pending-path pass. */
+  get pendingPoints(): readonly BezierPoint[] {
+    if (!this.start || !this.end) return [];
+    return [bezierCorner(this.start.x, this.start.y), bezierCorner(this.end.x, this.end.y)];
+  }
+
+  getHud(): { anchorWorld: Vec2; lines: readonly string[] } | null {
+    if (!this.start || !this.end) return null;
+    const dx = this.end.x - this.start.x;
+    const dy = this.end.y - this.start.y;
+    const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    return { anchorWorld: this.end, lines: [`${deg.toFixed(1)}°`] };
+  }
+
+  onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
+    this.start = { x: e.startWorld.x, y: e.startWorld.y };
+    this.end = { x: e.currentWorld.x, y: e.currentWorld.y };
+    ctx.requestRender();
+  }
+
+  onDrag(e: ToolDragEvent, ctx: ToolContext): void {
+    if (!this.start) return;
+    this.end = { x: e.currentWorld.x, y: e.currentWorld.y };
+    // Shift constrains to the horizontal / vertical / 45° the eye expects, the
+    // same modifier every other drag in this file honours.
+    if (e.modifiers.shift) this.end = constrainToAxis(this.start, this.end);
+    ctx.requestRender();
+  }
+
+  onDragEnd(e: ToolDragEvent, ctx: ToolContext): void {
+    const a = this.start;
+    let b: Vec2 = { x: e.currentWorld.x, y: e.currentWorld.y };
+    this.start = null;
+    this.end = null;
+    ctx.requestRender();
+    if (!a) return;
+    if (e.modifiers.shift) b = constrainToAxis(a, b);
+    // A tap is not a cut. Below the drag threshold the direction is noise, and
+    // an infinite line through a noisy direction cuts something arbitrary.
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 2) return;
+
+    const ids = this.targets(a, b, ctx);
+    if (ids.length === 0) return;
+    ctx.execute(commands.cutPaths(ids, a, b));
+  }
+
+  deactivate(): void {
+    this.start = null;
+    this.end = null;
+  }
+
+  /** Selected layers, or — with nothing selected — everything the line crosses. */
+  private targets(a: Vec2, b: Vec2, ctx: ToolContext): NodeId[] {
+    const selected = ctx.selectionIds();
+    if (selected.length > 0) return selected.map((id) => id as NodeId);
+    const out: NodeId[] = [];
+    for (const node of ctx.scene.getNodes()) {
+      if (node.locked) continue;
+      if (lineStraddles(a, b, node)) out.push(node.id);
+    }
+    return out;
+  }
+}
+
+/** Snap a drag to the nearest of the 8 principal directions (Shift). */
+function constrainToAxis(a: Vec2, b: Vec2): Vec2 {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return b;
+  const step = Math.PI / 4;
+  const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+  return { x: a.x + Math.cos(angle) * len, y: a.y + Math.sin(angle) * len };
+}
+
+/**
+ * Does the (infinite) line a→b pass through this node's box?
+ *
+ * True when the four corners do not all fall on the same side. Uses the node's
+ * ORIENTED corners where it has them — a rotated layer's AABB is bigger than
+ * the layer, and the difference is exactly the region where a near-miss would
+ * read as a hit.
+ */
+function lineStraddles(a: Vec2, b: Vec2, node: WorkspaceNode): boolean {
+  const cs = node.worldCorners ?? R.corners(node.worldBounds);
+  let pos = false;
+  let neg = false;
+  for (const c of cs) {
+    const s = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (s > 0) pos = true;
+    else if (s < 0) neg = true;
+  }
+  return pos && neg;
+}
+
 // ── Polygon / Star (drag to size a regular filled shape) ────────────
 abstract class CreatePolyTool implements Tool {
   abstract readonly id: string;
@@ -1789,6 +1925,7 @@ export function createBuiltinTools(): Tool[] {
     new PolygonTool(),
     new StarTool(),
     new LineTool(),
+    new KnifeTool(),
     new PenTool(),
     new PencilTool(),
     new BrushTool(),
