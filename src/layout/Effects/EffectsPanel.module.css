@@ -8,16 +8,42 @@
   overflow-y: auto;
 }
 
+/*
+ * The label/control row used by layer styles and by the fill & stroke section.
+ *
+ * Aligned to `PropertyRow`'s conventions and reading its knobs — the row
+ * height (`--control-height-row`) and the numeric field width
+ * (`--prop-field-width`) — rather than re-guessing them here. These sections
+ * cannot use that component (a row may end in a colour swatch, a picker or a
+ * checkbox where a PropertyRow has a value cell), but there is no reason a
+ * drop-shadow distance and a Position X should put their digits on different
+ * columns, and before this they did.
+ */
 .blendRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
+  min-height: var(--control-height-row);
+  min-width: 0;
 }
 
 .blendLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+/* One width for every numeric field on a label/value row — the same
+   declaration `PropertyRow`'s `.values` applies to its own. */
+.blendRow > [data-numeric] {
+  flex: 0 0 var(--prop-field-width, 58px);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .blendTrigger {
@@ -87,10 +113,17 @@
   font-size: var(--font-size-xs);
 }
 
+/* A stacked label + field, used two- and three-up inside `.maskControls`.
+   `flex: 1 1 0` so the columns are EQUAL rather than content-sized: a
+   "Distance"/"Spread"/"Size" trio used to give each field whatever width its
+   own label needed, so no two style panels put their fields in the same
+   places. */
 .maskField {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  flex: 1 1 0;
+  min-width: 0;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }

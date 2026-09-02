@@ -9,9 +9,9 @@ import type { BlendMode, ColorAttachment, SamplerHandle, TextureHandle, BufferHa
 import type { Viewport } from '../../viewport/Viewport';
 import type { RenderPassContext } from '../RenderPass';
 import type { CommandBuffer } from '../../commands/DrawCommand';
-import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, SCENE_BLIT_LUT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL, MESH3D_PBR_MATERIAL } from '../../shaders/Material';
+import { SOLID_MATERIAL, TEXTURED_MATERIAL, TEXTURED_LINEAR_MATERIAL, SCENE_BLIT_MATERIAL, SCENE_BLIT_LUT_MATERIAL, MASKED_TEXTURED_MATERIAL, MASKED_TEXTURED_LINEAR_MATERIAL, LUT_TEXTURED_MATERIAL, LUT_TEXTURED_LINEAR_MATERIAL, MATTE_COMBINE_MATERIAL, BLEND_COMBINE_MATERIAL, DEFORMED_MESH_MATERIAL, DEFORMED_MESH_LINEAR_MATERIAL, SOLID3D_MATERIAL, TEXTURED3D_MATERIAL, TEXTURED3D_LINEAR_MATERIAL, TEXTURED3D_NO_DEPTH_WRITE_MATERIAL, TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, MASKED_TEXTURED3D_MATERIAL, MASKED_TEXTURED3D_LINEAR_MATERIAL, MESH3D_SOLID_MATERIAL, MESH3D_TEXTURED_MATERIAL, MESH3D_TEXTURED_LINEAR_MATERIAL, MESH3D_PBR_MATERIAL, SHADOW_DEPTH_MATERIAL, SHADOW_DEPTH_MESH_MATERIAL } from '../../shaders/Material';
 import { TEXTURED_SILHOUETTE_MATERIAL } from '../../shaders/Material';
-import { packSolid, packTextured, packSceneBlitLut, packDeformedMesh, packSolid3D, packTextured3D, packMesh3DPbr, type SolidShape, type ColorTransform, type Shade3D, type PbrMapParams } from '../../pipeline/uniforms';
+import { packSolid, packTextured, packSceneBlitLut, packDeformedMesh, packSolid3D, packTextured3D, packMesh3DPbr, packShadowDepth, type SolidShape, type ColorTransform, type Shade3D, type PbrMapParams } from '../../pipeline/uniforms';
 import { HARDWARE_SRGB_UPLOADS, LINEAR_INTERMEDIATE_STORAGE } from '../../shaders/linearWorkingSpace';
 import { getActiveViewerLut } from '../../shaders/colorPipeline';
 
@@ -27,13 +27,60 @@ import { getActiveViewerLut } from '../../shaders/colorPipeline';
 const FULL_UV: Rect = { x: 0, y: 0, width: 1, height: 1 };
 
 /**
- * The env-map bind-group fields for a lit-3d draw, from the buffer's pass-wide
- * environment. Spread into every `emit*3D` item: those materials DECLARE
- * bindings 7/8, so a draw that omitted them would be an incomplete bind group
- * on WebGPU rather than a quietly unlit one.
+ * The PASS-WIDE bind-group fields for a lit-3d draw: the environment map at
+ * 7/8 and the run's shadow map at 9/10. Spread into every `emit*3D` item,
+ * because those materials DECLARE all four — a draw that omitted them would be
+ * an incomplete bind group on WebGPU rather than a quietly unlit one.
+ *
+ * Both are properties of the SCENE and the RUN rather than of the layer, which
+ * is why they ride the buffer instead of four more parameters on helpers that
+ * already take ten.
  */
-function envBinding(cmds: CommandBuffer): { envTexture?: TextureHandle; envSampler?: SamplerHandle } {
-  return cmds.env ? { envTexture: cmds.env.texture, envSampler: cmds.env.sampler } : {};
+function envBinding(cmds: CommandBuffer): {
+  envTexture?: TextureHandle;
+  envSampler?: SamplerHandle;
+  shadowTexture?: TextureHandle;
+  shadowSampler?: SamplerHandle;
+} {
+  return {
+    ...(cmds.env ? { envTexture: cmds.env.texture, envSampler: cmds.env.sampler } : {}),
+    ...(cmds.shadow ? { shadowTexture: cmds.shadow.texture, shadowSampler: cmds.shadow.sampler } : {}),
+  };
+}
+
+/**
+ * Queue one shadow CASTER into the map pass — a unit quad, or an indexed mesh
+ * range when `geometry` is given.
+ *
+ * `mvp` is world → LIGHT clip and `model` is the caster's own world matrix; the
+ * fragment stage needs both, because the distance it stores is measured in world
+ * space along the light's axis rather than read off the clip z (see the
+ * `shadow-depth` shader note). Blend `none`: the map holds a packed number.
+ */
+export function emitShadowCaster(
+  cmds: CommandBuffer,
+  mvp: Mat4,
+  model: ArrayLike<number>,
+  axis: readonly [number, number, number],
+  invFar: number,
+  origin: readonly [number, number, number],
+  geometry?: { vertexBuffer: BufferHandle; indexBuffer: BufferHandle; indexFormat: 'uint16' | 'uint32'; firstIndex: number; indexCount: number },
+): void {
+  cmds.add({
+    batchKey: geometry ? `shadow-mesh|${geometry.vertexBuffer.id}` : 'shadow-quad',
+    material: geometry ? SHADOW_DEPTH_MESH_MATERIAL : SHADOW_DEPTH_MATERIAL,
+    blend: 'none',
+    uniforms: packShadowDepth(mvp, model, axis, invFar, origin),
+    ...(geometry
+      ? {
+        vertexBuffer: geometry.vertexBuffer,
+        indexBuffer: geometry.indexBuffer,
+        indexCount: geometry.indexCount,
+        firstIndex: geometry.firstIndex,
+        indexFormat: geometry.indexFormat,
+      }
+      : {}),
+  });
 }
 
 /** RT copies skip the upload decode only while intermediates stay linear. */
@@ -296,8 +343,12 @@ export function beginSizedPass(
   attachment: ColorAttachment,
   width: number,
   height: number,
+  /** Opt into the target's depth attachment (the shadow-map pass, which needs
+   *  one to resolve WHICH caster is nearest at each texel). The target must
+   *  have been created with `depth: true`. */
+  depth?: { clearDepth?: number },
 ): RenderPassEncoder {
-  const enc = ctx.services.backend.beginRenderPass({ label, color: attachment });
+  const enc = ctx.services.backend.beginRenderPass({ label, color: attachment, ...(depth ? { depth } : {}) });
   enc.setViewport(0, 0, Math.max(1, width), Math.max(1, height));
   return enc;
 }

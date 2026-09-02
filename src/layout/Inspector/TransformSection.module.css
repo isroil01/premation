@@ -375,3 +375,82 @@
 .cornerGrid .popoverLabel {
   min-width: 28px;
 }
+
+/* ── 3x3 Anchor Origin Selector Matrix ── */
+.anchorHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.anchorOriginBox {
+  display: grid;
+  grid-template-columns: repeat(3, 8px);
+  grid-template-rows: repeat(3, 8px);
+  gap: 2px;
+  padding: 3px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+
+.anchorDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--color-surface-3);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.anchorDot:hover {
+  background: var(--color-text-secondary);
+}
+
+.anchorDotActive {
+  background: var(--color-primary);
+  box-shadow: 0 0 3px var(--color-primary);
+}
+
+/* ── Advanced Transform Progressive Disclosure Toggle ── */
+.advancedToggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin-top: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px dashed var(--color-border-subtle);
+  background: transparent;
+  border-left: none;
+  border-right: none;
+  border-bottom: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.advancedToggle:hover {
+  color: var(--color-text-primary);
+}
+
+.advancedChevron {
+  flex: none;
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.advancedGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--color-border-subtle);
+}
+

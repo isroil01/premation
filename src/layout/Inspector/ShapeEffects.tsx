@@ -13,6 +13,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readNodeAudioWaveform, setAudioWaveform, defaultAudioWaveform } from '@core/audio/audioWaveformGen';
 import { AudioWaveformSection } from './AudioWaveformSection';
+import { InspectorSection } from './InspectorSection';
 import styles from './TextAnimatorControls.module.css';
 
 export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -34,8 +35,13 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
   ];
 
   return (
-    <div className={styles.root}>
-      <div className={styles.head}>
+    // The Add menu sits in the shared actions slot rather than in a `.head`
+    // strip of its own. It is the same control, in the same corner, as the
+    // path operators' move/remove and the layer styles' kebab — one place a
+    // section's menu lives, so it can be aimed at without reading the section
+    // first. The accordion already names this section, so no title here.
+    <InspectorSection
+      actions={
         <Dropdown
           placement="left-start"
           trigger={
@@ -46,12 +52,13 @@ export function ShapeEffects({ nodeId }: { nodeId: string }): JSX.Element | null
           }
           items={items}
         />
-      </div>
+      }
+    >
       {!hasAudioWave && (
         <div className={styles.empty}>Draw an audio waveform from a soundtrack on this shape.</div>
       )}
       <AudioWaveformSection nodeId={nodeId} />
-    </div>
+    </InspectorSection>
   );
 }
 

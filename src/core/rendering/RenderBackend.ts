@@ -267,6 +267,21 @@ export interface RenderLayer {
      *  (AE default, identity vs the pre-material gain). */
     diffuse?: number;
   };
+  /**
+   * Material Options → Casts Shadows, for the GEOMETRY-aware shadow path.
+   *
+   * Only consumed when a light in the comp has `shadowMap` on: it selects which
+   * members of a depth run are rasterised into the map. Absent means "does not
+   * cast", which is what every layer emitted before shadow maps existed says —
+   * so the flag cannot switch anything on retroactively.
+   *
+   * Deliberately NOT folded into `shade3d`: that block is present only when the
+   * layer ACCEPTS LIGHTS, and a layer that refuses lighting still blocks it.
+   */
+  castsShadow3d?: boolean;
+  /** Material Options → Accepts Shadows, for the same path. Only ever set to
+   *  FALSE (a shadow catcher turned off); absent means the default, on. */
+  acceptsShadows3d?: boolean;
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */
   depth?: number;

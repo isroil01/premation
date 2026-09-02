@@ -26,6 +26,28 @@
   width: 100%;
 }
 
+/* The Assets header's one NAMED action. `flex: none` so it keeps its label at
+   any panel width and the search box absorbs the rest — a button that shrinks
+   until only its glyph is left is the icon-only dock button again. */
+.importModelBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.importModelBtn:hover {
+  color: var(--color-text-primary);
+}
+
 /* Properties: header + search stay put; the accordion is the only scroller.
    One gutter (`--space-5`) from search through section names through extras. */
 .inspectorShell {
@@ -85,9 +107,17 @@
 /* Horizontal padding matches the accordion trigger's gutter below it, so the
    search field and every section name share one left edge. */
 .searchRow {
-  padding: var(--space-4) var(--space-5);
+  padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--color-border);
   background: var(--color-panel);
+  flex: none;
+}
+
+.layerGlyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
   flex: none;
 }
 
@@ -278,6 +308,16 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
+}
+
+/* The rule between Layer Styles and the saved-preset shelf below it. Was an
+   inline `style={{ marginTop: 12, paddingTop: 12, borderTop: … }}` — the same
+   measurements, but written where no stylesheet could keep them in step with
+   the section spacing around them. */
+.stylePresetsRule {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .rowAction {

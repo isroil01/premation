@@ -1,0 +1,101 @@
+/**
+ * The inspector's shared grammar.
+ *
+ * Two things live here: the section shell (`.section` / `.head` / `.body`) and
+ * the ROW CONVENTIONS the appearance-family sections align to — path
+ * operators, layer styles, shape effects and fills, which were four different
+ * answers to "how wide is the label column".
+ *
+ * The sections that cannot use `PropertyRow` (a card head with a picker, a
+ * two-up field pair) read ITS knobs rather than inventing their own —
+ * `--prop-stopwatch-col` and `--prop-value-col`, declared in
+ * `components/PropertyRow/PropertyRow.module.css`. That is what makes a
+ * Zig-Zag amount and a Position X land their numbers on the same pixel column
+ * instead of merely near each other.
+ */
+
+/* ── The section shell ──────────────────────────────────────────── */
+
+/*
+  No padding. The gutter belongs to the host (the accordion's `.panel` already
+  sets `--space-5`), and a second inset here would push every section two
+  gutters in from the search box above it.
+*/
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* A card inside a section — one path operator, one layer style. The hairline
+   is what separates two cards that are otherwise identical strips of rows. */
+.nested {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-sm);
+  min-width: 0;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.icon {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+/* Always the last cell, always flush right. A kebab that moves between cards
+   is a kebab you cannot aim at without reading each card first. */
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-left: auto;
+  flex: none;
+}
+
+.twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--prop-stopwatch-col, 20px);
+  height: var(--control-height-2xs);
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.twisty:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.body[hidden] {
+  display: none;
+}

@@ -55,7 +55,7 @@ import {
 import { FaceMaterialsSection } from './FaceMaterialsSection';
 import s from './MaterialSection.module.css';
 
-/** Whether this layer has a material at all — the mount test in DemoPanels. */
+/** Whether this layer has a material at all — the registry's `appliesTo`. */
 export function hasMaterialSection(nodeId: string): boolean {
   if (!nodeId || nodeId === 'comp_root') return false;
   const node = defaultSceneGraph.getNode(nodeId);

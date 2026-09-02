@@ -100,6 +100,10 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [falloffDistRaw, setFalloffDist] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'falloffDistance');
   const [darknessRaw, setDarkness] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowDarkness');
   const [diffusionRaw, setDiffusion] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowDiffusion');
+  const [shadowMapRaw, setShadowMap] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowMap');
+  const [mapSizeRaw, setMapSize] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowMapSize');
+  const [shadowBiasRaw, setShadowBias] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowBias');
+  const [shadowSoftRaw, setShadowSoft] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'shadowSoftness');
   const [poiXRaw, setPoiX] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiX');
   const [poiYRaw, setPoiY] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiY');
   const [poiZRaw, setPoiZ] = useNodeComponentProp(defaultSceneGraph, nodeId, tComp?.id, 'poiZ');
@@ -139,6 +143,10 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const darkness = num(darknessRaw, LIGHT_DEFAULTS.shadowDarkness);
   const diffusion = num(diffusionRaw, LIGHT_DEFAULTS.shadowDiffusion);
   const castsShadows = shadowsRaw === true || shadowsRaw === 1;
+  const shadowMap = shadowMapRaw === true || shadowMapRaw === 1;
+  const mapSize = num(mapSizeRaw, LIGHT_DEFAULTS.shadowMapSize);
+  const shadowBias = num(shadowBiasRaw, LIGHT_DEFAULTS.shadowBias);
+  const shadowSoftness = num(shadowSoftRaw, LIGHT_DEFAULTS.shadowSoftness);
   const envSky: EnvironmentSky = isEnvironmentSky(envPresetRaw) ? envPresetRaw : DEFAULT_ENVIRONMENT_PRESET;
   /** The Sky menu's value: a preset id, or the one "Image…" entry. */
   const skyMenuValue = envAssetId === null ? envSky : 'image';
@@ -444,6 +452,56 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
           <>
             <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
             <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
+            {/*
+              The two shadow techniques, as one switch rather than two features.
+
+              Off is a projected copy of the caster's silhouette on the nearest
+              accepting plane behind it: cheap, soft, and correct for one caster
+              over one flat surface. On rasterises the scene's casters from this
+              light into a depth map and samples it per fragment, which is what
+              buys a shadow that follows the receiver's own geometry, that an
+              object casts onto ITSELF, and that lands on more than one surface.
+
+              Turning it on SUPPRESSES this light's projected copy, so the two
+              never double up. It only reaches layers that render through the
+              depth-tested 3D path — Shadow diffusion above still shapes the
+              projected copy for everything else.
+            */}
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Shadow map</span>
+              <Checkbox
+                checked={shadowMap}
+                onChange={() => setShadowMap(shadowMap ? undefined : true)}
+                title="Rasterise this light's casters into a depth map instead of projecting a flat copy — geometry-aware shadows on 3D layers"
+              />
+            </div>
+            {shadowMap && (
+              <>
+                <div className={styles.popoverRow}>
+                  <span className={styles.popoverLabel}>Map quality</span>
+                  <select
+                    className={styles.select}
+                    style={{ width: 110 }}
+                    value={String(mapSize)}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      setMapSize(v === LIGHT_DEFAULTS.shadowMapSize ? undefined : v);
+                    }}
+                    aria-label="Map quality"
+                  >
+                    <option value="512">Draft (512)</option>
+                    <option value="1024">Standard (1024)</option>
+                    <option value="2048">High (2048)</option>
+                  </select>
+                </div>
+                {/* Bias trades the two failures against each other: too little
+                    and a lit surface stripes itself with its own depth
+                    quantization, too much and the shadow lifts off the foot of
+                    its caster. Both are visible, so this is a real control. */}
+                <KfRow nodeId={nodeId} prop="shadowBias" label="Shadow bias" value={shadowBias} unit="px" min={0} onStatic={(v) => setShadowBias(v)} />
+                <KfRow nodeId={nodeId} prop="shadowSoftness" label="Map softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
+              </>
+            )}
           </>
         )}
         <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>

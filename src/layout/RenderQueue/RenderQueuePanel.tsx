@@ -18,6 +18,7 @@
 
 import { useState } from 'react';
 import { Icon } from '@components/Icon';
+import { EmptyState } from '@components/EmptyState';
 import { useCompositionStore } from '@stores/compositionStore';
 import {
   canChooseOutputDir,
@@ -278,10 +279,12 @@ export function RenderQueuePanel(): JSX.Element {
       {/* ── Job list ─────────────────────────────────────────────── */}
       <div className={styles.jobList}>
         {jobs.length === 0 && (
-          <div className={styles.emptyState}>
-            <Icon name="queue" size="lg" className={styles.emptyIcon} />
-            <span>No render jobs. Click "Add Comp" to queue a composition.</span>
-          </div>
+          <EmptyState
+            icon="queue"
+            title="Nothing queued"
+            message="Queue a composition and it renders here — the queue keeps going while you keep working."
+            action={{ label: 'Add the current composition', onClick: () => setShowDialog(true) }}
+          />
         )}
 
         {jobs.map((job, idx) => (

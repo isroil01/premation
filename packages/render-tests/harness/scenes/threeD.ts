@@ -164,8 +164,106 @@ function shadowCatcherPair(): Scene[] {
   ];
 }
 
+/**
+ * Shadow MAP — does the geometric path put a shadow where the projected one
+ * cannot?
+ *
+ * ── What the pair isolates ──────────────────────────────────────────────────
+ *
+ * Both frames have the same geometry, the same camera, the same spot light and
+ * the same Casts / Accepts switches. They differ in ONE property: the light's
+ * `shadowMap`. So the difference between them is the difference between a
+ * shadow rasterised from the light and a caster copy projected onto the nearest
+ * accepting plane — not the presence of a shadow, which both have.
+ *
+ * That is the honest comparison to make, and it is a harder one than
+ * shadow-on / shadow-off. `-off` here is not "no shadow": it is the 2.5D
+ * projection this feature is an ALTERNATIVE to, committed as a reference of its
+ * own so a change to either path shows up as its own failure.
+ *
+ * ── Why the geometry is what it is ──────────────────────────────────────────
+ *
+ * The caster floats at z = 0 with the floor at z = 400 and the light at
+ * z = −400, which is the same arrangement `shadowCatcherPair` uses and for the
+ * same reason: it satisfies every bound the projected path imposes (t = 2, well
+ * inside its ≤ 8 cap), so the control frame genuinely renders a projected
+ * shadow rather than silently rendering none.
+ *
+ * The floor sets `acceptsLights` explicitly. It is OFF by default
+ * (`acceptsLightsFlag` requires an explicit true), and a shadow multiplies a
+ * LIGHT's contribution — so on an unlit floor the map would be computed,
+ * sampled, and multiplied into nothing. A scene that looked identical either
+ * way would have certified a feature that does not run.
+ *
+ * The spot aims at the floor's centre through a Point of Interest rather than
+ * through `lightAngle`: the legacy 2D angle can only swing a light within the
+ * comp plane, so it could not point a cone down the z axis at all.
+ *
+ * Shadow Darkness is 70, not the default 100, and that is a measurement
+ * decision rather than a taste one. This spot is the comp's ONLY light, so a
+ * fully blocking shadow leaves the occluded floor at exactly zero — visually
+ * indistinguishable from a hole in the floor, and numerically indistinguishable
+ * from the background, which would make the golden unreadable by the human who
+ * has to bless it. 70 leaves 30 % of the light through, so the shadow is dark,
+ * bounded, and obviously ON the floor. It also exercises the slider on BOTH
+ * paths at once: the projected copy scales its opacity by the same number.
+ */
+function shadowMapSpotPair(): Scene[] {
+  const build = (map: boolean): Scene['build'] => (graph) => {
+    /*
+      The light is added FIRST, and the order is load-bearing.
+
+      A light also emits a comp-sized WASH layer, and the wash keeps its slot in
+      the layer stack while the 3D layers sort by depth around it. With the light
+      third, dropping the projected shadow layer (which is what turning the map
+      on does) shifted the caster from after the wash to before it — so the
+      caster came out screen-brightened in one frame of the pair and not the
+      other, and the pair no longer isolated the shadow. Adding the light first
+      pins the wash to the back in both frames, and the caster is painted last in
+      both.
+    */
+    graph.addNode(node('L', {
+      kind: 'light',
+      position: CENTER,
+      transform: {
+        z: -400, intensity: 100, lightType: 'spot', lightCone: 100, radius: 1600,
+        poiX: 240, poiY: 180, poiZ: 400,
+        castShadows: true, shadowDiffusion: 0, shadowDarkness: 70,
+        ...(map ? { shadowMap: true } : {}),
+      },
+      style: { fill: '#ffffff' },
+    }));
+    graph.addNode(node('floor', {
+      kind: 'shape',
+      position: CENTER,
+      transform: {
+        width: 440, height: 340, shapeType: 'rect', z: 400,
+        castsShadows: false,
+        acceptsShadows: true,
+        acceptsLights: true,
+        diffuse: 100,
+      },
+      style: { fill: '#c8ccd8' },
+    }));
+    // Off-centre, so the shadow lands beside its caster instead of hiding
+    // directly behind it — invisible in both frames is not a measurement.
+    graph.addNode(node('caster', {
+      kind: 'shape',
+      position: { x: 190, y: 145 },
+      transform: { width: 110, height: 90, shapeType: 'rect', z: 0, castsShadows: true },
+      style: { fill: '#4ad0a0' },
+    }));
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: { z: -1000, focalLength: 1000 } }));
+  };
+  return [
+    scene('shadow-map-spot', 'A spot light with Shadow Map on: the caster is rasterised from the light and sampled per fragment.', build(true)),
+    scene('shadow-map-spot-off', 'The same scene with Shadow Map off — the 2.5D projected caster copy, the control the pair is measured against.', build(false)),
+  ];
+}
+
 export const threeDScenes: Scene[] = [
   ...shadowCatcherPair(),
+  ...shadowMapSpotPair(),
 
   scene('three-d-rotated', 'Layer rotated in 3D (rotationY) — perspective foreshortening.', (graph) => {
     panel(graph, 'p', { z: 0, rotationY: 45 });

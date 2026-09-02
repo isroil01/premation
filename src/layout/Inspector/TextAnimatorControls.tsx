@@ -190,14 +190,14 @@ function ParamRow({
 
   return (
     <div className={styles.paramRow}>
-      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+      <span className={styles.rowToggle}>
         <Checkbox
           checked={animated}
           onChange={toggle}
           title="Toggle Animation"
           style={{ width: 14, height: 14 }}
         />
-      </div>
+      </span>
       <span className={styles.paramLabel}>{label}</span>
       <ValueField
         value={display}
@@ -398,7 +398,11 @@ function RangeSelectorBody({
       </div>
       {sel.randomizeOrder && (
         <div className={styles.paramRow}>
-          <span className={styles.paramLabel} style={{ marginLeft: 22 }}>Random Seed</span>
+          {/* Was `style={{ marginLeft: 22 }}` — a hand-measured stand-in for
+              the animation-toggle gutter the rows above reserve. Now it is the
+              gutter itself, so the two labels cannot drift apart. */}
+          <span className={styles.rowToggle} />
+          <span className={styles.paramLabel}>Random Seed</span>
           <ValueField
             value={sel.randomSeed}
             onChange={(v) => patch({ randomSeed: Math.round(v) })}

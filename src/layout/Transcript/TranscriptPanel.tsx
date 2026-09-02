@@ -51,7 +51,8 @@ import {
 } from 'react';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
-import { Input } from '@components/Input';
+import { SearchField } from '@components/SearchField';
+import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { getTimelineController } from '@core/timeline/TimelineController';
@@ -444,15 +445,13 @@ export function TranscriptPanel(): JSX.Element {
       </div>
 
       <div className={styles.toolbar}>
-        <Input
-          size="xs"
-          leftIcon="search"
+        <SearchField
+          size="sm"
+          fullWidth={false}
           placeholder="Find a word"
           value={query}
-          clearable
-          onClear={() => setQuery('')}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Find a word in the transcript"
+          onChange={setQuery}
+          ariaLabel="Find a word in the transcript"
         />
         <Button
           size="xs"
@@ -516,25 +515,33 @@ export function TranscriptPanel(): JSX.Element {
 
       <div className={styles.body}>
         {words.length === 0 && phase === 'idle' && (
-          <div className={styles.empty}>
-            <Icon name="mic" size="lg" />
-            <p className={styles.emptyTitle}>No transcript yet</p>
-            <p className={styles.emptyText}>
-              {available
+          <EmptyState
+            icon="mic"
+            title="No transcript yet"
+            message={
+              available
                 ? `Transcribe the ${scope.label} `
                   + `(${(scope.end - scope.start).toFixed(1)}s of audio), `
                   + 'then click a word to seek, drag or shift-click to select a run, and press '
                   + 'Delete to cut that time out of every layer.'
                 : 'Transcription runs in the desktop app, which holds your provider key. '
-                  + 'This build cannot reach one.'}
-            </p>
-          </div>
+                  + 'This build cannot reach one.'
+            }
+            action={
+              available
+                ? { label: 'Transcribe', onClick: () => { void runTranscribe(); }, disabled: busy }
+                : undefined
+            }
+          />
         )}
 
         {words.length > 0 && filtered.length === 0 && (
-          <div className={styles.empty}>
-            <p className={styles.emptyText}>No word matches “{query}”.</p>
-          </div>
+          <EmptyState
+            compact
+            icon="search"
+            message={`No word matches “${query}”.`}
+            action={{ label: 'Show the whole transcript', onClick: () => setQuery('') }}
+          />
         )}
 
         {groups.map((group) => (

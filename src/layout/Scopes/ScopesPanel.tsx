@@ -53,6 +53,7 @@ import {
   subscribeFrames,
 } from '@core/rendering/frameTap';
 import { captureScopeFrame, liveCompRegion, type ScopeFrame, type ScopeFrameMiss } from './scopeFrame';
+import { EmptyState } from '@components/EmptyState';
 import styles from './ScopesPanel.module.css';
 
 /** Sampling rate. Matches the frame tap's publish ceiling deliberately. */
@@ -386,10 +387,34 @@ export function ScopesPanel(): JSX.Element {
         <span className={`${styles.status} ${line.warn ? styles.warn : ''}`.trim()}>{line.text}</span>
       </div>
 
-      <div className={`${styles.plots} ${view === 'all' ? styles.grid2 : ''}`.trim()}>
-        {kinds.map((kind) => (
-          <ScopePlot key={kind} kind={kind} waveMode={waveMode} subscribe={subscribe} />
-        ))}
+      <div className={styles.plotsWrap}>
+        <div className={`${styles.plots} ${view === 'all' ? styles.grid2 : ''}`.trim()}>
+          {kinds.map((kind) => (
+            <ScopePlot key={kind} kind={kind} waveMode={waveMode} subscribe={subscribe} />
+          ))}
+        </div>
+        {/*
+          OVER the graticules, not instead of them. `accumulateFor` returns an
+          empty accumulator rather than null precisely so a scope with no
+          signal still draws its graduated frame — a blank panel reads as a
+          broken scope. But an empty graticule only says "no signal"; it never
+          said what to do about it, and "Waiting for a rendered frame" in the
+          status strip is one line of 11px text at the far right of a toolbar.
+          So the graticule keeps its job and this says the rest.
+        */}
+        {!status.source && (
+          <div className={styles.plotsEmpty}>
+            <EmptyState
+              icon="graph-value"
+              title={status.miss === 'off-screen' ? 'Composition is off screen' : 'No signal yet'}
+              message={
+                status.miss === 'off-screen'
+                  ? 'Scroll or zoom the viewport until the composition is visible — the scopes read what the canvas draws.'
+                  : 'Play or scrub the composition and the waveform, parade, vectorscope and histogram read the frame on screen.'
+              }
+            />
+          </div>
+        )}
       </div>
     </div>
   );

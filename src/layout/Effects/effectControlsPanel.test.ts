@@ -41,8 +41,8 @@ describe('Effect Controls panel wiring', () => {
   });
 
   it('the renderer map actually mounts the panel', () => {
-    const demo = readFileSync(join(SRC, 'layout/EditorLayout/DemoPanels.tsx'), 'utf8');
-    expect(demo).toMatch(/effectControls:\s*\(\)\s*=>\s*<EffectControlsPanel/);
+    const map = readFileSync(join(SRC, 'layout/EditorLayout/panelRenderers.ts'), 'utf8');
+    expect(map).toMatch(/effectControls:\s*EffectControlsPanel/);
   });
 
   it('the right Effects panel no longer hosts the applied stack', () => {
@@ -61,7 +61,7 @@ describe('Effect Controls panel wiring', () => {
   it('hosts Cloner and Physics once attached from Effects → Simulation', () => {
     const controls = readFileSync(join(SRC, 'layout/Effects/EffectControlsPanel.tsx'), 'utf8');
     const library = readFileSync(join(SRC, 'layout/Effects/EffectsPanel.tsx'), 'utf8');
-    const props = readFileSync(join(SRC, 'layout/EditorLayout/DemoPanels.tsx'), 'utf8');
+    const props = readFileSync(join(SRC, 'layout/Inspector/inspectorSections.ts'), 'utf8');
     expect(library).toMatch(/Simulation/);
     expect(library).toMatch(/enableNodeCloner/);
     expect(library).toMatch(/enableNodePhysics/);

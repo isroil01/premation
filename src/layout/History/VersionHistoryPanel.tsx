@@ -10,6 +10,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { Pagination } from '@components/Pagination';
+import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
 import { openModal } from '@stores/modalStore';
 import { useVersionHistoryStore } from '@stores/versionHistoryStore';
@@ -71,9 +72,11 @@ function VersionHistory(): JSX.Element {
       {status === 'loading' && <p className={styles.note}>Loading history…</p>}
       {status === 'error' && <p className={styles.error}>{error}</p>}
       {status === 'ready' && versions.length === 0 && (
-        <p className={styles.note}>
-          No versions yet. Autosave captures snapshots as you work, or save a checkpoint above.
-        </p>
+        <EmptyState
+          icon="history"
+          title="No versions yet"
+          message="Autosave captures snapshots as you work — or name a checkpoint above to keep one deliberately."
+        />
       )}
 
       <div className={styles.list}>

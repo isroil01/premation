@@ -224,6 +224,24 @@ export interface BindGroupLayoutEntry {
 export const ENV_TEXTURE_BINDING = 7;
 export const ENV_SAMPLER_BINDING = 8;
 
+/**
+ * Bind slots the SHADOW MAP occupies on every lit-3d material.
+ *
+ * 9 and 10, immediately past the environment pair, for the same reason that
+ * pair sits past everything else: a shadow map is a property of the SCENE's
+ * lighting, not of the layer, so it must stay clear of the mask (3), a plugin
+ * origin (4) and the mesh PBR set (3-6) and cannot be renumbered by a
+ * per-layer slot arriving later.
+ *
+ * Declared beside the env pair, and for the same backend reason: the WebGL2
+ * backend has to recognise the SAMPLER slot by number, because the shadow map
+ * is the one texture in a lit draw that must be sampled NEAREST (its texels
+ * are a 24-bit depth packed across rgb — bilinear blending of two packed
+ * values is not a depth), while every other sampler is broadcast to all units.
+ */
+export const SHADOW_TEXTURE_BINDING = 9;
+export const SHADOW_SAMPLER_BINDING = 10;
+
 export interface PipelineDescriptor {
   label?: string;
   shader: ShaderModuleHandle;

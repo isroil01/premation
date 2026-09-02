@@ -108,6 +108,26 @@
 
 /* ── Plots ───────────────────────────────────────────────────────── */
 
+/* Holds the plot grid and the "no signal" overlay in the same box. */
+.plotsWrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Scrimmed rather than opaque: the graticule underneath is still the thing
+   that says "a scope is here and it is reading nothing". */
+.plotsEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--color-overlay-scrim);
+  pointer-events: none;
+}
+
 .plots {
   display: grid;
   grid-template-columns: 1fr;

@@ -448,3 +448,30 @@ describe('commands', () => {
     expect(byId.get('transcript.deleteSelection')?.enabled?.()).toBe(true);
   });
 });
+
+describe('the search box', () => {
+  it('says when a word matches nothing, and offers to clear', () => {
+    seedTranscript();
+    render(<TranscriptPanel />);
+
+    const search = screen.getByRole('searchbox', { name: 'Find a word in the transcript' });
+    fireEvent.change(search, { target: { value: 'zzzz-not-a-word' } });
+
+    expect(screen.getByText(/No word matches/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show the whole transcript' }));
+    expect((search as HTMLInputElement).value).toBe('');
+    expect(screen.queryByText(/No word matches/)).toBeNull();
+  });
+
+  it('clears on Escape rather than letting the key reach the panel', () => {
+    seedTranscript();
+    render(<TranscriptPanel />);
+
+    const search = screen.getByRole('searchbox', { name: 'Find a word in the transcript' });
+    fireEvent.change(search, { target: { value: 'looks' } });
+    fireEvent.keyDown(search, { key: 'Escape' });
+
+    expect((search as HTMLInputElement).value).toBe('');
+  });
+});

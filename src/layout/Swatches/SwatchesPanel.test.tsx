@@ -131,3 +131,19 @@ describe('managing the palette', () => {
     expect(useSwatchStore.getState().swatches.map((s) => s.hex)).toEqual(['#c0ffee']);
   });
 });
+
+describe('the empty palette', () => {
+  it('names both empty sections and offers the one action that works', () => {
+    render(<SwatchesPanel />);
+
+    expect(screen.getByText('No swatches yet')).toBeTruthy();
+    expect(screen.getByText('Nothing in this composition is painted yet.')).toBeTruthy();
+
+    // The empty state's action does the same thing as the Add button above it
+    // — which is the point: the panel is empty precisely when that button is
+    // the only thing a new user can usefully press, and it is an unlabelled
+    // "+" in a header until you hover it.
+    fireEvent.click(screen.getByRole('button', { name: /add the picked colour/i }));
+    expect(useSwatchStore.getState().swatches.length).toBe(1);
+  });
+});

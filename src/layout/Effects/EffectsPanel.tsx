@@ -10,7 +10,7 @@
 
 import { useState, useMemo, useSyncExternalStore } from 'react';
 import { Icon, type IconName } from '@components/Icon';
-import { Input } from '@components/Input';
+import { SearchField } from '@components/SearchField';
 import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
 import { PropertyRow } from '@components/PropertyRow';
@@ -330,15 +330,12 @@ export function EffectsPanel(): JSX.Element {
       </div>
       <div className={styles.browser}>
         <div className={styles.searchRow}>
-          <Input
+          <SearchField
             value={effectQuery}
             placeholder="Search effects…"
+            ariaLabel="Search effects"
             size="sm"
-            fullWidth
-            leftIcon="search"
-            clearable
-            onClear={() => setEffectQuery('')}
-            onChange={(e) => setEffectQuery(e.currentTarget.value)}
+            onChange={setEffectQuery}
           />
           <button
             type="button"

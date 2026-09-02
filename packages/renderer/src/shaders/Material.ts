@@ -15,7 +15,7 @@ import type {
   TextureFormat,
   VertexBufferLayout,
 } from '../gpu/types';
-import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING } from '../gpu/types';
+import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING } from '../gpu/types';
 import { makeKey } from '../utils/ids';
 import { QUAD_LAYOUT } from '../resources/Geometry';
 import type { ShaderCache } from './ShaderCache';
@@ -433,9 +433,11 @@ export const SOLID3D_MATERIAL: MaterialDescriptor = {
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
     { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
   // The env map is this material's ONLY texture, so it lands on unit 0 here.
-  glslSamplers: ['uEnvTex'],
+  glslSamplers: ['uEnvTex', 'uShadowTex'],
   depth: { test: true, write: true },
 };
 
@@ -449,8 +451,10 @@ export const TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uTex', 'uEnvTex'],
+  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex'],
   depth: { test: true, write: true },
 };
 
@@ -483,8 +487,10 @@ export const TEXTURED3D_NO_DEPTH_WRITE_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uTex', 'uEnvTex'],
+  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex'],
   depth: { test: true, write: false },
 };
 
@@ -504,16 +510,40 @@ export const MASKED_TEXTURED3D_MATERIAL: MaterialDescriptor = {
     { binding: 3, type: 'texture', stages: ['fragment'] },
     { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
   // Three textures now, past what the backend's two-name guess can reach —
   // so name them all, in the order QuadRenderer pushes the entries.
-  glslSamplers: ['uTex', 'uMaskTex', 'uEnvTex'],
+  glslSamplers: ['uTex', 'uMaskTex', 'uEnvTex', 'uShadowTex'],
   depth: { test: true, write: true },
 };
 
 export const MASKED_TEXTURED3D_LINEAR_MATERIAL: MaterialDescriptor = {
   ...MASKED_TEXTURED3D_MATERIAL,
   shader: 'masked-textured3d-linear',
+};
+
+/**
+ * The shadow-map CASTER materials — one per geometry kind, both writing the
+ * packed light-space distance the lit-3d shaders read back at binding 9.
+ *
+ * No textures at all, which is the point: a caster contributes its SILHOUETTE
+ * and its distance, never its colour, so a map costs one small pipeline and one
+ * uniform per caster rather than a second full material set. Blend `none` is
+ * not a default here but a requirement — the map holds a packed number, and
+ * alpha-blending two packed numbers produces a third that is not a distance.
+ *
+ * Depth test AND write: the map must record the NEAREST caster at each texel,
+ * which is exactly what a depth buffer resolves. It is the pass's own scratch;
+ * nothing samples it (see the `shadow-depth` shader note on why the distance
+ * goes to the colour attachment instead).
+ */
+export const SHADOW_DEPTH_MATERIAL: MaterialDescriptor = {
+  shader: 'shadow-depth',
+  topology: 'triangle-list',
+  layout: [{ binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] }],
+  depth: { test: true, write: true },
 };
 
 export const DEFORMED_MESH_LAYOUT: VertexBufferLayout = {
@@ -550,6 +580,15 @@ export const MESH3D_LAYOUT: VertexBufferLayout = {
   ],
 };
 
+/** The mesh twin of `SHADOW_DEPTH_MATERIAL` — same block, mesh vertex layout. */
+export const SHADOW_DEPTH_MESH_MATERIAL: MaterialDescriptor = {
+  shader: 'shadow-depth-mesh',
+  topology: 'triangle-list',
+  layout: [{ binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] }],
+  buffers: [MESH3D_LAYOUT],
+  depth: { test: true, write: true },
+};
+
 /** Depth-tested solid-colour extruded mesh (walls / bevels / back cap). */
 export const MESH3D_SOLID_MATERIAL: MaterialDescriptor = {
   shader: 'mesh3d-solid',
@@ -558,8 +597,10 @@ export const MESH3D_SOLID_MATERIAL: MaterialDescriptor = {
     { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
     { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uEnvTex'],
+  glslSamplers: ['uEnvTex', 'uShadowTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };
@@ -574,8 +615,10 @@ export const MESH3D_TEXTURED_MATERIAL: MaterialDescriptor = {
     { binding: 2, type: 'sampler', stages: ['fragment'] },
     { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
-  glslSamplers: ['uTex', 'uEnvTex'],
+  glslSamplers: ['uTex', 'uEnvTex', 'uShadowTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };
@@ -607,10 +650,12 @@ export const MESH3D_PBR_MATERIAL: MaterialDescriptor = {
     { binding: 6, type: 'texture', stages: ['fragment'] },
     { binding: ENV_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
     { binding: ENV_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
+    { binding: SHADOW_TEXTURE_BINDING, type: 'texture', stages: ['fragment'] },
+    { binding: SHADOW_SAMPLER_BINDING, type: 'sampler', stages: ['fragment'] },
   ],
   // Bindings 3–6 are CLAIMED by the map set; the environment atlas took 7/8,
   // which is exactly the "anything else starts at 7" this note anticipated.
-  glslSamplers: ['uTex', 'uNormalTex', 'uMRTex', 'uAOTex', 'uEmissiveTex', 'uEnvTex'],
+  glslSamplers: ['uTex', 'uNormalTex', 'uMRTex', 'uAOTex', 'uEmissiveTex', 'uEnvTex', 'uShadowTex'],
   buffers: [MESH3D_LAYOUT],
   depth: { test: true, write: true },
 };

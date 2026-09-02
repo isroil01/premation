@@ -33,7 +33,7 @@ import {
   type MaterialDescriptor,
 } from '../shaders/Material';
 import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING } from '../gpu/types';
-import { packSolid3D, packTextured3D, SHADE3D_FLOATS, type Shade3D } from '../pipeline/uniforms';
+import { packSolid3D, packTextured3D, SHADE3D_FLOATS, SHADOW3D_FLOATS, type Shade3D } from '../pipeline/uniforms';
 import type { Mat4 } from '../core/math/Mat4';
 import type { Rect } from '../core/math/geometry';
 import type { Color } from '../core/math/Color';
@@ -74,23 +74,30 @@ const SHADE_SHADERS = BUILTIN_SHADERS.filter((s) => s.wgsl.includes('envParams :
 describe('the gate: no environment light ⇒ the arithmetic that shipped before', () => {
   it('packs envParams as four zeros when the shade carries no env', () => {
     const out = packSolid3D(MVP4, COLOR, 1, undefined, LIT);
-    // The tail's LAST vec4. Zero x is what the shader tests, so this IS the gate.
-    expect([...out.slice(out.length - 4)]).toEqual([0, 0, 0, 0]);
+    // Zero x is what the shader tests, so this IS the gate.
+    const envAt = out.length - SHADOW3D_FLOATS - 4;
+    expect([...out.slice(envAt, envAt + 4)]).toEqual([0, 0, 0, 0]);
   });
 
   it('★ adding env changes ONLY that vec4 — every other float is untouched', () => {
     // The claim the render-test gate rests on, made structural: an environment
     // light must not be able to move a single byte of the model matrix, the
     // eye, the shade params or the light array.
+    //
+    // `envParams` is no longer the tail's last vec4 — the shadow-map block was
+    // appended AFTER it — so the offset is named rather than assumed. That the
+    // shadow block stays zero here is the other half of the claim: an
+    // environment must not switch a shadow on either.
     const without = packTextured3D(MVP4, RECT, COLOR, 1, undefined, LIT);
     const withEnv = packTextured3D(MVP4, RECT, COLOR, 1, undefined, {
       ...LIT,
       env: { intensity: 0.75, rotationRad: 0.5, scale: 2.5 },
     });
     expect(withEnv.length).toBe(without.length);
-    const head = without.length - 4;
-    expect([...withEnv.slice(0, head)]).toEqual([...without.slice(0, head)]);
-    expect([...withEnv.slice(head)]).toEqual([1, 0.75, 0.5, 2.5]);
+    const envAt = without.length - SHADOW3D_FLOATS - 4;
+    expect([...withEnv.slice(0, envAt)]).toEqual([...without.slice(0, envAt)]);
+    expect([...withEnv.slice(envAt, envAt + 4)]).toEqual([1, 0.75, 0.5, 2.5]);
+    expect([...withEnv.slice(envAt + 4)]).toEqual(new Array(SHADOW3D_FLOATS).fill(0));
   });
 
   it('reserves exactly one vec4 for it in the shade tail', () => {
@@ -99,8 +106,10 @@ describe('the gate: no environment light ⇒ the arithmetic that shipped before'
     // this pins the third side of the triangle — the field COUNT.
     expect(SHADE3D_FLOATS % 4).toBe(0);
     const noShade = packSolid3D(MVP4, COLOR, 1);
-    // No shade at all ⇒ a zero-filled tail ⇒ the lit flag AND the env flag off.
-    expect([...noShade.slice(noShade.length - 4)]).toEqual([0, 0, 0, 0]);
+    // No shade at all ⇒ a zero-filled tail ⇒ the lit flag, the env flag AND the
+    // shadow flag all off.
+    expect([...noShade.slice(noShade.length - SHADOW3D_FLOATS - 4)])
+      .toEqual(new Array(SHADOW3D_FLOATS + 4).fill(0));
   });
 
   it.each(SHADE_SHADERS.map((s) => s.name))('%s gates its reflection on envParams.x', (name) => {
@@ -146,14 +155,15 @@ describe('the binding contract', () => {
     expect(smp?.type).toBe('sampler');
   });
 
-  it.each(LIT_3D)('$name names every sampler, in texture-binding order, ending in uEnvTex', ({ material }) => {
+  it.each(LIT_3D)('$name names every sampler, in texture-binding order, env then shadow last', ({ material }) => {
     const textures = material.layout.filter((e) => e.type === 'texture').map((e) => e.binding);
     // QuadRenderer pushes texture entries in ascending binding order, and the
     // WebGL2 backend assigns units in that order — so the names must be the
-    // same list, same order.
+    // same list, same order. The env atlas (7) and the shadow map (9) are the
+    // last two, in that order, on every lit-3d material.
     expect(material.glslSamplers).toBeDefined();
     expect(material.glslSamplers!.length).toBe(textures.length);
-    expect(material.glslSamplers![material.glslSamplers!.length - 1]).toBe('uEnvTex');
+    expect(material.glslSamplers!.slice(-2)).toEqual(['uEnvTex', 'uShadowTex']);
     expect([...textures].sort((a, b) => a - b)).toEqual(textures);
   });
 

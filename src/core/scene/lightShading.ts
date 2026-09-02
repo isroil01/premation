@@ -29,7 +29,13 @@ import { lightAttenuationAt, LIGHT_DEFAULTS, type Light } from './light';
  */
 export interface SceneLight
   extends Pick<Light, 'type' | 'color' | 'intensity' | 'radius' | 'angle' | 'cone' | 'shadows'>,
-    Partial<Pick<Light, 'coneFeather' | 'falloff' | 'falloffDistance' | 'poi'>> {
+    Partial<Pick<Light,
+      | 'coneFeather' | 'falloff' | 'falloffDistance' | 'poi'
+      // The shadow-MAP switch and its three settings. Optional, because the
+      // environment rig synthesises `SceneLight`s that were never a light layer
+      // and have no shadow of their own.
+      | 'shadowMap' | 'shadowMapSize' | 'shadowBias' | 'shadowSoftness' | 'shadowDarkness'
+    >> {
   x: number;
   y: number;
   z: number;
@@ -134,6 +140,36 @@ export interface ShaderLight {
   falloffMode: number;
   /** Smooth-curve span in px, default already applied. */
   falloffDistance: number;
+  /**
+   * Render a GEOMETRY-AWARE shadow for this light (see `Light.shadowMap`).
+   *
+   * Carried HERE rather than restated in the snapshot DTO deliberately: the
+   * comment on `RenderSnapshot.lights3d` explains why that DTO refers to this
+   * type instead of copying it — `coneFeather`, `falloff` and `poi` were each
+   * honoured on the CPU and silently dropped on the GPU because a field was
+   * added to one of three structural copies. A fourth copy would be a fourth
+   * chance at the same bug.
+   *
+   * The renderer reads these; `shadeLayer` (the CPU per-quad fallback) does
+   * not, and cannot — a per-quad gain has no geometry to occlude.
+   */
+  shadowMap?: boolean;
+  /** Map resolution, px per side; the renderer clamps to 512 / 1024 / 2048. */
+  shadowMapSize?: number;
+  /** Depth bias in comp px. */
+  shadowBias?: number;
+  /** PCF tap spacing in map texels. */
+  shadowSoftness?: number;
+  /**
+   * AE's Shadow Darkness as a FRACTION (1 = the light is fully blocked).
+   *
+   * The same slider the projected copy already scales its opacity by, so the
+   * two shadow paths answer to one control rather than to two that disagree.
+   * It matters more here than there: a map is the only light in most test
+   * scenes, and a term of exactly 0 renders the occluded surface pure black —
+   * physically right, and indistinguishable from a hole in the floor.
+   */
+  shadowDarkness?: number;
 }
 
 const FALLOFF_ID: Record<string, number> = { none: 0, smooth: 1, 'inverse-square': 2 };
@@ -186,6 +222,18 @@ export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[]
       coneFeatherRad: halfConeRad * featherPct,
       falloffMode: FALLOFF_ID[light.falloff ?? 'none'] ?? 0,
       falloffDistance: Math.max(1, light.falloffDistance ?? LIGHT_DEFAULTS.falloffDistance),
+      // Spread through only when ON, so a scene that never opts in packs an
+      // undefined the renderer's `=== true` test reads as off — and every
+      // existing golden keeps the shade tail it had.
+      ...(light.shadowMap === true
+        ? {
+          shadowMap: true,
+          ...(light.shadowMapSize !== undefined ? { shadowMapSize: light.shadowMapSize } : {}),
+          ...(light.shadowBias !== undefined ? { shadowBias: light.shadowBias } : {}),
+          ...(light.shadowSoftness !== undefined ? { shadowSoftness: light.shadowSoftness } : {}),
+          ...(light.shadowDarkness !== undefined ? { shadowDarkness: light.shadowDarkness / 100 } : {}),
+        }
+        : {}),
     });
   }
   return out;

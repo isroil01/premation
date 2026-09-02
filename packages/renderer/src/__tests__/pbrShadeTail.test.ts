@@ -27,10 +27,30 @@ it('packs shininess when no roughness, and −roughness when PBR', () => {
 });
 
 it('every shade block branches on the sign and uses the GGX terms', () => {
+  /*
+    ONE literal per dialect, not two.
+
+    This used to count 2 + 2, because the WGSL and GLSL shade functions were
+    each written out TWICE — once inside `solid3d`, once in the shared const the
+    textured and mesh shaders interpolate — and the two copies were kept in step
+    by hand. They were byte-identical, and the shadow-map work made that
+    duplication a liability rather than a curiosity: four edit sites for one
+    change, with nothing but this count to notice a miss.
+
+    So `solid3d` now interpolates the same consts everything else does, and
+    `shade3dN` / `shade3dNMR` are still derived from them by substitution at
+    module load. The invariant this test was protecting — all four blocks agree
+    — became structural, and what is left to pin is that the shared text itself
+    still branches on the sign and still carries the GGX terms.
+  */
   const src = readFileSync(resolve(__dirname, '../shaders/builtin.ts'), 'utf8');
-  expect((src.match(/pbr = obj\.shadeParams\.z < 0\.0/g) ?? []).length).toBe(2);
-  expect((src.match(/bool pbr = shadeParams\.z < 0\.0/g) ?? []).length).toBe(2);
-  // D, G, F all present in each of the four blocks.
-  expect((src.match(/alpha2 \/ \(3\.14159265 \* dd \* dd\)/g) ?? []).length).toBe(4);
-  expect((src.match(/pow\(1\.0 - VdotH, 5\.0\)/g) ?? []).length).toBe(4);
+  expect((src.match(/pbr = obj\.shadeParams\.z < 0\.0/g) ?? []).length).toBe(1);
+  expect((src.match(/bool pbr = shadeParams\.z < 0\.0/g) ?? []).length).toBe(1);
+  // D, G, F present in each dialect's one block.
+  expect((src.match(/alpha2 \/ \(3\.14159265 \* dd \* dd\)/g) ?? []).length).toBe(2);
+  expect((src.match(/pow\(1\.0 - VdotH, 5\.0\)/g) ?? []).length).toBe(2);
+  // …and that the four SHADERS still get it, which is what the count stood in
+  // for: solid3d must interpolate the shared const rather than re-copy it.
+  expect(src).toContain('${WGSL_SHADE3D_FN}');
+  expect(src).toContain('${GLSL_SHADE3D_FN}');
 });

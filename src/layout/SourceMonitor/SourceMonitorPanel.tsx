@@ -85,7 +85,8 @@ export function SourceMonitorPanel(): JSX.Element {
       <div className={styles.root}>
         <EmptyState
           icon="tv"
-          message="No clip loaded. Open one from Assets — “Open in Source Monitor” — to mark in and out points."
+          title="No clip loaded"
+          message="Open a clip from the Assets panel — “Open in Source Monitor” — to mark in and out points before it reaches the timeline."
         />
       </div>
     );

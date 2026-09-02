@@ -27,8 +27,11 @@
  * moment it exists, with no edit here.
  *
  * WHAT THE DERIVATION CANNOT COVER, stated so nobody reads it as total:
- *   • sections outside this directory (`EditorLayout/DemoPanels.tsx` hosts
- *     several inline ones);
+ *   • sections outside this directory. This used to name `DemoPanels.tsx`,
+ *     which hosted several sections as inline JSX inside its push chain and so
+ *     had no component for this suite to find. They are components in
+ *     `inspectorSectionParts.tsx` now, in this directory, and covered — but a
+ *     section written anywhere else still would not be;
  *   • components whose props are not literally `nodeId` — a section keyed on
  *     something else is skipped, and `at least the known sections are present`
  *     below is the positive control that the discovery found anything at all.

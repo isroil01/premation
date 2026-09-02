@@ -31,6 +31,7 @@ import {
   switchMulticamAngle,
 } from '@core/composition/multicam';
 import { Button } from '@components/Button';
+import { EmptyState } from '@components/EmptyState';
 import styles from './MulticamViewer.module.css';
 
 interface AngleView {
@@ -84,7 +85,8 @@ function liveAngleAt(views: ReadonlyArray<AngleView>, t: number): number | null 
   return best;
 }
 
-function MulticamViewerBody(): JSX.Element {
+/** Exported so the empty state can be asserted without opening a modal. */
+export function MulticamViewerBody(): JSX.Element {
   const sceneRev = useSceneRevision((s) => s.rev);
   const time = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.time ?? 0 : 0));
   const [syncing, setSyncing] = useState(false);
@@ -146,7 +148,13 @@ function MulticamViewerBody(): JSX.Element {
   };
 
   if (views.length < 2) {
-    return <div className={styles.hint}>This composition has no multicam angles. Create one via “New Multicam from Library…”.</div>;
+    return (
+      <EmptyState
+        icon="video"
+        title="No multicam angles"
+        message="A multicam group needs at least two angles. Build one from the Library with “New Multicam from Library…”."
+      />
+    );
   }
 
   return (

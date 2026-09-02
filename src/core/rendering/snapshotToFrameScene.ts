@@ -1456,6 +1456,15 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // path carries per-fragment shade data (the shader lights it for real, with
   // the per-quad gain as its own fallback); anything on the affine painter path
   // gets the per-quad gain folded into its tint exactly as before.
+  /*
+    Casting is INDEPENDENT of lighting, and of the shade block below.
+
+    A layer that refuses Accepts Lights has no `shade3d` and no `lighting`, and
+    it still stands between a lamp and the wall. Attaching this inside the
+    `layer.lighting` branch would have made an unlit card transparent to every
+    shadow-mapped light — the bug this placement exists to avoid.
+  */
+  if (layer.castsShadow3d && out.threeD) out.threeD.castsShadow = true;
   if (layer.lighting) {
     if (layer.shade3d && out.threeD && depthEligible3D(out)) {
       out.threeD.shade = {
@@ -1467,6 +1476,10 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         ...(layer.shade3d.oneSided ? { oneSided: true } : {}),
         ...(layer.shade3d.ambient !== undefined ? { ambient: layer.shade3d.ambient } : {}),
         ...(layer.shade3d.diffuse !== undefined ? { diffuse: layer.shade3d.diffuse } : {}),
+        // Only ever FALSE reaches here — a shadow catcher turned off. Absent is
+        // the default (a lit surface receives), which is what every layer
+        // emitted before shadow maps existed carries.
+        ...(layer.acceptsShadows3d === false ? { acceptsShadows: false } : {}),
         quadGain: layer.lighting,
       };
     } else if (out.color) {

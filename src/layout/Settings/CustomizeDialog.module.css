@@ -85,11 +85,10 @@
   gap: var(--space-3);
 }
 
+/* Sizing only — the field is a <SearchField>, which carries its own icon,
+   clear button and focus treatment. */
 .searchBox {
-  position: relative;
   flex: 1;
-  display: flex;
-  align-items: center;
 }
 
 .searchIcon {

@@ -211,17 +211,30 @@ describe('one-sided shading: CPU and GPU agree on what the flag means', () => {
     const uniforms = readSource('../packages/renderer/src/pipeline/uniforms.ts');
     expect(uniforms).toMatch(/out\[o \+ 3\] = toon \? \(shade\.oneSided \? 4 : 3\) : shade\.oneSided \? 2 : 1;/);
     const shaders = readSource('../packages/renderer/src/shaders/builtin.ts');
-    // Every shade block derives one-sidedness from 2-or-4 and toon from >2.5,
-    // and every lambert/specular term uses the derived flag.
-    expect((shaders.match(/let oneS = \(obj\.eyeLit\.w > 1\.5 && obj\.eyeLit\.w < 2\.5\) \|\| obj\.eyeLit\.w > 3\.5;/g) ?? []).length).toBe(2);
-    expect((shaders.match(/twoSided = \(\(eyeLit\.w > 1\.5 && eyeLit\.w < 2\.5\) \|\| eyeLit\.w > 3\.5\) \? 0\.0 : 1\.0/g) ?? []).length).toBe(2);
-    // All four blocks quantize under the toon flag.
-    expect((shaders.match(/toonFlag/g) ?? []).length).toBeGreaterThanOrEqual(12);
-    // 4 blocks x (aim + toLight + Phong specular + PBR N·L + PBR N·V + PBR N·H).
+    /*
+      ONE literal per dialect, not two.
+
+      These counts used to be 2 and 2, because the WGSL and GLSL shade blocks
+      were each written out twice — once inline in `solid3d`, once in the const
+      the textured and mesh shaders interpolate — and kept in step by hand. The
+      shadow-map work turned that duplication into four edit sites for one
+      change, so `solid3d` now interpolates the same const everything else does
+      and `shade3dN` / `shade3dNMR` are still derived from it by substitution.
+
+      The claim being pinned is unchanged: the flag's encoding, written in one
+      place and read in another that cannot see it. What moved is only how many
+      copies of the reader exist in source — and the four SHADERS still each get
+      one, because they are all built from this text.
+    */
+    expect((shaders.match(/let oneS = \(obj\.eyeLit\.w > 1\.5 && obj\.eyeLit\.w < 2\.5\) \|\| obj\.eyeLit\.w > 3\.5;/g) ?? []).length).toBe(1);
+    expect((shaders.match(/twoSided = \(\(eyeLit\.w > 1\.5 && eyeLit\.w < 2\.5\) \|\| eyeLit\.w > 3\.5\) \? 0\.0 : 1\.0/g) ?? []).length).toBe(1);
+    // Both dialects quantize under the toon flag.
+    expect((shaders.match(/toonFlag/g) ?? []).length).toBeGreaterThanOrEqual(6);
+    // 2 blocks x (aim + toLight + Phong specular + PBR N·L + PBR N·V + PBR N·H).
     // The PBR branch must honour the flag in every dot product it takes, or a
     // one-sided extrusion wall would light from behind under GGX while staying
     // dark under Phong — the divergence this file exists to catch.
-    expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(24);
+    expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(12);
   });
 
   it('only a closed 3D BODY asks for it', () => {

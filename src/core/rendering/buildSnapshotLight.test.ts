@@ -36,6 +36,13 @@ describe('lights', () => {
       falloffDistance: 500,
       shadowDarkness: 100,
       shadowDiffusion: 0,
+      // Geometry-aware shadows, off by default: `shadowMap: false` leaves the
+      // 2.5D projected copy in place, and the three settings below are inert
+      // until it is switched on.
+      shadowMap: false,
+      shadowMapSize: 1024,
+      shadowBias: 3,
+      shadowSoftness: 1,
       poi: null,
       // Environment-light fields (no-ops on the four classic types).
       envPreset: 'studio',

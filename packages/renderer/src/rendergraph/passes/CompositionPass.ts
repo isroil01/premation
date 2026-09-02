@@ -3,12 +3,14 @@ import { Mat3 } from '../../core/math/Mat3';
 import { Rect } from '../../core/math/geometry';
 import { depthEligible3D, type Renderable, type RenderableEffect, type RenderableSdf } from '../../scene/FrameScene';
 import type { SolidShape, Shade3D } from '../../pipeline/uniforms';
-import type { TextureHandle, SamplerHandle } from '../../gpu/types';
+import type { TextureHandle, SamplerHandle, BufferHandle } from '../../gpu/types';
 import { RenderPass, type RenderPassContext } from '../RenderPass';
-import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D } from './passUtils';
+import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D, emitShadowCaster } from './passUtils';
+import { addTransformedBox, boxIsEmpty, emptyBox, shadowCameraFor, shadowMapSizeOf, type ShadowCamera, type WorldBox } from './shadowMap';
 import { BLUR_MATERIAL, BOKEH_MATERIAL, COC_BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
 import { packBlur, packBokeh, packCocBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
 import { ENV_SPEC_LEVELS } from '../../pipeline/uniforms';
+import { Mat4 } from '../../core/math/Mat4';
 import { CommandBuffer } from '../../commands/DrawCommand';
 import type { MaterialDescriptor } from '../../shaders/Material';
 import { EffectPass } from './EffectPass';
@@ -1801,6 +1803,170 @@ export class CompositionPass extends RenderPass {
     return { texture, sampler };
   }
 
+  /**
+   * Local-space bounds of an extruded mesh, keyed by its geometry key.
+   *
+   * Cached because fitting a shadow frustum needs the mesh's extent and the
+   * only place that extent exists is the vertex array — an O(n) scan that would
+   * otherwise run once per frame for a mesh whose vertices did not change. The
+   * key already names the geometry (the GPU buffers are keyed off it), so a
+   * mesh that reuploads gets a new entry for free.
+   */
+  private readonly meshBounds = new Map<string, { lo: [number, number, number]; hi: [number, number, number] }>();
+
+  private boundsOfMesh(mesh: NonNullable<Renderable['extrudedMesh']>): { lo: [number, number, number]; hi: [number, number, number] } {
+    const hit = this.meshBounds.get(mesh.key);
+    if (hit) return hit;
+    const v = mesh.vertices;
+    const lo: [number, number, number] = [Infinity, Infinity, Infinity];
+    const hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    // MESH3D_LAYOUT: position xyz, normal xyz, uv — 8 floats per vertex.
+    for (let i = 0; i + 2 < v.length; i += 8) {
+      for (let a = 0; a < 3; a++) {
+        const c = v[i + a]!;
+        if (c < lo[a]!) lo[a] = c;
+        if (c > hi[a]!) hi[a] = c;
+      }
+    }
+    const out = Number.isFinite(lo[0]) ? { lo, hi } : { lo: [0, 0, 0] as [number, number, number], hi: [0, 0, 0] as [number, number, number] };
+    this.meshBounds.set(mesh.key, out);
+    return out;
+  }
+
+  /** The GPU buffers for an extruded mesh, keyed by its geometry key so an
+   *  unchanged mesh uploads nothing. Shared by the main draw and the shadow
+   *  pass, which must rasterise the SAME triangles or the map lies. */
+  private meshBuffers(ctx: RenderPassContext, r: Renderable): {
+    vertexBuffer: BufferHandle;
+    indexBuffer: BufferHandle;
+    indexFormat: 'uint16' | 'uint32';
+  } {
+    const mesh = r.extrudedMesh!;
+    const { resources } = ctx.services;
+    return {
+      vertexBuffer: resources.buffer(
+        `geometry:ext-vertex:${mesh.key}`,
+        { label: `ext-vertex:${r.id}`, sizeBytes: mesh.vertices.byteLength, usage: ['vertex'], data: mesh.vertices },
+      ),
+      indexBuffer: resources.buffer(
+        `geometry:ext-index:${mesh.key}`,
+        { label: `ext-index:${r.id}`, sizeBytes: mesh.indices.byteLength, usage: ['index'], data: mesh.indices },
+      ),
+      indexFormat: mesh.indices instanceof Uint32Array ? 'uint32' : 'uint16',
+    };
+  }
+
+  /** The world box a shadow frustum must cover: the WHOLE run, not only its
+   *  casters. A receiver past the far plane reads as lit, which looks exactly
+   *  like a feature that was never built. */
+  private runWorldBox(group: ReadonlyArray<Renderable>): WorldBox {
+    const box = emptyBox();
+    for (const r of group) {
+      const model = r.threeD?.model;
+      if (!model) continue;
+      if (r.extrudedMesh) {
+        const b = this.boundsOfMesh(r.extrudedMesh);
+        addTransformedBox(box, model, b.lo, b.hi);
+      } else {
+        // A layer quad is the unit square in its own frame; z = 0 is the plane.
+        addTransformedBox(box, model, [0, 0, 0], [1, 1, 0]);
+      }
+    }
+    return box;
+  }
+
+  /**
+   * The shadow map's stand-in when a run has no shadow-mapped light.
+   *
+   * Always returns something, for the reason `envBindingFor` does: the lit-3d
+   * materials DECLARE bindings 9/10, and an incomplete bind group is a WebGPU
+   * validation failure where an unsampled 1x1 texel is free. White decodes to a
+   * distance past the far plane — "nothing occludes anything" — so even a draw
+   * that reached the sampler by mistake would render lit rather than black.
+   */
+  private shadowFallback(ctx: RenderPassContext): { texture: TextureHandle; sampler: SamplerHandle } {
+    const { resources } = ctx.services;
+    const key = 'texture:shadow-none';
+    const had = resources.has('textures', key);
+    const texture = resources.texture(key, { label: 'shadow-none', width: 1, height: 1, format: 'rgba8unorm' }, true);
+    if (!had) {
+      resources.writeTexture(texture, { type: 'buffer', data: new Uint8Array([255, 255, 255, 255]), width: 1, height: 1 });
+    }
+    return { texture, sampler: this.shadowSampler(ctx) };
+  }
+
+  /** NEAREST + clamp. Not negotiable: the map's texels are a 24-bit depth packed
+   *  across rgb, and a bilinear blend of two of them decodes to a number that is
+   *  neither — visible as speckle along every shadow edge. */
+  private shadowSampler(ctx: RenderPassContext): SamplerHandle {
+    return ctx.services.resources.sampler(
+      'sampler:shadow-map',
+      { label: 'shadow-map', min: 'nearest', mag: 'nearest', addressU: 'clamp', addressV: 'clamp' },
+      /* pinned */ true,
+    );
+  }
+
+  /**
+   * Render this run's casters from `light` into a shadow map.
+   *
+   * Returns null — and the run then renders exactly as it did before shadow
+   * maps existed — when the light cannot cast (ambient), when the frustum
+   * cannot be fitted (the run is behind the light), or when the run holds no
+   * caster at all. Those are refusals, not failures: a map of nothing would
+   * darken nothing, at the cost of a pass.
+   */
+  private renderShadowMap(
+    ctx: RenderPassContext,
+    group: ReadonlyArray<Renderable>,
+    light: { type: 'ambient' | 'point' | 'spot' | 'parallel'; x: number; y: number; z: number; aimX: number; aimY: number; aimZ: number; shadowMapSize?: number },
+  ): { texture: TextureHandle; sampler: SamplerHandle; camera: ShadowCamera; size: number } | null {
+    const casters = group.filter((r) => r.threeD?.castsShadow === true && r.opacity > 0);
+    if (casters.length === 0) return null;
+    const box = this.runWorldBox(group);
+    if (boxIsEmpty(box)) return null;
+    const camera = shadowCameraFor(light, box);
+    if (!camera) return null;
+
+    const { services } = ctx;
+    const size = shadowMapSizeOf(light.shadowMapSize);
+    // Pinned and keyed by SIZE alone: one map per resolution serves every run in
+    // the frame, because a run consumes its map before the next one is drawn.
+    const rt = services.resources.renderTarget(
+      `shadow-map:${size}`,
+      { label: `shadow-map:${size}`, width: size, height: size, format: 'rgba8unorm', depth: true },
+      /* pinned */ true,
+    );
+    // White = a distance past the far plane, so an untouched texel says "no
+    // caster here" rather than "a caster at zero distance", which would put the
+    // whole receiver in shadow.
+    const enc = beginSizedPass(ctx, 'shadow-map', { target: rt, clear: Color.white() }, size, size, { clearDepth: 1 });
+    const cmds = new CommandBuffer();
+    for (const r of casters) {
+      const model = r.threeD!.model;
+      const mvp = Mat4.multiply(camera.matrix, Mat4.fromArray(model));
+      if (r.extrudedMesh) {
+        const bufs = this.meshBuffers(ctx, r);
+        for (const range of r.extrudedMesh.ranges) {
+          if (range.count === 0) continue;
+          emitShadowCaster(cmds, mvp, model, camera.axis, camera.invFar, camera.origin, {
+            ...bufs, firstIndex: range.first, indexCount: range.count,
+          });
+        }
+        continue;
+      }
+      // Quads cast their full rectangle, not their alpha. A texture's shape is
+      // not consulted: reading it would mean binding it, which is a second
+      // material and a second pipeline for a silhouette the app's own 2.5D
+      // projection has never respected either.
+      emitShadowCaster(cmds, mvp, model, camera.axis, camera.invFar, camera.origin);
+    }
+    services.quad.execute(enc, cmds);
+    enc.end();
+    const texture = services.backend.renderTargetTexture(rt);
+    if (!texture) return null;
+    return { texture, sampler: this.shadowSampler(ctx), camera, size };
+  }
+
   private render3DGroup(
     ctx: RenderPassContext,
     group: ReadonlyArray<Renderable>,
@@ -1816,6 +1982,60 @@ export class CompositionPass extends RenderPass {
     // against the fallback texel.
     const envMap = ctx.scene.envMap?.levels === ENV_SPEC_LEVELS ? ctx.scene.envMap : undefined;
     const env = this.envBindingFor(ctx);
+    /*
+      Geometry-aware shadows for ONE light per run.
+
+      One, not all of them, and the limit is the binding rather than the maths:
+      a second map is a second texture at a second slot on every lit-3d
+      material, plus a second matrix in a uniform tail that is already 184
+      floats. The first light with `shadowMap` on wins; the rest keep the 2.5D
+      projected copy the adapter still emits for them, so turning the switch on
+      for two lamps gives one geometric shadow and one projected one rather than
+      a silent downgrade of both.
+
+      Rendered BEFORE the main pass opens, because the map is a texture the
+      main pass samples and no backend lets one pass read the target another is
+      still writing.
+    */
+    const shadowLightIndex = lights ? lights.findIndex((l) => l.shadowMap === true && l.type !== 'ambient' && l.gain > 0) : -1;
+    const shadowRun = shadowLightIndex >= 0 ? this.renderShadowMap(ctx, group, lights![shadowLightIndex]!) : null;
+    const shadowLight = shadowRun ? lights![shadowLightIndex]! : undefined;
+    // `shadowed` is what `packShade3D` matches on to resolve the light's index
+    // AFTER its own filtering — see the flag's note there.
+    const litLights = lights && shadowRun
+      ? lights.map((l, i) => (i === shadowLightIndex ? { ...l, shadowed: true } : l))
+      : lights;
+    /*
+      The v flip is the OPPOSITE of `targetSampleUv`'s, and that is not a typo.
+
+      `targetSampleUv` flips for a quad whose uv runs top-down in screen terms.
+      Here the coordinate comes from the light's own NDC, where +1 is the top of
+      the viewport on both backends. WebGL2 writes render targets bottom-up, so
+      NDC +1 lands at v = 1 and the identity is already right; WebGPU writes
+      them top-down, so NDC +1 lands at v = 0 and the lookup must flip.
+    */
+    const shadowFlipV = !ctx.services.backend.renderTargetFlipV;
+    const shadow = shadowRun
+      ? { texture: shadowRun.texture, sampler: shadowRun.sampler }
+      : this.shadowFallback(ctx);
+    const shadowTail = shadowRun
+      ? {
+        matrix: shadowRun.camera.matrix,
+        axis: shadowRun.camera.axis,
+        invFar: shadowRun.camera.invFar,
+        origin: shadowRun.camera.origin,
+        // Defaults to fully blocking, which is AE's default and is what a
+        // single-light scene renders as pure black. The slider is the way out,
+        // and it is the SAME slider the projected path scales its opacity by.
+        darkness: Math.max(0, Math.min(1, shadowLight?.shadowDarkness ?? 1)),
+        // The UI's bias is in WORLD units, which is the unit a user can reason
+        // about; the shader compares normalised distances, so it converts here
+        // rather than asking the UI to know the far plane.
+        bias: Math.max(0, shadowLight?.shadowBias ?? 3) * shadowRun.camera.invFar,
+        step: Math.max(0, shadowLight?.shadowSoftness ?? 1) / shadowRun.size,
+        flipV: shadowFlipV,
+      }
+      : undefined;
     const targetUv = targetSampleUv(ctx);
     const clampSampler = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     // Per-fragment Accepts-Lights shading: build the shade tail for renderables
@@ -1825,15 +2045,15 @@ export class CompositionPass extends RenderPass {
     // into the tint, so lighting is never silently lost.
     const shadeFor = (r: Renderable): Shade3D | undefined => {
       const s = r.threeD?.shade;
-      if (!s || !lights || lights.length === 0) return undefined;
+      if (!s || !litLights || litLights.length === 0) return undefined;
       // Material Ambient/Diffuse (AE %) — same factors as `shadeLayer`. Without
       // this the GPU path ignored the Material Options sliders while the CPU
       // quadGain fallback honored them.
       const kAmbient = (s.ambient ?? 100) / 100;
       const kDiffuse = (s.diffuse ?? 50) / 50;
       const scaledLights = (kAmbient === 1 && kDiffuse === 1)
-        ? lights
-        : lights.map((l) => ({
+        ? litLights
+        : litLights.map((l) => ({
           ...l,
           gain: l.gain * (l.type === 'ambient' ? kAmbient : kDiffuse),
         }));
@@ -1868,6 +2088,10 @@ export class CompositionPass extends RenderPass {
             },
           }
           : {}),
+        // Attached only to a surface that ACCEPTS shadows, so the shader needs
+        // no second gate: a shadow catcher turned off packs the block as zeros
+        // and reads exactly as it did before this existed.
+        ...(shadowTail && s.acceptsShadows !== false ? { shadow: shadowTail } : {}),
         lights: scaledLights,
       };
     };
@@ -1879,6 +2103,7 @@ export class CompositionPass extends RenderPass {
 
     let cmds = new CommandBuffer();
     cmds.env = env;
+    cmds.shadow = shadow;
     let depthCleared = false;
     // True when `cmds` holds a queued draw sampling the resolved-effect texture
     // in LAYER_TARGET — that draw must execute before LAYER_TARGET is reused.
@@ -1889,10 +2114,11 @@ export class CompositionPass extends RenderPass {
       services.quad.execute(enc, cmds);
       enc.end();
       cmds = new CommandBuffer();
-      // The replacement buffer needs it too: the lit-3d materials declare
-      // bindings 7/8 unconditionally, so a sub-pass without this would queue
-      // incomplete bind groups.
+      // The replacement buffer needs them too: the lit-3d materials declare
+      // bindings 7/8 and 9/10 unconditionally, so a sub-pass without these
+      // would queue incomplete bind groups.
       cmds.env = env;
+      cmds.shadow = shadow;
       depthCleared = true;
       pendingResolved = false;
     };

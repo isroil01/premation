@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { ColorPicker } from '@components/ColorPicker';
+import { EmptyState } from '@components/EmptyState';
 import { useSwatchStore } from '@stores/swatchStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -102,9 +103,22 @@ export function SwatchesPanel(): JSX.Element {
       <div className={styles.sectionLabel}>Project Swatches</div>
 
       {swatches.length === 0 ? (
-        <p className={styles.empty}>
-          No swatches yet. Pick a color above and press Add, or promote one of the document colors below.
-        </p>
+        <EmptyState
+          compact
+          icon="palette"
+          title="No swatches yet"
+          message="Pick a colour above and add it, or promote one of the document colours below."
+          action={{
+            label: 'Add the picked colour',
+            onClick: () => {
+              const added = addSwatch(draft);
+              if (added) {
+                setEditingId(added.id);
+                setDraftName(added.name);
+              }
+            },
+          }}
+        />
       ) : (
         <ul className={styles.list}>
           {swatches.map((sw, i) => (
@@ -194,7 +208,11 @@ export function SwatchesPanel(): JSX.Element {
 
       <div className={styles.sectionLabel}>Document Colors</div>
       {documentColors.length === 0 ? (
-        <p className={styles.empty}>Nothing in this composition is painted yet.</p>
+        <EmptyState
+          compact
+          icon="brush"
+          message="Nothing in this composition is painted yet."
+        />
       ) : (
         <div className={styles.grid} role="listbox" aria-label="Document colors">
           {documentColors.map((hex) => (

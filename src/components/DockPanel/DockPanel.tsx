@@ -13,7 +13,7 @@ import { openContextMenu } from '@stores/contextMenuStore';
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
-import { panelDef } from '@layout/EditorLayout/panelDefs';
+import { panelDef, availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import styles from './DockPanel.module.css';
 
 export interface DockPanelProps {
@@ -122,6 +122,27 @@ export function DockPanel({
         icon: item.id === effectiveActiveId ? ('check' as IconName) : (item.icon ?? undefined),
         onSelect: () => openPanel(item.id),
       })),
+    ];
+
+    const currentIds = new Set(allItems.map((item) => item.id));
+    const otherDefs = availablePanelDefs().filter(
+      (def) => def.region === regionKey && !currentIds.has(def.id)
+    );
+    if (otherDefs.length > 0) {
+      items.push({ type: 'separator' });
+      items.push({ type: 'label', label: 'More Panels' });
+      for (const def of otherDefs) {
+        items.push({
+          type: 'item' as const,
+          id: `open-${def.id}`,
+          label: def.title,
+          icon: def.icon,
+          onSelect: () => openPanel(def.id),
+        });
+      }
+    }
+
+    items.push(
       { type: 'separator' },
       { type: 'label', label: 'Panel Actions' },
       {
@@ -181,8 +202,8 @@ export function DockPanel({
         label: `Undock “${targetLabel}”`,
         icon: 'export' as IconName,
         onSelect: popoutActivePanel,
-      },
-    ];
+      }
+    );
     return items;
   }, [allItems, effectiveActiveId, onToggleSplit, isSplit, isTop, isLeft, targetLabel, targetPanelId, isRegionCollapsed, regionKey]);
 

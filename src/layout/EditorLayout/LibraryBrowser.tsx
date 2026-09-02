@@ -16,7 +16,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
 import { Input } from '@components/Input';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import styles from './DemoPanels.module.css';
+import styles from './panels.module.css';
 
 /** The least a library item must expose to be browsable. */
 export interface BrowsableItem {

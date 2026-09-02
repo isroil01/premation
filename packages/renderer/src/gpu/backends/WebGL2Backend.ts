@@ -35,7 +35,7 @@ import type {
   VertexBufferLayout,
   IndexFormat,
 } from '../types';
-import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING } from '../types';
+import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING } from '../types';
 import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
@@ -776,6 +776,13 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // texture from clamp to repeat.
     let envSampler: WebGLSampler | null = null;
     let envUnit = -1;
+    // Same exception, second reason: the shadow map must sample NEAREST. Its
+    // texels are a 24-bit depth packed across rgb, and the broadcast sampler
+    // below is LINEAR — a bilinear blend of two packed depths decodes to a
+    // number that is neither of them, which reads as noise along every shadow
+    // edge rather than as a soft one.
+    let shadowSampler: WebGLSampler | null = null;
+    let shadowUnit = -1;
     for (const e of (group.native as { entries: BindGroupResource[] }).entries) {
       if ('buffer' in e) {
         const nb = e.buffer.native as NativeBuffer;
@@ -790,9 +797,12 @@ class WebGL2PassEncoder implements RenderPassEncoder {
           : (texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform);
         if (uni) gl.uniform1i(uni, texIndex);
         if (e.binding === ENV_TEXTURE_BINDING) envUnit = texIndex;
+        if (e.binding === SHADOW_TEXTURE_BINDING) shadowUnit = texIndex;
         texIndex += 1;
       } else if (e.binding === ENV_SAMPLER_BINDING) {
         envSampler = e.sampler.native as WebGLSampler;
+      } else if (e.binding === SHADOW_SAMPLER_BINDING) {
+        shadowSampler = e.sampler.native as WebGLSampler;
       } else {
         sampler = e.sampler.native as WebGLSampler;
       }
@@ -810,6 +820,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // AFTER the broadcast, so the env unit keeps the wrapping sampler even
     // when the draw also carries a layer sampler.
     if (envSampler && envUnit >= 0) gl.bindSampler(envUnit, envSampler);
+    if (shadowSampler && shadowUnit >= 0) gl.bindSampler(shadowUnit, shadowSampler);
   }
   setVertexBuffer(_slot: number, buffer: BufferHandle): void {
     this.vertexBuffer = buffer.native as NativeBuffer;

@@ -31,7 +31,7 @@
 import { BUILTIN_SHADERS } from '../shaders/builtin';
 import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
-  packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D,
+  packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D, packShadowDepth,
   packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock,
   packBokeh, packCocBlur, packSceneBlitLut, packMesh3DPbr,
 } from '../pipeline/uniforms';
@@ -154,6 +154,12 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   // `packTextured3D`, so a field added to the shared shade tail must land
   // between them on BOTH sides or every map parameter reads garbage.
   { shader: 'mesh3d-pbr', pack: () => packMesh3DPbr(MVP4, RECT, COLOR, 1) },
+  // The shadow-map caster pair. Their block is deliberately NOT the shade tail
+  // — it carries the light's MVP, the caster's world matrix and the axis/origin
+  // the receiver measures against — so it is its own row, and the two shaders
+  // share one packer because they differ only in vertex layout.
+  { shader: 'shadow-depth', pack: () => packShadowDepth(MVP4, MVP4 as unknown as number[], [0, 0, 1], 0.001, [0, 0, 0]) },
+  { shader: 'shadow-depth-mesh', pack: () => packShadowDepth(MVP4, MVP4 as unknown as number[], [0, 0, 1], 0.001, [0, 0, 0]) },
   { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
   { shader: 'bokeh', pack: () => packBokeh(MVP, RECT, 0.001, 0.001, 8, 6, 0.5, 1) },
   { shader: 'coc-blur', pack: () => packCocBlur(MVP, RECT, RECT, 0.001, 0.001, [1, 2, 3, 4], 6, 0.5, 1) },

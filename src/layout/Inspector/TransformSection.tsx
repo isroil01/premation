@@ -5,7 +5,7 @@ import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { is3DEnabled } from '@core/scene/threeD';
-import { setAnchor } from '@core/scene/anchor';
+import { setAnchor, estimateNodeBounds } from '@core/scene/anchor';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
@@ -35,6 +35,18 @@ const ROTATION_PROPS = new Set([
   'orientationZ',
 ]);
 
+const ANCHOR_PRESETS: Array<{ id: string; label: string; getOffset: (w: number, h: number) => { x: number; y: number } }> = [
+  { id: 'tl', label: 'Top Left', getOffset: (w: number, h: number) => ({ x: -w / 2, y: -h / 2 }) },
+  { id: 'tc', label: 'Top Center', getOffset: (_w: number, h: number) => ({ x: 0, y: -h / 2 }) },
+  { id: 'tr', label: 'Top Right', getOffset: (w: number, h: number) => ({ x: w / 2, y: -h / 2 }) },
+  { id: 'ml', label: 'Middle Left', getOffset: (w: number, _h: number) => ({ x: -w / 2, y: 0 }) },
+  { id: 'mc', label: 'Center', getOffset: (_w: number, _h: number) => ({ x: 0, y: 0 }) },
+  { id: 'mr', label: 'Middle Right', getOffset: (w: number, _h: number) => ({ x: w / 2, y: 0 }) },
+  { id: 'bl', label: 'Bottom Left', getOffset: (w: number, h: number) => ({ x: -w / 2, y: h / 2 }) },
+  { id: 'bc', label: 'Bottom Center', getOffset: (_w: number, h: number) => ({ x: 0, y: h / 2 }) },
+  { id: 'br', label: 'Bottom Right', getOffset: (w: number, h: number) => ({ x: w / 2, y: h / 2 }) },
+];
+
 export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   useSceneRevision((s) => s.rev);
   // Every field here can show a sampled keyframe value, and keyframes live in
@@ -49,6 +61,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const node = defaultSceneGraph.getNode(nodeId);
   const [linkedScale, setLinkedScale] = useState(true);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // NO early return before the hooks below. `if (!node) return null` used to sit
   // here, above ~22 more hooks (two useMemo + twenty useNodeComponentProp), so
@@ -197,6 +210,7 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
         label={label.replace(/(Position|Scale|Rotation|Anchor Point)\s*/i, '') || label}
         srLabel={label}
         animated={animated}
+        compact
         onStopwatch={numeric ? toggleStopwatch : undefined}
         navigator={{
           hasPrev: !!prev,
@@ -293,20 +307,6 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
 
   const is3D = is3DEnabled(node);
   const isCamera = readNodeKind(node) === 'camera';
-  /**
-   * A light has depth but cannot take the 3D switch.
-   *
-   * `canBe3D` lists only content kinds, so `is3DEnabled` is false for a light
-   * forever — and Z rendered only for `isCamera || is3D`, which left a light
-   * with no depth control anywhere in the UI. The renderer has always read it:
-   * `nodeWorldPosition` resolves a light's z, cast shadows are BUILT on it
-   * (`denom = caster.z - lightZ`, and a light sharing the caster's plane throws
-   * no shadow at all), and an aimed light needs depth to have a beam that
-   * travels. Every light was pinned to z = 0 by the inspector alone.
-   *
-   * Same exemption cameras already have, and for the same reason: these kinds
-   * are positioned in 3D by nature rather than by a switch.
-   */
   const isLight = readNodeKind(node) === 'light';
   const hasDepth = isCamera || isLight || is3D;
 
@@ -319,12 +319,26 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
   const isOpacityAnimated = defaultAnimation.isAnimated(nodeId, 'opacity');
   const isSkewAnimated = defaultAnimation.isAnimated(nodeId, 'skew') || defaultAnimation.isAnimated(nodeId, 'skewAxis');
 
+  // Interactive 3x3 anchor snapping
+  const bounds = widthVal !== undefined && heightVal !== undefined ? { width: widthVal, height: heightVal } : estimateNodeBounds(nodeId);
+
+  const applyAnchorPreset = (preset: typeof ANCHOR_PRESETS[number]) => {
+    const target = preset.getOffset(bounds.width, bounds.height);
+    setAnchor(nodeId, target.x, target.y);
+  };
+
+  const isPresetActive = (preset: typeof ANCHOR_PRESETS[number]) => {
+    const target = preset.getOffset(bounds.width, bounds.height);
+    return Math.abs(anchorXVal - target.x) < 1.5 && Math.abs(anchorYVal - target.y) < 1.5;
+  };
+
   // AE-style flat property list: a subhead per group (label · animated dot ·
   // stopwatch), then its rows inline — no popovers, everything one glance away.
-  const subhead = (label: string, animated: boolean, stopwatch: JSX.Element | null) => (
+  const subhead = (label: string, animated: boolean, stopwatch: JSX.Element | null, extra?: JSX.Element) => (
     <div className={styles.subhead}>
       {label}
       {animated && <span className={styles.animatedDot} />}
+      {extra}
       <span style={{ flex: 1 }} />
       {stopwatch}
     </div>
@@ -332,37 +346,34 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
 
   return (
     <div className={styles.section}>
-
       <div className={styles.inlineRows}>
         {!isCamera && (
           <>
-            {subhead('Anchor', isAnchorAnimated, renderStopwatchBtn([
-              { prop: 'anchorX', value: anchorXVal },
-              { prop: 'anchorY', value: anchorYVal },
-            ]))}
-            {/*
-              AE semantics: typing an anchor value MOVES the layer.
-
-              Anchor Point is a coordinate in the layer's own space and Position
-              says where that point sits in the parent, so moving the anchor
-              inside the layer shifts the content by −R·S·Δanchor. Compensating
-              here is what the Pan Behind tool (Y) is for, and it is a separate
-              gesture in AE precisely because the two are different intentions.
-
-              These rows used to call `moveAnchorCompensated`, which was neither
-              AE nor self-consistent: `renderAnimPropInner` routes ANIMATED
-              properties straight to `setKeyframe` and never calls this writer,
-              so the compensation silently vanished the moment the anchor
-              carried a track. One field, three behaviours, decided by keyframe
-              state that has nothing to do with anchoring.
-            */}
+            {subhead(
+              'Anchor',
+              isAnchorAnimated,
+              renderStopwatchBtn([
+                { prop: 'anchorX', value: anchorXVal },
+                { prop: 'anchorY', value: anchorYVal },
+              ]),
+              <div className={styles.anchorOriginBox} title="Quick Snap Anchor Origin (3x3 Matrix)">
+                {ANCHOR_PRESETS.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`${styles.anchorDot} ${isPresetActive(p) ? styles.anchorDotActive : ''}`}
+                    title={p.label}
+                    onClick={() => applyAnchorPreset(p)}
+                  />
+                ))}
+              </div>
+            )}
             {renderAnimPropInner('anchorX', anchorXVal, (v) => {
               setAnchor(nodeId, v, anchorYVal);
             })}
             {renderAnimPropInner('anchorY', anchorYVal, (v) => {
               setAnchor(nodeId, anchorXVal, v);
             })}
-            {is3D && renderAnimPropInner('anchorZ', anchorZVal, (v) => setAnchorZ(v))}
           </>
         )}
 
@@ -396,26 +407,6 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
         {renderAnimPropInner('scaleX', scaleXVal, (v) => setScaleXVal(v))}
         {renderAnimPropInner('scaleY', scaleYVal, (v) => setScaleYVal(v))}
 
-        {subhead('Rotation', isRotationAnimated, renderStopwatchBtn([
-          { prop: 'rotation', value: rotVal },
-          ...(is3D
-            ? [
-                { prop: 'rotationX', value: rotXVal },
-                { prop: 'rotationY', value: rotYVal },
-              ]
-            : []),
-        ]))}
-        {renderAnimPropInner('rotation', rotVal, (v) => setRotVal(v))}
-        {is3D && (
-          <>
-            {renderAnimPropInner('rotationX', rotXVal, (v) => setRotXVal(v))}
-            {renderAnimPropInner('rotationY', rotYVal, (v) => setRotYVal(v))}
-            {renderAnimPropInner('orientationX', oriXVal, (v) => setOriX(v))}
-            {renderAnimPropInner('orientationY', oriYVal, (v) => setOriY(v))}
-            {renderAnimPropInner('orientationZ', oriZVal, (v) => setOriZ(v))}
-          </>
-        )}
-
         {widthVal !== undefined && heightVal !== undefined && (
           <>
             {subhead('Size', isSizeAnimated, renderStopwatchBtn([
@@ -427,22 +418,69 @@ export function TransformSection({ nodeId }: { nodeId: string }): JSX.Element | 
           </>
         )}
 
-        {/* Skew — a shear applied between rotation and scale. `skewAxis` turns
-            the horizontal default into any direction. */}
-        {subhead('Skew', isSkewAnimated, renderStopwatchBtn([
-          { prop: 'skew', value: skewVal },
+        {subhead('Rotation', isRotationAnimated, renderStopwatchBtn([
+          { prop: 'rotation', value: rotVal },
+          ...(is3D
+            ? [
+                { prop: 'rotationX', value: rotXVal },
+                { prop: 'rotationY', value: rotYVal },
+              ]
+            : []),
         ]))}
-        {renderAnimPropInner('skew', skewVal, (v) => setSkew(v))}
-        {renderAnimPropInner('skewAxis', skewAxisVal, (v) => setSkewAxis(v))}
+        {renderAnimPropInner('rotation', rotVal, (v) => setRotVal(v))}
 
         {sComp && (
           <>
             {subhead('Opacity', isOpacityAnimated, renderStopwatchBtn([{ prop: 'opacity', value: opacityVal }]))}
             {renderAnimPropInner('opacity', opacityVal, (v) => setOpacityVal(v))}
-            {/* Fill opacity fades the layer's pixels but not its styles — at 0
-                a shadowed layer leaves the shadow floating. */}
-            {renderAnimPropInner('fillOpacity', fillOpacityVal, (v) => setFillOpacity(v))}
           </>
+        )}
+
+        {/* Advanced Transform Progressive Disclosure Toggle */}
+        <button
+          type="button"
+          className={styles.advancedToggle}
+          onClick={() => setShowAdvanced(!showAdvanced)}
+          aria-expanded={showAdvanced}
+        >
+          <Icon
+            name={showAdvanced ? 'chevron-down' : 'chevron-right'}
+            size="sm"
+            className={styles.advancedChevron}
+          />
+          <span>Advanced Transform & 3D</span>
+        </button>
+
+        {showAdvanced && (
+          <div className={styles.advancedGroup}>
+            {/* Skew */}
+            {subhead('Skew', isSkewAnimated, renderStopwatchBtn([
+              { prop: 'skew', value: skewVal },
+            ]))}
+            {renderAnimPropInner('skew', skewVal, (v) => setSkew(v))}
+            {renderAnimPropInner('skewAxis', skewAxisVal, (v) => setSkewAxis(v))}
+
+            {/* 3D Rotations & Orientations */}
+            {is3D && (
+              <>
+                {subhead('3D Rotation & Orientation', false, null)}
+                {renderAnimPropInner('rotationX', rotXVal, (v) => setRotXVal(v))}
+                {renderAnimPropInner('rotationY', rotYVal, (v) => setRotYVal(v))}
+                {renderAnimPropInner('orientationX', oriXVal, (v) => setOriX(v))}
+                {renderAnimPropInner('orientationY', oriYVal, (v) => setOriY(v))}
+                {renderAnimPropInner('orientationZ', oriZVal, (v) => setOriZ(v))}
+                {renderAnimPropInner('anchorZ', anchorZVal, (v) => setAnchorZ(v))}
+              </>
+            )}
+
+            {/* Fill opacity */}
+            {sComp && (
+              <>
+                {subhead('Fill Opacity', false, null)}
+                {renderAnimPropInner('fillOpacity', fillOpacityVal, (v) => setFillOpacity(v))}
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>

@@ -28,21 +28,12 @@
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
+/* Sizing only. The field itself is a <SearchField>, which brings the app's
+   one search-box treatment with it — this used to restate a border, a radius,
+   a background and a focus colour that no other search box in the app used. */
 .search {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border-strong);
-  background: var(--color-surface-0);
-  color: var(--color-text-primary);
-  font-size: 0.82rem;
-  outline: none;
-  transition: border-color 140ms ease;
-}
-
-.search:focus {
-  border-color: var(--color-primary);
 }
 
 .publishBtn {

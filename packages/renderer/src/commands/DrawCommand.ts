@@ -61,6 +61,20 @@ export interface DrawItem {
   /** Sampler for {@link envTexture} — REPEAT in u so the equirect's longitude
    *  seam blends instead of clamping, which is why it cannot be the layer's. */
   envSampler?: SamplerHandle;
+  /**
+   * The run's shadow map, at bindings 9/10.
+   *
+   * Bound on EVERY lit-3d draw for exactly the reason {@link envTexture} is: the
+   * shader skips it on a zero `shadowParams.x`, and making the BINDING the
+   * switch would mean a second pipeline per 3d material to say what one uniform
+   * already says. A run with no shadow-mapped light binds the shared 1x1
+   * far-depth texel, which is never sampled.
+   */
+  shadowTexture?: TextureHandle;
+  /** Sampler for {@link shadowTexture} — NEAREST, because the map's texels are
+   *  a 24-bit depth packed across rgb and a filtered blend of two of them is not
+   *  a depth. That is why it cannot be the layer's sampler. */
+  shadowSampler?: SamplerHandle;
   /** Optional custom geometry for mesh rendering. */
   vertexBuffer?: BufferHandle;
   indexBuffer?: BufferHandle;
@@ -96,6 +110,16 @@ export class CommandBuffer {
    * fallback, which the shader's zero `envParams.x` never samples.
    */
   env?: { texture: TextureHandle; sampler: SamplerHandle };
+
+  /**
+   * The shadow map every lit-3d draw in this buffer binds.
+   *
+   * A property of the PASS for the same reason `env` is: a depth RUN renders one
+   * map, from one light, and every receiver in the run reads that same texture.
+   * The `emit*3D` helpers stamp it onto their items, so a 2D draw never acquires
+   * a binding its material does not declare.
+   */
+  shadow?: { texture: TextureHandle; sampler: SamplerHandle };
 
   add(item: DrawItem): void {
     this.items.push(item);

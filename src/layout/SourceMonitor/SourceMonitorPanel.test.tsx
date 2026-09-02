@@ -207,3 +207,13 @@ describe('JKL shuttle', () => {
     }
   });
 });
+
+describe('with no clip open', () => {
+  it('names the surface and says where a clip comes from', () => {
+    useSourceMonitorStore.setState({ assetId: null });
+    render(<SourceMonitorPanel />);
+
+    expect(screen.getByText('No clip loaded')).toBeTruthy();
+    expect(screen.getByText(/Open a clip from the Assets panel/)).toBeTruthy();
+  });
+});

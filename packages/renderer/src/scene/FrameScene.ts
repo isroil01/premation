@@ -644,6 +644,17 @@ export interface Renderable {
   threeD?: {
     model: readonly number[];
     /**
+     * This renderable throws a geometric shadow (Material Options → Casts
+     * Shadows). Read only when a light in the run has `shadowMap` on: it
+     * selects the members drawn into the map.
+     *
+     * Separate from `shade` on purpose. `shade` is present only when the layer
+     * ACCEPTS LIGHTS, and a layer that refuses lighting still blocks it —
+     * hanging casting off the shade block would make an unlit card in front of
+     * a lamp transparent to it.
+     */
+    castsShadow?: boolean;
+    /**
      * Per-fragment shading (Material Options → Accepts Lights). When the
      * renderable draws through the depth-tested group path, the 3d shaders run
      * real per-fragment Lambert + Blinn-Phong specular using the scene's
@@ -672,6 +683,13 @@ export interface Renderable {
       ambient?: number;
       /** Material Diffuse % (AE). Scales Lambert on the GPU path. */
       diffuse?: number;
+      /**
+       * This surface RECEIVES a geometric shadow (Material Options → Accepts
+       * Shadows). False keeps the surface fully lit even where the map says it
+       * is occluded — the shadow-catcher switch, honoured on the GPU path the
+       * same way the projected copy already honours it on the CPU one.
+       */
+      acceptsShadows?: boolean;
     };
   };
 }
@@ -749,6 +767,34 @@ export interface SceneLight3D {
   falloffMode: number;
   /** Smooth-curve span in px, default already applied. */
   falloffDistance: number;
+  /**
+   * Render this light's GEOMETRIC shadow — the run's casters rasterised from
+   * the light into a depth map, sampled per fragment.
+   *
+   * Opt-in, and absent means off, because the alternative it replaces is not
+   * broken: a 2.5D projected caster copy (see `buildSnapshot`) lands a correct
+   * silhouette on the nearest accepting plane and costs nothing. A map buys
+   * what that cannot express — a shadow that curves over the receiver's own
+   * geometry, that a caster casts onto ITSELF, and that respects more than one
+   * receiving surface — at the price of a second render of every caster.
+   *
+   * When this is on, the adapter must SUPPRESS this light's projected copy, or
+   * the frame carries two shadows from one lamp.
+   */
+  shadowMap?: boolean;
+  /** Map resolution; the renderer clamps to 512 / 1024 / 2048. */
+  shadowMapSize?: number;
+  /** Depth bias in WORLD units, subtracted from the receiver's distance before
+   *  the comparison. Too little and a lit surface stripes itself; too much and
+   *  a shadow detaches from the foot of its caster. */
+  shadowBias?: number;
+  /** PCF tap spacing, in map texels. 1 = a plain 3×3; larger softens the edge
+   *  at the cost of banding, since the tap count stays 9. */
+  shadowSoftness?: number;
+  /** AE's Shadow Darkness as a FRACTION — how much of this light a caster
+   *  blocks. 1 (the default) blocks all of it, which on a single-light scene
+   *  renders the occluded surface pure black. */
+  shadowDarkness?: number;
 }
 
 export interface CompositionInfo {

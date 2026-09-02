@@ -30,6 +30,7 @@ import {
 import type { RepeaterComposite } from '@core/scene/repeater';
 import styles from './TextAnimatorControls.module.css';
 import { Checkbox } from '@components/Checkbox';
+import { InspectorSection } from './InspectorSection';
 
 const TYPES: { id: PathOpType; label: string }[] = [
   { id: 'zigzag', label: 'Zig-Zag' },
@@ -131,14 +132,14 @@ function ParamRow({
 
   return (
     <div className={styles.paramRow}>
-      <div style={{ display: 'flex', alignItems: 'center', height: '100%' }}>
-          <Checkbox 
-            checked={animated} 
-            onChange={toggle} 
-            title="Toggle Animation"
-            style={{ width: 14, height: 14 }}
-          />
-        </div>
+      <span className={styles.rowToggle}>
+        <Checkbox
+          checked={animated}
+          onChange={toggle}
+          title="Toggle Animation"
+          style={{ width: 14, height: 14 }}
+        />
+      </span>
       <span className={styles.paramLabel}>{label}</span>
       <ValueField value={display} onChange={onChange} min={min} max={max} step={step} unit={unit} aria-label={label} />
     </div>
@@ -174,43 +175,49 @@ function PathOpCard({
   }));
 
   return (
-    <div className={styles.root}>
-      <div className={styles.head}>
-        <span className={styles.title}>
-          {count > 1 ? `${index + 1}. ${typeLabel}` : typeLabel}
-        </span>
-        {index > 0 && (
+    <InspectorSection
+      nested
+      title={count > 1 ? `${index + 1}. ${typeLabel}` : typeLabel}
+      // The move and remove controls go in the shared actions slot: the
+      // inspector has one place a card's controls live, and it is the right end
+      // of its title row — the same place the layer styles and shape effects
+      // put theirs.
+      actions={
+        <>
+          {index > 0 && (
+            <button
+              type="button"
+              className={styles.remove}
+              onClick={() => reorderPathOp(nodeId, op.id, index - 1)}
+              aria-label={`Move ${typeLabel} up`}
+              title="Move up — operators apply top to bottom"
+            >
+              <Icon name="chevron-up" size="sm" />
+            </button>
+          )}
+          {index < count - 1 && (
+            <button
+              type="button"
+              className={styles.remove}
+              onClick={() => reorderPathOp(nodeId, op.id, index + 1)}
+              aria-label={`Move ${typeLabel} down`}
+              title="Move down — operators apply top to bottom"
+            >
+              <Icon name="chevron-down" size="sm" />
+            </button>
+          )}
           <button
             type="button"
             className={styles.remove}
-            onClick={() => reorderPathOp(nodeId, op.id, index - 1)}
-            aria-label={`Move ${typeLabel} up`}
-            title="Move up — operators apply top to bottom"
+            onClick={() => removePathOp(nodeId, op.id)}
+            aria-label={`Remove ${typeLabel}`}
+            title="Remove path operator"
           >
-            <Icon name="chevron-up" size="sm" />
+            <Icon name="minus" size="sm" />
           </button>
-        )}
-        {index < count - 1 && (
-          <button
-            type="button"
-            className={styles.remove}
-            onClick={() => reorderPathOp(nodeId, op.id, index + 1)}
-            aria-label={`Move ${typeLabel} down`}
-            title="Move down — operators apply top to bottom"
-          >
-            <Icon name="chevron-down" size="sm" />
-          </button>
-        )}
-        <button
-          type="button"
-          className={styles.remove}
-          onClick={() => removePathOp(nodeId, op.id)}
-          aria-label={`Remove ${typeLabel}`}
-          title="Remove path operator"
-        >
-          <Icon name="minus" size="sm" />
-        </button>
-      </div>
+        </>
+      }
+    >
       {/* No type picker on a Trim or Repeater card. Retyping either into a
           Zig-Zag would silently reinterpret its own parameters as
           amount/detail, and there is no sensible value to carry across — both
@@ -324,7 +331,10 @@ function PathOpCard({
             unit="%"
           />
           <div className={styles.paramRow}>
-            <div />
+            {/* An empty gutter, not a missing one: the seed cannot be animated,
+                but its label must still start on the same column as the two
+                rows above it. */}
+            <span className={styles.rowToggle} />
             <span className={styles.paramLabel}>Random Seed</span>
             <ValueField
               value={op.seed ?? 0}
@@ -335,7 +345,7 @@ function PathOpCard({
           </div>
         </>
       )}
-    </div>
+    </InspectorSection>
   );
 }
 

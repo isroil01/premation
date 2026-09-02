@@ -20,6 +20,8 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Icon } from '@components/Icon';
 import { Pagination } from '@components/Pagination';
+import { SearchField } from '@components/SearchField';
+import { EmptyState } from '@components/EmptyState';
 import { cn } from '@utils/cn';
 import { usePluginStore } from '@stores/pluginStore';
 import pluginHost from '@core/plugins/PluginHost';
@@ -295,15 +297,15 @@ export function PluginsList({
       )}
 
       <div className={styles.searchRow}>
-        <input
+        <SearchField
           className={styles.search}
-          type="search"
           placeholder="Search plugins"
-          aria-label="Search plugins"
+          ariaLabel="Search plugins"
+          size="md"
           value={query}
           // Back to page one on every edit. Staying on page 4 of the previous
           // search would show a page of a list that no longer exists.
-          onChange={(e) => { setQuery(e.target.value); setOffset(0); }}
+          onChange={(next) => { setQuery(next); setOffset(0); }}
         />
         {/*
           Two DIFFERENT actions, both on the list on purpose.
@@ -339,11 +341,12 @@ export function PluginsList({
         {loading && <SkeletonRows />}
 
         {!loading && rows.length === 0 && (
-          <EmptyState
+          <PluginsEmpty
             query={query}
             registryAvailable={registryAvailable}
             failed={failed}
             canInstall={canInstall}
+            onClearQuery={() => { setQuery(''); setOffset(0); }}
           />
         )}
 
@@ -837,14 +840,22 @@ function RevocationStalenessNotice(): JSX.Element | null {
   );
 }
 
-function EmptyState({
-  query, registryAvailable, failed, canInstall,
+/**
+ * The plugin list's four flavours of "nothing here", on the shared
+ * <EmptyState> rather than on three hand-rolled `styles.state` divs. It kept
+ * its own name because the shared component is now imported into this file and
+ * the local one used to shadow it — which is how the panel ended up with an
+ * empty state that looked like nothing else in the app.
+ */
+function PluginsEmpty({
+  query, registryAvailable, failed, canInstall, onClearQuery,
 }: {
   query: string;
   registryAvailable: boolean;
   failed: boolean;
   /** False in the dock, where there is no way to add one from here. */
   canInstall: boolean;
+  onClearQuery: () => void;
 }): JSX.Element {
   /*
     Where to go, whenever this copy of the list cannot install.
@@ -860,32 +871,46 @@ function EmptyState({
 
   if (failed) {
     return (
-      <div className={styles.state}>
-        <span className={styles.stateTitle}>Couldn&rsquo;t reach the registry.</span>
-        <span>Your installed plugins are still available. Check your connection.</span>
-      </div>
+      <EmptyState
+        icon="plugin"
+        title="Couldn’t reach the registry."
+        message="Your installed plugins are still available. Check your connection."
+      />
     );
   }
   if (!registryAvailable) {
     return (
-      <div className={styles.state}>
-        <span className={styles.stateTitle}>The plugin registry isn&rsquo;t available in this edition.</span>
-        <span>
-          {canInstall
+      <EmptyState
+        icon="plugin"
+        title="The plugin registry isn’t available in this edition."
+        message={
+          canInstall
             ? 'You can still install plugins from a folder or a .zip package.'
-            : 'Plugins are installed from the dashboard’s Plugins page, from a folder or a .zip package.'}
-        </span>
-      </div>
+            : 'Plugins are installed from the dashboard’s Plugins page, from a folder or a .zip package.'
+        }
+      />
+    );
+  }
+  if (query.trim()) {
+    return (
+      <EmptyState
+        icon="plugin"
+        title={`No plugins match “${query.trim()}”.`}
+        message="Try a broader search."
+        action={{ label: 'Show all plugins', onClick: onClearQuery }}
+      />
     );
   }
   return (
-    <div className={styles.state}>
-      <span className={styles.stateTitle}>
-        {query.trim() ? `No plugins match “${query.trim()}”.` : 'No plugins yet.'}
-      </span>
-      <span>{query.trim() ? 'Try a broader search.' : 'Published plugins will appear here.'}</span>
-      {!query.trim() && elsewhere}
-    </div>
+    <EmptyState
+      icon="plugin"
+      title="No plugins yet."
+      message={
+        <>
+          Published plugins will appear here. {elsewhere}
+        </>
+      }
+    />
   );
 }
 

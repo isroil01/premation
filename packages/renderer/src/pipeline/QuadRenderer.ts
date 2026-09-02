@@ -9,7 +9,7 @@
 import type { CommandBuffer } from '../commands/DrawCommand';
 import type { RenderBackend, RenderPassEncoder } from '../gpu/RenderBackend';
 import type { ResourceManager } from '../gpu/ResourceManager';
-import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, type TextureFormat } from '../gpu/types';
+import { ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING, type TextureFormat } from '../gpu/types';
 import { QUAD_VERTEX_COUNT, unitQuadBuffer } from '../resources/Geometry';
 import type { MaterialSystem } from '../shaders/Material';
 
@@ -85,6 +85,12 @@ export class QuadRenderer {
         // declared sampler list.
         if (item.envTexture) entries.push({ binding: ENV_TEXTURE_BINDING, texture: item.envTexture });
         if (item.envSampler) entries.push({ binding: ENV_SAMPLER_BINDING, sampler: item.envSampler });
+        // Bindings 9/10: the run's shadow map and its NEAREST sampler. After the
+        // env pair for the same reason that pair came last — every texture unit
+        // the WebGL2 backend hands out above keeps the number it already had,
+        // and `uShadowTex` is simply the next name in the declared list.
+        if (item.shadowTexture) entries.push({ binding: SHADOW_TEXTURE_BINDING, texture: item.shadowTexture });
+        if (item.shadowSampler) entries.push({ binding: SHADOW_SAMPLER_BINDING, sampler: item.shadowSampler });
 
         const p = item.pbrTextures;
         const bg = this.resources.bindGroup(
@@ -100,6 +106,9 @@ export class QuadRenderer {
           // And again for the environment map: the fallback 1x1 and a real sky
           // are two different textures at the same binding.
           + `:${item.envTexture?.id ?? 0}`
+          // And once more for the shadow map: the fallback far texel and a real
+          // map are two different textures at the same binding.
+          + `:${item.shadowTexture?.id ?? 0}`
           + `:${idx}`,
           { pipeline, entries },
         );

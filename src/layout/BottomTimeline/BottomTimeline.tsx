@@ -10,6 +10,7 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
+import { SearchField } from '@components/SearchField';
 import { useCompositionStore } from '@stores/compositionStore';
 import { framesToTimecode } from '@core/time/timecode';
 import { Timeline, headerWidthFor, type TimelineProps } from '@layout/Timeline';
@@ -282,27 +283,14 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </span>
             </div>
 
-            <div className={styles.searchContainer}>
-              <Icon name="search" size="sm" className={styles.searchIcon} />
-              <input
-                type="text"
-                placeholder="Filter layers & props..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className={styles.searchInput}
-                aria-label="Search layers and properties"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  className={styles.searchClear}
-                  onClick={() => setSearchQuery('')}
-                  title="Clear search filter"
-                >
-                  <Icon name="close" size="sm" />
-                </button>
-              )}
-            </div>
+            <SearchField
+              className={styles.searchContainer}
+              size="sm"
+              placeholder="Filter layers & props…"
+              ariaLabel="Search layers and properties"
+              value={searchQuery}
+              onChange={setSearchQuery}
+            />
 
             <div className={styles.timelineSwitchesGroup}>
               <button

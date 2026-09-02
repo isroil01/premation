@@ -53,6 +53,30 @@ export interface Light {
   /** Shadow edge softness, comp px (AE's Shadow Diffusion). */
   shadowDiffusion: number;
   /**
+   * Render a GEOMETRY-AWARE shadow for this light: the depth-tested 3D run's
+   * casters, rasterised from the light into a depth map and sampled per
+   * fragment, instead of the 2.5D projected caster copy.
+   *
+   * Off by default, and the default is not laziness. The projected copy is
+   * correct for the case it was built for — one caster, one flat receiver
+   * behind it — costs nothing, and works on layers that never reach the depth
+   * path at all. A map buys the three things it cannot express (a shadow that
+   * follows the receiver's own geometry, a caster shadowing itself, more than
+   * one receiving surface) in exchange for a second render of every caster and
+   * a texture, so it is a choice the scene makes rather than one made for it.
+   *
+   * When this is on, `buildSnapshot` SUPPRESSES this light's projected copy —
+   * otherwise one lamp throws two shadows.
+   */
+  shadowMap: boolean;
+  /** Shadow-map resolution, px per side. 512 / 1024 / 2048. */
+  shadowMapSize: number;
+  /** Depth bias in comp px: too little and a lit surface stripes itself, too
+   *  much and the shadow lifts off the foot of its caster. */
+  shadowBias: number;
+  /** PCF tap spacing in map texels — how soft the map's edge reads. */
+  shadowSoftness: number;
+  /**
    * Point of Interest — spot and parallel lights AIM at it, which is the only
    * way to point a light in 3D. Null means the light has no 3D target and falls
    * back to `angle`, the legacy comp-plane direction: a spot could previously
@@ -92,6 +116,12 @@ export const LIGHT_DEFAULTS = {
   falloffDistance: 500,
   shadowDarkness: 100,
   shadowDiffusion: 0,
+  // 1024 is the size at which a comp-sized caster's edge stops reading as
+  // stair-steps at 100% zoom; 3 px of bias and a one-texel PCF spacing are the
+  // pair that leaves `shadow-map-spot` free of both acne and peter-panning.
+  shadowMapSize: 1024,
+  shadowBias: 3,
+  shadowSoftness: 1,
   envReflections: 100,
 } as const;
 
@@ -121,6 +151,10 @@ export function readNodeLight(node: SceneNode): Light {
   let shadows = false;
   let shadowDarkness: number = LIGHT_DEFAULTS.shadowDarkness;
   let shadowDiffusion: number = LIGHT_DEFAULTS.shadowDiffusion;
+  let shadowMap = false;
+  let shadowMapSize: number = LIGHT_DEFAULTS.shadowMapSize;
+  let shadowBias: number = LIGHT_DEFAULTS.shadowBias;
+  let shadowSoftness: number = LIGHT_DEFAULTS.shadowSoftness;
   let poiX: number | undefined;
   let poiY: number | undefined;
   let poiZ: number | undefined;
@@ -144,6 +178,10 @@ export function readNodeLight(node: SceneNode): Light {
     if (typeof p.poiY === 'number') poiY = p.poiY;
     if (typeof p.poiZ === 'number') poiZ = p.poiZ;
     if (p.castShadows === true || p.castShadows === 1) shadows = true;
+    if (p.shadowMap === true || p.shadowMap === 1) shadowMap = true;
+    shadowMapSize = num(p.shadowMapSize, shadowMapSize);
+    shadowBias = num(p.shadowBias, shadowBias);
+    shadowSoftness = num(p.shadowSoftness, shadowSoftness);
     if (isEnvironmentSky(p.envPreset)) envPreset = p.envPreset;
     envRotation = num(p.envRotation, envRotation);
     envReflections = num(p.envReflections, envReflections);
@@ -154,6 +192,7 @@ export function readNodeLight(node: SceneNode): Light {
   return {
     type, color, intensity, radius, angle, cone, coneFeather,
     falloff, falloffDistance, shadows, shadowDarkness, shadowDiffusion,
+    shadowMap, shadowMapSize, shadowBias, shadowSoftness,
     poi: hasPOI ? { x: poiX ?? 0, y: poiY ?? 0, z: poiZ ?? 0 } : null,
     envPreset, envRotation, envReflections,
   };

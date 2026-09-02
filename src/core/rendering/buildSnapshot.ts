@@ -1453,6 +1453,16 @@ export function buildSnapshot(
     x: number; y: number; z: number;
     intensity: number; darkness: number; diffusion: number;
   };
+  /**
+   * True when some light in the comp renders a geometric shadow MAP instead of
+   * a projected caster copy.
+   *
+   * A separate signal because `shadowLights` (the projection's input list)
+   * deliberately excludes those lights: without this, a 3D caster lit only by a
+   * map light would fall through to the 2D CSS drop-shadow branch below and
+   * acquire a flat screen-space smudge on top of its real shadow.
+   */
+  let hasShadowMapLight = false;
   const shadowLights: ShadowLight[] = (() => {
     if (comp.draft3d) return [];
     const out: ShadowLight[] = [];
@@ -1460,6 +1470,13 @@ export function buildSnapshot(
       if (readNodeKind(n) !== 'light') continue;
       const lt = readNodeLight(n);
       if (!lt.shadows || lt.type === 'ambient' || lt.type === 'environment') continue;
+      // A light rendering a real shadow MAP must not also throw a projected
+      // caster copy — one lamp, two shadows, offset from each other, is the
+      // single most visible way this feature can go wrong. Suppressed here,
+      // where the projection's input list is built, rather than at the
+      // projection site: the caster and receiver bookkeeping below is shared
+      // with the beam wash and must keep running.
+      if (lt.shadowMap) { hasShadowMapLight = true; continue; }
       const av = valuesOf(n.id);
       const wp = nodeWorldPosition(n);
       out.push({
@@ -1602,7 +1619,10 @@ export function buildSnapshot(
           sceneLights.push({
             ...lt,
             type: 'ambient', color: rl.color, intensity: rl.intensity,
-            shadows: false, falloff: 'none', poi: null,
+            // An environment light is a PROBE, not a fixture: it has no
+            // position to rasterise a map from, and its rig is six synthesised
+            // parallels that would each claim the one shadow binding.
+            shadows: false, shadowMap: false, falloff: 'none', poi: null,
             x: centre.x, y: centre.y, z: 0,
           });
         } else {
@@ -1615,7 +1635,7 @@ export function buildSnapshot(
           sceneLights.push({
             ...lt,
             type: 'parallel', color: rl.color, intensity: rl.intensity,
-            shadows: false, falloff: 'none',
+            shadows: false, shadowMap: false, falloff: 'none',
             x: centre.x - rl.from!.x * FAR,
             y: centre.y - rl.from!.y * FAR,
             z: 0 - rl.from!.z * FAR,
@@ -1633,6 +1653,14 @@ export function buildSnapshot(
       cone: av.get('lightCone') ?? lt.cone,
       coneFeather: av.get('lightConeFeather') ?? lt.coneFeather,
       falloffDistance: av.get('falloffDistance') ?? lt.falloffDistance,
+      // The shadow-map settings, sampled from the ANIMATION map like every
+      // other numeric light prop. The inspector offers all three as keyframe
+      // rows, and a row that keyframes a value nothing samples is a control
+      // that appears to work and does not — the trap `shadowDarkness` and the
+      // light's own z each fell into once already.
+      shadowDarkness: av.get('shadowDarkness') ?? lt.shadowDarkness,
+      shadowBias: av.get('shadowBias') ?? lt.shadowBias,
+      shadowSoftness: av.get('shadowSoftness') ?? lt.shadowSoftness,
       // A keyframed POI aims the light in 3D over time. Any single component
       // being animated is enough to make the light a targeted one, so the base
       // POI (which may be null) has to be filled in rather than spread through.
@@ -3252,7 +3280,7 @@ export function buildSnapshot(
         // (emitted after this walk, once every receiver plane is known). The
         // screen-space drop-shadow stays for 2D layers, where there is no depth
         // to project through and it is the only thing that reads as a shadow.
-        if (is3D && shadowLight) {
+        if (is3D && (shadowLight || hasShadowMapLight)) {
           // The WORLD matrix rides along. The projection below used to build the
           // shadow from `layer.x`/`layer.y`, which for a 3D layer are already
           // PROJECTED screen coordinates, while the light's x/y/z are world —
@@ -3266,6 +3294,20 @@ export function buildSnapshot(
         }
       }
       if (is3D && mat.acceptsShadows) shadowReceivers.push({ z: z3, depth });
+      /*
+        The same two switches, carried to the GPU shadow-map path.
+
+        Set on `layer` here — before the extrusion / model-mesh branches clone
+        it — so a solid inherits them along with everything else it inherits.
+        Separate fields rather than a reuse of `lighting`/`shade3d`: a layer
+        that refuses LIGHTS still blocks them, so casting cannot hang off the
+        shade block, and a receiver that accepts none must stay fully lit where
+        the map says it is occluded.
+      */
+      if (is3D) {
+        if (mat.castsShadows) layer.castsShadow3d = true;
+        if (!mat.acceptsShadows) layer.acceptsShadows3d = false;
+      }
       // A lit plane is a plane a beam can land on. Same {z, depth} record, taken
       // at the same moment, so the wash projection and the shadow projection
       // measure the scene identically.

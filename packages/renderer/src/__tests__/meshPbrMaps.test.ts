@@ -53,16 +53,17 @@ describe('mesh3d-pbr — the map set is declared in both dialects', () => {
     for (const binding of declared) {
       expect(pbr.wgsl).toMatch(new RegExp(`@group\\(0\\) @binding\\(${binding}\\) var \\w+ : texture_2d<f32>`));
     }
-    // 1 base colour + normal/MR/AO/emissive + the environment atlas.
-    expect(declared).toEqual([1, 3, 4, 5, 6, 7]);
+    // 1 base colour + normal/MR/AO/emissive + the environment atlas + the
+    // shadow map, which the lit-3d materials all carry at 9.
+    expect(declared).toEqual([1, 3, 4, 5, 6, 7, 9]);
   });
 
   it('★ declares its GLSL samplers in the same ORDER the bind group binds them', () => {
     // The WebGL2 backend has nothing but this ordering to go on. Entries are
-    // pushed base-colour → normal → MR → AO → emissive → env, so the names must
-    // appear in the fragment source in that order too.
+    // pushed base-colour → normal → MR → AO → emissive → env → shadow, so the
+    // names must appear in the fragment source in that order too.
     const names = MESH3D_PBR_MATERIAL.glslSamplers!;
-    expect(names).toEqual(['uTex', 'uNormalTex', 'uMRTex', 'uAOTex', 'uEmissiveTex', 'uEnvTex']);
+    expect(names).toEqual(['uTex', 'uNormalTex', 'uMRTex', 'uAOTex', 'uEmissiveTex', 'uEnvTex', 'uShadowTex']);
     const at = names.map((n) => {
       const i = pbr.glsl.fragment.indexOf(`uniform sampler2D ${n};`);
       expect(i).toBeGreaterThanOrEqual(0);
@@ -162,9 +163,11 @@ describe('★ the narrow mesh shader is untouched — the goldens gate', () => {
     }
   });
 
-  it('and keeps its own bind-group layout at base colour + sampler (+ the env atlas)', () => {
+  it('and keeps its own bind-group layout at base colour + sampler (+ env and shadow)', () => {
     const textures = MESH3D_TEXTURED_MATERIAL.layout.filter((e) => e.type === 'texture').map((e) => e.binding);
-    expect(textures).toEqual([1, 7]);
+    // 7 is the environment atlas and 9 the shadow map — both scene-wide, both
+    // on every lit-3d material, neither a per-layer MAP.
+    expect(textures).toEqual([1, 7, 9]);
     // The PBR set is what claims 3-6; nothing else on this path may.
     expect(textures).not.toContain(3);
   });

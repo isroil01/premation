@@ -11,11 +11,14 @@ Imported glTF/GLB models shipped 2026-09-01/02 (see "Imported models" below):
 they arrive as ordinary layers — a 3D null per glTF node, a mesh layer per
 primitive — through the same extrusion mesh render path every other 3D layer
 uses, not a separate object type. Environment Light shipped alongside them as
-an SH irradiance probe (three procedural sky presets, or any image
-downsampled and projected) expressed through the existing 8-slot light
-array — a low-frequency approximation, not a reflection map. Still open: HDRI
-**file** import and a reflection/specular map for mirror-like surfaces; that
-remains AE's Advanced 3D territory.
+an SH irradiance probe (three procedural sky presets, or any image / EXR
+asset chosen as the sky — `envPreset: 'asset:<id>'`) expressed through the
+existing 8-slot light array. Since 2026-09-02 the same sky also feeds a
+prefiltered specular atlas (five roughness levels) sampled by the Physical and
+Phong branches as split-sum image-based reflections — a mirror surface now
+mirrors the scenery, tinted by its base colour when metallic. Gated on
+`envParams`, so a scene without an environment light shades exactly as before.
+Toon shading deliberately takes no reflection.
 
 ---
 
@@ -321,9 +324,13 @@ Four mechanisms build on that boring mapping, all shipped 2026-09-01/02:
   and either poses once or bakes real rotation keyframes per frame, composing
   with skinning for free.
 
-Still open: external-file `.gltf` (only `.glb`/embedded `.gltf` import today),
-and PBR texture maps beyond base colour (normal/roughness/metalness/emissive
-maps are not read from the glTF material).
+Both of the gaps this paragraph used to name closed on 2026-09-02: an
+external-file `.gltf` imports with its sidecars (folded into one GLB at import,
+refusing with the names of any files that are missing), and the material's
+normal, metallic-roughness, occlusion and emissive maps render through a
+separate `mesh3d-pbr` material — tangents come from screen-space derivatives,
+so normal maps follow skinned and morphed geometry for free. Still open:
+a second UV set (`texCoord: 1` is parsed but not fed).
 
 ## Auto-Orient
 
