@@ -11,6 +11,7 @@ import { cloudProjectsEnabled } from '@core/config/edition';
 // evaluated wherever the menu renders, and TitleBar renders on /login and
 // /dashboard, where the core has not booted. `coreServices()` throws there.
 import { tryCoreServices } from '@core/services/coreServices';
+import { buildWorkspaceMenuItems } from './workspaceMenu';
 
 /** Project-lifecycle command ids (registered against ProjectManager at boot). */
 export const ProjectCommands = {
@@ -43,6 +44,25 @@ export interface MenuItemModel {
   /** Overrides the command's label. */
   label?: string;
   separator?: boolean;
+  /**
+   * A nested menu. Either a fixed list, or a thunk evaluated by the RENDERER
+   * every time the menu is drawn — which is what a submenu built from user data
+   * needs (see `workspaceMenu.ts`: saving a layout must make it appear without
+   * a reload, and `useAppMenuGroups` memoises).
+   *
+   * A parent carrying `children` needs no `commandId`; it is not itself an
+   * action, so the renderers must not grey it out for lacking one.
+   */
+  children?: ReadonlyArray<MenuItemModel> | (() => ReadonlyArray<MenuItemModel>);
+  /**
+   * A direct action, for entries that CANNOT be commands — a workspace the user
+   * invented at runtime has no registration to point at. Ignored when
+   * `commandId` is set; the registry stays the single source for anything that
+   * can live in it (label, enabled state, shortcut, palette entry).
+   */
+  onSelect?: () => void;
+  /** Checked state for an `onSelect` entry. Command-backed items use `Command.isChecked`. */
+  checked?: () => boolean;
   /**
    * Hide the item entirely when this returns false. Evaluated per render by
    * `useAppMenuGroups`, which also collapses the separators left behind.
@@ -175,6 +195,17 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'layer.newLight', label: 'New Light Layer' },
       { commandId: 'layer.newNull', label: 'New Null Object' },
       { commandId: 'layer.newAdjustment', label: 'New Adjustment Layer' },
+      {
+        // The 3D inserts existed only in the TopNav "+" dropdown — a place you
+        // browse rather than search. They belong beside the other New entries.
+        label: 'New 3D Primitive',
+        children: [
+          { commandId: 'layer.new3d.cube', label: 'Cube' },
+          { commandId: 'layer.new3d.sphere', label: 'Sphere' },
+          { commandId: 'layer.new3d.cylinder', label: 'Cylinder' },
+          { commandId: 'layer.new3d.plane', label: 'Plane' },
+        ],
+      },
       { separator: true },
       { commandId: 'layer.bringToFront', label: 'Bring to Front' },
       { commandId: 'layer.bringForward', label: 'Bring Forward' },
@@ -187,6 +218,33 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'layer.nullsFromPathLive', label: 'Create Nulls From Path Points (Points Follow Nulls)' },
       { commandId: 'layer.shapesFromText', label: 'Create Shapes From Text' },
       { commandId: 'layer.autoTrace', label: 'Auto-trace…' },
+      { separator: true },
+      {
+        /**
+         * Boolean path ops. Both engines shipped complete and lived in ONE
+         * place: the Scene panel's node kebab, found only by right-clicking a
+         * multi-selection. Live first, because it is the one to reach for —
+         * the operands stay animatable — with the destructive bakes below a
+         * rule, which is the same order the kebab uses.
+         */
+        label: 'Path Operations',
+        children: [
+          { commandId: 'shape.boolean.union', label: 'Union (Add)' },
+          { commandId: 'shape.boolean.subtract', label: 'Subtract' },
+          { commandId: 'shape.boolean.intersect', label: 'Intersect' },
+          { commandId: 'shape.boolean.exclude', label: 'Exclude (XOR)' },
+          { separator: true },
+          { commandId: 'shape.mergeUnion', label: 'Merge Paths (Bake): Union' },
+          { commandId: 'shape.mergeSubtract', label: 'Merge Paths (Bake): Subtract' },
+          { commandId: 'shape.mergeIntersect', label: 'Merge Paths (Bake): Intersect' },
+          { commandId: 'shape.mergeExclude', label: 'Merge Paths (Bake): Exclude' },
+        ],
+      },
+      { separator: true },
+      // AE puts Scene Edit Detection under Layer, and so did the code's own
+      // comment on the clip menu — which was the only place it could be run.
+      { commandId: 'layer.sceneEditDetect.markers', label: 'Scene Edit Detection → Markers' },
+      { commandId: 'layer.sceneEditDetect.split', label: 'Scene Edit Detection → Split Clips' },
     ],
   },
   {
@@ -260,6 +318,8 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.rulers', label: 'Toggle Rulers' },
       { commandId: 'view.safeAreas', label: 'Toggle Safe Areas' },
       { commandId: 'view.fitSelection', label: 'Fit Selection in View' },
+      { commandId: 'timeline.zoomToFit', label: 'Fit Composition in Timeline' },
+      { commandId: 'timeline.zoomToWorkArea', label: 'Fit Work Area in Timeline' },
       { separator: true },
       { commandId: BuiltinCommands.ResetLayout, label: 'Reset Layout' },
       { commandId: BuiltinCommands.SwitchTheme, label: 'Switch Theme' },
@@ -277,6 +337,9 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'view.renderQueue', label: 'Render Queue' },
       { commandId: 'view.graphEditor', label: 'Graph Editor' },
       { separator: true },
+      // Built per render from WorkspaceManager — half of it is user data. See
+      // workspaceMenu.ts.
+      { label: 'Workspace', children: buildWorkspaceMenuItems },
       { commandId: 'view.customize', label: 'Customize…' },
       // No Plugins entry here: the Plugins GROUP (built dynamically in
       // pluginMenu.ts) owns it, and a second door labelled the same thing is

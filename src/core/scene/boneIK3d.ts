@@ -52,7 +52,9 @@ export interface IkOptions {
   maxStepRad?: number;
 }
 
-const IK_DEFAULTS: Required<IkOptions> = { iterations: 12, tolerance: 0.5, maxStepRad: 0.6 };
+/** Solver defaults. Exported so the inspector's fields can seed from them
+ *  rather than repeating three numbers that would then drift. */
+export const IK_DEFAULTS: Required<IkOptions> = { iterations: 12, tolerance: 0.5, maxStepRad: 0.6 };
 
 /** Rodrigues axis-angle → column-major rotation matrix (axis unit-length). */
 export function axisAngleMatrix(ax: number, ay: number, az: number, angle: number): Matrix4 {

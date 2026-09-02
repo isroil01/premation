@@ -35,6 +35,7 @@ import { AlignSection } from '@layout/Inspector/AlignSection';
 import { CharacterPanel } from '@layout/Inspector/CharacterPanel';
 import { ParagraphPanel } from '@layout/Inspector/ParagraphPanel';
 import { AlignPanel } from '@layout/Inspector/AlignPanel';
+import { SwatchesPanel } from '@layout/Swatches';
 import { InfoAudioPanel } from '@layout/Inspector/InfoAudioPanel';
 import { PreviewPanel } from '@layout/Inspector/PreviewPanel';
 import { TrackerPanel } from '@layout/Inspector/TrackerPanel';
@@ -45,6 +46,9 @@ import { SvgSection, RevertSvgRow } from '@layout/Inspector/SvgSection';
 import { canRevertToSvg, revertSvgGroupToLayer } from '@core/svg/svgConvert';
 import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
 import { ThreeDControl } from '@layout/Inspector/ThreeDControl';
+import { ModelSection } from '@layout/Inspector/ModelSection';
+import { Ik3DSection, isIk3DTip } from '@layout/Inspector/Ik3DSection';
+import { nodeMorphTargetCount } from '@core/scene/modelMorph';
 import { AiChatPanel } from '@layout/AiChat/AiChatPanel';
 import { aiEnabled } from '@core/config/edition';
 import { ShapeEffects } from '@layout/Inspector/ShapeEffects';
@@ -1785,6 +1789,26 @@ function InspectorContent({ nodeId, query = '' }: { nodeId: string | null; query
     });
   }
 
+  // ── 2b. Imported-model & 3D rigging groups ─────────────────────
+  // Both are strictly conditional: a layer either carries blend shapes or it
+  // does not, and either tips a 3D chain or it does not. The predicates live
+  // beside the features (modelMorph / Ik3DSection) so this list cannot answer
+  // the question differently from the section itself.
+  if (nodeMorphTargetCount(node) > 0) {
+    items.push({
+      id: 'morph', title: 'Morph Targets', icon: 'sparkles',
+      defaultOpen: false,
+      content: <ModelSection nodeId={nodeId} />,
+    });
+  }
+  if (isIk3DTip(nodeId)) {
+    items.push({
+      id: 'ik3d', title: '3D IK', icon: 'crosshair',
+      defaultOpen: false,
+      content: <Ik3DSection nodeId={nodeId} />,
+    });
+  }
+
   // ── 3. Align & Distribute ───────────────────────────────────────
   if (isDrawable || kind === 'group') {
     items.push({
@@ -2603,6 +2627,7 @@ export function getAllPanelRenderers(): Record<string, () => ReactNode> {
     character: () => <CharacterPanel />,
     paragraph: () => <ParagraphPanel />,
     align: () => <AlignPanel />,
+    swatches: () => <SwatchesPanel />,
     info: () => <InfoAudioPanel />,
     preview: () => <PreviewPanel />,
     tracker: () => <TrackerPanel />,

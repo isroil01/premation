@@ -16,7 +16,19 @@ import { Switch } from '@components/Switch';
 import { ValueField } from '@components/ValueField';
 import { useSceneRevision } from '@stores/sceneStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { is3DEnabled, set3DEnabled, canBe3D, readNode3D, setNodeExtrusionDepth, setNodeBevelDepth, isPerChar3D, setNodePerChar3D } from '@core/scene/threeD';
+import {
+  is3DEnabled,
+  set3DEnabled,
+  canBe3D,
+  readNode3D,
+  setNodeExtrusionDepth,
+  setNodeBevelDepth,
+  setNodeBevelStyle,
+  BEVEL_STYLES,
+  isPerChar3D,
+  setNodePerChar3D,
+} from '@core/scene/threeD';
+import type { BevelStyle } from '@core/scene/extrusion';
 import { hasTextComponent } from '@core/text/textAnimators';
 import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
 import { useUIStore } from '@stores/uiStore';
@@ -35,6 +47,13 @@ import {
   setNodeToonBands,
   MATERIAL_PCT_DEFAULTS,
 } from '@core/scene/material';
+
+/** Menu labels for the bevel profiles — the union stays the source of truth. */
+const BEVEL_STYLE_LABELS: Record<BevelStyle, string> = {
+  angular: 'Angular',
+  concave: 'Concave',
+  convex: 'Convex',
+};
 
 /**
  * One material response row: label, slider, and a scrubbable/typable number.
@@ -155,6 +174,26 @@ export function ThreeDControl({ nodeId }: { nodeId: string }): JSX.Element | nul
                 onChange={(v) => setNodeBevelDepth(nodeId, v)}
                 aria-label="Bevel depth"
               />
+            </div>
+          )}
+          {/* Bevel PROFILE. Only meaningful once there is a chamfer to shape,
+              so it rides with Bevel Depth rather than standing alone above a
+              depth of 0 where every option would look identical. */}
+          {three.extrusionDepth > 0 && three.bevelDepth > 0 && (
+            <div className={s.row}>
+              <span className={s.label}>Bevel Style</span>
+              <select
+                className={s.select}
+                value={three.bevelStyle}
+                onChange={(e) => setNodeBevelStyle(nodeId, e.currentTarget.value as BevelStyle)}
+                aria-label="Bevel style"
+              >
+                {BEVEL_STYLES.map((style) => (
+                  <option key={style} value={style}>
+                    {BEVEL_STYLE_LABELS[style]}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
           <FaceMaterialsSection nodeId={nodeId} />

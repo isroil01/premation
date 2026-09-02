@@ -8,7 +8,16 @@
 
 import { parseGltf } from '@core/media/gltf';
 import { bakeWeightTracks } from './modelAnimation';
-import { morphVertices, morphTag, readMorphWeights, clearMorphMemo } from './modelMorph';
+import {
+  morphVertices,
+  morphTag,
+  readMorphWeights,
+  clearMorphMemo,
+  nodeMorphTargetCount,
+  morphTargetLabels,
+  readNodeMorphNames,
+} from './modelMorph';
+import { buildModelLayout } from './modelImport';
 import {
   registerModel,
   clearModelRegistry,
@@ -153,5 +162,66 @@ describe('buildSnapshot — morphed vertices', () => {
     const animated = new Map([['morph0', 0.75]]);
     expect(readMorphWeights(node, animated, 1)).toEqual([0.75]);
     expect(readMorphWeights(node, null, 1)).toEqual([0.25]);
+  });
+});
+
+/**
+ * The panel-facing half: how many sliders a layer gets and what they are
+ * called. Counted from the layer's own props rather than the mesh registry,
+ * because the inspector renders on a freshly-opened document — before
+ * `modelHydrate` has re-parsed any geometry.
+ */
+describe('morph target discovery for the inspector', () => {
+  const withProps = (props: Record<string, unknown>, modelProps?: Record<string, unknown>): SceneNode => ({
+    id: 'l', name: 'l', parent: null, children: [], visible: true, locked: false,
+    transform: { position: { x: 0, y: 0 }, rotation: 0, scale: { x: 1, y: 1 } },
+    components: [
+      { id: 'l_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 0, y: 0, ...props } },
+      ...(modelProps ? [{ id: 'l_model', type: MODEL_COMPONENT, props: modelProps }] : []),
+    ],
+  } as unknown as SceneNode);
+
+  it('counts the contiguous morph props and stops at the first gap', () => {
+    expect(nodeMorphTargetCount(withProps({}))).toBe(0);
+    expect(nodeMorphTargetCount(withProps({ morph0: 0, morph1: 0.5, morph2: 0 }))).toBe(3);
+    // morph1 missing → morph2 is unreachable, and counting it would label a
+    // slider that writes a prop the renderer never reads.
+    expect(nodeMorphTargetCount(withProps({ morph0: 0, morph2: 0 }))).toBe(1);
+  });
+
+  it('the persisted name array is a second lower bound on the count', () => {
+    const node = withProps({}, { modelKey: 'k', mesh: 0, prim: 0, morphNames: ['a', 'b'] });
+    expect(nodeMorphTargetCount(node)).toBe(2);
+  });
+
+  it('labels with the file name where there is one, an ordinal where not', () => {
+    const node = withProps(
+      { morph0: 0, morph1: 0, morph2: 0 },
+      { modelKey: 'k', mesh: 0, prim: 0, morphNames: ['jawOpen', '', 'browInnerUp'] },
+    );
+    expect(morphTargetLabels(node)).toEqual(['jawOpen', 'Target 2', 'browInnerUp']);
+  });
+
+  it('falls back to ordinals for a model with no names at all', () => {
+    expect(morphTargetLabels(withProps({ morph0: 0, morph1: 0 }))).toEqual(['Target 1', 'Target 2']);
+    expect(readNodeMorphNames(withProps({ morph0: 0 }))).toBeNull();
+  });
+});
+
+describe('glTF extras.targetNames survives import', () => {
+  afterEach(() => clearModelRegistry());
+
+  it('parses the names off the mesh and lands them on the leaf layer', () => {
+    const glb = buildMorphTriGlb();
+    const key = modelKeyForBytes(new Uint8Array(glb));
+    registerModel(key, glb);
+    const parsed = parseGltf(glb);
+    expect(parsed.meshes[0]!.targetNames).toEqual(['blink']);
+
+    const layout = buildModelLayout(parsed, key, { width: 800, height: 600 });
+    const leaf = layout.specs.find((s) => s.model)!;
+    expect(leaf.morphNames).toEqual(['blink']);
+    // …and the weight itself is still an ordinary animatable Transform prop.
+    expect(leaf.props.morph0).toBe(0);
   });
 });

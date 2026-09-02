@@ -41,6 +41,7 @@ import {
   type VideoSinkResult,
 } from './videoSink';
 import { isPluginFormat, pluginExporters } from './pluginExporters';
+import type { ExportChapter } from './chapters';
 
 import { useUIStore } from '@stores/uiStore';
 import { exportEdlText } from './exportEdl';
@@ -80,6 +81,18 @@ export interface ExportOptions {
   quality?: ExportQuality;
   /** mov only — which ProRes flavour to encode. Defaults to 4444 (alpha). */
   proresProfile?: ProresProfile;
+  /**
+   * Chapter marks for the delivered file, derived from the composition's
+   * markers by `chaptersFromMarkers`.
+   *
+   * Passed in already-resolved rather than read from the timeline here for the
+   * same reason `range` is: an export must deliver what was asked for at the
+   * moment it was asked for, and a queued job that re-read the live marker list
+   * at render time would ship chapters the user never saw. Absent — which is
+   * what every non-dialog caller, the render queue and the headless CLI
+   * included, leaves it — means no chapters and no extra ffmpeg input.
+   */
+  chapters?: ReadonlyArray<ExportChapter>;
   /**
    * When false, ignore the timeline work area and export the whole composition.
    * Default (undefined/true) keeps the existing behaviour: a set work area is
@@ -503,6 +516,7 @@ export async function renderVideo(
     quality: opts.quality ?? 'high',
     ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
     transparent: !!opts.comp?.transparent,
+    ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
     ...(audio ? { audioWav: audio } : {}),
   });
   if (!sink) throw new Error(unsupportedFormatMessage(format));
@@ -606,6 +620,7 @@ export async function createResumableVideoRender(
     quality: opts.quality ?? 'high',
     ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
     transparent: !!opts.comp?.transparent,
+    ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
     ...(audio ? { audioWav: audio } : {}),
   });
   if (!sink) return null;

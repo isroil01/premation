@@ -28,7 +28,12 @@ function isSolidNode(node: SceneNode): boolean {
   return node.components.find((c) => c.type === 'fx')?.props.solid === true;
 }
 
-const BEVEL_STYLES: readonly BevelStyle[] = ['angular', 'concave', 'convex'];
+/**
+ * Every bevel profile, in menu order. Exported because the inspector's
+ * "Bevel style" dropdown builds its options from it — a second hand-written
+ * list would be one more place for a new profile to be silently missing.
+ */
+export const BEVEL_STYLES: readonly BevelStyle[] = ['angular', 'concave', 'convex'];
 
 /** The depth props that mark a layer as 3D-enabled. */
 export const THREE_D_PROPS = ['z', 'rotationX', 'rotationY'] as const;
@@ -57,8 +62,9 @@ export interface Node3D {
    *  chamfer ring, so the object's edges catch light. Keyframeable; clamped to
    *  min(w,h)/2 and depth/2 at render time. 0 = hard square edges. */
   bevelDepth: number;
-  /** Bevel profile. `angular` (default) is a single 45° chamfer; other styles
-   *  are stored but currently render as `angular`. */
+  /** Bevel profile. `angular` (default) is a single 45° chamfer; `concave` and
+   *  `convex` are multi-segment curved profiles (see `extrudeOutline`, which
+   *  raises the bevel segment count for them). */
   bevelStyle: BevelStyle;
 }
 

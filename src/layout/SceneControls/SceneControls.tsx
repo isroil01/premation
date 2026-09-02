@@ -32,6 +32,7 @@ import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import styles from './SceneControls.module.css';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { useFocusPlaneStore } from '@stores/focusPlaneStore';
 
 const CAMERA_TOOLS: ReadonlyArray<{ id: CameraTool; icon: IconName; label: string }> = [
   // "Orbit Around Camera POI", because that is what orbitCameraBy actually
@@ -88,6 +89,11 @@ export function SceneControls(): JSX.Element {
   const armedCamera = CAMERA_TOOLS.find((t) => t.id === cameraTool);
   const gizmo = GIZMO_MODES.find((g) => g.id === gizmo3dState) ?? GIZMO_MODES[0]!;
   const axis = AXIS_MODES.find((a) => a.id === gizmo3dAxisMode) ?? AXIS_MODES[0]!;
+  const focusPlaneVisibility = useFocusPlaneStore((s) => s.visibility);
+  const setFocusPlaneVisibility = useFocusPlaneStore((s) => s.setVisibility);
+  const focusPlaneOn = focusPlaneVisibility !== 'off';
+  // The focus plane defaults ON, so it does not count toward lighting the
+  // trigger — a button that is lit in a fresh project is saying nothing.
   const viewOnCount = [draft3d, groundGridVisible, layerBoxesVisible].filter(Boolean).length;
 
   const cameraItems: DropdownItem[] = [
@@ -215,13 +221,32 @@ export function SceneControls(): JSX.Element {
             checked: layerBoxesVisible,
             onChange: () => toggleLayerBoxesVisible(),
           },
+          { type: 'separator' },
+          // The focus plane is three-valued in its store (off / selected /
+          // always) but reads as two decisions here: whether to draw it at
+          // all, and whether the ACTIVE camera counts or only a selected one.
+          {
+            type: 'checkbox',
+            id: 'view-focus-plane',
+            label: 'Camera focus plane',
+            checked: focusPlaneOn,
+            onChange: (on) => setFocusPlaneVisibility(on ? 'always' : 'off'),
+          },
+          {
+            type: 'checkbox',
+            id: 'view-focus-plane-selected-only',
+            label: 'Focus plane only for the selected camera',
+            checked: focusPlaneVisibility === 'selected',
+            disabled: !focusPlaneOn,
+            onChange: (only) => setFocusPlaneVisibility(only ? 'selected' : 'always'),
+          },
         ]}
         trigger={
           <button
             type="button"
             className={viewOnCount > 0 ? styles.triggerActive : styles.trigger}
             aria-label="3D view options"
-            title="3D view — draft shading, ground plane, layer bounding boxes"
+            title="3D view — draft shading, ground plane, layer bounding boxes, focus plane"
           >
             <Icon name="cube" size="md" />
             <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />

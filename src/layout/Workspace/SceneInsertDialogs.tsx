@@ -147,6 +147,12 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
             >
               <option value="point">Point (radiates everywhere)</option>
               <option value="spot">Spot (directional cone)</option>
+              {/* Parallel was the one LightType the dialog could not create,
+                  so the only way to get sunlight was to insert some other kind
+                  of light and re-type it in the inspector. It needs no extra
+                  seed of its own: like a spot it is aimed, but by `lightAngle`
+                  / Point of Interest, both of which readNodeLight defaults. */}
+              <option value="parallel">Parallel (directional, like sunlight)</option>
               <option value="ambient">Ambient (uniform wash)</option>
               <option value="environment">Environment (image-based sky)</option>
             </select>

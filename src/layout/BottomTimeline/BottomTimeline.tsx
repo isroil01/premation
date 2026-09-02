@@ -33,6 +33,7 @@ import { flattenComposition } from '@core/scene/sceneDerive';
 import { deleteComposition, duplicateComposition } from '@core/composition/compositionOps';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { customConfirm, customPrompt } from '@components/Modal';
+import { OnionSkinSettingsPopover } from './OnionSkinSettings';
 import styles from './BottomTimeline.module.css';
 
 export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
@@ -381,6 +382,11 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 <Icon name="history" size="sm" />
               </button>
 
+              {/* The store's before/after/step/opacity were unreachable: the
+                  toggle turned on whatever the defaults were and that was the
+                  whole feature. See OnionSkinSettings. */}
+              <OnionSkinSettingsPopover className={styles.toggleIconChevron} />
+
               <button
                 type="button"
                 className={proportionalScrub ? styles.toggleIconActive : styles.toggleIcon}
@@ -495,6 +501,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         {graphEditorOpen && (
           <GraphEditor
             selectedNodeIds={selectedIds}
+            propertyFilter={searchQuery}
             currentTime={playheadTime}
             duration={props.model.duration}
             pixelsPerSecond={pps}

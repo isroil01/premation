@@ -19,6 +19,7 @@ import { useProjectStore, type CompositionSettings, type SerializedWorkspaceTabs
 import { useMotionBlurStore, type MotionBlurSettings } from '@stores/motionBlurStore';
 import { useGuidesStore, type GuidesSettings } from '@stores/guidesStore';
 import { useColorManagementStore, type ColorManagementSettings } from '@stores/colorManagementStore';
+import { useSwatchStore, type ProjectSwatch } from '@stores/swatchStore';
 import type { ProjectFile } from '@core/types';
 import type { SerializedTimeline } from '@motion/timeline';
 import { migrateDocument } from '@core/project/migrations';
@@ -44,6 +45,17 @@ export interface EditorDocument {
   guides?: GuidesSettings;
   /** Project working space, display transform, intermediate bit depth. */
   colorManagement?: ColorManagementSettings;
+  /**
+   * The project's named colour swatches, in the user's order.
+   *
+   * Authored state, so it belongs to the file rather than the machine: a
+   * palette kept in preferences would be the previous project's palette the
+   * moment a second file opened. Optional, so every document written before
+   * swatches existed reads back unchanged — absent means "keep", and
+   * `projectDocumentIO.createEmpty` states an empty palette explicitly so File ▸
+   * New Project does not inherit the last one's.
+   */
+  swatches?: ProjectSwatch[];
   /**
    * The plugins this document's custom layers depend on.
    *
@@ -117,6 +129,7 @@ export function captureDocument(): EditorDocument {
     motionBlur: useMotionBlurStore.getState().settings(),
     guides: useGuidesStore.getState().settings(),
     colorManagement: useColorManagementStore.getState().settings(),
+    swatches: useSwatchStore.getState().list(),
     openTabs,
     ...(pluginReferences().length > 0 ? { plugins: pluginReferences() } : {}),
     // Absent when empty, so a document with no plugin state reads back
@@ -234,6 +247,7 @@ export function restoreDocument(doc: EditorDocument): void {
   if (doc.motionBlur) useMotionBlurStore.getState().restore(doc.motionBlur);
   if (doc.guides) useGuidesStore.getState().restore(doc.guides);
   if (doc.colorManagement) useColorManagementStore.getState().restore(doc.colorManagement);
+  if (doc.swatches) useSwatchStore.getState().restore(doc.swatches);
 
   // The document's media srcs are object URLs from whichever session WROTE it
   // — dead on arrival by definition. Repoint them at the live library by

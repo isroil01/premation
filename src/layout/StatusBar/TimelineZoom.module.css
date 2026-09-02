@@ -33,6 +33,15 @@
   cursor: default;
 }
 
+/* Separates "change the zoom by a step" from "compute a zoom for me". Without
+   it the two fit buttons read as more +/- steps and get skipped over. */
+.divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 1px;
+  background: var(--color-border-subtle);
+}
+
 .range {
   -webkit-appearance: none;
   appearance: none;

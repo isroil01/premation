@@ -1,6 +1,6 @@
 # Premation vs Adobe After Effects — Feature Comparison & Gap Analysis
 
-> **Basis of comparison:** Premation `dev` as of 2026-08-21 (every Premation claim
+> **Basis of comparison:** Premation `dev` as of 2026-09-02 (every Premation claim
 > verified against source — registries, tests, and shipped modules, not prose) vs
 > **After Effects 26.3** (June 2026 release; 26.0 shipped January 2026).
 > Where a count is stated, a test or registry in this repo pins it.
@@ -86,9 +86,9 @@
 | Feature | Premation | AE 26.3 | Status |
 |---|---|---|---|
 | Cameras | 1/2-node (`cameraOrientation`), DoF, **quad view**; **SfM + bundle adjust** camera solve (`sfmCamera.ts`, `bundleAdjust.ts`) | Same + denser commercial solver | Foothold shipped; COLMAP-grade open |
-| Lights | 4 types (`LightType: point, ambient, spot, parallel`), falloff, cone feather, Blinn-Phong | 4 types + cast shadows | Parity |
-| Geometry | Extrusion + bevels + per-face materials (`FACE_SURFACE_IDS`); primitives are FACET QUADS (a cylinder = 20 flat strips, each a layer with its own matrix), not meshes | Advanced 3D: glTF + parametric meshes + Substance PBR, height displacement, IBL | ⚠️ Gap (Tier 2) — displacement needs per-vertex meshes and IBL needs an environment texture in both backends' pipeline layouts: a new mesh pipeline, not a feature on this one |
-| **Shading model** | Phong (original) **or Physical: Cook-Torrance GGX + Smith-Schlick + Schlick Fresnel, roughness / metalness**, in all four 3D shade blocks (WGSL + GLSL, solid + textured); Specular Intensity scales dielectric F₀ (0.5 → 4 %); roughness keyframeable | PBR (roughness / metalness) | Parity on the reflectance model; no IBL |
+| Lights | 5 types (`LightType: point, ambient, spot, parallel, environment`), falloff, cone feather, Blinn-Phong; **environment** is an SH irradiance probe (procedural sky presets or an image, projected to 9 coefficients, expressed as a derived ambient + up to six parallel lights — zero renderer changes) | 4 types + cast shadows | Parity, plus IBL as a low-frequency irradiance approximation (no reflections) |
+| Geometry | Extrusion + bevels + per-face materials (`FACE_SURFACE_IDS`); primitives are FACET QUADS (a cylinder = 20 flat strips, each a layer with its own matrix), not meshes; **plus imported `.glb`/embedded `.gltf` meshes** (shipped 2026-09-01/02) — a 3D null per node, a mesh layer per primitive, drawn through the same extrusion mesh render path, with CPU skinning against joint layers, morph-target blend shapes, baked animation clips, and 3D IK (CCD) over joint chains | Advanced 3D: glTF + parametric meshes + Substance PBR, height displacement, IBL | ⚠️ Gap (Tier 2), narrowed — imported meshes, skinning, morphs, baked clips and IBL (irradiance-only) now ship; still open: external-file `.gltf`, PBR texture maps beyond base colour, height displacement, and reflections/shadow maps/SSAO |
+| **Shading model** | Phong (original) **or Physical: Cook-Torrance GGX + Smith-Schlick + Schlick Fresnel, roughness / metalness**, **or Toon** (cel shading, 2–8 bands), in all four 3D shade blocks (WGSL + GLSL, solid + textured); Specular Intensity scales dielectric F₀ (0.5 → 4 %); roughness keyframeable | PBR (roughness / metalness) | Parity on the reflectance model, plus Toon as a third model AE lacks natively; IBL is irradiance-only (no reflections) |
 | Rigging | Bones, FK/IK with FABRIK, IK/FK blending, geodesic auto-weights, weight painting, ARAP puppet, bend pins | Puppet pins; bones via paid third-party | 🏆 Premation outclasses native AE |
 
 ### 2.7 Footage, audio, export
@@ -113,7 +113,7 @@
 **🟡 Tier 2 — pro workflow**
 4. COLMAP-grade SfM / denser planar (Mocha product depth) — RANSAC + **temporal H smooth** + BA footholds shipped
 5. Adobe-quality Content-Aware Fill (classical PatchMatch + bidirectional video shipped)
-8. glTF/3D model import — **foothold shipped 2026-09-01** (was "out of scope by design"; the user reversed that): `.glb`/embedded `.gltf` import as ordinary 3D layers (nulls per node, mesh layers per primitive) through the extrusion mesh render path — triangles, base-colour materials/textures, per-fragment lighting. Still open: skins/animations/morphs (later tiers), external-file `.gltf`, PBR texture maps beyond base colour
+8. glTF/3D model import — **shipped 2026-09-01/02** (was "out of scope by design"; the user reversed that): `.glb`/embedded `.gltf` import as ordinary 3D layers (nulls per node, mesh layers per primitive) through the extrusion mesh render path — triangles, base-colour materials/textures, per-fragment lighting, **plus CPU skinning against joint layers, morph-target blend shapes, baked animation clips, and 3D IK (CCD) over joint chains**. Still open: external-file `.gltf`, PBR texture maps beyond base colour
 
 **🟢 Tier 3 — niche/finishing**
 9. ~~3:2 pulldown removal~~ — shipped

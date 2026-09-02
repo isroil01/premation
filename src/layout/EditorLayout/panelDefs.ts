@@ -98,6 +98,11 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'character',   title: 'Character', icon: 'type',        region: 'rightInspector', weight: 4.8, closable: false },
   { id: 'paragraph',   title: 'Paragraph', icon: 'text-left',   region: 'rightInspector', weight: 4.7, closable: false },
   { id: 'align',       title: 'Align',     icon: 'align-center', region: 'rightInspector', weight: 4.6, closable: false },
+  // The project palette. NOT `onDemand`: a palette nobody can see is a palette
+  // nobody fills, and the swatches it holds are document state that has to be
+  // discoverable from the file rather than from a menu the user has to already
+  // know about — the same argument that made `marketplace` permanent.
+  { id: 'swatches',    title: 'Swatches',  icon: 'palette',     region: 'rightInspector', weight: 4.55, closable: false },
   { id: 'info',        title: 'Info & Audio', icon: 'info',     region: 'rightInspector', weight: 4.5, closable: false },
   { id: 'preview',     title: 'Preview',   icon: 'play',        region: 'rightInspector', weight: 4.4, closable: false },
   { id: 'tracker',     title: 'Tracker',   icon: 'crosshair',   region: 'rightInspector', weight: 4.2, closable: false },

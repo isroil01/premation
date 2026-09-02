@@ -68,6 +68,7 @@ import { BoneOverlay } from './BoneOverlay';
 import { TrackPointOverlay } from './TrackPointOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
 import { AxisWidgetOverlay } from './AxisWidgetOverlay';
+import { FocusPlaneOverlay } from './FocusPlaneOverlay';
 import { useGizmo3d } from './useGizmo3d';
 import { useDeviceHandles } from './useDeviceHandles';
 import { useFocusContext } from '@layout/focus/useFocusContext';
@@ -535,6 +536,11 @@ export function WorkspaceViewport({
               showGizmo={gizmo3dProps.is3D && !!gizmo3dProps.singleId}
             />
           )}
+          {/* The camera's focus plane and its focus-pull handle. Mounted AFTER
+              the 3D gizmo so it paints above the wireframes it belongs to; it
+              is pointer-transparent apart from that one handle, and renders
+              nothing at all unless a DOF camera is on show. */}
+          <FocusPlaneOverlay />
           {/* Persistent view-orientation axis widget (whenever the comp is 3D). */}
           <AxisWidgetOverlay />
         </div>

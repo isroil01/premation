@@ -1061,3 +1061,14 @@ button.play:hover {
   cursor: pointer;
 }
 
+
+/* The settings chevron beside the onion-skin toggle. Half width and butted
+   against it, so the pair reads as one control with a disclosure rather than
+   as two independent toggles. */
+.toggleIconChevron {
+  composes: toggleBtn;
+  width: 16px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}

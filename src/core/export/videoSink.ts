@@ -27,6 +27,7 @@ import { isPluginFormat, pluginExporterFor } from './pluginExporters';
 import { openPluginExport } from './openPluginExport';
 import { createHdrMasteringAccumulator } from './hdrTransfer';
 import { FramePipeline, CanvasPool, defaultConcurrency } from './framePipeline';
+import { formatFfmetadata, formatCarriesChapters, type ExportChapter } from './chapters';
 
 /**
  * A format this module can encode.
@@ -66,6 +67,18 @@ export interface VideoSinkParams {
   proresProfile?: ProresProfile;
   /** Keep an alpha channel (forces lossless frame staging). */
   transparent?: boolean;
+  /**
+   * Chapter marks for the delivered file, already derived from the comp's
+   * markers (`chaptersFromMarkers`).
+   *
+   * Only the ffmpeg sink can honour these, and only for a container that
+   * carries chapters — MP4 and MOV, which includes the HDR presets since they
+   * mux into MP4. Handed to a WebM or GIF export they are ignored rather than
+   * rejected: the caller has already been told which formats carry them, and
+   * failing an otherwise-fine export over metadata nobody can see would be the
+   * wrong trade. See `formatCarriesChapters`.
+   */
+  chapters?: ReadonlyArray<ExportChapter>;
   /** Mixed comp audio as WAV bytes, or undefined for a silent export. */
   audioWav?: Uint8Array;
   /** Cooperative cancellation reaching INTO the encode phase — without it the
@@ -410,6 +423,20 @@ class FfmpegSink implements VideoSink {
       ? 'mp4'
       : this.params.format;
     const mastering = this.hdrTransfer ? this.hdrStats.finish() : undefined;
+    /*
+      Chapters cross the IPC boundary as FFMETADATA1 TEXT, not as a chapter
+      array. The main process has no access to `src/` (it is a separate tsconfig
+      and a separate bundle), so formatting there would mean a second copy of
+      the escaping rules — the half of this feature most likely to be wrong and
+      least likely to be noticed. One tested formatter, and main.ts only has to
+      write bytes to a file and name it on the command line.
+
+      Empty string when the format cannot carry chapters or none were derived;
+      main.ts treats that as "add no metadata input".
+    */
+    const chapterMetadata = formatCarriesChapters(this.params.format)
+      ? formatFfmetadata(this.params.chapters ?? [])
+      : '';
     // Encode-phase cancellation. The frame loop polls the signal itself, but
     // the ffmpeg child is where a long export spends most of its wall clock —
     // and without this the Cancel button was inert for that entire phase,
@@ -434,6 +461,7 @@ class FfmpegSink implements VideoSink {
           ? { proresProfile: this.params.proresProfile }
           : {}),
         ...(this.hdrTransfer ? { hdr: this.hdrTransfer, hdrMastering: mastering } : {}),
+        ...(chapterMetadata ? { chaptersFfmetadata: chapterMetadata } : {}),
       });
     } catch (err) {
       // A killed child exits non-zero and rejects with an ffmpeg error — when

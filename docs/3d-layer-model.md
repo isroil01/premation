@@ -6,8 +6,16 @@ behaves the way it does.
 Target: **After Effects' Classic 3D renderer**. Flat planes in 3D space, lit and
 shadowed, with a working camera. Extrusion, bevels and a per-layer physical
 (Cook-Torrance/GGX) shading model exist here as extensions beyond Classic 3D.
-Imported 3D models and HDRI environments are explicitly out of scope — that is
-AE's Advanced 3D, a separate project.
+
+Imported glTF/GLB models shipped 2026-09-01/02 (see "Imported models" below):
+they arrive as ordinary layers — a 3D null per glTF node, a mesh layer per
+primitive — through the same extrusion mesh render path every other 3D layer
+uses, not a separate object type. Environment Light shipped alongside them as
+an SH irradiance probe (three procedural sky presets, or any image
+downsampled and projected) expressed through the existing 8-slot light
+array — a low-frequency approximation, not a reflection map. Still open: HDRI
+**file** import and a reflection/specular map for mirror-like surfaces; that
+remains AE's Advanced 3D territory.
 
 ---
 
@@ -286,6 +294,36 @@ plastic (the highlight keeps the light's colour), 1 as metal. It rides in the
 spare `shadeParams.w` uniform slot, so it costs no layout change — and it is
 visible only where there IS a highlight, so the inspector says to raise Specular
 when Specular is 0.
+
+## Imported models
+
+A `.glb` or embedded `.gltf` import lands as ordinary layers, not a special
+object: every glTF **node** becomes a 3D null carrying that node's TRS, and
+every mesh **primitive** becomes a leaf layer parented under its node's null,
+drawn through the same extrusion mesh render path a hand-built extruded shape
+uses. Boring on purpose — the result is parentable, keyframeable with the
+existing gizmo, and listed in the timeline like anything else.
+
+Four mechanisms build on that boring mapping, all shipped 2026-09-01/02:
+
+- **Skinning.** A skinned primitive's vertices are placed by its **joints**,
+  not by its own layer transform — and the joints are just the imported null
+  layers, so a joint keyframed, dragged, or reparented by hand moves the skin
+  correctly with no separate rig runtime.
+- **Morph targets.** Blend-shape weights (`morph0`…`morphN-1`) are ordinary
+  animatable Transform props on the mesh layer, driven by a baked clip, a
+  slider, or the graph editor like any other keyframed value.
+- **Baked animation clips.** A glTF clip is baked at import onto the node's
+  own position/rotation/scale tracks — no playback runtime, so a walk cycle is
+  immediately visible in the timeline and editable in the graph editor.
+- **3D IK.** CCD (cyclic coordinate descent) over a chain of parented 3D
+  nulls — the imported skeleton's joints — aims the chain's tip at a target
+  and either poses once or bakes real rotation keyframes per frame, composing
+  with skinning for free.
+
+Still open: external-file `.gltf` (only `.glb`/embedded `.gltf` import today),
+and PBR texture maps beyond base colour (normal/roughness/metalness/emissive
+maps are not read from the glTF material).
 
 ## Auto-Orient
 

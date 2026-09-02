@@ -295,6 +295,18 @@ export function ViewControls(): JSX.Element {
             ],
           },
           {
+            /*
+              Multi-view layouts. These labels used to read "view-only right
+              pane" and "top-left interactive", which stopped being true when
+              `usePaneWorkspace` gave every pane its own Workspace: its own
+              camera and framing, its own hit-tester bound to the view THAT pane
+              shows, and global selection, so a click or an edit in any pane is
+              the same undoable command it would be in the main viewport. The
+              menu was talking people out of using panes they could already
+              work in. The one thing still exclusive to the main viewport is the
+              interactive 3D transform gizmo — panes draw the scene reference
+              geometry (SceneGeometryOverlay) without its handles.
+            */
             type: 'item',
             id: 'view-layout',
             label: `Layout: ${viewLayout === '4' ? '4 Views' : viewLayout === '2' ? '2 Views' : '1 View'}`,
@@ -309,14 +321,14 @@ export function ViewControls(): JSX.Element {
               {
                 type: 'checkbox' as const,
                 id: 'layout-2',
-                label: '2 Views (view-only right pane)',
+                label: '2 Views (side by side; each interactive, own camera)',
                 checked: viewLayout === '2',
                 onChange: () => setViewLayout('2'),
               },
               {
                 type: 'checkbox' as const,
                 id: 'layout-4',
-                label: '4 Views (2×2 grid; top-left interactive)',
+                label: '4 Views (2×2 grid; each interactive, own camera)',
                 checked: viewLayout === '4',
                 onChange: () => setViewLayout('4'),
               },

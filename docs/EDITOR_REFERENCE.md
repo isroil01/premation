@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 47 | `src/stores/*.ts` |
+| Stores | 49 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        47 Zustand stores
+                          ├── src/stores/*        49 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -466,8 +466,22 @@ history-dependent proof. Still **no turbulence or wind field, no collisions
 between particles, no sub-emitters, no trails, no layer-as-particle, and no 3D
 particles.** Particular / Form / Plexus class density remains a later ceiling.
 
-**No imported 3D models, PBR or HDRI.** "3D" here means 2D layers with extrusion
-placed in a 3D space — not a rendered 3D scene. Out of scope by direction.
+**Imported 3D models — this entry previously said out of scope by direction.
+Corrected 2026-09-02: the user reversed that, and it shipped.** glTF `.glb`/
+embedded `.gltf` import lands as ordinary layers — a 3D null per node, a mesh
+layer per primitive — through the same extrusion mesh render path every other
+3D layer uses (`modelImport.ts`). Four mechanisms build on that: CPU skinning
+against joint layers (`modelSkinning.ts`), morph-target blend shapes on the
+mesh layer's Transform (`modelMorph.ts`), glTF clips baked at import onto the
+node's own position/rotation/scale tracks (`modelAnimation.ts`), and 3D IK —
+CCD over a chain of parented 3D nulls (`boneIK3d.ts`), composing with skinning
+for free. Environment Light (`environmentLight.ts`) is a separate mechanism:
+an SH irradiance probe (procedural sky presets, or any image, projected to 9
+coefficients) expressed through the existing 8-slot light array as a derived
+ambient + up to six parallel lights — zero renderer changes, and a
+low-frequency approximation, not a reflection map. Still out of scope:
+HDRI **file** import, a reflection/specular map for mirror-like surfaces, PBR
+texture maps beyond base colour, and external-file `.gltf`.
 
 **Linear working space — storage slice shipped (2026-08-14).** Float *precision*
 (`rgba16float` intermediates) already existed; grade / blend / blur maths run
@@ -2179,3 +2193,14 @@ pass ran 2026-08-19 in a real Chromium tab — frame-by-frame mode stepped
 content drifting across frames, timestamps exact), and after Add-at-Playhead
 the render cache reported `ready` with all 24 frames decoded
 (294,912 bytes — exactly 24 × 64×48×4) and zero console errors.
+
+### Corrected 2026-09-02 — "out of scope by direction" was reversed
+
+| §4 claimed | Reality |
+|---|---|
+| "No imported 3D models, PBR or HDRI… Out of scope by direction" | **Reversed by the user, and shipped 2026-09-01/02.** glTF `.glb`/embedded `.gltf` import lands as ordinary layers (null per node, mesh layer per primitive) through the extrusion mesh render path — `modelImport.ts` — with CPU skinning against joint layers (`modelSkinning.ts`), morph-target blend shapes (`modelMorph.ts`), baked animation clips (`modelAnimation.ts`), and 3D IK / CCD over joint chains (`boneIK3d.ts`). Environment Light (`environmentLight.ts`) shipped alongside as an SH irradiance probe expressed through the existing light array — zero renderer changes, no reflections. Still out of scope: HDRI **file** import, a reflection map, PBR texture maps beyond base colour, external-file `.gltf` |
+
+`docs/3d-layer-model.md`'s opening paragraph and its new "Imported models"
+section, and `ROADMAP.md`'s "Advanced 3D" entry, were both restating the old
+"explicitly out of scope" claim as of this pass and are corrected in the same
+commit.

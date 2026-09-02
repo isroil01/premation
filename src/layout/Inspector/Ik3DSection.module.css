@@ -1,0 +1,93 @@
+/**
+ * Ik3DSection — the 3D IK panel.
+ *
+ * Same row rhythm as ThreeDControl (label left, control right, no per-row
+ * hairline) so the two 3D groups read as one family rather than two panels
+ * that happen to sit near each other.
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+  min-height: var(--control-height-sm, 22px);
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chain {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+}
+
+.groupHeader {
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: var(--space-1, 4px) 0 2px;
+}
+
+/* Mirrors ParentControl's dropdown trigger — this IS a layer picker, and a
+   second visual language for the same job would be the tell. */
+.trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1, 4px);
+  max-width: 140px;
+  height: var(--control-height-xs, 20px);
+  padding: 0 var(--space-1, 4px);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary, #ddd);
+  background: var(--color-surface-1, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-sm, 3px);
+  cursor: pointer;
+}
+.trigger:hover {
+  border-color: var(--color-border, rgba(255, 255, 255, 0.2));
+}
+.trigger:focus-visible {
+  outline: 2px solid var(--color-accent, #4a8cff);
+  outline-offset: 1px;
+}
+
+.triggerValue {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-1, 4px);
+  margin-top: var(--space-1, 4px);
+}
+.actions > * {
+  flex: 1;
+}
+
+.hint {
+  margin: 2px 0 0;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}

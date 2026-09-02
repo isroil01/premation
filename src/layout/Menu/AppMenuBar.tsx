@@ -15,14 +15,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Menu, MenuItem, MenuSeparator } from '@components/Menu';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { getCommandRegistry } from '@core/commands/Command';
-import { asCommandId } from '@app-types/common';
+import { Menu } from '@components/Menu';
 import { useAppMenuGroups } from './useAppMenuGroups';
 import { anchorMenuTo } from './menuAnchor';
-import { formatChord } from './formatChord';
-import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
+import { MenuModelItems } from './MenuModelItems';
 import styles from './AppMenuBar.module.css';
 
 export function AppMenuBar(): JSX.Element {
@@ -60,11 +56,6 @@ export function AppMenuBar(): JSX.Element {
     setOpenGroup(groupId);
   };
 
-  const run = (commandId: string): void => {
-    void getCommandSystem().execute(asCommandId(commandId));
-    setOpenGroup(null);
-  };
-
   const group = menuGroups.find((g) => g.id === openGroup) ?? null;
 
   return (
@@ -87,34 +78,7 @@ export function AppMenuBar(): JSX.Element {
         ? createPortal(
             <div id="app-menu-dropdown" className={styles.dropdown} style={{ left: anchor.left, top: anchor.top }}>
               <Menu noScroll onItemActivate={() => setOpenGroup(null)}>
-                {group.items.map((it, i) => {
-                  if (it.separator) return <MenuSeparator key={`sep-${i}`} />;
-                  const cmd = it.commandId ? getCommandRegistry().get(asCommandId(it.commandId)) : undefined;
-                  // An UNREGISTERED command renders disabled — an enabled item
-                  // whose click silently no-ops (execute on an unknown id)
-                  // reads as broken; greyed-out reads as "not available".
-                  const enabled = cmd ? (cmd.enabled ? cmd.enabled() : true) : false;
-                  // A toggle's CURRENT state. `Command.isChecked` was declared
-                  // on the interface and read by nothing, so "Show Grid" looked
-                  // identical whether the grid was on or off — the menu could
-                  // tell you an action existed but not what it would do.
-                  // `undefined` for a non-toggle keeps role="menuitem".
-                  const checked = cmd?.isChecked?.();
-                  const label = it.label ?? cmd?.label ?? it.commandId ?? '';
-                  const resolvedChord = cmd ? resolveChord(cmd.id as unknown as string, cmd.shortcut, getShortcutOverrides()) : undefined;
-                  const shortcut = resolvedChord ? formatChord(resolvedChord) : undefined;
-                  return (
-                    <MenuItem
-                      key={it.commandId ?? i}
-                      id={it.commandId ?? String(i)}
-                      label={label}
-                      shortcut={shortcut}
-                      disabled={!enabled}
-                      checked={checked}
-                      onSelect={() => it.commandId && run(it.commandId)}
-                    />
-                  );
-                })}
+                <MenuModelItems items={group.items} onActivate={() => setOpenGroup(null)} />
               </Menu>
             </div>,
             document.body,

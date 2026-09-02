@@ -438,49 +438,121 @@ export function readSceneDof(
   filter?: ActiveCameraFilter,
 ): DofConfig | null {
   const active = activeCameraNode(graph, rootId, filter);
-  for (const node of active ? [active] : []) {
-    let strength: number | undefined;
-    let focus: number | undefined;
-    let focal: number | undefined;
-    let aperture: number | undefined;
-    let fStop: number | undefined;
-    let irisBlades: number | undefined;
-    let irisRoundness: number | undefined;
-    let highlightGain: number | undefined;
-    for (const c of node.components) {
-      const p = c.props as Record<string, unknown>;
-      strength = num(p.dofStrength) ?? strength;
-      focus = num(p.focusDistance) ?? focus;
-      focal = num(p.focalLength) ?? focal;
-      aperture = num(p.dofAperture) ?? aperture;
-      fStop = num(p.fStop) ?? fStop;
-      irisBlades = num(p.irisBlades) ?? irisBlades;
-      irisRoundness = num(p.irisRoundness) ?? irisRoundness;
-      highlightGain = num(p.highlightGain) ?? highlightGain;
-    }
-    strength = sample?.(node.id, 'dofStrength') ?? strength;
-    focus = sample?.(node.id, 'focusDistance') ?? focus;
-    aperture = sample?.(node.id, 'dofAperture') ?? aperture;
-    fStop = sample?.(node.id, 'fStop') ?? fStop;
-    irisBlades = sample?.(node.id, 'irisBlades') ?? irisBlades;
-    irisRoundness = sample?.(node.id, 'irisRoundness') ?? irisRoundness;
-    highlightGain = sample?.(node.id, 'highlightGain') ?? highlightGain;
-    if (!strength || strength <= 0) return null;
-    const lens = focal ?? Project3D.defaultCamera(width, height).focalLength;
-    return {
-      strength,
-      focus: focus ?? lens,
-      // Default the slope to the cap → identical to the old single-scalar ramp.
-      aperture: aperture ?? strength,
-      focalLength: lens,
-      // Present ONLY when the camera actually carries one. `dofBlurPx` selects
-      // the physical model on presence, so defaulting it here — to anything at
-      // all — would silently re-grade every existing project's defocus.
-      ...(fStop !== undefined && fStop > 0 ? { fStop } : {}),
-      ...(irisBlades !== undefined && irisBlades >= 3 ? { irisBlades } : {}),
-      ...(irisRoundness !== undefined ? { irisRoundness } : {}),
-      ...(highlightGain !== undefined && highlightGain > 0 ? { highlightGain } : {}),
-    };
+  return active ? readNodeDof(active, width, height, sample) : null;
+}
+
+/**
+ * ONE camera node's depth of field, without asking which camera is active.
+ *
+ * `readSceneDof` is the renderer's entry point and answers "what is the shot's
+ * DOF", which is necessarily the ACTIVE camera's. The viewport's focus-plane
+ * gizmo asks a different question — "what is THIS camera's DOF" — about a
+ * camera the user selected, which may not be the one the comp renders through.
+ * Splitting the read out is what keeps those two from growing separate parsers
+ * of the same eight props; `readSceneDof` is now purely the camera-selection
+ * half.
+ */
+export function readNodeDof(
+  node: SceneNode,
+  width: number,
+  height: number,
+  sample?: CameraSample,
+): DofConfig | null {
+  let strength: number | undefined;
+  let focus: number | undefined;
+  let focal: number | undefined;
+  let aperture: number | undefined;
+  let fStop: number | undefined;
+  let irisBlades: number | undefined;
+  let irisRoundness: number | undefined;
+  let highlightGain: number | undefined;
+  for (const c of node.components) {
+    const p = c.props as Record<string, unknown>;
+    strength = num(p.dofStrength) ?? strength;
+    focus = num(p.focusDistance) ?? focus;
+    focal = num(p.focalLength) ?? focal;
+    aperture = num(p.dofAperture) ?? aperture;
+    fStop = num(p.fStop) ?? fStop;
+    irisBlades = num(p.irisBlades) ?? irisBlades;
+    irisRoundness = num(p.irisRoundness) ?? irisRoundness;
+    highlightGain = num(p.highlightGain) ?? highlightGain;
   }
-  return null;
+  strength = sample?.(node.id, 'dofStrength') ?? strength;
+  focus = sample?.(node.id, 'focusDistance') ?? focus;
+  aperture = sample?.(node.id, 'dofAperture') ?? aperture;
+  fStop = sample?.(node.id, 'fStop') ?? fStop;
+  irisBlades = sample?.(node.id, 'irisBlades') ?? irisBlades;
+  irisRoundness = sample?.(node.id, 'irisRoundness') ?? irisRoundness;
+  highlightGain = sample?.(node.id, 'highlightGain') ?? highlightGain;
+  if (!strength || strength <= 0) return null;
+  const lens = focal ?? Project3D.defaultCamera(width, height).focalLength;
+  return {
+    strength,
+    focus: focus ?? lens,
+    // Default the slope to the cap → identical to the old single-scalar ramp.
+    aperture: aperture ?? strength,
+    focalLength: lens,
+    // Present ONLY when the camera actually carries one. `dofBlurPx` selects
+    // the physical model on presence, so defaulting it here — to anything at
+    // all — would silently re-grade every existing project's defocus.
+    ...(fStop !== undefined && fStop > 0 ? { fStop } : {}),
+    ...(irisBlades !== undefined && irisBlades >= 3 ? { irisBlades } : {}),
+    ...(irisRoundness !== undefined ? { irisRoundness } : {}),
+    ...(highlightGain !== undefined && highlightGain > 0 ? { highlightGain } : {}),
+  };
+}
+
+/** The depth band that reads as sharp — `far` is `Infinity` past hyperfocal. */
+export interface FocusRange {
+  near: number;
+  far: number;
+}
+
+/**
+ * The depths either side of the focal plane where defocus reaches
+ * `cocThresholdPx` — i.e. the DEPTH OF FIELD, the thing the focus distance
+ * actually buys you.
+ *
+ * It is the inverse of {@link dofBlurPx} and is solved per model, not
+ * approximated, so the band it returns and the blur the renderer draws cannot
+ * disagree:
+ *
+ *  - **Legacy ramp** — `|d − S|/max(1,S)·aperture = c` is symmetric, so the
+ *    band is `S ± c·max(1,S)/aperture`. It is the honest picture of that model:
+ *    equal in front and behind, which is precisely its defect.
+ *  - **Physical CoC** — solving `A·f·|d−S| / (d·(S−f)) = c` for `d` gives the
+ *    textbook near/far limits `A·f·S / (A·f ± c·(S−f))`. The far limit runs to
+ *    infinity once `c·(S − f) ≥ A·f` — the hyperfocal distance — which is why
+ *    `far` is deliberately allowed to be `Infinity` rather than clamped to a
+ *    made-up number a caller would then draw.
+ *
+ * `strength` is the blur CAP in both models, so a threshold at or above it
+ * means nothing on screen ever exceeds it and the whole scene is in focus.
+ */
+export function focusRangeAt(dof: DofConfig, cocThresholdPx: number): FocusRange {
+  const S = Math.max(0, dof.focus);
+  const c = cocThresholdPx;
+  // A non-positive threshold asks where blur is exactly zero: the plane itself.
+  if (!(c > 0) || !Number.isFinite(c)) return { near: S, far: S };
+  if (dof.strength <= c) return { near: 0, far: Infinity };
+
+  if (dof.fStop === undefined) {
+    // `max(1, S)` mirrors the ramp's own guard, so the inverse is exact rather
+    // than merely close for a sub-pixel focus distance.
+    if (!(dof.aperture > 0)) return { near: 0, far: Infinity };
+    const t = (c * Math.max(1, S)) / dof.aperture;
+    return { near: Math.max(0, S - t), far: S + t };
+  }
+
+  const f = Math.max(1e-6, dof.focalLength ?? dof.focus);
+  const N = Math.max(1e-6, dof.fStop);
+  // The degenerate rig `dofBlurPx` resolves to the cap: focusing at or inside
+  // the focal length never converges, so no depth is in focus.
+  if (!(S > f)) return { near: S, far: S };
+
+  const Af = (f / N) * f;
+  const spread = c * (S - f);
+  const near = (Af * S) / (Af + spread);
+  const far = Af - spread > 1e-9 ? (Af * S) / (Af - spread) : Infinity;
+  return { near: Math.max(0, near), far };
 }

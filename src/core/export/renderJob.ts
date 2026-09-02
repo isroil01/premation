@@ -29,6 +29,7 @@ import {
   type ResumableVideoRender,
 } from '@core/export/exportManager';
 import { canEncodeLocally, type VideoFormat } from '@core/export/videoSink';
+import type { ExportChapter } from '@core/export/chapters';
 import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { compSizeOf } from '@core/composition/compSizes';
 
@@ -88,6 +89,18 @@ export interface RenderJobSpec {
   quality?: 'high' | 'medium' | 'draft';
   /** mov only — ProRes flavour, captured from the dialog at queue time. */
   proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
+  /**
+   * Chapter marks, resolved from the composition's markers at QUEUE time.
+   *
+   * Captured rather than re-derived at render time for the same reason the
+   * range is (see `rangeStartSec`): the marker list is live editor state, so a
+   * job that read it when it finally ran would deliver chapters nobody chose.
+   * Absent means no chapters — which is what the headless CLI leaves it as,
+   * deliberately: a terminal render has no dialog to have ticked the box in,
+   * and inventing chapters for it would change what `premation render` writes
+   * based on editor state the invocation never mentioned.
+   */
+  chapters?: ReadonlyArray<ExportChapter>;
 }
 
 /**
@@ -127,6 +140,7 @@ export function jobExportOptions(job: RenderJobSpec): ExportOptions {
     time: 0,
     quality: job.quality ?? 'high',
     ...(job.proresProfile ? { proresProfile: job.proresProfile } : {}),
+    ...(job.chapters?.length ? { chapters: job.chapters } : {}),
     // The captured range, never the LIVE work area: a queued job must render
     // what was queued, regardless of what the user does to any timeline
     // between queueing and running.

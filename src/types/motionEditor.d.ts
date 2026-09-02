@@ -400,6 +400,17 @@ export interface MotionEditorApi {
           displayMaxNits: number;
           displayMinNits: number;
         };
+        /**
+         * Chapter marks as FFMETADATA1 TEXT (see `@core/export/chapters`).
+         *
+         * Text rather than a chapter array because the main process cannot
+         * import from `src/` — formatting there would duplicate the escaping
+         * rules. Written to a file beside the staged frames and pulled in as an
+         * extra ffmpeg INPUT, since ffmpeg can only read chapters from a
+         * container. Honoured for MP4/MOV only; the WebM muxer has no Chapters
+         * element at all.
+         */
+        chaptersFfmetadata?: string;
       },
     ): Promise<{ path: string; frames: number; videoCodec?: string }>;
     /**

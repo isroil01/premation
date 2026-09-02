@@ -1684,6 +1684,33 @@
   box-shadow: 0 0 4px color-mix(in srgb, var(--color-primary) 70%, transparent);
 }
 
+/* ── Clip snap indicator ──────────────────────────────────────────
+   Shares `.kfSnapLine`'s geometry; only the colour differs, so the line can
+   say WHAT the bar latched onto. A playhead hit reuses `.kfSnapPlayhead` — it
+   is the same object and must not read as two different things. The frame grid
+   still draws nothing, for the reason above. */
+.clipSnapClip {
+  background: var(--color-primary);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-primary) 70%, transparent);
+}
+
+.clipSnapMarker {
+  background: var(--color-warning);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-warning) 70%, transparent);
+}
+
+/* Work-area in/out and the comp bounds — structural edges rather than content,
+   so they get the quieter dashed treatment the graph editor uses. */
+.clipSnapBound {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--color-text-secondary) 0,
+    var(--color-text-secondary) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
 /* ── Property selection (proportional scrubbing acts on it) ─────────── */
 
 .propNameSelectable {

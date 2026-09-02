@@ -100,7 +100,7 @@ export interface GltfAnimation {
 }
 
 export interface ParsedGltf {
-  meshes: { name: string; primitives: GltfPrimitive[]; weights: number[] }[];
+  meshes: { name: string; primitives: GltfPrimitive[]; weights: number[]; targetNames: string[] }[];
   materials: GltfMaterial[];
   images: GltfImage[];
   nodes: GltfNode[];
@@ -165,7 +165,13 @@ interface GltfJson {
       roughnessFactor?: number;
     };
   }[];
-  meshes?: { name?: string; primitives: GltfJsonPrimitive[]; weights?: number[] }[];
+  meshes?: {
+    name?: string;
+    primitives: GltfJsonPrimitive[];
+    weights?: number[];
+    /** Where every exporter puts blend-shape names — see `readTargetNames`. */
+    extras?: { targetNames?: unknown };
+  }[];
   nodes?: {
     name?: string; children?: number[]; mesh?: number; skin?: number; weights?: number[];
     translation?: number[]; rotation?: number[]; scale?: number[]; matrix?: number[];
@@ -186,6 +192,27 @@ interface GltfJsonPrimitive {
   material?: number;
   mode?: number;
   targets?: Record<string, number>[];
+  extras?: { targetNames?: unknown };
+}
+
+/**
+ * Morph target names, from `extras.targetNames`.
+ *
+ * The spec has no first-class place for them, and every tool in practice
+ * (Blender, Maya, three.js, FBX2glTF, VRM) writes this exact array — on the
+ * MESH, with a handful of older exporters writing it on the first PRIMITIVE
+ * instead, so both are read. Names are what makes a morph slider mean
+ * something ("browInnerUp"), so dropping them left the UI with nothing but
+ * ordinals. Non-strings are filtered rather than coerced: a bad extras block
+ * should cost the names, not produce `[object Object]` labels.
+ */
+function readTargetNames(mesh: {
+  extras?: { targetNames?: unknown };
+  primitives: GltfJsonPrimitive[];
+}): string[] {
+  const raw = mesh.extras?.targetNames ?? mesh.primitives[0]?.extras?.targetNames;
+  if (!Array.isArray(raw)) return [];
+  return raw.map((n) => (typeof n === 'string' ? n : ''));
 }
 
 const COMPONENT_BYTES: Record<number, number> = {
@@ -341,6 +368,7 @@ function parseJson(g: GltfJson, glbBin: Uint8Array | null): ParsedGltf {
         };
       }),
     weights: mesh.weights ?? [],
+    targetNames: readTargetNames(mesh),
   }));
 
   // Nodes with TRS (matrix decomposed when given).

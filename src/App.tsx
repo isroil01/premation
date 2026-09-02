@@ -69,8 +69,10 @@ import {
   parseKeyframeId,
   expandKeyframeProp,
   POSITION_PSEUDO_PROP,
+  type EasingKind,
 } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { openKeyframeVelocityDialog } from '@layout/Timeline/KeyframeVelocityDialog';
 import { useCompositionStore } from '@stores/compositionStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readCompRef } from '@core/scene/compInstance';
@@ -1098,12 +1100,113 @@ function EditorShellInner(): JSX.Element {
     const easeTargets: string[] = selectedKfIds.has(kfId) ? [...selectedKfIds] : [kfId];
     const ease = (preset: EasingPreset) => () => applyEasingToKeyframes(easeTargets, preset);
 
+    /**
+     * Set one interpolation KIND on every expanded track of this keyframe.
+     *
+     * Not `applyEasingToKeyframes`: that maps AE's five preset NAMES onto
+     * bezier handles, and Auto Bezier / Continuous Bezier are neither presets
+     * nor handle shapes — they are engine easing kinds that the sampler
+     * derives tangents for (`setEasing` seeds their default handles). Routing
+     * them through the preset path would silently write a plain bezier and the
+     * keyframe would stop auto-adjusting to its neighbours.
+     */
+    const setInterp = (kind: EasingKind, label: string) => () => {
+      runAnimEdit(label, () => {
+        for (const p of props) {
+          if (defaultAnimation.isAnimated(ref.nodeId, p)) {
+            defaultAnimation.setEasing(ref.nodeId, p, ref.t, kind);
+          }
+        }
+      });
+    };
+
     openContextMenu(x, y, [
       { id: 'easy-ease', label: 'Easy Ease', shortcut: 'F9', onSelect: ease('Ease') },
       { id: 'ease-in', label: 'Easy Ease In', shortcut: 'Shift+F9', onSelect: ease('EaseIn') },
       { id: 'ease-out', label: 'Easy Ease Out', shortcut: 'Ctrl+Shift+F9', onSelect: ease('EaseOut') },
       { id: 'linear', label: 'Linear Interpolation', onSelect: ease('Linear') },
+      {
+        /**
+         * AE's Keyframe Interpolation submenu. The inspector row menu has had
+         * an interpolation submenu since it shipped; the timeline diamond —
+         * the surface people actually right-click — offered four flat easing
+         * entries and a hold toggle, and no way to reach Auto or Continuous
+         * Bezier at all despite both being live in the sampler.
+         *
+         * The flat "Enable/Disable Hold" and "Enable/Disable Roving" entries
+         * moved IN here rather than being duplicated: both are interpolation
+         * choices (roving decides whether the keyframe's time is authored or
+         * solved for constant speed), and two doors to one toggle in one menu
+         * is how a user ends up thinking they are two different things.
+         */
+        id: 'interpolation',
+        label: 'Keyframe Interpolation',
+        children: [
+          { id: 'interp-linear', label: 'Linear', onSelect: setInterp('linear', 'Linear interpolation') },
+          { id: 'interp-bezier', label: 'Bezier', onSelect: setInterp('bezier', 'Bezier interpolation') },
+          { id: 'interp-auto', label: 'Auto Bezier', onSelect: setInterp('autoBezier', 'Auto bezier interpolation') },
+          {
+            id: 'interp-continuous',
+            label: 'Continuous Bezier',
+            onSelect: setInterp('continuousBezier', 'Continuous bezier interpolation'),
+          },
+          {
+            // Toggles, because that is what the flat entry it replaces did:
+            // choosing Hold on a keyframe that already holds is how you get
+            // back to interpolating.
+            id: 'interp-hold',
+            label: isHold ? 'Hold ✓' : 'Hold',
+            onSelect: isHold
+              ? setInterp('linear', 'Disable hold keyframe')
+              : setInterp('hold', 'Enable hold keyframe'),
+          },
+          { id: 'interp-sep', separator: true },
+          {
+            id: 'interp-roving',
+            label: isRoving ? 'Rove Across Time ✓' : 'Rove Across Time',
+            onSelect: () => {
+              runAnimEdit(isRoving ? 'Disable roving keyframe' : 'Enable roving keyframe', () => {
+                for (const p of props) {
+                  if (defaultAnimation.isAnimated(ref.nodeId, p)) {
+                    defaultAnimation.setRoving(ref.nodeId, p, ref.t, !isRoving);
+                  }
+                }
+              });
+            },
+          },
+        ],
+      },
+      {
+        // The speed-graph maths was drag-only. A number you can type is the
+        // whole reason AE ships this dialog — see KeyframeVelocityDialog.
+        id: 'velocity',
+        label: 'Keyframe Velocity…',
+        onSelect: () => {
+          if (!openKeyframeVelocityDialog(ref.nodeId, ref.prop, ref.t)) {
+            useUIStore.getState().notify({
+              level: 'info',
+              message: 'A lone keyframe has no segment to shape.',
+              durationMs: 2600,
+            });
+          }
+        },
+      },
       { id: 'sep-ease', separator: true },
+      {
+        // Navigation from the menu that is already open on a keyframe: the J/K
+        // chords do this, but nothing said so anywhere a pointer can reach.
+        id: 'goto-prev-kf',
+        label: 'Go to Previous Keyframe',
+        shortcut: 'J',
+        onSelect: () => getTimelineController().goToPrevKeyframe(),
+      },
+      {
+        id: 'goto-next-kf',
+        label: 'Go to Next Keyframe',
+        shortcut: 'K',
+        onSelect: () => getTimelineController().goToNextKeyframe(),
+      },
+      { id: 'sep-nav', separator: true },
       {
         id: 'copy',
         label: `Copy Keyframe${easeTargets.length > 1 ? 's' : ''}`,
@@ -1118,32 +1221,6 @@ function EditorShellInner(): JSX.Element {
           const targets = useSelectionStore.getState().ids;
           if (targets.length > 0) pasteKeyframes(targets, getTimelineController().currentSeconds);
         },
-      },
-      {
-        id: 'toggle-hold',
-        label: isHold ? 'Disable Hold (Stepped)' : 'Enable Hold (Stepped)',
-        onSelect: () => {
-          runAnimEdit(isHold ? 'Disable hold keyframe' : 'Enable hold keyframe', () => {
-            for (const p of props) {
-              if (defaultAnimation.isAnimated(ref.nodeId, p)) {
-                defaultAnimation.updateKeyframe(ref.nodeId, p, ref.t, { easing: isHold ? 'linear' : 'hold' });
-              }
-            }
-          });
-        }
-      },
-      {
-        id: 'toggle-roving',
-        label: isRoving ? 'Disable Roving' : 'Enable Roving (Rove Across Time)',
-        onSelect: () => {
-          runAnimEdit(isRoving ? 'Disable roving keyframe' : 'Enable roving keyframe', () => {
-            for (const p of props) {
-              if (defaultAnimation.isAnimated(ref.nodeId, p)) {
-                defaultAnimation.setRoving(ref.nodeId, p, ref.t, !isRoving);
-              }
-            }
-          });
-        }
       },
       {
         id: 'delete',

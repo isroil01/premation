@@ -57,6 +57,10 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
     motionBlur: { ...DEFAULT_MOTION_BLUR_SETTINGS },
     guides: { ...DEFAULT_GUIDES_SETTINGS },
     colorManagement: { ...DEFAULT_COLOR_MANAGEMENT_SETTINGS },
+    // Stated rather than omitted, for the reason the doc comment above gives:
+    // an absent key means "keep", so leaving swatches out would hand the new
+    // project the previous one's palette.
+    swatches: [],
   }),
 
   capture: () => captureDocument(),

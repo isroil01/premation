@@ -108,9 +108,9 @@ import {
   timeReverseKeyframes,
   easyEaseAll,
   sequenceLayers,
-  applySmoother,
-  applyWiggler,
 } from '@core/animation/keyframeAssistants';
+import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
+import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
@@ -123,7 +123,10 @@ import { ProjectCommands } from '@layout/Menu';
 import { CommandPalette } from '@layout/CommandPalette';
 import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
-import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
+import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers, insert3DPrimitive } from '@core/scene/sceneInsert';
+import { assetIdOf } from '@core/source/sourceInfo';
+import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
+import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { findNavTarget } from '@core/workspace/cameraNav';
 import { insertNull, moveNodeInStack } from '@core/scene/parenting';
 import { createNullsFromPath, pathVertices } from '@core/scene/nullsFromPaths';
@@ -438,27 +441,164 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
  * commands exist with no menu home". They live in the Animation menu now (see
  * menuModel), so they're discoverable rather than shortcut-only.
  */
-import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { mergeSelectedPaths, liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
 import { compSizeOf } from '@core/composition/compSizes';
 
+/** The four boolean operators, in the order every other surface lists them. */
+const MERGE_OPS: ReadonlyArray<{ op: MergeOp; label: string; bakeId: string }> = [
+  // `bakeId` is the ORIGINAL command id for each bake. The ids are keys into
+  // the user's persisted shortcut overrides, so renaming them for symmetry
+  // with the new live ones would silently orphan any remap.
+  { op: 'union', label: 'Union (Add)', bakeId: 'shape.mergeUnion' },
+  { op: 'subtract', label: 'Subtract', bakeId: 'shape.mergeSubtract' },
+  { op: 'intersect', label: 'Intersect', bakeId: 'shape.mergeIntersect' },
+  { op: 'exclude', label: 'Exclude (XOR)', bakeId: 'shape.mergeExclude' },
+];
+
+/**
+ * Boolean path operations — LIVE and BAKED.
+ *
+ * Both engines shipped complete and were reachable from exactly one place: a
+ * "Merge Paths" submenu inside the Scene panel's node kebab, which you only
+ * find by right-clicking two selected layers. The palette had the bakes only,
+ * so the live boolean — the one that keeps operands animatable, which is the
+ * whole reason to prefer it — had no route at all outside that kebab.
+ *
+ * The DemoPanels kebab keeps its own entries verbatim; these call the same two
+ * functions, so there is one implementation and two doors, not two features.
+ */
 function buildMergePathCommands(): ReadonlyArray<Command> {
-  const ops: Array<{ id: string; label: string; op: MergeOp }> = [
-    { id: 'shape.mergeUnion', label: 'Merge Paths: Union', op: 'union' },
-    { id: 'shape.mergeSubtract', label: 'Merge Paths: Subtract', op: 'subtract' },
-    { id: 'shape.mergeIntersect', label: 'Merge Paths: Intersect', op: 'intersect' },
-    { id: 'shape.mergeExclude', label: 'Merge Paths: Exclude (XOR)', op: 'exclude' },
-  ];
-  return ops.map(({ id, label, op }) => ({
-    id: asCommandId(id),
-    label,
+  const enabled = (): boolean => useSelectionStore.getState().ids.length >= 2;
+  const live: Command[] = MERGE_OPS.map(({ op, label }) => ({
+    id: asCommandId(`shape.boolean.${op}`),
+    label: `Path Operation: ${label}`,
     icon: 'layers' as const,
-    enabled: () => useSelectionStore.getState().ids.length >= 2,
+    enabled,
+    execute: () => {
+      const ids = liveMergeSelectedPaths(op);
+      if (ids.length > 0) notify(`Live boolean (${op}) — operands stay editable`, 'success');
+      else notify('Select at least two shape layers with closed paths', 'warning');
+    },
+  }));
+  const baked: Command[] = MERGE_OPS.map(({ op, label, bakeId }) => ({
+    id: asCommandId(bakeId),
+    label: `Merge Paths (Bake): ${label}`,
+    icon: 'layers' as const,
+    enabled,
     execute: () => {
       const ids = mergeSelectedPaths(op);
       if (ids.length > 0) notify(`Merged paths (${op})`, 'success');
       else notify('Select at least two shape layers to merge', 'warning');
     },
   }));
+  return [...live, ...baked];
+}
+
+/**
+ * Layer ▸ New 3D Primitive. The inserts existed only in the TopNav "+" menu,
+ * which is a place you browse, not a place you search — so a user who knows
+ * the app has 3D primitives had no way to type "cube" and get one.
+ */
+function buildPrimitive3DCommands(): ReadonlyArray<Command> {
+  // Mirrors `insert3DPrimitive`'s own parameter union rather than importing a
+  // type it does not export — a mismatch is a compile error at the call below.
+  type Kind = 'cube' | 'sphere' | 'plane' | 'cylinder';
+  const kinds: ReadonlyArray<{ id: Kind; label: string; icon: string }> = [
+    { id: 'cube', label: '3D Cube', icon: 'cube' },
+    { id: 'sphere', label: '3D Sphere', icon: 'sphere' },
+    { id: 'cylinder', label: '3D Cylinder', icon: 'cylinder' },
+    { id: 'plane', label: '3D Plane', icon: 'square' },
+  ];
+  return kinds.map(({ id, label, icon }) => ({
+    id: asCommandId(`layer.new3d.${id}`),
+    label: `New ${label}`,
+    icon,
+    // Inserting needs somewhere to insert INTO. Every other New-layer command
+    // is unconditional for the same reason: `insert3DPrimitive` resolves the
+    // active comp root itself.
+    enabled: () => true,
+    execute: () => {
+      insert3DPrimitive(id);
+      notify(`${label} added`, 'success');
+    },
+  }));
+}
+
+/**
+ * The first selected layer whose source is a VIDEO asset — Scene Edit
+ * Detection's only valid subject. A still has no cuts, and an audio layer has
+ * no frames to compare.
+ */
+function selectedVideoNodeId(): string | null {
+  const assets = useAssetStore.getState().assets;
+  for (const id of useSelectionStore.getState().ids) {
+    const node = defaultSceneGraph.getNode(id);
+    if (!node) continue;
+    const assetId = assetIdOf(node);
+    if (!assetId) continue;
+    if (assets.find((a) => a.id === assetId)?.type === 'video') return id;
+  }
+  return null;
+}
+
+/**
+ * AE's Layer ▸ Scene Edit Detection, as commands.
+ *
+ * The detector and both appliers shipped reachable ONLY from the timeline
+ * clip's right-click menu — and only on a clip whose asset the menu had
+ * already resolved. Same entry point (`runSceneEditDetection`), so the confirm,
+ * the progress notification and the +1µs frame mapping are shared verbatim.
+ */
+function buildSceneEditCommands(): ReadonlyArray<Command> {
+  const modes: ReadonlyArray<{ mode: SceneEditMode; label: string }> = [
+    { mode: 'markers', label: 'Scene Edit Detection → Markers' },
+    { mode: 'split', label: 'Scene Edit Detection → Split Clips' },
+  ];
+  return modes.map(({ mode, label }) => ({
+    id: asCommandId(`layer.sceneEditDetect.${mode}`),
+    label,
+    icon: 'scissors' as const,
+    enabled: () => selectedVideoNodeId() !== null,
+    execute: () => {
+      const nodeId = selectedVideoNodeId();
+      if (!nodeId) {
+        notify('Select a video layer first', 'warning');
+        return;
+      }
+      void runSceneEditDetection(nodeId, mode);
+    },
+  }));
+}
+
+/**
+ * Window ▸ Workspace — saving and resetting the dock layout.
+ *
+ * Applying a preset is NOT here: the presets are partly user data (saved
+ * layouts come and go while the app runs), so they are built per render in
+ * `workspaceMenu.ts` rather than frozen into the registry at boot. What is
+ * fixed — save-as and reset — is a command, so it is searchable.
+ */
+function buildWorkspaceCommands(): ReadonlyArray<Command> {
+  return [
+    {
+      id: asCommandId('workspace.saveAs'),
+      label: 'Save Layout as Workspace…',
+      icon: 'layout',
+      enabled: () => true,
+      execute: async () => {
+        const name = await customPrompt(
+          'Save Workspace',
+          'Save the current panel arrangement as a workspace you can switch back to from Window ▸ Workspace.',
+          '',
+          { placeholder: 'e.g. Rough Cut', confirmLabel: 'Save' },
+        );
+        const trimmed = name?.trim();
+        if (!trimmed) return;
+        getWorkspaceManager().saveCurrentWorkspace(trimmed);
+        notify(`Workspace “${trimmed}” saved`, 'success');
+      },
+    },
+  ];
 }
 
 function buildEasingCommands(): ReadonlyArray<Command> {
@@ -692,30 +832,24 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       id: asCommandId('animation.smoother'),
       label: 'The Smoother…',
       icon: 'track',
+      // Same predicate the dialog uses to build its track list, so the menu
+      // entry cannot be enabled on a layer the dialog would open empty.
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).some(
-          (p) => (defaultAnimation.getTrackKeyframes(id, p)?.length ?? 0) >= 3,
-        );
+        return !!id && smootherTracks(id).length > 0;
       },
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        const raw = await customPrompt(
-          'The Smoother',
-          'Replace dense keyframes with the fewest that keep each curve within this tolerance (in the property’s own units — px for position), then smooth the survivors’ tangents.',
-          '5',
-          { placeholder: 'e.g. 5', confirmLabel: 'Smooth' },
-        );
-        if (raw === null) return;
-        const tolerance = Number(raw);
-        if (!Number.isFinite(tolerance) || tolerance <= 0) {
-          notify('Tolerance must be a number above 0', 'warning');
+        // A real dialog rather than `customPrompt`: tolerance is a look-at-it
+        // control, and the prompt could not express WHICH tracks to touch at
+        // all. The dialog previews live and commits as one undo entry.
+        if (smootherTracks(id).length === 0) {
+          notify('Needs a track with 3+ keyframes', 'warning');
           return;
         }
-        const r = applySmoother(id, tolerance);
-        if (!r) { notify('Needs a track with 3+ keyframes', 'warning'); return; }
-        notify(`Smoothed ${r.tracks} track${r.tracks === 1 ? '' : 's'}: ${r.before} → ${r.after} keyframes`, 'success');
+        const summary = await openSmootherDialog(id);
+        if (summary) notify(summary, 'success');
       },
     },
     {
@@ -730,28 +864,19 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'track',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && (['x', 'y'] as const).some(
-          (p) => (defaultAnimation.getTrackKeyframes(id, p)?.length ?? 0) >= 2,
-        );
+        return !!id && wigglerTracks(id).length > 0;
       },
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        const raw = await customPrompt(
-          'The Wiggler',
-          'Bake a deterministic wobble into the animated position: wobbles per second, then peak deviation in px — e.g. "5, 25". Authored keyframes keep their times and values.',
-          '5, 25',
-          { placeholder: 'frequency, amplitude', confirmLabel: 'Wiggle' },
-        );
-        if (raw === null) return;
-        const [f, a] = raw.split(/[,\s]+/).filter(Boolean).map(Number);
-        if (!Number.isFinite(f) || !Number.isFinite(a) || f! <= 0 || a === 0) {
-          notify('Enter frequency (per second, above 0) and amplitude (px, not 0)', 'warning');
+        // Was a prompt that parsed "5, 25" out of a string — two numbers with
+        // different units, unlabelled, and rejected wholesale on a typo.
+        if (wigglerTracks(id).length === 0) {
+          notify('Animate position first (2+ keyframes on x or y)', 'warning');
           return;
         }
-        const r = applyWiggler(id, { frequency: f!, amplitude: a! });
-        if (!r) { notify('Animate position first (2+ keyframes on x or y)', 'warning'); return; }
-        notify(`Wiggled ${r.tracks === 2 ? 'x and y' : 'position'} — ${r.added} keyframes added`, 'success');
+        const summary = await openWigglerDialog(id);
+        if (summary) notify(summary, 'success');
       },
     },
     {
@@ -1059,6 +1184,9 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildMarkerCommands(),
     ...buildEasingCommands(),
     ...buildMergePathCommands(),
+    ...buildPrimitive3DCommands(),
+    ...buildSceneEditCommands(),
+    ...buildWorkspaceCommands(),
     ...buildProjectCommands(),
     ...buildRigPresetCommands(),
     ...buildCaptionCommands(),

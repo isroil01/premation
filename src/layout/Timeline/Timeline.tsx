@@ -34,6 +34,8 @@ import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
 import { PickWhip } from '@components/PickWhip';
 import { keyframeShapes, keyframePaths, describeShapes } from './keyframeShape';
 import { snapKeyframeGroup, type SnapTarget } from './keyframeSnap';
+import { collectClipSnapTargets, snapClipEdges, type ClipSnapTarget } from './clipSnap';
+import { registerTimelineScroll, setTimelineViewportWidth } from './timelineViewport';
 import { scaleSelection, scaleGrip } from './keyframeTimeScale';
 import { ValueField } from '@components/ValueField';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -378,12 +380,42 @@ function Timeline({
    */
   const colHeadsRef = useRef<HTMLDivElement | null>(null);
   const { ref: containerRef, size } = useResizeObserver<HTMLDivElement>();
+  /** Latest `onScroll`, so the mount-once viewport effect can report a
+   *  programmatic scroll without re-registering on every render. */
+  const onScrollRef = useRef(onScroll);
+  onScrollRef.current = onScroll;
   const [scrollLeft, setScrollLeft] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
 
   const [, forceUpdate] = useState({});
   useEffect(() => {
     return audioEngine.onChange(() => forceUpdate({}));
+  }, []);
+
+  // ── Publish the lane viewport, for out-of-panel zoom actions ────
+  // "Fit composition" lives in the status bar and cannot measure this: the lane
+  // width is whatever is left after the user-resizable header column, which is
+  // known here and nowhere else. Written to a module store rather than lifted
+  // through props — the timeline's host does not connect the two panels, and
+  // this fires on every frame of a divider drag.
+  useEffect(() => {
+    const el = lanesRef.current;
+    if (!el) return;
+    const publish = (): void => setTimelineViewportWidth(el.clientWidth);
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    const unregister = registerTimelineScroll((px) => {
+      el.scrollLeft = px;
+      setScrollLeft(el.scrollLeft);
+      onScrollRef.current?.(el.scrollLeft);
+    });
+    return () => {
+      ro.disconnect();
+      // Only blank the measurement if no OTHER timeline (the popout window)
+      // took over in the meantime — React mounts the new one before this runs.
+      if (unregister()) setTimelineViewportWidth(0);
+    };
   }, []);
 
   // ── Header column: resize + scroll ─────────────────────────────
@@ -785,8 +817,29 @@ function Timeline({
       duration: number;
       sourceInSec: number;
       live: { start: number; duration: number; sourceInSec: number };
+      /**
+       * What this drag may latch onto, snapshotted at pointer-DOWN.
+       *
+       * The list cannot change mid-gesture (no clip but this one is moving, and
+       * markers/work area are not editable during a drag), and rebuilding it on
+       * every pointermove would walk every clip on every track at pointer rate.
+       */
+      snapTargets: readonly ClipSnapTarget[];
     }
   >(null);
+  /**
+   * Everything a clip drag needs to build its snap targets, refreshed each
+   * render. A ref rather than a dependency so the drag listeners below are not
+   * re-bound (and the in-flight gesture torn down) every time the model object
+   * changes identity — which, during playback, is every frame.
+   */
+  const clipSnapCtx = useRef({ tracks: model.tracks, markers: model.markers, workArea: model.workArea, currentTime, duration: model.duration });
+  clipSnapCtx.current = { tracks: model.tracks, markers: model.markers, workArea: model.workArea, currentTime, duration: model.duration };
+  /** What the in-flight clip drag is latched onto — drives the guide line. */
+  const [clipSnap, setClipSnap] = useState<ClipSnapTarget | null>(null);
+  /** Mirror of `clipSnap`, so pointermove can skip a re-render when the latch
+   *  has not actually changed — this runs at pointer rate. */
+  const clipSnapShown = useRef<ClipSnapTarget | null>(null);
   const [clipPreview, setClipPreview] = useState<null | {
     id: string;
     start: number;
@@ -844,6 +897,17 @@ function Timeline({
         duration: clip.duration,
         sourceInSec,
         live: { start: clip.start, duration: clip.duration, sourceInSec },
+        // The dragged bar is excluded from its own target list — otherwise its
+        // start would pull it straight back to where it began and the bar would
+        // be immovable inside one snap radius.
+        snapTargets: collectClipSnapTargets({
+          tracks: clipSnapCtx.current.tracks,
+          excludeClipIds: [clip.id],
+          playheadTime: clipSnapCtx.current.currentTime,
+          markers: clipSnapCtx.current.markers,
+          workArea: clipSnapCtx.current.workArea ?? null,
+          compDuration: clipSnapCtx.current.duration,
+        }),
       };
       setClipPreview({ id: clip.id, start: clip.start, duration: clip.duration, sourceInSec });
       try {
@@ -871,13 +935,31 @@ function Timeline({
       const deltaSec = (e.clientX - lanesRect.left + currentScrollLeft - d.startX) / pps;
       const frameDur = 1 / (model.frameRate || 30);
       const minGap = frameDur;
-      // Snap to the frame grid DURING the drag — the engine stores whole
-      // frames, so an unsnapped preview visibly jumped on release. Alt frees
-      // snap for move/trim; slip/slide always snap (modifier already chose mode).
-      const snapToFrame = (v: number): number => Math.round(v / frameDur) * frameDur;
-      const passThrough = (v: number): number => v;
-      const snap =
-        d.mode === 'slip' || d.mode === 'slide' || !e.altKey ? snapToFrame : passThrough;
+      // Snapping. The frame grid is the LAST resort inside `snapClipEdges`, so
+      // a drag that latches onto nothing still quantizes exactly as it always
+      // did (the engine stores whole frames, so an unsnapped preview visibly
+      // jumped on release) — but a bar that comes within a few pixels of a
+      // neighbour's edge, the playhead, a marker or a work-area bound now lands
+      // on it exactly, which is the alignment people were doing by eye.
+      //
+      // Alt frees a move/trim entirely. Slip and slide always snap, because Alt
+      // is the modifier that CHOSE those modes and cannot also mean "no snap".
+      const snapDisabled = d.mode !== 'slip' && d.mode !== 'slide' && e.altKey;
+      const snapOpts = { pixelsPerSecond: pps, frameDuration: frameDur, disabled: snapDisabled };
+      const snapToFrame = (v: number): number =>
+        snapDisabled || frameDur <= 0 ? v : Math.round(v / frameDur) * frameDur;
+      // Boxed so TypeScript keeps the declared type: a plain `let` written only
+      // from inside `snapBody` narrows to `never` at the read site below.
+      const hit: { target: ClipSnapTarget | null } = { target: null };
+      /** Snap a set of MOVING edges as one body; returns the offset to apply. */
+      const snapBody = (edges: readonly number[]): number => {
+        const { delta, target } = snapClipEdges(edges, d.snapTargets, snapOpts);
+        // No guide line for the frame grid: it is quantization, not an
+        // alignment the user was aiming at, and a line on every drag would be
+        // noise. Same rule as the keyframe snapper's indicator.
+        hit.target = target && target.kind !== 'frame' ? target : null;
+        return delta;
+      };
       let start = d.start;
       let duration = d.duration;
       let sourceInSec = d.sourceInSec;
@@ -887,17 +969,32 @@ function Timeline({
       // every "expand" gesture into a shrink.
       if (d.mode === 'slip') {
         // Drag right → later into the source (positive sourceIn), matching AE.
-        sourceInSec = snap(Math.max(0, d.sourceInSec + deltaSec));
+        // Frame grid only: slip does not move the BAR, so there is no edge to
+        // align with anything on the timeline axis.
+        sourceInSec = snapToFrame(Math.max(0, d.sourceInSec + deltaSec));
       } else if (d.mode === 'move' || d.mode === 'slide') {
-        start = snap(Math.max(0, d.start + deltaSec));
+        const rawStart = Math.max(0, d.start + deltaSec);
+        // Both edges are candidates — a bar is just as often butted up by its
+        // tail as by its head, and only trying the head would make the common
+        // "snap the out-point to the playhead" gesture impossible.
+        start = Math.max(0, rawStart + snapBody([rawStart, rawStart + d.duration]));
       } else if (d.mode === 'start') {
         const end = d.start + d.duration;
-        start = snap(clamp(d.start + deltaSec, 0, end - minGap));
-        start = Math.min(start, end - minGap);
+        const raw = clamp(d.start + deltaSec, 0, end - minGap);
+        start = clamp(raw + snapBody([raw]), 0, end - minGap);
         duration = end - start;
       } else {
-        const end = snap(Math.max(d.start + minGap, d.start + d.duration + deltaSec));
+        const raw = Math.max(d.start + minGap, d.start + d.duration + deltaSec);
+        const end = Math.max(d.start + minGap, raw + snapBody([raw]));
         duration = Math.max(minGap, end - d.start);
+      }
+      // Only while the gesture is a real drag: a guide flashing under a plain
+      // click on a bar would be feedback for an edit that never happened.
+      const nextSnap = d.moved ? hit.target : null;
+      if ((nextSnap?.time ?? null) !== (clipSnapShown.current?.time ?? null) ||
+          (nextSnap?.kind ?? null) !== (clipSnapShown.current?.kind ?? null)) {
+        clipSnapShown.current = nextSnap;
+        setClipSnap(nextSnap);
       }
       d.live = { start, duration, sourceInSec };
       setClipPreview({ id: d.id, start, duration, sourceInSec });
@@ -905,6 +1002,10 @@ function Timeline({
     const onUp = (): void => {
       const d = clipDrag.current;
       if (!d) return;
+      if (clipSnapShown.current) {
+        clipSnapShown.current = null;
+        setClipSnap(null);
+      }
       // A click that never became a drag on an already-selected bar collapses
       // the selection down to it (the deferred half of the rule in onClipDown).
       if (d.collapseSelectionOnUp && !d.moved) onTrackSelect?.(d.trackId, false);
@@ -936,6 +1037,8 @@ function Timeline({
       window.removeEventListener('pointerup', onUp);
       if (clipDrag.current) {
         clipDrag.current = null;
+        clipSnapShown.current = null;
+        setClipSnap(null);
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
       }
@@ -1691,6 +1794,23 @@ function Timeline({
                   kfSnap.kind === 'keyframe' && styles.kfSnapKeyframe,
                 )}
                 style={{ transform: `translateX(${8 + kfSnap.time * pps}px)` }}
+                aria-hidden
+              />
+            )}
+
+            {/* The same indicator for a CLIP drag. Coloured by what was hit, so
+                the line says *why* the bar stopped there — butted against a
+                neighbour reads differently from parked on the playhead. */}
+            {clipSnap && (
+              <div
+                className={cn(
+                  styles.kfSnapLine,
+                  clipSnap.kind === 'playhead' && styles.kfSnapPlayhead,
+                  clipSnap.kind === 'clip' && styles.clipSnapClip,
+                  clipSnap.kind === 'marker' && styles.clipSnapMarker,
+                  (clipSnap.kind === 'workArea' || clipSnap.kind === 'comp') && styles.clipSnapBound,
+                )}
+                style={{ transform: `translateX(${TIMELINE_LEFT_OFFSET + clipSnap.time * pps}px)` }}
                 aria-hidden
               />
             )}

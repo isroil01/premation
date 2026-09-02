@@ -14,11 +14,76 @@
  */
 
 import { MESH_VERTEX_FLOATS } from '@core/geometry/extrudeMesh';
-import type { ModelPrimitiveEntry } from './modelMesh';
+import { MODEL_COMPONENT, type ModelPrimitiveEntry } from './modelMesh';
 import type { SceneNode } from '@core/types';
 
 /** Prefix of the animatable weight props on the mesh layer. */
 export const MORPH_PROP_PREFIX = 'morph';
+
+/**
+ * Where the glTF `extras.targetNames` array is persisted — on the leaf's
+ * Model component, written at import (see modelImport.ts).
+ */
+export const MORPH_NAMES_PROP = 'morphNames';
+
+/** Hard ceiling on the sliders a layer can show. ARKit face rigs land at 52. */
+const MORPH_SCAN_LIMIT = 256;
+
+function transformProps(node: SceneNode): Record<string, unknown> | null {
+  for (const c of node.components) {
+    if (c.type === 'Transform') return c.props as Record<string, unknown>;
+  }
+  return null;
+}
+
+/**
+ * The persisted morph target names for this layer, or null.
+ *
+ * Read off the Model component by NAME rather than through modelMesh, so this
+ * module stays free of the session mesh registry — the inspector must be able
+ * to label sliders on a freshly-opened document, before hydration has run.
+ */
+export function readNodeMorphNames(node: SceneNode): string[] | null {
+  for (const c of node.components) {
+    if (c.type !== MODEL_COMPONENT) continue;
+    const raw = (c.props as Record<string, unknown>)[MORPH_NAMES_PROP];
+    if (!Array.isArray(raw)) continue;
+    return raw.map((n) => (typeof n === 'string' ? n : ''));
+  }
+  return null;
+}
+
+/**
+ * How many morph weights this layer carries.
+ *
+ * Counted from the CONTIGUOUS `morph0…` props on the Transform (which import
+ * always seeds, one per target) rather than from the mesh registry, for the
+ * same reason as above: a document that has not hydrated its geometry yet
+ * still knows how many blend shapes its layers have. The persisted name array
+ * is a second lower bound, so a file whose weights all defaulted away still
+ * lists its targets.
+ */
+export function nodeMorphTargetCount(node: SceneNode): number {
+  const props = transformProps(node);
+  let n = 0;
+  if (props) {
+    while (n < MORPH_SCAN_LIMIT && typeof props[`${MORPH_PROP_PREFIX}${n}`] === 'number') n += 1;
+  }
+  return Math.max(n, readNodeMorphNames(node)?.length ?? 0);
+}
+
+/**
+ * Slider labels for a layer's morph targets: the file's own names where it
+ * gave one, `Target N` (1-based, matching the ordinal a user counts) where it
+ * did not.
+ */
+export function morphTargetLabels(node: SceneNode): string[] {
+  const names = readNodeMorphNames(node);
+  return Array.from({ length: nodeMorphTargetCount(node) }, (_, i) => {
+    const given = names?.[i];
+    return given && given.trim() !== '' ? given : `Target ${i + 1}`;
+  });
+}
 
 /**
  * The layer's current morph weights: animated track ∥ Transform prop ∥ 0.
@@ -30,10 +95,7 @@ export function readMorphWeights(
   targetCount: number,
 ): number[] | null {
   if (targetCount === 0) return null;
-  let props: Record<string, unknown> | null = null;
-  for (const c of node.components) {
-    if (c.type === 'Transform') { props = c.props as Record<string, unknown>; break; }
-  }
+  const props = transformProps(node);
   const out = new Array<number>(targetCount);
   let any = false;
   for (let i = 0; i < targetCount; i++) {

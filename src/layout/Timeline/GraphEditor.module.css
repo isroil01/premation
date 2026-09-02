@@ -45,6 +45,41 @@
   border-bottom: 1px solid var(--color-primary);
 }
 
+/* Graph visibility mode — one control with two states, not two buttons that
+   happen to be adjacent, so "which set am I looking at?" is answered by shape
+   as well as by colour. */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.segBtn,
+.segBtnActive {
+  padding: 2px 8px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.segBtn:hover {
+  color: var(--color-text-primary);
+}
+
+.segBtnActive {
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  color: var(--color-text-primary);
+}
+
 .spacer {
   flex: 1;
 }
@@ -268,6 +303,14 @@
 
 .curve {
   pointer-events: none;
+}
+
+/* The reference ("before") ghost. Dashed and unclickable so it reads as a
+   memory of the curve rather than a second curve competing for the pointer. */
+.referenceCurve {
+  pointer-events: none;
+  stroke-dasharray: 4 3;
+  stroke-linecap: round;
 }
 
 /* Invisible, generous hit targets — the visible dot is 4.5px, the grab radius 10px. */

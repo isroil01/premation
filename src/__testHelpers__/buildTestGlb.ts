@@ -133,6 +133,9 @@ export function buildMorphTriGlb(): ArrayBuffer {
       name: 'face',
       primitives: [{ attributes: { POSITION: 0 }, indices: 2, targets: [{ POSITION: 1 }] }],
       weights: [0],
+      // Where every exporter writes blend-shape names; the importer keeps them
+      // so the Morph Targets panel can label the slider.
+      extras: { targetNames: ['blink'] },
     }],
     nodes: [{ name: 'face', mesh: 0 }],
     animations: [{

@@ -137,10 +137,14 @@ storage layer.
   for plugin authors.
 - **Collaboration.** Real-time multiplayer would need a substantial
   re-architecture. Not planned, not refused.
-- **Advanced 3D.** Imported 3D models, PBR materials and HDRI environments are
-  explicitly out of scope — see
-  [`docs/3d-layer-model.md`](docs/3d-layer-model.md). The target is AE's
-  *Classic* 3D, plus extrusion and bevels.
+- **Advanced 3D.** Imported glTF/GLB models, CPU skinning, morph targets,
+  baked animation clips, 3D IK and an SH-probe Environment Light all shipped
+  2026-09-01/02 — see [`docs/3d-layer-model.md`](docs/3d-layer-model.md) for
+  how they map onto ordinary layers. Still open: HDRI **file** import, a
+  reflection/specular map for mirror-like surfaces, PBR texture maps beyond
+  base colour, and curved (non-faceted) meshes for the editor's own
+  primitives. The target remains AE's *Classic* 3D, plus extrusion/bevels and
+  this imported-model foothold — full parametric Advanced 3D is not planned.
 - **Local AI conversation persistence.** The assistant ships in the local
   edition (BYOK via OS keystore + `aiProxy`, including `ai:image`). Thread
   history still only persists when a backend is present; in-session history

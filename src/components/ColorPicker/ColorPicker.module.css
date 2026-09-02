@@ -166,13 +166,116 @@
   user-select: none;
 }
 
-/* Recent colors. */
+/* ── Swatch strips (project palette / document colors / recents) ──────────
+   One shared skin: three strips that look different would read as three
+   unrelated features rather than three answers to the same question. */
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-1);
+  min-height: 14px;
+}
+
+.sectionLabel {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  user-select: none;
+}
+
+.sectionAdd {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+}
+
+.sectionAdd:hover {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.sectionEmpty {
+  margin: 0;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+
 .recents {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
-  padding-top: var(--space-1);
-  border-top: 1px solid var(--color-border-subtle);
+}
+
+/* Inline rename/delete for one project swatch — opened by right-click. */
+.editRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.editSwatch {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--color-border-strong);
+}
+
+.editInput {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height-xs);
+  padding: 0 var(--space-1);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  outline: none;
+}
+
+.editDelete {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: var(--control-height-xs);
+  flex: none;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+}
+
+.editDelete:hover {
+  border-color: var(--color-red-500);
+  color: var(--color-red-500);
 }
 
 .recentSwatch {
@@ -190,6 +293,14 @@
   box-shadow:
     inset 0 0 0 1px var(--color-border-strong),
     0 0 0 1px var(--color-primary);
+}
+
+/* The swatch whose rename row is open, so the row and its subject are linked. */
+.recentSwatchActive {
+  composes: recentSwatch;
+  box-shadow:
+    inset 0 0 0 1px var(--color-border-strong),
+    0 0 0 2px var(--color-primary);
 }
 
 /* Hex input row — inset field. */

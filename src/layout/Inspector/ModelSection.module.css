@@ -1,0 +1,121 @@
+/**
+ * ModelSection — the Morph Targets group.
+ *
+ * A morph rig is a LIST: 5 targets on a prop, 52 on an ARKit face. So the
+ * rows are sized for scanning (one line each, name truncated rather than
+ * wrapped) and the list scrolls inside the section instead of pushing every
+ * group below it off the panel.
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2, 6px);
+}
+
+.count {
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Beyond ~8 targets the list is taller than the panel; scroll it here so the
+   sections below stay reachable. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+  min-height: var(--control-height-sm, 22px);
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.labelAnimated {
+  color: var(--color-text-primary);
+}
+
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 0 0 76px;
+  width: 76px;
+  height: var(--control-height-xs, 20px);
+  background: transparent;
+  cursor: ew-resize;
+}
+.slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--color-text-secondary, #bbb);
+  border: 1px solid var(--color-surface-0, #1c1e22);
+  transition: background var(--motion-duration-fast, 120ms) ease;
+}
+.slider:hover::-webkit-slider-thumb,
+.slider:active::-webkit-slider-thumb {
+  background: var(--color-accent, #4a8cff);
+}
+.slider:focus-visible {
+  outline: 2px solid var(--color-accent, #4a8cff);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm, 3px);
+}
+.slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-border-subtle, rgba(255, 255, 255, 0.14));
+}
+.slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-secondary, #bbb);
+  border: 1px solid var(--color-surface-0, #1c1e22);
+}
+
+.value {
+  flex: 0 0 auto;
+  min-width: 46px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hint {
+  margin: 2px 0 0;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}

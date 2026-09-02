@@ -27,6 +27,7 @@
 
 import { parseGltf, type ParsedGltf } from '@core/media/gltf';
 import { bakeClip, bakeWeightTracks } from './modelAnimation';
+import { MORPH_NAMES_PROP } from './modelMorph';
 import { defaultAnimation } from '@motion/animation';
 import {
   MODEL_COMPONENT,
@@ -63,6 +64,14 @@ export interface ModelLayerSpec {
   style?: Record<string, unknown>;
   /** Model reference (leafs only). */
   model?: { mesh: number; prim: number; skin?: number };
+  /**
+   * glTF `extras.targetNames` for this primitive's morph targets, when the
+   * file carried them. Persisted on the leaf's Model component so the Morph
+   * Targets inspector can label sliders "jawOpen" instead of "Target 3" —
+   * the geometry re-parses on open, but the panel must read a NAME without
+   * waiting on hydration, so it lives in the document.
+   */
+  morphNames?: string[];
   /** The glTF node this null stands for — animation channels target it. */
   gltfNode?: number;
 }
@@ -151,6 +160,13 @@ export function buildModelLayout(
         const entry = modelPrimitiveFor({ modelKey, ...ref });
         growWorldBox(world, ref);
         const b = entry?.bbox;
+        const targetCount = entry?.morphTargets.length ?? 0;
+        // Trim/pad to the primitive's own target count: `extras.targetNames`
+        // is exporter-written and not validated by the spec, so a mismatched
+        // array must not shift every label by one.
+        const morphNames = targetCount > 0
+          ? Array.from({ length: targetCount }, (_, ti) => parsed.meshes[n.mesh!]?.targetNames[ti] ?? '')
+          : [];
         specs.push({
           parent: mySpec,
           name: mesh.primitives.length > 1 ? `${mesh.name} ${pi + 1}` : mesh.name,
@@ -184,6 +200,7 @@ export function buildModelLayout(
           },
           style: { opacity: 100, ...(entry && !entry.textureUrl ? { fill: entry.fill } : {}) },
           model: ref,
+          ...(morphNames.some((nm) => nm !== '') ? { morphNames } : {}),
         });
       });
     }
@@ -297,6 +314,7 @@ export function importGltfModel(bytes: ArrayBuffer, fileName: string): ModelImpo
           mesh: spec.model.mesh,
           prim: spec.model.prim,
           ...(spec.model.skin !== undefined ? { skin: spec.model.skin } : {}),
+          ...(spec.morphNames ? { [MORPH_NAMES_PROP]: spec.morphNames } : {}),
         },
       });
     } else if (spec.gltfNode !== undefined) {

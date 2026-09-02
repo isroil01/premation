@@ -405,6 +405,14 @@ function registerRenderIpc(): void {
   const jobs = new Map<string, string>();
   /** Running ffmpeg children per job, so `render:cancel` can kill them. */
   const running = new Map<string, ReturnType<typeof spawn>>();
+  /**
+   * Chapter metadata, staged in the job dir next to the frames.
+   *
+   * The name is deliberately outside `frame_%04d` so `stagedFrames` cannot
+   * mistake it for a frame, and inside the job dir so `cleanJob` reclaims it
+   * with everything else.
+   */
+  const CHAPTER_METADATA_FILE = 'chapters.ffmetadata';
 
   const resolveFfmpeg = (): string => {
     if (process.env.FFMPEG_PATH && existsSync(process.env.FFMPEG_PATH)) return process.env.FFMPEG_PATH;
@@ -714,6 +722,13 @@ function registerRenderIpc(): void {
           displayMaxNits: number;
           displayMinNits: number;
         };
+        /**
+         * Chapter marks, already rendered as FFMETADATA1 text by the renderer
+         * (`src/core/export/chapters.ts`). Text and not a chapter array on
+         * purpose: this process cannot import from `src/`, so formatting here
+         * would mean a second, untested copy of the ffmetadata escaping rules.
+         */
+        chaptersFfmetadata?: string;
       },
     ) => {
       const dir = jobs.get(jobId);
@@ -734,7 +749,39 @@ function registerRenderIpc(): void {
       const evenScale = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
       const crf = opts.quality === 'draft' ? '28' : opts.quality === 'medium' ? '23' : '18';
 
-      const base = ['-y', '-framerate', ffmpegRate(opts.fps), '-i', input, ...(hasAudio ? ['-i', audio!] : [])];
+      /*
+        Chapters ride in as an extra INPUT, not as a flag.
+
+        ffmpeg has no "set chapter" option: chapters are read from a demuxer, so
+        the only way to attach them is to hand it a file it can parse chapters
+        OUT of — an FFMETADATA1 text file — and then map that input's chapters
+        onto the output. The file lands in the job's own staging dir, so
+        `cleanJob` already deletes it and there is no second temp path to leak.
+
+        `-map_chapters` rather than `-map_metadata`: the latter would also
+        replace the output's GLOBAL metadata with the (empty) metadata of a file
+        that contains nothing but chapters. Only MP4/MOV get it — the WebM muxer
+        has no Chapters element, and passing this to a VP9 encode would produce
+        an identical file plus a stray temp write.
+      */
+      const wantsChapters =
+        (opts.format === 'mp4' || opts.format === 'mov')
+        && typeof opts.chaptersFfmetadata === 'string'
+        && opts.chaptersFfmetadata.trim().length > 0;
+      if (wantsChapters) {
+        await writeFile(path.join(dir, CHAPTER_METADATA_FILE), opts.chaptersFfmetadata!, 'utf8');
+      }
+      const chapterInput = wantsChapters ? ['-i', path.join(dir, CHAPTER_METADATA_FILE)] : [];
+      // Input indices: frames are 0, the audio mix (when present) is 1, so the
+      // metadata file is whatever comes next. Off by one here silently maps the
+      // AUDIO input's (non-existent) chapters and delivers a file with none.
+      const chapterMap = wantsChapters ? ['-map_chapters', String(hasAudio ? 2 : 1)] : [];
+
+      const base = [
+        '-y', '-framerate', ffmpegRate(opts.fps), '-i', input,
+        ...(hasAudio ? ['-i', audio!] : []),
+        ...chapterInput,
+      ];
       let args: string[];
 
       // HDR10 / HLG: frames are already PQ/HLG-baked; tag BT.2020 + transfer.
@@ -762,6 +809,9 @@ function registerRenderIpc(): void {
           '-vf', evenScale,
           ...(hasAudio ? ['-c:a', 'aac', '-b:a', '192k', '-shortest'] : []),
           '-movflags', '+faststart',
+          // The HDR presets deliver an MP4, so they carry chapters like any
+          // other MP4 — `opts.format` is already 'mp4' by the time it gets here.
+          ...chapterMap,
         ];
         const x265Args = [
           ...base,
@@ -844,6 +894,7 @@ function registerRenderIpc(): void {
             '-c:v', 'prores_ks', '-profile:v', profileFlag, '-pix_fmt', pixFmt,
             '-vf', evenScale,
             ...(hasAudio ? ['-c:a', 'pcm_s16le', '-shortest'] : []),
+            ...chapterMap,
             out,
           ];
           break;
@@ -866,6 +917,7 @@ function registerRenderIpc(): void {
             '-movflags', '+faststart',
             '-vf', evenScale,
             ...(hasAudio ? ['-c:a', 'aac', '-b:a', '192k', '-shortest'] : []),
+            ...chapterMap,
             out,
           ];
       }
