@@ -10,6 +10,16 @@
  * detail a copied parser gets wrong silently.
  */
 
+// `aiProxy` registers IPC handlers at import through `ipcGuard`, which pulls
+// the real `electron` module. CI installs with `--ignore-scripts`, so the
+// Electron binary is absent there and that import throws before the first
+// test runs. Stub it the way the other main-process suites do.
+jest.mock('electron', () => ({
+  app: { getPath: () => '/tmp/motion-test' },
+  ipcMain: { handle: () => undefined, on: () => undefined },
+  safeStorage: { isEncryptionAvailable: () => false },
+}));
+
 import { parseWhisperSegments, parseWhisperWords } from './aiProxy';
 
 describe('parseWhisperSegments', () => {
