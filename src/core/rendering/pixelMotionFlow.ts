@@ -10,10 +10,15 @@
  * ── Design constraints, in order ────────────────────────────────────────────
  *
  *  DETERMINISTIC. Pure arithmetic on pixel arrays — no Math.random, no time,
- *  no GPU rasterization in the estimation. The same two frames always produce
- *  the same flow and the same in-between, so export matches preview and a
- *  scrub back redraws the same frame. (This was the stated reason the feature
- *  waited; the tracker's landing proved the pattern.)
+ *  no floating-point rasterization in the estimation. The same two frames
+ *  always produce the same flow and the same in-between, so export matches
+ *  preview and a scrub back redraws the same frame. The GPU twin of this
+ *  search (`pixelMotionFlowGpu.ts`) is admissible under this constraint
+ *  because it is INTEGER arithmetic end to end — integer luma, integer SAD,
+ *  fixed scan order — and must prove itself bit-equal to this module on a
+ *  synthetic pair before it is allowed to serve a single real frame. The
+ *  float half (sub-pixel parabola, smoothing) runs HERE either way, on the
+ *  exact integers the search produced.
  *
  *  CHEAP ENOUGH ON THE CPU. Flow is estimated at a downscaled size (the
  *  caller picks; ~384px wide is the intended operating point) on a grid, not
@@ -74,10 +79,34 @@ export function lumaOf(data: Uint8ClampedArray, w: number, h: number): Float32Ar
   return out;
 }
 
+/**
+ * Integer Rec.601-weighted luma (×256): `77·R + 150·G + 29·B`, 0..65280.
+ *
+ * This is the variant Pixel Motion itself feeds `computeFlow`, because every
+ * operation on it is EXACT — a GLSL `int` pipeline and this loop produce the
+ * same numbers on any hardware, which is what lets the GPU search in
+ * `pixelMotionFlowGpu.ts` be bit-equal to the CPU one. SAD only cares about
+ * relative differences, so the ×256 scale is invisible downstream (the
+ * validity test is a ratio). `lumaOf` stays as-is for the consumers that read
+ * luma VALUES (roto brush, content-aware fill, stabilization).
+ */
+export function lumaIntOf(data: Uint8ClampedArray, w: number, h: number): Int32Array {
+  const out = new Int32Array(w * h);
+  for (let i = 0, p = 0; i < out.length; i++, p += 4) {
+    out[i] = data[p]! * 77 + data[p + 1]! * 150 + data[p + 2]! * 29;
+  }
+  return out;
+}
+
+/** Luma buffer accepted by the flow search. Int32 (from `lumaIntOf`) is the
+ *  Pixel Motion path — exact, GPU-twinnable; Float32 (from `lumaOf`) remains
+ *  for the tracking-side consumers. Both are deterministic. */
+export type LumaArray = Float32Array | Int32Array;
+
 /** Sum of absolute differences between a block in `a` centred at (ax,ay) and
  *  one in `b` centred at (ax+dx, ay+dy). Out-of-bounds samples clamp. */
 function blockSad(
-  a: Float32Array, b: Float32Array, w: number, h: number,
+  a: LumaArray, b: LumaArray, w: number, h: number,
   ax: number, ay: number, dx: number, dy: number, r: number,
 ): number {
   let sad = 0;
@@ -103,30 +132,58 @@ function parabolic(cm: number, c0: number, cp: number): number {
   return Math.max(-0.5, Math.min(0.5, off));
 }
 
+/** Options with defaults applied — the single place the defaults live, so the
+ *  CPU search, the GPU search and the tests all resolve identically. */
+export function resolveFlowOptions(opts: FlowOptions = {}): {
+  step: number; r: number; s: number; minImp: number;
+} {
+  return {
+    step: Math.max(4, opts.step ?? 8),
+    r: Math.max(2, opts.blockRadius ?? 3),
+    s: Math.max(2, opts.searchRadius ?? 10),
+    minImp: opts.minImprovement ?? 0.06,
+  };
+}
+
 /**
- * Block-matched flow a→b on a regular grid.
- *
- * Exhaustive search inside `searchRadius` (adjacent video frames move a few
- * pixels at flow resolution — the honest search space is small), sub-pixel
- * parabola on the winner, then one 3×3 smoothing pass so a single mismatched
- * block cannot punch a hole in the warp.
+ * Raw per-cell search results, `SEARCH_STRIDE` numbers per grid cell:
+ * [zero, best, bx, by, cxm, cxp, cym, cyp]. This is the seam between the
+ * search (CPU here, or the integer GPU pass) and `finalizeFlow` — SADs and
+ * integer winner in, float field out. The four parabola SADs are only
+ * meaningful when the improvement test passes; an abstaining cell may leave
+ * them zero (the CPU search does, to skip four SADs; the GPU one computes
+ * them unconditionally — `finalizeFlow` reads them only for valid cells, so
+ * the outputs are still identical).
  */
-export function computeFlow(
-  lumA: Float32Array,
-  lumB: Float32Array,
+export const SEARCH_STRIDE = 8;
+
+/**
+ * The per-cell SAD search half of `computeFlow`: two-stage block match on a
+ * regular grid, into a raw `SEARCH_STRIDE`-per-cell buffer.
+ *
+ * Two-stage: EVEN offsets first (a quarter of the candidates), then a ±1
+ * refine around the winner. Exhaustive was ~4× the cost for identical results
+ * on real content — adjacent video frames don't carry the single-pixel
+ * checkerboards that could hide a minimum between coarse taps, and the
+ * parabola in `finalizeFlow` re-centres sub-pixel anyway. Deterministic:
+ * fixed scan order, strict less-than (ties keep the earlier candidate; zero
+ * displacement is the seed). The GPU twin mirrors this loop statement for
+ * statement — any change here must land there too, or the init self-check
+ * will (correctly) refuse the GPU path.
+ */
+export function searchAllCells(
+  lumA: LumaArray,
+  lumB: LumaArray,
   w: number,
   h: number,
-  opts: FlowOptions = {},
-): FlowField {
-  const step = Math.max(4, opts.step ?? 8);
-  const r = Math.max(2, opts.blockRadius ?? 3);
-  const s = Math.max(2, opts.searchRadius ?? 10);
-  const minImp = opts.minImprovement ?? 0.06;
+  step: number,
+  r: number,
+  s: number,
+  minImp: number,
+): Float64Array {
   const cols = Math.max(1, Math.floor(w / step));
   const rows = Math.max(1, Math.floor(h / step));
-  const dx = new Float32Array(cols * rows);
-  const dy = new Float32Array(cols * rows);
-  const valid = new Uint8Array(cols * rows);
+  const raw = new Float64Array(cols * rows * SEARCH_STRIDE);
 
   for (let gy = 0; gy < rows; gy++) {
     for (let gx = 0; gx < cols; gx++) {
@@ -136,13 +193,6 @@ export function computeFlow(
       let best = zero;
       let bx = 0;
       let by = 0;
-      // Two-stage search: EVEN offsets first (a quarter of the candidates),
-      // then a ±1 refine around the winner. Exhaustive was ~4× the cost for
-      // identical results on real content — adjacent video frames don't carry
-      // the single-pixel checkerboards that could hide a minimum between
-      // coarse taps, and the parabola below re-centres sub-pixel anyway.
-      // Deterministic: fixed scan order, strict less-than (ties keep the
-      // earlier candidate; zero displacement is the seed).
       for (let oy = -s; oy <= s; oy += 2) {
         for (let ox = -s; ox <= s; ox += 2) {
           if (ox === 0 && oy === 0) continue;
@@ -169,21 +219,51 @@ export function computeFlow(
           }
         }
       }
-      // Textureless or genuinely static: no vote. `zero` can itself be 0 on
-      // flat synthetic frames — the max(1,…) keeps the ratio meaningful.
-      if (zero - best < minImp * Math.max(1, zero)) {
-        continue;
-      }
-      // Sub-pixel: parabola along each axis around the winner.
-      const cx0 = best;
-      const cxm = blockSad(lumA, lumB, w, h, ax, ay, bx - 1, by, r);
-      const cxp = blockSad(lumA, lumB, w, h, ax, ay, bx + 1, by, r);
-      const cym = blockSad(lumA, lumB, w, h, ax, ay, bx, by - 1, r);
-      const cyp = blockSad(lumA, lumB, w, h, ax, ay, bx, by + 1, r);
-      dx[gy * cols + gx] = bx + parabolic(cxm, cx0, cxp);
-      dy[gy * cols + gx] = by + parabolic(cym, cx0, cyp);
-      valid[gy * cols + gx] = 1;
+      const o = (gy * cols + gx) * SEARCH_STRIDE;
+      raw[o] = zero;
+      raw[o + 1] = best;
+      raw[o + 2] = bx;
+      raw[o + 3] = by;
+      // Abstaining cell (same predicate finalizeFlow applies): skip the four
+      // parabola SADs — they would never be read.
+      if (zero - best < minImp * Math.max(1, zero)) continue;
+      raw[o + 4] = blockSad(lumA, lumB, w, h, ax, ay, bx - 1, by, r);
+      raw[o + 5] = blockSad(lumA, lumB, w, h, ax, ay, bx + 1, by, r);
+      raw[o + 6] = blockSad(lumA, lumB, w, h, ax, ay, bx, by - 1, r);
+      raw[o + 7] = blockSad(lumA, lumB, w, h, ax, ay, bx, by + 1, r);
     }
+  }
+  return raw;
+}
+
+/**
+ * The float half: validity test, sub-pixel parabola, one 3×3 smoothing pass.
+ * Runs on the CPU for BOTH search backends, on the exact numbers the search
+ * produced — which is what makes the two backends bit-equal fields.
+ */
+export function finalizeFlow(
+  raw: Float64Array,
+  cols: number,
+  rows: number,
+  step: number,
+  minImp: number,
+): FlowField {
+  const dx = new Float32Array(cols * rows);
+  const dy = new Float32Array(cols * rows);
+  const valid = new Uint8Array(cols * rows);
+
+  for (let i = 0; i < cols * rows; i++) {
+    const o = i * SEARCH_STRIDE;
+    const zero = raw[o]!;
+    const best = raw[o + 1]!;
+    // Textureless or genuinely static: no vote. `zero` can itself be 0 on
+    // flat synthetic frames — the max(1,…) keeps the ratio meaningful.
+    if (zero - best < minImp * Math.max(1, zero)) continue;
+    const bx = raw[o + 2]!;
+    const by = raw[o + 3]!;
+    dx[i] = bx + parabolic(raw[o + 4]!, best, raw[o + 5]!);
+    dy[i] = by + parabolic(raw[o + 6]!, best, raw[o + 7]!);
+    valid[i] = 1;
   }
 
   // One 3×3 box-smooth so neighbours share their estimate. Grid vectors are
@@ -212,6 +292,29 @@ export function computeFlow(
   }
 
   return { cols, rows, step, dx: sdx, dy: sdy, valid };
+}
+
+/**
+ * Block-matched flow a→b on a regular grid.
+ *
+ * Exhaustive search inside `searchRadius` (adjacent video frames move a few
+ * pixels at flow resolution — the honest search space is small), sub-pixel
+ * parabola on the winner, then one 3×3 smoothing pass so a single mismatched
+ * block cannot punch a hole in the warp. Composed of `searchAllCells` +
+ * `finalizeFlow` so the GPU search can substitute the first half.
+ */
+export function computeFlow(
+  lumA: LumaArray,
+  lumB: LumaArray,
+  w: number,
+  h: number,
+  opts: FlowOptions = {},
+): FlowField {
+  const { step, r, s, minImp } = resolveFlowOptions(opts);
+  const cols = Math.max(1, Math.floor(w / step));
+  const rows = Math.max(1, Math.floor(h / step));
+  const raw = searchAllCells(lumA, lumB, w, h, step, r, s, minImp);
+  return finalizeFlow(raw, cols, rows, step, minImp);
 }
 
 /** Bilinear flow sample at a FLOW-RESOLUTION position. Edge-clamped. */
@@ -269,6 +372,15 @@ function bilinearRgba(
  * frames; A is sampled `t` of the way BACK along it and B `1−t` of the way
  * FORWARD, then the two motion-compensated samples cross-fade. Where flow is
  * zero this is exactly Frame Mix — the deliberate degradation.
+ *
+ * The body is `sampleFlow` + `bilinearRgba` with the flow bilinear unrolled:
+ * its x-side terms repeat every row and its y-side terms every column, so
+ * they are computed w+h times instead of w·h — and the per-pixel [dx,dy]
+ * tuple `sampleFlow` would allocate never exists. The per-pixel EXPRESSIONS
+ * are unchanged, so the output is bit-identical to the composed form (pinned
+ * by test). The GPU warp (`pixelMotionWarpGpu.ts`) mirrors this math within
+ * float tolerance — a change here needs a matching one there, or its
+ * self-check will (correctly) refuse the GPU warp.
  */
 export function warpBlend(
   a: Uint8ClampedArray,
@@ -285,12 +397,43 @@ export function warpBlend(
   const pb = new Float32Array(4);
   const invSX = 1 / flowScaleX;
   const invSY = 1 / flowScaleY;
+  const { cols, rows, step } = flow;
+  const fdx = flow.dx;
+  const fdy = flow.dy;
+  const x0s = new Int32Array(w);
+  const x1s = new Int32Array(w);
+  const fxs = new Float64Array(w);
+  for (let x = 0; x < w; x++) {
+    const gx = Math.min(cols - 1, Math.max(0, (x * invSX) / step - 0.5));
+    const x0 = Math.floor(gx);
+    x0s[x] = x0;
+    x1s[x] = Math.min(cols - 1, x0 + 1);
+    fxs[x] = gx - x0;
+  }
   let o = 0;
   for (let y = 0; y < h; y++) {
+    const gy = Math.min(rows - 1, Math.max(0, (y * invSY) / step - 0.5));
+    const y0 = Math.floor(gy);
+    const y1 = Math.min(rows - 1, y0 + 1);
+    const fy = gy - y0;
+    const r0 = y0 * cols;
+    const r1 = y1 * cols;
     for (let x = 0; x < w; x++, o += 4) {
-      const [fdx, fdy] = sampleFlow(flow, x * invSX, y * invSY);
-      const dx = fdx * flowScaleX;
-      const dy = fdy * flowScaleY;
+      const x0 = x0s[x]!;
+      const x1 = x1s[x]!;
+      const fx = fxs[x]!;
+      const i00 = r0 + x0;
+      const i10 = r0 + x1;
+      const i01 = r1 + x0;
+      const i11 = r1 + x1;
+      const fdxv =
+        (fdx[i00]! * (1 - fx) + fdx[i10]! * fx) * (1 - fy) +
+        (fdx[i01]! * (1 - fx) + fdx[i11]! * fx) * fy;
+      const fdyv =
+        (fdy[i00]! * (1 - fx) + fdy[i10]! * fx) * (1 - fy) +
+        (fdy[i01]! * (1 - fx) + fdy[i11]! * fx) * fy;
+      const dx = fdxv * flowScaleX;
+      const dy = fdyv * flowScaleY;
       bilinearRgba(a, w, h, x - dx * t, y - dy * t, pa);
       bilinearRgba(b, w, h, x + dx * (1 - t), y + dy * (1 - t), pb);
       out[o] = pa[0]! * (1 - t) + pb[0]! * t;

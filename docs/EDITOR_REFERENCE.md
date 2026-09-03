@@ -852,6 +852,18 @@ nearest-frame while either bracket is still decoding — never a hole, never a
 half-warped guess — and to Frame Mix wherever flow reports no texture.
 Synthetic-frame suite proves recovery of known motion to sub-pixel, endpoint
 identity and determinism; a real-footage on-machine pass is still owed.
+GPU-accelerated (2026-09-01): estimation now prefers an integer WebGL2 twin
+of the CPU search (`rendering/pixelMotionFlowGpu.ts` — integer luma/SAD,
+fixed scan order, RGBA32UI readback, ~13× the CPU search at 1080p) that must
+prove itself BIT-EQUAL to the CPU path on a synthetic pair at init, so the
+backend choice can never make preview and export disagree; the parabola and
+smoothing stay on the CPU (`finalizeFlow`, shared by both backends).
+The full-res warp followed (2026-09-01, `rendering/pixelMotionWarpGpu.ts`,
+~80× at 1080p): float bilinear can't be bit-equal, so its gate is the
+session decision itself — tolerance + determinism self-check at init, then
+preview and export both warp on whichever backend won for the whole
+session. The CPU warp remains the fallback (and lost ~30% of its own cost
+to a flow-bilinear unroll, pinned bit-identical by test).
 The old text stood here since 2026-08-11 saying Pixel Motion was the mode
 people actually reach for on retimed footage, and that the decoder
 problem in Tier 1.
