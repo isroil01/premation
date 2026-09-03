@@ -82,6 +82,16 @@ export type RenderableEffect =
        * max corner (effect spread / skip gates).
        */
       cocCorners?: readonly [number, number, number, number];
+      /**
+       * This blur IS the camera's depth of field, synthesised per layer by the
+       * snapshot adapter (id 'dof' upstream). Tagged so CompositionPass can
+       * DROP it for renderables it renders through the per-pixel depth-buffer
+       * gather (`camera3d.dof`) — the gather computes the same CoC from the
+       * real depth buffer, and running both would defocus twice. Renderables
+       * that fall off the depth path (mattes, adjustments, no depth texture)
+       * keep the entry, so DOF is never silently lost.
+       */
+      dofSource?: boolean;
     }
   | { type: 'glow'; radiusPx: number; color?: Color; /** Comp-px alpha dilate before blur (Spread). */ spreadPx?: number }
   | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number; spreadPx?: number }
@@ -831,6 +841,35 @@ export interface FrameScene {
     /** Camera world position — the Blinn-Phong eye. Absent for ortho views
      *  (specular is skipped there). */
     eye?: readonly [number, number, number];
+    /**
+     * The camera's depth-of-field config, when DOF is active. Present ONLY on
+     * perspective cameras (ortho/custom views have no lens). When set — and the
+     * backend can hand back a sampleable depth texture — CompositionPass
+     * renders each 3D depth group into a single-sample colour+depth pair and
+     * runs the `dof-gather` pass: per-PIXEL circle of confusion from the real
+     * depth buffer, instead of the per-layer corner-CoC approximation. Same
+     * two CoC models as the adapter's `dofBlurPx` (legacy ramp / thin-lens,
+     * selected by `fStop` presence), so the two paths defocus identically
+     * where a layer is flat.
+     */
+    dof?: {
+      /** Max defocus blur in px (AE's Blur Level cap). */
+      strength: number;
+      /** In-focus distance from the camera, px (camera-space z). */
+      focus: number;
+      /** Legacy-ramp slope (see dofBlurPx). */
+      aperture: number;
+      /** Lens focal length, px — the thin-lens model's f. */
+      focalLength?: number;
+      /** f-number; presence selects the physical thin-lens CoC. */
+      fStop?: number;
+      /** Iris blade count (≥3 = polygonal bokeh; else spiral disk). */
+      irisBlades?: number;
+      /** 0 = sharp n-gon, 1 = circle. */
+      irisRoundness?: number;
+      /** Extra weight on bright taps (specular bloom). */
+      highlightGain?: number;
+    };
   };
   /** Scene lights for per-fragment Accepts-Lights shading in 3D groups. */
   lights3d?: ReadonlyArray<SceneLight3D>;

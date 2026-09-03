@@ -4526,6 +4526,11 @@ export function buildSnapshot(
           // Eye for Blinn-Phong specular on the per-fragment path. Ortho views
           // have no eye — specular degrades gracefully there (adapter omits it).
           eye: [camera!.position.x, camera!.position.y, camera!.position.z] as const,
+          // The camera's DOF, for the per-pixel depth-buffer gather over 3D
+          // depth groups. The per-layer `id: 'dof'` blurs above stay on the
+          // layers as the fallback; the renderer drops them (dofSource) only
+          // for renderables it actually gathers, so the two never both apply.
+          ...(dof ? { dof } : {}),
         }
     : undefined;
   // Scene lights in shader terms — only worth carrying when a 3D layer exists

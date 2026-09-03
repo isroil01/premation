@@ -344,9 +344,13 @@ export interface DofConfig {
  * NOTE: a layer spanning depth is split into CoC tiles (`dofStrips`) so the
  * blur radius can vary across the quad. Polygonal bokeh (iris blades) is an
  * opt-in on the GPU blur pass — absent blades keep the Gaussian, so existing
- * shots do not re-grade. A true sampleable depth-buffer gather remains a
- * renderer-target change (WebGL2 depth is a renderbuffer; WebGPU depth is
- * created without TEXTURE_BINDING).
+ * shots do not re-grade. On the GPU depth-group path this per-layer maths is
+ * now the FALLBACK: both backends expose a sampleable single-sample depth
+ * texture (`renderTargetDepthTexture`), and CompositionPass's `dof-gather`
+ * pass computes the same two CoC models per PIXEL from the real depth buffer
+ * (the config rides `RenderSnapshot.camera3d.dof`). This function remains the
+ * source of truth for the shader's maths and for every path that cannot
+ * gather (painter-path layers, MSAA-only targets, Canvas2D-era readers).
  */
 export function dofBlurPx(depth: number, dof: DofConfig): number {
   if (dof.fStop === undefined) {

@@ -334,6 +334,10 @@ export class WebGPUBackend implements RenderBackend {
         if (e.type === 'uniform-buffer') entry.buffer = { type: 'uniform' };
         else if (e.type === 'storage-buffer') entry.buffer = { type: 'read-only-storage' };
         else if (e.type === 'texture') entry.texture = {};
+        // A depth-format view (depth24plus) may only bind where the layout says
+        // so — the default `{}` means filterable float and rejects the group.
+        // `unfilterable-float` pairs with WGSL `texture_2d<f32>` + textureLoad.
+        else if (e.type === 'depth-texture') entry.texture = { sampleType: 'unfilterable-float' };
         else entry.sampler = {};
         return entry;
       }),

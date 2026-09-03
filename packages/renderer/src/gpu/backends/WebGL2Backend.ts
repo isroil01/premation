@@ -74,6 +74,15 @@ interface NativePipeline {
    * name-guessing above can reach. When set it supersedes both fields above.
    */
   texUniforms: (WebGLUniformLocation | null)[];
+  /**
+   * Bindings the material declared as `depth-texture` — those units must NOT
+   * get the draw's sampler object. A DEPTH_COMPONENT texture with compare mode
+   * NONE is texture-COMPLETE only under NEAREST; the shared linear sampler
+   * bound over it made it incomplete, and an incomplete texture returns
+   * (0,0,0,1) for EVERY lookup — texelFetch included — so the DOF gather read
+   * depth 0 everywhere and blurred the whole group at the cap.
+   */
+  depthTexBindings: ReadonlySet<number>;
 }
 interface NativeRenderTarget {
   /** Single-sample FBO wrapping `texture` — what everything SAMPLES from. */
@@ -409,7 +418,8 @@ export class WebGL2Backend implements RenderBackend {
       gl.getUniformLocation(program, 'uMaskTex') ??
       gl.getUniformLocation(program, 'uMapTex') ??
       gl.getUniformLocation(program, 'uLutTex') ??
-      gl.getUniformLocation(program, 'uMatteTex');
+      gl.getUniformLocation(program, 'uMatteTex') ??
+      gl.getUniformLocation(program, 'uDepthTex');
     return h('pipeline', {
       program,
       blend: desc.blend,
@@ -420,6 +430,7 @@ export class WebGL2Backend implements RenderBackend {
       texUniform,
       tex1Uniform,
       texUniforms: (desc.samplerNames ?? []).map((n) => gl.getUniformLocation(program, n)),
+      depthTexBindings: new Set(desc.layout.filter((e) => e.type === 'depth-texture').map((e) => e.binding)),
     } satisfies NativePipeline);
   }
   destroyPipeline(_pipeline: PipelineHandle): void {}
@@ -791,6 +802,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // solid in the comp; carrying the AO sampler explicitly is what stops it.
     let aoSampler: WebGLSampler | null = null;
     let aoUnit = -1;
+    const depthUnits: number[] = [];
     for (const e of (group.native as { entries: BindGroupResource[] }).entries) {
       if ('buffer' in e) {
         const nb = e.buffer.native as NativeBuffer;
@@ -807,6 +819,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
         if (e.binding === ENV_TEXTURE_BINDING) envUnit = texIndex;
         if (e.binding === SHADOW_TEXTURE_BINDING) shadowUnit = texIndex;
         if (e.binding === AO_TEXTURE_BINDING) aoUnit = texIndex;
+        if (this.pipeline?.depthTexBindings.has(e.binding)) depthUnits.push(texIndex);
         texIndex += 1;
       } else if (e.binding === ENV_SAMPLER_BINDING) {
         envSampler = e.sampler.native as WebGLSampler;
@@ -825,6 +838,13 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // to the unit before it in entry order (unit 0), which left every
     // SECONDARY texture (mask/matte/LUT/displacement map) incomplete: alpha
     // read as 1, so masks silently did nothing on the GL backend.
+    //
+    // EXCEPT the depth-texture units, which the rule inverts for: a depth
+    // texture (compare mode NONE) is only complete under NEAREST, and its
+    // NEAREST filter is set with texParameteri at creation — so a LINEAR
+    // sampler object over it made it incomplete and every texelFetch returned
+    // 0. Those units must carry NO sampler object at all (and any object left
+    // by an earlier draw must be unbound).
     if (sampler) {
       for (let u = 0; u < Math.max(1, texIndex); u++) gl.bindSampler(u, sampler);
     }
@@ -833,6 +853,7 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     if (envSampler && envUnit >= 0) gl.bindSampler(envUnit, envSampler);
     if (shadowSampler && shadowUnit >= 0) gl.bindSampler(shadowUnit, shadowSampler);
     if (aoSampler && aoUnit >= 0) gl.bindSampler(aoUnit, aoSampler);
+    for (const u of depthUnits) gl.bindSampler(u, null);
   }
   setVertexBuffer(_slot: number, buffer: BufferHandle): void {
     this.vertexBuffer = buffer.native as NativeBuffer;

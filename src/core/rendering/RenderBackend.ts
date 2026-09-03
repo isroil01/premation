@@ -14,6 +14,7 @@ import type { LayerMask } from '@core/effects/mask';
 import type { TrackMatte } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { ShaderLight } from '@core/scene/lightShading';
+import type { DofConfig } from '@core/scene/camera3d';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
 
@@ -638,6 +639,17 @@ export interface RenderSnapshot {
     projection: readonly number[];
     /** Camera world position — the eye for Blinn-Phong specular. */
     eye?: readonly [number, number, number];
+    /**
+     * The active camera's depth-of-field config (readSceneDof), present only
+     * when DOF is on AND the frame renders through a perspective camera. The
+     * GPU renderer uses it for the per-pixel depth-buffer gather over 3D depth
+     * groups; the per-layer `id: 'dof'` blur entries remain on the layers as
+     * the fallback for every path that cannot gather. Referencing `DofConfig`
+     * rather than restating its shape, for the same reason `lights3d` refers
+     * to `ShaderLight` — a structural copy is where fields go to be silently
+     * dropped on one side.
+     */
+    dof?: DofConfig;
   };
   /**
    * Scene lights in shader terms (per-fragment Accepts-Lights shading on the

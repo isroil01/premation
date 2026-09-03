@@ -103,6 +103,53 @@ export function resizeBounds(
   return { x, y, width: w, height: h };
 }
 
+/**
+ * Where `point` lands when the plane is scaled about `pivot` by `ratio`
+ * (per world axis). This is the position half of a multi-selection resize:
+ * each layer's anchor moves toward/away from the fixed pivot by the same
+ * ratio its Scale multiplies by, so the whole group grows as one body.
+ */
+export function scaleAboutPivot(point: Vec2, pivot: Vec2, ratio: Vec2): Vec2 {
+  return {
+    x: pivot.x + (point.x - pivot.x) * ratio.x,
+    y: pivot.y + (point.y - pivot.y) * ratio.y,
+  };
+}
+
+/** Where `point` lands after sweeping `deltaRad` around `pivot`. */
+export function orbitAboutPivot(point: Vec2, pivot: Vec2, deltaRad: number): Vec2 {
+  const cos = Math.cos(deltaRad);
+  const sin = Math.sin(deltaRad);
+  const dx = point.x - pivot.x;
+  const dy = point.y - pivot.y;
+  return { x: pivot.x + dx * cos - dy * sin, y: pivot.y + dx * sin + dy * cos };
+}
+
+/**
+ * The point a resize drag holds FIXED on an axis-aligned box: the corner or
+ * edge midpoint opposite the grabbed handle. Used as the multi-selection
+ * pivot — a group has no single anchor to scale about, so the design-tool
+ * convention (opposite corner stays put) is the one that applies.
+ */
+export function oppositePivot(rect: Rect, handle: HandleId): Vec2 {
+  const left = rect.x;
+  const right = rect.x + rect.width;
+  const top = rect.y;
+  const bottom = rect.y + rect.height;
+  const cx = rect.x + rect.width / 2;
+  const cy = rect.y + rect.height / 2;
+  switch (handle) {
+    case 'nw': return { x: right, y: bottom };
+    case 'ne': return { x: left, y: bottom };
+    case 'se': return { x: left, y: top };
+    case 'sw': return { x: right, y: top };
+    case 'n': return { x: cx, y: bottom };
+    case 's': return { x: cx, y: top };
+    case 'e': return { x: left, y: cy };
+    case 'w': return { x: right, y: cy };
+  }
+}
+
 /** Signed angle (radians) swept from `start` to `current` around `pivot`. */
 export function rotationDelta(pivot: Vec2, start: Vec2, current: Vec2): number {
   const a0 = Math.atan2(start.y - pivot.y, start.x - pivot.x);

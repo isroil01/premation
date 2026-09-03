@@ -8,6 +8,7 @@
     "plugin-visible#0": 0.24177,
     "svg-embedded-raster#0": 0.19156,
     "svg-filter-blur#0": 0.01101,
+    "three-d-dof-visible#0": 0.05243,
     "video-decoded-frame#13": 0.01274,
     "video-decoded-frame#5": 0.01274
   }

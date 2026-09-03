@@ -97,7 +97,15 @@ export {
   type Handle,
   type HandleId,
 } from './selection/handles';
-export { resizeBounds, resizeBoundsAboutPivot, rotationDelta, isResizeHandle } from './selection/transform';
+export {
+  resizeBounds,
+  resizeBoundsAboutPivot,
+  rotationDelta,
+  isResizeHandle,
+  scaleAboutPivot,
+  orbitAboutPivot,
+  oppositePivot,
+} from './selection/transform';
 export * as Gizmo3D from './selection/gizmo3d';
 export type { GizmoHandleType, RenderedGizmo3D, RenderedGizmoAxis, RenderedGizmoArc, RenderedGizmoPlane } from './selection/gizmo3d';
 export * as SceneGizmos from './selection/sceneGizmos';
@@ -159,6 +167,7 @@ export {
   type ToolDragEvent,
   type ToolWheelEvent,
   type ToolKeyEvent,
+  type ToolHud,
 } from './tools';
 
 // ── Commands ──────────────────────────────────────────────────────
@@ -169,6 +178,9 @@ export {
   type MoveNodesPayload,
   type ResizeNodePayload,
   type RotateNodePayload,
+  type MultiTransformItem,
+  type MultiResizeNodesPayload,
+  type MultiRotateNodesPayload,
   type MoveAnchorPayload,
   type CreateNodePayload,
   type DeleteNodesPayload,

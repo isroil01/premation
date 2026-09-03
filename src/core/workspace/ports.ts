@@ -23,6 +23,8 @@ import {
   type DeleteNodesPayload,
   type ResizeNodePayload,
   type RotateNodePayload,
+  type MultiResizeNodesPayload,
+  type MultiRotateNodesPayload,
   type MoveAnchorPayload,
   type UpdateNodePathPayload,
   type UpdateMaskPathPayload,
@@ -1340,6 +1342,145 @@ function rotateNode(payload: RotateNodePayload): void {
   gestureSceneBump();
 }
 
+/**
+ * Whether a node can take its share of a MULTI-selection transform.
+ *
+ * Mirrors the single-node gates: `resizeNode` refuses non-drawable kinds, the
+ * selection controller withholds the 2D grips from 3D layers (the gizmo owns
+ * them) and devices (the renderer ignores their scale/rotation outright). The
+ * tool filters the same way before it ever sends the command; this is the
+ * belt-and-braces for any other caller.
+ */
+function multiTransformable(node: SceneNode): boolean {
+  const kind = kindOf(node);
+  return drawable(kind) && kind !== 'light' && kind !== 'camera' && !is3DEnabled(node);
+}
+
+/**
+ * Scale a multi-selection about one fixed world pivot — the group-box handle
+ * drag. The TOOL resolved everything absolute (per-node world scale and the
+ * world point each node's anchor lands on, both derived from drag-START state,
+ * the same ratio contract as `resizeNode`); this handler only converts
+ * world → parent space and routes the writes down the keyframe-or-static dual
+ * path. One `gestureAnimEdit` covers every node, so a drag is ONE undo entry
+ * for the keyframed side, exactly like `moveNodes`.
+ *
+ * `item.position` is the ANCHOR's world point, which is `parentWorld · (x, y)`
+ * by the renderer's model — so the layer's own x/y is just the parent inverse
+ * applied to it, with none of the box-centre/offset correction `resizeNode`
+ * needs for its centre-based payload.
+ */
+function multiResizeNodes(payload: MultiResizeNodesPayload): void {
+  if (payload.items.length === 0) return;
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  const keyed: Array<{ nodeId: ID; prop: string; lt: number; value: number }> = [];
+  let changed = false;
+
+  for (const item of payload.items) {
+    const node = defaultSceneGraph.getNode(item.id as ID);
+    if (!node || node.locked || !multiTransformable(node)) continue;
+    const cid = transformComponentId(node);
+    if (!cid) continue;
+
+    // World → parent space, the space x/y and scaleX/scaleY actually live in.
+    const ps = parentSpaceOf(node.id, rawTime);
+    const localPos = Matrix.transformPoint(ps.inv, item.position);
+    const localScaleX = item.scale.x / ps.scaleX;
+    const localScaleY = item.scale.y / ps.scaleY;
+
+    // Per-property stopwatch contract (see hasAnyTrack): position and scale
+    // decide independently, per node.
+    const lt = getRemappedTime(node.id, rawTime);
+    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y'])) {
+      keyed.push(
+        { nodeId: node.id, prop: 'x', lt, value: localPos.x },
+        { nodeId: node.id, prop: 'y', lt, value: localPos.y },
+      );
+    }
+    if (autoKeyframe || hasAnyTrack(node.id, ['scaleX', 'scaleY', 'scale'])) {
+      keyed.push(
+        { nodeId: node.id, prop: 'scaleX', lt, value: localScaleX },
+        { nodeId: node.id, prop: 'scaleY', lt, value: localScaleY },
+      );
+    }
+
+    // Static base always follows (harmless when animated — animated reads win).
+    defaultSceneGraph.writeProp(node.id, cid, 'x', localPos.x);
+    defaultSceneGraph.writeProp(node.id, cid, 'y', localPos.y);
+    defaultSceneGraph.writeProp(node.id, cid, 'scaleX', localScaleX);
+    defaultSceneGraph.writeProp(node.id, cid, 'scaleY', localScaleY);
+    changed = true;
+  }
+
+  if (keyed.length > 0) {
+    gestureAnimEdit(
+      'Keyframe Resize',
+      () => {
+        for (const k of keyed) defaultAnimation.setKeyframe(k.nodeId, k.prop, k.lt, k.value);
+      },
+      // Stable for the whole drag (playhead can't move mid-drag) → ONE undo
+      // entry per gesture, the moveNodes pattern.
+      `drag:multiresize:${rawTime}:${payload.items.map((i) => i.id).join(',')}`,
+    );
+  }
+  if (changed) gestureSceneBump();
+}
+
+/**
+ * Rotate a multi-selection about the group centre: each node's rotation adds
+ * the drag's sweep and its anchor orbits the pivot — both resolved ABSOLUTE by
+ * the tool. Same shape as `multiResizeNodes`: world → parent conversion here,
+ * dual keyframe/static writes, one merged undo entry per drag.
+ */
+function multiRotateNodes(payload: MultiRotateNodesPayload): void {
+  if (payload.items.length === 0) return;
+  const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
+  const rawTime = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+  const keyed: Array<{ nodeId: ID; prop: string; lt: number; value: number }> = [];
+  let changed = false;
+
+  for (const item of payload.items) {
+    const node = defaultSceneGraph.getNode(item.id as ID);
+    if (!node || node.locked || !multiTransformable(node)) continue;
+    const cid = transformComponentId(node);
+    if (!cid) continue;
+
+    const ps = parentSpaceOf(node.id, rawTime);
+    // The tool's angle is ABSOLUTE world; `rotation` is stored parent-relative
+    // — the same subtraction rotateNode performs.
+    const deg = (item.rotation * 180) / Math.PI - ps.rotationDeg;
+    const localPos = Matrix.transformPoint(ps.inv, item.position);
+
+    const lt = getRemappedTime(node.id, rawTime);
+    if (autoKeyframe || hasAnyTrack(node.id, ['rotation'])) {
+      keyed.push({ nodeId: node.id, prop: 'rotation', lt, value: deg });
+    }
+    if (autoKeyframe || hasAnyTrack(node.id, ['x', 'y'])) {
+      keyed.push(
+        { nodeId: node.id, prop: 'x', lt, value: localPos.x },
+        { nodeId: node.id, prop: 'y', lt, value: localPos.y },
+      );
+    }
+
+    defaultSceneGraph.writeProp(node.id, cid, 'rotation', deg);
+    defaultSceneGraph.writeProp(node.id, cid, 'x', localPos.x);
+    defaultSceneGraph.writeProp(node.id, cid, 'y', localPos.y);
+    changed = true;
+  }
+
+  if (keyed.length > 0) {
+    gestureAnimEdit(
+      'Keyframe Rotate',
+      () => {
+        for (const k of keyed) defaultAnimation.setKeyframe(k.nodeId, k.prop, k.lt, k.value);
+      },
+      `drag:multirotate:${rawTime}:${payload.items.map((i) => i.id).join(',')}`,
+    );
+  }
+  if (changed) gestureSceneBump();
+}
+
 function moveAnchor(payload: MoveAnchorPayload): void {
   const node = defaultSceneGraph.getNode(payload.id as ID);
   if (!node || node.locked) return;
@@ -1531,6 +1672,12 @@ export function createCommandPort(viewOf?: () => Camera3dMode): CommandPort {
           break;
         case WorkspaceCommandType.RotateNode:
           rotateNode(command.payload as RotateNodePayload);
+          break;
+        case WorkspaceCommandType.MultiResizeNodes:
+          multiResizeNodes(command.payload as MultiResizeNodesPayload);
+          break;
+        case WorkspaceCommandType.MultiRotateNodes:
+          multiRotateNodes(command.payload as MultiRotateNodesPayload);
           break;
         case WorkspaceCommandType.MoveAnchor:
           moveAnchor(command.payload as MoveAnchorPayload);

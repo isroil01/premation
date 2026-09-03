@@ -5,6 +5,7 @@ export type {
   ToolDragEvent,
   ToolWheelEvent,
   ToolKeyEvent,
+  ToolHud,
 } from './Tool';
 export { ToolManager } from './ToolManager';
 export {

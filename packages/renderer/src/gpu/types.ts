@@ -201,7 +201,15 @@ export interface VertexBufferLayout {
   attributes: VertexAttribute[];
 }
 
-export type BindingType = 'uniform-buffer' | 'storage-buffer' | 'texture' | 'sampler';
+/**
+ * `depth-texture` binds a render target's DEPTH texture (renderTargetDepthTexture)
+ * for reading. WebGPU needs the distinction at layout time — a depth-format view
+ * is only bindable where the layout says `unfilterable-float` (or `depth`), and
+ * the default `texture` entry means filterable float, which rejects the bind
+ * group. Shaders read it with textureLoad / texelFetch, never through a
+ * filtering sampler (WebGL2 depth textures only guarantee NEAREST).
+ */
+export type BindingType = 'uniform-buffer' | 'storage-buffer' | 'texture' | 'depth-texture' | 'sampler';
 export interface BindGroupLayoutEntry {
   binding: number;
   type: BindingType;

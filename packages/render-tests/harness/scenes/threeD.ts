@@ -307,6 +307,30 @@ export const threeDScenes: Scene[] = [
       + 'whatever the wash currently does.',
   }),
 
+  // The per-pixel depth-buffer gather's signature case: ONE tilted plane
+  // running through the focus distance. The per-layer path had to approximate
+  // this with corner-CoC gradients on the quad; the gather reads the real
+  // depth buffer, so the sharp band sits exactly where the plane crosses
+  // focus and defocus grows continuously to either side. The card sits AT the
+  // focus distance (z = 250 ⇒ camera depth 1250 = focusDistance), intersecting
+  // the ramp, so it doubles as the sharp control and as a depth-intersection
+  // check: its edges must stay hard against the ramp's defocused far side.
+  scene('three-d-dof-gather-ramp', 'Per-pixel DOF: a tilted plane through the focus distance, sharp only at the crossing.', (graph) => {
+    graph.addNode(node('ramp', {
+      kind: 'shape',
+      position: CENTER,
+      transform: { width: 420, height: 240, shapeType: 'rect', z: 250, rotationX: 68 },
+      style: { fill: '#d05a7f' },
+    }));
+    graph.addNode(node('card', {
+      kind: 'shape',
+      position: { x: 150, y: 190 },
+      transform: { width: 90, height: 70, shapeType: 'rect', z: 250 },
+      style: { fill: '#4ad0a0' },
+    }));
+    graph.addNode(node('cam', { kind: 'camera', position: CENTER, transform: { z: -1000, focalLength: 1000, dofStrength: 24, focusDistance: 1250, dofAperture: 150 } }));
+  }),
+
   scene('light-point', 'Point light on a 3D panel.', (graph) => {
     panel(graph, 'p', { z: 0, rotationX: 10 }, '#c9c9d6');
     light(graph, 'L', { z: -200, intensity: 90, radius: 320, lightType: 'point' }, '#ffcc55');

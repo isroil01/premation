@@ -14,6 +14,8 @@ export const WorkspaceCommandType = {
   MoveNodes: 'workspace.moveNodes',
   ResizeNode: 'workspace.resizeNode',
   RotateNode: 'workspace.rotateNode',
+  MultiResizeNodes: 'workspace.multiResizeNodes',
+  MultiRotateNodes: 'workspace.multiRotateNodes',
   MoveAnchor: 'workspace.moveAnchor',
   CreateNode: 'workspace.createNode',
   DeleteNodes: 'workspace.deleteNodes',
@@ -67,6 +69,49 @@ export interface ResizeNodePayload {
    * the handler falls back to scaling it.
    */
   size?: Vec2;
+}
+
+/**
+ * One node's share of a multi-selection transform, in ABSOLUTE world terms.
+ *
+ * `position` is the world point the node's ANCHOR must land on. The anchor's
+ * world position is `parentWorld · (x, y)` — the renderer leaves the anchor
+ * fixed under Scale and Rotation — so the handler recovers the layer's own
+ * `x`/`y` as `invParentWorld · position`, with none of the box-centre/offset
+ * arithmetic `resizeNode` needs. Absolute (not a delta) for the same reason
+ * `ResizeNodePayload.scale` is: every tick of one drag resolves against the
+ * state captured at drag START, so repeating a tick cannot compound.
+ */
+export interface MultiTransformItem {
+  id: NodeId;
+  /** World-space point the node's anchor lands on. */
+  position: Vec2;
+}
+
+/**
+ * Scale a multi-selection about one fixed world pivot: each node's Scale
+ * multiplies by the drag's ratio and its anchor moves toward/away from the
+ * pivot by the same ratio — AE's group-box scale. The TOOL resolves both
+ * (see `MultiTransformItem` and the resize-ratio contract on
+ * `ResizeNodePayload`); the handler only converts world → parent space.
+ */
+export interface MultiResizeNodesPayload {
+  items: readonly (MultiTransformItem & {
+    /** Absolute target WORLD scale (start scale × drag ratio). */
+    scale: Vec2;
+  })[];
+}
+
+/**
+ * Rotate a multi-selection about the group centre: each node's anchor orbits
+ * the pivot and its rotation adds the same sweep. As with `RotateNodePayload`,
+ * `rotation` is the ABSOLUTE world angle the tool measured.
+ */
+export interface MultiRotateNodesPayload {
+  items: readonly (MultiTransformItem & {
+    /** Absolute target WORLD rotation in radians. */
+    rotation: number;
+  })[];
 }
 
 export interface RotateNodePayload {
@@ -148,6 +193,18 @@ export const commands = {
     return {
       type: WorkspaceCommandType.RotateNode,
       payload: { id, rotation, pivot } satisfies RotateNodePayload,
+    };
+  },
+  multiResizeNodes(items: MultiResizeNodesPayload['items']): WorkspaceCommand {
+    return {
+      type: WorkspaceCommandType.MultiResizeNodes,
+      payload: { items } satisfies MultiResizeNodesPayload,
+    };
+  },
+  multiRotateNodes(items: MultiRotateNodesPayload['items']): WorkspaceCommand {
+    return {
+      type: WorkspaceCommandType.MultiRotateNodes,
+      payload: { items } satisfies MultiRotateNodesPayload,
     };
   },
   /** Pan-behind: re-pivot the node, compensating position so it stays put. */

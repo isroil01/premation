@@ -25,10 +25,17 @@ import { corner as bezierCorner } from '../math/BezierPoint';
 import { commands } from '../commands/WorkspaceCommands';
 import * as Mat from '../math/Mat2D';
 import type { HandleId } from '../selection/handles';
-import { resizeBounds, resizeBoundsAboutPivot, rotationDelta } from '../selection/transform';
+import {
+  resizeBounds,
+  resizeBoundsAboutPivot,
+  rotationDelta,
+  scaleAboutPivot,
+  orbitAboutPivot,
+  oppositePivot,
+} from '../selection/transform';
 import { handleCursor, visibleHandleIds, CORNER_HANDLES } from '../selection/handles';
 import type { CursorType } from '../cursor/CursorManager';
-import type { Tool, ToolContext, ToolPointerEvent, ToolDragEvent, ToolKeyEvent } from './Tool';
+import type { Tool, ToolContext, ToolPointerEvent, ToolDragEvent, ToolKeyEvent, ToolHud } from './Tool';
 
 /** Default size used when a create/text tool is clicked without dragging. */
 const DEFAULT_CREATE_SIZE = 100;
@@ -79,22 +86,41 @@ export class SelectTool implements Tool {
   private startMatrix: Mat.Mat2D | null = null;
   private appliedDelta: Vec2 = { x: 0, y: 0 };
   private excludeIds: Set<string> = new Set();
-  /** Live drag readout (Δ / size / angle) — see Tool.getHud. */
-  private hud: { anchorWorld: Vec2; lines: readonly string[] } | null = null;
+  /** Live drag readout (Δ / size / angle / scale %) — see Tool.getHud. */
+  private hud: ToolHud | null = null;
   /** Grip under the cursor (idle only) — drives the overlay's lit grip. */
   private hoverHandleId: string | null = null;
   // Transform (single-node) state.
   private transformId: NodeId | null = null;
   private transformPivot: Vec2 = { x: 0, y: 0 };
   private cursorPop: (() => void) | null = null;
+  /**
+   * Multi-selection transform state, captured at drag START so every tick
+   * resolves against the same base — the ratio contract `resizeRotated.test.ts`
+   * pins for single layers, extended per node. Empty while a single-node (or
+   * no) transform is in flight; `transformId` stays null for a multi drag, so
+   * the two paths cannot both fire.
+   */
+  private multiStart: Array<{ id: NodeId; anchor: Vec2; scale: Vec2; rotation: number }> = [];
+  /** Rotate pivot for a multi drag: the group box centre, frozen at start. */
+  private multiPivot: Vec2 = { x: 0, y: 0 };
 
   getHandles(ctx: ToolContext): readonly OverlayHandle[] {
     const sel = ctx.selectionIds();
-    if (sel.length !== 1) {
-      // Multi-select: the bounding box still draws (buildOverlay), but the
-      // transform handles are single-node only — painting them would offer
-      // grips that can't be grabbed, so draw none.
-      return [];
+    if (sel.length === 0) return [];
+    if (sel.length > 1) {
+      // Multi-select: the eight grips on the selection's union AABB —
+      // axis-aligned is correct here, a group has no single orientation to
+      // honour (`SelectionController.handles` already computes exactly this).
+      // A drag scales/rotates the whole selection about the group box, AE
+      // style. Only when NO selected layer can take a 2D transform (all 3D or
+      // devices) is there nothing to offer.
+      if (!this.multiTransformIds(ctx)) return [];
+      const allowed = new Set(this.visibleIds(ctx));
+      return ctx.selection
+        .handles()
+        .filter((h) => allowed.has(h.id))
+        .map((h) => ({ id: h.id, position: h.position, kind: h.kind }));
     }
     // Degrade with on-screen size: eight 8px grips on a 30px box overlap into
     // an unusable blob. Filtering HERE (rather than in the painter) is what
@@ -110,6 +136,54 @@ export class SelectTool implements Tool {
     // crosshair, never a square, so it cannot be mistaken for a resize grip.
     const node = ctx.scene.getNode(sel[0]!);
     if (node) out.push({ id: `anchor_${sel[0]!}`, position: anchorWorld(node), kind: 'anchor' });
+    return out;
+  }
+
+  /**
+   * The nodes a multi-selection transform applies to, or null when the
+   * selection cannot take the 2D handles at all.
+   *
+   * 3D layers and devices are FILTERED rather than vetoing the gesture: their
+   * transforms belong to the 3D gizmo / don't exist (see
+   * `SelectionController.handles`), but a camera caught in a select-all must
+   * not disarm scaling the artwork around it. They simply stay put. Null only
+   * when nothing transformable remains — then the grips would be a lie.
+   */
+  private multiTransformIds(ctx: ToolContext): NodeId[] | null {
+    const sel = ctx.selectionIds();
+    if (sel.length < 2) return null;
+    const out: NodeId[] = [];
+    for (const id of sel) {
+      const n = ctx.scene.getNode(id);
+      if (!n || n.is3D || n.device || n.locked) continue;
+      out.push(id);
+    }
+    return out.length > 0 ? out : null;
+  }
+
+  /**
+   * Per-node world pose at drag start, the base every tick's absolute target
+   * is computed from. Scale comes off the world matrix's columns — the same
+   * derivation the single-node resize uses — and rotation off its first
+   * column, so a drag tick is `start × ratio` / `start + delta`, never a
+   * compounding read of the live (already edited) node.
+   */
+  private captureMultiStart(
+    ctx: ToolContext,
+    ids: readonly NodeId[],
+  ): Array<{ id: NodeId; anchor: Vec2; scale: Vec2; rotation: number }> {
+    const out: Array<{ id: NodeId; anchor: Vec2; scale: Vec2; rotation: number }> = [];
+    for (const id of ids) {
+      const n = ctx.scene.getNode(id);
+      if (!n) continue;
+      const m = n.worldMatrix;
+      out.push({
+        id,
+        anchor: anchorWorld(n),
+        scale: { x: Math.hypot(m.a, m.b), y: Math.hypot(m.c, m.d) },
+        rotation: Math.atan2(m.b, m.a),
+      });
+    }
     return out;
   }
 
@@ -217,6 +291,41 @@ export class SelectTool implements Tool {
         return;
       }
     }
+    // Drag from outside a corner of a MULTI-selection → rotate the group about
+    // its box centre: every layer's anchor orbits the pivot and its rotation
+    // adds the same sweep, so the selection turns as one body (AE's group
+    // rotate). Pivoting on the frozen START centre — not the live box — is
+    // what keeps the maths stable while the layers move under it.
+    if (this.downRotate && sel.length > 1) {
+      const ids = this.multiTransformIds(ctx);
+      const bounds = ctx.selection.selectionBounds();
+      if (ids && bounds) {
+        this.mode = 'rotate';
+        this.multiPivot = R.center(bounds);
+        this.multiStart = this.captureMultiStart(ctx, ids);
+        this.startAngle = Math.atan2(
+          e.startWorld.y - this.multiPivot.y,
+          e.startWorld.x - this.multiPivot.x,
+        );
+        return;
+      }
+    }
+    // Handle drag on a MULTI-selection → scale the group about a fixed pivot:
+    // the opposite corner/edge of the union AABB (Alt = the box centre). Each
+    // layer's Scale multiplies by the drag's ratio and its anchor moves
+    // toward/away from the pivot by the same ratio. There is no group anchor
+    // to pivot on (each layer keeps its own), so the design-tool convention
+    // applies rather than the single-layer anchor rule.
+    if (this.downHandle && sel.length > 1) {
+      const ids = this.multiTransformIds(ctx);
+      const bounds = ctx.selection.selectionBounds();
+      if (ids && bounds) {
+        this.mode = 'resize';
+        this.startBounds = bounds;
+        this.multiStart = this.captureMultiStart(ctx, ids);
+        return;
+      }
+    }
     // Handle drag → resize the single selected node.
     if (this.downHandle && sel.length === 1) {
       this.transformId = sel[0]!;
@@ -295,6 +404,73 @@ export class SelectTool implements Tool {
         this.hud = { anchorWorld: e.currentWorld, lines: [`${deg.toFixed(1)}°`] };
       }
       ctx.execute(commands.rotateNode(this.transformId, next, this.transformPivot));
+      ctx.requestRender();
+      return;
+    }
+    if (this.mode === 'rotate' && this.multiStart.length > 0) {
+      const angle = Math.atan2(
+        e.currentWorld.y - this.multiPivot.y,
+        e.currentWorld.x - this.multiPivot.x,
+      );
+      let delta = angle - this.startAngle;
+      // Shift snaps the SWEEP, not each layer's absolute angle — the layers
+      // start at different rotations, and snapping each to its own 15° grid
+      // would shear the group apart on the first tick.
+      if (e.modifiers.shift) {
+        const step = Math.PI / 12;
+        delta = Math.round(delta / step) * step;
+      }
+      ctx.execute(
+        commands.multiRotateNodes(
+          this.multiStart.map((s) => ({
+            id: s.id,
+            rotation: s.rotation + delta,
+            position: orbitAboutPivot(s.anchor, this.multiPivot, delta),
+          })),
+        ),
+      );
+      // The group readout is the SWEEP, signed — the layers went in at
+      // different angles, so there is no single absolute angle to show (the
+      // single-layer path above shows its layer's own, normalized).
+      const deg = (delta * 180) / Math.PI;
+      this.hud = {
+        anchorWorld: e.currentWorld,
+        lines: [`${deg >= 0 ? '+' : ''}${deg.toFixed(1)}°`],
+      };
+      ctx.requestRender();
+      return;
+    }
+    if (this.mode === 'resize' && this.multiStart.length > 0 && this.startBounds && this.downHandle) {
+      const from = this.startBounds;
+      if (from.width <= 0 && from.height <= 0) return;
+      // Alt re-pivots on the box centre each tick (like the single-node path,
+      // where Alt is read live), otherwise the opposite corner/edge holds.
+      const pivot = e.modifiers.alt ? R.center(from) : oppositePivot(from, this.downHandle);
+      const next = resizeBoundsAboutPivot(
+        from, this.downHandle, e.currentWorld, pivot, undefined, e.modifiers.shift,
+      );
+      // The drag as a RATIO of the start box — the same contract the
+      // single-node resize keeps (`resizeRotated.test.ts`): every tick is
+      // absolute against drag-start state, so repeating a tick cannot compound.
+      const ratio = {
+        x: from.width > 0 ? next.width / from.width : 1,
+        y: from.height > 0 ? next.height / from.height : 1,
+      };
+      ctx.execute(
+        commands.multiResizeNodes(
+          this.multiStart.map((s) => ({
+            id: s.id,
+            scale: { x: s.scale.x * ratio.x, y: s.scale.y * ratio.y },
+            position: scaleAboutPivot(s.anchor, pivot, ratio),
+          })),
+        ),
+      );
+      // The group has no single Scale property, so the readout is the drag's
+      // ratio — same format as the single-layer scale readout below.
+      this.hud = {
+        anchorWorld: e.currentWorld,
+        lines: [`${Math.round(ratio.x * 100)}% × ${Math.round(ratio.y * 100)}%`],
+      };
       ctx.requestRender();
       return;
     }
@@ -575,7 +751,7 @@ export class SelectTool implements Tool {
     };
   }
 
-  getHud(): { anchorWorld: Vec2; lines: readonly string[] } | null {
+  getHud(): ToolHud | null {
     return this.hud;
   }
 
@@ -596,12 +772,15 @@ export class SelectTool implements Tool {
     this.startLocalBounds = null;
     this.startMatrix = null;
     this.moveIds = [];
+    this.multiStart = [];
     ctx.requestRender();
   }
 
   deactivate(): void {
     this.cursorPop?.();
     this.cursorPop = null;
+    this.multiStart = [];
+    this.hud = null;
   }
 
   /** Which selection handle is under a screen point, if any. */
@@ -620,7 +799,11 @@ export class SelectTool implements Tool {
    * screen to explain it.
    */
   private inRotateRing(screen: Vec2, ctx: ToolContext): boolean {
-    if (ctx.selectionIds().length !== 1) return false;
+    const sel = ctx.selectionIds();
+    if (sel.length === 0) return false;
+    // Multi-select rotates too (about the group centre) — but only when the
+    // selection can take the grips at all, the same gate `getHandles` applies.
+    if (sel.length > 1 && !this.multiTransformIds(ctx)) return false;
     const bounds = ctx.selection.selectionBounds();
     if (!bounds) return false;
     const allowed = new Set(this.visibleIds(ctx));
@@ -640,7 +823,9 @@ export class SelectTool implements Tool {
   }
 
   private pickHandle(screen: Vec2, ctx: ToolContext): HandleId | null {
-    if (ctx.selectionIds().length !== 1) return null;
+    const sel = ctx.selectionIds();
+    if (sel.length === 0) return null;
+    if (sel.length > 1 && !this.multiTransformIds(ctx)) return null;
     // Only the handles that are actually drawn — an invisible grip that still
     // resizes is worse than no grip at all.
     const allowed = new Set(this.visibleIds(ctx));
@@ -1440,7 +1625,7 @@ export class KnifeTool implements Tool {
     return [bezierCorner(this.start.x, this.start.y), bezierCorner(this.end.x, this.end.y)];
   }
 
-  getHud(): { anchorWorld: Vec2; lines: readonly string[] } | null {
+  getHud(): ToolHud | null {
     if (!this.start || !this.end) return null;
     const dx = this.end.x - this.start.x;
     const dy = this.end.y - this.start.y;

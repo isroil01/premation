@@ -841,6 +841,59 @@ export function packCocBlur(
 }
 
 /**
+ * Per-pixel depth-buffer DOF gather (3D depth groups):
+ * mat3 + uvRect
+ * + params(texelX, texelY, blades, roundness)
+ * + params2(highlightGain, maxRadiusPx, depthA, depthB)
+ * + dofP(focus, aperture, strength, focalLength)
+ * + dofP2(fStop or 0 = legacy ramp, 0, 0, 0).
+ *
+ * depthA/depthB are the 3D projection's z-row entries (proj[10], proj[14]);
+ * the shader inverts the stored depth back to camera-space z with them.
+ */
+export function packDofGather(
+  mvp: Mat3,
+  uvRect: Rect,
+  texelX: number,
+  texelY: number,
+  blades: number,
+  roundness: number,
+  highlightGain: number,
+  maxRadiusPx: number,
+  depthA: number,
+  depthB: number,
+  focus: number,
+  aperture: number,
+  strength: number,
+  focalLength: number,
+  fStop: number,
+): Float32Array {
+  const out = new Float32Array(MAT3_STD140_FLOATS + 4 + 4 + 4 + 4 + 4);
+  let o = packMat3(mvp, out, 0);
+  o = packRect(uvRect, out, o);
+  out[o + 0] = texelX;
+  out[o + 1] = texelY;
+  out[o + 2] = blades;
+  out[o + 3] = roundness;
+  o += 4;
+  out[o + 0] = highlightGain;
+  out[o + 1] = maxRadiusPx;
+  out[o + 2] = depthA;
+  out[o + 3] = depthB;
+  o += 4;
+  out[o + 0] = focus;
+  out[o + 1] = aperture;
+  out[o + 2] = strength;
+  out[o + 3] = focalLength;
+  o += 4;
+  out[o + 0] = fStop;
+  out[o + 1] = 0;
+  out[o + 2] = 0;
+  out[o + 3] = 0;
+  return out;
+}
+
+/**
  * Glass composite uniform: mat3 mvp + vec4 uvRect + five vec4 parameter blocks.
  *
  * Packed as opaque vec4s rather than named scalars because std140 pads every

@@ -1355,6 +1355,311 @@ void main() {
   },
 };
 
+/**
+ * Per-pixel depth-buffer DOF gather (3D depth groups).
+ *
+ * Reads the group's resolved colour (binding 1) and its single-sample DEPTH
+ * texture (binding 3, via textureLoad/texelFetch — depth textures only
+ * guarantee NEAREST), reconstructs camera-space z per pixel, computes the
+ * circle of confusion with the SAME two models as `dofBlurPx` (legacy ramp /
+ * thin-lens, selected by fStop presence), and gathers with per-tap coverage
+ * weights so foreground defocus scatters over what is behind it while an
+ * in-focus foreground keeps a hard edge against a blurred background.
+ *
+ * params  = (texelX, texelY, blades, roundness)
+ * params2 = (highlightGain, maxRadiusPx = strength cap, depthA, depthB)
+ * dofP    = (focus, aperture, strength, focalLength)
+ * dofP2   = (fStop or 0 = legacy ramp, 0, 0, 0)
+ *
+ * depthA/depthB are the projection's z row (proj[10], proj[14]): the stored
+ * depth inverts to camera z as z = depthB / (ndc − depthA). The two dialects
+ * differ ONLY in the depth-value → NDC step: WebGPU stores NDC z directly,
+ * GL stores (ndc + 1) / 2.
+ */
+const DOF_GATHER: ShaderSource = {
+  name: 'dof-gather',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+  params2 : vec4<f32>,
+  dofP : vec4<f32>,
+  dofP2 : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var depthTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${SRGB_TRANSFER_WGSL}
+// One texel, colour AND depth, from the SAME integer coordinate. Filtering the
+// colour while snapping the depth is how edge ghosts happen: a tap straddling
+// an in-focus silhouette blends its colour outward while its depth snaps to
+// the BACKGROUND texel — whose CoC is the cap — so the straddle sample passes
+// the coverage test at full weight and the sharp edge stamps faint copies of
+// itself at every ring radius.
+fn texelAt(uv : vec2<f32>) -> vec2<i32> {
+  let size = vec2<i32>(textureDimensions(depthTex, 0));
+  return clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
+}
+fn viewZAtTexel(c : vec2<i32>) -> f32 {
+  // WebGPU stores NDC z directly (depth range [0,1]).
+  let ndc = textureLoad(depthTex, c, 0).x;
+  return obj.params2.w / (ndc - obj.params2.z);
+}
+fn cocAt(z : f32) -> f32 {
+  let S = obj.dofP.x;
+  let strength = obj.dofP.z;
+  let fStop = obj.dofP2.x;
+  if (fStop <= 0.0) {
+    // Legacy ramp — identical to dofBlurPx's non-physical branch.
+    let defocus = abs(z - S) / max(1.0, S);
+    return min(strength, defocus * obj.dofP.y);
+  }
+  let f = max(1e-6, obj.dofP.w);
+  if (S <= f || z <= 0.0) { return strength; }
+  let A = f / fStop;
+  return min(strength, (A * f * abs(z - S)) / (z * (S - f)));
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c0 = textureSampleLevel(tex, smp, uv, 0.0);
+  let maxR = obj.params2.y;
+  if (maxR < 0.34) { return c0; }
+  let zC = viewZAtTexel(texelAt(uv));
+  let cocC = cocAt(zC);
+  let texel = obj.params.xy;
+  let blades = obj.params.z;
+  let roundness = clamp(obj.params.w, 0.0, 1.0);
+  let gain = max(0.0, obj.params2.x);
+  var acc = vec4<f32>(0.0);
+  var wsum = 0.0;
+  // Centre sample, weight 1 — wsum can never be empty.
+  {
+    var lin = c0;
+    if (c0.a > 0.0001) {
+      let straight = c0.rgb / c0.a;
+      lin = vec4<f32>(storageToWorking(straight) * c0.a, c0.a);
+    }
+    let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let w = 1.0 + gain * lum * lum;
+    acc = acc + lin * w;
+    wsum = wsum + w;
+  }
+  // Kernel spans the CAP, not this pixel's own CoC: a sharp pixel must still
+  // RECEIVE a blurred foreground neighbour's scatter. Per-tap coverage decides:
+  // a tap contributes only where its own blur circle reaches this pixel, and a
+  // tap BEHIND the centre is clamped to the centre's CoC so a blurred backdrop
+  // never bleeds over an in-focus edge.
+  if (blades >= 3.0) {
+    let n = max(3.0, min(11.0, floor(blades + 0.5)));
+    for (var ring = 1; ring <= 5; ring = ring + 1) {
+      let r = maxR * f32(ring) / 5.0;
+      for (var b = 0; b < 11; b = b + 1) {
+        if (f32(b) >= n) { break; }
+        let a0 = 6.2831853 * (f32(b) + 0.5 * f32(ring % 2)) / n;
+        let polyR = r / max(0.2, cos(3.14159265 / n));
+        let rd = mix(polyR, r, roundness);
+        let tc = texelAt(clamp(uv + vec2<f32>(cos(a0), sin(a0)) * rd * texel, vec2<f32>(0.0), vec2<f32>(1.0)));
+        let zT = viewZAtTexel(tc);
+        var reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        let w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          let t = textureLoad(tex, tc, 0);
+          var lin = t;
+          if (t.a > 0.0001) {
+            let straight = t.rgb / t.a;
+            lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+          }
+          let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+          let w = w0 * (1.0 + gain * lum * lum);
+          acc = acc + lin * w;
+          wsum = wsum + w;
+        }
+      }
+    }
+  } else {
+    // Concentric-ring disk, taps per ring growing with circumference (4·ring,
+    // 60 total) and a golden rotation per ring so edges don't stamp aligned
+    // ghosts. A 32-tap spiral was visibly stepped at CoC ≈ the cap: one
+    // direction per radius undersamples the disk's rim.
+    for (var ring = 1; ring <= 5; ring = ring + 1) {
+      let rd = maxR * f32(ring) / 5.0;
+      let cnt = 4 * ring;
+      let base = 2.3999632 * f32(ring);
+      for (var b = 0; b < 20; b = b + 1) {
+        if (b >= cnt) { break; }
+        let a = base + 6.2831853 * f32(b) / f32(cnt);
+        let tc = texelAt(clamp(uv + vec2<f32>(cos(a), sin(a)) * rd * texel, vec2<f32>(0.0), vec2<f32>(1.0)));
+        let zT = viewZAtTexel(tc);
+        var reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        let w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          let t = textureLoad(tex, tc, 0);
+          var lin = t;
+          if (t.a > 0.0001) {
+            let straight = t.rgb / t.a;
+            lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+          }
+          let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+          let w = w0 * (1.0 + gain * lum * lum);
+          acc = acc + lin * w;
+          wsum = wsum + w;
+        }
+      }
+    }
+  }
+  let avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    let straight = avg.rgb / avg.a;
+    return vec4<f32>(workingToStorage(straight) * avg.a, avg.a);
+  }
+  return avg;
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; vec4 dofP; vec4 dofP2; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; vec4 dofP; vec4 dofP2; };
+uniform sampler2D uTex;
+uniform highp sampler2D uDepthTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+// One texel, colour AND depth, from the SAME integer coordinate — see the
+// WGSL twin for why filtering colour against snapped depth ghosts edges.
+ivec2 texelAt(vec2 uv) {
+  ivec2 size = textureSize(uDepthTex, 0);
+  return clamp(ivec2(uv * vec2(size)), ivec2(0), size - ivec2(1));
+}
+float viewZAtTexel(ivec2 c) {
+  // GL stores (ndc + 1) / 2 — undo the depth-range mapping first.
+  float ndc = texelFetch(uDepthTex, c, 0).r * 2.0 - 1.0;
+  return params2.w / (ndc - params2.z);
+}
+float cocAt(float z) {
+  float S = dofP.x;
+  float strength = dofP.z;
+  float fStop = dofP2.x;
+  if (fStop <= 0.0) {
+    float defocus = abs(z - S) / max(1.0, S);
+    return min(strength, defocus * dofP.y);
+  }
+  float f = max(1e-6, dofP.w);
+  if (S <= f || z <= 0.0) { return strength; }
+  float A = f / fStop;
+  return min(strength, (A * f * abs(z - S)) / (z * (S - f)));
+}
+void main() {
+  vec4 c0 = texture(uTex, vUv);
+  float maxR = params2.y;
+  if (maxR < 0.34) { frag = c0; return; }
+  float zC = viewZAtTexel(texelAt(vUv));
+  float cocC = cocAt(zC);
+  vec2 texel = params.xy;
+  float blades = params.z;
+  float roundness = clamp(params.w, 0.0, 1.0);
+  float gain = max(0.0, params2.x);
+  vec4 acc = vec4(0.0);
+  float wsum = 0.0;
+  {
+    vec4 lin = c0;
+    if (c0.a > 0.0001) {
+      vec3 straight = c0.rgb / c0.a;
+      lin = vec4(storageToWorking(straight) * c0.a, c0.a);
+    }
+    float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float w = 1.0 + gain * lum * lum;
+    acc += lin * w;
+    wsum += w;
+  }
+  if (blades >= 3.0) {
+    float n = max(3.0, min(11.0, floor(blades + 0.5)));
+    for (int ring = 1; ring <= 5; ring++) {
+      float r = maxR * float(ring) / 5.0;
+      for (int b = 0; b < 11; b++) {
+        if (float(b) >= n) break;
+        float a0 = 6.2831853 * (float(b) + 0.5 * float(ring % 2)) / n;
+        float polyR = r / max(0.2, cos(3.14159265 / n));
+        float rd = mix(polyR, r, roundness);
+        ivec2 tc = texelAt(clamp(vUv + vec2(cos(a0), sin(a0)) * rd * texel, vec2(0.0), vec2(1.0)));
+        float zT = viewZAtTexel(tc);
+        float reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        float w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          vec4 t = texelFetch(uTex, tc, 0);
+          vec4 lin = t;
+          if (t.a > 0.0001) {
+            vec3 straight = t.rgb / t.a;
+            lin = vec4(storageToWorking(straight) * t.a, t.a);
+          }
+          float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+          float w = w0 * (1.0 + gain * lum * lum);
+          acc += lin * w;
+          wsum += w;
+        }
+      }
+    }
+  } else {
+    // Concentric-ring disk — see the WGSL twin for why the spiral stepped.
+    for (int ring = 1; ring <= 5; ring++) {
+      float rd = maxR * float(ring) / 5.0;
+      int cnt = 4 * ring;
+      float base = 2.3999632 * float(ring);
+      for (int b = 0; b < 20; b++) {
+        if (b >= cnt) break;
+        float a = base + 6.2831853 * float(b) / float(cnt);
+        ivec2 tc = texelAt(clamp(vUv + vec2(cos(a), sin(a)) * rd * texel, vec2(0.0), vec2(1.0)));
+        float zT = viewZAtTexel(tc);
+        float reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        float w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          vec4 t = texelFetch(uTex, tc, 0);
+          vec4 lin = t;
+          if (t.a > 0.0001) {
+            vec3 straight = t.rgb / t.a;
+            lin = vec4(storageToWorking(straight) * t.a, t.a);
+          }
+          float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+          float w = w0 * (1.0 + gain * lum * lum);
+          acc += lin * w;
+          wsum += w;
+        }
+      }
+    }
+  }
+  vec4 avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    vec3 straight = avg.rgb / avg.a;
+    frag = vec4(workingToStorage(straight) * avg.a, avg.a);
+  } else {
+    frag = avg;
+  }
+}
+`,
+  },
+};
 
 export const GRADIENT_RAMP: ShaderSource = {
   name: 'gradient-ramp',
@@ -6339,7 +6644,7 @@ void main() {
 };
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
-  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, BOKEH, COC_BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
+  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, BOKEH, COC_BLUR, DOF_GATHER, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
   FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, LIGHT_SWEEP, LENS_FLARE, LIGHT_RAYS, BEND,
   BEVEL_ALPHA, BEVEL_EDGES, SPOTLIGHT, SPHERE, CYLINDER, ARITHMETIC,
   // Round-six per-pixel colour ports.

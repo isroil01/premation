@@ -33,7 +33,7 @@ import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
   packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D, packShadowDepth,
   packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock,
-  packBokeh, packCocBlur, packSceneBlitLut, packMesh3DPbr, packSsao, packSsaoBlur,
+  packBokeh, packCocBlur, packDofGather, packSceneBlitLut, packMesh3DPbr, packSsao, packSsaoBlur,
 } from '../pipeline/uniforms';
 import type { Mat3 } from '../core/math/Mat3';
 import type { Mat4 } from '../core/math/Mat4';
@@ -169,6 +169,7 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
   { shader: 'bokeh', pack: () => packBokeh(MVP, RECT, 0.001, 0.001, 8, 6, 0.5, 1) },
   { shader: 'coc-blur', pack: () => packCocBlur(MVP, RECT, RECT, 0.001, 0.001, [1, 2, 3, 4], 6, 0.5, 1) },
+  { shader: 'dof-gather', pack: () => packDofGather(MVP, RECT, 0.001, 0.001, 6, 0.5, 1, 24, 1.00001, -1, 1000, 24, 24, 1000, 0) },
   {
     shader: 'scene-blit-lut',
     pack: () => packSceneBlitLut(MVP, RECT, COLOR, 1, { size: 33, is1d: false, intensity: 1, domainMin: 0, domainMax: 1 }),

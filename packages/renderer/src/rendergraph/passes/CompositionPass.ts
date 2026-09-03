@@ -8,8 +8,8 @@ import { RenderPass, type RenderPassContext } from '../RenderPass';
 import { beginViewportPass, beginSizedPass, emitSolid, emitTextured, emitSilhouette, emitMaskedTextured, emitLutTextured, emitMatteCombine, emitBlendCombine, modelFromRect, mvpFor, writeAttachment, emitLayerTexture, screenMvp, targetSampleUv, mvp3dFor, emitSolid3D, emitTextured3D, emitMaskedTextured3D, emitMesh3D, emitShadowCaster, emitSsao, emitSsaoBlur } from './passUtils';
 import { addTransformedBox, boxIsEmpty, emptyBox, shadowCameraFor, shadowMapSizeOf, type ShadowCamera, type WorldBox } from './shadowMap';
 import { ssaoBufferSize, ssaoCameraFor, ssaoFarFor, ssaoIntensityOf, ssaoRadiusOf, SSAO_SAMPLES } from './ssao';
-import { BLUR_MATERIAL, BOKEH_MATERIAL, COC_BLUR_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
-import { packBlur, packBokeh, packCocBlur, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
+import { BLUR_MATERIAL, BOKEH_MATERIAL, COC_BLUR_MATERIAL, DOF_GATHER_MATERIAL, GLASS_MATERIAL, GRADIENT_RAMP_MATERIAL, FRACTAL_NOISE_MATERIAL, DISPLACEMENT_MAP_MATERIAL, COMPOUND_BLUR_MATERIAL, APPLY_COLOR_LUT_MATERIAL, SET_MATTE_MATERIAL, MOTION_TILE_MATERIAL, FILL_MATERIAL, STROKE_MATERIAL, SHARPEN_MATERIAL, NOISE_MATERIAL, BEAM_MATERIAL, LIGHT_SWEEP_MATERIAL, LENS_FLARE_MATERIAL, LIGHT_RAYS_MATERIAL, BEND_MATERIAL, BEVEL_ALPHA_MATERIAL, BEVEL_EDGES_MATERIAL, SPOTLIGHT_MATERIAL, SPHERE_MATERIAL, CYLINDER_MATERIAL, ARITHMETIC_MATERIAL, VIGNETTE_MATERIAL, BLACK_AND_WHITE_MATERIAL, TRITONE_MATERIAL, PHOTO_FILTER_MATERIAL, THRESHOLD_MATERIAL, VIBRANCE_MATERIAL, MIRROR_MATERIAL, OFFSET_MATERIAL, BULGE_MATERIAL, TWIRL_MATERIAL, SPHERIZE_MATERIAL, KALEIDOSCOPE_MATERIAL, RIPPLE_MATERIAL, CHROMATIC_ABERRATION_MATERIAL, MAGNIFY_MATERIAL, MOSAIC_MATERIAL, FIND_EDGES_MATERIAL, EMBOSS_MATERIAL, COLOR_EMBOSS_MATERIAL, HALFTONE_MATERIAL } from '../../shaders/Material';
+import { packBlur, packBokeh, packCocBlur, packDofGather, packGlass, packGradientRamp, packFractalNoise, packDisplacementMap, packCompoundBlur, packApplyColorLut, packSetMatte, packMotionTile, packFill, packStroke, packSharpen, packNoise, packBeam, packLightSweep, packLensFlare, packLightRays, packBend, packPerspective, packSpotlight, packArithmetic, packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock, packPluginEffect } from '../../pipeline/uniforms';
 import { ENV_SPEC_LEVELS } from '../../pipeline/uniforms';
 import { Mat4 } from '../../core/math/Mat4';
 import { CommandBuffer } from '../../commands/DrawCommand';
@@ -66,6 +66,20 @@ export const MATTE_TARGET = 'matte-target';
  */
 export const BACKDROP_HALF1 = 'backdrop-half1';
 export const BACKDROP_HALF2 = 'backdrop-half2';
+
+/**
+ * SINGLE-SAMPLE colour+depth pair for the per-pixel depth-of-field gather.
+ *
+ * The scene / precomp targets are 4× MSAA, and a multisampled depth attachment
+ * cannot be sampled on either backend (`renderTargetDepthTexture` returns null
+ * under MSAA) — so when a 3D group renders under an active camera DOF, its
+ * depth pass is redirected here, and the `dof-gather` composite reads this
+ * target's colour AND depth to compute a per-pixel circle of confusion before
+ * drawing the result over the real out target. The traded-away multisampling
+ * is the cheapest of the options: the group is being defocused anyway, and the
+ * solid quads carry their own SDF edge AA.
+ */
+export const DOF_TARGET = 'dof-target';
 
 /** Downsample factor for the backdrop blur chain. */
 export const BACKDROP_DOWNSCALE = 2;
@@ -401,7 +415,7 @@ interface ListState {
 export class CompositionPass extends RenderPass {
   readonly name = 'composition';
   override get writes() {
-    return [EffectPass.activeColorTarget, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, ...PRECOMP_TARGETS];
+    return [EffectPass.activeColorTarget, LAYER_TARGET, BLUR_TARGET1, BLUR_TARGET2, BLUR_TARGET3, MATTE_TARGET, DOF_TARGET, ...PRECOMP_TARGETS];
   }
   override readonly after = ['background'];
 
@@ -2163,6 +2177,84 @@ export class CompositionPass extends RenderPass {
     return { texture, sampler: this.shadowSampler(ctx), camera, size };
   }
 
+  /**
+   * The per-pixel DOF gather setup for this frame's 3D groups, or null when the
+   * per-layer CoC fallback must stand: no camera DOF, an ortho/custom view (no
+   * eye ⇒ no lens), or a backend/target that cannot hand back a sampleable
+   * depth texture (the WebGL2 MSAA fallback path, tests on colour-only mocks).
+   */
+  private dofGatherFor(ctx: RenderPassContext): { depthA: number; depthB: number } | null {
+    const cam = ctx.scene.camera3d;
+    if (!cam?.dof || !cam.eye || !(cam.dof.strength > 0)) return null;
+    const backend = ctx.services.backend;
+    if (!backend.renderTargetDepthTexture) return null;
+    const target = ctx.target(DOF_TARGET);
+    if (!target || !backend.renderTargetDepthTexture(target)) return null;
+    // The projection's z row: stored depth inverts to camera z via
+    // z = depthB / (ndc − depthA). See cameraProjectionMatrix (column-major).
+    const depthA = cam.projection[10];
+    const depthB = cam.projection[14];
+    if (depthA === undefined || depthB === undefined || depthB === 0) return null;
+    return { depthA, depthB };
+  }
+
+  /**
+   * A renderable with its adapter-synthesised per-layer DOF blurs removed —
+   * what a member of a GATHERED group must draw as, since the gather derives
+   * the same defocus per pixel from the depth buffer and applying both would
+   * defocus twice. Everything else about the effect chain stays.
+   */
+  private static withoutDofEffects(r: Renderable): Renderable {
+    if (!r.effects || r.effects.length === 0) return r;
+    const fx = r.effects.filter((e) => !(e.type === 'blur' && e.dofSource));
+    return fx.length === r.effects.length ? r : { ...r, effects: fx };
+  }
+
+  /**
+   * Composite a gathered group over `out`: one fullscreen `dof-gather` draw
+   * sampling DOF_TARGET's colour + depth, computing each pixel's circle of
+   * confusion from the camera's DOF config (both dofBlurPx models), and
+   * blending the defocused group source-over the scene.
+   */
+  private compositeDofGather(ctx: RenderPassContext, out: string, depthA: number, depthB: number): void {
+    const { services, viewport } = ctx;
+    const dof = ctx.scene.camera3d!.dof!;
+    const target = ctx.target(DOF_TARGET)!;
+    const colorTex = services.backend.renderTargetTexture(target);
+    const depthTex = services.backend.renderTargetDepthTexture!(target);
+    if (!colorTex || !depthTex) return;
+    const smp = services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
+    const cmds = new CommandBuffer();
+    cmds.add({
+      batchKey: `dof-gather|${colorTex.id}`,
+      material: DOF_GATHER_MATERIAL,
+      blend: 'normal',
+      uniforms: packDofGather(
+        screenMvp(),
+        targetSampleUv(ctx),
+        1 / Math.max(1, viewport.pixelSize.width),
+        1 / Math.max(1, viewport.pixelSize.height),
+        dof.irisBlades ?? 0,
+        dof.irisRoundness ?? 0.65,
+        dof.highlightGain ?? 0,
+        dof.strength,
+        depthA,
+        depthB,
+        dof.focus,
+        dof.aperture,
+        dof.strength,
+        dof.focalLength ?? dof.focus,
+        dof.fStop ?? 0,
+      ),
+      texture: colorTex,
+      sampler: smp,
+      maskTexture: depthTex,
+    });
+    const enc = beginViewportPass(ctx, 'dof-gather', writeAttachment(ctx, out));
+    services.quad.execute(enc, cmds);
+    enc.end();
+  }
+
   private render3DGroup(
     ctx: RenderPassContext,
     group: ReadonlyArray<Renderable>,
@@ -2259,6 +2351,12 @@ export class CompositionPass extends RenderPass {
         flipV: shadowFlipV,
       }
       : undefined;
+    // Camera DOF: the whole group renders into the single-sample DOF pair
+    // instead of `out`, and one gather composites it back — per-pixel circle
+    // of confusion off the real depth buffer. Null keeps the exact legacy path
+    // (per-layer CoC blurs stay in the effect chains and `out` stays MSAA).
+    const gather = this.dofGatherFor(ctx);
+    const groupOut = gather ? DOF_TARGET : out;
     const targetUv = targetSampleUv(ctx);
     const clampSampler = () => services.resources.sampler('linear-clamp', { min: 'linear', mag: 'linear', addressU: 'clamp', addressV: 'clamp' });
     // Per-fragment Accepts-Lights shading: build the shade tail for renderables
@@ -2340,7 +2438,10 @@ export class CompositionPass extends RenderPass {
     let pendingResolved = false;
     const flush = (): void => {
       if (cmds.length === 0) return;
-      const enc = beginViewportPass(ctx, 'composition-3d', writeAttachment(ctx, out), depthCleared ? {} : { clearDepth: 1 });
+      // A gathered group starts from transparency — DOF_TARGET is scratch and
+      // may hold the previous group's pixels; `out` is only ever loaded.
+      const clear = gather && !depthCleared ? Color.transparent() : undefined;
+      const enc = beginViewportPass(ctx, 'composition-3d', writeAttachment(ctx, groupOut, clear), depthCleared ? {} : { clearDepth: 1 });
       services.quad.execute(enc, cmds);
       enc.end();
       cmds = new CommandBuffer();
@@ -2354,7 +2455,10 @@ export class CompositionPass extends RenderPass {
       pendingResolved = false;
     };
 
-    for (const r of group) {
+    for (const r0 of group) {
+      // Inside a gathered group the adapter's per-layer DOF blurs come OFF the
+      // chain — the gather recomputes the same CoC per pixel from real depth.
+      const r = gather ? CompositionPass.withoutDofEffects(r0) : r0;
       if (r.opacity <= 0) continue;
       const mvp = mvp3dFor(viewport, camera3d, r.threeD!.model);
       const uv = r.uvRect ?? { x: 0, y: 0, width: 1, height: 1 };
@@ -2413,6 +2517,9 @@ export class CompositionPass extends RenderPass {
       }
     }
     flush();
+    // depthCleared doubles as "something actually rendered": an all-culled
+    // group leaves DOF_TARGET stale, and gathering it would composite garbage.
+    if (gather && depthCleared) this.compositeDofGather(ctx, out, gather.depthA, gather.depthB);
   }
 
   /**

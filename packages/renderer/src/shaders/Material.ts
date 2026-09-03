@@ -198,6 +198,23 @@ export const COC_BLUR_MATERIAL: MaterialDescriptor = {
   ],
 };
 
+/**
+ * Per-pixel depth-buffer DOF gather (3D depth groups). Binding 3 is the group
+ * target's DEPTH texture — `depth-texture`, not `texture`, because WebGPU only
+ * binds a depth-format view where the layout says unfilterable-float; the
+ * shader reads it with textureLoad/texelFetch (depth textures are NEAREST).
+ */
+export const DOF_GATHER_MATERIAL: MaterialDescriptor = {
+  shader: 'dof-gather',
+  topology: 'triangle-list',
+  layout: [
+    { binding: 0, type: 'uniform-buffer', stages: ['vertex', 'fragment'] },
+    { binding: 1, type: 'texture', stages: ['fragment'] },
+    { binding: 2, type: 'sampler', stages: ['fragment'] },
+    { binding: 3, type: 'depth-texture', stages: ['fragment'] },
+  ],
+};
+
 export const GRADIENT_RAMP_MATERIAL: MaterialDescriptor = {
   shader: 'gradient-ramp',
   topology: 'triangle-list',

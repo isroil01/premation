@@ -504,6 +504,11 @@ export function extractSpatialEffects(
         ...(blades >= 3 && Number.isFinite(roundness) ? { roundness } : {}),
         ...(highlightGain > 0 ? { highlightGain } : {}),
         ...(cocCorners ? { cocCorners } : {}),
+        // Camera-DOF blurs (buildSnapshot's `id: 'dof'`) are tagged so the
+        // renderer can drop them for renderables it defocuses through the
+        // per-pixel depth-buffer gather instead — applying both would blur
+        // twice. Untagged blurs (the user's own Blur effect) always stand.
+        ...(e.id === 'dof' ? { dofSource: true } : {}),
       });
     }
     if (e.type === 'glow') {

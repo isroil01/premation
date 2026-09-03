@@ -61,6 +61,18 @@ export interface ToolWheelEvent {
 
 export type ToolKeyEvent = KeyInput;
 
+/**
+ * A transient readout a tool wants floated beside the pointer while a gesture
+ * is in flight — "200% × 200%", "+32.5°", "+40, -12". World-anchored so the
+ * overlay builder projects it exactly like every handle (`WorkspaceOverlay
+ * .dragHud`); the painter adds its own screen offset. Null (or an absent
+ * `getHud`) means nothing to show.
+ */
+export interface ToolHud {
+  anchorWorld: Vec2;
+  lines: readonly string[];
+}
+
 /** Shared services a tool operates through. Provided by the Workspace. */
 export interface ToolContext {
   readonly camera: Camera;
@@ -136,7 +148,7 @@ export interface Tool {
    * host as a badge beside the pointer (the 2D twin of the 3D gizmo's
    * measurement HUD). Null when no drag is measuring anything.
    */
-  getHud?(ctx: ToolContext): { anchorWorld: Vec2; lines: readonly string[] } | null;
+  getHud?(ctx: ToolContext): ToolHud | null;
 
   /** Optional: id of the overlay handle under the cursor, for hover styling. */
   hoveredHandleId?(): string | null;
