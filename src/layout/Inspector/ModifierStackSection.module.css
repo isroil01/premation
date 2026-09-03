@@ -1,0 +1,251 @@
+/**
+ * Modifier Stack chrome.
+ *
+ * The list is the whole point, so it is the only thing in the section that is
+ * given a surface of its own: numbered, indented under a left rule that reads
+ * as the running value falling from row to row. Everything else — the property
+ * picker, the two menus, the actions — is the same flat labelled-row grammar
+ * the rest of the Inspector uses, so the eye lands on the pipeline and not on
+ * the plumbing around it.
+ */
+
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hint {
+  margin: 0 0 2px;
+  font-size: var(--font-size-micro);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+}
+
+/* Fixed gutter — the alignment is what makes the rows read as a list. */
+.label {
+  flex: 0 0 62px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+}
+
+.select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-primary);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.empty {
+  margin: 0;
+  padding: 8px;
+  text-align: center;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: var(--radius-sm, 4px);
+}
+
+/* ── The pipeline ────────────────────────────────────────────────── */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  padding: 5px 6px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm, 4px);
+  cursor: grab;
+}
+
+/* A disabled row stays legible — it is still part of the description of the
+   motion, it just is not contributing. Hiding it would make the order it
+   occupies invisible, and re-enabling it would then be a surprise. */
+.itemOff {
+  opacity: 0.55;
+}
+
+/* The step number carries the order. It is what makes the list read as a
+   sequence rather than as a stack of unrelated cards — and unlike a coloured
+   edge it survives a theme, a colour-blind reader and a screenshot. */
+.ordinal {
+  flex: 0 0 12px;
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--color-text-tertiary);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 20px;
+}
+
+.grip {
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+}
+
+.kind {
+  font-size: var(--font-size-micro);
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Tabular figures so a value changing under a drag does not shift the row. */
+.summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+}
+
+.iconBtn {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: var(--font-size-micro);
+  line-height: 1;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+}
+
+.iconBtn:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-surface-3, var(--color-surface-1));
+  border-color: var(--color-border);
+}
+
+.iconBtn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.params {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-top: 4px;
+  padding-left: 16px;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fieldLabel {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+}
+
+.text {
+  flex: 1 1 100%;
+  min-width: 0;
+  height: 22px;
+  padding: 0 5px;
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-primary);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.rowHint {
+  margin: 3px 0 0 16px;
+  font-size: var(--font-size-micro);
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+.warn {
+  margin: 3px 0 0 16px;
+  font-size: var(--font-size-micro);
+  line-height: 1.4;
+  color: var(--color-warning, #ffb703);
+}
+
+/* ── Output ──────────────────────────────────────────────────────── */
+
+.compiled {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 2px;
+}
+
+.compiledLabel {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+}
+
+.code {
+  display: block;
+  max-height: 84px;
+  overflow: auto;
+  padding: 5px 6px;
+  font-family: var(--font-family-mono, monospace);
+  font-size: var(--font-size-micro);
+  line-height: 1.5;
+  /* Wraps rather than scrolls sideways: this text is meant to be READ, and a
+     horizontally scrolling formula is one nobody reads. */
+  word-break: break-word;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--font-size-micro);
+  line-height: 1.5;
+  color: var(--color-danger, #ff6b6b);
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.note {
+  margin: 0;
+  font-size: var(--font-size-micro);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}

@@ -1,31 +1,93 @@
-.scrim {
+/* Onboarding tour.
+
+   The one rule that governs this file: NOTHING here may swallow a pointer
+   event except the card. Half the steps ask the user to draw a shape or press
+   play while the overlay is up, so `.layer`, `.spotlight` and `.plainScrim` are
+   all `pointer-events: none` and `.card` opts back in. Adding a full-bleed
+   element without that line silently turns the tour back into a slideshow. */
+
+.layer {
   position: fixed;
   inset: 0;
   z-index: var(--z-index-modal);
-  display: grid;
-  place-items: center;
+  pointer-events: none;
+}
+
+/* The masked scrim. One SVG rather than four divs around a hole: real corner
+   rounding, one element to animate, and no 9999px box-shadow for the
+   compositor to rasterize. */
+.spotlight {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  animation: onb-fade var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.scrimFill {
+  fill: var(--color-overlay-scrim);
+}
+
+/* The ring around the cut-out. Drawn on top of the masked scrim, so it reads as
+   the edge of the light rather than as a border on the control. */
+.spotlightRing {
+  fill: none;
+  stroke: var(--color-primary);
+  stroke-width: 1.5;
+  opacity: 0.9;
+}
+
+/* Anchor missing (a closed panel): no hole to cut, so a plain dim. */
+.plainScrim {
+  position: absolute;
+  inset: 0;
   background: var(--color-overlay-scrim);
-  animation: onb-in var(--motion-duration-base) var(--motion-ease-standard);
+  pointer-events: none;
+  animation: onb-fade var(--motion-duration-base) var(--motion-ease-standard);
 }
 
 .card {
-  width: min(440px, 92vw);
-  padding: var(--space-8);
+  position: absolute;
+  width: min(380px, 92vw);
+  padding: var(--space-6);
   background: var(--color-surface-2);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-dialog);
   box-shadow: var(--shadow-lg);
+  pointer-events: auto;
+  animation: onb-rise var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+/* Before the first measurement, and whenever the anchor is not mounted. */
+.cardCentered {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 .badge {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-panel);
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
   background: var(--color-ai-subtle);
   color: var(--color-ai-primary);
-  margin-bottom: var(--space-5);
+  flex: none;
+}
+
+.count {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  letter-spacing: 0.02em;
 }
 
 .title {
@@ -33,35 +95,50 @@
   font-size: var(--font-size-section);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-  margin-bottom: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .body {
-  font-size: var(--font-size-body);
+  font-size: var(--font-size-md);
   color: var(--color-text-secondary);
   line-height: var(--line-height-normal);
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-4);
 }
 
-.hint {
+/* The "do the thing" line. Deliberately louder than `.body`: it is the only
+   part of the card that is an instruction rather than a description, and the
+   step will not advance until it is followed. */
+.task {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
   font-size: var(--font-size-sm);
   color: var(--color-ai-light);
   background: var(--color-ai-subtle);
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-sm);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-4);
 }
 
-.ae {
+.missing {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  border: 1px dashed var(--color-border-strong);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-4);
+}
+
+.optOut {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-md);
-  color: var(--color-text-secondary);
-  margin-bottom: var(--space-6);
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-4);
   cursor: pointer;
 }
 
@@ -69,12 +146,12 @@
   display: flex;
   justify-content: center;
   gap: var(--space-2);
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-5);
 }
 
 .dot {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: var(--radius-full);
   background: var(--color-border-strong);
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -88,6 +165,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3);
 }
 
 .skip {
@@ -104,11 +182,24 @@
   gap: var(--space-3);
 }
 
-@keyframes onb-in {
+@keyframes onb-fade {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
+@keyframes onb-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* The centred card owns `transform` for its own centring, so it must not be
+   handed a keyframe that overwrites it. */
+.cardCentered {
+  animation-name: onb-fade;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .scrim { animation: none; }
+  .spotlight,
+  .plainScrim,
+  .card { animation: none; }
 }

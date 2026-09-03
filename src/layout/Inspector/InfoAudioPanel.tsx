@@ -7,8 +7,18 @@ import { audioEngine } from '@core/audio/AudioEngine';
 import { toDb, meterFraction } from '@core/audio/audioLevels';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { Icon } from '@components/Icon';
+import { cn } from '@utils/cn';
 import styles from './InfoAudioPanel.module.css';
 
+/**
+ * Info & Audio — three flat readout groups: the pointer, the composition, and
+ * the master meter.
+ *
+ * Rows, not cards. The panel used to draw each group in its own bordered,
+ * rounded box, so a 280px column held three boxes inside a box; a readout is a
+ * list of labelled values, and a rule between groups is all the structure it
+ * needs.
+ */
 export function InfoAudioPanel(): JSX.Element {
   const { x, y, rgba, present } = useInfoStore();
   const selectedIds = useSelectionStore((s) => s.ids);
@@ -48,28 +58,28 @@ export function InfoAudioPanel(): JSX.Element {
     : '—';
 
   const primaryNode = selectedIds[0] ? defaultSceneGraph.getNode(selectedIds[0]) : null;
+  const volumeLabel = `${volumeDb > 0 ? `+${volumeDb}` : volumeDb} dB`;
 
   return (
     <div className={styles.root}>
-      {/* ── Info Card (Coordinates & RGBA) ── */}
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <span>Pointer Info</span>
-          <span style={{ color: 'var(--color-selection, #2988ff)' }}>{present ? 'Live' : 'Idle'}</span>
+      {/* ── Pointer ── */}
+      <section className={styles.group} aria-label="Pointer">
+        <div className={styles.groupHead}>
+          <span className={styles.groupLabel}>Pointer</span>
+          <span className={cn(styles.status, present && styles.statusLive)}>{present ? 'Live' : 'Idle'}</span>
         </div>
-
-        <div className={styles.grid}>
-          <div className={styles.statRow}>
-            <span className={styles.statKey}>X:</span>
-            <span className={styles.statVal}>{present ? `${x} px` : '—'}</span>
+        <div className={styles.rows}>
+          <div className={styles.row}>
+            <span className={styles.key}>X</span>
+            <span className={cn(styles.value, styles.mono)}>{present ? `${x} px` : '—'}</span>
           </div>
-          <div className={styles.statRow}>
-            <span className={styles.statKey}>Y:</span>
-            <span className={styles.statVal}>{present ? `${y} px` : '—'}</span>
+          <div className={styles.row}>
+            <span className={styles.key}>Y</span>
+            <span className={cn(styles.value, styles.mono)}>{present ? `${y} px` : '—'}</span>
           </div>
-          <div className={styles.statRow}>
-            <span className={styles.statKey}>RGB:</span>
-            <span className={styles.statVal}>
+          <div className={styles.row}>
+            <span className={styles.key}>RGB</span>
+            <span className={cn(styles.value, styles.mono)}>
               {rgba ? (
                 <>
                   <span className={styles.colorSwatch} style={{ background: swatch }} />
@@ -78,49 +88,51 @@ export function InfoAudioPanel(): JSX.Element {
               ) : '—'}
             </span>
           </div>
-          <div className={styles.statRow}>
-            <span className={styles.statKey}>Alpha:</span>
-            <span className={styles.statVal}>{rgba ? `${Math.round((rgba.a / 255) * 100)}%` : '—'}</span>
+          <div className={styles.row}>
+            <span className={styles.key}>Alpha</span>
+            <span className={cn(styles.value, styles.mono)}>{rgba ? `${Math.round((rgba.a / 255) * 100)}%` : '—'}</span>
           </div>
-          <div className={styles.statRow} style={{ gridColumn: 'span 2' }}>
-            <span className={styles.statKey}>Hex:</span>
-            <span className={styles.statVal}>{hexColor}</span>
+          <div className={styles.row}>
+            <span className={styles.key}>Hex</span>
+            <span className={cn(styles.value, styles.mono)}>{hexColor}</span>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* ── Selection / Comp Stats ── */}
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <span>Composition Specs</span>
+      {/* ── Composition ── */}
+      <section className={styles.group} aria-label="Composition">
+        <div className={styles.groupHead}>
+          <span className={styles.groupLabel}>Composition</span>
         </div>
-        <div className={styles.grid}>
-          <div className={styles.statRow}>
-            <span className={styles.statKey}>Size:</span>
-            <span className={styles.statVal}>{compWidth} × {compHeight}</span>
+        <div className={styles.rows}>
+          <div className={styles.row}>
+            <span className={styles.key}>Size</span>
+            <span className={cn(styles.value, styles.mono)}>{compWidth} × {compHeight}</span>
           </div>
-          <div className={styles.statRow}>
-            <span className={styles.statKey}>FPS:</span>
-            <span className={styles.statVal}>{compFps} fps</span>
+          <div className={styles.row}>
+            <span className={styles.key}>Frame rate</span>
+            <span className={cn(styles.value, styles.mono)}>{compFps} fps</span>
           </div>
-          <div className={styles.statRow} style={{ gridColumn: 'span 2' }}>
-            <span className={styles.statKey}>Selected:</span>
-            <span className={styles.statVal}>
-              {primaryNode ? `${primaryNode.name} (${selectedIds.length} layer${selectedIds.length > 1 ? 's' : ''})` : 'None'}
+          <div className={styles.row}>
+            <span className={styles.key}>Selected</span>
+            <span className={styles.value} title={primaryNode?.name ?? undefined}>
+              {primaryNode ? `${primaryNode.name}${selectedIds.length > 1 ? ` +${selectedIds.length - 1}` : ''}` : 'None'}
             </span>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* ── Audio Monitor (Dual Peak VU Meter) ── */}
-      <div className={styles.card}>
-        <div className={styles.cardHeader}>
-          <span>Audio Master Levels</span>
+      {/* ── Audio ── */}
+      <section className={styles.group} aria-label="Audio">
+        <div className={styles.groupHead}>
+          <span className={styles.groupLabel}>Audio</span>
           <button
             type="button"
-            style={{ border: 'none', background: 'transparent', color: muted ? '#ef4444' : 'var(--color-text-secondary)', cursor: 'pointer', padding: 0 }}
+            className={cn(styles.iconBtn, muted && styles.iconBtnMuted)}
             onClick={() => setMuted(!muted)}
-            title={muted ? 'Unmute Audio' : 'Mute Audio'}
+            aria-pressed={muted}
+            aria-label={muted ? 'Unmute audio' : 'Mute audio'}
+            title={muted ? 'Unmute audio' : 'Mute audio'}
           >
             <Icon name={muted ? 'audio-off' : 'audio'} size="sm" />
           </button>
@@ -130,28 +142,27 @@ export function InfoAudioPanel(): JSX.Element {
           <div className={styles.channelRow}>
             <span className={styles.channelLabel}>L</span>
             <div className={styles.meterBar}>
-              <div className={styles.meterFill} style={{ width: muted ? '0%' : `${Math.round(bars.l * 100)}%` }} />
+              <div className={styles.meterCover} style={{ transform: `scaleX(${muted ? 1 : (1 - bars.l).toFixed(3)})` }} />
             </div>
           </div>
           <div className={styles.channelRow}>
             <span className={styles.channelLabel}>R</span>
             <div className={styles.meterBar}>
-              <div className={styles.meterFill} style={{ width: muted ? '0%' : `${Math.round(bars.r * 100)}%` }} />
+              <div className={styles.meterCover} style={{ transform: `scaleX(${muted ? 1 : (1 - bars.r).toFixed(3)})` }} />
             </div>
+          </div>
+          <div className={styles.scaleRow} aria-hidden="true">
+            <span>-48</span>
+            <span>-24</span>
+            <span>-12</span>
+            <span>-6</span>
+            <span>0</span>
+            <span>+6</span>
           </div>
         </div>
 
-        <div className={styles.scaleRow}>
-          <span>-48</span>
-          <span>-24</span>
-          <span>-12</span>
-          <span>-6</span>
-          <span>0</span>
-          <span>+6</span>
-        </div>
-
-        <div className={styles.volumeRow}>
-          <Icon name="sound" size="sm" />
+        <div className={styles.row}>
+          <span className={styles.key}>Master</span>
           <input
             type="range"
             min="-48"
@@ -159,13 +170,12 @@ export function InfoAudioPanel(): JSX.Element {
             value={volumeDb}
             onChange={(e) => setVolumeDb(Number(e.target.value))}
             className={styles.volumeSlider}
-            title={`Master Volume: ${volumeDb > 0 ? `+${volumeDb}` : volumeDb} dB`}
+            aria-label="Master volume"
+            title={`Master volume: ${volumeLabel}`}
           />
-          <span style={{ fontSize: 'var(--font-size-micro)', fontFamily: 'monospace', minWidth: 36, textAlign: 'right' }}>
-            {volumeDb > 0 ? `+${volumeDb}` : volumeDb} dB
-          </span>
+          <span className={cn(styles.value, styles.mono, styles.volumeValue)}>{volumeLabel}</span>
         </div>
-      </div>
+      </section>
     </div>
   );
 }

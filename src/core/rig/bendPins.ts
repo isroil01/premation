@@ -158,6 +158,10 @@ export function driverRestMesh(restMesh: DeformedMesh, bends: readonly DeformPin
     pinRestPositions: restMesh.pinRestPositions,
     pinVertexIndices: restMesh.pinVertexIndices,
     weights,
+    // Same geometry, only the weight columns are re-normalised — so it is the
+    // same LAYOUT, and anything reading that off the view (the overlay's
+    // lattice) must not see it reset to the 'grid' default.
+    layout: restMesh.layout,
   };
   perMesh.set(key, view);
   return view;

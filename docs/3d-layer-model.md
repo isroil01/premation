@@ -6,8 +6,19 @@ behaves the way it does.
 Target: **After Effects' Classic 3D renderer**. Flat planes in 3D space, lit and
 shadowed, with a working camera. Extrusion, bevels and a per-layer physical
 (Cook-Torrance/GGX) shading model exist here as extensions beyond Classic 3D.
-Imported 3D models and HDRI environments are explicitly out of scope — that is
-AE's Advanced 3D, a separate project.
+
+Imported glTF/GLB models shipped 2026-09-01/02 (see "Imported models" below):
+they arrive as ordinary layers — a 3D null per glTF node, a mesh layer per
+primitive — through the same extrusion mesh render path every other 3D layer
+uses, not a separate object type. Environment Light shipped alongside them as
+an SH irradiance probe (three procedural sky presets, or any image / EXR
+asset chosen as the sky — `envPreset: 'asset:<id>'`) expressed through the
+existing 8-slot light array. Since 2026-09-02 the same sky also feeds a
+prefiltered specular atlas (five roughness levels) sampled by the Physical and
+Phong branches as split-sum image-based reflections — a mirror surface now
+mirrors the scenery, tinted by its base colour when metallic. Gated on
+`envParams`, so a scene without an environment light shades exactly as before.
+Toon shading deliberately takes no reflection.
 
 ---
 
@@ -152,10 +163,16 @@ Adding a target is the fix, and the inspector says so.
 
 The untargeted aim is **Direction plus the layer's world rotation**. Rotating a
 light turns the fixture, exactly as rotating any other layer turns it, and a spot
-parented to a spinning null sweeps with the rig. Summed once, in
-`buildSnapshot`'s `nodeLightAimDeg`, so the glow, the per-quad shading, the
-per-fragment shader and the viewport cone gizmo cannot disagree. A **targeted**
-light ignores rotation outright: a POI is a real 3D aim and wins.
+parented to a spinning null sweeps with the rig. That untargeted sum lives in
+`buildSnapshot`'s `nodeLightAimDeg`. A **targeted** light ignores rotation
+outright: a POI is a real 3D aim and wins — resolved ONCE where the light is
+pushed onto `sceneLights` (`normalize(poi − worldPos)`, with the comp-plane
+angle derived from it by `aimToCompAngleDeg`), and the glow wash, the per-quad
+shading, the per-fragment shader and the viewport cone gizmo all read that one
+resolved light. Corrected 2026-09-03: the wash used to read the untargeted sum,
+so a targeted spot's visible cone stayed pinned to Direction while everything
+else re-aimed — "only the blueprint points at the target". Pinned by
+`buildSnapshotLightAim.test.ts`.
 
 **Falloff**: None (default — the legacy hard radius cutoff and linear ramp) /
 Smooth / Inverse Square Clamped. The curves reach *past* the radius, where the
@@ -286,6 +303,40 @@ plastic (the highlight keeps the light's colour), 1 as metal. It rides in the
 spare `shadeParams.w` uniform slot, so it costs no layout change — and it is
 visible only where there IS a highlight, so the inspector says to raise Specular
 when Specular is 0.
+
+## Imported models
+
+A `.glb` or embedded `.gltf` import lands as ordinary layers, not a special
+object: every glTF **node** becomes a 3D null carrying that node's TRS, and
+every mesh **primitive** becomes a leaf layer parented under its node's null,
+drawn through the same extrusion mesh render path a hand-built extruded shape
+uses. Boring on purpose — the result is parentable, keyframeable with the
+existing gizmo, and listed in the timeline like anything else.
+
+Four mechanisms build on that boring mapping, all shipped 2026-09-01/02:
+
+- **Skinning.** A skinned primitive's vertices are placed by its **joints**,
+  not by its own layer transform — and the joints are just the imported null
+  layers, so a joint keyframed, dragged, or reparented by hand moves the skin
+  correctly with no separate rig runtime.
+- **Morph targets.** Blend-shape weights (`morph0`…`morphN-1`) are ordinary
+  animatable Transform props on the mesh layer, driven by a baked clip, a
+  slider, or the graph editor like any other keyframed value.
+- **Baked animation clips.** A glTF clip is baked at import onto the node's
+  own position/rotation/scale tracks — no playback runtime, so a walk cycle is
+  immediately visible in the timeline and editable in the graph editor.
+- **3D IK.** CCD (cyclic coordinate descent) over a chain of parented 3D
+  nulls — the imported skeleton's joints — aims the chain's tip at a target
+  and either poses once or bakes real rotation keyframes per frame, composing
+  with skinning for free.
+
+Both of the gaps this paragraph used to name closed on 2026-09-02: an
+external-file `.gltf` imports with its sidecars (folded into one GLB at import,
+refusing with the names of any files that are missing), and the material's
+normal, metallic-roughness, occlusion and emissive maps render through a
+separate `mesh3d-pbr` material — tangents come from screen-space derivatives,
+so normal maps follow skinned and morphed geometry for free. Still open:
+a second UV set (`texCoord: 1` is parsed but not fed).
 
 ## Auto-Orient
 

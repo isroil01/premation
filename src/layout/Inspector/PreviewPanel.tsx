@@ -4,6 +4,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { Icon } from '@components/Icon';
 import { Switch } from '@components/Switch';
+import { cn } from '@utils/cn';
 import styles from './PreviewPanel.module.css';
 
 function formatTimecode(seconds: number, fps: number): string {
@@ -14,6 +15,13 @@ function formatTimecode(seconds: number, fps: number): string {
   return `${pad(Math.floor(s / 60))}:${pad(s % 60)}:${pad(f)}`;
 }
 
+/**
+ * Preview — the transport and the RAM-preview settings, as one flat column.
+ *
+ * Readout, transport row, settings rows. It used to wrap each of those in its
+ * own bordered card and give the play button a filled block; a panel this small
+ * needs one rule between its groups, not three boxes.
+ */
 export function PreviewPanel(): JSX.Element {
   const activeTabId = useProjectStore((s) => s.activeTabId);
   const playing = useProjectStore((s) => (activeTabId ? s.tabs[activeTabId]?.playing ?? false : false));
@@ -60,68 +68,46 @@ export function PreviewPanel(): JSX.Element {
     setTime(duration, Math.round(duration * (fps || 30)));
   };
 
+  const loopLabel = loopMode === 'loop' ? 'Continuous loop' : loopMode === 'ping-pong' ? 'Ping-pong' : 'Play once';
+
   return (
     <div className={styles.root}>
-      {/* ── Status Head Readout ── */}
-      <div className={styles.statusHead}>
-        <span className={styles.timecodeDisplay}>{formatTimecode(time, fps || 30)}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className={styles.fpsBadge}>{fps || 30} fps</span>
-          <span className={styles.fpsBadge}>{compWidth}×{compHeight}</span>
-        </div>
+      {/* ── Readout ── */}
+      <div className={styles.readout}>
+        <span className={styles.timecode}>{formatTimecode(time, fps || 30)}</span>
+        <span className={styles.meta}>{fps || 30} fps · {compWidth}×{compHeight}</span>
       </div>
 
-      {/* ── AE RAM Transport Controls ── */}
-      <div className={styles.transportBar}>
-        <button
-          type="button"
-          className={styles.transportBtn}
-          title="First Frame (Home)"
-          onClick={handleFirstFrame}
-        >
+      {/* ── Transport ── */}
+      <div className={styles.transport} role="toolbar" aria-label="Preview transport">
+        <button type="button" className={styles.transportBtn} title="First frame (Home)" aria-label="First frame" onClick={handleFirstFrame}>
           <Icon name="skip-back" size="sm" />
         </button>
-
-        <button
-          type="button"
-          className={styles.transportBtn}
-          title="Previous Frame (Page Up / Ctrl+Left)"
-          onClick={handlePrevFrame}
-        >
+        <button type="button" className={styles.transportBtn} title="Previous frame (Page Up)" aria-label="Previous frame" onClick={handlePrevFrame}>
           <Icon name="chevron-left" size="sm" />
         </button>
-
         <button
           type="button"
-          className={`${styles.transportBtn} ${styles.transportBtnPrimary}`}
-          title={playing ? 'Pause Preview (Spacebar)' : 'RAM Preview Play (Spacebar / Numpad 0)'}
+          className={cn(styles.transportBtn, styles.transportPlay)}
+          title={playing ? 'Pause (Space)' : 'Play (Space)'}
+          aria-label={playing ? 'Pause' : 'Play'}
+          aria-pressed={playing}
           onClick={handleTogglePlay}
         >
-          <Icon name={playing ? 'pause' : 'play'} size="sm" />
+          <Icon name={playing ? 'pause' : 'play'} size="md" />
         </button>
-
-        <button
-          type="button"
-          className={styles.transportBtn}
-          title="Next Frame (Page Down / Ctrl+Right)"
-          onClick={handleNextFrame}
-        >
+        <button type="button" className={styles.transportBtn} title="Next frame (Page Down)" aria-label="Next frame" onClick={handleNextFrame}>
           <Icon name="chevron-right" size="sm" />
         </button>
-
-        <button
-          type="button"
-          className={styles.transportBtn}
-          title="Last Frame (End)"
-          onClick={handleLastFrame}
-        >
+        <button type="button" className={styles.transportBtn} title="Last frame (End)" aria-label="Last frame" onClick={handleLastFrame}>
           <Icon name="skip-forward" size="sm" />
         </button>
-
+        <span className={styles.transportGap} />
         <button
           type="button"
-          className={styles.transportBtn}
-          title={`Loop Mode: ${loopMode === 'loop' ? 'Continuous Loop' : loopMode === 'ping-pong' ? 'Ping-Pong' : 'Play Once'}`}
+          className={cn(styles.transportBtn, loopMode !== 'once' && styles.transportOn)}
+          title={`Loop: ${loopLabel}`}
+          aria-label={`Loop mode: ${loopLabel}`}
           onClick={() => {
             setLoopMode(loopMode === 'loop' ? 'ping-pong' : loopMode === 'ping-pong' ? 'once' : 'loop');
           }}
@@ -130,18 +116,20 @@ export function PreviewPanel(): JSX.Element {
         </button>
       </div>
 
-      {/* ── Preview Options Card ── */}
-      <div className={styles.settingsCard}>
-        <div className={styles.row}>
+      {/* ── Playback settings ── */}
+      <div className={styles.group}>
+        <span className={styles.groupLabel}>Playback</span>
+
+        <label className={styles.row}>
           <span className={styles.label}>Shortcut</span>
           <select className={styles.select} defaultValue="space">
             <option value="space">Spacebar</option>
             <option value="num0">Numpad 0</option>
             <option value="shiftSpace">Shift + Spacebar</option>
           </select>
-        </div>
+        </label>
 
-        <div className={styles.row}>
+        <label className={styles.row}>
           <span className={styles.label}>Range</span>
           <select
             className={styles.select}
@@ -152,23 +140,23 @@ export function PreviewPanel(): JSX.Element {
             <option value="entire-comp">Entire Comp</option>
             <option value="current-forward">From Current Time</option>
           </select>
-        </div>
+        </label>
 
-        <div className={styles.row}>
-          <span className={styles.label}>Skip Frames</span>
+        <label className={styles.row}>
+          <span className={styles.label}>Skip frames</span>
           <select
             className={styles.select}
             value={skip}
             onChange={(e) => setSkip(Number(e.target.value))}
           >
-            <option value={0}>0 (Every Frame)</option>
-            <option value={1}>1 (2× Speed)</option>
-            <option value={2}>2 (3× Speed)</option>
-            <option value={5}>5 (Fast Draft)</option>
+            <option value={0}>0 — every frame</option>
+            <option value={1}>1 — 2× speed</option>
+            <option value={2}>2 — 3× speed</option>
+            <option value={5}>5 — fast draft</option>
           </select>
-        </div>
+        </label>
 
-        <div className={styles.row}>
+        <label className={styles.row}>
           <span className={styles.label}>Resolution</span>
           <select
             className={styles.select}
@@ -181,10 +169,10 @@ export function PreviewPanel(): JSX.Element {
             <option value="third">Third (33%)</option>
             <option value="quarter">Quarter (25%)</option>
           </select>
-        </div>
+        </label>
 
         <div className={styles.row}>
-          <span className={styles.label}>Mute Audio</span>
+          <span className={styles.label}>Mute audio</span>
           <Switch
             checked={muteAudio}
             onChange={(e) => setMuteAudio(e.currentTarget.checked)}

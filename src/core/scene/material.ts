@@ -93,11 +93,15 @@ export interface MaterialOptions {
    * geometry, Schlick Fresnel with F0 blended from dielectric 4 % toward the
    * surface colour by `metal`, and energy-conserving diffuse — the model AE's
    * Advanced 3D renderer and every current real-time engine use. Roughness
-   * replaces shininess there. Default `phong` so no existing scene changes.
+   * replaces shininess there. `toon` is cel shading: Blinn-Phong terms
+   * quantized into `toonBands` hard steps — the cartoon look AE has no 3D
+   * answer to at all. Default `phong` so no existing scene changes.
    */
-  shading: 'phong' | 'pbr';
+  shading: 'phong' | 'pbr' | 'toon';
   /** PBR roughness, 0–100 (0 mirror, 100 matte). Read only when `shading` is `pbr`. */
   roughness: number;
+  /** Cel bands, 2–8. Read only when `shading` is `toon`. */
+  toonBands: number;
 }
 
 /** The Material Options a keyframe track can drive. Mirrors the registry's
@@ -171,17 +175,28 @@ export function readNodeMaterial(node: SceneNode, av?: ReadonlyMap<string, numbe
     metal: pct(p.metal, 0),
     specular: pct(p.specular, 0),
     shininess: typeof p.shininess === 'number' ? Math.max(1, p.shininess) : 32,
-    shading: p.shadingModel === 'pbr' ? 'pbr' : 'phong',
+    shading: p.shadingModel === 'pbr' ? 'pbr' : p.shadingModel === 'toon' ? 'toon' : 'phong',
     roughness: pct(p.roughness, 50),
+    toonBands: typeof p.toonBands === 'number' ? Math.max(2, Math.min(8, Math.round(p.toonBands))) : 3,
   };
 }
 
 /** Switch a layer's 3D reflectance model. */
-export function setNodeShadingModel(nodeId: string, shading: 'phong' | 'pbr'): void {
+export function setNodeShadingModel(nodeId: string, shading: 'phong' | 'pbr' | 'toon'): void {
   const node = defaultSceneGraph.getNode(nodeId);
   const t = node?.components.find((c) => c.type === 'Transform');
   if (!node || !t) return;
-  defaultSceneGraph.writeProp(nodeId, t.id, 'shadingModel', shading === 'pbr' ? 'pbr' : undefined);
+  defaultSceneGraph.writeProp(nodeId, t.id, 'shadingModel', shading === 'phong' ? undefined : shading);
+  bumpScene();
+}
+
+/** Cel band count for the toon model, 2–8 (3 is the unstored default). */
+export function setNodeToonBands(nodeId: string, bands: number): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  const t = node?.components.find((c) => c.type === 'Transform');
+  if (!t) return;
+  const v = Math.max(2, Math.min(8, Math.round(bands)));
+  defaultSceneGraph.writeProp(nodeId, t.id, 'toonBands', v !== 3 ? v : undefined);
   bumpScene();
 }
 
@@ -265,4 +280,135 @@ export function setNodeCastsShadows(nodeId: string, casts: boolean): void {
   // Store only the non-default 'false' so the common case adds nothing to file.
   defaultSceneGraph.writeProp(nodeId, t.id, 'castsShadows', casts ? undefined : false);
   bumpScene();
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * REUSABLE MATERIALS
+ *
+ * `MaterialOptions` is what a NODE currently resolves to (defaults filled in,
+ * animation applied). `MaterialParams` is the same surface description with no
+ * node attached — the thing a named material in the library stores, and the
+ * thing "apply this material" writes.
+ *
+ * The split matters because `MaterialOptions` carries DERIVED conveniences
+ * (`castsShadows`, `acceptsShadows`, `shadowOnly`) that are mirrors of the
+ * tri-states. Persisting those would put one fact in the file twice and let a
+ * hand-edited document contradict itself.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** A complete, layer-independent description of a surface's light response. */
+export interface MaterialParams {
+  castsShadows: CastsShadowsMode;
+  acceptsShadows: AcceptsShadowsMode;
+  acceptsLights: boolean;
+  lightTransmission: number;
+  ambient: number;
+  diffuse: number;
+  metal: number;
+  specular: number;
+  shininess: number;
+  shading: 'phong' | 'pbr' | 'toon';
+  roughness: number;
+  toonBands: number;
+}
+
+/** Exactly what `readNodeMaterial` reports for a node with nothing stored. */
+export const DEFAULT_MATERIAL_PARAMS: MaterialParams = {
+  castsShadows: 'on',
+  acceptsShadows: 'on',
+  acceptsLights: false,
+  lightTransmission: MATERIAL_PCT_DEFAULTS.lightTransmission,
+  ambient: MATERIAL_PCT_DEFAULTS.ambient,
+  diffuse: MATERIAL_PCT_DEFAULTS.diffuse,
+  metal: MATERIAL_PCT_DEFAULTS.metal,
+  specular: 0,
+  shininess: 32,
+  shading: 'phong',
+  roughness: MATERIAL_PCT_DEFAULTS.roughness,
+  toonBands: 3,
+};
+
+/** Drop the derived mirrors: the storable half of a resolved material. */
+export function materialParamsOf(m: MaterialOptions): MaterialParams {
+  return {
+    castsShadows: m.castsShadowsMode,
+    acceptsShadows: m.acceptsShadowsMode,
+    acceptsLights: m.acceptsLights,
+    lightTransmission: m.lightTransmission,
+    ambient: m.ambient,
+    diffuse: m.diffuse,
+    metal: m.metal,
+    specular: m.specular,
+    shininess: m.shininess,
+    shading: m.shading,
+    roughness: m.roughness,
+    toonBands: m.toonBands,
+  };
+}
+
+/** The named-material form of a layer's current surface, or null if unknown. */
+export function readNodeMaterialParams(nodeId: string): MaterialParams | null {
+  const node = defaultSceneGraph.getNode(nodeId);
+  return node ? materialParamsOf(readNodeMaterial(node)) : null;
+}
+
+/**
+ * Write a whole material onto a layer.
+ *
+ * EVERY axis is written, including the ones equal to the default — a material
+ * states a COMPLETE surface, so applying "Plastic" after "Gold" must not leave
+ * gold's roughness behind. (The individual setters still store only non-default
+ * values, so a default axis clears its prop rather than writing a redundant
+ * one; the file stays as small as it was.)
+ *
+ * Nothing outside Material Options is touched: fill, opacity, strokes, geometry
+ * and transform are none of a material's business. That is the difference
+ * between this and the Style panel's material PRESETS, which state a colour too
+ * — and which silently replaced the layer's colour back when they lived in the
+ * Transform panel.
+ */
+export function applyMaterialParams(nodeId: string, params: MaterialParams): void {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node?.components.some((c) => c.type === 'Transform')) return;
+  setNodeShadowMode(nodeId, 'castsShadows', params.castsShadows);
+  setNodeShadowMode(nodeId, 'acceptsShadows', params.acceptsShadows);
+  setNodeAcceptsLights(nodeId, params.acceptsLights);
+  setNodeMaterialPct(nodeId, 'lightTransmission', params.lightTransmission, MATERIAL_PCT_DEFAULTS.lightTransmission);
+  setNodeMaterialPct(nodeId, 'ambient', params.ambient, MATERIAL_PCT_DEFAULTS.ambient);
+  setNodeMaterialPct(nodeId, 'diffuse', params.diffuse, MATERIAL_PCT_DEFAULTS.diffuse);
+  setNodeMaterialPct(nodeId, 'metal', params.metal, MATERIAL_PCT_DEFAULTS.metal);
+  setNodeMaterialPct(nodeId, 'roughness', params.roughness, MATERIAL_PCT_DEFAULTS.roughness);
+  setNodeSpecular(nodeId, params.specular);
+  setNodeShininess(nodeId, params.shininess);
+  setNodeShadingModel(nodeId, params.shading);
+  setNodeToonBands(nodeId, params.toonBands);
+}
+
+/**
+ * Coerce whatever a document (or a hand edit, or an older build) carried into a
+ * valid material. Unreadable axes fall back to the default rather than to zero:
+ * a material that silently became fully matte black is worse than one that
+ * reads as the default surface.
+ */
+export function normalizeMaterialParams(raw: unknown): MaterialParams {
+  const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const num = (v: unknown, fallback: number, lo: number, hi: number): number =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : fallback;
+  const shading = p.shading === 'pbr' ? 'pbr' : p.shading === 'toon' ? 'toon' : 'phong';
+  return {
+    castsShadows: shadowMode(p.castsShadows),
+    acceptsShadows: shadowMode(p.acceptsShadows),
+    acceptsLights: acceptsLightsFlag(p.acceptsLights),
+    lightTransmission: num(p.lightTransmission, DEFAULT_MATERIAL_PARAMS.lightTransmission, 0, 100),
+    ambient: num(p.ambient, DEFAULT_MATERIAL_PARAMS.ambient, 0, 100),
+    diffuse: num(p.diffuse, DEFAULT_MATERIAL_PARAMS.diffuse, 0, 100),
+    metal: num(p.metal, DEFAULT_MATERIAL_PARAMS.metal, 0, 100),
+    specular: num(p.specular, DEFAULT_MATERIAL_PARAMS.specular, 0, 100),
+    shininess: num(p.shininess, DEFAULT_MATERIAL_PARAMS.shininess, 1, 512),
+    shading,
+    roughness: num(p.roughness, DEFAULT_MATERIAL_PARAMS.roughness, 0, 100),
+    toonBands: Math.round(num(p.toonBands, DEFAULT_MATERIAL_PARAMS.toonBands, 2, 8)),
+  };
 }

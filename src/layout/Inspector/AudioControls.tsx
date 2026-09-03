@@ -41,7 +41,15 @@ import {
 import { useUIStore } from '@stores/uiStore';
 import { waveformPath } from '@core/audio/waveform';
 import { InspectorRow } from '@components/Inspector';
+// Importing the command module registers "Remove Silence…" and "Duck Under
+// Voice…"; importing the dialogs is what tells those commands how to open. The
+// three are pulled in together here so the menu entries cannot exist without a
+// dialog behind them.
+import '@core/audio/audioCommands';
+import { openSilenceRemovalDialog } from './SilenceRemovalDialog';
+import { openDuckingDialog } from './DuckingDialog';
 import styles from './AudioControls.module.css';
+import toolStyles from './AudioToolDialog.module.css';
 
 const WAVE_W = 264;
 const WAVE_H = 52;
@@ -232,6 +240,29 @@ export function AudioControls({ nodeId }: { nodeId: string }): JSX.Element | nul
       <div className={styles.sectionLabel}>Effects</div>
       <AudioEffectsSection nodeId={nodeId} />
 
+      <div className={styles.sectionLabel}>
+        Edit
+        <span className={styles.hint}>cuts and levels</span>
+      </div>
+      <div className={toolStyles.toolButtons}>
+        <button
+          type="button"
+          className={toolStyles.toolButton}
+          title="Find the dead air in this take and cut it out, closing the gaps"
+          onClick={() => openSilenceRemovalDialog(nodeId)}
+        >
+          Remove silence…
+        </button>
+        <button
+          type="button"
+          className={toolStyles.toolButton}
+          title="Hold this layer’s level down whenever another layer is talking"
+          onClick={() => openDuckingDialog(nodeId)}
+        >
+          Duck under voice…
+        </button>
+      </div>
+
       <div className={styles.sectionLabel}>Keyframes</div>
       <AudioToKeyframes nodeId={nodeId} />
     </div>
@@ -327,7 +358,7 @@ function AudioToKeyframes({ nodeId }: { nodeId: string }): JSX.Element {
       trigger={
         <button
           type="button"
-          className={styles.convertBtn}
+          className={toolStyles.toolButton}
           title={`Write the loudness envelope as keyframes (${AUDIO_AMPLITUDE_PROP}, 0–100) — drive any property from it`}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
         >

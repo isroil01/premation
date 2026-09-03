@@ -33,6 +33,8 @@ import { getEventBus } from '@core/events/EventBus';
 import { useGuidesStore } from '@stores/guidesStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { idleCacheSpan, nextSpanFrame } from '@core/rendering/idleCacheSpan';
+import { onPreviewCacheRequest } from '@stores/cacheRequestStore';
+import { publishFrame } from '@core/rendering/frameTap';
 import { clipGeometrySignature } from '@core/timeline/TimelineController';
 import { roiHandleAt, resizeRoi, clampRoi, roiHandleCursor, type RoiHandle } from '@core/rendering/roiGeometry';
 import { useMotionBlurStore } from '@stores/motionBlurStore';
@@ -105,7 +107,7 @@ import {
   precomposeSelected,
 } from '@core/scene/sceneInsert';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { moveNodeInStack } from '@core/scene/parenting';
+import { arrangeNodes } from '@core/scene/parenting';
 import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor } from '@core/scene/labelColor';
 import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { facesOfNode, pickFace } from '@core/scene/facePicking';
@@ -479,6 +481,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         }
       }
       backend.renderFrame(snap);
+      // The scopes panel (and anything else that wants the composited
+      // frame) taps it HERE, the one place the content canvas is guaranteed
+      // freshly drawn — a cache blit leaves it stale.
+      if (!ghost) publishFrame(content, t);
     };
 
     // ── Idle caching (the After Effects idle pump) ─────────────────────
@@ -558,6 +564,8 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       }
     };
 
+    // Set by an explicit "Cache Work Area Now"; read once by the next pass.
+    let explicitCacheRequest = false;
     const startIdlePass = (): void => {
       idleTimer = null;
       const b = backendRef.current;
@@ -567,7 +575,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       const lastCompFrame = Math.max(0, Math.round((compRef.current.durationSeconds || 0) * fps) - 1);
       // Which frames, and where to start — pure and unit-tested, because a span
       // that is one frame long or one frame off is invisible from in here.
-      const wantWholeSpan = usePreferenceStore.getState().idleCacheWorkArea;
+      // An explicit request means the whole span whatever the idle preference
+      // says — the toast promised the work area.
+      const wantWholeSpan = explicitCacheRequest || usePreferenceStore.getState().idleCacheWorkArea;
+      explicitCacheRequest = false;
       const span = idleCacheSpan({
         playhead: Math.round(timeRef.current * fps),
         lastCompFrame,
@@ -711,6 +722,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
       cancelIdleCache();
       idleTimer = setTimeout(startIdlePass, IDLE_CACHE_DELAY_MS);
     };
+    const cacheRequestSub = onPreviewCacheRequest(() => {
+      explicitCacheRequest = true;
+      cancelIdleCache();
+      startIdlePass();
+    });
 
     const render = (): void => {
       const b = backendRef.current;
@@ -1143,6 +1159,7 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
     return () => {
       readyCancelled = true;
       cancelIdleCache();
+      cacheRequestSub();
       cancelAnimationFrame(raf);
       clearTimeout(settleTimer);
       window.removeEventListener('resize', sizeAll);
@@ -2237,11 +2254,14 @@ function nodeContextMenuItems(id: string): ContextMenuItem[] {
   return [
     { id: 'rename', label: 'Rename…', onSelect: renameNode },
     { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
+    // One call for the whole selection — see `reorderSiblings` for what looping
+    // over it did to a multi-selection. Same helper the Layer menu and the
+    // Scene panel's context menu use.
     { id: 'arrange', label: 'Arrange', children: [
-      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'front'); } },
-      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'forward'); } },
-      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'backward'); } },
-      { id: 'arr-back', label: 'Send to Back', onSelect: () => { for (const nid of useSelectionStore.getState().ids) moveNodeInStack(nid, 'back'); } },
+      { id: 'arr-front', label: 'Bring to Front', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'front'); } },
+      { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'forward'); } },
+      { id: 'arr-backward', label: 'Send Backward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'backward'); } },
+      { id: 'arr-back', label: 'Send to Back', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'back'); } },
     ] },
     { id: 'sep0', separator: true },
     { id: 'kf', label: 'Add Keyframe', children: [

@@ -1,19 +1,48 @@
 /**
- * DockPanel — After Effects-style region panel host with horizontal tab header & overflow menu.
+ * DockPanel — a region's panels as a vertical ICON RAIL beside one content pane.
  *
- * Displays primary tabs horizontally and houses additional dock panels inside
- * an authentic AE panel options / hamburger dropdown (≡), allowing instant switching.
+ * ## Why a rail and not a tab strip
+ *
+ * This used to be a horizontal tab strip that showed the first three panels and
+ * hid the rest behind a ≡ menu. The right inspector registers fourteen panels,
+ * so eleven of them — Align, Swatches, Scopes, Preview, Source, Tracker,
+ * Rigging, Effects, Graph, Presets, Paragraph — were invisible until the user
+ * guessed that the hamburger held them. A tab that cannot be seen is a feature
+ * that does not exist; the two "Where is X?" reports that prompted this were
+ * both about panels that were open the whole time.
+ *
+ * A rail scales: at 28px a tab, fourteen panels take 420px of the sidebar's
+ * height and every one of them is a single click with its name a hover away.
+ * It is also what the COLLAPSED sidebar already drew — so collapsing now simply
+ * hides the content column, and no icon moves.
+ *
+ * ## One header, one menu
+ *
+ * The strip carried a split button, a ≡ menu with "Split View" in it, a
+ * right-click menu on every tab with "Move / Undock" in it, and the ≡ menu with
+ * "Move / Undock" in it again — four homes for six actions. Now:
+ *
+ *   • the header names the ACTIVE panel and holds ONE options menu (⋯) — what
+ *     you can do with this panel, then what you can do with this sidebar, then
+ *     which registered panels are not docked yet;
+ *   • a rail tab's right-click offers the same per-panel verbs for THAT panel,
+ *     so a panel need not be activated to be moved or closed;
+ *   • the collapse toggle sits at the foot of the rail, where it also reads as
+ *     the way back when the sidebar is collapsed to the rail alone.
+ *
+ * Reordering is still drag-and-drop along the rail.
  */
 
 import { useMemo, type ReactNode, type DragEvent } from 'react';
 import { useLayoutStore } from '@stores/layoutStore';
 import type { RegionId } from '@stores/layoutStore';
 import type { IconName } from '@components/Icon';
-import { openContextMenu } from '@stores/contextMenuStore';
+import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { Icon } from '@components/Icon';
+import { Tooltip } from '@components/Tooltip';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
-import { panelDef } from '@layout/EditorLayout/panelDefs';
+import { panelDef, availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import styles from './DockPanel.module.css';
 
 export interface DockPanelProps {
@@ -24,6 +53,14 @@ export interface DockPanelProps {
   isSplit?: boolean;
   splitPosition?: 'top' | 'bottom';
   onToggleSplit?: () => void;
+  /**
+   * Which edge of the sidebar the rail sits on. The OUTER edge — the one at
+   * the window's side — so the pointer can overshoot onto it and the content
+   * pane stays adjacent to the viewport. Defaults from the region: the left
+   * sidebar puts it left, the inspector puts it right; a sidebar the user has
+   * re-docked to the other side passes the other value.
+   */
+  railSide?: 'left' | 'right';
 }
 
 interface TabDescriptor {
@@ -33,7 +70,15 @@ interface TabDescriptor {
   closable: boolean;
 }
 
-const MAX_VISIBLE_TABS = 3;
+function spawnPopout(panelId: string): void {
+  useLayoutStore.getState().popoutPanel(panelId);
+  if (window.motionEditor?.popout?.spawnWindow) {
+    window.motionEditor.popout.spawnWindow(panelId);
+  } else {
+    const url = `${window.location.origin}${window.location.pathname}#/popout/${panelId}`;
+    window.open(url, `popout-${panelId}`, 'width=900,height=650,resizable=yes');
+  }
+}
 
 export function DockPanel({
   region,
@@ -43,10 +88,12 @@ export function DockPanel({
   isSplit = false,
   splitPosition,
   onToggleSplit,
+  railSide,
 }: DockPanelProps): JSX.Element | null {
   const isLeft = region.startsWith('leftSidebar');
   const isTop = splitPosition ? splitPosition === 'top' : (region === 'leftSidebar' || region === 'rightInspector');
   const regionKey = isLeft ? 'leftSidebar' : 'rightInspector';
+  const side = railSide ?? (isLeft ? 'left' : 'right');
 
   const panelOrder = useLayoutStore((s) => s.panelOrder[region] ?? []);
   const activeTabId = useLayoutStore((s) => s.activePanelByRegion[region]);
@@ -73,354 +120,220 @@ export function DockPanel({
       });
   }, [panelOrder, panels]);
 
-  // Guard against a stale persisted active id that no longer has a tab
+  // Guard against a stale persisted active id that no longer has a tab.
   const effectiveActiveId = allItems.some((i) => i.id === activeTabId) ? activeTabId : allItems[0]?.id;
+  const activeItem = allItems.find((i) => i.id === effectiveActiveId);
 
-  // Primary visible tabs in header (limits tab clutter, always includes active tab)
-  const visibleItems = useMemo(() => {
-    if (allItems.length <= MAX_VISIBLE_TABS) return allItems;
-    const top = allItems.slice(0, MAX_VISIBLE_TABS);
-    if (effectiveActiveId && !top.some((i) => i.id === effectiveActiveId)) {
-      const activeItem = allItems.find((i) => i.id === effectiveActiveId);
-      if (activeItem) {
-        return [...top.slice(0, MAX_VISIBLE_TABS - 1), activeItem];
-      }
-    }
-    return top;
-  }, [allItems, effectiveActiveId]);
+  const otherSide: RegionId = isLeft ? 'rightInspector' : 'leftSidebar';
+  const otherSideLabel = isLeft ? 'Move to Right Inspector' : 'Move to Left Sidebar';
+  const paneDest: RegionId = isTop
+    ? (isLeft ? 'leftSidebar_bottom' : 'rightInspector_bottom')
+    : (isLeft ? 'leftSidebar' : 'rightInspector');
+  const paneLabel = isTop ? 'Move to Bottom Pane' : 'Move to Top Pane';
 
-  const targetPanelId = effectiveActiveId ?? allItems[0]?.id ?? null;
-  const targetPanel = targetPanelId ? panels[targetPanelId] : undefined;
-  const targetLabel = targetPanel?.title || 'Panel';
-
-  const moveActiveTo = (dest: RegionId) => {
-    if (targetPanelId) {
-      const destLen = useLayoutStore.getState().panelOrder[dest]?.length ?? 0;
-      movePanel(targetPanelId, dest, destLen);
-    }
+  const moveTo = (panelId: string, dest: RegionId): void => {
+    const destLen = useLayoutStore.getState().panelOrder[dest]?.length ?? 0;
+    movePanel(panelId, dest, destLen);
   };
 
-  const popoutActivePanel = () => {
-    if (targetPanelId) {
-      useLayoutStore.getState().popoutPanel(targetPanelId);
-      if (window.motionEditor?.popout?.spawnWindow) {
-        window.motionEditor.popout.spawnWindow(targetPanelId);
-      } else {
-        const url = `${window.location.origin}${window.location.pathname}#/popout/${targetPanelId}`;
-        window.open(url, `popout-${targetPanelId}`, 'width=900,height=650,resizable=yes');
-      }
-    }
-  };
+  /**
+   * The per-panel verbs, as plain data so the header menu and the rail's
+   * right-click draw the SAME list for their respective panel. One source, so
+   * the two cannot drift into offering different things.
+   */
+  const panelVerbs = (item: TabDescriptor): Array<{ id: string; label: string; icon: IconName; onSelect: () => void }> => [
+    ...(isSplit ? [{ id: 'move-pane', label: paneLabel, icon: 'layout' as IconName, onSelect: () => moveTo(item.id, paneDest) }] : []),
+    { id: 'move-side', label: otherSideLabel, icon: (isLeft ? 'panel-right' : 'panel-left') as IconName, onSelect: () => moveTo(item.id, otherSide) },
+    { id: 'popout', label: 'Undock into Window', icon: 'pop-out', onSelect: () => spawnPopout(item.id) },
+    ...(item.closable ? [{ id: 'close', label: `Close “${item.label}”`, icon: 'close' as IconName, onSelect: () => closePanel(item.id) }] : []),
+  ];
 
   const menuItems: DropdownItem[] = useMemo(() => {
-    const items: DropdownItem[] = [
-      { type: 'label', label: 'Dock Panels' },
-      ...allItems.map((item) => ({
-        type: 'item' as const,
-        id: `panel-${item.id}`,
-        label: item.label,
-        icon: item.id === effectiveActiveId ? ('check' as IconName) : (item.icon ?? undefined),
-        onSelect: () => openPanel(item.id),
-      })),
+    const items: DropdownItem[] = [];
+    if (activeItem) {
+      items.push({ type: 'label', label: activeItem.label });
+      for (const v of panelVerbs(activeItem)) {
+        items.push({ type: 'item', id: v.id, label: v.label, icon: v.icon, onSelect: v.onSelect });
+      }
+    }
+
+    items.push(
       { type: 'separator' },
-      { type: 'label', label: 'Panel Actions' },
+      { type: 'label', label: isLeft ? 'Sidebar' : 'Inspector' },
       {
-        type: 'item' as const,
+        type: 'item',
         id: 'toggle-collapse',
-        label: isRegionCollapsed ? 'Expand Sidebar' : 'Collapse Sidebar',
-        icon: (isLeft
-          ? isRegionCollapsed ? 'chevron-right' : 'chevron-left'
-          : isRegionCollapsed ? 'chevron-left' : 'chevron-right') as IconName,
-        onSelect: () => {
-          useLayoutStore.getState().setCollapsed(regionKey, !isRegionCollapsed);
-        },
+        label: 'Collapse to Rail',
+        icon: (side === 'left' ? 'chevron-left' : 'chevron-right') as IconName,
+        onSelect: () => useLayoutStore.getState().setCollapsed(regionKey, true),
       },
-      ...(onToggleSplit
-        ? [
-            {
-              type: 'item' as const,
-              id: 'split-view',
-              label: isSplit ? 'Merge into Single View' : 'Split View (Top & Bottom)',
-              icon: (isSplit ? 'minimize' : 'layers') as IconName,
-              onSelect: onToggleSplit,
-            },
-          ]
-        : []),
-      ...(isSplit
-        ? [
-            {
-              type: 'item' as const,
-              id: 'move-pane',
-              label: isTop ? 'Move to Bottom Pane' : 'Move to Top Pane',
-              icon: 'layout' as IconName,
-              onSelect: () => {
-                if (isTop) {
-                  const bottomDest: RegionId = isLeft ? 'leftSidebar_bottom' : 'rightInspector_bottom';
-                  moveActiveTo(bottomDest);
-                } else {
-                  const topDest: RegionId = isLeft ? 'leftSidebar' : 'rightInspector';
-                  moveActiveTo(topDest);
-                }
-              },
-            },
-          ]
-        : []),
-      {
-        type: 'item' as const,
-        id: 'move-side',
-        label: isLeft ? 'Move to Right Inspector' : 'Move to Left Sidebar',
-        icon: 'layout' as IconName,
-        onSelect: () => {
-          const otherSide: RegionId = isLeft ? 'rightInspector' : 'leftSidebar';
-          moveActiveTo(otherSide);
-        },
-      },
-      {
-        type: 'item' as const,
-        id: 'popout',
-        label: `Undock “${targetLabel}”`,
-        icon: 'export' as IconName,
-        onSelect: popoutActivePanel,
-      },
-    ];
+    );
+    if (onToggleSplit) {
+      items.push({
+        type: 'item',
+        id: 'split-view',
+        label: isSplit ? 'Merge Panes' : 'Split into Two Panes',
+        icon: (isSplit ? 'minimize' : 'panel-bottom') as IconName,
+        onSelect: onToggleSplit,
+      });
+    }
+
+    // Registered for this side but not docked — the on-demand panels (History,
+    // Render) and anything the user closed. The only place they can be opened
+    // from inside the sidebar itself; the Window menu is the other door.
+    const currentIds = new Set(allItems.map((item) => item.id));
+    const otherDefs = availablePanelDefs().filter((def) => def.region === regionKey && !currentIds.has(def.id));
+    if (otherDefs.length > 0) {
+      items.push({ type: 'separator' }, { type: 'label', label: 'Open Panel' });
+      for (const def of otherDefs) {
+        items.push({ type: 'item', id: `open-${def.id}`, label: def.title, icon: def.icon, onSelect: () => openPanel(def.id) });
+      }
+    }
     return items;
-  }, [allItems, effectiveActiveId, onToggleSplit, isSplit, isTop, isLeft, targetLabel, targetPanelId, isRegionCollapsed, regionKey]);
+    // `panelVerbs` is a closure over the same inputs listed here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allItems, activeItem, onToggleSplit, isSplit, isTop, isLeft, side, regionKey, paneDest, paneLabel, otherSide, otherSideLabel]);
 
   // All hooks must run before this guard — bail out only once they have.
   if (allItems.length === 0) return null;
 
   const activeRenderer = effectiveActiveId ? renderers[effectiveActiveId] : undefined;
 
-  /** Drag handlers — plain HTML5 DnD for tab reordering */
+  /** Drag handlers — plain HTML5 DnD for rail reordering. */
   const onDragStart = (id: string) => (e: DragEvent<HTMLDivElement>) => {
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', id);
   };
-
   const onDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
   };
-
   const onDrop = (targetId: string | null) => (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     const src = e.dataTransfer.getData('text/plain');
     if (!src || src === targetId) return;
-
     let targetIdx = panelOrder.length;
     if (targetId !== null) {
       targetIdx = panelOrder.indexOf(targetId);
       if (targetIdx === -1) targetIdx = panelOrder.length;
     }
-
     movePanel(src, region, targetIdx);
   };
 
-  if (isCollapsed) {
-    return (
-      <div className={cn(styles.root, styles.collapsedRoot, className)}>
-        <div className={styles.collapsedHeaderBar}>
-          <Dropdown
-            placement={isLeft ? 'right-start' : 'left-start'}
-            offset={{ x: 6, y: 0 }}
-            noScroll
-            trigger={
-              <button
-                type="button"
-                className={styles.collapsedMenuBtn}
-                title="Dock Panels & Options"
-                aria-label="Dock panels and options menu"
-              >
-                <Icon name="menu" size="sm" />
-              </button>
-            }
-            items={menuItems}
-          />
-        </div>
+  const onRailContextMenu = (item: TabDescriptor) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const verbs = panelVerbs(item);
+    const entries: ContextMenuItem[] = [];
+    for (const v of verbs) {
+      if (v.id === 'close') entries.push({ id: 'sep-close', separator: true });
+      entries.push({ id: v.id, label: v.label, onSelect: v.onSelect });
+    }
+    openContextMenu(e.clientX, e.clientY, entries);
+  };
 
-        <div className={styles.collapsedIconsRail}>
-          {allItems.map((item) => {
-            const isActive = item.id === effectiveActiveId;
-            return (
+  const tooltipSide = side === 'right' ? 'left' : 'right';
+  // Only the LAST rail in a region carries the collapse toggle: a split region
+  // stacks two DockPanels, and two toggles for one action is one too many. The
+  // collapsed region renders a single DockPanel, which is therefore also last.
+  const showCollapseToggle = !isSplit || splitPosition === 'bottom';
+
+  const rail = (
+    <div
+      className={styles.rail}
+      role="tablist"
+      aria-orientation="vertical"
+      aria-label={isLeft ? 'Sidebar panels' : 'Inspector panels'}
+      onDragOver={onDragOver}
+      onDrop={onDrop(null)}
+    >
+      {allItems.map((item) => {
+        const isActive = item.id === effectiveActiveId && !isCollapsed;
+        return (
+          <div
+            key={item.id}
+            draggable
+            onDragStart={onDragStart(item.id)}
+            onDragOver={onDragOver}
+            onDrop={onDrop(item.id)}
+            className={styles.railSlot}
+            onContextMenu={onRailContextMenu(item)}
+          >
+            <Tooltip label={item.label} placement={tooltipSide}>
               <button
-                key={item.id}
                 type="button"
-                className={cn(styles.collapsedIconBtn, isActive && styles.collapsedIconBtnActive)}
-                title={`${item.label} (Click to expand)`}
+                role="tab"
+                tabIndex={isActive ? 0 : -1}
+                aria-selected={isActive}
                 aria-label={item.label}
+                className={cn(styles.railTab, isActive && styles.railTabActive)}
                 onClick={() => {
                   openPanel(item.id);
-                  useLayoutStore.getState().setCollapsed(regionKey, false);
+                  if (isCollapsed) useLayoutStore.getState().setCollapsed(regionKey, false);
                 }}
               >
-                {item.icon ? <Icon name={item.icon} size="sm" /> : <Icon name="layers" size="sm" />}
+                <Icon name={item.icon ?? 'layers'} size="md" />
               </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={cn(styles.root, className)}>
-      {/* ── AE Top Tab Bar ── */}
-      <div className={styles.headerBar}>
-        <div className={styles.tabsScroll} role="tablist" onDragOver={onDragOver} onDrop={onDrop(null)}>
-          {visibleItems.map((item) => {
-            const isActive = item.id === effectiveActiveId;
-            return (
-              <div
-                key={item.id}
-                draggable
-                onDragStart={onDragStart(item.id)}
-                onDragOver={onDragOver}
-                onDrop={onDrop(item.id)}
-                className={styles.draggableTab}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  const otherSide: RegionId = isLeft ? 'rightInspector' : 'leftSidebar';
-                  const otherSideLabel = isLeft ? 'Move to Right Inspector' : 'Move to Left Sidebar';
-
-                  openContextMenu(e.clientX, e.clientY, [
-                    ...(isSplit
-                      ? isTop
-                        ? [
-                            {
-                              id: 'move-pane-bottom',
-                              label: 'Move to Bottom Pane',
-                              onSelect: () => {
-                                const bottomDest: RegionId = isLeft ? 'leftSidebar_bottom' : 'rightInspector_bottom';
-                                movePanel(item.id, bottomDest, useLayoutStore.getState().panelOrder[bottomDest]?.length ?? 0);
-                              },
-                            },
-                          ]
-                        : [
-                            {
-                              id: 'move-pane-top',
-                              label: 'Move to Top Pane',
-                              onSelect: () => {
-                                const topDest: RegionId = isLeft ? 'leftSidebar' : 'rightInspector';
-                                movePanel(item.id, topDest, useLayoutStore.getState().panelOrder[topDest]?.length ?? 0);
-                              },
-                            },
-                          ]
-                      : onToggleSplit
-                      ? [
-                          {
-                            id: 'split-view',
-                            label: 'Split Sidebar (Top & Bottom)',
-                            onSelect: () => onToggleSplit(),
-                          },
-                        ]
-                      : []),
-                    {
-                      id: 'move-side',
-                      label: otherSideLabel,
-                      onSelect: () => movePanel(item.id, otherSide, useLayoutStore.getState().panelOrder[otherSide]?.length ?? 0),
-                    },
-                    {
-                      id: 'popout',
-                      label: 'Undock Panel into Window',
-                      onSelect: () => {
-                        useLayoutStore.getState().popoutPanel(item.id);
-                        const url = `${window.location.origin}${window.location.pathname}#/popout/${item.id}`;
-                        window.open(url, `popout-${item.id}`, 'width=900,height=650,resizable=yes');
-                      },
-                    },
-                    ...(item.closable
-                      ? [
-                          { id: 'sep', separator: true },
-                          { id: 'close', label: `Close “${item.label}”`, onSelect: () => closePanel(item.id) },
-                        ]
-                      : []),
-                  ]);
-                }}
-              >
-                {/* Not a <button>: the close control lives inside the tab's
-                    padded box, and a button may not nest inside a button. A
-                    role="tab" div with explicit keyboard handling keeps the
-                    exact same layout while staying valid DOM. */}
-                <div
-                  role="tab"
-                  tabIndex={isActive ? 0 : -1}
-                  className={cn(styles.tabItem, isActive && styles.tabItemActive)}
-                  onClick={() => openPanel(item.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      openPanel(item.id);
-                    }
-                  }}
-                  title={item.label}
-                  aria-selected={isActive}
-                >
-                  {item.icon && <Icon name={item.icon} size="sm" />}
-                  <span className={styles.tabLabel}>{item.label}</span>
-                  {item.closable && (
-                    <button
-                      type="button"
-                      className={styles.tabCloseBtn}
-                      title={`Close ${item.label}`}
-                      aria-label={`Close ${item.label}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        closePanel(item.id);
-                      }}
-                    >
-                      <Icon name="close" size="sm" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* ── Actions & Panel Hamburger / Overflow Menu ── */}
-        <div className={styles.headerActions}>
-          {headerExtras}
-
-          {/* Quick Split / Merge Toggle Button */}
-          {onToggleSplit && (
-            <button
-              type="button"
-              className={styles.actionBtn}
-              title={isSplit ? 'Remove Split (Merge Panels)' : 'Split Sidebar (Top & Bottom)'}
-              aria-label={isSplit ? 'Remove Split (Merge Panels)' : 'Split Sidebar (Top & Bottom)'}
-              onClick={onToggleSplit}
-            >
-              <Icon name={isSplit ? 'minimize' : 'layers'} size="sm" />
-            </button>
-          )}
-
-          <Dropdown
-            placement="bottom-end"
-            offset={{ x: -8, y: 4 }}
-            noScroll
-            trigger={
-              <button
-                type="button"
-                className={styles.actionBtn}
-                title="Dock Panels & Options"
-                aria-label="Dock panels and options menu"
-              >
-                <Icon name="menu" size="sm" />
-              </button>
-            }
-            items={menuItems}
-          />
-        </div>
-      </div>
-
-      {/* ── Panel Content ── */}
-      {!isCollapsed && (
-        <div className={styles.content}>
-          {activeRenderer ? activeRenderer() : null}
-        </div>
+            </Tooltip>
+          </div>
+        );
+      })}
+      <div className={styles.railSpacer} />
+      {showCollapseToggle && (
+        <Tooltip label={isCollapsed ? 'Expand' : 'Collapse to rail'} placement={tooltipSide}>
+          <button
+            type="button"
+            className={styles.railToggle}
+            aria-label={isCollapsed ? (isLeft ? 'Expand sidebar' : 'Expand inspector') : (isLeft ? 'Collapse sidebar' : 'Collapse inspector')}
+            aria-expanded={!isCollapsed}
+            onClick={() => useLayoutStore.getState().setCollapsed(regionKey, !isCollapsed)}
+          >
+            <Icon
+              name={(isCollapsed ? (side === 'left' ? 'chevron-right' : 'chevron-left') : (side === 'left' ? 'chevron-left' : 'chevron-right')) as IconName}
+              size="sm"
+            />
+          </button>
+        </Tooltip>
       )}
     </div>
   );
-}
 
+  return (
+    <div className={cn(styles.root, side === 'left' && styles.railLeft, isCollapsed && styles.collapsed, className)}>
+      {!isCollapsed && (
+        <div className={styles.pane}>
+          <div className={styles.header}>
+            <span className={styles.title} title={activeItem?.label}>{activeItem?.label ?? ''}</span>
+            <div className={styles.headerActions}>
+              {headerExtras}
+              <Dropdown
+                placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
+                offset={{ x: 0, y: 4 }}
+                noScroll
+                trigger={
+                  <button type="button" className={styles.actionBtn} aria-label="Panel options" title="Panel options">
+                    <Icon name="more-horizontal" size="sm" />
+                  </button>
+                }
+                items={menuItems}
+              />
+              {activeItem?.closable && (
+                <button
+                  type="button"
+                  className={styles.actionBtn}
+                  aria-label={`Close ${activeItem.label}`}
+                  title={`Close ${activeItem.label}`}
+                  onClick={() => closePanel(activeItem.id)}
+                >
+                  <Icon name="close" size="sm" />
+                </button>
+              )}
+            </div>
+          </div>
+          <div className={styles.content}>{activeRenderer ? activeRenderer() : null}</div>
+        </div>
+      )}
+      {rail}
+    </div>
+  );
+}

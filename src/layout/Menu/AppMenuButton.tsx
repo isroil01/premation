@@ -6,16 +6,12 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Menu, MenuItem, MenuSeparator } from '@components/Menu';
+import { Menu, MenuItem } from '@components/Menu';
 import { IconButton } from '@components/IconButton';
 import { Icon } from '@components/Icon';
-import { getCommandSystem } from '@core/commands/CommandSystem';
-import { getCommandRegistry } from '@core/commands/Command';
-import { asCommandId } from '@app-types/common';
 import { useAppMenuGroups } from './useAppMenuGroups';
 import { anchorMenuTo } from './menuAnchor';
-import { formatChord } from './formatChord';
-import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
+import { MenuModelItems } from './MenuModelItems';
 import styles from './AppMenuBar.module.css';
 
 export function AppMenuButton(): JSX.Element {
@@ -56,11 +52,6 @@ export function AppMenuButton(): JSX.Element {
     setOpen(true);
   };
 
-  const run = (commandId: string): void => {
-    void getCommandSystem().execute(asCommandId(commandId));
-    setOpen(false);
-  };
-
   return (
     <div ref={ref} style={{ display: 'inline-flex' }}>
       <IconButton aria-label="Menu" size="md" active={open} onClick={toggle}>
@@ -72,33 +63,11 @@ export function AppMenuButton(): JSX.Element {
               <Menu noScroll onItemActivate={() => setOpen(false)}>
                 {menuGroups.map((group) => (
                   <MenuItem key={group.id} id={group.id} label={group.label}>
-                    {group.items.map((it, i) => {
-                      if (it.separator) return <MenuSeparator key={`sep-${i}`} />;
-                      const cmd = it.commandId ? getCommandRegistry().get(asCommandId(it.commandId)) : undefined;
-                      // An unregistered/unknown command renders disabled — an
-                      // enabled item whose click silently no-ops reads as broken.
-                      const enabled = cmd ? (cmd.enabled ? cmd.enabled() : true) : false;
-                      // A toggle's CURRENT state. `Command.isChecked` was declared
-                      // on the interface and read by nothing, so "Show Grid" looked
-                      // identical whether the grid was on or off — the menu could
-                      // tell you an action existed but not what it would do.
-                      // `undefined` for a non-toggle keeps role="menuitem".
-                      const checked = cmd?.isChecked?.();
-                      const label = it.label ?? cmd?.label ?? it.commandId ?? '';
-                      const resolvedChord = cmd ? resolveChord(cmd.id as unknown as string, cmd.shortcut, getShortcutOverrides()) : undefined;
-                      const shortcut = resolvedChord ? formatChord(resolvedChord) : undefined;
-                      return (
-                        <MenuItem
-                          key={it.commandId ?? i}
-                          id={it.commandId ?? String(i)}
-                          label={label}
-                          shortcut={shortcut}
-                          disabled={!enabled}
-                      checked={checked}
-                          onSelect={() => it.commandId && run(it.commandId)}
-                        />
-                      );
-                    })}
+                    <MenuModelItems
+                      items={group.items}
+                      onActivate={() => setOpen(false)}
+                      keyPrefix={`${group.id}/`}
+                    />
                   </MenuItem>
                 ))}
               </Menu>

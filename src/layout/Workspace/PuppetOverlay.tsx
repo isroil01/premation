@@ -16,7 +16,7 @@ import { useAssetStore } from '@stores/assetStore';
 import { addPuppetPin, deletePuppetPin } from '@core/rig/puppetCommands';
 import { nextRigId, usedRigIds } from '@core/rig/rigIds';
 import { SketchRecorder, DEFAULT_SKETCH_TOLERANCE } from '@core/rig/puppetSketch';
-import { readNodeSkeleton } from '@core/rig/skeletonCommands';
+import { readNodeSkeleton, bindPoseBones } from '@core/rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '@core/rig/skeleton';
 import { resolveLiveBones } from '@core/rig/liveBones';
 import {
@@ -233,7 +233,9 @@ export function PuppetOverlay(): JSX.Element | null {
     const activeIk: IkTargetResolved[] = resolveActiveIkTargets(skel, node.id, layerT);
     const posedBones = applyIk(animatedBones, activeIk);
     skelPoseWorld = computeWorldTransforms({ bones: posedBones });
-    skelBinding = getSkeletonBinding(restMesh, skel.bones, skel.weightPaint);
+    // BIND to the rig's rest pose, POSE with the live one — same rule as
+    // buildSnapshot and BoneOverlay, so all three agree on where the skin sits.
+    skelBinding = getSkeletonBinding(restMesh, bindPoseBones(skel), skel.weightPaint);
     deformedVertices = skinRigVertices(skelBinding, skelPoseWorld, deformedVertices);
   }
 
@@ -280,22 +282,22 @@ export function PuppetOverlay(): JSX.Element | null {
   })();
 
   // After Effects draws a gold lattice, not filled triangles. Grid mode is
-  // boxes (the two-triangle cell's diagonal is omitted); silhouette mode
-  // keeps every unique edge because there is no axis-aligned lattice.
-  const meshBoxes = puppetLatticePath(
-    restMesh.vertices,
-    deformedVertices,
-    restMesh.triangles,
-    localToScreen,
-    true,
-  );
-  const meshPath = meshBoxes || puppetLatticePath(
-    restMesh.vertices,
-    deformedVertices,
-    restMesh.triangles,
-    localToScreen,
-    false,
-  );
+  // boxes (the two-triangle cell's diagonal is omitted); an OUTLINE mesh keeps
+  // every unique edge because it has no axis-aligned lattice to reduce to.
+  //
+  // The mesh says which it is. This used to try boxes first and fall back only
+  // when that produced NOTHING — which held while the only outline mesh was an
+  // ear-clipped vector path (no axis-aligned edges at all), and broke the moment
+  // the alpha mesher started emitting some: a handful of edges survived the
+  // filter and the overlay drew disconnected dashes instead of a wireframe.
+  const latticeBoxes = (restMesh.layout ?? 'grid') === 'grid';
+  const meshPath =
+    (latticeBoxes
+      ? puppetLatticePath(restMesh.vertices, deformedVertices, restMesh.triangles, localToScreen, true)
+      : '')
+    // Any mesh whose box filter leaves nothing (and every outline mesh) draws
+    // every unique edge, so the wireframe can never come out empty.
+    || puppetLatticePath(restMesh.vertices, deformedVertices, restMesh.triangles, localToScreen, false);
 
   /**
    * The point a pin's rotation gesture turns about, in the same local space the

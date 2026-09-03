@@ -129,7 +129,15 @@ describe('the Animation menu', () => {
   test('names the command, and that name resolves to a registered command', () => {
     const group = APP_MENU.find((g) => g.id === 'animation');
     expect(group).toBeDefined();
-    const ids = group!.items.filter((i) => !i.separator).map((i) => i.commandId);
+    // At any depth: the entry lives under Animation ▸ Bake.
+    type Item = { commandId?: string; separator?: boolean; children?: ReadonlyArray<Item> | (() => ReadonlyArray<Item>) };
+    const collect = (items: ReadonlyArray<Item>): Array<string | undefined> =>
+      items.flatMap((i) => {
+        if (i.separator) return [];
+        const kids = i.children ? collect(typeof i.children === 'function' ? i.children() : i.children) : [];
+        return [i.commandId, ...kids];
+      });
+    const ids = collect(group!.items);
     expect(ids).toContain(COMMAND_ID);
 
     const registered = new Set(buildStaticCommands().map((c) => String(c.id)));

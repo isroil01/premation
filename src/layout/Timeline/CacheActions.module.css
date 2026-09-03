@@ -1,0 +1,57 @@
+/* The cache lane's own controls — see CacheActions.tsx. */
+
+.group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  /* The lane it labels is 2-4px tall and sits directly below this row, so the
+     buttons stay visually quiet until hovered. */
+  opacity: 0.75;
+  transition: opacity 0.15s ease;
+}
+
+.group:hover,
+.group:focus-within {
+  opacity: 1;
+}
+
+.btn {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.btn:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The green dot the RAM lane is drawn in, so the group reads as belonging to
+   it rather than to the navigator beside it. */
+.readout {
+  /* The token scale, not a bare 10px — `--font-size-micro` is reserved for
+     uppercase chrome labels and this is a tabular number. */
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  padding: 0 2px;
+}

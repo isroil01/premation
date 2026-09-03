@@ -15,6 +15,7 @@ import { asCommandId } from '@app-types/common';
 import type { Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
+import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultAnimation } from '@motion/animation';
 import { captureAnimEdit, type AnimEditCommand } from '@core/animation/animationCommands';
 import { bumpScene } from '@stores/sceneStore';
@@ -87,21 +88,46 @@ function applyAndRecord(
     .push(new PuppetEditCommand(nodeId, before, after, label, trackEdit));
 }
 
+/**
+ * The mesh mode a BRAND-NEW rig on this layer should start in.
+ *
+ * An image layer gets `'silhouette'`, which for an image means the alpha
+ * OUTLINE mesh (`alphaMesh.ts`): traced, simplified, expanded, Delaunay-filled.
+ * That is AE's Puppet mesh, and it is what makes dragging a hand pin bend the
+ * arm — a limb is its own strip of triangles, so the harmonic weights fall off
+ * along the limb instead of across the empty rectangle between limb and torso.
+ * On the coverage-culled grid the same drag moved the torso 4.1px per 40px of
+ * hand travel; on the outline mesh, 1.4px.
+ *
+ * Everything else keeps the grid. A vector layer's `'silhouette'` route is the
+ * ear-clipped path outline, which is a different (older) code path, and text /
+ * video / open strokes have no outline at all and would fall back to the grid
+ * anyway — so naming grid here says what actually happens.
+ *
+ * Either way `buildRestMesh` falls back to the grid whenever the outline is
+ * unusable (no decoded bitmap yet, degenerate trace), so this choice can only
+ * improve the mesh, never break the layer.
+ */
+function defaultMeshMode(nodeId: ID): PuppetRig['meshMode'] {
+  const node = defaultSceneGraph.getNode(nodeId);
+  if (!node) return 'grid';
+  const kind = readNodeKind(node);
+  return kind === 'image' || kind === 'svg' ? 'silhouette' : 'grid';
+}
+
 /** Add a pin to the layer's rig (creating the rig if absent). One undo step. */
 export function addPuppetPin(nodeId: ID, pin: PuppetPin): void {
   const rig = currentRig(nodeId);
-  // A brand-new rig uses a coverage-culled GRID (AE's lattice), expansion 0,
-  // so a PNG character's transparent box is not part of the deform and the
-  // overlay reads as boxes rather than an ear-clipped outline. A pinless rig
-  // that never chose a mesh mode gets the same default on the first pin.
-  // Existing rigs with pins keep whatever meshMode they already have.
+  // A pinless rig that never chose a mesh mode gets the same default on the
+  // first pin. Existing rigs with pins keep whatever meshMode they already have
+  // — a stored document must open with the mesh it was authored against.
   let after: PuppetRig;
   if (!rig) {
-    after = { pins: [pin], meshMode: 'grid', meshExpansion: 0, meshDensity: 22 };
+    after = { pins: [pin], meshMode: defaultMeshMode(nodeId), meshExpansion: 0, meshDensity: 22 };
   } else {
     after = { ...rig, pins: [...(rig.pins ?? []), pin] };
     if ((rig.pins?.length ?? 0) === 0) {
-      if (after.meshMode === undefined || after.meshMode === 'silhouette') after.meshMode = 'grid';
+      if (after.meshMode === undefined) after.meshMode = defaultMeshMode(nodeId);
       if (after.meshExpansion === undefined) after.meshExpansion = 0;
       if (after.meshDensity === undefined) after.meshDensity = 22;
     }

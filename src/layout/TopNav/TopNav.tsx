@@ -14,7 +14,7 @@ import { Icon, type IconName } from '@components/Icon';
 import { ToolOptionsBar } from './ToolOptionsBar';
 import { useActiveWorkspace, useProjectStore } from '@stores/projectStore';
 import { insertPrimitive, insertSolid, insertAdjustmentLayer, insertAudio, insertParticle, insertImageSequence, insertCompInstance, insert3DPrimitive, insert3DText } from '@core/scene/sceneInsert';
-import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
+import { openCameraDialog, openLightDialog, openPrimitiveDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { useGuidesStore } from '@stores/guidesStore';
 import { importLottieFile } from '@core/library/lottieLibrary';
 import { reportLottieImport, reportLottieImportFailure } from '@core/lottie/lottieImportReport';
@@ -84,6 +84,32 @@ const PEN_TOOLS: ToolDef[] = [
   { id: 'curvature',icon: 'curvature',  label: 'Curvature Pen' },
 ];
 
+/**
+ * The Knife, appended to the Pen flyout — it EDITS an outline rather than
+ * drawing one, which is why it sits with the pen tools and not the shapes.
+ *
+ * Deliberately NOT an entry in `PEN_TOOLS`. `toolCommands.test.ts` walks that
+ * list and requires a matching `tool.<id>` in `buildToolCommands` — the check
+ * that keeps every toolbar tool rebindable from Customize… and findable in the
+ * palette — and registering `tool.knife` there is outside this change. Listing
+ * the Knife separately keeps that guard TELLING THE TRUTH (it is not yet a
+ * rebindable command) instead of being dodged by a rename; the entry moves into
+ * `PEN_TOOLS` unchanged the moment `{ tool: 'knife', label: 'Knife Tool',
+ * chord: { key: 'k' } }` lands in Providers.
+ *
+ * NO KEYBOARD SHORTCUT until that line lands. `KnifeTool.shortcut` is `k` and is
+ * unique across the builtin set, but `ToolManager.activateByShortcut` is not the
+ * app's tool-key channel — the app only ever feeds Space into the engine
+ * (`useSpaceTransport`) and drives every other tool key from the command
+ * registry. So this flyout item and the Pathfinder section's button are the two
+ * live routes to the Knife today, and the tooltip does not promise a third.
+ */
+const KNIFE_FLYOUT = {
+  tool: 'knife' as Tool,
+  icon: 'scissors' as IconName,
+  label: 'Knife Tool (K) — drag across a shape to cut its path',
+};
+
 const SHAPE_TOOLS: ToolDef[] = [
   { id: 'shape',    icon: 'square',     label: 'Rectangle Tool', shortcut: 'Q' },
   { id: 'ellipse',  icon: 'circle',     label: 'Ellipse Tool', shortcut: 'Shift+Q' },
@@ -144,7 +170,7 @@ function buildAnimateItems(
     // Sequence / stagger live as registered commands (Animation menu + palette);
     // TopNav reuses them so the prompt and undo path stay one.
     { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayerBars')); } },
-    { type: 'item', id: 'anim-sequence', label: 'Stagger Animations (0.3s)', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayers')); } },
+    { type: 'item', id: 'anim-sequence', label: 'Stagger Animations…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayers')); } },
     { type: 'separator' },
     {
       type: 'item',
@@ -253,15 +279,27 @@ export function TopNav(): JSX.Element {
   const [lastPointerTool, setLastPointerTool] = useState<Tool>('select');
   const [lastPenTool, setLastPenTool] = useState<Tool>('pen');
   const [lastShapeTool, setLastShapeTool] = useState<Tool>('shape');
+  const [lastMaskTool, setLastMaskTool] = useState<Tool>('mask-rect');
 
   const isPointerActive = POINTER_TOOLS.some(t => t.id === activeTool);
   const pointerDropdownTool = POINTER_TOOLS.find(t => t.id === (isPointerActive ? activeTool : lastPointerTool)) || POINTER_TOOLS[0]!;
 
-  const isPenActive = PEN_TOOLS.some(t => t.id === activeTool);
-  const penDropdownTool = PEN_TOOLS.find(t => t.id === (isPenActive ? activeTool : lastPenTool)) || PEN_TOOLS[0]!;
+  // The Knife lights the same trigger as the pen tools it shares a flyout with,
+  // or picking it would leave the toolbar showing no active tool at all.
+  const isKnifeActive = activeTool === KNIFE_FLYOUT.tool;
+  const isPenActive = PEN_TOOLS.some(t => t.id === activeTool) || isKnifeActive;
+  const penDropdownTool = isKnifeActive
+    ? { id: KNIFE_FLYOUT.tool, icon: KNIFE_FLYOUT.icon, label: KNIFE_FLYOUT.label, shortcut: undefined }
+    : PEN_TOOLS.find(t => t.id === (isPenActive ? activeTool : lastPenTool)) || PEN_TOOLS[0]!;
 
   const isShapeActive = SHAPE_TOOLS.some(t => t.id === activeTool);
   const shapeDropdownTool = SHAPE_TOOLS.find(t => t.id === (isShapeActive ? activeTool : lastShapeTool)) || SHAPE_TOOLS[0]!;
+
+  // The three mask tools were three permanent buttons while the three shape
+  // tools beside them — the same kind of choice, one active at a time — were
+  // one menu. Same shape of decision, same control.
+  const isMaskActive = MASK_TOOLS.some(t => t.id === activeTool);
+  const maskDropdownTool = MASK_TOOLS.find(t => t.id === (isMaskActive ? activeTool : lastMaskTool)) || MASK_TOOLS[0]!;
 
   const isPuppetActive = activeTool === 'puppet-pin';
   const armPuppet = (kind: typeof puppetPinKind): void => {
@@ -273,7 +311,8 @@ export function TopNav(): JSX.Element {
     if (isPointerActive) setLastPointerTool(activeTool);
     if (isPenActive) setLastPenTool(activeTool);
     if (isShapeActive) setLastShapeTool(activeTool);
-  }, [activeTool, isPointerActive, isPenActive, isShapeActive]);
+    if (isMaskActive) setLastMaskTool(activeTool);
+  }, [activeTool, isPointerActive, isPenActive, isShapeActive, isMaskActive]);
 
   // Screen width monitoring hook for responsive collapse
   const [width, setWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1000);
@@ -307,7 +346,7 @@ export function TopNav(): JSX.Element {
       icon: 'camera',
       submenu: [
         { type: 'item', id: 'cam-orbit', label: 'Orbit Camera', icon: 'orbit', onSelect: () => useGuidesStore.getState().setCameraTool('orbit') },
-        { type: 'item', id: 'cam-pan', label: 'Pan Camera', icon: 'hand-grab', onSelect: () => useGuidesStore.getState().setCameraTool('pan') },
+        { type: 'item', id: 'cam-pan', label: 'Pan Camera', icon: 'pan-camera', onSelect: () => useGuidesStore.getState().setCameraTool('pan') },
         { type: 'item', id: 'cam-dolly', label: 'Dolly Camera', icon: 'perspective', onSelect: () => useGuidesStore.getState().setCameraTool('dolly') },
       ]
     });
@@ -315,12 +354,12 @@ export function TopNav(): JSX.Element {
       type: 'item',
       id: '3d-gizmos',
       label: '3D Gizmo Modes',
-      icon: 'axis-3d',
+      icon: 'gizmo-universal',
       submenu: [
-        { type: 'item', id: 'gizmo-universal', label: 'Universal Gizmo', icon: 'axis-3d', onSelect: () => useGuidesStore.getState().setGizmo3dState('universal') },
-        { type: 'item', id: 'gizmo-position', label: 'Position Gizmo', icon: 'move', onSelect: () => useGuidesStore.getState().setGizmo3dState('position') },
-        { type: 'item', id: 'gizmo-scale', label: 'Scale Gizmo', icon: 'scale', onSelect: () => useGuidesStore.getState().setGizmo3dState('scale') },
-        { type: 'item', id: 'gizmo-rotation', label: 'Rotation Gizmo', icon: 'rotate-cw', onSelect: () => useGuidesStore.getState().setGizmo3dState('rotation') },
+        { type: 'item', id: 'gizmo-universal', label: 'Universal Gizmo', icon: 'gizmo-universal', onSelect: () => useGuidesStore.getState().setGizmo3dState('universal') },
+        { type: 'item', id: 'gizmo-position', label: 'Position Gizmo', icon: 'gizmo-position', onSelect: () => useGuidesStore.getState().setGizmo3dState('position') },
+        { type: 'item', id: 'gizmo-scale', label: 'Scale Gizmo', icon: 'gizmo-scale', onSelect: () => useGuidesStore.getState().setGizmo3dState('scale') },
+        { type: 'item', id: 'gizmo-rotation', label: 'Rotation Gizmo', icon: 'gizmo-rotation', onSelect: () => useGuidesStore.getState().setGizmo3dState('rotation') },
       ]
     });
     overflowItems.push({
@@ -466,7 +505,7 @@ export function TopNav(): JSX.Element {
                   className={isPointerActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${pointerDropdownTool.label}${pointerDropdownTool.shortcut ? ` (${pointerDropdownTool.shortcut})` : ''}`}
                 >
-                  <Icon name={pointerDropdownTool.icon} size="sm" />
+                  <Icon name={pointerDropdownTool.icon} size="md" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -487,18 +526,29 @@ export function TopNav(): JSX.Element {
                   type="button"
                   className={isPenActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${penDropdownTool.label}${penDropdownTool.shortcut ? ` (${penDropdownTool.shortcut})` : ''}`}
+                  data-tour="pen-tool"
                 >
-                  <Icon name={penDropdownTool.icon} size="sm" />
+                  <Icon name={penDropdownTool.icon} size="md" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
-              items={PEN_TOOLS.map((t) => ({
-                type: 'item',
-                id: t.id,
-                label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
-                icon: t.icon,
-                onSelect: () => setTool(t.id),
-              }))}
+              items={[
+                ...PEN_TOOLS.map((t) => ({
+                  type: 'item' as const,
+                  id: t.id,
+                  label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
+                  icon: t.icon,
+                  onSelect: () => setTool(t.id),
+                })),
+                { type: 'separator' as const },
+                {
+                  type: 'item' as const,
+                  id: KNIFE_FLYOUT.tool,
+                  label: KNIFE_FLYOUT.label,
+                  icon: KNIFE_FLYOUT.icon,
+                  onSelect: () => setTool(KNIFE_FLYOUT.tool),
+                },
+              ]}
             />
 
             {/* Text Tool */}
@@ -508,7 +558,7 @@ export function TopNav(): JSX.Element {
               title={`${TEXT_TOOL.label} (${TEXT_TOOL.shortcut})`}
               onClick={() => setTool(TEXT_TOOL.id)}
             >
-              <Icon name={TEXT_TOOL.icon} size="sm" />
+              <Icon name={TEXT_TOOL.icon} size="md" />
             </button>
 
             {/* Shape Tools Dropdown */}
@@ -519,8 +569,9 @@ export function TopNav(): JSX.Element {
                   type="button"
                   className={isShapeActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
                   title={`${shapeDropdownTool.label}${shapeDropdownTool.shortcut ? ` (${shapeDropdownTool.shortcut})` : ''}`}
+                  data-tour="shape-tool"
                 >
-                  <Icon name={shapeDropdownTool.icon} size="sm" />
+                  <Icon name={shapeDropdownTool.icon} size="md" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -539,20 +590,28 @@ export function TopNav(): JSX.Element {
             <>
               <span className={styles.toolDivider} aria-hidden />
               <div className={styles.toolGroup}>
-                {!hideMask && MASK_TOOLS.map((tool) => {
-                  const active = activeTool === tool.id;
-                  return (
-                    <button
-                      key={tool.id}
-                      type="button"
-                      className={active ? styles.toolActive : styles.tool}
-                      title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
-                      onClick={() => setTool(tool.id)}
-                    >
-                      <Icon name={tool.icon} size="sm" />
-                    </button>
-                  );
-                })}
+                {!hideMask && (
+                  <Dropdown
+                    placement="bottom-start"
+                    trigger={
+                      <button
+                        type="button"
+                        className={isMaskActive ? styles.toolDropdownTriggerActive : styles.toolDropdownTrigger}
+                        title={`${maskDropdownTool.label}${maskDropdownTool.shortcut ? ` (${maskDropdownTool.shortcut})` : ''}`}
+                      >
+                        <Icon name={maskDropdownTool.icon} size="md" />
+                        <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
+                      </button>
+                    }
+                    items={MASK_TOOLS.map((t) => ({
+                      type: 'item',
+                      id: t.id,
+                      label: t.shortcut ? `${t.label} (${t.shortcut})` : t.label,
+                      icon: t.icon,
+                      onSelect: () => setTool(t.id),
+                    }))}
+                  />
+                )}
 
                 {!hidePuppet && (
                   <>
@@ -566,7 +625,7 @@ export function TopNav(): JSX.Element {
                           disabled={!canRig}
                           aria-label={puppetPinLabel(puppetPinKind)}
                         >
-                          <Icon name={PUPPET_PIN_ICONS[puppetPinKind]} size="sm" />
+                          <Icon name={PUPPET_PIN_ICONS[puppetPinKind]} size="md" />
                           <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                         </button>
                       }
@@ -585,7 +644,7 @@ export function TopNav(): JSX.Element {
                       disabled={!canRig}
                       onClick={() => setTool(BONE_TOOL.id)}
                     >
-                      <Icon name={BONE_TOOL.icon} size="sm" />
+                      <Icon name={BONE_TOOL.icon} size="md" />
                     </button>
                   </>
                 )}
@@ -602,7 +661,7 @@ export function TopNav(): JSX.Element {
               noScroll
               trigger={
                 <button type="button" className={styles.toolDropdownTrigger} aria-label="New layer" title="New Layer (Shape, Text, Solid, Null, Camera, Light, 3D…)">
-                  <Icon name="layer-plus" size="sm" />
+                  <Icon name="layer-plus" size="md" />
                   <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                 </button>
               }
@@ -641,6 +700,9 @@ export function TopNav(): JSX.Element {
                 { type: 'item', id: 'new-3d-cube', label: '3D Cube', icon: 'cube', onSelect: () => insert3DPrimitive('cube') },
                 { type: 'item', id: 'new-3d-sphere', label: '3D Sphere', icon: 'sphere', onSelect: () => insert3DPrimitive('sphere') },
                 { type: 'item', id: 'new-3d-cylinder', label: '3D Cylinder', icon: 'cylinder', onSelect: () => insert3DPrimitive('cylinder') },
+                // The parametrised route to the same family, plus the shapes a
+                // fixed default cannot express (a torus IS its ring/tube ratio).
+                { type: 'item', id: 'new-3d-primitive', label: '3D Primitive…', icon: 'sphere', onSelect: () => openPrimitiveDialog() },
                 { type: 'separator' },
                 { type: 'item', id: 'new-audio', label: 'Audio…', icon: 'audio', onSelect: () => audioInputRef.current?.click() },
                 { type: 'item', id: 'new-image-sequence', label: 'Image Sequence…', icon: 'media', onSelect: () => seqInputRef.current?.click() },
@@ -664,7 +726,7 @@ export function TopNav(): JSX.Element {
                     title={selectedId ? 'Animation presets & rigging (Easy Ease, Typewriter, Bounce, Rig)…' : 'Select a layer to apply animation presets'}
                     disabled={!selectedId}
                   >
-                    <Icon name="magic-wand" size="sm" />
+                    <Icon name="magic-wand" size="md" />
                     <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
                   </button>
                 }
@@ -686,7 +748,7 @@ export function TopNav(): JSX.Element {
                   title={snap ? 'Snapping ON — Magnetically snaps layers & playhead (Click to disable)' : 'Snapping OFF — Click to enable magnetic snapping'}
                   onClick={toggleSnap}
                 >
-                  <Icon name="magnet" size="sm" />
+                  <Icon name="magnet" size="md" />
                 </button>
               </div>
             </>
@@ -711,7 +773,7 @@ export function TopNav(): JSX.Element {
                   placement="bottom-end"
                   trigger={
                     <button type="button" className={styles.tool} aria-label="More tools" title="More tools">
-                      <Icon name="more-horizontal" size="sm" />
+                      <Icon name="more-horizontal" size="md" />
                     </button>
                   }
                   items={overflowItems}
@@ -733,7 +795,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canUndo}
                   onClick={() => performUndo()}
                 >
-                  <Icon name="undo" size="sm" />
+                  <Icon name="undo" size="md" />
                 </button>
                 <button
                   type="button"
@@ -743,7 +805,7 @@ export function TopNav(): JSX.Element {
                   disabled={!canRedo}
                   onClick={() => performRedo()}
                 >
-                  <Icon name="redo" size="sm" />
+                  <Icon name="redo" size="md" />
                 </button>
               </div>
             </>
@@ -759,16 +821,17 @@ export function TopNav(): JSX.Element {
                   title="Preview presentation (Fullscreen)"
                   onClick={() => enterPresentation()}
                 >
-                  <Icon name="play" size="sm" weight="fill" />
+                  <Icon name="play" size="md" weight="fill" />
                   <span>Preview</span>
                 </button>
                 <button
                   type="button"
                   className={styles.exportBtn}
                   title="Export composition…"
+                  data-tour="export"
                   onClick={() => openExportDialog(compDuration, compFps)}
                 >
-                  <Icon name="export" size="sm" weight="bold" />
+                  <Icon name="export" size="md" weight="bold" />
                   <span>Export</span>
                 </button>
               </div>

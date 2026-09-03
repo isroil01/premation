@@ -28,6 +28,7 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { batchHistory } from '@stores/historyStore';
 import { groupSelectedNodes, ungroupSelectedNode } from '@core/scene/sceneInsert';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useGradientEditStore } from '@layout/Workspace/gradientEditStore';
 
 /**
  * One keyframeable paint scalar — a ValueField plus a keyframe toggle.
@@ -474,6 +475,19 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
   // sit below it, which is what made the hook count vary between renders.
   const selectedIds = useSelectionStore((s) => s.ids);
 
+  /**
+   * On-canvas gradient editing, armed from here as well as from the canvas.
+   *
+   * This panel is exactly where you are standing when you decide that typing an
+   * angle and four stop percentages is the wrong way to place a gradient, so it
+   * is the second door into the gizmo — the first being a double-click on the
+   * swatch chip the overlay draws at the layer's centre.
+   */
+  const gradientArmedId = useGradientEditStore((s) => s.nodeId);
+  const armGradient = useGradientEditStore((s) => s.arm);
+  const disarmGradient = useGradientEditStore((s) => s.disarm);
+  const gradientArmed = gradientArmedId === nodeId;
+
   const handleFillTypeChange = (type: FillType | 'none') => {
     if (type === 'none') {
       if (fill) setSavedFill(fill);
@@ -576,7 +590,7 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
           section previews the real paint stack and covers all four categories
           plus 3D materials. */}
       <div className={styles.inlineRows}>
-        {/* Text layers own Character Color in TextSection. Editing paint fill
+        {/* Text layers own Character Color in CharacterPanel. Editing paint fill
             here wrote the same prop and looked like a duplicate background
             picker — hide Fill chrome on text; Stroke remains. */}
         {!textComp && (
@@ -648,6 +662,19 @@ export function AppearanceSection({ nodeId }: { nodeId: string }): JSX.Element |
 
             {fill && (fill.type === 'linear' || fill.type === 'radial') && (
               <div style={{ marginTop: 4, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <button
+                  type="button"
+                  className={effStyles.addChip}
+                  style={{ gap: 5, ...(gradientArmed ? { color: 'var(--color-primary, #4c8dff)' } : {}) }}
+                  aria-pressed={gradientArmed}
+                  title={gradientArmed
+                    ? 'Editing this gradient on the canvas — click to put the handles away (or press Escape)'
+                    : 'Drag the gradient axis and its stops directly on the canvas'}
+                  onClick={() => (gradientArmed ? disarmGradient() : armGradient(nodeId, 0))}
+                >
+                  <Icon name="gradient" size="sm" />
+                  <span>{gradientArmed ? 'Editing on canvas' : 'Edit on canvas'}</span>
+                </button>
                 <span className={styles.popoverLabel} style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>Stops:</span>
                 <StopList nodeId={nodeId} paint={fill} />
               </div>

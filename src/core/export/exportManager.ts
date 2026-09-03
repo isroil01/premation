@@ -35,12 +35,14 @@ import {
   canEncodeLocally,
   canvasBytes,
   createVideoSink,
+  reopenVideoSink,
   type ExportQuality,
   type ProresProfile,
   type VideoFormat,
   type VideoSinkResult,
 } from './videoSink';
 import { isPluginFormat, pluginExporters } from './pluginExporters';
+import type { ExportChapter } from './chapters';
 
 import { useUIStore } from '@stores/uiStore';
 import { exportEdlText } from './exportEdl';
@@ -81,6 +83,18 @@ export interface ExportOptions {
   /** mov only — which ProRes flavour to encode. Defaults to 4444 (alpha). */
   proresProfile?: ProresProfile;
   /**
+   * Chapter marks for the delivered file, derived from the composition's
+   * markers by `chaptersFromMarkers`.
+   *
+   * Passed in already-resolved rather than read from the timeline here for the
+   * same reason `range` is: an export must deliver what was asked for at the
+   * moment it was asked for, and a queued job that re-read the live marker list
+   * at render time would ship chapters the user never saw. Absent — which is
+   * what every non-dialog caller, the render queue and the headless CLI
+   * included, leaves it — means no chapters and no extra ffmpeg input.
+   */
+  chapters?: ReadonlyArray<ExportChapter>;
+  /**
    * When false, ignore the timeline work area and export the whole composition.
    * Default (undefined/true) keeps the existing behaviour: a set work area is
    * the export range.
@@ -104,6 +118,17 @@ export interface ExportOptions {
   /** Cooperative cancellation for the whole export (frame loop and encoder).
    *  Aborting rejects with a DOMException 'AbortError'. */
   signal?: AbortSignal;
+  /**
+   * Make this render survive a RESTART of the app, described by this value.
+   *
+   * The staging dir gets a `resume.json` holding it verbatim, so a later
+   * session can list the half-finished render and rebuild the job that was
+   * producing it. The render queue passes its `RenderJobSpec`; everyone else
+   * leaves this undefined, which is what says "if this is interrupted, it is
+   * simply gone" — the right answer for a one-shot export dialog and for a
+   * headless CLI invocation that has already exited.
+   */
+  resumeSpec?: unknown;
 }
 
 /** True when an error is the cooperative-cancel rejection. */
@@ -503,6 +528,7 @@ export async function renderVideo(
     quality: opts.quality ?? 'high',
     ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
     transparent: !!opts.comp?.transparent,
+    ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
     ...(audio ? { audioWav: audio } : {}),
   });
   if (!sink) throw new Error(unsupportedFormatMessage(format));
@@ -585,20 +611,58 @@ export interface ResumableVideoRender {
   finish(): Promise<VideoSinkResult>;
   /** Abandon the render and delete the staging dir. */
   dispose(): Promise<void>;
+  /**
+   * The staging dir's id, or null before the first frame lands.
+   *
+   * This is the one value that lets a queue REMEMBER which directory on disk
+   * belongs to which of its jobs. Without it a relaunched app can only guess
+   * (by comparing what a manifest says it was rendering against what the queue
+   * has), and a duplicated job would make that guess ambiguous.
+   */
+  stagingJobId(): string | null;
+}
+
+/**
+ * A staging dir left behind by a previous run of the app, and how far it got.
+ *
+ * Handed back by `render:adoptJob` after it has re-registered the directory in
+ * main under its original id. `stagedFrames` is counted off the FILES, not read
+ * from the manifest, so resuming at it can neither restage work that exists nor
+ * leave a hole ffmpeg would silently truncate at.
+ */
+export interface ResumableRenderAdoption {
+  jobId: string;
+  stagedFrames: number;
 }
 
 /**
  * A resumable render, or null where resuming is impossible — the browser sinks
  * stream their encode as frames arrive, so a paused stream has no staging to
  * come back to. Callers fall back to the one-shot `renderVideo` there.
+ *
+ * With `adopt`, the render attaches to a staging dir a PREVIOUS SESSION opened
+ * rather than opening its own. Everything after that point is identical: the
+ * frame loop starts at the offset the caller asks for and `finish()` encodes
+ * one sequence of files, which is why a resume across a restart needed no
+ * second render path.
  */
 export async function createResumableVideoRender(
   opts: ExportOptions,
   format: VideoFormat,
+  adopt?: ResumableRenderAdoption,
 ): Promise<ResumableVideoRender | null> {
   if (!canEncodeLocally()) return null;
+  // Computed even when adopting, and deliberately: the wav is already staged in
+  // the dir from the first run, so nothing rewrites it — but `finish()` decides
+  // whether to tell ffmpeg the file HAS audio from this field, and a resumed
+  // render that left it undefined would deliver a silent video.
   const audio = await exportAudioBytes(opts);
-  const sink = createVideoSink({
+
+  const params = offlineParams(opts);
+  const { start, end } = resolveRange(params);
+  const totalFrames = end - start + 1;
+
+  const sinkParams = {
     format,
     width: opts.width,
     height: opts.height,
@@ -606,13 +670,19 @@ export async function createResumableVideoRender(
     quality: opts.quality ?? 'high',
     ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
     transparent: !!opts.comp?.transparent,
+    ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
     ...(audio ? { audioWav: audio } : {}),
-  });
+    // What lets a LATER RUN of the app find this render's frames. Only present
+    // when the caller asked to be resumable — see `VideoSinkParams.resume`.
+    ...(opts.resumeSpec !== undefined
+      ? { resume: { spec: opts.resumeSpec, totalFrames } }
+      : {}),
+  };
+  const sink = adopt
+    ? reopenVideoSink(sinkParams, adopt.jobId, adopt.stagedFrames)
+    : createVideoSink(sinkParams);
   if (!sink) return null;
 
-  const params = offlineParams(opts);
-  const { start, end } = resolveRange(params);
-  const totalFrames = end - start + 1;
   const isHdr = format === 'hdr10' || format === 'hlg';
 
   return {
@@ -656,6 +726,7 @@ export async function createResumableVideoRender(
       const result = await sink.finish();
       return result;
     },
+    stagingJobId: () => sink.stagingJobId?.() ?? null,
     dispose: () => sink.dispose(),
   };
 }

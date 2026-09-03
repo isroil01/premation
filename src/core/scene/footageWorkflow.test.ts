@@ -141,7 +141,7 @@ describe('replace source', () => {
 
 describe('the controls are reachable', () => {
   it('double-click opens the PREVIEW, and insertion moved to the menu', () => {
-    const ui = readSource('layout/EditorLayout/DemoPanels.tsx');
+    const ui = readSource('layout/Assets/AssetsPanel.tsx');
     expect(ui).toMatch(/onDoubleClick=\{\(\) => openFootagePreview\(row\.asset\)\}/);
     expect(ui).toMatch(/Add at Playhead/);
     expect(ui).toMatch(/Use as Source for/);

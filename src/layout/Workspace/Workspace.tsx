@@ -68,6 +68,9 @@ import { BoneOverlay } from './BoneOverlay';
 import { TrackPointOverlay } from './TrackPointOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
 import { AxisWidgetOverlay } from './AxisWidgetOverlay';
+import { FocusPlaneOverlay } from './FocusPlaneOverlay';
+import { SmartGuideOverlay } from './SmartGuideOverlay';
+import { GradientHandleOverlay } from './GradientHandleOverlay';
 import { useGizmo3d } from './useGizmo3d';
 import { useDeviceHandles } from './useDeviceHandles';
 import { useFocusContext } from '@layout/focus/useFocusContext';
@@ -222,7 +225,9 @@ export function WorkspaceViewport({
     focusKey,
   });
 
-  const gizmo3dProps = useGizmo3d(overlayRef, stageRef);
+  // No view options — the main viewport IS the default view (camera3dMode +
+  // the workspace controller's transform). The secondary panes pass their own.
+  const gizmo3dProps = useGizmo3d(stageRef);
   // Camera / light handles. Mounted AFTER the layer gizmo so its capture-phase
   // listener runs second: where a device handle overlaps a transform handle the
   // layer gizmo claims the press first, which is the more specific intent.
@@ -535,6 +540,20 @@ export function WorkspaceViewport({
               showGizmo={gizmo3dProps.is3D && !!gizmo3dProps.singleId}
             />
           )}
+          {/* The camera's focus plane and its focus-pull handle. Mounted AFTER
+              the 3D gizmo so it paints above the wireframes it belongs to; it
+              is pointer-transparent apart from that one handle, and renders
+              nothing at all unless a DOF camera is on show. */}
+          <FocusPlaneOverlay />
+          {/* The gradient axis, its end grips and the colour stops. Renders
+              nothing unless the one selected layer has a gradient fill, and
+              only a small swatch chip until the editor is armed. */}
+          <GradientHandleOverlay />
+          {/* Figma-style measurement chrome: distances to the nearest layers,
+              equal-spacing hatch bars, equal-size highlights. Draws only while
+              a gesture is in flight or Alt is measuring, so an idle viewport is
+              untouched by it. */}
+          <SmartGuideOverlay />
           {/* Persistent view-orientation axis widget (whenever the comp is 3D). */}
           <AxisWidgetOverlay />
         </div>

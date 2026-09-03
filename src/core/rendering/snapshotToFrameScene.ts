@@ -504,6 +504,11 @@ export function extractSpatialEffects(
         ...(blades >= 3 && Number.isFinite(roundness) ? { roundness } : {}),
         ...(highlightGain > 0 ? { highlightGain } : {}),
         ...(cocCorners ? { cocCorners } : {}),
+        // Camera-DOF blurs (buildSnapshot's `id: 'dof'`) are tagged so the
+        // renderer can drop them for renderables it defocuses through the
+        // per-pixel depth-buffer gather instead — applying both would blur
+        // twice. Untagged blurs (the user's own Blur effect) always stand.
+        ...(e.id === 'dof' ? { dofSource: true } : {}),
       });
     }
     if (e.type === 'glow') {
@@ -1432,6 +1437,22 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
               gain: r.gain,
               ...(r.textured ? { textured: true } : {}),
             })),
+            // Texture KEYS, matching what MotionRendererBackend feeds under
+            // `pbrmap:<layerId>:*` — the same contract every other textureKey
+            // here follows.
+            ...(layer.extrudedMesh.pbr
+              ? {
+                  pbr: {
+                    ...(layer.extrudedMesh.pbr.normalSrc ? { normalKey: `pbrmap:${layer.id}:n` } : {}),
+                    ...(layer.extrudedMesh.pbr.metallicRoughnessSrc ? { metallicRoughnessKey: `pbrmap:${layer.id}:m` } : {}),
+                    ...(layer.extrudedMesh.pbr.occlusionSrc ? { occlusionKey: `pbrmap:${layer.id}:o` } : {}),
+                    ...(layer.extrudedMesh.pbr.emissiveSrc ? { emissiveKey: `pbrmap:${layer.id}:e` } : {}),
+                    normalScale: layer.extrudedMesh.pbr.normalScale,
+                    occlusionStrength: layer.extrudedMesh.pbr.occlusionStrength,
+                    emissive: layer.extrudedMesh.pbr.emissive,
+                  },
+                }
+              : {}),
           },
         }
       : {}),
@@ -1440,6 +1461,15 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
   // path carries per-fragment shade data (the shader lights it for real, with
   // the per-quad gain as its own fallback); anything on the affine painter path
   // gets the per-quad gain folded into its tint exactly as before.
+  /*
+    Casting is INDEPENDENT of lighting, and of the shade block below.
+
+    A layer that refuses Accepts Lights has no `shade3d` and no `lighting`, and
+    it still stands between a lamp and the wall. Attaching this inside the
+    `layer.lighting` branch would have made an unlit card transparent to every
+    shadow-mapped light — the bug this placement exists to avoid.
+  */
+  if (layer.castsShadow3d && out.threeD) out.threeD.castsShadow = true;
   if (layer.lighting) {
     if (layer.shade3d && out.threeD && depthEligible3D(out)) {
       out.threeD.shade = {
@@ -1447,9 +1477,14 @@ export function layerToRenderable(layer: RenderLayer, parentMatrix?: Mat3, paren
         shininess: layer.shade3d.shininess,
         ...(layer.shade3d.metal ? { metal: layer.shade3d.metal } : {}),
         ...(layer.shade3d.roughness !== undefined ? { roughness: layer.shade3d.roughness } : {}),
+        ...(layer.shade3d.toonBands !== undefined ? { toonBands: layer.shade3d.toonBands } : {}),
         ...(layer.shade3d.oneSided ? { oneSided: true } : {}),
         ...(layer.shade3d.ambient !== undefined ? { ambient: layer.shade3d.ambient } : {}),
         ...(layer.shade3d.diffuse !== undefined ? { diffuse: layer.shade3d.diffuse } : {}),
+        // Only ever FALSE reaches here — a shadow catcher turned off. Absent is
+        // the default (a lit surface receives), which is what every layer
+        // emitted before shadow maps existed carries.
+        ...(layer.acceptsShadows3d === false ? { acceptsShadows: false } : {}),
         quadGain: layer.lighting,
       };
     } else if (out.color) {
@@ -1951,6 +1986,15 @@ export function snapshotToFrameScene(snapshot: RenderSnapshot): FrameScene {
     dissolveFrame: Math.round((snapshot.time ?? 0) * (snapshot.fps ?? 30)),
     ...(has3d ? { camera3d: snapshot.camera3d } : {}),
     ...(has3d && snapshot.lights3d && snapshot.lights3d.length > 0 ? { lights3d: snapshot.lights3d } : {}),
+    // The reflection half of the same environment light whose irradiance rig
+    // rides `lights3d`. Gated on `has3d` like everything else on the depth
+    // path: with no 3D layer there is nothing to reflect in, and shipping the
+    // atlas anyway would upload a texture no draw binds.
+    ...(has3d && snapshot.envMap ? { envMap: snapshot.envMap } : {}),
+    // Ambient occlusion, handed straight through. Gated on `has3d` like every
+    // other depth-path field: with no 3D layer there is no run to prepass, and
+    // the pass would render three targets for nothing.
+    ...(has3d && snapshot.ssao?.enabled ? { ssao: snapshot.ssao } : {}),
   };
 }
 

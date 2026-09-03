@@ -7,6 +7,10 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  /* The ease-library popover is positioned against this, not against the
+     toolbar: the toolbar scrolls horizontally when it runs out of room, and a
+     popover anchored inside a scroller would scroll away from its trigger. */
+  position: relative;
 }
 
 .toolbar {
@@ -17,6 +21,18 @@
   padding: 0 8px;
   background: var(--color-toolbar);
   border-bottom: 1px solid var(--color-border-strong);
+  flex-shrink: 0;
+  /* Scroll rather than wrap. The graph's height arithmetic (INNER_H) assumes a
+     single 32px toolbar row, so a wrapped second row would silently overlap
+     the canvas — and this toolbar now has to survive the Motion panel, which
+     is a third of the timeline's width. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+/* Nothing in the toolbar may be squashed into illegibility by the scroller. */
+.toolbar > * {
   flex-shrink: 0;
 }
 
@@ -43,6 +59,41 @@
 .tabActive {
   color: var(--color-primary);
   border-bottom: 1px solid var(--color-primary);
+}
+
+/* Graph visibility mode — one control with two states, not two buttons that
+   happen to be adjacent, so "which set am I looking at?" is answered by shape
+   as well as by colour. */
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.segBtn,
+.segBtnActive {
+  padding: 2px 8px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: inherit;
+  font-size: var(--font-size-micro);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.segBtn:hover {
+  color: var(--color-text-primary);
+}
+
+.segBtnActive {
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  color: var(--color-text-primary);
 }
 
 .spacer {
@@ -270,6 +321,14 @@
   pointer-events: none;
 }
 
+/* The reference ("before") ghost. Dashed and unclickable so it reads as a
+   memory of the curve rather than a second curve competing for the pointer. */
+.referenceCurve {
+  pointer-events: none;
+  stroke-dasharray: 4 3;
+  stroke-linecap: round;
+}
+
 /* Invisible, generous hit targets — the visible dot is 4.5px, the grab radius 10px. */
 .kfHit {
   fill: transparent;
@@ -300,4 +359,57 @@
 
 .playhead {
   pointer-events: none;
+}
+
+/* ── Keyframe tools: kind selector + ease library popover ───────── */
+
+/* The interpolation-KIND selector. A native <select> deliberately: ten options
+   is too many for a pill strip in a 32px toolbar, and the OS popup already
+   solves keyboard access, overflow and long labels. The ease PILLS beside it
+   stay pills because they are the five you reach for constantly. */
+.select {
+  height: var(--control-height-sm, 22px);
+  max-width: 118px;
+  padding: 0 4px;
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm, 3px);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+}
+
+.select:hover {
+  color: var(--color-text-primary);
+}
+
+.select:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.libraryAnchor {
+  position: static;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Anchored to `.root` (see the note there) and pinned under the toolbar. Its
+   own scroller: 24 curves plus the saved row is taller than a graph panel
+   docked at the bottom of a laptop screen. */
+.popover {
+  position: absolute;
+  top: 33px;
+  right: 8px;
+  z-index: var(--z-index-popover);
+  width: 300px;
+  max-height: min(420px, calc(100% - 40px));
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md, 6px);
+  box-shadow: var(--shadow-lg);
 }

@@ -137,7 +137,7 @@ interface PuppetRig {
   meshDensity?: number;   // grid subdivisions per side, clamped 2..50 (default 15)
   solver?: 'lbs' | 'arap'; // default 'arap'
   maxRotationDeg?: number;  // Mesh Rotation Refinement; absent = unlimited
-  meshMode?: 'grid' | 'silhouette'; // default 'grid'
+  meshMode?: 'grid' | 'silhouette'; // default 'grid' for shape rigs; NEW rigs on image/SVG layers get 'silhouette' (2026-09-03)
 }
 
 /** What the solver actually consumes — the live, possibly keyframe-sampled state. */
@@ -207,9 +207,16 @@ When no track exists for a property, the **static value on the pin/bone is the f
 
 ### 3.1 Rest-mesh construction (`buildRestMesh`)
 
-Two modes, selected by `rig.meshMode`. **`'silhouette'`** ear-clips the layer's outline directly
-(§12.1) — better triangle distribution on thin diagonal artwork, and every vertex lands on the
-artwork. **`'grid'`** is the default: a **regular grid, then culled**:
+Two modes, selected by `rig.meshMode`. **`'silhouette'`** on a **shape** layer ear-clips the
+layer's outline directly (§12.1); on an **image** layer (since 2026-09-03, `alphaMesh.ts`) it is
+AE's Puppet mesh for a bitmap — marching squares over the alpha coverage → Douglas–Peucker →
+miter offset by Mesh Expansion → boundary resampled at the density spacing + hexagonal interior
+Steiner points → Bowyer–Watson Delaunay clipped to the silhouette, so a thin limb owns its own
+triangle strip and a pin on the hand bends the arm while the torso stays put. New rigs on
+image/SVG layers default to it; the bone rig reaches the same mesh through `SkeletonRig.meshMode`.
+Before that fix `resolvePuppetSilhouette` returned `undefined` for every image layer, so the
+mode silently fell back to the grid, which drags a square neighbourhood — the "broken / torn"
+character. **`'grid'`** remains the default for shape rigs: a **regular grid, then culled**:
 
 1. **Grid.** `cols = rows = clamp(meshDensity, 2, 50)` over the box
    `[-w/2 - pad - expansion, +w/2 + pad + expansion]` × same for y.

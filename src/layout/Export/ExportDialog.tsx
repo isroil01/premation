@@ -23,6 +23,7 @@ import { useLayoutStore } from '@stores/layoutStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { runExport, isAbortError, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
 import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
+import { chaptersFromMarkers, formatCarriesChapters, type ExportChapter } from '@core/export/chapters';
 import { formatHdrCapabilityNote, formatHdrExportDoneNote } from '@core/export/hdrTransfer';
 import { ExportPreview } from './ExportPreview';
 import styles from './ExportDialog.module.css';
@@ -77,6 +78,31 @@ function fileStem(name: string): string {
   return trimmed.replace(/[<>:"/\\|?*]+/g, '-');
 }
 
+/**
+ * The comp's labelled markers as chapter marks on the DELIVERED file's clock.
+ *
+ * A work-area export starts at zero in the file, so a marker four seconds into
+ * the comp becomes a chapter at `4 − startSec`, and a marker before the range
+ * is not in the file at all (`chaptersFromMarkers` drops the negatives).
+ *
+ * Composition markers only: `getMarkers()` is the comp's own marker track,
+ * where `getLayerMarkers()` would be a per-layer annotation that travels with a
+ * trimmed layer — ten layers each carrying "start" would mint ten chapters over
+ * the same second. Read at CALL time rather than cached, so what gets written
+ * is what the timeline says when the button is pressed.
+ */
+function chaptersForRange(startSec: number, endSec: number, fps: number): ExportChapter[] {
+  const shifted = getTimelineController()
+    .getMarkers()
+    .map((m) => ({ time: m.time - startSec, label: m.label }));
+  return chaptersFromMarkers(shifted, fps, Math.max(0, endSec - startSec));
+}
+
+/** Whether the whole composition holds anything a chapter could be made of. */
+function hasChapterMarkers(fps: number, durationSec: number): boolean {
+  return chaptersForRange(0, durationSec, fps).length > 0;
+}
+
 function ExportDialog({ duration, fps, onClose }: { duration: number; fps: number; onClose?: () => void }): JSX.Element {
   const presets = useMemo(() => availableExportPresets(), []);
   const presetByFormat = useMemo(() => {
@@ -97,6 +123,12 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
   // background" in Composition Settings got an opaque export (and preview)
   // unless they re-toggled it here — the dialog's `false` overrode the comp.
   const [transparent, setTransparent] = useState(() => !!useCompositionStore.getState().transparent);
+  // Default ON when the comp actually has labelled markers: someone who took
+  // the trouble to name them meant them as structure, and a delivered file
+  // without that structure is the thing they would have to notice to ask for.
+  // A comp with no labelled markers gets the switch off, so the row reads as
+  // "nothing to write" rather than as a promise the export cannot keep.
+  const [chapters, setChapters] = useState(() => hasChapterMarkers(fps, duration));
   const [progress, setProgress] = useState<number | null>(null);
   const notify = useUIStore((s) => s.notify);
   const baseComp = useCompositionStore((s) => s.comp());
@@ -146,6 +178,26 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
   const rangeStart = useWorkArea && workArea ? workArea.start : 0;
   const rangeDuration = useWorkArea && workArea ? Math.max(0, workArea.end - workArea.start) : duration;
 
+  // Chapters ride in the container, so only MP4/MOV can carry them — the HDR
+  // presets included, since they mux to MP4. WebM is excluded on purpose: this
+  // repo's muxer writes no Chapters element (webmMuxer.ts:18), so the toggle
+  // would tick and change nothing. `canEncodeLocally` because the metadata is
+  // attached by ffmpeg; the browser's WebCodecs path has no way to add it.
+  const supportsChapters = formatCarriesChapters(format) && canEncodeLocally();
+  /** How many chapters the CURRENT range would actually write. */
+  const chapterCount = useMemo(
+    () => chaptersForRange(rangeStart, rangeStart + rangeDuration, fps).length,
+    [rangeStart, rangeDuration, fps],
+  );
+  const writeChapters = chapters && supportsChapters && chapterCount > 0;
+
+  /** Chapter marks read at ACTION time, for the same reason `captureRange` is. */
+  const captureChapters = useCallback((): ExportChapter[] => {
+    if (!chapters || !supportsChapters) return [];
+    const { startSec, endSec } = captureRange();
+    return chaptersForRange(startSec, endSec, fps);
+  }, [chapters, supportsChapters, captureRange, fps]);
+
   const comp = useMemo(
     () => ({ ...baseComp, rootId: baseComp.id, transparent: alpha, compSizeOf }),
     [baseComp, alpha],
@@ -178,6 +230,7 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
     const controller = new AbortController();
     abortRef.current = controller;
     setProgress(0);
+    const chapterMarks = captureChapters();
     try {
       const done = await runExport({
         format,
@@ -188,6 +241,7 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
         time,
         quality,
         ...(format === 'mov' ? { proresProfile } : {}),
+        ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
         // Captured NOW, not read live mid-render: what you clicked is what
         // renders, even if the work area moves while the export runs.
         range: captureRange(),
@@ -212,7 +266,7 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
       abortRef.current = null;
       setProgress(null);
     }
-  }, [format, width, height, fps, duration, time, quality, proresProfile, compName, comp, notify, captureRange]);
+  }, [format, width, height, fps, duration, time, quality, proresProfile, compName, comp, notify, captureRange, captureChapters]);
 
   const queueJob = (): void => {
     const ext = outputExtFor(format as OutputFormat);
@@ -222,6 +276,10 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
     // work area, and editing any timeline's in/out after queueing changed
     // what every pending job produced.
     const range = captureRange();
+    // Chapters are captured here too, and for the same reason: markers are live
+    // editor state, so a job that re-derived them when it finally ran would
+    // deliver a chapter list nobody chose.
+    const chapterMarks = captureChapters();
     useRenderQueueStore.getState().addJob({
       compositionName: compName ?? 'Comp 1',
       compositionId: baseComp.id,
@@ -239,6 +297,7 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
       transparent: alpha,
       quality,
       ...(format === 'mov' ? { proresProfile } : {}),
+      ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
     });
     useLayoutStore.getState().openPanel('renderQueue');
     notify({ level: 'success', message: 'Added to Render Queue (F6)', durationMs: 2600 });
@@ -476,6 +535,36 @@ function ExportDialog({ duration, fps, onClose }: { duration: number; fps: numbe
                   ? 'Highest fidelity, and the only profile that carries alpha.'
                   : 'No alpha channel — smaller files for opaque delivery and edit handoff.'}
               </p>
+            </div>
+          ) : null}
+
+          {MOVING.has(format) ? (
+            <div
+              className={styles.switchRow}
+              title={
+                supportsChapters
+                  ? 'Composition markers with a label become chapter marks in the file.'
+                  : 'Chapter marks are an MP4/MOV feature — this container cannot carry them.'
+              }
+            >
+              <div className={styles.switchCopy}>
+                <span className={styles.switchTitle}>Chapters from markers</span>
+                <span className={styles.switchHint}>
+                  {!supportsChapters
+                    ? 'Only MP4 and MOV carry chapters. WebM and GIF have nowhere to put them.'
+                    : chapterCount === 0
+                      ? 'No labelled composition markers in this range — nothing to write.'
+                      : writeChapters
+                        ? `${chapterCount} chapter${chapterCount === 1 ? '' : 's'}, one per labelled marker, each running to the next.`
+                        : `${chapterCount} labelled marker${chapterCount === 1 ? '' : 's'} available.`}
+                </span>
+              </div>
+              <Switch
+                checked={writeChapters}
+                disabled={busy || !supportsChapters || chapterCount === 0}
+                onChange={(e) => setChapters(e.currentTarget.checked)}
+                aria-label="Chapters from markers"
+              />
             </div>
           ) : null}
 

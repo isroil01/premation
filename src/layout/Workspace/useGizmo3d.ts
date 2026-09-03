@@ -1,11 +1,28 @@
 /**
  * useGizmo3d — React hook providing interactive 3D Transform Gizmo logic,
  * raycasting interaction, and real-time scene updates.
+ *
+ * ## Per-view, not per-app
+ *
+ * The hook used to read the MAIN viewport's globals directly: the view mode off
+ * `guidesStore.camera3dMode` and the comp → canvas transform off
+ * `getWorkspaceController().getView()`. That made it structurally impossible to
+ * mount a second gizmo — a 2-up or 4-up secondary pane draws the same scene
+ * through its OWN camera and its own framing, so a gizmo built from the main
+ * viewport's numbers lands in a completely different place on the pane's pixels
+ * (and hit-tests the pointer against a projection nothing on screen uses).
+ *
+ * Both are now injectable through {@link Gizmo3dViewOptions}, exactly as
+ * `SceneGeometryOverlay` already took them as props. Omit them and the hook
+ * behaves as before, reading the main viewport. What stays GLOBAL is everything
+ * that should be: selection, the axis mode, the camera-tool gate, and the
+ * transform write path — a drag in a pane is the same undoable command it is
+ * anywhere else.
  */
 
 import { useState, useEffect, useRef } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useGuidesStore } from '@stores/guidesStore';
+import { useGuidesStore, type Camera3dMode } from '@stores/guidesStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useProjectStore } from '@stores/projectStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
@@ -45,16 +62,55 @@ export interface DragState3D {
   }>;
 }
 
-export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>, stageRef: React.RefObject<HTMLElement | null>) {
+/** Identity view — the fallback while a pane's camera does not exist yet. */
+const IDENTITY_VIEW: RenderView = { scale: 1, offsetX: 0, offsetY: 0 };
+
+/** Which VIEW this gizmo belongs to. Omit every field for the main viewport. */
+export interface Gizmo3dViewOptions {
+  /** View mode to project through. Defaults to `guidesStore.camera3dMode`. */
+  mode?: Camera3dMode;
+  /**
+   * This view's live comp → canvas transform (`canvasPx = compPx·scale + offset`,
+   * CSS px, relative to `stageRef`'s box). Defaults to the main viewport's
+   * controller view. A pane passes `usePaneWorkspace().getRenderView`.
+   */
+  getView?: () => RenderView | undefined;
+  /**
+   * Bumped whenever `getView` would answer differently for a reason no window
+   * pointer/wheel event covers — a pane's `framingRev`. Without it a pane that
+   * re-frames itself (auto-fit on resize) leaves the gizmo at the old framing
+   * until the next stray pointer move.
+   */
+  viewRev?: number;
+}
+
+export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, options?: Gizmo3dViewOptions) {
   const selectedIds = useSelectionStore((s) => s.ids);
 
   const gizmoState = useGuidesStore((s) => s.gizmo3dState);
   const axisMode = useGuidesStore((s) => s.gizmo3dAxisMode);
-  const camera3dMode = useGuidesStore((s) => s.camera3dMode);
+  const mainMode = useGuidesStore((s) => s.camera3dMode);
+  // The view this instance draws for: a pane's own mode when it passes one.
+  const mode = options?.mode ?? mainMode;
   // Camera, ortho axis, ground-plane visibility and the scene wireframes all
   // come from ONE shared resolver — the inspection panes use it too.
-  const refGeometry = useSceneRefGeometry(camera3dMode);
+  const refGeometry = useSceneRefGeometry(mode);
   const customViews = useGuidesStore((s) => s.customViews);
+
+  /**
+   * The view reader, behind a ref.
+   *
+   * Every consumer below (the rAF resync, the pointer handlers, the hit
+   * tolerance) needs the CURRENT transform, and the pane's `getRenderView`
+   * reads a live camera. Holding it in a ref keeps the pointer-listener effect
+   * from re-attaching whenever the host re-renders with a new closure.
+   */
+  const getViewOpt = options?.getView;
+  const viewRev = options?.viewRev ?? 0;
+  const readViewRef = useRef<() => RenderView>(() => getWorkspaceController().getView());
+  readViewRef.current = getViewOpt
+    ? (): RenderView => getViewOpt() ?? IDENTITY_VIEW
+    : (): RenderView => getWorkspaceController().getView();
 
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
@@ -128,15 +184,15 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
   // Camera / ortho axis / scene gizmos come from the SHARED resolver, which the
   // read-only inspection panes use too — one resolution path, so the panes and
   // the interactive viewport cannot disagree about where anything sits.
-  const { camera, orthoView, sceneGizmos, groundGridVisible, scene3d } = refGeometry;
+  const { camera, orthoView, sceneGizmos, groundGridVisible, groundLevel, scene3d } = refGeometry;
 
   // Comp → canvas view transform (RenderView: canvasPx = compPx·scale + offset,
   // CSS px). Kept in state and re-synced on wheel / pointer input so the SVG
   // overlay follows viewport pan & zoom.
-  const [viewTransform, setViewTransform] = useState<RenderView>(() => getWorkspaceController().getView());
+  const [viewTransform, setViewTransform] = useState<RenderView>(() => readViewRef.current());
   useEffect(() => {
     const sync = (): void => {
-      const v = getWorkspaceController().getView();
+      const v = readViewRef.current();
       setViewTransform((prev) =>
         prev.scale === v.scale && prev.offsetX === v.offsetX && prev.offsetY === v.offsetY ? prev : v,
       );
@@ -167,7 +223,9 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
       window.removeEventListener('pointermove', queueSync, { capture: true } as EventListenerOptions);
       window.removeEventListener('pointerup', queueSync, { capture: true } as EventListenerOptions);
     };
-  }, []);
+    // `viewRev` re-syncs for framing changes no pointer event announces (a
+    // pane auto-fitting on resize); the reader itself lives in a ref.
+  }, [viewRev]);
 
   const renderedGizmoRef = useRef<RenderedGizmo3D | null>(null);
 
@@ -194,9 +252,8 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
 
   // Pointer event handlers for 3D Gizmo interaction
   useEffect(() => {
-    const overlay = overlayRef.current;
     const stage = stageRef.current;
-    if (!overlay || !stage || !is3D || selected3DNodes.length === 0) return;
+    if (!stage || !is3D || selected3DNodes.length === 0) return;
 
     const getStageLocal = (e: MouseEvent): { x: number; y: number } => {
       const rect = stage.getBoundingClientRect();
@@ -206,12 +263,12 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
     // Comp space mouse coordinate (factoring out viewport zoom and pan).
     // RenderView is canvasPx = compPx·scale + offset ⇒ comp = (canvas − offset)/scale.
     const getCompLocal = (stagePt: { x: number; y: number }): { x: number; y: number } => {
-      return Gizmo3D.viewportToComp(stagePt, getWorkspaceController().getView());
+      return Gizmo3D.viewportToComp(stagePt, readViewRef.current());
     };
 
     // Hit thresholds are in comp px — scale a fixed on-screen tolerance down.
     const hitTolerance = (): number => {
-      const s = getWorkspaceController().getView().scale || 1;
+      const s = readViewRef.current().scale || 1;
       return 12 / s;
     };
 
@@ -242,7 +299,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
           const axisEntry = renderedGizmoRef.current?.axes.find((a) => a.type === handle);
           let tAxis: number;
           if (axisEntry?.degenerate) {
-            const viewScale = getWorkspaceController().getView().scale || 1;
+            const viewScale = readViewRef.current().scale || 1;
             tAxis = -(stagePt.y - dragState.startMouseScreen.y) / viewScale;
           } else {
             tAxis = Project3D.closestPointRayAxis(ray, dragState.startPos3D, axisDir).tAxis;
@@ -529,7 +586,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
     // `selectedIds` (not just `singleId`) because onPointerDown snapshots the
     // selection's nodes: a multi-select change that keeps the same primary id
     // must still rebind the closure.
-  }, [is3D, singleId, selectedIds, axisMode, camera3dMode, customViews, compWidth, compHeight, time]);
+  }, [is3D, singleId, selectedIds, axisMode, mode, customViews, compWidth, compHeight, time]);
 
   return {
     is3D,
@@ -547,6 +604,7 @@ export function useGizmo3d(overlayRef: React.RefObject<HTMLCanvasElement | null>
     gizmoState,
     axisMode,
     groundGridVisible,
+    groundLevel,
     activeHandle,
     hoverHandle,
     dragState,

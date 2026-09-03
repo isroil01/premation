@@ -14,6 +14,7 @@ import type { LayerMask } from '@core/effects/mask';
 import type { TrackMatte } from '@core/effects/matte';
 import type { FillPaint } from '@core/paint/fill';
 import type { ShaderLight } from '@core/scene/lightShading';
+import type { DofConfig } from '@core/scene/camera3d';
 import type { Stroke } from '@core/paint/stroke';
 import type { BezierPoint } from '../../../packages/workspace/src/math/BezierPoint';
 
@@ -254,6 +255,9 @@ export interface RenderLayer {
     metal?: number;
     /** PBR roughness 0..1. Present ⇒ the GGX model; absent ⇒ Blinn-Phong. */
     roughness?: number;
+    /** Cel bands (2–8). Present ⇒ toon: Blinn-Phong terms quantized to hard
+     *  steps. Mutually exclusive with `roughness` (buildSnapshot sets one). */
+    toonBands?: number;
     /** Light this surface from one side. Set only by an extrusion's walls and
      *  back cap, which bound a volume — see `lightShading.ndotl`. */
     oneSided?: boolean;
@@ -264,6 +268,21 @@ export interface RenderLayer {
      *  (AE default, identity vs the pre-material gain). */
     diffuse?: number;
   };
+  /**
+   * Material Options → Casts Shadows, for the GEOMETRY-aware shadow path.
+   *
+   * Only consumed when a light in the comp has `shadowMap` on: it selects which
+   * members of a depth run are rasterised into the map. Absent means "does not
+   * cast", which is what every layer emitted before shadow maps existed says —
+   * so the flag cannot switch anything on retroactively.
+   *
+   * Deliberately NOT folded into `shade3d`: that block is present only when the
+   * layer ACCEPTS LIGHTS, and a layer that refuses lighting still blocks it.
+   */
+  castsShadow3d?: boolean;
+  /** Material Options → Accepts Shadows, for the same path. Only ever set to
+   *  FALSE (a shadow catcher turned off); absent means the default, on. */
+  acceptsShadows3d?: boolean;
   /** Distance from the camera along the view axis; larger = farther. Drives 3D
    *  painter-order sorting. */
   depth?: number;
@@ -510,6 +529,24 @@ export interface RenderLayer {
       /** Sample the layer's own texture (image/video back cap) instead of `fill`. */
       textured?: boolean;
     }>;
+    /**
+     * An imported glTF material's maps beyond base colour, as this session's
+     * object URLs. Present only when the material carries at least one — which
+     * is what routes the draw to the wider `mesh3d-pbr` pipeline, leaving every
+     * extrusion and every base-colour-only model on the shader they already
+     * had. The URLs come straight from the mesh registry each frame (they are
+     * session-scoped and never stored in the document), so nothing here needs
+     * the rehydration dance `src` needs.
+     */
+    pbr?: {
+      normalSrc?: string;
+      metallicRoughnessSrc?: string;
+      occlusionSrc?: string;
+      emissiveSrc?: string;
+      normalScale: number;
+      occlusionStrength: number;
+      emissive: [number, number, number];
+    };
   };
   deformedMesh?: {
     vertices: Float32Array;
@@ -602,6 +639,17 @@ export interface RenderSnapshot {
     projection: readonly number[];
     /** Camera world position — the eye for Blinn-Phong specular. */
     eye?: readonly [number, number, number];
+    /**
+     * The active camera's depth-of-field config (readSceneDof), present only
+     * when DOF is on AND the frame renders through a perspective camera. The
+     * GPU renderer uses it for the per-pixel depth-buffer gather over 3D depth
+     * groups; the per-layer `id: 'dof'` blur entries remain on the layers as
+     * the fallback for every path that cannot gather. Referencing `DofConfig`
+     * rather than restating its shape, for the same reason `lights3d` refers
+     * to `ShaderLight` — a structural copy is where fields go to be silently
+     * dropped on one side.
+     */
+    dof?: DofConfig;
   };
   /**
    * Scene lights in shader terms (per-fragment Accepts-Lights shading on the
@@ -614,6 +662,64 @@ export interface RenderSnapshot {
    * typechecks everywhere.
    */
   lights3d?: ReadonlyArray<ShaderLight>;
+  /**
+   * The comp's environment light as a prefiltered REFLECTION map.
+   *
+   * `lights3d` already carries the SAME environment's irradiance, expanded
+   * into a derived rig of one ambient plus up to six parallels. That rig is
+   * what a surface is LIT by; this is what a smooth surface MIRRORS, and the
+   * two are the two halves of one environment light — same rotation, same
+   * intensity, produced side by side in buildSnapshot.
+   *
+   * Emitted only when the comp has an environment light AND a 3D layer that
+   * can use it. Absent means the shader's reflection block never runs.
+   */
+  envMap?: EnvironmentSpecularMap;
+  /**
+   * Screen-space ambient occlusion, as the composition authored it.
+   *
+   * Emitted only when the comp turned it on AND the frame has a 3D layer that
+   * could use it — the renderer's own gate is `enabled`, and passing a disabled
+   * block would still cost the snapshot a key on every frame of every project
+   * that never opted in. Absent means the shade tail packs zeros and every 3D
+   * run renders exactly as it did before AO existed.
+   */
+  ssao?: SsaoConfig;
+}
+
+/**
+ * Composition-level SSAO. Structurally the renderer's `SsaoSettings` DTO,
+ * restated here for the reason `EnvironmentSpecularMap` is — this layer's
+ * snapshot type is the app's own contract — but the field NAMES must match,
+ * because `snapshotToFrameScene` hands the object straight through.
+ */
+export interface SsaoConfig {
+  enabled: boolean;
+  /** Hemisphere radius in COMP PX. */
+  radius: number;
+  /** How much of the ambient term full occlusion removes, 0..2. */
+  intensity: number;
+  /** Buffer resolution — 'half' (the default) or 'full'. */
+  quality: 'half' | 'full';
+}
+
+/**
+ * A prefiltered specular environment, as raw texels.
+ *
+ * Structurally the renderer's `EnvironmentMap` DTO. Restated here rather than
+ * imported for the same reason `ShaderLight` is not — this layer's snapshot
+ * type is the app's own contract — but the field NAMES must match, because
+ * `snapshotToFrameScene` hands the object straight through.
+ */
+export interface EnvironmentSpecularMap {
+  id: string;
+  width: number;
+  height: number;
+  levels: number;
+  scale: number;
+  data: Uint8Array;
+  intensity: number;
+  rotationDeg: number;
 }
 
 export interface RenderBackend {

@@ -14,6 +14,12 @@ import { usePhysicsStore } from '@stores/physicsStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { readNodePhysicsRaw, PHYSICS_PROP, DEFAULT_PHYSICS_BODY } from '@core/simulation/physicsBodies';
 import type { BodyKind, ColliderShape, PhysicsBodyConfig } from '@core/simulation/rigidBody';
+// Importing this module is what REGISTERS `dynamics.bakePhysics` /
+// `dynamics.bakeParticles`. It has to be imported from somewhere that runs at
+// boot, and the Inspector is the surface that owns the feature — so the
+// commands need no entry in the boot sequence to exist.
+import { runPhysicsBake } from '@core/simulation/bakeCommands';
+import { BakeDialog } from '@core/simulation/BakeDialog';
 import panel from '@layout/Effects/EffectsPanel.module.css';
 
 export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | null {
@@ -22,6 +28,7 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
   const w = usePhysicsStore();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [worldCollapsed, setWorldCollapsed] = useState(false);
+  const [bakeOpen, setBakeOpen] = useState(false);
 
   if (!node) return null;
 
@@ -153,6 +160,23 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
             </>
           )}
 
+          {/* Bake — the escape hatch out of live solve, for DYNAMIC bodies only:
+              a static body's pose is its own transform and the solver never
+              overrides it, so there is nothing of it to write down. */}
+          {cfg.kind === 'dynamic' && (
+            <PropertyRow label="Bake" compact>
+              <button
+                type="button"
+                className={panel.paramSelect}
+                style={{ width: '100%', textAlign: 'left', cursor: 'pointer' }}
+                onClick={() => setBakeOpen(true)}
+                title="Convert this simulation into editable keyframes and switch physics off"
+              >
+                Bake to keyframes…
+              </button>
+            </PropertyRow>
+          )}
+
           {/* Simulation World (shared across composition) */}
           <div className={panel.paramGroup}>
             <button
@@ -190,6 +214,15 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
             )}
           </div>
         </div>
+      )}
+
+      {bakeOpen && (
+        <BakeDialog
+          open
+          onClose={() => setBakeOpen(false)}
+          title="Bake Physics to Keyframes"
+          onBake={(opts) => runPhysicsBake([nodeId], opts)}
+        />
       )}
     </div>
   );

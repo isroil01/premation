@@ -9,9 +9,10 @@
  * wireframes a Left or Top view is a blank field; with them you can see where
  * every layer, camera and light actually sits.
  *
- * Shared by the interactive viewport (inside Gizmo3dOverlay, under the
- * transform handles) and by the read-only inspection panes, so the two cannot
- * disagree about where anything is.
+ * Always drawn inside `Gizmo3dOverlay`, under the transform handles — in the
+ * main viewport and in every secondary 2-up / 4-up pane alike, each passing its
+ * own camera and transform. One component, so no two views can disagree about
+ * where a camera or a light sits.
  */
 
 import React from 'react';
@@ -27,6 +28,12 @@ export interface SceneGeometryOverlayProps {
   /** Comp → canvas transform: canvasPx = compPx·scale + offset. */
   viewTransform: { scale: number; offsetX: number; offsetY: number };
   groundGridVisible: boolean;
+  /**
+   * Ground plane offset from the comp's bottom edge, comp units. Optional and
+   * defaulting to 0 — the plane at y = compHeight this drew before there was a
+   * setting — so a caller that has nothing to say about the floor is unchanged.
+   */
+  groundLevel?: number;
   sceneGizmos: readonly SceneGizmo[];
   /**
    * Draggable camera / light points, drawn as grab dots.
@@ -64,6 +71,7 @@ export const SceneGeometryOverlay: React.FC<SceneGeometryOverlayProps> = ({
   compHeight,
   viewTransform,
   groundGridVisible,
+  groundLevel = 0,
   sceneGizmos,
   deviceHandles,
   hoveredDeviceHandle,
@@ -85,9 +93,14 @@ export const SceneGeometryOverlay: React.FC<SceneGeometryOverlayProps> = ({
    */
   const renderGroundGrid = () => {
     if (!groundGridVisible) return null;
+    // The builder lays the floor on y = compHeight; the comp's World ▸ ground
+    // level slides that plane. Applied HERE rather than inside the builder so
+    // the packaged geometry (and its pinned tests) keep their one meaning, and
+    // so an offset of 0 produces the identical numbers it always has.
+    const shift = (p: Vec3): Vec3 => (groundLevel === 0 ? p : { ...p, y: p.y + groundLevel });
     const lines = Gizmo3D.buildGroundGridLines(compWidth, compHeight).map((l) => ({
-      start: projectScreen(l.start),
-      end: projectScreen(l.end),
+      start: projectScreen(shift(l.start)),
+      end: projectScreen(shift(l.end)),
       alpha: l.major ? 0.4 : 0.15,
     }));
     return (
@@ -218,12 +231,3 @@ export const SceneGeometryOverlay: React.FC<SceneGeometryOverlayProps> = ({
     </>
   );
 };
-
-/** Standalone SVG wrapper — for panes that have no other overlay to nest in. */
-export const SceneGeometryOverlaySvg: React.FC<SceneGeometryOverlayProps> = (props) => (
-  <svg
-    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 1 }}
-  >
-    <SceneGeometryOverlay {...props} />
-  </svg>
-);

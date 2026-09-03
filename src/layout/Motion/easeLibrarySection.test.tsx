@@ -12,10 +12,11 @@
  */
 
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
-import { cubicBezierEase, defaultAnimation } from '@motion/animation';
+import { cubicBezierEase, defaultAnimation, makeKeyframeId } from '@motion/animation';
 import { EaseLibrarySection } from './EaseLibrarySection';
 import { easeCurvePath, easeCurveGuides, EASE_THUMB } from './easeCurvePath';
 import { EASE_PRESETS, easePresetById } from '@core/animation/easePresets';
+import { useCustomEaseStore } from '@stores/customEaseStore';
 import { setCommandSystem, CommandSystem } from '@core/commands/CommandSystem';
 
 const NODE = 'ease-layer';
@@ -36,6 +37,10 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   defaultAnimation.clear();
+  // The saved-curve library is persistent by design, so a test that saves one
+  // would otherwise add a chip to every later test's grid.
+  useCustomEaseStore.setState({ curves: [] });
+  globalThis.localStorage?.clear();
 });
 
 const kfAt0 = () => defaultAnimation.getTrackKeyframes(NODE, PROP)!.find((k) => k.t === 0)!;
@@ -78,7 +83,7 @@ describe('easeCurvePath', () => {
 
 describe('EaseLibrarySection', () => {
   const renderSection = (bezier?: [number, number, number, number]) =>
-    render(<EaseLibrarySection nodeId={NODE} prop={PROP} t={0} bezier={bezier} />);
+    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(NODE, PROP, 0)]} bezier={bezier} />);
 
   it('offers every curve in the library', () => {
     renderSection();
@@ -109,6 +114,37 @@ describe('EaseLibrarySection', () => {
     expect(
       screen.getAllByRole('button').filter((b) => b.getAttribute('aria-pressed') === 'true'),
     ).toHaveLength(0);
+  });
+
+  it('applies to EVERY selected keyframe, not just the focused one', () => {
+    // The reason this takes ids instead of one (node, prop, t): the graph
+    // editor's selection spans keyframes, and "ease these eight" is the whole
+    // point of having a library.
+    render(
+      <EaseLibrarySection
+        keyframeIds={[makeKeyframeId(NODE, PROP, 0), makeKeyframeId(NODE, PROP, 1)]}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Quart In' }));
+    for (const t of [0, 1]) {
+      const kf = defaultAnimation.getTrackKeyframes(NODE, PROP)!.find((k) => k.t === t)!;
+      expect(kf.bezier).toEqual(easePresetById('quart-in')!.bezier);
+    }
+  });
+
+  it('saves the focused keyframe’s curve as a named entry that then applies', () => {
+    const custom: [number, number, number, number] = [0.9, 0.02, 0.1, 0.98];
+    const { unmount } = renderSection(custom);
+    fireEvent.change(screen.getByLabelText('New ease curve name'), { target: { value: 'Snap' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(useCustomEaseStore.getState().curves.map((c) => c.label)).toContain('Snap');
+    unmount();
+
+    // A saved curve is a chip like any other, and applies to the selection.
+    defaultAnimation.setKeyframe(NODE, PROP, 0, 0, 'linear');
+    render(<EaseLibrarySection keyframeIds={[makeKeyframeId(NODE, PROP, 0)]} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Snap' }));
+    expect(kfAt0().bezier).toEqual(custom);
   });
 
   it('says where Elastic and Bounce actually live', () => {

@@ -1,0 +1,99 @@
+/**
+ * Shared chrome for the keyframe-assistant dialogs (The Smoother, The Wiggler).
+ *
+ * One stylesheet for both because they are the same dialog shape — a blurb, a
+ * few numeric fields, a list of the tracks that will be touched, and a live
+ * result line. Two copies of this drifted apart the last time it was tried.
+ */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.blurb {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-5);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.fieldWide {
+  grid-column: 1 / -1;
+}
+
+.label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tracks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 180px;
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+}
+
+.trackRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.trackCount {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.result {
+  margin: 0;
+  min-height: 1.2em;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-5);
+}
+
+/* The preview note sits next to the buttons: the whole point of the dialog is
+   that what you see is already applied, and Cancel is what puts it back. */
+.footerNote {
+  margin-right: auto;
+  align-self: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+/* A row of mutually-exclusive choices (the Wiggler's dimension). Not
+   `.footer`: that one right-aligns and reserves the left edge for a note. */
+.segmented {
+  display: flex;
+  gap: var(--space-2);
+}

@@ -69,9 +69,9 @@ export function ParagraphPanel(): JSX.Element {
   return (
     <div className={styles.root}>
       {/* Target Status Banner */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-secondary)', paddingBottom: 2, borderBottom: '1px solid var(--color-border)' }}>
-        <span style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Paragraph</span>
-        <span style={{ color: hasTarget ? 'var(--color-selection, #2988ff)' : 'var(--color-text-muted)' }}>
+      <div className={styles.panelHead}>
+        <span className={styles.panelHeadTitle}>Paragraph</span>
+        <span className={hasTarget ? styles.panelHeadStatusOn : styles.panelHeadStatus}>
           {hasTarget ? node?.name || 'Selected Text' : 'Default Preset'}
         </span>
       </div>
@@ -138,7 +138,7 @@ export function ParagraphPanel(): JSX.Element {
         </button>
       </div>
 
-      <div className={styles.sectionTitle} style={{ marginTop: 6 }}>Indents &amp; Spacing</div>
+      <div className={`${styles.sectionTitle} ${styles.sectionTitleSpaced}`}>Indents &amp; Spacing</div>
 
       {/* AE Paragraph Indents Grid */}
       <div className={styles.metricGrid}>
@@ -191,7 +191,7 @@ export function ParagraphPanel(): JSX.Element {
         </div>
 
         {/* Space After */}
-        <div className={styles.metricCell} style={{ gridColumn: 'span 2' }}>
+        <div className={`${styles.metricCell} ${styles.metricCellWide}`}>
           <span className={styles.metricLabel} title="Space after paragraph">↓¶</span>
           <input
             type="number"

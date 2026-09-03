@@ -21,7 +21,9 @@ displayed frame is produced by: comp time → layer time-mapping chain → sourc
 **presentation frame index** through a real MP4/WebM sample table → **WebCodecs
 `VideoDecoder`** → canvas → GPU texture → composited quad. You add motion by keyframing
 the layer's transform, by 2-D/planar/3-D **motion tracking** of the footage itself, by
-**auto-reframe**, or by any of **175 effects**. Export re-runs the exact same snapshot
+**auto-reframe**, or by any of **183 effects**. You cut it with razor / slip / slide /
+roll, a source monitor, per-cut transitions and text-based deletion from the
+transcript (§9b). Export re-runs the exact same snapshot
 builder on a deterministic fixed-timestep loop, waits for every decode to actually land
 (and *refuses* to write the file if one didn't), and hands the frames to **ffmpeg in a
 child process** or to a **WebCodecs encoder + WebM muxer**.
@@ -39,6 +41,7 @@ child process** or to a **WebCodecs encoder + WebM muxer**.
 7. [Stage 6 — Placement: layer, or a whole composition](#7-stage-6--placement-layer-or-a-whole-composition)
 8. [Stage 7 — Interpret Footage: per-file reinterpretation](#8-stage-7--interpret-footage-per-file-reinterpretation)
 9. [Stage 8 — The clip model: trim, slip, slide, split](#9-stage-8--the-clip-model-trim-slip-slide-split)
+    - [Stage 8b — The edit tools above the clip model](#9b-stage-8b--the-edit-tools-above-the-clip-model)
 10. [Stage 9 — Time mapping: comp seconds → source seconds](#10-stage-9--time-mapping-comp-seconds--source-seconds)
 11. [Stage 10 — Decode: the exact frame path](#11-stage-10--decode-the-exact-frame-path)
 12. [Stage 11 — The decode fallback ladder](#12-stage-11--the-decode-fallback-ladder)
@@ -717,6 +720,153 @@ animation was travelling toward never renders.
 
 ---
 
+## 9b. Stage 8b — The edit tools above the clip model
+
+Added 2026-09-02. Everything below sits **on top of** the five clip operations in
+§9 and introduces no sixth one — which is the point: an NLE gesture is a policy
+about which of `trimStart` / `trimEnd` / `shift` / `slip` / `split` to call and in
+what order, not a new way for a bar to relate to its source.
+
+### The edit modes — `src/layout/Timeline/timelineEditMode.ts`
+
+Selection, **Razor**, **Slip**, **Slide** and **Roll**, chorded to
+`Shift+S / Shift+C / Shift+Y / Shift+U / Shift+R`, with `Escape` returning to
+Selection (`TimelineTools.tsx` draws the row; `timelineEditModeIntegration.test.tsx`
+pins the gestures end to end). Two design notes worth keeping:
+
+- **Why a mode and not a modifier.** Slip and slide already existed as Alt-drag
+  and Alt+Shift-drag on a clip body and were invisible — the only way to find one
+  was to hold a key over a bar and notice the cursor change. All of these
+  gestures begin with a press on a clip body and differ only in meaning, so they
+  cannot be distinguished by *where* you press: either a modifier says which, or
+  the tool does. The Alt-drags still work.
+- **Why its own store, not `uiStore`'s `Tool`.** `Tool` is the CANVAS toolbar and
+  acts on the viewport; these act on time. Folding them in would make every
+  `activeTool === 'select'` check in the viewport wrong the moment somebody
+  picked Razor.
+
+**Roll** is the one genuinely new edit, and the only one the old toolset could
+not fake. It moves the CUT POINT between two abutting clips — the left clip's
+out and the right clip's in move together, so total duration is unchanged — and
+it is bounded by BOTH clips' remaining source handles. The arithmetic is
+`rollLimits` / `rollClips` in `packages/timeline/src/clips/Clip.ts:198-228`
+(clamped, and integer-frame, because a fractional roll would desynchronise the
+pair by a sub-frame); `TimelineController.rollEdit` (`:757`) addresses the two
+scene nodes and commits both bars as **one** history entry.
+`src/layout/Timeline/clipCuts.ts` finds the cut under the pointer.
+
+Razor splits at a snapped cut line rather than at the playhead, and `Shift`+click
+cuts every track at that frame — so `Ctrl+Shift+D` is no longer the only splitter
+and you no longer have to travel to the playhead first.
+
+### Per-cut transitions — `src/core/timeline/transitions.ts`
+
+Cross dissolve, dip to black, dip to white and wipe. The mechanism is a
+**record**, not a pattern to be re-derived: `transitionStore.ts` holds which cut,
+which kind, how long, and how it straddles the cut, and everything visible is
+MATERIALISED from it — overlapping bars, opacity ramps, or a keyframed wipe
+effect. Three operations follow: materialise, dematerialise (restore the exact
+snapshot taken before), and change (both, in one undo entry).
+
+`TimelineController.writeCrossfades` has written dissolves since Sequence Layers
+and does the job perfectly *once* — what it leaves behind is four opacity
+keyframes and two bars that happen to overlap, with nothing saying those facts
+are one thing. So the dissolve could not be selected, lengthened, removed without
+guessing what the opacity track held before, or changed to a dip. Deriving it the
+other way round — scanning opacity tracks for something ramp-shaped — would
+misread a hand-authored fade as a transition and delete it.
+
+UI: `Timeline/transitionPalette.tsx` (drag a chip onto a cut),
+`transitionCommands.ts` (double-click a cut, or the clip menu), and
+`transitionOverlay.ts` (the grips that resize one live).
+
+### The source monitor — `src/layout/SourceMonitor/sourceMonitorOps.ts`
+
+In and out points are marked in **source seconds**; a clip bar is **frames of the
+target comp**. That conversion happens in this one file and nowhere else, because
+it needs both halves at once — the range, and the fps of the comp the footage is
+landing in. A monitor that stored frames would be wrong the moment the same clip
+went into a 24 fps and a 30 fps comp.
+
+The four verbs (Insert, Overwrite, Add to end, New comp from range) all route
+through `insertMedia` — the single import path that owns PAR, sequences, audio,
+SVG and fitting, and which has no opinion about time — and then express the range
+as the timeline's own trims: `trimClipTo('end')` **first**, then `'start'`, then
+`setClipStart`. End first because moving the head first can momentarily invert the
+bar and the engine clamps it to one frame (see §9's `clipWindow` note on sliver
+bars), and `trimStart` advances `sourceIn` by the same delta it moves `start`,
+which is what makes the bar show the marked part of the file rather than the
+first N seconds of it.
+
+### Deleting a time range — `src/layout/Transcript/transcriptOps.ts`
+
+Text-based editing: select a run of words in the transcript panel and delete its
+time range from every layer. The arithmetic is `src/core/captions/transcriptEdit.ts`
+(pure, testable without a scene); this file is the surgery.
+
+The trap it exists to avoid: `TimelineController.rippleDeleteLayer` deletes ONE
+bar and slides everything after it left by that bar's length. Deleting a time
+RANGE is a different operation — several layers are cut at the same two instants,
+and the gap that closes is the **range's** length, once, not the sum of the
+lengths of the clips that were in it. Calling the ripple delete per layer would
+shift later clips once per layer, which for a video plus its audio is exactly
+twice as far as it should be. So the ripple is done ONCE per range, after the
+deletions, over every clip in the comp — including layers the user excluded from
+the deletion, because time closing is a fact about the composition.
+
+Ranges are applied **last first**: every earlier range's boundaries are stated in
+the current time base, and closing a later gap does not move them, while closing
+an earlier one would move every range after it.
+
+### Silence removal and ducking — `src/core/audio/`
+
+`silenceRemoval.ts` splits into two deliberately separate shapes.
+`detectSilences` is PURE — samples in, source-second ranges out, no scene, no
+engine, no Web Audio — which is what lets the dialog show a real "will remove N
+gaps totalling S s" readout computed by the same code that does the cut, rather
+than by a cheaper estimate that agrees on the easy cases and disagrees exactly
+where the parameters are interesting. `removeSilences` is the scene half: map
+source seconds onto comp time through each layer's clip bars, cut, delete, close
+the gap — picture and sound split at the same boundaries, one undo entry.
+
+The ripple is done by hand here for a structural reason:
+`deleteLayerForClip({ ripple: true })` shifts every later bar **on the same
+track**, and in this app a composition is ONE track — every layer shares it
+(`compositionTrackIds`) — so the built-in ripple would drag unrelated layers left.
+
+`ducking.ts` holds a music layer a set number of dB under a voice layer as **level
+keyframes** on `audioLevelDb`, not as a sidechain compressor: Web Audio has no
+sidechain input, a live detector would need an `AudioWorklet` plus a second
+implementation for the `OfflineAudioContext` the export mixdown uses, and the two
+would not agree. Baked keyframes are the same numbers in preview, in export and
+on screen, and can be dragged afterwards. The parameters are remembered on the
+node as `__ducking` so **Re-duck** exists when the voice track changes — the same
+contract `audioDriver.ts` has with `__audioDriver`.
+
+### Assembling — `src/core/composition/`
+
+`assembleFromFootage.ts` is one gesture and one undo entry over four things that
+already existed and were never joined up: Scene Edit Detection finds the cuts,
+the clip splits, the shortest shots are dropped, and `sequenceLayerBars` lays the
+rest end-to-end with a dissolve. Before it, an assembly cost four gestures — two
+of them repeated per shot, each its own undo entry — so backing out of a bad
+detection meant forty presses of `Ctrl+Z`. `compFromClips.ts` is the sibling:
+lift a selection of clips into their own composition.
+
+### Reviewing — scopes and the frame tap
+
+`src/core/video/scopes.ts` computes waveform (luma/RGB), RGB parade, vectorscope
+and histogram as pure functions over an `ImageData.data`, accumulating into small
+integer histograms first so the painter's cost depends on the panel size rather
+than on the two million pixels of a 1080p frame. Frames arrive either from the
+RAM preview cache (with the comp rect reconstructed out of the viewport) or from
+`src/core/rendering/frameTap.ts` — a rate-limited, opt-in, **synchronous**
+`drawImage` + `getImageData` taken inside the render tick, because the viewport's
+WebGL canvas has no `preserveDrawingBuffer` and its pixels are unreadable by the
+time any timer fires.
+
+---
+
 ## 10. Stage 9 — Time mapping: comp seconds → source seconds
 
 This is the composition function `buildSnapshot` builds per layer per frame
@@ -1193,6 +1343,24 @@ Two modes:
 - **`mix`** — cross-dissolve between the two bracket frames.
 - **`pixelMotion`** — optical-flow motion compensation (`feedPixelMotion`,
   `MotionRendererBackend.ts:1256-1287`; flow in `src/core/rendering/pixelMotionFlow.ts`).
+  Flow estimation prefers a WebGL2 pass (`pixelMotionFlowGpu.ts`, ~13× the CPU search at
+  1080p): an INTEGER twin of the CPU block match — integer luma, integer SAD, fixed scan
+  order, uint readback through RGBA32UI (core WebGL2, no float-readback extension) — that
+  must prove itself bit-equal to the CPU search on a synthetic pair at init before serving
+  a real frame. Bit-equal fields are what keep preview == export regardless of which
+  backend ran, including a mid-session fall-back on context loss. The sub-pixel parabola
+  and 3×3 smoothing run on the CPU either way (`finalizeFlow`), on the exact integers the
+  search produced; no WebGL2 (or a failed self-check) means the CPU search, as before.
+  The full-res WARP prefers WebGL2 too (`pixelMotionWarpGpu.ts`, ~80× at 1080p: ~4.5ms
+  warm vs ~370ms CPU) under a DIFFERENT gate: float bilinear cannot be bit-equal across
+  backends, so the backend is a session-level decision instead — self-check once at init
+  (GPU within a few counts of the CPU warp on a synthetic pair, and two GPU runs
+  bit-identical), then every frame the session renders (preview and export alike) warps on
+  the chosen backend. Measured GPU-vs-CPU difference at 1080p: ≤1 count per channel. The
+  GPU path also skips both full-res `getImageData` reads and the `putImageData` write —
+  frames go canvas→texture and return via `drawImage`. A mid-session context loss drops
+  the remaining frames to the CPU warp (the one seam where warp pixels can change inside
+  a session — visually indistinguishable, deliberately preferred to killing the mode).
   Needs **both** bracket frames from the exact decoder; while either is decoding, the ordinary
   ladder feeds the *nearest* bracket under the same key — "nearest-frame, never a hole, and
   never a half-warped guess" (`:1251-1255`). The warp is memoized on the frame pair + weight,
@@ -1448,6 +1616,17 @@ encodes **once** at the end from `frame_%04d`, so "a paused render is nothing mo
 'the loop stopped after frame N and the files for 0..N are still there'." `run` treats the
 abort signal as **pause**, resolving with the next offset instead of throwing, and
 deliberately does **not** dispose the sink — disposal deletes the staging dir.
+
+Reached from the UI as of 2026-09-02 (`src/stores/renderQueueStore.ts`,
+`renderQueuePauseResume.test.ts`). `paused` and `stopped` are the same state
+mechanically and differ only in scope — Pause is "this job", Stop is "the whole
+queue" — and both carry a `resumeFrame` mirroring the live handle's
+`_resume.nextOffset`. A resumed job keeps the progress it had, because pause
+meaning "start over" is the failure this exists to avoid, and half-rendered jobs
+are picked up ahead of queued ones. Losing the work is its own verb, **Discard**,
+and it is the only destructive one; removing a job disposes its parked sink so
+the staging dir cannot leak. `_resume` is **never serialized** — it holds a live
+sink — so pause/resume is session-scoped, and duplicating a job strips it.
 
 ### 16.8 Other export paths
 

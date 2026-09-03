@@ -185,7 +185,7 @@ describe('the control is reachable', () => {
   it('ClonerSection is mounted from Effects → Simulation into Effect Controls', () => {
     const library = readSource('layout/Effects/EffectsPanel.tsx');
     const controls = readSource('layout/Effects/EffectControlsPanel.tsx');
-    const props = readSource('layout/EditorLayout/DemoPanels.tsx');
+    const props = readSource('layout/Inspector/inspectorSections.ts');
     // Add from the Effects browser…
     expect(library).toMatch(/enableNodeCloner/);
     expect(library).toMatch(/Simulation/);

@@ -7,13 +7,15 @@
 
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
+import { EmptyState } from '@components/EmptyState';
 import { openModal } from '@stores/modalStore';
 import { relinkLiveAsset } from '@core/project/localProjectIO';
 import type { MissingAssetRef } from '@core/project/missingAssets';
 import { bumpScene } from '@stores/sceneStore';
 import { useState } from 'react';
 
-function RelinkBody({
+/** Exported so the relinked-everything state can be asserted directly. */
+export function RelinkBody({
   missing,
   close,
 }: {
@@ -40,9 +42,12 @@ function RelinkBody({
 
   if (left.length === 0) {
     return (
-      <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: 'var(--font-size-sm)' }}>
-        Every missing asset has been relinked.
-      </p>
+      <EmptyState
+        compact
+        icon="success"
+        title="Nothing left to relink"
+        message="Every missing asset now points at a file on this machine."
+      />
     );
   }
 

@@ -31,9 +31,9 @@
 import { BUILTIN_SHADERS } from '../shaders/builtin';
 import {
   packBend, packPerspective, packSpotlight, packMotionTile, packFill,
-  packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D,
+  packSharpen, packSetMatte, packStroke, packTextured, packDeformedMesh, packTextured3D, packShadowDepth,
   packVignetteFx, packBlackAndWhite, packTritone, packPhotoFilter, packThreshold, packVibrance, packFxBlock,
-  packBokeh, packCocBlur, packSceneBlitLut,
+  packBokeh, packCocBlur, packDofGather, packSceneBlitLut, packMesh3DPbr, packSsao, packSsaoBlur,
 } from '../pipeline/uniforms';
 import type { Mat3 } from '../core/math/Mat3';
 import type { Mat4 } from '../core/math/Mat4';
@@ -149,9 +149,27 @@ const PACKERS: ReadonlyArray<{ shader: string; pack: () => Float32Array }> = [
   { shader: 'mesh3d-solid', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'mesh3d-textured', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
   { shader: 'mesh3d-textured-linear', pack: () => packTextured3D(MVP4, RECT, COLOR, 1) },
+  // …and the PBR variant widens that block by two vec4s at the TAIL, which is
+  // exactly the drift this table exists to catch: `packMesh3DPbr` builds on
+  // `packTextured3D`, so a field added to the shared shade tail must land
+  // between them on BOTH sides or every map parameter reads garbage.
+  { shader: 'mesh3d-pbr', pack: () => packMesh3DPbr(MVP4, RECT, COLOR, 1) },
+  // The shadow-map caster pair. Their block is deliberately NOT the shade tail
+  // — it carries the light's MVP, the caster's world matrix and the axis/origin
+  // the receiver measures against — so it is its own row, and the two shaders
+  // share one packer because they differ only in vertex layout.
+  { shader: 'shadow-depth', pack: () => packShadowDepth(MVP4, MVP4 as unknown as number[], [0, 0, 1], 0.001, [0, 0, 0]) },
+  { shader: 'shadow-depth-mesh', pack: () => packShadowDepth(MVP4, MVP4 as unknown as number[], [0, 0, 1], 0.001, [0, 0, 0]) },
+  // The SSAO pair. Their blocks are their own — the estimate carries a mat4
+  // (camera space to clip, used in BOTH directions) after three vec4s, and the
+  // blur carries one vec4 — so a field added to either must land on both sides
+  // here or the pass reads a radius where it expects a far plane.
+  { shader: 'ssao', pack: () => packSsao(MVP, RECT, MVP4, 40, 1, 1000, 1, 512, 512, 16) },
+  { shader: 'ssao-blur', pack: () => packSsaoBlur(MVP, RECT, 1 / 512, 1 / 512, 1000, 40) },
   { shader: 'scene-blit', pack: () => packTextured(MVP, RECT, COLOR, 1) },
   { shader: 'bokeh', pack: () => packBokeh(MVP, RECT, 0.001, 0.001, 8, 6, 0.5, 1) },
   { shader: 'coc-blur', pack: () => packCocBlur(MVP, RECT, RECT, 0.001, 0.001, [1, 2, 3, 4], 6, 0.5, 1) },
+  { shader: 'dof-gather', pack: () => packDofGather(MVP, RECT, 0.001, 0.001, 6, 0.5, 1, 24, 1.00001, -1, 1000, 24, 24, 1000, 0) },
   {
     shader: 'scene-blit-lut',
     pack: () => packSceneBlitLut(MVP, RECT, COLOR, 1, { size: 33, is1d: false, intensity: 1, domainMin: 0, domainMax: 1 }),

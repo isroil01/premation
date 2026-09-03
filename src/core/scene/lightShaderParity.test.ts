@@ -203,30 +203,49 @@ describe('one-sided shading: CPU and GPU agree on what the flag means', () => {
     expect(one![0]).toBeLessThan(two![0]);
   });
 
-  it('the shader reads the flag from eyeLit.w, and 2 means one-sided', () => {
+  it('the shader reads the flag from eyeLit.w: 2/4 one-sided, 3/4 toon', () => {
     // The encoding is load-bearing in two places that cannot see each other:
     // `packShade3D` writes it, four shade blocks read it. Both are pinned so a
     // change to either shows up here rather than as a lighting difference.
+    // 1 = two-sided, 2 = one-sided, 3/4 = their toon twins (cel-quantized).
     const uniforms = readSource('../packages/renderer/src/pipeline/uniforms.ts');
-    expect(uniforms).toMatch(/out\[o \+ 3\] = shade\.oneSided \? 2 : 1;/);
+    expect(uniforms).toMatch(/out\[o \+ 3\] = toon \? \(shade\.oneSided \? 4 : 3\) : shade\.oneSided \? 2 : 1;/);
     const shaders = readSource('../packages/renderer/src/shaders/builtin.ts');
-    // Every shade block derives it, and every lambert/specular term uses it.
-    expect((shaders.match(/twoSided = select\(1\.0, 0\.0, obj\.eyeLit\.w > 1\.5\)/g) ?? []).length).toBe(2);
-    expect((shaders.match(/twoSided = eyeLit\.w > 1\.5 \? 0\.0 : 1\.0/g) ?? []).length).toBe(2);
-    // 4 blocks x (aim + toLight + Phong specular + PBR N·L + PBR N·V + PBR N·H).
+    /*
+      ONE literal per dialect, not two.
+
+      These counts used to be 2 and 2, because the WGSL and GLSL shade blocks
+      were each written out twice — once inline in `solid3d`, once in the const
+      the textured and mesh shaders interpolate — and kept in step by hand. The
+      shadow-map work turned that duplication into four edit sites for one
+      change, so `solid3d` now interpolates the same const everything else does
+      and `shade3dN` / `shade3dNMR` are still derived from it by substitution.
+
+      The claim being pinned is unchanged: the flag's encoding, written in one
+      place and read in another that cannot see it. What moved is only how many
+      copies of the reader exist in source — and the four SHADERS still each get
+      one, because they are all built from this text.
+    */
+    expect((shaders.match(/let oneS = \(obj\.eyeLit\.w > 1\.5 && obj\.eyeLit\.w < 2\.5\) \|\| obj\.eyeLit\.w > 3\.5;/g) ?? []).length).toBe(1);
+    expect((shaders.match(/twoSided = \(\(eyeLit\.w > 1\.5 && eyeLit\.w < 2\.5\) \|\| eyeLit\.w > 3\.5\) \? 0\.0 : 1\.0/g) ?? []).length).toBe(1);
+    // Both dialects quantize under the toon flag.
+    expect((shaders.match(/toonFlag/g) ?? []).length).toBeGreaterThanOrEqual(6);
+    // 2 blocks x (aim + toLight + Phong specular + PBR N·L + PBR N·V + PBR N·H).
     // The PBR branch must honour the flag in every dot product it takes, or a
     // one-sided extrusion wall would light from behind under GGX while staying
     // dark under Phong — the divergence this file exists to catch.
-    expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(24);
+    expect((shaders.match(/, twoSided\)/g) ?? []).length).toBe(12);
   });
 
-  it('only an extrusion BODY asks for it', () => {
+  it('only a closed 3D BODY asks for it', () => {
     // Slices and the front face must not: their normals are +Z, so clamping
-    // would black them out under a front light. Two sites: the extruded MESH
-    // (every vertex normal points out of the solid) and the quad-synthesis
-    // fallback's walls + back cap.
+    // would black them out under a front light. Three sites, each a solid
+    // whose vertex normals all point out of the volume: the extruded MESH,
+    // the quad-synthesis fallback's walls + back cap, and an imported glTF
+    // model mesh (its single-sided materials; doubleSided ones route through
+    // the 'front' range role, which the renderer lights two-sided).
     const build = readSource('core/rendering/buildSnapshot.ts');
-    expect((build.match(/oneSided: true/g) ?? []).length).toBe(2);
+    expect((build.match(/oneSided: true/g) ?? []).length).toBe(3);
     expect((build.match(/sceneLights, undefined, true\)/g) ?? []).length).toBe(1);
   });
 });

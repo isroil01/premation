@@ -31,6 +31,64 @@ export interface DrawItem {
    * question the renderer has to answer by counting.
    */
   originTexture?: TextureHandle;
+  /**
+   * The glTF PBR map set, at bindings 3–6 of the `mesh3d-pbr` material.
+   *
+   * Named rather than positional for the same reason `originTexture` is: the
+   * shader means something different by each, and the slots overlap by NUMBER
+   * with `maskTexture`/`originTexture` only because no material ever declares
+   * both sets — the mesh path has no mask and no plugin origin. Every field is
+   * required once the group is present; a material missing one binds the shared
+   * white texture, whose value is the identity for all three multiplicative
+   * maps (see the `mesh3d-pbr` shader note).
+   */
+  pbrTextures?: {
+    normal: TextureHandle;
+    metallicRoughness: TextureHandle;
+    occlusion: TextureHandle;
+    emissive: TextureHandle;
+  };
+  /**
+   * The scene's prefiltered specular environment map, at bindings 7/8.
+   *
+   * Bound on EVERY lit-3d draw, not only the reflective ones: the shader
+   * skips it on a zero `envParams.x`, and a per-draw binding difference would
+   * mean a second pipeline for every 3d material to express what one uniform
+   * already expresses. A comp with no environment light binds the shared 1x1
+   * fallback, which is never sampled.
+   */
+  envTexture?: TextureHandle;
+  /** Sampler for {@link envTexture} — REPEAT in u so the equirect's longitude
+   *  seam blends instead of clamping, which is why it cannot be the layer's. */
+  envSampler?: SamplerHandle;
+  /**
+   * The run's shadow map, at bindings 9/10.
+   *
+   * Bound on EVERY lit-3d draw for exactly the reason {@link envTexture} is: the
+   * shader skips it on a zero `shadowParams.x`, and making the BINDING the
+   * switch would mean a second pipeline per 3d material to say what one uniform
+   * already says. A run with no shadow-mapped light binds the shared 1x1
+   * far-depth texel, which is never sampled.
+   */
+  shadowTexture?: TextureHandle;
+  /** Sampler for {@link shadowTexture} — NEAREST, because the map's texels are
+   *  a 24-bit depth packed across rgb and a filtered blend of two of them is not
+   *  a depth. That is why it cannot be the layer's sampler. */
+  shadowSampler?: SamplerHandle;
+  /**
+   * The run's ambient-occlusion buffer, at bindings 11/12.
+   *
+   * Bound on EVERY lit-3d draw for the same reason {@link envTexture} and
+   * {@link shadowTexture} are: the shader skips it on a zero `aoParams.x`, and
+   * making the BINDING the switch would mean a second pipeline per 3d material
+   * to say what one uniform already says. A run without SSAO binds the shared
+   * 1x1 white texel — "nothing occludes anything" — which is never sampled.
+   */
+  aoTexture?: TextureHandle;
+  /** Sampler for {@link aoTexture} — LINEAR-clamp, because the buffer is
+   *  usually half resolution and is being magnified. It cannot be the layer's:
+   *  `solid3d` has no layer sampler for the backend to broadcast. */
+  aoSampler?: SamplerHandle;
   /** Optional custom geometry for mesh rendering. */
   vertexBuffer?: BufferHandle;
   indexBuffer?: BufferHandle;
@@ -51,6 +109,41 @@ export interface CommandBatch {
 
 export class CommandBuffer {
   private readonly items: DrawItem[] = [];
+
+  /**
+   * The specular environment map every lit-3d draw in this buffer binds.
+   *
+   * A property of the PASS, not of the draw: one comp has one environment, and
+   * threading it through four `emit*3D` signatures that are already ten
+   * parameters long would say the opposite. The `emit*3D` helpers stamp it
+   * onto their items; nothing else reads it, so a 2D draw never acquires a
+   * binding its material does not declare.
+   *
+   * Every lit-3d material DECLARES bindings 7/8, so this must be set before a
+   * 3d group is queued — a comp with no environment light sets the shared 1x1
+   * fallback, which the shader's zero `envParams.x` never samples.
+   */
+  env?: { texture: TextureHandle; sampler: SamplerHandle };
+
+  /**
+   * The shadow map every lit-3d draw in this buffer binds.
+   *
+   * A property of the PASS for the same reason `env` is: a depth RUN renders one
+   * map, from one light, and every receiver in the run reads that same texture.
+   * The `emit*3D` helpers stamp it onto their items, so a 2D draw never acquires
+   * a binding its material does not declare.
+   */
+  shadow?: { texture: TextureHandle; sampler: SamplerHandle };
+
+  /**
+   * The ambient-occlusion buffer every lit-3d draw in this buffer binds.
+   *
+   * A property of the PASS, like `env` and `shadow`: a depth run renders one
+   * screen-space AO image and every receiver in the run reads that same
+   * texture. The `emit*3D` helpers stamp it onto their items, so a 2D draw
+   * never acquires a binding its material does not declare.
+   */
+  ao?: { texture: TextureHandle; sampler: SamplerHandle };
 
   add(item: DrawItem): void {
     this.items.push(item);

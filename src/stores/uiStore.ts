@@ -48,6 +48,9 @@ export type Tool =
   | 'eraser'
   | 'curvature'
   | 'line'
+  // Drag a line across a shape layer: every crossing splits its path. Lives
+  // beside the pen tools because it EDITS an outline rather than creating one.
+  | 'knife'
   | 'text'
   | 'shape'
   | 'ellipse'

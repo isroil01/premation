@@ -131,3 +131,138 @@ describe('the status line does not lie about a disabled expression', () => {
     expect(container.textContent ?? '').not.toContain('Disabled');
   });
 });
+
+/**
+ * Autocomplete, at the level this medium can actually see.
+ *
+ * The string arithmetic — which range an accepted item replaces, where the
+ * caret lands — is pinned in `expressionCompletion.test.ts`, without a DOM.
+ * What is left, and what ONLY a render can check, is the wiring: that typing
+ * opens the list, that the keys reach the textarea rather than the global
+ * shortcut manager, and that accepting writes through to the engine.
+ *
+ * Note the shape of every case: the caret is set on the element before firing,
+ * because a controlled textarea in jsdom does not move it for you and the
+ * completion is defined entirely by where the caret is.
+ */
+describe('completion at the caret', () => {
+  const editor = (): HTMLTextAreaElement =>
+    screen.getByRole('combobox', { name: 'Expression for x' }) as HTMLTextAreaElement;
+
+  /** Type `text` as if it were entered, leaving the caret at its end. */
+  const type = (el: HTMLTextAreaElement, text: string): void => {
+    act(() => {
+      fireEvent.change(el, { target: { value: text, selectionStart: text.length, selectionEnd: text.length } });
+    });
+  };
+
+  const render1 = (): HTMLTextAreaElement => {
+    defaultAnimation.removeExpression(NODE, 'x');
+    render(<ExpressionEditor nodeId={NODE} prop="x" />);
+    return editor();
+  };
+
+  test('typing an identifier opens a ranked list', () => {
+    const el = render1();
+    type(el, 'wig');
+    const list = screen.getByRole('listbox', { name: 'Expression completions' });
+    expect(list).toBeTruthy();
+    const options = screen.getAllByRole('option');
+    expect(options[0]?.textContent).toContain('wiggle()');
+    // …with the documentation beside it, which the chip strip only had on hover.
+    expect(options[0]?.textContent).toContain('smooth random motion');
+    expect(options.length).toBeLessThanOrEqual(8);
+  });
+
+  test('nothing opens on punctuation or an empty field', () => {
+    const el = render1();
+    type(el, 'value + ');
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  test('Enter accepts the highlighted row and writes the expression through', () => {
+    const el = render1();
+    type(el, 'wig');
+    act(() => { fireEvent.keyDown(el, { key: 'Enter' }); });
+    expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
+    // …and the list is gone, so a second Enter is a newline again.
+    expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  test('Tab accepts too', () => {
+    const el = render1();
+    type(el, 'wig');
+    act(() => { fireEvent.keyDown(el, { key: 'Tab' }); });
+    expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
+  });
+
+  test('the arrows move the highlight, and Enter takes what is highlighted', () => {
+    const el = render1();
+    type(el, 'loop');
+    const before = screen.getAllByRole('option').map((o) => o.textContent ?? '');
+    act(() => { fireEvent.keyDown(el, { key: 'ArrowDown' }); });
+    expect(screen.getAllByRole('option')[1]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('option')[0]).toHaveAttribute('aria-selected', 'false');
+    act(() => { fireEvent.keyDown(el, { key: 'Enter' }); });
+    // Whatever row two was, that is what landed — asserted through the list
+    // rather than against a hardcoded name, so ranking can change freely.
+    const label = (before[1] ?? '').replace(/\(\).*$/, '');
+    expect(defaultAnimation.getExpressionSrc(NODE, 'x')?.startsWith(label)).toBe(true);
+  });
+
+  test('Escape dismisses without touching the text', () => {
+    const el = render1();
+    type(el, 'wig');
+    act(() => { fireEvent.keyDown(el, { key: 'Escape' }); });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wig');
+  });
+
+  test('Ctrl+Space opens the list on demand', () => {
+    const el = render1();
+    type(el, 'e');
+    act(() => { fireEvent.keyDown(el, { key: 'Escape' }); });
+    expect(screen.queryByRole('listbox')).toBeNull();
+    act(() => { fireEvent.keyDown(el, { key: ' ', code: 'Space', ctrlKey: true }); });
+    expect(screen.getByRole('listbox')).toBeTruthy();
+  });
+
+  test('clicking a row accepts it', () => {
+    const el = render1();
+    type(el, 'wig');
+    act(() => { fireEvent.mouseDown(screen.getAllByRole('option')[0]!); });
+    expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('wiggle(2, 30)');
+  });
+
+  test('a dotted access offers that object’s members', () => {
+    const el = render1();
+    type(el, 'thisComp.wi');
+    expect(screen.getAllByRole('option')[0]?.textContent).toContain('thisComp.width');
+    act(() => { fireEvent.keyDown(el, { key: 'Enter' }); });
+    // The object the user already typed is not duplicated — the bug the
+    // insert-at-caret chip strip had in every form.
+    expect(defaultAnimation.getExpressionSrc(NODE, 'x')).toBe('thisComp.width');
+  });
+
+  test('the combobox points a screen reader at the highlighted row', () => {
+    const el = render1();
+    type(el, 'wig');
+    expect(el).toHaveAttribute('aria-expanded', 'true');
+    const active = el.getAttribute('aria-activedescendant');
+    expect(active).toBeTruthy();
+    expect(document.getElementById(active!)).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('the reference is folded away', () => {
+  test('the 50-chip strip lives behind a closed disclosure', () => {
+    const { container } = render(<ExpressionEditor nodeId={NODE} prop="x" />);
+    const details = container.querySelector('details');
+    expect(details).toBeTruthy();
+    // Closed by default: the panel is the code and its value, not a wall of
+    // names. The chips themselves are unchanged inside it.
+    expect(details?.hasAttribute('open')).toBe(false);
+    expect(container.textContent ?? '').toContain('Reference');
+    expect(screen.getByRole('button', { name: 'wiggle()' })).toBeTruthy();
+  });
+});

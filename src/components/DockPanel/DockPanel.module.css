@@ -1,6 +1,16 @@
+/*
+ * DockPanel — an icon rail on the sidebar's outer edge beside one content pane.
+ *
+ * Two columns, one row. The rail keeps a fixed width (`--dock-rail-width`,
+ * which is also the sidebar's COLLAPSED width — see layoutStore) so that
+ * collapsing the sidebar removes the pane and moves no icon.
+ *
+ * The default layout puts the rail on the RIGHT (the inspector's outer edge);
+ * `.railLeft` flips the order for the left sidebar or a re-docked inspector.
+ */
 .root {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -10,230 +20,91 @@
   overflow: hidden;
 }
 
-/* ── Collapsed 44px Rail View ───────────────────────────────────────── */
-.collapsedRoot {
-  width: 100%;
-  max-width: 44px;
-  min-width: 44px;
-  background: var(--color-panel);
+.railLeft {
+  flex-direction: row-reverse;
+}
+
+.collapsed {
+  width: var(--dock-rail-width);
+  min-width: var(--dock-rail-width);
+  max-width: var(--dock-rail-width);
+}
+
+/* ── The content column ────────────────────────────────────────────── */
+.pane {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
 }
 
-.collapsedHeaderBar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: var(--bar-height-panel);
-  min-height: var(--bar-height-panel);
-  background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-border);
-  flex: none;
-}
-
-.collapsedMenuBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-height-row);
-  height: var(--control-height-row);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.collapsedMenuBtn:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-}
-
-.collapsedIconsRail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  padding: 6px 0;
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-}
-
-.collapsedIconBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-height-lg);
-  height: var(--control-height-lg);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
-  flex: none;
-}
-
-.collapsedIconBtn:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-}
-
-.collapsedIconBtnActive {
-  background: var(--color-surface-2) !important;
-  color: var(--color-primary) !important;
-  border-color: var(--color-border) !important;
-}
-
-/* ── Modern Studio Segmented Panel Tab Strip ───────────────────────── */
-.headerBar {
+/*
+ * The active panel's header. Sized to --bar-height-panel so it lines up with
+ * the viewport header across the splitter — the two bands either side of a
+ * seam sharing one height is most of what makes the frame read as one grid.
+ */
+.header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-border-subtle);
-  flex: none;
+  gap: var(--space-2);
   height: var(--bar-height-panel);
   min-height: var(--bar-height-panel);
-  padding: 0 8px 0 6px;
+  padding: 0 var(--space-3) 0 var(--space-5);
+  background: var(--color-panel-header);
+  border-bottom: 1px solid var(--color-border);
   user-select: none;
+  flex: none;
 }
 
-.tabsScroll {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  height: 100%;
+.title {
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  padding: 3px 0;
-  margin-right: 4px;
-}
-
-.tabsScroll::-webkit-scrollbar {
-  display: none;
-}
-
-.tabItem {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: var(--control-height-row);
-  padding: 0 8px;
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: var(--color-text-tertiary);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-  flex: none;
-  position: relative;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.tabItem:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--color-text-primary);
-}
-
-.tabItem:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-.tabItemActive {
-  background: var(--color-surface-2) !important;
-  color: var(--color-text-primary) !important;
-  font-weight: 600;
-  border-color: transparent !important;
-  box-shadow: none !important;
-}
-
-.tabLabel {
-  display: inline-block;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 120px;
-  letter-spacing: -0.01em;
+  white-space: nowrap;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
 }
 
-.tabCloseBtn {
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-sm);
-  border: none;
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  padding: 0;
-  margin-left: 2px;
-  font-size: var(--font-size-micro);
-  opacity: 0;
-  transition: all 0.12s ease;
-}
-
-.tabItem:hover .tabCloseBtn,
-.tabItemActive .tabCloseBtn {
-  opacity: 1;
-}
-
-.tabCloseBtn:hover {
-  background: rgba(255, 255, 255, 0.12);
-  color: var(--color-text-primary);
-}
-
-/* Tab actions right header */
 .headerActions {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--space-1);
   flex: none;
-  margin-left: 6px;
-  padding-right: 0;
 }
 
 .actionBtn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   width: var(--control-height-sm);
   height: var(--control-height-sm);
-  border: 1px solid transparent;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-text-tertiary);
-  border-radius: var(--radius-sm);
   cursor: pointer;
-  padding: 0;
-  flex: none;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .actionBtn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-hover);
   color: var(--color-text-primary);
 }
 
-.actionBtnActive {
-  background: var(--color-surface-3) !important;
-  color: var(--color-primary) !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
+.actionBtn:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
-/* ── Content Area ─────────────────────────────────────────────────── */
 .content {
   flex: 1 1 auto;
   width: 100%;
@@ -243,34 +114,162 @@
   overflow-x: hidden;
   position: relative;
   scrollbar-width: thin;
-  scrollbar-color: var(--color-border-strong) var(--color-surface-0);
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
 
 .content::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 
 .content::-webkit-scrollbar-thumb {
-  background: var(--color-border-strong);
-  border-radius: 0;
+  background: var(--color-scrollbar-thumb);
 }
 
 .content::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+  background: var(--color-scrollbar-thumb-hover);
 }
 
 .content::-webkit-scrollbar-track {
-  background: var(--color-surface-0);
+  background: var(--color-scrollbar-track);
 }
 
-.draggableTab {
+/* ── The rail ──────────────────────────────────────────────────────── */
+/*
+ * The hairline sits on the rail's INNER edge, facing the pane. The active
+ * tab's indicator bar overlaps it, which is what makes the tab read as
+ * attached to the content it controls rather than as a button that happens
+ * to be lit.
+ */
+.rail {
   display: flex;
-  align-items: stretch;
-  cursor: grab;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  width: var(--dock-rail-width);
+  min-width: var(--dock-rail-width);
   height: 100%;
+  padding: var(--space-2) 0;
+  background: var(--color-panel-header);
+  border-left: 1px solid var(--color-border);
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  user-select: none;
 }
 
-.draggableTab:active {
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+.railLeft .rail {
+  border-left: none;
+  border-right: 1px solid var(--color-border);
+}
+
+.railSlot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  flex: none;
+  cursor: grab;
+}
+
+.railSlot:active {
   cursor: grabbing;
+}
+
+.railTab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-lg);
+  height: var(--control-height-lg);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.railTab:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.railTab:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.railTabActive {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+.railTabActive:hover {
+  background: var(--color-surface-2);
+}
+
+/* The indicator: a 2px accent on the slot's inner edge, vertically centred on
+   the tab. Drawn on the SLOT, not the button, so it can sit flush against the
+   rail's hairline while the button keeps its own rounded box. */
+.railSlot:has(.railTabActive)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 2px;
+  height: 16px;
+  transform: translateY(-50%);
+  background: var(--color-primary);
+  border-radius: 0 1px 1px 0;
+}
+
+.railLeft .railSlot:has(.railTabActive)::before {
+  left: auto;
+  right: 0;
+  border-radius: 1px 0 0 1px;
+}
+
+.railSpacer {
+  flex: 1 1 auto;
+  min-height: var(--space-2);
+}
+
+/* The collapse / expand toggle at the foot of the rail. Quieter than a tab:
+   it is chrome, not a destination. */
+.railToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-lg);
+  height: var(--control-height-md);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  flex: none;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.railToggle:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.railToggle:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }

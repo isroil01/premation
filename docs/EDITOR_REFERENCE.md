@@ -66,11 +66,11 @@ rediscovered in git history and believed a second time.
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
-| Light types | 4 | `src/core/scene/light.ts` → `LightType` |
-| Canvas tools | 20 | `packages/workspace/src/tools/builtin.ts` |
+| Light types | 5 | `src/core/scene/light.ts` → `LightType` |
+| Canvas tools | 21 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `videoSink.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` |
-| Stores | 47 | `src/stores/*.ts` |
+| Stores | 54 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        47 Zustand stores
+                          ├── src/stores/*        54 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -176,7 +176,9 @@ Bounce Keyframes), not an ease — it generates decaying keys with amplitude *an
 duration both scaled by decay, which is what separates gravity from a flutter.
 
 **The Smoother and The Wiggler ship** (2026-09-01, `keyframeAssistants.ts`,
-Animation menu): The Smoother replaces a dense baked track (motion sketch,
+Animation menu) — as **dialogs with a live preview and one undo entry**
+(2026-09-02), not the text prompts parsing `"5, 25"` they landed as. The
+Smoother replaces a dense baked track (motion sketch,
 tracking, audio keyframes, expression bakes) with the fewest keyframes that
 stay within a value-unit tolerance — Douglas-Peucker on VERTICAL deviation,
 because t and value have different units — then smooths the survivors'
@@ -191,9 +193,159 @@ measured ARC length (`applyRovingSpatial`) — per-axis |value| roving is
 constant-speed only on an axis-aligned path, and tore the corner keyframe of an
 L-shaped move to two different times. Misaligned grids fall back per-track.
 
+**There is one graph editor** (2026-09-02). The timeline's graph and the Motion
+panel's private editor were two implementations of the same idea that disagreed
+about easing vocabulary; the private one is deleted and both surfaces now host
+the same component (`Timeline/GraphEditor.tsx`, embedded by
+`MotionEditorPanel.tsx`). It scopes to the timeline's property search and adds
+**Animated / Selected** visibility modes, a frozen **reference curve** to bend a
+new track against, the easing-kind selector, rove, ease copy/paste, and an
+**ease library** popover of saved curves (`customEaseStore.ts`,
+`EaseLibrarySection.tsx`). The vocabulary itself is reconciled in one tested
+helper (`easingVocabulary.ts`), so "ease out" means the same thing on the pills,
+in the graph and in the library.
+
+**Keyframe editing gained the AE verbs** (2026-09-01/02): the keyframe context
+menu carries an **Interpolation** submenu, **Keyframe Velocity…** and previous /
+next keyframe; **onion skin** has a settings popover for before / after / step /
+opacity; and the expression editor **autocompletes at the caret** — ranked,
+member-aware, Ctrl+Space — with the 48-chip reference strip collapsed behind a
+disclosure instead of occupying the panel.
+
+### Stagger, modifiers and drivers
+
+**Parametric stagger** (`choreography.ts`, `planStagger.ts`,
+`ChoreographySection.tsx`) animates a SELECTION rather than a layer: order modes,
+a base offset and swing in frames, a feel per gesture, a seed, and per-layer
+overrides. Evenly-spaced stagger is a metronome, which is why the gaps are
+non-uniform by design. The choice is stored as a record, so **Re-apply** replaces
+the previous choreography in one undo entry rather than layering a second one on
+top of it. What lands is ordinary keyframes on real properties — a head start on
+manual work, not a mode you get stuck in.
+
+**Modifier stacks** (`modifierStack.ts` → `modifierCompile.ts`,
+`ModifierStackSection.tsx`) are an ordered, editable pipeline per animatable
+property: offset / multiply / clamp / wiggle / smooth / spring / loop / delay /
+audio / oscillate / expression rows, each with parameters and an enable switch,
+**compiled to ONE expression** attached to the property. The render path, the
+exporter, undo and the render cache see an ordinary expression and cost nothing
+new; the user sees sliders instead of somebody else's `wiggle(0.35, …)`.
+Base-relative intrinsics compile as DISPLACEMENTS, so a wiggle in the middle of a
+stack does not discard the rows above it. Two behaviour presets ship as recipes.
+
+**Audio-reactive drivers** (`audioDriver.ts`, `AudioDriverSection.tsx`) say
+"follow the music" as a control: band, attack/release ballistics, gate, output
+range and curve. Where the engine can express the driver it becomes an
+expression; where it cannot — the `audio` identifier is bound to the LIVE
+broadband playback meter, which cannot answer for one band at an arbitrary time —
+it bakes per frame, with the parameters kept on `__audioDriver` so **Re-bake**
+exists. A baked track with no record of where it came from is indistinguishable
+from hand-drawn keyframes, which is the whole reason the record is written.
+
+**Bake dynamics** (`bakeDynamics.ts`, `BakeDialog.tsx`). Rigid bodies and
+particles are a live solve — `buildSnapshot` asks the solver for a pose every
+frame and the answer is never written down — which is why a simulation is the one
+thing in this editor you cannot art-direct. Baking runs it through the SAME
+solver the renderer uses, writes what it did as keyframes (particles to layers,
+bodies to transform tracks) and disables the live sim **in the same undo entry**.
+
+### The timeline as an editor
+
+**Edit tools are modes, not modifiers** (2026-09-02, `timelineEditMode.ts`,
+`TimelineTools.tsx`): Selection, **Razor**, **Slip**, **Slide** and **Roll**, each
+a lit button with a chord — **Shift+S / Shift+C / Shift+Y / Shift+U / Shift+R**,
+Escape returns to Selection — its own cursor, and a pointer HUD in frames. Slip
+and slide already worked as Alt-drag and Alt+Shift-drag and were *invisible*;
+**roll** — the two-sided trim at a cut, bounded by both clips' source handles, the
+one edit the older tools could not fake — did not exist at all. Razor draws a
+snapped cut line and **Shift+click cuts every track**. The Alt-drag gestures
+survive. This is its own store rather than an addition to the canvas `Tool`
+union, deliberately: these gestures act on time, not on the viewport, and folding
+them in would make every `activeTool === 'select'` check in the viewport wrong.
+
+**Clip edges snap** (2026-09-01) to other clips, the playhead, markers, the work
+area and the comp bounds, with a guide line; the frame grid stays the fallback.
+**Fit Composition** (`;`) and **Fit Work Area** (`Alt+;`) sit in the zoom control
+and the View menu.
+
+**Per-cut transitions** (`core/timeline/transitions.ts`, `transitionStore.ts`,
+`Timeline/transitionPalette.tsx`): cross dissolve, dip to black, dip to white and
+wipe, each held as a **record** — which cut, which kind, how long, how it sits on
+the cut — that MATERIALISES into overlapping bars, opacity ramps or a keyframed
+wipe, and dematerialises back to an exact snapshot of what was there before. The
+crossfade writer has existed since Sequence Layers, and it does the job perfectly
+once: what it leaves behind is four keyframes and two bars that happen to
+overlap, with nothing saying those facts are ONE thing. The record is the missing
+noun, and it is the authority — deriving a transition the other way round (by
+scanning opacity tracks for something ramp-shaped) would misread a hand-authored
+fade and delete it. Drag a chip onto a cut, double-click a cut, or use the clip
+menu; grips resize it live, and a change is dematerialise-then-materialise in one
+undo entry.
+
+**Assemble from Footage** (`assembleFromFootage.ts`, `AssembleDialog.tsx`) turns
+a rush into a cut in one gesture and **one undo entry**: detect the cuts through
+Scene Edit Detection, split, drop the shortest shots, sequence the rest with
+dissolves. Every piece existed already and none of them were joined up, so an
+assembly used to cost four gestures — two of them per shot — and forty presses of
+Ctrl+Z to back out of a bad detection. **New Composition from Selected Clips**
+(`compFromClips.ts`) lifts a selection into its own comp. **Use Proxies** is a
+comp-wide View toggle and a Preview-menu checkbox.
+
+### Reviewing footage: source monitor, scopes, transcript
+
+**Source Monitor** (`SourceMonitorPanel.tsx`, `sourceMonitorOps.ts`): mark in and
+out in SOURCE seconds, shuttle with **J / K / L** (1× / 2× / 4× ramps), step by
+frame, then **Insert**, **Overwrite**, **Add to end** or **New comp from range**.
+The source-seconds → target-comp-frames conversion happens in exactly one place
+because it needs both halves at once — the range, and the fps of the comp the
+footage is landing in; a monitor that stored frames would be wrong the moment the
+same clip went into a 24 fps and a 30 fps comp. The range is expressed as the
+timeline's own trims (`trimClipTo('end')`, then `'start'`, then `setClipStart`),
+not as a bespoke insert-with-duration. The footage preview dialog can hand a clip
+straight to it.
+
+**Scopes** (`Scopes/ScopesPanel.tsx`, `core/video/scopes.ts`): waveform (luma or
+RGB), RGB parade, vectorscope with 75 % targets, and histogram. Each accumulates
+the frame into a small integer histogram FIRST, so the painter's cost depends on
+the size of the panel rather than on the two million pixels of a 1080p frame, and
+a trace's brightness reads as density because density is a count. Input is
+point-sampled on a stride — averaging neighbours would INVENT code values that
+are not in the frame, which is the one thing a scope must not do. Fed from the
+RAM preview cache with the comp rect reconstructed out of the viewport, or from a
+render-loop tap (`frameTap.ts`): a synchronous `drawImage` + `getImageData`
+inside the draw tick, because the viewport canvas has no `preserveDrawingBuffer`
+and its pixels are gone by the time any timer fires.
+
+**Transcript panel, with text-based editing** (`Transcript/TranscriptPanel.tsx`,
+`transcriptOps.ts`, `core/captions/transcriptEdit.ts`): transcribe the comp, click
+a word to seek, select a run of words and **delete its time range from every
+layer at once**. That is not the ripple delete applied per layer — several layers
+are cut at the same two instants and the gap that closes is the range's length
+ONCE, not the sum of the clips inside it, which for a video plus its audio would
+be exactly twice too far. Ranges apply last-first, so earlier boundaries stay
+stated in the current time base. Plus a filler-word finder, transcript →
+captions, and SRT/VTT export.
+
+**Silence removal and ducking** (`silenceRemoval.ts`, `ducking.ts`, with their own
+dialogs). Detection is PURE — samples in, source-second ranges out — so the
+dialog's "will remove N gaps totalling S s" is computed by the same code that
+makes the cut, not by a cheaper estimate that agrees on the easy cases. Removal
+splits picture and sound at the same boundaries, drops the pieces and closes the
+gaps, in one undo entry. Ducking holds a music layer a set number of dB under a
+voice layer as **level keyframes** rather than a sidechain compressor: Web Audio
+has no sidechain input, a live detector would need an `AudioWorklet` plus a
+second implementation for the offline export mixdown, and the two would not
+agree. Baked keyframes are the same numbers in preview, in export and on screen,
+and you can drag one afterwards — a compressor you cannot see is a compressor you
+cannot fix. The parameters live on `__ducking`, so **Re-duck** exists for when the
+voice track changes.
+
+**Chapters from markers**: labelled composition markers become real chapters on
+MP4/MOV export, through an ffmetadata sidecar and `-map_chapters`.
+
 ### Compositing
-36 layer blend modes on one GPU shader path (`BLEND_COMBINE`), including the
-four Stencil/Silhouette modes. Bezier masks with all 7 AE modes (`none`
+38 blend modes on one GPU shader path (`BLEND_COMBINE`), including the
+four Stencil/Silhouette modes and Dissolve / Dancing Dissolve. Bezier masks with all 7 AE modes (`none`
 included), effect-scoped masking, and protected time regions. Track mattes
 (alpha/luma ± invert), decoupled from stacking order. Precomps with nesting and
 **continuous rasterization** (`continuousRaster.ts` → `buildSnapshot` →
@@ -218,6 +370,23 @@ and one repeater per shape; so does this (`pathOps.ts` resolves each with
 The chain's currency is a **list** of `PolyRun`s, not one polyline — that is what
 lets trim live in it, since trimming produces multiple open arcs.
 
+**Knife tool** (`K`, `KnifeTool` in `packages/workspace/src/tools/builtin.ts`,
+cutting through `core/geometry/pathCut.ts`): drag a
+line across the canvas and every targeted shape path is cut EXACTLY along it,
+cubic segments included, with closed shapes capped into islands. The tool's own
+decisions are the interesting half — a tap below the drag threshold must not cut
+(the line's direction would be pointer noise and the submitted line is infinite),
+a selection wins so "cut these two" is expressible, and with nothing selected only
+layers the line actually passes THROUGH are cut, by their corners rather than
+their AABB, so a diagonal near-miss stays a miss. A **Pathfinder** section gives
+shape layers the boolean set operations directly.
+
+**On-canvas gradient editor** (`gradientHandles.ts` + `GradientHandleOverlay.tsx`,
+per-fill chip): axis grips, stop diamonds, add / duplicate / delete stops, and a
+colour picker on double-click. The arithmetic half — an axis, a projection onto
+it, four kinds of hit test — is a pure, unit-tested module, the same split
+`focusPlane.ts` and `core/effects/effectHandles.ts` already make.
+
 ### Text
 Full animator selector stack, multiple selectors, wiggly selector, per-character
 3D, rich text, paragraph text, text-on-path. `textPath` is correctly *not* a path
@@ -225,9 +394,119 @@ operator: it consumes a mask and emits glyph placement, so it neither accepts no
 produces the chain's currency. AE models this the same way (Text → Path Options).
 
 ### 3D
-Classic 3D: cameras, 4 light types (point/ambient/spot/parallel) with AE falloff
-curves and cone feather, extrusion with bevels, face materials, ortho views,
-quad view. See §4 for what "3D" does **not** mean here.
+Classic 3D: cameras, 5 light types (point/ambient/spot/parallel/environment)
+with AE falloff curves and cone feather, extrusion with bevels, face materials,
+ortho views, quad view. See §4 for what "3D" does **not** mean here.
+
+**Environment light** (2026-09-01, `core/scene/environmentLight.ts`): an
+image-based sky — a preset equirect (studio / day sky / sunset) projected onto
+band-2 spherical harmonics, expanded at snapshot time into a derived rig (one
+ambient irradiance floor + up to six axis-deviation parallels) that rides the
+EXISTING 8-slot light array. Zero renderer changes; works under Phong and PBR;
+`envRotation` is keyframeable (an animated sky). It lights, it never glows —
+no wash layer. AE has no equivalent of any kind.
+
+**Any image can be the sky, and it now reflects too** (2026-09-02). The sky is no
+longer only a preset: any image or **EXR** asset projects to SH through
+`core/scene/environmentImage.ts` (EXR keeps its linear energy), cached per asset,
+with the first frame that asks kicking a decode, falling back to the default
+preset for that frame and repainting when the projection lands. Beside the
+irradiance probe the same sky builds a **prefiltered specular atlas** —
+importance-sampled GGX, one level per roughness — and the shader does split-sum
+IBL against an analytic env-BRDF in both dialects (WGSL and GLSL). A
+**Reflections** row on the environment light turns it on; Physical and Phong
+reflect, **Toon deliberately does not**. The whole path is gated so every scene
+authored before it renders byte-identically (`environmentReflections.test.ts`,
+plus the `env-reflect-metal` / `env-reflect-metal-off` render-test pair).
+
+**Composition Settings ▸ World** (`CompositionSettingsDialog.tsx`, round-trip
+pinned by `core/api/worldSettings.test.ts`): a default
+environment for new lights, a ground level for the grid, and a sky backdrop
+stored for later. All three ride the existing `comps` chunk and are **optional and
+absent until set**, so a document written before they existed comes back without
+them rather than defaulted-and-rewritten.
+
+**Material section** (`core/scene/material.ts`, `MaterialSection.tsx`,
+`materialStore.ts`): every reflectance parameter in one place with a live shading
+preview, per-face overrides for extrusions, and a **persisted material library**
+seeded from the built-in presets. Metal stays visible under Phong rather than
+going black. **Light presets** (Key, Fill, Rim, Soft top, Warm practical, Cool
+moonlight, Sunset key) and a **Kelvin colour-temperature** row mirror the camera's
+lens presets — `colorTemperature.ts` carries the blackbody fit and its inverse.
+**Bevel Style** (angular / concave / convex) has a dropdown; its setter had no
+caller before 2026-09-01.
+
+**Real curved primitives** (2026-09-02, `core/geometry/primitiveMesh.ts`,
+`core/scene/primitiveLayer.ts`): sphere, cylinder, cone, torus, capsule and box
+are now MESH layers with editable segment counts, created through the same
+imported-model path, with smooth per-vertex normals so a tessellated curve lights
+as a curve instead of as its facets. A sphere is not an extruded circle (that is a
+capsule) and a torus has a hole through an axis the extrusion sweep does not
+have, which is why these are surfaces of revolution written directly rather than
+outlines swept along z. Cube and plane keep their bevel-capable extruded forms.
+
+**glTF PBR maps and external `.gltf`** (2026-09-02, `core/media/gltf.ts`): normal,
+metallic-roughness, occlusion and emissive maps land on a separate `mesh3d-pbr`
+material, with texture transforms baked into UVs and tangents taken from
+derivatives. An external `.gltf` now imports **with its sidecar files**, and
+refuses by NAMING the ones it could not find rather than importing a hole.
+**File ▸ Import 3D Model** is the explicit entry point beside the drop target.
+
+**The 3D gizmo and the DOF focus plane work in every pane** (2026-09-01/02) —
+2-up and 4-up secondary views are no longer view-only. The focus plane is drawn
+in the viewport at focus distance with in-focus bands and a centre handle that
+pulls focus along the view axis, writing through the same keyframed path the
+inspector uses; it toggles from the 3D view menu.
+
+**glTF model import ships** (2026-09-01, `core/media/gltf.ts` +
+`core/scene/modelImport.ts`): drop a `.glb` (or embedded-URI `.gltf`) into the
+Assets import and it becomes ORDINARY layers — a 3D null per glTF node, a mesh
+layer per primitive — rendered through the same depth-grouped `extrudedMesh`
+path as extrusions, so imported models depth-sort, light per-fragment (Phong or
+PBR via Material Options) and keyframe with the standard gizmo. The source .glb
+persists as a data: URL inside the scene document (every edition's save path
+carries it; re-parsed on open by `modelHydrate`), which is why imports above
+20 MB warn about document weight. A `.gltf` referencing external files is
+refused with "export as .glb".
+
+**Animation clips bake to real keyframes** (`core/scene/modelAnimation.ts`):
+the file's first clip lands on the node layers' own x/y/z / rotation / scale
+tracks at import — visible in the timeline, editable in the graph editor,
+retimable with speed ramps. Sparse rotation spans densify along the slerp arc
+(~15 samples/s) and every baked euler unwraps toward its predecessor so a spin
+never snaps back 360° at the ±180° seam. Extra clips are reported in the
+import toast, not silently dropped.
+
+**Skinned meshes deform live** (`core/scene/modelSkinning.ts`): JOINTS_0 /
+WEIGHTS_0 primitives CPU-skin at snapshot time against their joint layers'
+CURRENT world matrices — the joints are ordinary imported nulls, so a baked
+walk cycle, a gizmo drag on a bone, or hand-set keyframes all deform the mesh
+identically. Skinned poses upload under pose-hashed GPU buffer keys (identical
+poses — a paused playhead, a looping cycle — reuse one buffer). A deleted
+joint layer falls back to the rigid bind pose rather than half-deforming.
+
+**Morph targets blend live** (`core/scene/modelMorph.ts`): a primitive's
+POSITION/NORMAL target deltas blend on the mesh layer's animatable
+`morph0…morphN-1` props (a file's baked 'weights' clip, keyframed sliders and
+the graph editor all drive the same numbers), then feed the skinning pass —
+the glTF order, so a face morphs AND rides its skeleton. Blends upload under
+weight-hashed buffer keys like skinned poses.
+
+**Toon (cel) shading** is a third reflectance model beside Phong and PBR
+(Material Options → Shading → Toon): the same per-fragment lighting quantized
+into 2–8 hard bands (Bands slider), with a fixed tight specular blob. It
+rides the existing lit-flag/shininess uniform slots — zero layout changes —
+and applies to anything on the depth-tested lit path, imported models
+included. AE has no 3D cel shading at all.
+
+**3D IK on any parented 3D layers** (`core/scene/boneIK3d.ts`): a damped CCD
+solver over a chain of 3D nulls — exactly what a glTF skeleton imports as.
+Two palette commands: *Pose 3D IK Chain at Target* (one-shot, at the
+playhead) and *Bake 3D IK to Target* (solve every frame against the target
+layer's ANIMATED position and land real rotation keyframes on the joints —
+animate one null, bake, the limb follows; the result is ordinary keyframes).
+Select the chain tip, then Ctrl/Cmd-click the target. The effector keeps its
+own rotation, so FK on the wrist survives IK on the arm.
 
 ### Rigging
 Bone skeleton with **FK, IK and FABRIK**, weight painting, vertex weight editing,
@@ -266,9 +545,26 @@ because the dialog previously claimed all of them kept alpha:
 
 ### Import / export
 Lottie **import and export**, SVG import including SMIL and CSS animation,
-image sequences, video with audio. Nine export formats: `mp4`, `webm`, `gif`,
-`mov`, `png`, `png-sequence`, `jpg-sequence`, `json`, `lottie`. mp4/mov need the
-desktop app (ffmpeg); the browser gets WebM or a PNG sequence.
+image sequences, video with audio. The rendered formats are `mp4`, `webm`, `gif`,
+`mov`, `png`, `png-sequence`, `jpg-sequence`, `exr-sequence`, `wav`, `json` and
+`lottie`, plus the `hdr10` / `hlg` delivery variants and the interchange writers
+(`edl`, `otio`, `fcpxml`, `ale`, `mogrt`) — **18 export formats** in §1's count,
+which unions `VideoFormat` with `ExportFormat`. mp4/mov need the desktop app
+(ffmpeg); the browser gets WebM or a PNG sequence.
+
+**The render queue pauses and resumes** (2026-09-02, `renderQueueStore.ts`,
+`renderQueuePauseResume.test.ts`). The desktop sink already staged every frame as
+an image in a per-job temp dir and encoded once at the end from `frame_%04d`, so
+a paused render is nothing more exotic than "the loop stopped after frame N and
+the files for 0..N are still there". **Pause** (one job) and **Stop** (the whole
+queue) are therefore the same mechanism at two scopes: both keep the sink and
+both carry a `resumeFrame`, and a resumed job keeps the progress it had rather
+than restarting at zero. Losing the work is its own verb — **Discard** — and it
+is the only destructive one. Half-rendered jobs are picked up ahead of queued
+ones. The live handle is an open sink and is **never serialized**, so this is
+session-scoped: quitting abandons a paused job's staging directory.
+
+**Chapters** ride MP4/MOV export as described under the transcript section above.
 
 ### Templates
 Exposed fields (`templateFields.ts`), **5** field kinds (`text`, `color`,
@@ -279,6 +575,36 @@ protected time regions (`responsiveTime.ts` → `TimelineController` →
 **There is no data binding.** `dataBinding`, `dataSource` and `csvBind` have
 zero hits repo-wide. It was listed here as shipped; it does not exist, and
 building it is greenfield work rather than a remainder.
+
+### The shell
+
+**Smart guides** (`packages/workspace/src/snap/smartGuides.ts` +
+`SmartGuideOverlay.tsx`) are the measuring half of snapping. `SnapEngine` has
+always answered "where does this edge want to land" — alignment, a pink line with
+no number attached. This adds the other half: distance badges, equal-spacing and
+equal-size detection with snapping, and Alt-hover measuring, behind a View
+Options toggle. Turning it off takes away the measuring, not the magnet.
+
+**Preview controls have one home** (2026-09-02): resolution, adaptive floor,
+motion blur, draft, onion skin, region of interest and the cache actions all live
+in the **Preview** menu, with **Cache Work Area Now**, **Purge RAM Preview** and
+**Purge Disk Cache** as real commands (`previewCacheCommands.ts`). **Window ▸
+Workspace** lists the saved layouts with the active one checked, plus *Save Layout
+as…* and *Reset* (`workspaceMenu.ts`). The menubar renderer draws nested submenus
+through one shared component, which is what let Scene Edit Detection, live boolean
+path ops, path bakes and the 3D primitives become Layer-menu submenus as well as
+palette commands.
+
+**Project swatches** (`SwatchesPanel.tsx`): a palette persisted in the document
+plus a *Document colours* list derived on demand, offered both inside the colour
+picker and as a panel with apply-to-selection.
+
+**An interactive onboarding tour** (`onboardingStore.ts`,
+`OnboardingOverlay.tsx`) replaced five paragraphs of prose in a centred card — the
+one thing a first-run tour must not be. A step is a POINTER (a CSS selector for
+the real control) plus, optionally, a TASK: it advances when the action is
+actually done, checked against a baseline captured when the step began, rather
+than on a Next button pressed by someone who never looked.
 
 ### AI
 65 typed tools over a deterministic caster and a hand-authored technique
@@ -358,20 +684,24 @@ frames (`ExactVideoFrameCache.weaveCanvas`). Legacy fallback paths bob instead.
 What genuinely remains missing from this column: a placeholder/offline-media
 workflow.
 
-**Depth of field is still not per-pixel.** `dofEffectOf` pushes a Gaussian
-`blur` from one depth sample; there is still no DOF pass in `packages/renderer`
-(no sampleable depth buffer on WebGL2/WebGPU). Extrusions get per-face CoC.
-Depth-spanning flat quads (tilted cards, ground planes) now subdivide into UV
-strips via `dofStrips.ts` / `planDofStrips` in `buildSnapshot`, each with its
-own blur — better than one uniform CoC, still not cinematic.
+**Depth of field is per-LAYER, not per-scene.** The renderer does own two DOF
+shaders — `coc-blur`, whose radius is interpolated per pixel across a quad from
+four corner CoC radii (`planDofCocCorners` in `dofStrips.ts`), and `bokeh`, a
+polygonal iris gather — both dispatched by `CompositionPass`. So a tilted card
+gets a real blur gradient and an iris shape. What is still absent is the thing
+that would make it cinematic: **there is no sampleable depth buffer feeding a
+cross-layer gather**, so blur is computed from each layer's own geometry and one
+layer cannot blur ACROSS the silhouette of another. Foreground bokeh does not
+bleed over a background, and a partially-occluded highlight cuts off at the
+occluder's edge.
 
 Corrected 2026-08-12: extruded faces already carried per-face depth/CoC.
 Corrected 2026-08-14: flat depth-spanning quads use strip subdivision (max 8).
+Corrected 2026-09-01: strip subdivision is the FALLBACK; corner CoC + bokeh are
+the mechanism, and "no DOF code in `packages/renderer`" is retired (§5).
 
-Still missing vs AE: iris blades, bokeh shape, diffraction fringe, highlight
-gain — `bokeh` / `blades` / `iris` hit only transitions and AI prompt text.
-A true per-pixel pass should ship with those iris/highlight params, not just
-a depth-varying radius.
+Still missing vs AE: diffraction fringe and highlight gain, and the depth-buffer
+gather above — which is the prerequisite the other two want, not a polish item.
 
 **Lighting is per-fragment on the depth path, per-quad only as a fallback.**
 This entry previously claimed the opposite. The depth-tested 3D path runs real
@@ -392,12 +722,18 @@ Sharpened 2026-08-11 — "per-fragment" is doing less work than it sounds like.
 `fn shade3d` opens with `let N = normalize(obj.model[2].xyz)`: the normal is the
 **renderable's Z axis, constant across the whole surface**. What varies per pixel
 is the light vector, distance attenuation and falloff, via the world-position
-varying. So a large layer near a point light does get a real gradient, but no
-layer can have surface *detail* — there are no normal maps (`normalMap`: 1 hit,
-`envMap` / `roughness` / `metalness` / `hdri` / `pbr`: zero), and extrusion is
-shaded per **face**, each face flat. Likewise `shadowCatcher`, `environmentLight`
-and `imageBased` are all zero hits, so there is no image-based lighting and no
-way to land a 3D element on a real plate.
+varying.
+
+Superseded 2026-09-02, in two halves. **Surface detail exists on imported
+meshes**: glTF normal / metallic-roughness / occlusion / emissive maps ship on a
+`mesh3d-pbr` material with tangents from derivatives, and real curved primitives
+carry smooth per-vertex normals. **Image-based lighting exists**, both halves —
+`environmentLight.ts` for irradiance and a prefiltered specular atlas with
+split-sum IBL for reflections. What has NOT changed is the ordinary 2D/extruded
+layer: its normal is still the renderable's Z axis, constant across the surface,
+so a solid or a text extrusion has no surface detail of its own, and extrusion is
+still shaded per **face**, each face flat. `shadowCatcher` remains zero hits —
+there is still no way to land a 3D element on a real plate.
 
 **Particles — stateful floor bounce shipped (2026-08-14); density still limited.**
 Ballistic mode remains the default. Stateful mode (`simMode: 'stateful'`) uses
@@ -406,8 +742,43 @@ history-dependent proof. Still **no turbulence or wind field, no collisions
 between particles, no sub-emitters, no trails, no layer-as-particle, and no 3D
 particles.** Particular / Form / Plexus class density remains a later ceiling.
 
-**No imported 3D models, PBR or HDRI.** "3D" here means 2D layers with extrusion
-placed in a 3D space — not a rendered 3D scene. Out of scope by direction.
+**Imported 3D models — this entry previously said out of scope by direction.
+Corrected 2026-09-02: the user reversed that, and it shipped.** glTF `.glb`/
+embedded `.gltf` import lands as ordinary layers — a 3D null per node, a mesh
+layer per primitive — through the same extrusion mesh render path every other
+3D layer uses (`modelImport.ts`). Four mechanisms build on that: CPU skinning
+against joint layers (`modelSkinning.ts`), morph-target blend shapes on the
+mesh layer's Transform (`modelMorph.ts`), glTF clips baked at import onto the
+node's own position/rotation/scale tracks (`modelAnimation.ts`), and 3D IK —
+CCD over a chain of parented 3D nulls (`boneIK3d.ts`), composing with skinning
+for free. Environment Light (`environmentLight.ts`) is a separate mechanism:
+an SH irradiance probe (procedural sky presets, or any image, projected to 9
+coefficients) expressed through the existing 8-slot light array as a derived
+ambient + up to six parallel lights — zero renderer changes.
+
+**All four items this paragraph listed as out of scope closed on 2026-09-02.**
+HDRI / image skies import (any image or EXR asset, `environmentImage.ts`);
+reflections ship as a prefiltered specular atlas with split-sum IBL and an
+analytic env-BRDF in both shader dialects, behind a Reflections row on the
+environment light; **PBR texture maps** — normal, metallic-roughness, occlusion
+and emissive — land on a `mesh3d-pbr` material; and an **external-file `.gltf`**
+imports with its sidecars, refusing by naming the ones it cannot find. Real
+curved primitives (sphere / cylinder / cone / torus / capsule / box) came with
+them. **Shadow maps shipped later the same day**: an opt-in per-light
+`shadowMap` (512 / 1024 / 2048, bias, softness) renders a depth-eligible run's
+casters from the light into a packed linear-distance target
+(`rendergraph/passes/shadowMap.ts`) and samples it with 3×3 PCF inside
+`shade3d` at bindings 9/10, multiplying that light's diffuse and specular for
+receivers that accept shadows; the light's 2.5D projected copy is suppressed so
+nothing doubles. Off by default, so every earlier scene is byte-identical
+(`shadow-map-spot` / `-off` are the witness pair). Limits, stated in code: one
+mapped light per run, and a point light uses the spot frustum along its aim.
+**SSAO is not built**, and the reason is structural: every depth-eligible run
+draws into a multisampled target, and neither backend can sample a
+multisampled depth — the route is a linear-depth prepass bound before the run
+draws (ambient-only AO cannot be a post-pass once ambient and direct are
+summed). **Height displacement is not started.** A shadow catcher already
+exists as Accepts Shadows ▸ Only.
 
 **Linear working space — storage slice shipped (2026-08-14).** Float *precision*
 (`rgba16float` intermediates) already existed; grade / blend / blur maths run
@@ -481,6 +852,18 @@ nearest-frame while either bracket is still decoding — never a hole, never a
 half-warped guess — and to Frame Mix wherever flow reports no texture.
 Synthetic-frame suite proves recovery of known motion to sub-pixel, endpoint
 identity and determinism; a real-footage on-machine pass is still owed.
+GPU-accelerated (2026-09-01): estimation now prefers an integer WebGL2 twin
+of the CPU search (`rendering/pixelMotionFlowGpu.ts` — integer luma/SAD,
+fixed scan order, RGBA32UI readback, ~13× the CPU search at 1080p) that must
+prove itself BIT-EQUAL to the CPU path on a synthetic pair at init, so the
+backend choice can never make preview and export disagree; the parabola and
+smoothing stay on the CPU (`finalizeFlow`, shared by both backends).
+The full-res warp followed (2026-09-01, `rendering/pixelMotionWarpGpu.ts`,
+~80× at 1080p): float bilinear can't be bit-equal, so its gate is the
+session decision itself — tolerance + determinism self-check at init, then
+preview and export both warp on whichever backend won for the whole
+session. The CPU warp remains the fallback (and lost ~30% of its own cost
+to a flow-bilinear unroll, pinned bit-identical by test).
 The old text stood here since 2026-08-11 saying Pixel Motion was the mode
 people actually reach for on retimed footage, and that the decoder
 problem in Tier 1.
@@ -502,18 +885,28 @@ to describe is gone: `gizmo3dSnapping` was deleted with nine sibling symbols and
 
 ### Tier 3 — friction on long or complex projects
 
-- Render queue **Stop** discards progress; real pause/resume is unbuilt. The
-  offline loop itself is resumable in principle — fixed timestep, `index / fps`,
-  an existing `startFrame`/`endFrame` range, no accumulated state — but the sink
-  is disposed on abort and takes its ffmpeg staging directory with it.
-- **No local project browser** in the OSS edition — it opens straight into the
-  editor. Of the two foundations this entry used to call ready:
-  `RecentProjects` (persisted MRU) and `bundle/VersionStore.ts` (local,
-  bundle-backed history) are **real and tested**, but the SQLite `LocalIndex` is
-  **not an implementation** — `better-sqlite3` is absent from `package.json`, so
-  `index:available` is permanently false and `getLocalIndex()` always returns
-  `MemoryLocalIndex`, and nothing in `src/` ever calls `upsertProject` or
-  `addRecovery`, so the index would be empty even with the driver present.
+- **Render-queue pause/resume shipped 2026-09-02**, and this entry's diagnosis
+  was right: the loop was always resumable (fixed timestep, `index / fps`, an
+  existing `startFrame`/`endFrame` range, no accumulated state) and the only
+  obstacle was that abort disposed the sink and took the ffmpeg staging
+  directory with it. Now abort is treated as PAUSE — the run resolves with the
+  next offset instead of throwing, and the sink is deliberately not disposed
+  (`renderQueueStore.ts`). Pause (one job) and Stop (the queue) are one
+  mechanism at two scopes, both carrying a `resumeFrame`; **Discard** is the
+  separate destructive verb. The remaining limit is honest and narrow: the
+  resume handle is a live open sink and is never serialized, so pause/resume is
+  **session-scoped** — quitting the app abandons the staged frames.
+- **The local project browser shipped 2026-08-20**, and this entry's three
+  blockers are all closed — corrected 2026-09-02, because the text below it was
+  still asserting them. `better-sqlite3` is in `optionalDependencies`;
+  `src/core/localIndex/indexWriter.ts` is the writer the index never had (saves
+  and opens write it, and a thumbnail worker fills the `thumbHash` column the
+  schema always carried); the start screen is a card grid joined with the MRU
+  for anything the index has not seen, degrading to the MRU list in a browser
+  tab. What is still owed is a **real-device pass**: the driver is optional and
+  native, so it wants an `electron-rebuild` against the Electron ABI, and until
+  that runs `index:available` can still be false on a given machine and
+  `getLocalIndex()` fall back to `MemoryLocalIndex`.
 - **Essential Properties — promotion shipped 2026-08-14.** Instance overrides
   (`compInstanceOverrides.ts` / `CompOverridesSection`) already existed for the
   numeric Transform set. Source comps can now **publish** properties via
@@ -528,11 +921,16 @@ to describe is gone: `gizmo3dSnapping` was deleted with nine sibling symbols and
 - **The frame cache has a disk tier as of 2026-08-17** (`frameDiskCache.ts`) —
   PNG blobs in a byte-budgeted LRU, read back ahead of the playhead, so a looped
   work area longer than the ~60 frames RAM holds stops re-rendering every pass.
-  It is **session-scoped on purpose**: the invalidation key is built from
-  revision COUNTERS that reset to 0 each launch, so a persisted frame cannot be
-  told apart from a different project's. Surviving a restart — which is what
-  makes day three bearable in AE — needs a CONTENT-DERIVED key first, and that
-  is a correctness change to the key rather than a storage feature.
+  This entry said it was session-scoped and that surviving a restart needed a
+  content-derived key first. **Both halves landed the same week and this text
+  was left behind** — corrected 2026-09-02 against the file's own header.
+  `sceneContentHash.ts` made the key name a scene rather than merely notice that
+  one changed; then RETENTION in `frameDiskCache.ts` parks a generation that
+  stops being live instead of deleting it, so an undo gets its frames back with
+  zero re-renders, and a MANIFEST reconciled against the blobs actually present
+  lets a restart come back warm. The honest limits are now different ones: the
+  budget is global and evicts a parked generation wholesale, and a store without
+  a manifest (anything but IndexedDB) still purges at open.
 - **Output-module templates ship** (2026-08-18, `outputTemplates.ts`): named
   render-settings bundles with built-ins, applied from the queue dialog.
   Resolution is stored as a SCALE — "Half Res" saved from an HD comp still
@@ -561,10 +959,12 @@ Lottie export, and price.
 2. **Particle system — stateful floor bounce shipped 2026-08-14.** Opt-in
    `simMode: 'stateful'` with `SimulationCache`. Remaining density: turbulence,
    collisions, trails, sub-emitters, 3D / layer-as-particle.
-3. **Per-pixel depth of field — strip CoC shipped 2026-08-14.** Depth-spanning
-   flat quads subdivide into UV strips with per-strip blur (`dofStrips.ts`).
-   Extrusions already had per-face CoC. Still missing: sampleable depth buffer,
-   true per-pixel CoC, iris blades / bokeh / highlight bloom.
+3. **Depth of field — corner CoC + polygonal bokeh shipped 2026-09-01.**
+   `coc-blur` varies the blur radius per pixel across a quad from four corner
+   radii (`planDofCocCorners`), `bokeh` gathers a polygonal iris, both in
+   `builtin.ts` and dispatched by `CompositionPass`; strip subdivision is the
+   fallback. Remaining, and now the only item: a **sampleable depth buffer** so
+   the gather can cross layer silhouettes, plus highlight bloom.
 4. **Essential Properties — promotion shipped 2026-08-14.** Source comps publish
    props via the property menu; instances show the curated set (nested OK).
    Remaining: colour / text overrides beyond the numeric Transform set.
@@ -2119,3 +2519,45 @@ pass ran 2026-08-19 in a real Chromium tab — frame-by-frame mode stepped
 content drifting across frames, timestamps exact), and after Add-at-Playhead
 the render cache reported `ready` with all 24 frames decoded
 (294,912 bytes — exactly 24 × 64×48×4) and zero console errors.
+
+### Corrected 2026-09-02 — "out of scope by direction" was reversed
+
+| §4 claimed | Reality |
+|---|---|
+| "No imported 3D models, PBR or HDRI… Out of scope by direction" | **Reversed by the user, and shipped 2026-09-01/02.** glTF `.glb`/embedded `.gltf` import lands as ordinary layers (null per node, mesh layer per primitive) through the extrusion mesh render path — `modelImport.ts` — with CPU skinning against joint layers (`modelSkinning.ts`), morph-target blend shapes (`modelMorph.ts`), baked animation clips (`modelAnimation.ts`), and 3D IK / CCD over joint chains (`boneIK3d.ts`). Environment Light (`environmentLight.ts`) shipped alongside as an SH irradiance probe expressed through the existing light array — zero renderer changes, no reflections. Still out of scope: HDRI **file** import, a reflection map, PBR texture maps beyond base colour, external-file `.gltf` |
+
+`docs/3d-layer-model.md`'s opening paragraph and its new "Imported models"
+section, and `ROADMAP.md`'s "Advanced 3D" entry, were both restating the old
+"explicitly out of scope" claim as of this pass and are corrected in the same
+commit.
+
+### Corrected 2026-09-02 (second pass) — three tiers landed in one day, and §4 was a day behind
+
+Three commits shipped between the entry above and this one, and every §4 gap
+they closed was still written here as open. Recording the corrections rather than
+silently editing them out, because two of them are the failure mode §0 names
+exactly: **a limit stated in prose, fixed in code the same week, and never
+re-read** — the frame-cache row asserted a constraint the file it cites had
+already spent thirty lines explaining it no longer had.
+
+| §4 said | Reality, verified against the source named |
+|---|---|
+| Render queue "Stop discards progress; real pause/resume is unbuilt" | **Shipped** (`renderQueueStore.ts`, `renderQueuePauseResume.test.ts`). Abort is treated as pause, the sink is kept, `resumeFrame` survives; Discard is the separate destructive verb. Session-scoped, because the resume handle is a live sink and is never serialized |
+| The frame disk cache is "session-scoped on purpose… surviving a restart needs a CONTENT-DERIVED key first" | **Both halves landed 2026-08-17/18** and this row was thirteen days stale. `sceneContentHash.ts` supplies the key; retention parks dead generations and a manifest reconciles them at open, so an undo and a restart both come back warm. The header of `frameDiskCache.ts` says so in full |
+| "No local project browser in the OSS edition"; `LocalIndex` has no implementation and `better-sqlite3` "is absent from `package.json`" | **Shipped 2026-08-20.** The driver is in `optionalDependencies`, `src/core/localIndex/indexWriter.ts` is the writer that never existed, and the start screen is a card grid over it. What is genuinely owed is a real-device `electron-rebuild` pass — a narrower claim than the one that stood here |
+| "There is still no DOF pass in `packages/renderer`" | Retired 2026-09-01 in the row above, and still restated here. Two shaders ship. The honest gap is now the **cross-layer depth gather**, not the pass |
+| The 3D lighting entry's absence greps: "no normal maps… `envMap` / `roughness` / `metalness` / `hdri` / `pbr`: zero", and "`environmentLight` and `imageBased` are zero hits, so there is no image-based lighting" | **Superseded on imported geometry.** glTF normal / metallic-roughness / occlusion / emissive maps ship on a `mesh3d-pbr` material; IBL ships in both halves — SH irradiance and a prefiltered specular atlas with split-sum reflections. The claim survives only for ordinary 2D and extruded layers, whose normal is still a constant per renderable, and it is now stated that way |
+| Imported models: "still out of scope: HDRI **file** import, a reflection/specular map, PBR texture maps beyond base colour, and external-file `.gltf`" | **All four closed 2026-09-02**, along with real curved primitives. Shadow maps then shipped the same day (opt-in per light, PCF, byte-identical when off); SSAO is blocked by the multisampled scene targets (no sampleable depth on either backend) and height displacement is not started |
+| §3 Compositing: "36 layer blend modes" | **38**, and the same document's own Tier-2 entry already said "all 38 of AE's 38". The phrase escaped `docPropagatedCounts.test.ts` because the word between the digit and the noun ("36 **layer** blend modes") breaks its adjacency rule — the guard is narrow on purpose, and this is the cost. Rewritten into the checkable form |
+| §3 Import/export: "Nine export formats", against §1's **18** | The list was of RENDERED formats only; `exportFormats` unions `VideoFormat` with `ExportFormat` and includes the HDR delivery variants, EXR, WAV and the interchange writers. Rewritten to state 18 and enumerate what the other nine are, so the two halves of this document stop disagreeing |
+| `README.md`: the assistant has "62 tools" | **65**, and it is the SAME retired claim the §5 table at the top of this section already carries as `"62 AI tools" → 65`. It survived in the most-read file in the repo for the same reason "36 layer blend modes" did — it is not written as `N AI tools`, so nothing checked it. Corrected, and rewritten into the guarded form. `AE_COMPARISON.md` held a third number (61, with a `craft 17` breakdown that is now 21) |
+
+**No 3D gizmo snapping is still true and stays.** It was re-checked this pass
+rather than assumed: `gizmo3dSnapping` remains deleted with its nine siblings,
+`deadLayoutState.test.ts` still keeps it deleted, and nothing in the day's three
+commits adds it. Clip-edge snapping and smart guides are timeline and 2D-canvas
+features and are not this.
+
+**Particle density is still the ceiling it was.** Bake-to-layers shipped, which
+makes a simulation art-directable, but turbulence, particle–particle collisions,
+sub-emitters, trails, 3D particles and layer-as-particle remain absent.

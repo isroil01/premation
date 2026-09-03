@@ -10,6 +10,8 @@ import { useMemo, useState } from 'react';
 import { cn } from '@utils/cn';
 import { Button } from '@components/Button';
 import { Input } from '@components/Input';
+import { SearchField } from '@components/SearchField';
+import { EmptyState } from '@components/EmptyState';
 import { ColorPicker } from '@components/ColorPicker';
 import { Switch } from '@components/Switch';
 import { Icon, type IconName } from '@components/Icon';
@@ -92,7 +94,8 @@ function renderChordKeys(chord: KeyChord | undefined): JSX.Element {
   );
 }
 
-function ShortcutsTab(): JSX.Element {
+/** Exported so its empty state can be asserted without opening the modal. */
+export function ShortcutsTab(): JSX.Element {
   const [, force] = useState(0);
   const [recording, setRecording] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ id: string; withId: string } | null>(null);
@@ -186,27 +189,15 @@ function ShortcutsTab(): JSX.Element {
     <div className={styles.tabBody}>
       <div className={styles.shortcutsToolbar}>
         <div className={styles.shortcutsSearchRow}>
-          <div className={styles.searchBox}>
-            <Icon name="search" size="sm" className={styles.searchIcon} />
-            <input
-              type="text"
-              className={styles.searchInput}
-              placeholder="Search by command name, action, or shortcut key…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-            {searchQuery ? (
-              <button
-                type="button"
-                className={styles.clearSearchBtn}
-                onClick={() => setSearchQuery('')}
-                title="Clear search"
-                aria-label="Clear search"
-              >
-                <Icon name="close" size="sm" />
-              </button>
-            ) : null}
-          </div>
+          <SearchField
+            className={styles.searchBox}
+            size="md"
+            placeholder="Search by command name, action, or shortcut key…"
+            ariaLabel="Search shortcuts"
+            value={searchQuery}
+            resultCount={searchQuery ? `${filteredRows.length}` : undefined}
+            onChange={setSearchQuery}
+          />
 
           <Button variant="ghost" size="sm" onClick={resetAll} title="Reset all custom shortcuts to factory defaults">
             <Icon name="refresh" size="sm" />
@@ -238,11 +229,16 @@ function ShortcutsTab(): JSX.Element {
 
         <div className={styles.shortcutsList}>
           {filteredRows.length === 0 ? (
-            <div className={styles.emptyState}>
-              <Icon name="search" size="md" />
-              <span className={styles.emptyTitle}>No matching shortcuts found</span>
-              <span className={styles.hint}>Try a different search query or category filter.</span>
-            </div>
+            <EmptyState
+              icon="search"
+              title="No matching shortcuts found"
+              message="Try a different search query or category filter."
+              action={
+                searchQuery || activeCategory !== 'all'
+                  ? { label: 'Clear filters', onClick: () => { setSearchQuery(''); setActiveCategory('all'); } }
+                  : undefined
+              }
+            />
           ) : (
             filteredRows.map((r) => {
               const cat = getCommandCategory(r.id, r.label);

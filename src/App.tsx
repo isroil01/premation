@@ -39,6 +39,7 @@ import { MASK_ANIM_PROP } from '@core/timeline/propertyTree';
 import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
 import { runSceneEditDetection } from '@core/tracking/sceneEditCommand';
 import { bindAdaptiveResolution } from '@stores/renderQualityStore';
+import { installModelHydration } from '@core/scene/modelHydrate';
 import { usePropertySelectionStore, propertyKey, distributeScrub } from '@stores/propertySelectionStore';
 import {
   keyframeMask,
@@ -68,8 +69,29 @@ import {
   parseKeyframeId,
   expandKeyframeProp,
   POSITION_PSEUDO_PROP,
+  type EasingKind,
 } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { openKeyframeVelocityDialog } from '@layout/Timeline/KeyframeVelocityDialog';
+import {
+  addTransition,
+  removeTransition,
+  setTransition,
+  transitionAtCut,
+  compIdForTransition,
+  DEFAULT_TRANSITION_FRAMES,
+  TRANSITION_KINDS,
+  TRANSITION_LABEL,
+} from '@core/timeline/transitions';
+import {
+  TRANSITION_ALIGNMENTS,
+  TRANSITION_ALIGNMENT_LABEL,
+} from '@layout/Timeline/transitionOverlay';
+import {
+  TIMELINE_EDIT_MODES,
+  setTimelineEditMode,
+  getTimelineEditMode,
+} from '@layout/Timeline/timelineEditMode';
 import { useCompositionStore } from '@stores/compositionStore';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { readCompRef } from '@core/scene/compInstance';
@@ -105,7 +127,7 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { openInterpretFootage } from '@layout/Assets/InterpretFootageModal';
 import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
 import { useAssetStore } from '@stores/assetStore';
-import { customPrompt } from '@components/Modal';
+import { customPrompt, customAlert } from '@components/Modal';
 import { runDocumentEdit } from '@core/commands/documentEdit';
 
 /**
@@ -326,6 +348,10 @@ function EditorShellInner(): JSX.Element {
     })),
     [],
   );
+
+  // Imported 3D models: re-parse stored .glb sources into the session mesh
+  // registry after a project opens (and repoint dead texture object URLs).
+  useEffect(() => installModelHydration(), []);
 
   // Register the default panels exactly once.
   useEffect(() => {
@@ -1093,12 +1119,113 @@ function EditorShellInner(): JSX.Element {
     const easeTargets: string[] = selectedKfIds.has(kfId) ? [...selectedKfIds] : [kfId];
     const ease = (preset: EasingPreset) => () => applyEasingToKeyframes(easeTargets, preset);
 
+    /**
+     * Set one interpolation KIND on every expanded track of this keyframe.
+     *
+     * Not `applyEasingToKeyframes`: that maps AE's five preset NAMES onto
+     * bezier handles, and Auto Bezier / Continuous Bezier are neither presets
+     * nor handle shapes — they are engine easing kinds that the sampler
+     * derives tangents for (`setEasing` seeds their default handles). Routing
+     * them through the preset path would silently write a plain bezier and the
+     * keyframe would stop auto-adjusting to its neighbours.
+     */
+    const setInterp = (kind: EasingKind, label: string) => () => {
+      runAnimEdit(label, () => {
+        for (const p of props) {
+          if (defaultAnimation.isAnimated(ref.nodeId, p)) {
+            defaultAnimation.setEasing(ref.nodeId, p, ref.t, kind);
+          }
+        }
+      });
+    };
+
     openContextMenu(x, y, [
       { id: 'easy-ease', label: 'Easy Ease', shortcut: 'F9', onSelect: ease('Ease') },
       { id: 'ease-in', label: 'Easy Ease In', shortcut: 'Shift+F9', onSelect: ease('EaseIn') },
       { id: 'ease-out', label: 'Easy Ease Out', shortcut: 'Ctrl+Shift+F9', onSelect: ease('EaseOut') },
       { id: 'linear', label: 'Linear Interpolation', onSelect: ease('Linear') },
+      {
+        /**
+         * AE's Keyframe Interpolation submenu. The inspector row menu has had
+         * an interpolation submenu since it shipped; the timeline diamond —
+         * the surface people actually right-click — offered four flat easing
+         * entries and a hold toggle, and no way to reach Auto or Continuous
+         * Bezier at all despite both being live in the sampler.
+         *
+         * The flat "Enable/Disable Hold" and "Enable/Disable Roving" entries
+         * moved IN here rather than being duplicated: both are interpolation
+         * choices (roving decides whether the keyframe's time is authored or
+         * solved for constant speed), and two doors to one toggle in one menu
+         * is how a user ends up thinking they are two different things.
+         */
+        id: 'interpolation',
+        label: 'Keyframe Interpolation',
+        children: [
+          { id: 'interp-linear', label: 'Linear', onSelect: setInterp('linear', 'Linear interpolation') },
+          { id: 'interp-bezier', label: 'Bezier', onSelect: setInterp('bezier', 'Bezier interpolation') },
+          { id: 'interp-auto', label: 'Auto Bezier', onSelect: setInterp('autoBezier', 'Auto bezier interpolation') },
+          {
+            id: 'interp-continuous',
+            label: 'Continuous Bezier',
+            onSelect: setInterp('continuousBezier', 'Continuous bezier interpolation'),
+          },
+          {
+            // Toggles, because that is what the flat entry it replaces did:
+            // choosing Hold on a keyframe that already holds is how you get
+            // back to interpolating.
+            id: 'interp-hold',
+            label: isHold ? 'Hold ✓' : 'Hold',
+            onSelect: isHold
+              ? setInterp('linear', 'Disable hold keyframe')
+              : setInterp('hold', 'Enable hold keyframe'),
+          },
+          { id: 'interp-sep', separator: true },
+          {
+            id: 'interp-roving',
+            label: isRoving ? 'Rove Across Time ✓' : 'Rove Across Time',
+            onSelect: () => {
+              runAnimEdit(isRoving ? 'Disable roving keyframe' : 'Enable roving keyframe', () => {
+                for (const p of props) {
+                  if (defaultAnimation.isAnimated(ref.nodeId, p)) {
+                    defaultAnimation.setRoving(ref.nodeId, p, ref.t, !isRoving);
+                  }
+                }
+              });
+            },
+          },
+        ],
+      },
+      {
+        // The speed-graph maths was drag-only. A number you can type is the
+        // whole reason AE ships this dialog — see KeyframeVelocityDialog.
+        id: 'velocity',
+        label: 'Keyframe Velocity…',
+        onSelect: () => {
+          if (!openKeyframeVelocityDialog(ref.nodeId, ref.prop, ref.t)) {
+            useUIStore.getState().notify({
+              level: 'info',
+              message: 'A lone keyframe has no segment to shape.',
+              durationMs: 2600,
+            });
+          }
+        },
+      },
       { id: 'sep-ease', separator: true },
+      {
+        // Navigation from the menu that is already open on a keyframe: the J/K
+        // chords do this, but nothing said so anywhere a pointer can reach.
+        id: 'goto-prev-kf',
+        label: 'Go to Previous Keyframe',
+        shortcut: 'J',
+        onSelect: () => getTimelineController().goToPrevKeyframe(),
+      },
+      {
+        id: 'goto-next-kf',
+        label: 'Go to Next Keyframe',
+        shortcut: 'K',
+        onSelect: () => getTimelineController().goToNextKeyframe(),
+      },
+      { id: 'sep-nav', separator: true },
       {
         id: 'copy',
         label: `Copy Keyframe${easeTargets.length > 1 ? 's' : ''}`,
@@ -1113,32 +1240,6 @@ function EditorShellInner(): JSX.Element {
           const targets = useSelectionStore.getState().ids;
           if (targets.length > 0) pasteKeyframes(targets, getTimelineController().currentSeconds);
         },
-      },
-      {
-        id: 'toggle-hold',
-        label: isHold ? 'Disable Hold (Stepped)' : 'Enable Hold (Stepped)',
-        onSelect: () => {
-          runAnimEdit(isHold ? 'Disable hold keyframe' : 'Enable hold keyframe', () => {
-            for (const p of props) {
-              if (defaultAnimation.isAnimated(ref.nodeId, p)) {
-                defaultAnimation.updateKeyframe(ref.nodeId, p, ref.t, { easing: isHold ? 'linear' : 'hold' });
-              }
-            }
-          });
-        }
-      },
-      {
-        id: 'toggle-roving',
-        label: isRoving ? 'Disable Roving' : 'Enable Roving (Rove Across Time)',
-        onSelect: () => {
-          runAnimEdit(isRoving ? 'Disable roving keyframe' : 'Enable roving keyframe', () => {
-            for (const p of props) {
-              if (defaultAnimation.isAnimated(ref.nodeId, p)) {
-                defaultAnimation.setRoving(ref.nodeId, p, ref.t, !isRoving);
-              }
-            }
-          });
-        }
       },
       {
         id: 'delete',
@@ -1202,6 +1303,55 @@ function EditorShellInner(): JSX.Element {
     const assetId = (tComp?.props?.assetId as string | undefined) ?? (tComp?.props?.__assetId as string | undefined);
     const asset = assetId ? useAssetStore.getState().assets.find((a) => a.id === assetId) : null;
     const time = nodeId ? getNodeLayerTime(nodeId) : null;
+
+    /*
+     * The cut this clip takes part in, if any.
+     *
+     * Addressed by SCENE NODE and searched across the whole comp, not along one
+     * track, for the reason `clipCuts` documents at length: splitting clones the
+     * node, so the two halves of a cut land on two ADJACENT ROWS rather than on
+     * one, and a same-track search finds nothing at exactly the moment the user
+     * has just made the cut they want to soften.
+     *
+     * The clip's OUT-point wins when it has neighbours on both sides. That is
+     * the cut a right-click on a bar most often means — you reach for a
+     * dissolve while thinking about where this shot ends — and offering both
+     * would need two submenus that are indistinguishable in the menu.
+     */
+    const compBars = layer ? c.layersOfComp() : [];
+    const others = compBars.filter((l) => l.sourceId && l.sourceId !== nodeId && l.id !== layer?.id);
+    /*
+     * "Abuts" is not enough on its own: once a cross dissolve is applied the two
+     * bars OVERLAP by the transition's length, so a search for a seam finds
+     * nothing at exactly the cut the user is right-clicking to remove one from.
+     * A neighbour is therefore any bar that starts inside this one and carries
+     * on past its end (or, before it, ends inside this one having started
+     * earlier) — which covers the touching case and the overlapped one with the
+     * same test. The nearest to the out-point (or in-point) wins.
+     */
+    const nearest = <T,>(list: T[], distance: (item: T) => number): T | undefined =>
+      list.slice().sort((a, b) => distance(a) - distance(b))[0];
+    const neighbourAfter = layer
+      ? nearest(
+          others.filter((l) => l.start > layer.start && l.start <= layer.end && l.end > layer.end),
+          (l) => Math.abs(l.start - layer.end),
+        )
+      : undefined;
+    const neighbourBefore = layer
+      ? nearest(
+          others.filter((l) => l.end < layer.end && l.end >= layer.start && l.start < layer.start),
+          (l) => Math.abs(l.end - layer.start),
+        )
+      : undefined;
+    const cut =
+      nodeId && neighbourAfter?.sourceId
+        ? { leftNodeId: nodeId, rightNodeId: neighbourAfter.sourceId }
+        : nodeId && neighbourBefore?.sourceId
+          ? { leftNodeId: neighbourBefore.sourceId, rightNodeId: nodeId }
+          : null;
+    const existingTransition = cut
+      ? transitionAtCut(compIdForTransition(cut), cut.leftNodeId, cut.rightNodeId)
+      : undefined;
 
     openContextMenu(x, y, [
       {
@@ -1323,6 +1473,98 @@ function EditorShellInner(): JSX.Element {
               : []),
           ]
         : []),
+      { id: 'sep-transition', separator: true },
+      /*
+       * Transitions.
+       *
+       * A submenu rather than four flat rows: the four kinds are variants of one
+       * act, and flattening them would push five unrelated items apart in a menu
+       * that is already long. Present-but-DISABLED when the clip has no
+       * neighbour, rather than hidden — "why is there no transition command
+       * here" is a question the greyed row answers and an absent one does not.
+       */
+      {
+        id: 'add-transition',
+        label: 'Add Transition',
+        disabled: !cut,
+        children: TRANSITION_KINDS.map((kind) => ({
+          id: `add-transition-${kind}`,
+          label: TRANSITION_LABEL[kind],
+          onSelect: () => {
+            if (!cut) return;
+            void addTransition(
+              cut.leftNodeId,
+              cut.rightNodeId,
+              kind,
+              DEFAULT_TRANSITION_FRAMES,
+              'centred',
+            ).then((res) => {
+              if (!res.ok) void customAlert('Transition', res.reason);
+            });
+          },
+        })),
+      },
+      ...(existingTransition && cut
+        ? [
+            /*
+             * Alignment — where the transition sits relative to the cut.
+             *
+             * The record has carried this since transitions shipped and every
+             * entry point wrote 'centred', so the other two placements existed
+             * only in the type. A submenu of three named values next to the
+             * bracket's click-to-cycle: the same property, picked rather than
+             * stepped, for when you know which one you want. One undo entry
+             * each, because `setTransition` re-materializes the transition
+             * inside a single history entry.
+             */
+            {
+              id: 'transition-alignment',
+              label: 'Alignment',
+              children: TRANSITION_ALIGNMENTS.map((alignment) => ({
+                id: `transition-alignment-${alignment}`,
+                label: `${TRANSITION_ALIGNMENT_LABEL[alignment]}${
+                  existingTransition.alignment === alignment ? '  ✓' : ''
+                }`,
+                onSelect: () => {
+                  if (existingTransition.alignment === alignment) return;
+                  void setTransition(compIdForTransition(cut), existingTransition.id, {
+                    alignment,
+                  }).then((res) => {
+                    if (!res.ok) void customAlert('Transition', res.reason);
+                  });
+                },
+              })),
+            },
+            {
+              id: 'remove-transition',
+              label: `Remove ${TRANSITION_LABEL[existingTransition.kind]}`,
+              onSelect: () => {
+                void removeTransition(compIdForTransition(cut), existingTransition.id);
+              },
+            },
+          ]
+        : []),
+      /*
+       * The five timeline edit tools, reachable from the menu too.
+       *
+       * They already have a lit tool row and a Shift+letter chord each, and
+       * both of those still leave the same gap the row was built to close: you
+       * have to already know the family exists to look for it. A right-click on
+       * the very bar these gestures act on is where someone asks "can I move
+       * just the cut?", so the answer belongs there as well. `TIMELINE_EDIT_MODES`
+       * is the one source for the labels and chords, so a mode cannot exist in
+       * the row and not here.
+       */
+      {
+        id: 'edit-mode',
+        label: 'Timeline Tool',
+        children: TIMELINE_EDIT_MODES.map((def) => ({
+          id: `edit-mode-${def.mode}`,
+          label: `${def.label}${getTimelineEditMode() === def.mode ? '  ✓' : ''}`,
+          shortcut: def.chord,
+          onSelect: () => setTimelineEditMode(def.mode),
+        })),
+      },
       { id: 'sep-del', separator: true },
       /*
        * Two deletes, and they have to read as genuinely different things.

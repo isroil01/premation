@@ -32,6 +32,48 @@ for parenting and for expressions; a download-on-demand installer for the Object
 Matte model; and idle caching of the whole work area rather than five seconds
 ahead.
 
+Added 2026-09-02, in three passes over an audit of the editor. Most of what it
+found was not missing engine work but finished engine halves with no control, so
+a lot of this is *reach* rather than *build*.
+
+The footage path became an editing loop: a **Source Monitor** (in/out in source
+seconds, JKL shuttle, Insert / Overwrite / Add to end / New comp from range),
+**timeline edit tools as visible modes** — Selection, Razor, Slip, Slide and Roll
+on `Shift+S/C/Y/U/R`, with roll being a real two-sided trim that did not exist
+before — **clip-edge snapping** and Fit Composition / Fit Work Area, **per-cut
+transitions** held as records you can select, lengthen and remove, **Assemble
+from Footage** and New Composition from Selected Clips, a **Scopes** panel
+(waveform, parade, vectorscope, histogram), a **Transcript** panel with
+text-based editing, **silence removal** and **ducking**, chapters from labelled
+markers on MP4/MOV export, and a render queue that **pauses and resumes** (within
+a session) with Discard as the separate destructive verb.
+
+Motion got **one graph editor** — the Motion panel's private copy is gone, and
+the survivor carries Animated / Selected modes, a frozen reference curve and a
+saved-curve ease library — plus **parametric stagger** with a Re-apply that
+replaces rather than layers, **modifier stacks** (ordered offset / multiply /
+clamp / wiggle / smooth / spring / loop / delay / audio / oscillate rows compiled
+to one expression), **audio-reactive drivers**, **bake dynamics to keyframes**,
+The Smoother and The Wiggler as real dialogs, Keyframe Velocity and an
+Interpolation submenu, onion-skin settings, and caret autocomplete in the
+expression editor.
+
+3D got **image skies from any image or EXR asset** and, with them,
+**reflections** — a prefiltered specular atlas and split-sum IBL in both shader
+dialects; the **full glTF PBR map set** (normal, metallic-roughness, occlusion,
+emissive) and **external `.gltf` files with their sidecars**, behind a File ▸
+Import 3D Model entry; **real curved primitives** (sphere, cylinder, cone, torus,
+capsule, box) as meshes with editable segment counts; a **material editor and
+persisted library**; **Composition Settings ▸ World**; light presets and a Kelvin
+row; bevel styles; morph-target sliders; **3D IK** on parented layers; and the
+gizmo and DOF focus plane working in every 2-up / 4-up pane.
+
+And around the edges: a **knife tool** and pathfinder for shape paths, an
+on-canvas **gradient editor**, **smart guides** with distance badges and
+equal-spacing detection, **project swatches**, an interactive **onboarding
+tour**, one home for the preview controls (with Cache Work Area Now, Purge RAM
+and Purge Disk), and Window ▸ Workspace.
+
 The engine is one GPU render graph (WebGPU, falling back to WebGL2) shared by the
 viewport and the exporter, covered by golden-image render tests.
 
@@ -113,8 +155,15 @@ storage layer.
   Beyond tracking: more of the effect set, richer expression bindings. Open an
   issue for the specific gap you hit — that is far more useful than a general
   "more parity" wish.
-- **Timeline and graph-editor polish.** The graph editor is capable but not yet
-  pleasant for dense compositions.
+- ~~**A video editing loop.**~~ **SHIPPED 2026-09-02** — source monitor, edit-tool
+  modes (razor / slip / slide / roll), clip-edge snapping, per-cut transitions,
+  Assemble from Footage, scopes, transcript-based editing, silence removal and
+  ducking, and render-queue pause/resume. See "Where it stands today".
+- **Timeline and graph-editor polish.** The two graph editors became one on
+  2026-09-02, with Animated / Selected visibility modes, a frozen reference
+  curve and an ease library — which was most of what "not yet pleasant for dense
+  compositions" meant. What is still open is *density* rather than capability:
+  the panel is not yet fast or legible with hundreds of tracks on screen.
 - **Performance on large projects.** The engine handles high layer counts, but
   the UI has hot spots under heavy scenes. Profile before optimising, and bring
   the profile to the PR.
@@ -137,10 +186,21 @@ storage layer.
   for plugin authors.
 - **Collaboration.** Real-time multiplayer would need a substantial
   re-architecture. Not planned, not refused.
-- **Advanced 3D.** Imported 3D models, PBR materials and HDRI environments are
-  explicitly out of scope — see
-  [`docs/3d-layer-model.md`](docs/3d-layer-model.md). The target is AE's
-  *Classic* 3D, plus extrusion and bevels.
+- **Advanced 3D.** Almost all of what this entry listed as open closed on
+  2026-09-02. Imported glTF/GLB models (embedded **and** external-file, with
+  sidecars), CPU skinning, morph targets, baked animation clips, 3D IK, an
+  SH-probe Environment Light fed by **any image or EXR asset**, **split-sum
+  reflections** off that same sky, the **full glTF PBR map set**, and **real
+  curved primitives** all ship — see
+  [`docs/3d-layer-model.md`](docs/3d-layer-model.md) for how they map onto
+  ordinary layers. **Shadow maps shipped too** — opt-in per light, PCF-filtered,
+  byte-identical when off (`packages/renderer/src/rendergraph/passes/shadowMap.ts`);
+  one mapped light per run, point lights along their aim. What remains is
+  **SSAO** (blocked: every 3D run draws into a multisampled target, so neither
+  backend can sample its depth — it needs a linear-depth prepass bound before
+  the run draws) and **height displacement** (not started). The target remains
+  AE's *Classic* 3D, plus extrusion/bevels and this imported-model foothold —
+  full parametric Advanced 3D is not planned.
 - **Local AI conversation persistence.** The assistant ships in the local
   edition (BYOK via OS keystore + `aiProxy`, including `ai:image`). Thread
   history still only persists when a backend is present; in-session history

@@ -10,6 +10,7 @@
 
 import { act, render } from '@testing-library/react';
 import { DockPanel } from './DockPanel';
+import { TooltipProvider } from '@components/Tooltip';
 import { useLayoutStore } from '@stores/layoutStore';
 
 function resetLayoutStore(): void {
@@ -34,7 +35,8 @@ describe('DockPanel', () => {
     const renderers = { alpha: () => <div>alpha body</div> };
 
     // First render: region is empty, component bails out early.
-    const { container } = render(<DockPanel region="rightInspector" renderers={renderers} />);
+    // Rail tabs carry Radix tooltips, which need the provider main.tsx mounts.
+    const { container } = render(<TooltipProvider><DockPanel region="rightInspector" renderers={renderers} /></TooltipProvider>);
     expect(container).toBeEmptyDOMElement();
 
     // Second render: a panel arrives. Hook count must not change.
@@ -61,7 +63,8 @@ describe('DockPanel', () => {
       });
     });
 
-    const { container } = render(<DockPanel region="rightInspector" renderers={renderers} />);
+    // Rail tabs carry Radix tooltips, which need the provider main.tsx mounts.
+    const { container } = render(<TooltipProvider><DockPanel region="rightInspector" renderers={renderers} /></TooltipProvider>);
     expect(container.textContent).toContain('alpha body');
 
     act(() => useLayoutStore.getState().closePanel('alpha'));

@@ -32,6 +32,13 @@ import { openProjectPath } from '@core/project/openProjectPath';
 import { openLocalMotionFile, saveToComputer } from '@core/project/localProjectIO';
 import { offerRelink } from '@layout/Project/RelinkAssetsDialog';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
+import {
+  runNewCompFromClips,
+  runAssembleFromFootage,
+  selectedVideoLayerId,
+  type AssembleTarget,
+} from '@layout/Assets/footageAssembly';
+import { selectedPanelAssets, selectedPanelFootage } from '@core/composition/assetSelection';
 import { openModal } from '@stores/modalStore';
 import { customConfirm, customPrompt } from '@components/Modal';
 import { attachHistoryRecording, useHistoryStore, performUndo, performRedo } from '@stores/historyStore';
@@ -80,6 +87,9 @@ import {
   installSmartAnimateCommandSync,
 } from '@core/animation/smartAnimateCommands';
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
+import { buildIk3DCommands } from '@core/scene/ikCommands';
+import { buildBakeCommands } from '@core/simulation/bakeCommands';
+import { buildAudioCommands } from '@core/audio/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection, easingTargetKeyframes } from '@core/animation/easingSelection';
 import { useAssetStore } from '@stores/assetStore';
@@ -107,9 +117,9 @@ import {
   timeReverseKeyframes,
   easyEaseAll,
   sequenceLayers,
-  applySmoother,
-  applyWiggler,
 } from '@core/animation/keyframeAssistants';
+import { openSmootherDialog, smootherTracks } from '@layout/Motion/SmootherDialog';
+import { openWigglerDialog, wigglerTracks } from '@layout/Motion/WigglerDialog';
 import { armMotionSketch, finishMotionSketch, cancelMotionSketch } from '@core/animation/motionSketch';
 import { isGuideLayer, setGuideLayer } from '@core/scene/guideLayer';
 import { measureTextNodeBoxes } from '@core/text/measureText';
@@ -122,9 +132,11 @@ import { ProjectCommands } from '@layout/Menu';
 import { CommandPalette } from '@layout/CommandPalette';
 import { PresentationMode } from '@layout/Presentation/PresentationMode';
 import { openPalette } from '@stores/commandPaletteStore';
-import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers } from '@core/scene/sceneInsert';
+import { insertCamera, insertLight, insertAdjustmentLayer, precomposeSelected, insertPrimitive, insertSolid, deleteSelectedLayers, duplicateSelectedLayers, insert3DPrimitive } from '@core/scene/sceneInsert';
+import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
+import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { findNavTarget } from '@core/workspace/cameraNav';
-import { insertNull, moveNodeInStack } from '@core/scene/parenting';
+import { insertNull, arrangeNodes } from '@core/scene/parenting';
 import { createNullsFromPath, pathVertices } from '@core/scene/nullsFromPaths';
 import { createShapesFromText, canCreateShapesFromText } from '@core/scene/shapesFromText';
 import { autoTraceLayer } from '@core/effects/autoTrace';
@@ -237,6 +249,61 @@ function reportSave(outcome: SaveOutcome, opts?: { forkedFrom?: string | null })
   return false;
 }
 
+/**
+ * `file.import3DModel` — the picker half of the glTF importer.
+ *
+ * A first-class verb rather than "drop it in the Assets panel and hope": a
+ * model is not a library asset, it becomes a LAYER TREE, and — the part the
+ * asset door cannot express — a `.gltf` needs its `.bin` and its textures
+ * selected WITH it. The picker is multi-select and accepts those sidecar types
+ * for exactly that reason; `importModelFiles` works out which of the chosen
+ * files is the model and resolves the rest against it.
+ */
+async function pickAndImport3DModel(): Promise<void> {
+  const files = await new Promise<File[]>((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    // .bin and the image types are the sidecars a .gltf points at; a user who
+    // selects only the .gltf still gets a named, actionable error rather than
+    // a silent half-import.
+    input.accept = '.glb,.gltf,.bin,image/png,image/jpeg,image/webp,model/gltf+json,model/gltf-binary';
+    input.addEventListener('change', () => resolve(Array.from(input.files ?? [])));
+    // Chromium fires this on dismissal; without it the promise never settles
+    // and the command looks like it hung.
+    input.addEventListener('cancel', () => resolve([]));
+    input.click();
+  });
+  if (files.length === 0) return;
+  const { importModelFiles, MODEL_FILE_PATTERN } = await import('@core/scene/modelImport');
+  if (!files.some((f) => MODEL_FILE_PATTERN.test(f.name))) {
+    notify('Select a .glb or .gltf file (with its .bin and textures, if it has them).', 'warning');
+    return;
+  }
+  try {
+    const result = importModelFiles(
+      await Promise.all(files.map(async (f) => ({
+        name: f.name,
+        // Present when the selection came from a folder drop; it is what lets
+        // `textures/albedo.png` resolve as the path it actually is.
+        ...((f as File & { webkitRelativePath?: string }).webkitRelativePath
+          ? { path: (f as File & { webkitRelativePath?: string }).webkitRelativePath }
+          : {}),
+        bytes: await f.arrayBuffer(),
+      }))),
+    );
+    const clip = result.clip
+      ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s)`
+      : '';
+    notify(
+      result.warning ?? `Imported ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}${clip}`,
+      result.warning ? 'warning' : 'success',
+    );
+  } catch (err) {
+    notify(`3D import failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+  }
+}
+
 /** Tool-switching commands — single-key AE shortcuts (V/A/H/Z/W/R/S/P/T/U/E).
  *  Going through the CommandSystem makes them remappable in Customize…. The
  *  ShortcutManager already ignores keys typed into inputs/textareas. */
@@ -259,6 +326,7 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'rotate', label: 'Rotate Tool', chord: { key: 'w' } },
     { tool: 'pan-behind', label: 'Pan Behind (Anchor Point) Tool', chord: { key: 'y' } },
     { tool: 'pen', label: 'Pen Tool', chord: { key: 'g' } },
+    { tool: 'knife', label: 'Knife Tool', chord: { key: 'k' } },
     { tool: 'brush', label: 'Brush Tool' },
     { tool: 'text', label: 'Text Tool', chord: { key: 't', meta: true } },
     { tool: 'shape', label: 'Rectangle Tool', chord: { key: 'q' } },
@@ -437,27 +505,180 @@ function buildMarkerCommands(): ReadonlyArray<Command> {
  * commands exist with no menu home". They live in the Animation menu now (see
  * menuModel), so they're discoverable rather than shortcut-only.
  */
-import { mergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
+import { mergeSelectedPaths, liveMergeSelectedPaths, type MergeOp } from '@core/scene/mergePaths';
 import { compSizeOf } from '@core/composition/compSizes';
 
+/** The four boolean operators, in the order every other surface lists them. */
+const MERGE_OPS: ReadonlyArray<{ op: MergeOp; label: string; bakeId: string }> = [
+  // `bakeId` is the ORIGINAL command id for each bake. The ids are keys into
+  // the user's persisted shortcut overrides, so renaming them for symmetry
+  // with the new live ones would silently orphan any remap.
+  { op: 'union', label: 'Union (Add)', bakeId: 'shape.mergeUnion' },
+  { op: 'subtract', label: 'Subtract', bakeId: 'shape.mergeSubtract' },
+  { op: 'intersect', label: 'Intersect', bakeId: 'shape.mergeIntersect' },
+  { op: 'exclude', label: 'Exclude (XOR)', bakeId: 'shape.mergeExclude' },
+];
+
+/**
+ * Boolean path operations — LIVE and BAKED.
+ *
+ * Both engines shipped complete and were reachable from exactly one place: a
+ * "Merge Paths" submenu inside the Scene panel's node kebab, which you only
+ * find by right-clicking two selected layers. The palette had the bakes only,
+ * so the live boolean — the one that keeps operands animatable, which is the
+ * whole reason to prefer it — had no route at all outside that kebab.
+ *
+ * The DemoPanels kebab keeps its own entries verbatim; these call the same two
+ * functions, so there is one implementation and two doors, not two features.
+ */
 function buildMergePathCommands(): ReadonlyArray<Command> {
-  const ops: Array<{ id: string; label: string; op: MergeOp }> = [
-    { id: 'shape.mergeUnion', label: 'Merge Paths: Union', op: 'union' },
-    { id: 'shape.mergeSubtract', label: 'Merge Paths: Subtract', op: 'subtract' },
-    { id: 'shape.mergeIntersect', label: 'Merge Paths: Intersect', op: 'intersect' },
-    { id: 'shape.mergeExclude', label: 'Merge Paths: Exclude (XOR)', op: 'exclude' },
-  ];
-  return ops.map(({ id, label, op }) => ({
-    id: asCommandId(id),
-    label,
+  const enabled = (): boolean => useSelectionStore.getState().ids.length >= 2;
+  const live: Command[] = MERGE_OPS.map(({ op, label }) => ({
+    id: asCommandId(`shape.boolean.${op}`),
+    label: `Path Operation: ${label}`,
     icon: 'layers' as const,
-    enabled: () => useSelectionStore.getState().ids.length >= 2,
+    enabled,
+    execute: () => {
+      const ids = liveMergeSelectedPaths(op);
+      if (ids.length > 0) notify(`Live boolean (${op}) — operands stay editable`, 'success');
+      else notify('Select at least two shape layers with closed paths', 'warning');
+    },
+  }));
+  const baked: Command[] = MERGE_OPS.map(({ op, label, bakeId }) => ({
+    id: asCommandId(bakeId),
+    label: `Merge Paths (Bake): ${label}`,
+    icon: 'layers' as const,
+    enabled,
     execute: () => {
       const ids = mergeSelectedPaths(op);
       if (ids.length > 0) notify(`Merged paths (${op})`, 'success');
       else notify('Select at least two shape layers to merge', 'warning');
     },
   }));
+  return [...live, ...baked];
+}
+
+/**
+ * Layer ▸ New 3D Primitive. The inserts existed only in the TopNav "+" menu,
+ * which is a place you browse, not a place you search — so a user who knows
+ * the app has 3D primitives had no way to type "cube" and get one.
+ */
+function buildPrimitive3DCommands(): ReadonlyArray<Command> {
+  // Mirrors `insert3DPrimitive`'s own parameter union rather than importing a
+  // type it does not export — a mismatch is a compile error at the call below.
+  type Kind = 'cube' | 'sphere' | 'plane' | 'cylinder' | 'cone' | 'torus' | 'capsule' | 'box';
+  const kinds: ReadonlyArray<{ id: Kind; label: string; icon: string }> = [
+    { id: 'cube', label: '3D Cube', icon: 'cube' },
+    { id: 'sphere', label: '3D Sphere', icon: 'sphere' },
+    { id: 'cylinder', label: '3D Cylinder', icon: 'cylinder' },
+    { id: 'plane', label: '3D Plane', icon: 'square' },
+    // Real curved meshes (primitiveMesh.ts); `box` is the mesh cube, distinct
+    // from `cube`, which stays the bevel-capable extruded rect.
+    { id: 'cone', label: '3D Cone', icon: 'cylinder' },
+    { id: 'torus', label: '3D Torus', icon: 'sphere' },
+    { id: 'capsule', label: '3D Capsule', icon: 'cylinder' },
+    { id: 'box', label: '3D Box (mesh)', icon: 'cube' },
+  ];
+  return kinds.map(({ id, label, icon }) => ({
+    id: asCommandId(`layer.new3d.${id}`),
+    label: `New ${label}`,
+    icon,
+    // Inserting needs somewhere to insert INTO. Every other New-layer command
+    // is unconditional for the same reason: `insert3DPrimitive` resolves the
+    // active comp root itself.
+    enabled: () => true,
+    execute: () => {
+      insert3DPrimitive(id);
+      notify(`${label} added`, 'success');
+    },
+  }));
+}
+
+/**
+ * The first selected layer whose source is a VIDEO asset — Scene Edit
+ * Detection's only valid subject. A still has no cuts, and an audio layer has
+ * no frames to compare.
+ *
+ * Now shared with Assemble from Footage, which subjects the same layer to the
+ * same detector; it lives beside that flow so the two cannot drift into
+ * disagreeing about what a video layer is.
+ */
+const selectedVideoNodeId = selectedVideoLayerId;
+
+/**
+ * What Assemble from Footage would act on: a selected video LAYER first, and
+ * otherwise a video item selected in the Assets panel.
+ *
+ * Layer first because a layer is a stronger statement of intent — the user is
+ * looking at the comp, pointing at the clip in it. The panel selection is the
+ * fallback that makes the command work from the Assets context menu, where
+ * right-clicking a row has already made that row the selection.
+ */
+function assembleTarget(): AssembleTarget | null {
+  const nodeId = selectedVideoLayerId();
+  if (nodeId) return { kind: 'layer', nodeId };
+  const asset = selectedPanelAssets().find((a) => a.type === 'video');
+  return asset ? { kind: 'asset', asset } : null;
+}
+
+/**
+ * AE's Layer ▸ Scene Edit Detection, as commands.
+ *
+ * The detector and both appliers shipped reachable ONLY from the timeline
+ * clip's right-click menu — and only on a clip whose asset the menu had
+ * already resolved. Same entry point (`runSceneEditDetection`), so the confirm,
+ * the progress notification and the +1µs frame mapping are shared verbatim.
+ */
+function buildSceneEditCommands(): ReadonlyArray<Command> {
+  const modes: ReadonlyArray<{ mode: SceneEditMode; label: string }> = [
+    { mode: 'markers', label: 'Scene Edit Detection → Markers' },
+    { mode: 'split', label: 'Scene Edit Detection → Split Clips' },
+  ];
+  return modes.map(({ mode, label }) => ({
+    id: asCommandId(`layer.sceneEditDetect.${mode}`),
+    label,
+    icon: 'scissors' as const,
+    enabled: () => selectedVideoNodeId() !== null,
+    execute: () => {
+      const nodeId = selectedVideoNodeId();
+      if (!nodeId) {
+        notify('Select a video layer first', 'warning');
+        return;
+      }
+      void runSceneEditDetection(nodeId, mode);
+    },
+  }));
+}
+
+/**
+ * Window ▸ Workspace — saving and resetting the dock layout.
+ *
+ * Applying a preset is NOT here: the presets are partly user data (saved
+ * layouts come and go while the app runs), so they are built per render in
+ * `workspaceMenu.ts` rather than frozen into the registry at boot. What is
+ * fixed — save-as and reset — is a command, so it is searchable.
+ */
+function buildWorkspaceCommands(): ReadonlyArray<Command> {
+  return [
+    {
+      id: asCommandId('workspace.saveAs'),
+      label: 'Save Layout as Workspace…',
+      icon: 'layout',
+      enabled: () => true,
+      execute: async () => {
+        const name = await customPrompt(
+          'Save Workspace',
+          'Save the current panel arrangement as a workspace you can switch back to from Window ▸ Workspace.',
+          '',
+          { placeholder: 'e.g. Rough Cut', confirmLabel: 'Save' },
+        );
+        const trimmed = name?.trim();
+        if (!trimmed) return;
+        getWorkspaceManager().saveCurrentWorkspace(trimmed);
+        notify(`Workspace “${trimmed}” saved`, 'success');
+      },
+    },
+  ];
 }
 
 function buildEasingCommands(): ReadonlyArray<Command> {
@@ -691,30 +912,24 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       id: asCommandId('animation.smoother'),
       label: 'The Smoother…',
       icon: 'track',
+      // Same predicate the dialog uses to build its track list, so the menu
+      // entry cannot be enabled on a layer the dialog would open empty.
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && defaultAnimation.animatedProps(id).some(
-          (p) => (defaultAnimation.getTrackKeyframes(id, p)?.length ?? 0) >= 3,
-        );
+        return !!id && smootherTracks(id).length > 0;
       },
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        const raw = await customPrompt(
-          'The Smoother',
-          'Replace dense keyframes with the fewest that keep each curve within this tolerance (in the property’s own units — px for position), then smooth the survivors’ tangents.',
-          '5',
-          { placeholder: 'e.g. 5', confirmLabel: 'Smooth' },
-        );
-        if (raw === null) return;
-        const tolerance = Number(raw);
-        if (!Number.isFinite(tolerance) || tolerance <= 0) {
-          notify('Tolerance must be a number above 0', 'warning');
+        // A real dialog rather than `customPrompt`: tolerance is a look-at-it
+        // control, and the prompt could not express WHICH tracks to touch at
+        // all. The dialog previews live and commits as one undo entry.
+        if (smootherTracks(id).length === 0) {
+          notify('Needs a track with 3+ keyframes', 'warning');
           return;
         }
-        const r = applySmoother(id, tolerance);
-        if (!r) { notify('Needs a track with 3+ keyframes', 'warning'); return; }
-        notify(`Smoothed ${r.tracks} track${r.tracks === 1 ? '' : 's'}: ${r.before} → ${r.after} keyframes`, 'success');
+        const summary = await openSmootherDialog(id);
+        if (summary) notify(summary, 'success');
       },
     },
     {
@@ -729,28 +944,19 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       icon: 'track',
       enabled: () => {
         const id = useSelectionStore.getState().ids[0];
-        return !!id && (['x', 'y'] as const).some(
-          (p) => (defaultAnimation.getTrackKeyframes(id, p)?.length ?? 0) >= 2,
-        );
+        return !!id && wigglerTracks(id).length > 0;
       },
       execute: async () => {
         const id = useSelectionStore.getState().ids[0];
         if (!id) return;
-        const raw = await customPrompt(
-          'The Wiggler',
-          'Bake a deterministic wobble into the animated position: wobbles per second, then peak deviation in px — e.g. "5, 25". Authored keyframes keep their times and values.',
-          '5, 25',
-          { placeholder: 'frequency, amplitude', confirmLabel: 'Wiggle' },
-        );
-        if (raw === null) return;
-        const [f, a] = raw.split(/[,\s]+/).filter(Boolean).map(Number);
-        if (!Number.isFinite(f) || !Number.isFinite(a) || f! <= 0 || a === 0) {
-          notify('Enter frequency (per second, above 0) and amplitude (px, not 0)', 'warning');
+        // Was a prompt that parsed "5, 25" out of a string — two numbers with
+        // different units, unlabelled, and rejected wholesale on a typo.
+        if (wigglerTracks(id).length === 0) {
+          notify('Animate position first (2+ keyframes on x or y)', 'warning');
           return;
         }
-        const r = applyWiggler(id, { frequency: f!, amplitude: a! });
-        if (!r) { notify('Animate position first (2+ keyframes on x or y)', 'warning'); return; }
-        notify(`Wiggled ${r.tracks === 2 ? 'x and y' : 'position'} — ${r.added} keyframes added`, 'success');
+        const summary = await openWigglerDialog(id);
+        if (summary) notify(summary, 'success');
       },
     },
     {
@@ -792,7 +998,7 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
     {
       /** Stagger keyframe timing across selected animated layers (does not move bars). */
       id: asCommandId('animation.sequenceLayers'),
-      label: 'Stagger Animations (0.3s)',
+      label: 'Stagger Animations…',
       icon: 'layers',
       enabled: () => useSelectionStore.getState().ids.length >= 2,
       execute: () => {
@@ -1058,6 +1264,9 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildMarkerCommands(),
     ...buildEasingCommands(),
     ...buildMergePathCommands(),
+    ...buildPrimitive3DCommands(),
+    ...buildSceneEditCommands(),
+    ...buildWorkspaceCommands(),
     ...buildProjectCommands(),
     ...buildRigPresetCommands(),
     ...buildCaptionCommands(),
@@ -1066,6 +1275,9 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildSpeedRampCommands(),
     ...buildSmartAnimateCommands(),
     ...buildReframeCommands(),
+    ...buildIk3DCommands(),
+    ...buildBakeCommands(),
+    ...buildAudioCommands(),
   ];
 }
 
@@ -1097,6 +1309,47 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         } catch (e) {
           console.error(e);
         }
+      },
+    },
+    {
+      /**
+       * The rough-cut gesture: pick takes in the bin, get a timeline of them.
+       *
+       * Everything under it already shipped — `createCompositionFromFootage`
+       * for the comp, `sequenceLayerBars` for the layout, `writeCrossfades` for
+       * the dissolve — and doing it by hand was six gestures and six undo
+       * entries, half of which land every clip stacked at frame 0.
+       */
+      id: asCommandId('comp.newFromSelectedClips'),
+      label: 'New Composition from Selected Clips…',
+      icon: 'component',
+      enabled: () => selectedPanelFootage().length > 0,
+      execute: () => {
+        const assets = selectedPanelFootage();
+        if (assets.length === 0) {
+          notify('Select footage in the Assets panel first', 'warning');
+          return;
+        }
+        void runNewCompFromClips(assets);
+      },
+    },
+    {
+      /**
+       * Scene Edit Detection, the splits, the culling and the sequencing as one
+       * act — see `@core/composition/assembleFromFootage`. Acts on a selected
+       * video layer, or on a video item selected in the Assets panel.
+       */
+      id: asCommandId('comp.assembleFromFootage'),
+      label: 'Assemble from Footage…',
+      icon: 'scissors',
+      enabled: () => assembleTarget() !== null,
+      execute: () => {
+        const target = assembleTarget();
+        if (!target) {
+          notify('Select a video layer, or a video item in the Assets panel', 'warning');
+          return;
+        }
+        void runAssembleFromFootage(target);
       },
     },
     ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => ({
@@ -1404,53 +1657,35 @@ function buildProjectCommands(): ReadonlyArray<Command> {
         void rigLogoForAnimation();
       },
     },
-    // Arrange (z-order): a layer draws on top of the ones added before it, so a
-    // newly-imported background lands in front and hides everything. These give
-    // explicit stacking control (Figma/Illustrator chords: Ctrl/Cmd+] / [).
-    {
-      id: asCommandId('layer.bringToFront'),
-      label: 'Bring to Front',
-      icon: 'arrow-up',
-      shortcut: { key: ']', meta: true, shift: true },
+    /*
+      Arrange (z-order): a layer draws on top of the ones added before it, so a
+      newly-imported background lands in front and hides everything. These give
+      explicit stacking control (Figma/Illustrator chords: Ctrl/Cmd+] / [).
+
+      Each one hands `arrangeNodes` the WHOLE selection rather than looping a
+      single-layer move over it. The loop was wrong for any multi-selection —
+      the layers leapfrogged each other (Bring Forward over two adjacent layers
+      was a net no-op, Send to Back came out reversed) and each iteration landed
+      its own undo step. `reorderSiblings` documents the block rules.
+
+      The notice follows the RETURN value, so a layer already at the front no
+      longer reports having been brought forward.
+    */
+    ...([
+      ['layer.bringToFront', 'Bring to Front', 'arrow-up', 'front', 'Brought to front', { key: ']', meta: true, shift: true }],
+      ['layer.bringForward', 'Bring Forward', 'chevron-up', 'forward', 'Brought forward', { key: ']', meta: true }],
+      ['layer.sendBackward', 'Send Backward', 'chevron-down', 'backward', 'Sent backward', { key: '[', meta: true }],
+      ['layer.sendToBack', 'Send to Back', 'arrow-down', 'back', 'Sent to back', { key: '[', meta: true, shift: true }],
+    ] as const).map(([id, label, icon, action, message, shortcut]) => ({
+      id: asCommandId(id),
+      label,
+      icon,
+      shortcut,
       enabled: () => useSelectionStore.getState().count() > 0,
       execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'front');
-        notify('Brought to front', 'info');
+        if (arrangeNodes(useSelectionStore.getState().ids, action)) notify(message, 'info');
       },
-    },
-    {
-      id: asCommandId('layer.bringForward'),
-      label: 'Bring Forward',
-      icon: 'chevron-up',
-      shortcut: { key: ']', meta: true },
-      enabled: () => useSelectionStore.getState().count() > 0,
-      execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'forward');
-        notify('Brought forward', 'info');
-      },
-    },
-    {
-      id: asCommandId('layer.sendBackward'),
-      label: 'Send Backward',
-      icon: 'chevron-down',
-      shortcut: { key: '[', meta: true },
-      enabled: () => useSelectionStore.getState().count() > 0,
-      execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'backward');
-        notify('Sent backward', 'info');
-      },
-    },
-    {
-      id: asCommandId('layer.sendToBack'),
-      label: 'Send to Back',
-      icon: 'arrow-down',
-      shortcut: { key: '[', meta: true, shift: true },
-      enabled: () => useSelectionStore.getState().count() > 0,
-      execute: () => {
-        for (const id of useSelectionStore.getState().ids) moveNodeInStack(id, 'back');
-        notify('Sent to back', 'info');
-      },
-    },
+    })),
     {
       id: asCommandId('effect.blur'),
       label: 'Fast Box Blur',
@@ -2120,6 +2355,13 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             },
           });
           registry.register({
+            id: asCommandId('file.import3DModel'), label: 'Import 3D Model…', icon: 'cube',
+            // Always available: it creates layers in the active composition,
+            // and there is always an active composition.
+            enabled: () => true,
+            execute: () => { void pickAndImport3DModel(); },
+          });
+          registry.register({
             id: asCommandId('comp.saveFrame'), label: 'Save Frame As PNG', icon: 'image',
             // AE: Composition > Save Frame As. Renders the current playhead frame
             // at comp resolution through the deterministic offline path.
@@ -2273,6 +2515,38 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             execute: () => useGuidesStore.getState().toggleRulers(),
           });
           registry.register({
+            /*
+              Use Proxies, comp-wide.
+
+              The preference was always global — one `usePreferenceStore` flag
+              that both viewport hosts read — but the only switch for it sat in
+              the Inspector's Media section, which appears only while a footage
+              LAYER is selected. So a project-wide preview setting could be
+              changed only by first selecting a video, and there was no way at
+              all to see whether it was on.
+
+              Deliberately still that preference and not a new store: the export
+              invariant is enforced by POLARITY (see `@core/assets/proxy`) —
+              only the interactive viewport passes `useProxies` into a snapshot
+              build, and every output path is statically forbidden from even
+              naming it. A second home for the flag would be a second thing that
+              could grow an output-path reader.
+            */
+            id: asCommandId('view.useProxies'), label: 'Use Proxies', icon: 'media',
+            enabled: () => true,
+            isChecked: () => usePreferenceStore.getState().useProxies,
+            execute: () => {
+              const next = !usePreferenceStore.getState().useProxies;
+              usePreferenceStore.getState().set('useProxies', next);
+              notify(
+                next
+                  ? 'Using proxies where they exist — exports always use the originals'
+                  : 'Previewing the original media',
+                'info',
+              );
+            },
+          });
+          registry.register({
             // WorkspaceController.fitSelection existed with ZERO consumers —
             // the port comment even said "retained for fit-to-selection".
             // Shift+F, since bare letters are tool shortcuts in the viewport
@@ -2342,8 +2616,10 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           // to see or restore any of it. Only meaningful for a cloud project:
           // snapshots live on the backend, keyed by project id.
           // In the local edition this command stays unregistered: snapshots live
-          // in the project bundle instead, surfaced by VersionHistorySection in
-          // the inspector. Registering it would put a permanently-disabled menu
+          // in the project bundle instead, surfaced by VersionHistorySection —
+          // registered in `inspectorSections.ts` behind `versionHistoryAvailable()`
+          // (local edition + an open .motion bundle). Registering this would put a
+          // permanently-disabled menu
           // item next to a feature that does work.
           if (cloudProjectsEnabled()) {
             registry.register({

@@ -40,11 +40,19 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
 import { Icon } from '@components/Icon';
-import { defaultAnimation, makeKeyframeId, parseKeyframeId, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER } from '@motion/animation';
+import { defaultAnimation, makeKeyframeId, parseKeyframeId, expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { applyEasingToSelection } from '@core/animation/easingSelection';
+import {
+  EASING_KINDS,
+  activeEasingKind,
+  applyEasingKindToKeyframes,
+} from '@core/animation/easingVocabulary';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { useEaseClipboardStore } from '@stores/easeClipboardStore';
+import { bumpScene } from '@stores/sceneStore';
+import { EaseLibrarySection } from '@layout/Motion/EaseLibrarySection';
 import { compToKeyframeTime, keyframeToCompTime } from '@core/timeline/TimelineController';
 import { clamp } from '@utils/lang';
 import { ValueField } from '@components/ValueField';
@@ -72,6 +80,21 @@ import {
   applyGroupValueDelta,
   type GraphGroupMemberStart,
 } from './graphGroupMove';
+import {
+  visibleGraphTracks,
+  graphSelectedTrackKeys,
+  type GraphVisibilityMode,
+} from './graphTrackFilter';
+import {
+  polylinePath,
+  snapshotReferenceCurves,
+  valueToY,
+  yToValue,
+  type ReferenceCurve,
+} from './graphReferenceCurve';
+import { usePropertySelectionStore } from '@stores/propertySelectionStore';
+import { propertyLabel } from '@core/inspector/propertyMeta';
+import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import styles from './GraphEditor.module.css';
 
@@ -89,6 +112,16 @@ export interface GraphEditorProps {
   frameRate?: number;
   height?: number;
   onScrub?: (t: number) => void;
+  /**
+   * The timeline's property search string, verbatim.
+   *
+   * The graph is a view OF the timeline's rows, so it plots only the tracks
+   * whose rows survive the same filter — see `graphTrackFilter`. Omitted (the
+   * default) means "no filter", which is exactly the behaviour this panel had
+   * before the field existed, so an embedder that has not been taught about it
+   * loses nothing.
+   */
+  propertyFilter?: string;
 }
 
 interface KfPoint {
@@ -103,9 +136,12 @@ interface KfPoint {
   y: number;
   minV: number;
   maxV: number;
-  easing?: string;
+  easing?: EasingKind;
   bezier?: [number, number, number, number];
   continuous?: boolean;
+  roving?: boolean;
+  /** Ends of a track cannot rove — there is nothing to rove BETWEEN. */
+  canRove: boolean;
   inSpeed?: number;
   outSpeed?: number;
   inInfluence?: number;
@@ -132,6 +168,17 @@ function rewriteSelectedKeyframeId(oldId: string, newId: string): void {
 interface Range {
   minV: number;
   maxV: number;
+}
+
+/** One plottable curve: an engine track plus the text/colour the panel needs. */
+interface GraphTrack {
+  nodeId: string;
+  prop: string;
+  /** Layer name — what the timeline's filter matches a whole layer on. */
+  layerName: string;
+  /** Display label ("Position", "Glow Radius") — the filter matches this too. */
+  label: string;
+  color: string;
 }
 
 type DragKind = 'kf' | 'handle-in' | 'handle-out' | 'scrub' | 'box-zoom';
@@ -184,15 +231,6 @@ const MIN_HANDLE_Y = -2;
 const MAX_HANDLE_Y = 3;
 const MIN_INFLUENCE = 0.001;
 const MAX_INFLUENCE = 0.999;
-
-function valueToY(val: number, min: number, max: number, h: number): number {
-  if (max === min) return h / 2;
-  return h - ((val - min) / (max - min)) * h;
-}
-
-function yToValue(y: number, min: number, max: number, h: number): number {
-  return min + (1 - y / h) * (max - min);
-}
 
 function trackKey(nodeId: string, prop: string): string {
   return `${nodeId}:${prop}`;
@@ -273,9 +311,18 @@ export function GraphEditor({
   frameRate = 30,
   height: propsHeight,
   onScrub,
+  propertyFilter,
 }: GraphEditorProps): JSX.Element {
   const rev = useSceneRevision((s) => s.rev);
   const [mode, setMode] = useState<'value' | 'speed'>('value');
+  /**
+   * AE's two graph visibility modes. Component state, not a preference: there
+   * is no graph/timeline preference bag to put it in, and unlike the header
+   * width this follows what you are doing right now rather than how you like
+   * the app set up.
+   */
+  const [visibility, setVisibility] = useState<GraphVisibilityMode>('animated');
+  const propertySelection = usePropertySelectionStore((s) => s.entries);
   const [selectedKf, setSelectedKf] = useState<SelectedKf | null>(null);
   const selectedKfIds = useKeyframeSelectionStore((s) => s.ids);
   const setSelectedKfIds = useKeyframeSelectionStore((s) => s.set);
@@ -307,17 +354,51 @@ export function GraphEditor({
   }, [selectedNodeIds]);
 
   // ── Track / curve data ─────────────────────────────────────────
+  /**
+   * Every animated track of every selected layer, carrying the text the
+   * timeline's filter matches on.
+   *
+   * Colour is assigned HERE, across the UNFILTERED list, so a curve keeps its
+   * colour (and its legend chip) when the filter or the visibility mode
+   * narrows the set — a curve that changed colour as you typed would be a new
+   * curve as far as the eye is concerned.
+   */
   const allTracks = useMemo(() => {
-    const out: { nodeId: string; prop: string; color: string }[] = [];
+    const out: GraphTrack[] = [];
     let colorIdx = 0;
     for (const nodeId of selectedNodeIds) {
+      const layerName = defaultSceneGraph.getNode(nodeId)?.name ?? nodeId;
       for (const track of defaultAnimation.tracksFor(nodeId)) {
-        out.push({ nodeId, prop: track.prop, color: COLORS[colorIdx++ % COLORS.length] ?? '#2988ff' });
+        out.push({
+          nodeId,
+          prop: track.prop,
+          layerName,
+          label: propertyLabel(track.prop, nodeId),
+          color: COLORS[colorIdx++ % COLORS.length] ?? '#2988ff',
+        });
       }
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNodeIds, rev]);
+
+  /** Property ROW selection, expanded to the engine tracks it stands for. */
+  const selectedTrackKeys = useMemo(
+    () => graphSelectedTrackKeys(propertySelection),
+    [propertySelection],
+  );
+
+  /** What this panel actually plots: the filter's survivors, in the chosen mode. */
+  const tracks = useMemo(
+    () =>
+      visibleGraphTracks({
+        tracks: allTracks,
+        query: propertyFilter,
+        mode: visibility,
+        selectedKeys: selectedTrackKeys,
+      }),
+    [allTracks, propertyFilter, visibility, selectedTrackKeys],
+  );
 
   const INNER_H = Math.max(40, height - 40); // leave 40 px for toolbar
   const totalWidth = Math.max(duration * pps, 1);
@@ -335,6 +416,9 @@ export function GraphEditor({
     const paths: {
       color: string;
       d: string;
+      /** The polyline in data space ([comp seconds, plotted value]) — what the
+       *  reference overlay snapshots, so a ghost is independent of zoom. */
+      samples: ReadonlyArray<readonly [number, number]>;
       keyframes: KfPoint[];
       prop: string;
       nodeId: string;
@@ -347,7 +431,7 @@ export function GraphEditor({
     const visT0 = Math.max(0, (scrollLeft - 50) / pps);
     const visT1 = Math.min(duration, (scrollLeft + viewportW + 50) / pps);
 
-    for (const { nodeId, prop, color } of allTracks) {
+    for (const { nodeId, prop, color } of tracks) {
       const kfs = defaultAnimation.getTrackKeyframes(nodeId, prop);
       if (!kfs || kfs.length === 0) continue;
 
@@ -371,7 +455,10 @@ export function GraphEditor({
         return Math.abs((valueAt(t1) - valueAt(t0)) / (t1 - t0));
       };
 
-      // ── Sample per segment: [x px, plotted value] ──
+      // ── Sample per segment: [comp seconds, plotted value] ──
+      // Seconds, not pixels: the same polyline is what the reference overlay
+      // freezes, and a frozen ghost measured in pixels would drift the moment
+      // the graph was zoomed.
       const samples: [number, number][] = [];
       const firstAbs = toAbs(kfs[0]!.t);
       const lastAbs = toAbs(kfs[kfs.length - 1]!.t);
@@ -379,7 +466,7 @@ export function GraphEditor({
       // Before the first keyframe: flat (value) / zero (speed).
       if (firstAbs > 0) {
         const v = mode === 'speed' ? 0 : kfs[0]!.value;
-        samples.push([0, v], [firstAbs * pps, v]);
+        samples.push([0, v], [firstAbs, v]);
       }
 
       for (let s = 0; s < kfs.length - 1; s++) {
@@ -388,7 +475,7 @@ export function GraphEditor({
         const aAbs = toAbs(a.t);
         const bAbs = toAbs(b.t);
         if (mode === 'value' && isHoldEasing(a.easing)) {
-          samples.push([aAbs * pps, a.value], [bAbs * pps, a.value], [bAbs * pps, b.value]);
+          samples.push([aAbs, a.value], [bAbs, a.value], [bAbs, b.value]);
           continue;
         }
         const widthPx = Math.max(1, (bAbs - aAbs) * pps);
@@ -399,17 +486,17 @@ export function GraphEditor({
           const tAbs = aAbs + (bAbs - aAbs) * f;
           const tl = toLayer(tAbs);
           const v = mode === 'speed' ? speedIn(a, b, tl) : valueAt(tl);
-          samples.push([tAbs * pps, v]);
+          samples.push([tAbs, v]);
         }
       }
 
       if (lastAbs < duration) {
         const v = mode === 'speed' ? 0 : kfs[kfs.length - 1]!.value;
-        samples.push([lastAbs * pps, v], [duration * pps, v]);
+        samples.push([lastAbs, v], [duration, v]);
       }
       if (kfs.length === 1) {
         const v = mode === 'speed' ? 0 : kfs[0]!.value;
-        samples.push([0, v], [duration * pps, v]);
+        samples.push([0, v], [duration, v]);
       }
 
       // ── Range: frozen during a drag, auto-fit otherwise ──
@@ -450,9 +537,7 @@ export function GraphEditor({
       }
       const { minV, maxV } = range;
 
-      const d = samples.length
-        ? `M${samples.map(([x, v]) => `${x.toFixed(2)},${valueToY(v, minV, maxV, INNER_H).toFixed(2)}`).join('L')}`
-        : '';
+      const d = polylinePath(samples, pps, minV, maxV, INNER_H);
 
       const keyframes: KfPoint[] = kfs.map((kf, i) => {
         const prev = i > 0 ? kfs[i - 1] : null;
@@ -490,6 +575,8 @@ export function GraphEditor({
           easing: kf.easing,
           bezier: kf.bezier,
           continuous: kf.continuous,
+          roving: kf.roving,
+          canRove: !!prev && !!next,
           inSpeed: inSpd,
           outSpeed: outSpd,
           inInfluence: inInf,
@@ -497,11 +584,66 @@ export function GraphEditor({
         };
       });
 
-      paths.push({ color, d, keyframes, prop, nodeId, minV, maxV });
+      paths.push({ color, d, samples, keyframes, prop, nodeId, minV, maxV });
     }
     return paths;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allTracks, duration, pps, INNER_H, rev, mode, scrollLeft, viewportW, refitTick]);
+  }, [tracks, duration, pps, INNER_H, rev, mode, scrollLeft, viewportW, refitTick]);
+
+  // ── Reference ("before") curves ───────────────────────────────
+  /**
+   * Turn it on and every visible curve is frozen as it stands; the ghosts then
+   * sit behind the live curves, dashed and muted, until it is turned off.
+   *
+   * What is frozen is the SAMPLED POLYLINE, not the keyframes — re-deriving a
+   * ghost from the data being edited would give you a reference that changes
+   * with every drag, which is the one thing a reference must not do. Stored in
+   * data space and re-projected each frame, so zooming moves the ghost with
+   * its curve instead of leaving it behind.
+   */
+  const [referenceOn, setReferenceOn] = useState(false);
+  const [reference, setReference] = useState<Map<string, ReferenceCurve> | null>(null);
+  /** Ghosts are stale: freshly enabled, or the subject changed under them. */
+  const recaptureRef = useRef(false);
+
+  // A new selection / mode / filter means a new subject, and a reference means
+  // "before I started editing THIS" — so it re-freezes rather than keeping
+  // ghosts of curves that are no longer on screen.
+  //
+  // Keyed on the selection's CONTENT, not the array's identity: the host may
+  // hand us a fresh array on every render, and a dep that changes every render
+  // would re-freeze the ghost on every sampled frame of a drag — which is the
+  // ghost following the live curve, i.e. no reference at all.
+  const selectionKey = selectedNodeIds.join(' ');
+  useEffect(() => {
+    if (referenceOn) recaptureRef.current = true;
+  }, [referenceOn, selectionKey, mode, visibility, propertyFilter]);
+
+  useEffect(() => {
+    if (!referenceOn) {
+      recaptureRef.current = false;
+      setReference(null);
+      return;
+    }
+    const full = recaptureRef.current;
+    recaptureRef.current = false;
+    setReference((prev) => {
+      // A whole new subject — freeze everything as it stands.
+      if (full || !prev) return snapshotReferenceCurves(sampledPaths, trackKey);
+      // Otherwise only tracks that have just BECOME visible (a property row was
+      // added to the selection, say) get a ghost. Ghosts already held are never
+      // rewritten: a re-sample caused by the edit in progress must not move the
+      // thing being compared against, which is the entire point.
+      let next: Map<string, ReferenceCurve> | null = null;
+      for (const p of sampledPaths) {
+        const key = trackKey(p.nodeId, p.prop);
+        if (prev.has(key)) continue;
+        next ??= new Map(prev);
+        next.set(key, { points: p.samples });
+      }
+      return next ?? prev;
+    });
+  }, [referenceOn, sampledPaths]);
 
   // ── Pointer helpers ───────────────────────────────────────────
   const svgCoords = useCallback((e: { clientX: number; clientY: number }): { x: number; y: number } => {
@@ -1136,6 +1278,104 @@ export function GraphEditor({
     applyEasingToSelection(preset);
   }, []);
 
+  // ── Keyframe-level tools (were the Motion panel's) ────────────
+  /**
+   * What the ease tools write to: the shared keyframe selection, falling back
+   * to the focused diamond. The fallback matters — clicking a curve BODY
+   * focuses a keyframe without necessarily leaving it in the multi-selection,
+   * and a toolbar that then silently did nothing is the bug these buttons had
+   * in the panel (where they only ever touched one keyframe, no matter how
+   * many you had selected).
+   */
+  const targetKfIds = useMemo(() => {
+    const ids = [...selectedKfIds];
+    if (ids.length > 0) return ids;
+    return selectedKf ? [makeKeyframeId(selectedKf.nodeId, selectedKf.prop, selectedKf.t)] : [];
+  }, [selectedKfIds, selectedKf]);
+
+  const copyEase = useEaseClipboardStore((s) => s.copyEase);
+  const pasteEase = useEaseClipboardStore((s) => s.pasteEase);
+  const hasCopiedEase = useEaseClipboardStore((s) => s.copied);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const libraryRef = useRef<HTMLDivElement | null>(null);
+
+  const applyKind = useCallback(
+    (kind: EasingKind) => {
+      applyEasingKindToKeyframes(targetKfIds, kind);
+      bumpScene();
+    },
+    [targetKfIds],
+  );
+
+  /**
+   * Rove across time: the keyframe keeps its VALUE and gives up its TIME, which
+   * the engine re-solves for constant speed between the anchors either side.
+   *
+   * Because roving MOVES the keyframe, and a keyframe id embeds its time, the
+   * ids in the selection go stale the instant this runs — the diamond would
+   * stay put on screen and lose its selection ring. So the new times are read
+   * back and the selection is rewritten, exactly as a drag does.
+   */
+  const toggleRoving = useCallback(() => {
+    if (targetKfIds.length === 0) return;
+    const next = !selectedKfData?.roving;
+    const rewrites: Array<[string, string]> = [];
+    runAnimEdit(next ? 'Rove Across Time' : 'Stop Roving', () => {
+      for (const id of targetKfIds) {
+        const ref = parseKeyframeId(id);
+        if (!ref) continue;
+        let movedTo: number | null = null;
+        for (const prop of expandKeyframeProp(ref.prop)) {
+          const kfs = defaultAnimation.getTrackKeyframes(ref.nodeId, prop);
+          if (!kfs) continue;
+          const i = kfs.findIndex((k) => Math.abs(k.t - ref.t) < 1e-6);
+          // Ends have nothing to rove between; skipping them is why a
+          // whole-track selection can be roved in one click.
+          if (i <= 0 || i >= kfs.length - 1) continue;
+          defaultAnimation.setRoving(ref.nodeId, prop, kfs[i]!.t, next);
+          movedTo = defaultAnimation.getTrackKeyframes(ref.nodeId, prop)?.[i]?.t ?? null;
+        }
+        if (movedTo !== null && Math.abs(movedTo - ref.t) > 1e-9) {
+          rewrites.push([id, makeKeyframeId(ref.nodeId, ref.prop, movedTo)]);
+        }
+      }
+    });
+    for (const [oldId, newId] of rewrites) rewriteSelectedKeyframeId(oldId, newId);
+    const focused = rewrites.find(([oldId]) =>
+      selectedKf && oldId === makeKeyframeId(selectedKf.nodeId, selectedKf.prop, selectedKf.t));
+    if (focused && selectedKf) {
+      const t = parseKeyframeId(focused[1])?.t;
+      if (t !== undefined) setSelectedKf({ ...selectedKf, t });
+    }
+    bumpScene();
+  }, [targetKfIds, selectedKfData, selectedKf]);
+
+  // Deselecting takes the whole tool group away with it, so the popover must
+  // not still be "open" when the next keyframe is picked — it would appear
+  // unasked, over a curve, from a click two minutes ago.
+  const hasFocusedKf = !!selectedKf;
+  useEffect(() => {
+    if (!hasFocusedKf) setLibraryOpen(false);
+  }, [hasFocusedKf]);
+
+  // Escape closes the library popover; so does a click anywhere outside it.
+  useEffect(() => {
+    if (!libraryOpen) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setLibraryOpen(false);
+    };
+    const onDown = (e: PointerEvent): void => {
+      const el = libraryRef.current;
+      if (el && e.target instanceof Node && !el.contains(e.target)) setLibraryOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onDown, true);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onDown, true);
+    };
+  }, [libraryOpen]);
+
   // Which quick-ease pill matches the selected keyframe's ACTUAL easing, so
   // the applied one lights up (`iconBtnActive` existed in the CSS unused —
   // the pills never showed state, which read as "did that click work?").
@@ -1248,6 +1488,42 @@ export function GraphEditor({
           <Icon name="graph-speed" size="sm" /> Speed
         </button>
 
+        {/* AE's two graph visibility modes. "Selected" answers "show me the
+            row I clicked"; it falls back to the animated set when nothing is
+            selected, because a blank graph is never what deselecting meant. */}
+        <div className={styles.segmented} role="group" aria-label="Graph visibility">
+          <button
+            type="button"
+            className={visibility === 'animated' ? styles.segBtnActive : styles.segBtn}
+            aria-pressed={visibility === 'animated'}
+            onClick={() => setVisibility('animated')}
+            title="Show Animated Properties — every keyframed property of the selected layers"
+          >
+            Animated
+          </button>
+          <button
+            type="button"
+            className={visibility === 'selected' ? styles.segBtnActive : styles.segBtn}
+            aria-pressed={visibility === 'selected'}
+            onClick={() => setVisibility('selected')}
+            title="Show Selected Properties — only the property rows selected in the timeline (all animated ones while nothing is selected)"
+          >
+            Selected
+          </button>
+        </div>
+
+        <button
+          type="button"
+          className={referenceOn ? styles.tabActive : styles.tab}
+          aria-pressed={referenceOn}
+          onClick={() => setReferenceOn((v) => !v)}
+          title={referenceOn
+            ? 'Reference graph on — the dashed ghosts are the curves as they were when you switched it on. Click to clear.'
+            : 'Reference graph — freeze a dashed ghost of the current curves to compare your edits against'}
+        >
+          <Icon name="history" size="sm" /> Reference
+        </button>
+
         {/* Quick Ease Presets Group — aria-pressed + the active class reflect
             the selected keyframe's real easing, so the pills answer "which one
             is applied?" instead of only "which ones exist?". */}
@@ -1268,6 +1544,84 @@ export function GraphEditor({
             <button type="button" className={pillClass('Hold')} aria-pressed={activePreset === 'Hold'} aria-label="Hold interpolation" onClick={() => handleApplyPreset('Hold')} title="Toggle Hold">
               <Icon name="keyframe" size="sm" />
             </button>
+          </div>
+        )}
+
+        {/* Keyframe tools. These used to live in the Motion panel, applied to
+            the ONE keyframe it had focused; here they take the whole keyframe
+            selection, which is what the timeline and F9 already operate on. */}
+        {selectedKfData && (
+          <div className={styles.btnGroup}>
+            {/* Interpolation KIND — a different axis from the pills beside it
+                (those pick a named CURVE). See `easingVocabulary`. */}
+            <select
+              className={styles.select}
+              aria-label="Easing kind"
+              title="Interpolation kind for the selected keyframes"
+              value={activeEasingKind(selectedKfData)}
+              onChange={(e) => applyKind(e.target.value as EasingKind)}
+            >
+              {EASING_KINDS.map(({ kind, label }) => (
+                <option key={kind} value={kind}>{label}</option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              className={selectedKfData.roving ? styles.iconBtnActive : styles.iconBtn}
+              aria-pressed={!!selectedKfData.roving}
+              aria-label="Rove across time"
+              disabled={!selectedKfData.canRove}
+              onClick={toggleRoving}
+              title={selectedKfData.canRove
+                ? 'Rove Across Time — the keyframe keeps its value and gives up its time, so the speed through it is constant'
+                : 'The first and last keyframes of a track cannot rove'}
+            >
+              <Icon name="stopwatch" size="sm" />
+            </button>
+
+            <button
+              type="button"
+              className={styles.iconBtn}
+              aria-label="Copy ease"
+              onClick={() => copyEase(makeKeyframeId(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t))}
+              title="Copy this keyframe's easing"
+            >
+              <Icon name="copy" size="sm" />
+            </button>
+            <button
+              type="button"
+              className={styles.iconBtn}
+              aria-label="Paste ease"
+              disabled={!hasCopiedEase}
+              onClick={() => { pasteEase(targetKfIds); bumpScene(); }}
+              title={hasCopiedEase ? 'Paste the copied easing onto the selected keyframes' : 'Nothing copied yet'}
+            >
+              <Icon name="download" size="sm" />
+            </button>
+
+            {/* Anchor wraps the trigger AND the popover: the outside-click
+                dismiss is a capturing pointerdown, so a trigger outside the
+                anchor would close the popover a moment before its own click
+                re-opened it — a button that could never be used to close. */}
+            <div className={styles.libraryAnchor} ref={libraryRef}>
+              <button
+                type="button"
+                className={libraryOpen ? styles.iconBtnActive : styles.iconBtn}
+                aria-expanded={libraryOpen}
+                aria-haspopup="dialog"
+                aria-label="Ease library"
+                onClick={() => setLibraryOpen((v) => !v)}
+                title="Ease library — named curves, applied to the selected keyframes"
+              >
+                <Icon name="curvature" size="sm" />
+              </button>
+              {libraryOpen && (
+                <div className={styles.popover} role="dialog" aria-label="Ease library">
+                  <EaseLibrarySection keyframeIds={targetKfIds} bezier={selectedKfData.bezier} />
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -1432,8 +1786,13 @@ export function GraphEditor({
         {allTracks.length === 0 && (
           <span className={styles.hint}>Select a layer with keyframes to view curves</span>
         )}
+        {/* Something IS animated but nothing is plotted — say which gate ate it,
+            or the panel reads as broken. */}
+        {allTracks.length > 0 && tracks.length === 0 && (
+          <span className={styles.hint}>No animated property matches the timeline filter</span>
+        )}
 
-        {allTracks.map(({ nodeId, prop, color }) => {
+        {tracks.map(({ nodeId, prop, color }) => {
           const key = trackKey(nodeId, prop);
           const soloed = !soloKeys || soloKeys.has(key);
           return (
@@ -1492,6 +1851,27 @@ export function GraphEditor({
               >
                 {fmtAxis(v)}{mode === 'speed' ? '/s' : ''}
               </text>
+            );
+          })}
+
+          {/* Reference ghosts — behind everything live, and never hit-testable:
+              the dashed curve is a memory, not something you can grab. Projected
+              with the LIVE range so both curves share one y axis. */}
+          {reference && sampledPaths.map(({ nodeId, prop, color, minV, maxV }) => {
+            const key = trackKey(nodeId, prop);
+            const ghost = reference.get(key);
+            if (!ghost || ghost.points.length === 0) return null;
+            const dimmed = !!soloKeys && !soloKeys.has(key);
+            return (
+              <path
+                key={`ref-${key}`}
+                className={styles.referenceCurve}
+                d={polylinePath(ghost.points, pps, minV, maxV, INNER_H)}
+                stroke={color}
+                strokeWidth={1.5}
+                fill="none"
+                opacity={dimmed ? 0.08 : 0.42}
+              />
             );
           })}
 

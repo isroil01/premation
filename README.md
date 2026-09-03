@@ -131,13 +131,40 @@ registry, this section is expected to drift, so re-check before quoting it.
 - **183 effects** ([`src/core/effects/effects.ts`](src/core/effects/effects.ts))
 
 **Animation**
-- Keyframes with full easing control and a graph editor
+- Keyframes with full easing control and one graph editor, shared by the timeline
+  and the Motion panel — Animated/Selected modes, a frozen reference curve, rove,
+  and a library of saved ease curves
 - **78 presets** — 15 animation, 18 text, 6 behaviour, 5 scenery, 34 film look —
   plus your own, saved from any layer and exported as a shareable file
 - Per-glyph text animators with a real selector stack
-- Expressions
+- Expressions, with caret autocomplete
+- Modifier stacks — ordered offset / wiggle / spring / loop / delay / audio rows
+  per property, compiled to one expression and edited as sliders
+- Parametric stagger across a selection, audio-reactive drivers, and bake-dynamics
+  that turns a simulation into ordinary keyframes
 - Bone and puppet mesh rigging (FK, linear-blend skinning, FABRIK IK, ARAP)
 - Particles, motion blur, motion paths
+
+**Editing footage**
+- A source monitor — in/out in source seconds, JKL shuttle, insert / overwrite /
+  add to end / new comp from range
+- Razor, slip, slide and roll as visible timeline tools, with clip-edge snapping
+- Per-cut transitions you can select, lengthen and remove — cross dissolve, dip to
+  black or white, wipe
+- Assemble from Footage: detect the cuts in a rush, drop the runts, sequence the
+  rest with dissolves, one undo
+- Scopes — waveform, RGB parade, vectorscope, histogram
+- A transcript panel with text-based editing: select words, delete the time range
+  from every layer at once
+- Silence removal and ducking, both as editable keyframes
+
+**3D**
+- Cameras, five light types, extrusion and bevels, per-face materials
+- Imported glTF/GLB models as ordinary layers, with skinning, morph targets,
+  baked clips and 3D IK ([`docs/3d-layer-model.md`](docs/3d-layer-model.md))
+- Curved primitives — sphere, cylinder, cone, torus, capsule, box
+- An environment light fed by any image or EXR, giving both irradiance and
+  split-sum reflections, plus the glTF PBR map set
 
 **Import**
 - Video, audio and images
@@ -156,7 +183,8 @@ registry, this section is expected to drift, so re-check before quoting it.
 
 **Engine**
 - One GPU render graph, WebGPU or WebGL2, used by the viewport *and* the exporter
-- 3D transforms, extrusion, bevels, per-fragment shading
+- 3D transforms, extrusion, bevels, per-fragment shading, image-based lighting
+- A render queue that pauses and resumes within a session, keeping staged frames
 - Golden-image render tests to keep output stable across refactors
 
 ## Export
@@ -188,7 +216,7 @@ new object.
 
 ## The AI assistant
 
-The editor contains a complete AI layer: **62 tools** it can call, an agent loop,
+The editor contains a complete AI layer: **65 AI tools** it can call, an agent loop,
 a deterministic "caster" pipeline that assembles motion from a hand-authored
 technique library, and a self-critique pass.
 

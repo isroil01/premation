@@ -57,6 +57,16 @@ export const projectDocumentIO: ProjectDocumentIO<EditorDocument> = {
     motionBlur: { ...DEFAULT_MOTION_BLUR_SETTINGS },
     guides: { ...DEFAULT_GUIDES_SETTINGS },
     colorManagement: { ...DEFAULT_COLOR_MANAGEMENT_SETTINGS },
+    // Stated rather than omitted, for the reason the doc comment above gives:
+    // an absent key means "keep", so leaving swatches out would hand the new
+    // project the previous one's palette.
+    swatches: [],
+    // Same reason as swatches above: absent means "keep", so a new project
+    // would open holding the last one's saved materials.
+    materials: [],
+    // And again for transitions: a new project must not open with the previous
+    // one's dissolves still recorded against comp ids it happens to share.
+    transitions: {},
   }),
 
   capture: () => captureDocument(),

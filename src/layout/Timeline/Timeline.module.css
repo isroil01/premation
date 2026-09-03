@@ -7,7 +7,14 @@
   position: relative;
   display: grid;
   grid-template-columns: auto auto 1fr;
-  grid-template-rows: minmax(0, 1fr);
+  /*
+   * Two rows now: the edit-tool row spans the full width above everything, and
+   * the header column / resizer / lanes fill the rest. `auto` rather than a
+   * fixed track so the row is exactly as tall as the buttons in it — its height
+   * is also a TS constant (`TIMELINE_TOOLS_HEIGHT`), because the lanes' filler
+   * height is derived from the panel height minus the chrome above them.
+   */
+  grid-template-rows: auto minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1684,6 +1691,33 @@
   box-shadow: 0 0 4px color-mix(in srgb, var(--color-primary) 70%, transparent);
 }
 
+/* ── Clip snap indicator ──────────────────────────────────────────
+   Shares `.kfSnapLine`'s geometry; only the colour differs, so the line can
+   say WHAT the bar latched onto. A playhead hit reuses `.kfSnapPlayhead` — it
+   is the same object and must not read as two different things. The frame grid
+   still draws nothing, for the reason above. */
+.clipSnapClip {
+  background: var(--color-primary);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-primary) 70%, transparent);
+}
+
+.clipSnapMarker {
+  background: var(--color-warning);
+  box-shadow: 0 0 4px color-mix(in srgb, var(--color-warning) 70%, transparent);
+}
+
+/* Work-area in/out and the comp bounds — structural edges rather than content,
+   so they get the quieter dashed treatment the graph editor uses. */
+.clipSnapBound {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--color-text-secondary) 0,
+    var(--color-text-secondary) 3px,
+    transparent 3px,
+    transparent 6px
+  );
+}
+
 /* ── Property selection (proportional scrubbing acts on it) ─────────── */
 
 .propNameSelectable {
@@ -1707,4 +1741,235 @@
 }
 .propHeaderSelected {
   background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+}
+
+
+/* ── Edit-tool row ────────────────────────────────────────────────
+   Spans both columns above the ruler. It carries the panel's top boundary, so
+   it uses the same 2px dark rule the header/lanes division does rather than a
+   third weight of hairline. */
+.toolRow {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: var(--color-panel);
+  border-bottom: 2px solid var(--color-timeline-ruler-border);
+  overflow: hidden;
+}
+
+/* ── Razor guide ──────────────────────────────────────────────────
+   Where a click would cut. Deliberately NOT one of the snap-indicator colours:
+   those report where a drag landed, this predicts where a click will land, and
+   two different meanings sharing a colour is how a user learns to ignore both.
+   Amber is the warning token because a razor is destructive and the line is the
+   only warning before the cut. */
+.razorLine {
+  background: var(--color-danger);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-danger) 70%, transparent);
+  z-index: 6;
+}
+
+/* ── Cursors per edit mode ────────────────────────────────────────
+   Driven by `data-edit-mode` on the root so a mode change repaints every clip
+   bar on every virtualized row without re-rendering any of them.
+
+   `!important` is load-bearing here and nowhere else in this file: `.clip`
+   writes `cursor` as an INLINE style (it depends on whether a drag handler is
+   wired), and an inline declaration beats any selector. The alternative is
+   threading the mode down into the memoized row component and re-rendering
+   every bar on every tool change. */
+.root[data-edit-mode='razor'] .clip,
+.root[data-edit-mode='razor'] .lanes {
+  /* No cursor: url() — a bundled SVG cursor is a second asset pipeline and a
+     silent fallback to `auto` wherever it fails to load. `crosshair` says
+     "place a point precisely", which is what the razor does, and the red guide
+     line carries the rest of the meaning. */
+  cursor: crosshair !important;
+}
+
+.root[data-edit-mode='razor'] .clipHandle {
+  /* The trim handles are inert under the razor — a bar's edge is the one place
+     a cut cannot go — so they must not advertise a resize. */
+  cursor: crosshair !important;
+}
+
+.root[data-edit-mode='slip'] .clip,
+.root[data-edit-mode='slide'] .clip {
+  cursor: ew-resize !important;
+}
+
+.root[data-edit-mode='roll'] .clip {
+  /* `col-resize` is the platform's "move this boundary" glyph — the only one
+     of the three that names a cut rather than a bar. */
+  cursor: col-resize !important;
+}
+
+/* ── Drag read-out (slip / slide / roll) ──────────────────────────
+   Fixed to the viewport and following the pointer, because these three edits
+   move the pointer well outside the lanes that started them. Tabular numerals
+   so the delta does not jitter horizontally as it counts through 9 → 10. */
+.dragHud {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+/* ── Transitions ──────────────────────────────────────────────────
+   A transition belongs to BOTH clips at a cut, so it is drawn as a bracket
+   spanning the two rows rather than as a bar in a lane of its own — a lane
+   would make it look like a third layer that could be moved independently of
+   the two it joins.
+
+   The box sits above the bars and below the playhead: it has to be grabbable
+   over a clip, and it must never hide the one line that says where you are. */
+.transitionBox {
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-sizing: border-box;
+  padding: 0 2px;
+  border-radius: var(--radius-sm, 3px);
+  /* The bracket reads as an OVERLAP, not as a fill: a solid block would hide
+     both bars' waveforms and thumbnails exactly where the user is judging the
+     edit. Hatching says "these two share this span". */
+  background: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 26%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+  border: 1px solid color-mix(in srgb, var(--color-primary) 65%, transparent);
+  /* Left and right edges are the bracket's serifs — heavier, because they are
+     the parts you can actually grab. */
+  border-left-width: 3px;
+  border-right-width: 3px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+/* The dips borrow the colour they are named after, so four brackets in one comp
+   are told apart at a glance rather than by reading four labels. */
+.transitionBox[data-kind='dipToBlack'] {
+  background: repeating-linear-gradient(135deg, rgba(0, 0, 0, 0.55) 0 4px, transparent 4px 8px);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.transitionBox[data-kind='dipToWhite'] {
+  background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.5) 0 4px, transparent 4px 8px);
+  border-color: rgba(255, 255, 255, 0.75);
+}
+
+.transitionBox[data-kind='wipe'] {
+  background: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--color-accent, var(--color-primary)) 30%, transparent) 0 5px,
+    transparent 5px 10px
+  );
+  border-color: color-mix(in srgb, var(--color-accent, var(--color-primary)) 70%, transparent);
+}
+
+.transitionBoxSelected {
+  outline: 1px solid var(--color-primary);
+  outline-offset: 1px;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-primary) 55%, transparent);
+}
+
+/* The grips. Wider than they look: the visible serif is the border, and this
+   sits over it so the pointer target is a comfortable 7px without the bracket
+   growing fat enough to hide the frames underneath. */
+.transitionGrip {
+  width: 7px;
+  align-self: stretch;
+  flex: 0 0 auto;
+  cursor: ew-resize;
+  background: transparent;
+}
+
+.transitionGrip:hover {
+  background: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.transitionLabel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  padding: 0 2px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-primary);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+/* The kind label is also the alignment toggle, so it takes pointer events back
+   from `.transitionLabel` — which gives them up so a drag across the bracket
+   reaches the grips. Otherwise it stays a label: no button chrome, no shift on
+   press, just a hover tint saying it is live. */
+.transitionAlign {
+  pointer-events: auto;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.transitionAlign:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.transitionAlign:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* ── Cut drop marker ──────────────────────────────────────────────
+   Rendered only while a chip is in flight, and inert: it sits exactly where
+   both clips' trim handles are, so anything interactive here would swallow the
+   gesture a user most often wants at a cut. */
+.cutZone {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  border-radius: 2px;
+  border: 1px dashed color-mix(in srgb, var(--color-text-tertiary) 60%, transparent);
+}
+
+.cutZoneOver {
+  background: color-mix(in srgb, var(--color-primary) 35%, transparent);
+  border: 1px solid var(--color-primary);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+/* Why a transition was refused. Anchored under the tool row rather than floated
+   over the lanes, because the fix — a shorter transition, or trimming the clips
+   — is made in the timeline it must not cover. */
+.transitionError {
+  position: absolute;
+  z-index: 61;
+  /* Just under the tool row — `TIMELINE_TOOLS_HEIGHT` in TS, 30px. */
+  top: 34px;
+  left: var(--space-3);
+  right: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-danger);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  line-height: 1.45;
+  cursor: pointer;
 }

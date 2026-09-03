@@ -29,7 +29,13 @@ import { lightAttenuationAt, LIGHT_DEFAULTS, type Light } from './light';
  */
 export interface SceneLight
   extends Pick<Light, 'type' | 'color' | 'intensity' | 'radius' | 'angle' | 'cone' | 'shadows'>,
-    Partial<Pick<Light, 'coneFeather' | 'falloff' | 'falloffDistance' | 'poi'>> {
+    Partial<Pick<Light,
+      | 'coneFeather' | 'falloff' | 'falloffDistance' | 'poi'
+      // The shadow-MAP switch and its three settings. Optional, because the
+      // environment rig synthesises `SceneLight`s that were never a light layer
+      // and have no shadow of their own.
+      | 'shadowMap' | 'shadowMapSize' | 'shadowBias' | 'shadowSoftness' | 'shadowDarkness'
+    >> {
   x: number;
   y: number;
   z: number;
@@ -59,6 +65,30 @@ export function lightAim3D(light: SceneLight): readonly [number, number, number]
 export type Rgb = readonly [number, number, number];
 
 const DEG = Math.PI / 180;
+
+/**
+ * A resolved 3D aim expressed as a COMP-PLANE angle, in degrees — or null when
+ * the aim has no comp-plane component to express.
+ *
+ * The flat half of the light pipeline still speaks in one number: the glow
+ * wash is a quad whose ROTATION aims a cone baked around +X, and the gizmo's
+ * fallback aim is the same degree value. Without this the two halves resolved
+ * a targeted light differently — the shader and the per-quad Lambert term took
+ * `poi − position` (see `lightAim3D`) while the wash took `lightAngle + world
+ * rotation`, so a spot with a target lit one way and GLOWED another, and since
+ * the glow is what you actually see, a targeted spot appeared not to aim at
+ * its target at all.
+ *
+ * Null for an aim pointing straight into or out of the screen: its comp-plane
+ * projection is a point, so there is no direction to swing a flat cone to.
+ * Callers keep their untargeted angle there — a light aimed at the viewer has
+ * no honest wedge, and the landed-pool projection is what draws that case
+ * properly anyway.
+ */
+export function aimToCompAngleDeg(aim: readonly [number, number, number]): number | null {
+  if (Math.hypot(aim[0], aim[1]) < 1e-9) return null;
+  return Math.atan2(aim[1], aim[0]) / DEG;
+}
 
 /** Cap on the accumulated multiplier — keeps stacked lights from blowing out
  *  to Infinity while still allowing over-brightening (>1). */
@@ -110,7 +140,9 @@ export function planeNormalOf(world: ArrayLike<number>): readonly [number, numbe
  *  default. Each is a place the two models could disagree, and a WGSL/GLSL pair
  *  is the worst place to keep a default in step with TypeScript. */
 export interface ShaderLight {
-  type: SceneLight['type'];
+  /** The four RENDERABLE types. 'environment' never reaches the shader — it
+   *  is expanded into ambient+parallel entries before collection. */
+  type: Exclude<SceneLight['type'], 'environment'>;
   color: { r: number; g: number; b: number };
   gain: number;
   x: number;
@@ -132,6 +164,36 @@ export interface ShaderLight {
   falloffMode: number;
   /** Smooth-curve span in px, default already applied. */
   falloffDistance: number;
+  /**
+   * Render a GEOMETRY-AWARE shadow for this light (see `Light.shadowMap`).
+   *
+   * Carried HERE rather than restated in the snapshot DTO deliberately: the
+   * comment on `RenderSnapshot.lights3d` explains why that DTO refers to this
+   * type instead of copying it — `coneFeather`, `falloff` and `poi` were each
+   * honoured on the CPU and silently dropped on the GPU because a field was
+   * added to one of three structural copies. A fourth copy would be a fourth
+   * chance at the same bug.
+   *
+   * The renderer reads these; `shadeLayer` (the CPU per-quad fallback) does
+   * not, and cannot — a per-quad gain has no geometry to occlude.
+   */
+  shadowMap?: boolean;
+  /** Map resolution, px per side; the renderer clamps to 512 / 1024 / 2048. */
+  shadowMapSize?: number;
+  /** Depth bias in comp px. */
+  shadowBias?: number;
+  /** PCF tap spacing in map texels. */
+  shadowSoftness?: number;
+  /**
+   * AE's Shadow Darkness as a FRACTION (1 = the light is fully blocked).
+   *
+   * The same slider the projected copy already scales its opacity by, so the
+   * two shadow paths answer to one control rather than to two that disagree.
+   * It matters more here than there: a map is the only light in most test
+   * scenes, and a term of exactly 0 renders the occluded surface pure black —
+   * physically right, and indistinguishable from a hole in the floor.
+   */
+  shadowDarkness?: number;
 }
 
 const FALLOFF_ID: Record<string, number> = { none: 0, smooth: 1, 'inverse-square': 2 };
@@ -157,6 +219,10 @@ function resolvedAim(light: SceneLight): readonly [number, number, number] {
 export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[] {
   const out: ShaderLight[] = [];
   for (const light of lights) {
+    // Environment lights are a PROBE, not a shader light: buildSnapshot
+    // expands them into ambient+parallel entries before collection. One that
+    // leaks through unexpanded must be dropped, not mis-shaded as a point.
+    if (light.type === 'environment') continue;
     const gain = Math.max(0, light.intensity / 100);
     if (gain <= 0) continue;
     const c = Color.fromHex(light.color);
@@ -166,7 +232,7 @@ export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[]
     // `shadeLayer`; expressed once, in absolute radians, for both consumers.
     const featherPct = light.coneFeather === undefined ? 0.2 : Math.max(0, light.coneFeather) / 100;
     out.push({
-      type: light.type,
+      type: light.type as Exclude<SceneLight['type'], 'environment'>,
       color: { r: c.r, g: c.g, b: c.b },
       gain,
       x: light.x,
@@ -180,6 +246,18 @@ export function toShaderLights(lights: ReadonlyArray<SceneLight>): ShaderLight[]
       coneFeatherRad: halfConeRad * featherPct,
       falloffMode: FALLOFF_ID[light.falloff ?? 'none'] ?? 0,
       falloffDistance: Math.max(1, light.falloffDistance ?? LIGHT_DEFAULTS.falloffDistance),
+      // Spread through only when ON, so a scene that never opts in packs an
+      // undefined the renderer's `=== true` test reads as off — and every
+      // existing golden keeps the shade tail it had.
+      ...(light.shadowMap === true
+        ? {
+          shadowMap: true,
+          ...(light.shadowMapSize !== undefined ? { shadowMapSize: light.shadowMapSize } : {}),
+          ...(light.shadowBias !== undefined ? { shadowBias: light.shadowBias } : {}),
+          ...(light.shadowSoftness !== undefined ? { shadowSoftness: light.shadowSoftness } : {}),
+          ...(light.shadowDarkness !== undefined ? { shadowDarkness: light.shadowDarkness / 100 } : {}),
+        }
+        : {}),
     });
   }
   return out;

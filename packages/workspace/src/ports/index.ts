@@ -201,6 +201,12 @@ export interface WorkspaceOverlay {
    * screen px; the host paints it as a measurement badge.
    */
   dragHud?: { anchor: Vec2; lines: readonly string[] } | null;
+  /**
+   * Figma-style smart guides — distances to the nearest neighbours, equal
+   * spacing runs, equal-size matches. Null whenever no gesture is in flight and
+   * nothing is being Alt-measured, which is what keeps the canvas quiet.
+   */
+  smartGuides?: SmartGuideOverlayData | null;
 }
 
 export interface OverlayHandle {
@@ -225,6 +231,38 @@ export interface SnapLine {
   position: number;
   from: number;
   to: number;
+}
+
+/**
+ * One measured distance to draw: a dimension line from `from` to `to` along
+ * `axis`, sitting at `cross` on the other axis, with `label` beside it.
+ *
+ * Geometry is SCREEN px (so the painter does no projection) while `label` is
+ * the distance in COMPOSITION px — the number the user would type into the
+ * inspector. Those are deliberately different units: a measurement that changed
+ * as you zoomed would be useless for laying anything out.
+ */
+export interface SmartGuideSpan {
+  axis: 'x' | 'y';
+  from: number;
+  to: number;
+  cross: number;
+  label: string;
+  /** Part of an equal-spacing run — drawn as a hatch bar, not a plain line. */
+  equal: boolean;
+}
+
+/** The measurement chrome for the gesture in flight (or an Alt-hover). */
+export interface SmartGuideOverlayData {
+  spans: readonly SmartGuideSpan[];
+  /**
+   * Neighbours the dragged box matches in width or height, screen space. The
+   * painter outlines them — the equal-SIZE idiom, as distinct from the hatch
+   * bars that mean equal spacing.
+   */
+  sizeMatches: readonly Rect[];
+  /** True when this is an Alt-hover measurement rather than a live gesture. */
+  measuring: boolean;
 }
 
 /**

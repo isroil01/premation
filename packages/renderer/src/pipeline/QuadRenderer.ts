@@ -9,7 +9,7 @@
 import type { CommandBuffer } from '../commands/DrawCommand';
 import type { RenderBackend, RenderPassEncoder } from '../gpu/RenderBackend';
 import type { ResourceManager } from '../gpu/ResourceManager';
-import type { TextureFormat } from '../gpu/types';
+import { AO_SAMPLER_BINDING, AO_TEXTURE_BINDING, ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING, type TextureFormat } from '../gpu/types';
 import { QUAD_VERTEX_COUNT, unitQuadBuffer } from '../resources/Geometry';
 import type { MaterialSystem } from '../shaders/Material';
 
@@ -69,14 +69,56 @@ export class QuadRenderer {
         // generator emits that number unconditionally — sliding it down would
         // need this side to reproduce the same condition and agree.
         if (item.originTexture) entries.push({ binding: 4, texture: item.originTexture });
+        // Bindings 3–6 for the mesh PBR set. Pushed in binding order because
+        // the WebGL2 backend hands out texture units in ENTRY order and matches
+        // them against the material's declared sampler names.
+        if (item.pbrTextures) {
+          entries.push({ binding: 3, texture: item.pbrTextures.normal });
+          entries.push({ binding: 4, texture: item.pbrTextures.metallicRoughness });
+          entries.push({ binding: 5, texture: item.pbrTextures.occlusion });
+          entries.push({ binding: 6, texture: item.pbrTextures.emissive });
+        }
+        // Bindings 7/8: the scene's specular environment map and its own
+        // sampler. LAST in entry order, so the WebGL2 backend's texture units
+        // for everything above are exactly the ones they were before this
+        // existed, and `uEnvTex` is simply the next name in the material's
+        // declared sampler list.
+        if (item.envTexture) entries.push({ binding: ENV_TEXTURE_BINDING, texture: item.envTexture });
+        if (item.envSampler) entries.push({ binding: ENV_SAMPLER_BINDING, sampler: item.envSampler });
+        // Bindings 9/10: the run's shadow map and its NEAREST sampler. After the
+        // env pair for the same reason that pair came last — every texture unit
+        // the WebGL2 backend hands out above keeps the number it already had,
+        // and `uShadowTex` is simply the next name in the declared list.
+        if (item.shadowTexture) entries.push({ binding: SHADOW_TEXTURE_BINDING, texture: item.shadowTexture });
+        if (item.shadowSampler) entries.push({ binding: SHADOW_SAMPLER_BINDING, sampler: item.shadowSampler });
+        // Bindings 11/12: the run's AO buffer and its LINEAR sampler. Last
+        // again, and for the third time the same reason — every texture unit
+        // handed out above keeps the number it already had, and `uSsaoTex` is
+        // simply the next name in the material's declared sampler list.
+        if (item.aoTexture) entries.push({ binding: AO_TEXTURE_BINDING, texture: item.aoTexture });
+        if (item.aoSampler) entries.push({ binding: AO_SAMPLER_BINDING, sampler: item.aoSampler });
 
+        const p = item.pbrTextures;
         const bg = this.resources.bindGroup(
           // `originTexture` belongs in the KEY, not only in the entries. Two
           // draws of one shader differing only in what sits at binding 4 would
           // otherwise share a cached bind group, and the second would quietly
           // composite against the first's original.
           `bindgroup:${batch.material.shader}:${item.texture?.id ?? 0}:${item.maskTexture?.id ?? 0}`
-          + `:${item.originTexture?.id ?? 0}:${idx}`,
+          + `:${item.originTexture?.id ?? 0}`
+          // Same rule again: two PBR meshes differing only in their map set must
+          // not share a cached bind group.
+          + (p ? `:${p.normal.id}:${p.metallicRoughness.id}:${p.occlusion.id}:${p.emissive.id}` : '')
+          // And again for the environment map: the fallback 1x1 and a real sky
+          // are two different textures at the same binding.
+          + `:${item.envTexture?.id ?? 0}`
+          // And once more for the shadow map: the fallback far texel and a real
+          // map are two different textures at the same binding.
+          + `:${item.shadowTexture?.id ?? 0}`
+          // And for the AO buffer: the fallback white texel and a real buffer
+          // are two different textures at the same binding.
+          + `:${item.aoTexture?.id ?? 0}`
+          + `:${idx}`,
           { pipeline, entries },
         );
         encoder.setBindGroup(0, bg);

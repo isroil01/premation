@@ -19,6 +19,8 @@ import { useMemo, useRef, useState } from 'react';
 import { Panel } from '@components/Panel';
 import { BrowserTree, BrowserFolder, BrowserRow } from '@components/BrowserTree';
 import { Input } from '@components/Input';
+import { SearchField } from '@components/SearchField';
+import { EmptyState } from '@components/EmptyState';
 import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import {
@@ -368,15 +370,12 @@ export function MotionPresetsPanel(): JSX.Element {
     >
       <div className={styles.panelHeader}>
         <div className={styles.searchRow}>
-          <Input
+          <SearchField
             value={search}
             placeholder="Search presets…"
+            ariaLabel="Search presets"
             size="sm"
-            fullWidth
-            leftIcon="search"
-            clearable
-            onClear={() => setSearch('')}
-            onChange={(e) => setSearch(e.currentTarget.value)}
+            onChange={setSearch}
           />
           <button
             type="button"
@@ -539,10 +538,20 @@ export function MotionPresetsPanel(): JSX.Element {
             ))}
           </BrowserTree>
         ) : (
-          <div className={styles.emptyState}>
-            <Icon name="sparkles" size="md" className={styles.emptyIcon} />
-            <span className={styles.emptyText}>No presets found for "{search}"</span>
-          </div>
+          <EmptyState
+            icon="sparkles"
+            title={search.trim() ? 'No matching presets' : 'No presets yet'}
+            message={
+              search.trim()
+                ? `Nothing in the library matches “${search.trim()}”.`
+                : 'Animate a layer, then save its keyframes here to reuse them anywhere.'
+            }
+            action={
+              search.trim()
+                ? { label: 'Show all presets', onClick: () => setSearch('') }
+                : { label: 'Save selection as preset', onClick: beginSave }
+            }
+          />
         )}
       </div>
     </Panel>

@@ -230,3 +230,24 @@ describe('adding a plugin from this computer', () => {
     expect(screen.getByLabelText('Add a plugin')).toBeTruthy();
   });
 });
+
+describe('an empty catalogue', () => {
+  it('says so through the shared empty state, with a way back to the full list', async () => {
+    registry.browseRegistry.mockResolvedValue({ available: true, items: [], total: 0 });
+    render(<PluginsList />);
+    await settle();
+
+    expect(screen.getByText('No plugins yet.')).toBeTruthy();
+
+    // With a query in the box the wording changes and an escape hatch appears
+    // — the previous copy said "Try a broader search" and left the user to
+    // find the field again.
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search plugins' }), {
+      target: { value: 'nothing-matches-this' },
+    });
+    await settle();
+
+    expect(screen.getByText(/No plugins match/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show all plugins' })).toBeTruthy();
+  });
+});

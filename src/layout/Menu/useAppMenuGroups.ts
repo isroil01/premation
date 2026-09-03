@@ -12,7 +12,7 @@
 import { useMemo, useSyncExternalStore } from 'react';
 import pluginHost from '@core/plugins/PluginHost';
 import { usePluginStore } from '@stores/pluginStore';
-import { APP_MENU, type MenuGroupModel, type MenuItemModel } from './menuModel';
+import { APP_MENU, LAYER_NEW_SUBMENU_LABEL, type MenuGroupModel, type MenuItemModel } from './menuModel';
 import { buildPluginsMenuGroup } from './pluginMenu';
 import { allLayerKinds } from '@core/plugins/layerKindRegistry';
 import { pluginsEnabled } from '@core/config/edition';
@@ -67,13 +67,22 @@ export function useAppMenuGroups(): MenuGroupModel[] {
       if (g.id !== 'layer') return g;
       const entries: MenuItemModel[] = kinds.map((k) => ({
         commandId: `layer.new.${k.pluginId}.${k.kind.id}`,
-        label: `New -> ${k.kind.label}`,
+        label: k.kind.label,
       }));
-      // After the native New entries and before the separator that follows
-      // them, so the list reads as one group of things you can create.
-      const firstSeparator = g.items.findIndex((it) => it.separator);
-      const at2 = firstSeparator === -1 ? g.items.length : firstSeparator;
-      return { ...g, items: [...g.items.slice(0, at2), ...entries, ...g.items.slice(at2)] };
+      // Inside Layer ▸ New, after the built-in kinds and before the rule that
+      // precedes the 3D primitives — so the submenu reads as one list of things
+      // you can create. APP_MENU is not mutated: the parent is copied with new
+      // children.
+      return {
+        ...g,
+        items: g.items.map((it) => {
+          if (it.label !== LAYER_NEW_SUBMENU_LABEL || !it.children) return it;
+          const kids = typeof it.children === 'function' ? it.children() : it.children;
+          const firstSeparator = kids.findIndex((k) => k.separator);
+          const at2 = firstSeparator === -1 ? kids.length : firstSeparator;
+          return { ...it, children: [...kids.slice(0, at2), ...entries, ...kids.slice(at2)] };
+        }),
+      };
     });
 
     return withKinds.map((g) => ({ ...g, items: visibleItems(g.items) }));

@@ -27,6 +27,7 @@ import { isPluginFormat, pluginExporterFor } from './pluginExporters';
 import { openPluginExport } from './openPluginExport';
 import { createHdrMasteringAccumulator } from './hdrTransfer';
 import { FramePipeline, CanvasPool, defaultConcurrency } from './framePipeline';
+import { formatFfmetadata, formatCarriesChapters, type ExportChapter } from './chapters';
 
 /**
  * A format this module can encode.
@@ -66,6 +67,18 @@ export interface VideoSinkParams {
   proresProfile?: ProresProfile;
   /** Keep an alpha channel (forces lossless frame staging). */
   transparent?: boolean;
+  /**
+   * Chapter marks for the delivered file, already derived from the comp's
+   * markers (`chaptersFromMarkers`).
+   *
+   * Only the ffmpeg sink can honour these, and only for a container that
+   * carries chapters — MP4 and MOV, which includes the HDR presets since they
+   * mux into MP4. Handed to a WebM or GIF export they are ignored rather than
+   * rejected: the caller has already been told which formats carry them, and
+   * failing an otherwise-fine export over metadata nobody can see would be the
+   * wrong trade. See `formatCarriesChapters`.
+   */
+  chapters?: ReadonlyArray<ExportChapter>;
   /** Mixed comp audio as WAV bytes, or undefined for a silent export. */
   audioWav?: Uint8Array;
   /** Cooperative cancellation reaching INTO the encode phase — without it the
@@ -82,6 +95,23 @@ export interface VideoSinkParams {
    */
   durationSec?: number;
   compositionName?: string;
+  /**
+   * What to write into the staging dir's `resume.json`, so this render can be
+   * picked up by a LATER RUN OF THE APP.
+   *
+   * Only the ffmpeg sink can honour it — it is the only sink that stages frames
+   * as files and encodes once at the end, which is what makes a resume possible
+   * at all. Absent means "do not offer this render back after a restart", which
+   * is correct for a one-shot export dialog and for the headless CLI: a
+   * `premation render` that exited is not something a later editor session
+   * should propose to finish.
+   */
+  resume?: {
+    /** The queue's own `RenderJobSpec`, opaque to main and stored verbatim. */
+    spec: unknown;
+    /** Frames in the whole export range, so the manifest knows the denominator. */
+    totalFrames: number;
+  };
 }
 
 /**
@@ -150,6 +180,16 @@ export interface VideoSink {
   finish(): Promise<VideoSinkResult>;
   /** Release everything without producing a file (cancel / error paths). */
   dispose(): Promise<void>;
+  /**
+   * The staging dir's job id, once one has been opened — the handle a LATER RUN
+   * of the app needs to find this render's frames again.
+   *
+   * Optional because only the ffmpeg sink has one: a streaming sink's
+   * intermediate state is in the encoder, not in files, so there is nothing for
+   * a new process to name. Null before the first frame stages, since the dir is
+   * opened lazily.
+   */
+  stagingJobId?(): string | null;
 }
 
 /**
@@ -319,10 +359,44 @@ class FfmpegSink implements VideoSink {
     return r;
   }
 
+  /**
+   * Adopt a staging dir that already exists — the other half of `beginJob`.
+   *
+   * The dir was opened by a PREVIOUS RUN of the app and re-registered in main
+   * by `render:adoptJob`; from here on this sink is indistinguishable from one
+   * that opened the dir itself. `frames` is seeded with what is already staged
+   * so `finish()` does not refuse a render that came back with nothing left to
+   * do (its "no frames were rendered" guard counts this sink's OWN frames, and
+   * a job resumed at its last frame stages none).
+   *
+   * `ensureJob` short-circuits on the id, so the audio is not restaged: the wav
+   * is already in the dir from the first run, and re-deriving identical bytes
+   * to overwrite it would be pure cost.
+   */
+  reopen(jobId: string, stagedFrames: number): void {
+    this.jobId = jobId;
+    this.frames = stagedFrames;
+  }
+
+  stagingJobId(): string | null {
+    return this.jobId;
+  }
+
   private async ensureJob(): Promise<string> {
     if (this.jobId) return this.jobId;
     const r = this.bridge();
-    this.jobId = await r.beginJob!();
+    // The manifest travels WITH the open, not after it: a crash between the two
+    // would leave a dir full of frames that nothing can identify, which is the
+    // exact failure this feature exists to remove.
+    this.jobId = await r.beginJob!(
+      this.params.resume
+        ? {
+            spec: this.params.resume.spec,
+            format: this.params.format,
+            totalFrames: this.params.resume.totalFrames,
+          }
+        : undefined,
+    );
     if (this.params.audioWav && r.stageAudio) {
       await r.stageAudio(this.jobId, this.params.audioWav);
     }
@@ -410,6 +484,20 @@ class FfmpegSink implements VideoSink {
       ? 'mp4'
       : this.params.format;
     const mastering = this.hdrTransfer ? this.hdrStats.finish() : undefined;
+    /*
+      Chapters cross the IPC boundary as FFMETADATA1 TEXT, not as a chapter
+      array. The main process has no access to `src/` (it is a separate tsconfig
+      and a separate bundle), so formatting there would mean a second copy of
+      the escaping rules — the half of this feature most likely to be wrong and
+      least likely to be noticed. One tested formatter, and main.ts only has to
+      write bytes to a file and name it on the command line.
+
+      Empty string when the format cannot carry chapters or none were derived;
+      main.ts treats that as "add no metadata input".
+    */
+    const chapterMetadata = formatCarriesChapters(this.params.format)
+      ? formatFfmetadata(this.params.chapters ?? [])
+      : '';
     // Encode-phase cancellation. The frame loop polls the signal itself, but
     // the ffmpeg child is where a long export spends most of its wall clock —
     // and without this the Cancel button was inert for that entire phase,
@@ -434,6 +522,7 @@ class FfmpegSink implements VideoSink {
           ? { proresProfile: this.params.proresProfile }
           : {}),
         ...(this.hdrTransfer ? { hdr: this.hdrTransfer, hdrMastering: mastering } : {}),
+        ...(chapterMetadata ? { chaptersFfmetadata: chapterMetadata } : {}),
       });
     } catch (err) {
       // A killed child exits non-zero and rejects with an ffmpeg error — when
@@ -769,4 +858,25 @@ export function createVideoSink(params: VideoSinkParams): VideoSink | null {
   // browser will mux, and GIF has its own dedicated encoder (gifEncoder.ts).
   if (params.format === 'webm' && canEncodeWithWebCodecs()) return new WebCodecsSink(params);
   return null;
+}
+
+/**
+ * A sink bound to a staging dir that already exists on disk.
+ *
+ * The dir belongs to a render a previous run of the app started and never
+ * finished; `render:adoptJob` has just put it back in main's job table under
+ * its original id. Only the ffmpeg sink can be reopened, because it is the only
+ * one whose intermediate state IS files — a streaming browser sink has nothing
+ * a new process could attach to, so this answers null there and the caller
+ * falls back to rendering from frame 0.
+ */
+export function reopenVideoSink(
+  params: VideoSinkParams,
+  jobId: string,
+  stagedFrames: number,
+): VideoSink | null {
+  if (isPluginFormat(params.format) || !canEncodeLocally()) return null;
+  const sink = new FfmpegSink(params);
+  sink.reopen(jobId, stagedFrames);
+  return sink;
 }

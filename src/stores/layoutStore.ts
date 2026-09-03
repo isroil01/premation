@@ -19,6 +19,14 @@ import { getEventBus } from '@core/events/EventBus';
 import { clamp } from '@utils/lang';
 
 const PANEL_ORDER_SETTINGS_KEY = 'layout.panelOrder';
+
+/**
+ * Width of a collapsed sidebar: exactly the dock rail (`--dock-rail-width` in
+ * tokens/spacing.css), so collapsing hides the content pane and moves no icon.
+ * EditorLayout sizes the collapsed pane with this; `setRegionSize` treats any
+ * drag past it as the user pulling the sidebar open again.
+ */
+export const COLLAPSED_SIDEBAR_SIZE = 36;
 const LAYOUT_PERSIST_KEY = 'motion-editor.layout.v1';
 
 // ── Persistence helpers ───────────────────────────────────────────
@@ -422,7 +430,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         const r = s.regions[region];
         if (!r) return;
-        const collapsedThreshold = region === 'bottomTimeline' ? 60 : 44;
+        const collapsedThreshold = region === 'bottomTimeline' ? 60 : COLLAPSED_SIDEBAR_SIZE;
         if (r.collapsed && size > collapsedThreshold) {
           r.collapsed = false;
         }

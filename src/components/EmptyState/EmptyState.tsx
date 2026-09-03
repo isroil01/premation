@@ -16,7 +16,30 @@
 import { type ReactNode } from 'react';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
+import { Button } from '@components/Button';
 import styles from './EmptyState.module.css';
+
+/**
+ * The common case — one button that does the obvious thing. Passing it as data
+ * rather than as a rendered node is what keeps twenty empty states from each
+ * picking their own button variant and size; every panel that just wants "and
+ * here is the one next step" gets the same button.
+ */
+export interface EmptyStateAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}
+
+function isDeclarativeAction(action: unknown): action is EmptyStateAction {
+  return (
+    typeof action === 'object' &&
+    action !== null &&
+    'label' in action &&
+    'onClick' in action &&
+    typeof (action as { onClick: unknown }).onClick === 'function'
+  );
+}
 
 export interface EmptyStateProps {
   icon?: IconName;
@@ -24,11 +47,12 @@ export interface EmptyStateProps {
   title?: ReactNode;
   message: ReactNode;
   /**
-   * Optional next step(s). Multiple buttons stack full-width; pass them as a
-   * fragment. Prefer an action whenever the user can actually do something
-   * here without selecting anything first.
+   * Optional next step(s). Either `{ label, onClick }` for the usual single
+   * button, or arbitrary nodes when a panel genuinely needs two (they stack
+   * full-width; pass them as a fragment). Prefer an action whenever the user
+   * can actually do something here without selecting anything first.
    */
-  action?: ReactNode;
+  action?: ReactNode | EmptyStateAction;
   /** For an empty SECTION inside a populated panel — tighter, smaller tile. */
   compact?: boolean;
   className?: string;
@@ -49,7 +73,23 @@ export function EmptyState({
       </span>
       {title ? <div className={styles.title}>{title}</div> : null}
       <div className={styles.message}>{message}</div>
-      {action ? <div className={styles.action}>{action}</div> : null}
+      {action ? (
+        <div className={styles.action}>
+          {isDeclarativeAction(action) ? (
+            <Button
+              variant="primary"
+              size="sm"
+              fullWidth
+              disabled={action.disabled}
+              onClick={action.onClick}
+            >
+              {action.label}
+            </Button>
+          ) : (
+            action
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

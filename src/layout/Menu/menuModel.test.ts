@@ -25,14 +25,27 @@
 import { setEdition, type Edition } from '@core/config/edition';
 
 /** Ids registered outside `buildProjectCommands` that the menu also references. */
-type MenuShape = ReadonlyArray<{ id: string; items: ReadonlyArray<{ commandId?: string; separator?: boolean; visible?: () => boolean }> }>;
+interface ItemShape {
+  commandId?: string;
+  separator?: boolean;
+  visible?: () => boolean;
+  children?: ReadonlyArray<ItemShape> | (() => ReadonlyArray<ItemShape>);
+}
+type MenuShape = ReadonlyArray<{ id: string; items: ReadonlyArray<ItemShape> }>;
 
+/** Visible command ids at every depth — submenus included, since that is where most of the menu now lives. */
 function visibleCommandIds(menu: MenuShape): string[] {
-  return menu
-    .flatMap((g) => g.items)
-    .filter((it) => !it.separator && (it.visible === undefined || it.visible()))
-    .map((it) => it.commandId)
-    .filter((id): id is string => !!id);
+  const out: string[] = [];
+  const visit = (items: ReadonlyArray<ItemShape>): void => {
+    for (const it of items) {
+      if (it.separator) continue;
+      if (it.visible !== undefined && !it.visible()) continue;
+      if (it.commandId) out.push(it.commandId);
+      if (it.children) visit(typeof it.children === 'function' ? it.children() : it.children);
+    }
+  };
+  for (const g of menu) visit(g.items);
+  return out;
 }
 
 async function menuIn(edition: Edition): Promise<string[]> {

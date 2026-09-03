@@ -86,20 +86,58 @@
   margin: var(--space-2) 0 var(--space-1);
 }
 
+/*
+ * The row conventions shared by the three sections that use this stylesheet —
+ * text animators, path operators and shape effects.
+ *
+ * They are `PropertyRow`'s conventions, read from `PropertyRow`'s own knobs
+ * (`--prop-stopwatch-col`, `--prop-field-width`, `--control-height-row`)
+ * rather than re-guessed here. These sections cannot USE that component — a
+ * row here may carry a picker, a colour cell or nothing at all where a
+ * PropertyRow has a value cell — but there is no reason for their label column
+ * and their number column to land anywhere else, and until now they did not:
+ * a row with an animation checkbox indented its label by 22px and a row
+ * without one did not, which is why one call site carried a literal
+ * `marginLeft: 22` to fake the column back.
+ */
 .selectorRow,
 .paramRow {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-1) 0;
+  min-height: var(--control-height-row);
+  min-width: 0;
 }
 
 .selectorRow { justify-content: space-between; }
 
+/* The toggle gutter, RESERVED whether or not the row has a checkbox — the
+   same reason PropertyRow reserves its stopwatch and navigator columns. */
+.rowToggle {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 var(--prop-stopwatch-col, 20px);
+  height: 100%;
+}
+
 .paramLabel {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+
+/* One width for every numeric field, so the NUMBERS line up and not merely the
+   cells that hold them. Same declaration as `PropertyRow`'s `.values`. */
+.paramRow > [data-numeric],
+.selectorRow > [data-numeric] {
+  flex: 0 0 var(--prop-field-width, 58px);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .stopwatch {

@@ -135,3 +135,143 @@
     transition: none;
   }
 }
+
+/* ── Parameter fields ───────────────────────────────────────────────
+   A label / control / unit strip rather than a two-column grid. The panel is
+   the narrowest column in the app and a grid would either wrap the labels or
+   crush the inputs; a flex row lets the control take whatever is left after a
+   fixed label, which is the only allocation that survives a 220px inspector. */
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+}
+
+.fieldRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.fieldLabel {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+
+.select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--control-height-xs, 20px);
+  padding: 0 4px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+}
+
+.number {
+  /* `width` not `flex`: these hold two or three digits, and letting them grow
+     would push the unit off the end of a row that already fits. */
+  width: 46px;
+  flex: 0 0 auto;
+  height: var(--control-height-xs, 20px);
+  padding: 0 4px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* An overridden offset is not the plan's, and the list is otherwise a wall of
+   identical numbers — the border is what says which ones you set by hand. */
+.number[data-overridden='true'] {
+  border-color: var(--color-primary);
+  color: var(--color-text-primary);
+}
+
+.select:focus-visible,
+.number:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.unit {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+}
+
+.iconButton {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-xs, 20px);
+  height: var(--control-height-xs, 20px);
+  padding: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.iconButton:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.iconButton:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+/* ── Per-layer offsets ──────────────────────────────────────────────
+   Capped in height and scrollable: this section sits above a long preset
+   library, and a twenty-layer selection must not push it off the screen. */
+
+.layerList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  max-height: 156px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.layerRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.layerName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .iconButton {
+    transition: none;
+  }
+}

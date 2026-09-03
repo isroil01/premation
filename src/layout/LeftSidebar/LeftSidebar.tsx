@@ -17,6 +17,8 @@ export function LeftSidebar({ renderers, headerExtras, header, className }: Left
   const isCollapsed = className?.includes('collapsed-view') || false;
   const isSplit = useLayoutStore((s) => s.leftSidebarSplit);
   const toggleSplit = () => useLayoutStore.getState().toggleSidebarSplit('left');
+  // Rail on the outer edge — left unless the sidebar has been re-docked right.
+  const railSide = useLayoutStore((s) => (s.leftSidebarPosition === 'right' ? 'right' : 'left'));
 
   return (
     <aside className={cn(styles.root, className)}>
@@ -38,6 +40,7 @@ export function LeftSidebar({ renderers, headerExtras, header, className }: Left
             isSplit
             splitPosition="top"
             onToggleSplit={toggleSplit}
+            railSide={railSide}
           />
           <DockPanel
             region="leftSidebar_bottom"
@@ -46,6 +49,7 @@ export function LeftSidebar({ renderers, headerExtras, header, className }: Left
             isSplit
             splitPosition="bottom"
             onToggleSplit={toggleSplit}
+            railSide={railSide}
           />
         </SplitPane>
       ) : (
@@ -56,6 +60,7 @@ export function LeftSidebar({ renderers, headerExtras, header, className }: Left
           className={className}
           isSplit={false}
           onToggleSplit={toggleSplit}
+          railSide={railSide}
         />
       )}
     </aside>

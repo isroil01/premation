@@ -82,6 +82,16 @@ export type RenderableEffect =
        * max corner (effect spread / skip gates).
        */
       cocCorners?: readonly [number, number, number, number];
+      /**
+       * This blur IS the camera's depth of field, synthesised per layer by the
+       * snapshot adapter (id 'dof' upstream). Tagged so CompositionPass can
+       * DROP it for renderables it renders through the per-pixel depth-buffer
+       * gather (`camera3d.dof`) — the gather computes the same CoC from the
+       * real depth buffer, and running both would defocus twice. Renderables
+       * that fall off the depth path (mattes, adjustments, no depth texture)
+       * keep the entry, so DOF is never silently lost.
+       */
+      dofSource?: boolean;
     }
   | { type: 'glow'; radiusPx: number; color?: Color; /** Comp-px alpha dilate before blur (Spread). */ spreadPx?: number }
   | { type: 'drop-shadow'; radiusPx: number; color?: Color; offsetX: number; offsetY: number; spreadPx?: number }
@@ -608,6 +618,27 @@ export interface Renderable {
       /** Sample the layer's own texture instead of the flat colour. */
       textured?: boolean;
     }>;
+    /**
+     * An imported glTF material's maps beyond base colour. Present only when
+     * the material carries at least one, which is what selects the `mesh3d-pbr`
+     * pipeline — an extrusion, or a model with nothing but a base-colour
+     * texture, keeps the exact shader (and therefore the exact pixels) it had
+     * before this existed. Keys resolve through the texture registry like any
+     * other; an absent one binds white, the identity for every multiplicative
+     * map (see the shader's note).
+     */
+    pbr?: {
+      normalKey?: string;
+      metallicRoughnessKey?: string;
+      occlusionKey?: string;
+      emissiveKey?: string;
+      /** `normalTexture.scale`. */
+      normalScale: number;
+      /** `occlusionTexture.strength`. */
+      occlusionStrength: number;
+      /** emissiveFactor × KHR_materials_emissive_strength, linear. */
+      emissive: readonly [number, number, number];
+    };
   };
   /**
    * True 3D placement (AE Classic-3D GPU path). `model` is the 16-number
@@ -622,6 +653,17 @@ export interface Renderable {
    */
   threeD?: {
     model: readonly number[];
+    /**
+     * This renderable throws a geometric shadow (Material Options → Casts
+     * Shadows). Read only when a light in the run has `shadowMap` on: it
+     * selects the members drawn into the map.
+     *
+     * Separate from `shade` on purpose. `shade` is present only when the layer
+     * ACCEPTS LIGHTS, and a layer that refuses lighting still blocks it —
+     * hanging casting off the shade block would make an unlit card in front of
+     * a lamp transparent to it.
+     */
+    castsShadow?: boolean;
     /**
      * Per-fragment shading (Material Options → Accepts Lights). When the
      * renderable draws through the depth-tested group path, the 3d shaders run
@@ -640,6 +682,8 @@ export interface Renderable {
       metal?: number;
       /** PBR roughness 0..1. Present ⇒ GGX model — see `Shade3D.roughness`. */
       roughness?: number;
+      /** Cel bands 2–8. Present ⇒ toon quantization — see `Shade3D.toonBands`. */
+      toonBands?: number;
       /** Per-quad Lambert gain fallback (adapter-computed). */
       quadGain?: readonly [number, number, number];
       /** Light this surface from one side — see `Shade3D.oneSided`. Set by an
@@ -649,6 +693,13 @@ export interface Renderable {
       ambient?: number;
       /** Material Diffuse % (AE). Scales Lambert on the GPU path. */
       diffuse?: number;
+      /**
+       * This surface RECEIVES a geometric shadow (Material Options → Accepts
+       * Shadows). False keeps the surface fully lit even where the map says it
+       * is occluded — the shadow-catcher switch, honoured on the GPU path the
+       * same way the projected copy already honours it on the CPU one.
+       */
+      acceptsShadows?: boolean;
     };
   };
 }
@@ -726,6 +777,34 @@ export interface SceneLight3D {
   falloffMode: number;
   /** Smooth-curve span in px, default already applied. */
   falloffDistance: number;
+  /**
+   * Render this light's GEOMETRIC shadow — the run's casters rasterised from
+   * the light into a depth map, sampled per fragment.
+   *
+   * Opt-in, and absent means off, because the alternative it replaces is not
+   * broken: a 2.5D projected caster copy (see `buildSnapshot`) lands a correct
+   * silhouette on the nearest accepting plane and costs nothing. A map buys
+   * what that cannot express — a shadow that curves over the receiver's own
+   * geometry, that a caster casts onto ITSELF, and that respects more than one
+   * receiving surface — at the price of a second render of every caster.
+   *
+   * When this is on, the adapter must SUPPRESS this light's projected copy, or
+   * the frame carries two shadows from one lamp.
+   */
+  shadowMap?: boolean;
+  /** Map resolution; the renderer clamps to 512 / 1024 / 2048. */
+  shadowMapSize?: number;
+  /** Depth bias in WORLD units, subtracted from the receiver's distance before
+   *  the comparison. Too little and a lit surface stripes itself; too much and
+   *  a shadow detaches from the foot of its caster. */
+  shadowBias?: number;
+  /** PCF tap spacing, in map texels. 1 = a plain 3×3; larger softens the edge
+   *  at the cost of banding, since the tap count stays 9. */
+  shadowSoftness?: number;
+  /** AE's Shadow Darkness as a FRACTION — how much of this light a caster
+   *  blocks. 1 (the default) blocks all of it, which on a single-light scene
+   *  renders the occluded surface pure black. */
+  shadowDarkness?: number;
 }
 
 export interface CompositionInfo {
@@ -762,9 +841,109 @@ export interface FrameScene {
     /** Camera world position — the Blinn-Phong eye. Absent for ortho views
      *  (specular is skipped there). */
     eye?: readonly [number, number, number];
+    /**
+     * The camera's depth-of-field config, when DOF is active. Present ONLY on
+     * perspective cameras (ortho/custom views have no lens). When set — and the
+     * backend can hand back a sampleable depth texture — CompositionPass
+     * renders each 3D depth group into a single-sample colour+depth pair and
+     * runs the `dof-gather` pass: per-PIXEL circle of confusion from the real
+     * depth buffer, instead of the per-layer corner-CoC approximation. Same
+     * two CoC models as the adapter's `dofBlurPx` (legacy ramp / thin-lens,
+     * selected by `fStop` presence), so the two paths defocus identically
+     * where a layer is flat.
+     */
+    dof?: {
+      /** Max defocus blur in px (AE's Blur Level cap). */
+      strength: number;
+      /** In-focus distance from the camera, px (camera-space z). */
+      focus: number;
+      /** Legacy-ramp slope (see dofBlurPx). */
+      aperture: number;
+      /** Lens focal length, px — the thin-lens model's f. */
+      focalLength?: number;
+      /** f-number; presence selects the physical thin-lens CoC. */
+      fStop?: number;
+      /** Iris blade count (≥3 = polygonal bokeh; else spiral disk). */
+      irisBlades?: number;
+      /** 0 = sharp n-gon, 1 = circle. */
+      irisRoundness?: number;
+      /** Extra weight on bright taps (specular bloom). */
+      highlightGain?: number;
+    };
   };
   /** Scene lights for per-fragment Accepts-Lights shading in 3D groups. */
   lights3d?: ReadonlyArray<SceneLight3D>;
+  /**
+   * The comp's environment light as a prefiltered REFLECTION map.
+   *
+   * `lights3d` already carries the same environment's low-frequency
+   * IRRADIANCE, as a derived rig of one ambient plus up to six parallels (see
+   * core/scene/environmentLight.ts). That rig says how much light reaches a
+   * surface; it cannot say what the surface mirrors, which is what a smooth
+   * Physical material needs. So this is the second half of one environment,
+   * not a second environment — the two share a rotation and an intensity, and
+   * the shader turns them together.
+   *
+   * Present only when the comp HAS an environment light. Absent packs
+   * `envParams` as zeros and the shader's reflection block never runs, which
+   * is the gate that keeps every other scene bit-identical.
+   */
+  envMap?: EnvironmentMap;
+  /**
+   * Screen-space ambient occlusion for depth-eligible 3D runs.
+   *
+   * A COMPOSITION setting rather than a per-layer one, and that is what it
+   * describes: AO is contact darkening between whatever happens to be near
+   * whatever else, which no single layer can own. Absent (the default) means
+   * every 3D run renders exactly as it did before AO existed — the shade tail's
+   * `aoParams` packs as zeros and the shader multiplies its ambient term by a
+   * literal 1.0.
+   */
+  ssao?: SsaoSettings;
+}
+
+/** Composition-level SSAO, as the renderer needs it. Mirrors the authored
+ *  `CompositionSettings.ssao` (kept independent so the renderer package does
+ *  not import the app's store types). */
+export interface SsaoSettings {
+  enabled: boolean;
+  /** Hemisphere radius in COMP PX — the same unit every other spatial number
+   *  on the 3D path uses, so a radius means a fixed size in the scene rather
+   *  than a fixed size on screen. */
+  radius: number;
+  /** How much of the ambient term full occlusion removes, 0..2. */
+  intensity: number;
+  /** Buffer resolution: 'half' (the default) or 'full'. */
+  quality: 'half' | 'full';
+}
+
+/**
+ * A prefiltered specular environment, as raw texels the pass uploads itself.
+ *
+ * PIXELS rather than a `textureKey`, unlike every other image in this DTO: the
+ * texture registry resolves keys the APP registered, and the environment atlas
+ * is derived (a preset is procedural, and an image sky's atlas is built from a
+ * decode the app throws away) — routing it through the registry would mean
+ * inventing a registration for something no layer references. `id` is what
+ * makes that cheap: the pass keys its GPU texture off it and re-uploads only
+ * when the sky itself changes, so a keyframed rotation costs one uniform.
+ */
+export interface EnvironmentMap {
+  /** Identity of the CONTENT. Same id ⇒ same texels ⇒ no re-upload. */
+  id: string;
+  /** Full atlas size — `levels` equirect bands stacked top to bottom. */
+  width: number;
+  height: number;
+  /** Roughness levels; must equal the renderer's `ENV_SPEC_LEVELS`. */
+  levels: number;
+  /** Multiplier the shader applies after squaring the stored value. */
+  scale: number;
+  /** RGBA8, `width * height * 4` bytes. */
+  data: Uint8Array;
+  /** Environment intensity (Intensity/100 x Reflections/100). */
+  intensity: number;
+  /** Environment rotation in DEGREES, as the light layer stores it. */
+  rotationDeg: number;
 }
 
 /** An empty scene for a given composition. */

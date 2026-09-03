@@ -8,12 +8,29 @@
  * pipeline), eyedropper (Chromium's EyeDropper API — always available in the
  * Electron shell), numeric R/G/B/A fields, and recent-color swatches persisted
  * across sessions. One component — every color control in the app gets this.
+ *
+ * ── Three strips, three different promises ──────────────────────────────────
+ *
+ *   Swatches  the PROJECT palette — named, ordered, saved in the .motion file.
+ *             Curated by the user; shared by every picker in the app.
+ *   Document  every color the scene currently paints with. Derived, never
+ *             stored, recomputed when this popover OPENS (walking every node's
+ *             paint stack is cheap once and unaffordable per frame).
+ *   Recent    what you touched last, on this machine. localStorage, per-user,
+ *             deliberately not in the document — recents change on every drag,
+ *             and a file that dirtied itself for that would be unusable.
+ *
+ * They are separate because they answer different questions ("what is our
+ * brand red", "what is already in this comp", "what did I just use"). Merging
+ * them into one strip was the tempting simplification and it destroys all
+ * three answers at once.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { HexColorPicker, HexAlphaColorPicker, HexColorInput } from 'react-colorful';
 import { cn } from '@utils/cn';
+import { useSwatchStore } from '@stores/swatchStore';
 import styles from './ColorPicker.module.css';
 
 export interface ColorPickerProps {
@@ -120,6 +137,33 @@ export function ColorPicker({
   const [recent, setRecent] = useState<string[]>(readRecent);
   const rgba = useMemo(() => hexToRgba(color), [color]);
 
+  const swatches = useSwatchStore((s) => s.swatches);
+  const documentColors = useSwatchStore((s) => s.documentColors);
+  const addSwatch = useSwatchStore((s) => s.addSwatch);
+  const renameSwatch = useSwatchStore((s) => s.renameSwatch);
+  const removeSwatch = useSwatchStore((s) => s.removeSwatch);
+  const refreshDocumentColors = useSwatchStore((s) => s.refreshDocumentColors);
+
+  /** Which project swatch has its rename/delete row open, if any. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftName, setDraftName] = useState('');
+  const editing = swatches.find((s) => s.id === editingId) ?? null;
+  // The row closes itself if its swatch is deleted from another surface (the
+  // Swatches panel), rather than editing a swatch that is no longer there.
+  useEffect(() => {
+    if (editingId && !editing) setEditingId(null);
+  }, [editingId, editing]);
+
+  const openEditor = useCallback((id: string, name: string) => {
+    setEditingId(id);
+    setDraftName(name);
+  }, []);
+
+  const commitRename = useCallback(() => {
+    if (editingId) renameSwatch(editingId, draftName);
+    setEditingId(null);
+  }, [editingId, draftName, renameSwatch]);
+
   const setChannel = useCallback(
     (ch: 'r' | 'g' | 'b' | 'a', v: number) => {
       const next = { ...rgba, [ch]: ch === 'a' ? v / 100 : v };
@@ -146,8 +190,16 @@ export function ColorPicker({
   return (
     <Popover.Root
       onOpenChange={(open) => {
-        // Record on close so a saturation drag doesn't flood the recents.
-        if (!open && color) setRecent(pushRecent(color));
+        if (open) {
+          // The one place the document strip is derived. Walking every node's
+          // fill and stroke stack costs nothing once per open and would be
+          // indefensible as a subscription that fires on every scene bump.
+          refreshDocumentColors();
+        } else {
+          // Record on close so a saturation drag doesn't flood the recents.
+          if (color) setRecent(pushRecent(color));
+          setEditingId(null);
+        }
       }}
     >
       <Popover.Trigger asChild>
@@ -185,19 +237,119 @@ export function ColorPicker({
               {alpha && <ChannelField label="A%" value={Math.round(rgba.a * 100)} max={100} onCommit={(v) => setChannel('a', v)} />}
             </div>
 
-            {recent.length > 0 && (
-              <div className={styles.recents} role="listbox" aria-label="Recent colors">
-                {recent.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    className={styles.recentSwatch}
-                    style={{ background: c }}
-                    title={c.toUpperCase()}
-                    aria-label={`Use ${c}`}
-                    onClick={() => onChange(c)}
+            {/* ── Project palette ────────────────────────────────────── */}
+            <div className={styles.section}>
+              <div className={styles.sectionHead}>
+                <span className={styles.sectionLabel}>Swatches</span>
+                <button
+                  type="button"
+                  className={styles.sectionAdd}
+                  onClick={() => {
+                    const added = addSwatch(color);
+                    if (added) openEditor(added.id, added.name);
+                  }}
+                  title="Save this color to the project palette"
+                  aria-label="Add current color to project swatches"
+                >
+                  +
+                </button>
+              </div>
+              {swatches.length > 0 ? (
+                <div className={styles.recents} role="listbox" aria-label="Project swatches">
+                  {swatches.map((sw) => (
+                    <button
+                      key={sw.id}
+                      type="button"
+                      className={cn(styles.recentSwatch, sw.id === editingId && styles.recentSwatchActive)}
+                      style={{ background: sw.hex }}
+                      title={`${sw.name} — ${sw.hex.toUpperCase()} (right-click to rename or delete)`}
+                      aria-label={`Use ${sw.name}`}
+                      onClick={() => onChange(sw.hex)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        openEditor(sw.id, sw.name);
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className={styles.sectionEmpty}>No project swatches yet — + saves this color.</p>
+              )}
+              {editing && (
+                <div className={styles.editRow}>
+                  <span className={styles.editSwatch} style={{ background: editing.hex }} aria-hidden />
+                  <input
+                    className={styles.editInput}
+                    value={draftName}
+                    autoFocus
+                    aria-label="Swatch name"
+                    onChange={(e) => setDraftName(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                      if (e.key === 'Escape') setEditingId(null);
+                    }}
                   />
-                ))}
+                  <button
+                    type="button"
+                    className={styles.editDelete}
+                    title="Delete this swatch"
+                    aria-label={`Delete ${editing.name}`}
+                    // `onMouseDown`, not `onClick`: the input's blur commits a
+                    // rename and re-renders this row away before a click on a
+                    // sibling ever lands.
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      removeSwatch(editing.id);
+                      setEditingId(null);
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* ── Colors already in this document ────────────────────── */}
+            {documentColors.length > 0 && (
+              <div className={styles.section}>
+                <div className={styles.sectionHead}>
+                  <span className={styles.sectionLabel}>Document</span>
+                </div>
+                <div className={styles.recents} role="listbox" aria-label="Document colors">
+                  {documentColors.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={styles.recentSwatch}
+                      style={{ background: c }}
+                      title={c.toUpperCase()}
+                      aria-label={`Use ${c}`}
+                      onClick={() => onChange(c)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {recent.length > 0 && (
+              <div className={styles.section}>
+                <div className={styles.sectionHead}>
+                  <span className={styles.sectionLabel}>Recent</span>
+                </div>
+                <div className={styles.recents} role="listbox" aria-label="Recent colors">
+                  {recent.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      className={styles.recentSwatch}
+                      style={{ background: c }}
+                      title={c.toUpperCase()}
+                      aria-label={`Use ${c}`}
+                      onClick={() => onChange(c)}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>

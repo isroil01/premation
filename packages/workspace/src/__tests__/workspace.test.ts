@@ -232,12 +232,16 @@ describe('Workspace overlay', () => {
     expect(overlay.selectionBoxes).toHaveLength(1);
   });
 
-  it('multi-selection draws no transform handles (they would be dead grips)', () => {
+  it('multi-selection draws the eight grips on the union AABB (group scale/rotate)', () => {
     const { ws, selection } = makeWorkspace();
     selection.set(['a', 'b']);
     const overlay = ws.overlay();
     expect(overlay.selectionBounds).not.toBeNull();
-    expect(overlay.handles).toHaveLength(0);
+    // Live grips now — a drag scales the whole selection about the group box
+    // (see multiSelectTransform.test.ts). No per-layer anchor marker: the
+    // handles belong to the selection as a body, which has no single pivot.
+    expect(overlay.handles).toHaveLength(8);
+    expect(overlay.handles.every((h) => h.kind === 'resize')).toBe(true);
   });
 
   it('emits HoverChanged as the pointer moves over a node', () => {

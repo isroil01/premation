@@ -1,0 +1,1 @@
+export { SwatchesPanel } from './SwatchesPanel';

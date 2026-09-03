@@ -1,6 +1,6 @@
 # Premation vs Adobe After Effects — Feature Comparison & Gap Analysis
 
-> **Basis of comparison:** Premation `dev` as of 2026-08-21 (every Premation claim
+> **Basis of comparison:** Premation `dev` as of 2026-09-02 (every Premation claim
 > verified against source — registries, tests, and shipped modules, not prose) vs
 > **After Effects 26.3** (June 2026 release; 26.0 shipped January 2026).
 > Where a count is stated, a test or registry in this repo pins it.
@@ -15,7 +15,7 @@
 | Expressions | Hand-written safe language (`packages/animation/src/expressions.ts`, ~50 identifiers) + value/speed graph editor | Full JavaScript (ES6+) | Very high parity for motion-design idioms |
 | 2D rigging | Bones, FK/IK, FABRIK solver, weight painting, ARAP puppet (`src/core/rig/`) | Puppet pins only; bones need Duik/Limber | **Premation wins natively** |
 | Tracking | Multi-point + planar/mesh; Smooth Stabilize (similarity / subspace / RS); **3D Camera Tracker (SfM + BA)**; Roto Brush + GrabCut + **SAM-class segment**; CAF video (PatchMatch + bidirectional) | Point tracker, 3D Camera Tracker, Warp Stabilizer VFX, Mocha planar, Roto Brush 3 | Classical parity footholds shipped; neural SAM / Mocha depth remain |
-| AI integration | 61 typed tools (read 7 / write 24 / craft 17 / compose 13), deterministic Caster/Director runner | Sensei / Firefly (generative fill, Roto Brush 3) | Premation has native agentic automation |
+| AI integration | **65** typed tools (read 7 / write 24 / craft 21 / compose 13), deterministic Caster/Director runner | Sensei / Firefly (generative fill, Roto Brush 3) | Premation has native agentic automation |
 
 ## 2. Feature-by-Feature
 
@@ -24,7 +24,11 @@
 | Feature | Premation | AE 26.3 | Status |
 |---|---|---|---|
 | Layer/clip model | Multi-clip bars per track (start, duration, sourceIn/Out) | One source per layer, in/out trims | Parity (+ multi-clip per track) |
-| Trim/split/slip/slide | All present; **ripple trim / ripple insert gap** | All present | Parity |
+| Trim/split/slip/slide/**roll** | Visible **edit-tool modes** (2026-09-02, `timelineEditMode.ts`): Selection / Razor / Slip / Slide / Roll on `Shift+S/C/Y/U/R`, cursors, snapped razor line, `Shift`+click cuts every track, pointer HUD in frames; roll is a real two-sided trim bounded by both clips' source handles. Alt-drag slip/slide kept. Plus **ripple trim / ripple insert gap** | Same five, as tools | Parity |
+| **Per-cut transitions** | Cross dissolve, dip to black, dip to white, wipe as document RECORDS (`core/timeline/transitions.ts`) that materialize into overlaps / opacity ramps / a keyframed wipe and dematerialize to an exact snapshot; drag a chip onto a cut, double-click it, or use the clip menu; grips resize live | Effect-based transitions; Premiere-style cut transitions absent | **Premation wins** vs AE (AE has no per-cut transition object) |
+| **Source Monitor** | In/out in source seconds, JKL shuttle (1×/2×/4×), frame stepping, Insert / Overwrite / Add to end / New comp from range (`SourceMonitorPanel.tsx`, `sourceMonitorOps.ts`) | Footage panel with in/out; no three-point edit | Parity, closer to an NLE than AE is |
+| **Assemble / new comp from clips** | Assemble from Footage — detect cuts, split, drop the runts, sequence with dissolves, **one undo** (`assembleFromFootage.ts`); New Composition from Selected Clips (`compFromClips.ts`) | Scene Edit Detection + manual precomp | Parity+ (one gesture vs several) |
+| **Clip-edge snapping / fit** | Clips snap to other clips, playhead, markers, work area and comp bounds with a guide line; Fit Composition (`;`) / Fit Work Area (`Alt+;`) | Snapping + zoom-to-fit | Parity |
 | Time remapping | `remapTime` curve, freeze, reverse, sequence bars | Time Remap + speed graph, stretch, freeze | Parity |
 | Frame blending | Frame Mix + **Pixel Motion** (deterministic optical-flow warp) | Frame Mix + Pixel Motion | Parity |
 | Responsive/protected time | `responsiveTime.ts` regions | Responsive Design — Time | Parity |
@@ -45,7 +49,10 @@
 | Feature | Premation | AE 26.3 | Status |
 |---|---|---|---|
 | Interpolation | Linear, hold, bezier, continuous, **roving** (`interpolate.ts`), spatial auto-tangents | Same set | Parity |
-| Graph editor | Value + speed graphs, handle editing, Easy Ease, presets | Same | Parity |
+| Graph editor | **One** editor (2026-09-02): the Motion panel's private copy is deleted and both surfaces host `Timeline/GraphEditor.tsx` — value + speed graphs, handle editing, Easy Ease, presets, **Animated / Selected** visibility modes, a frozen **reference curve**, rove, ease copy/paste and a saved-curve **ease library** | Same, incl. Show Animated / Selected | Parity |
+| Keyframe assistants / menus | Interpolation submenu, **Keyframe Velocity…**, prev/next keyframe, The Smoother and The Wiggler as dialogs with live preview, onion-skin settings popover | Same set | Parity |
+| **Stagger / modifier stacks / audio drivers** | Parametric stagger with order modes, swing, seed and a record that makes **Re-apply** replace the last one in one undo (`choreography.ts`); ordered per-property **modifier stacks** compiled to one expression (`modifierStack.ts`); audio-reactive drivers with band / attack / release / gate / range (`audioDriver.ts`); **bake dynamics** to keyframes | Sequence Layers + expressions; no modifier stack (Cavalry has one) | **Premation wins** — AE has no data-held modifier stack |
+| Expression authoring | Caret **autocomplete** (ranked, member-aware, Ctrl+Space) in the expression editor | Expression language menu + autocomplete | Parity |
 | Generators | Physics bounce (`bounce.ts`) | Keyframe assistants + expressions | Parity |
 | Layer utilities | **Create Nulls From Path Points**, both directions — one-shot, and live **Points Follow Nulls** via a render-time binding (`Geometry.pointBindings`); **Create Shapes From Text** with the **font's own `glyf`/CFF outlines** (`openType.ts`, `fontOutlines.ts`) and a traced fallback when the face cannot be read; **Auto-trace** (layer alpha → add + subtract mask paths incl. holes, per-frame keyframes) | Same three | Parity (font-exact needs Local Font Access permission; web fonts fall back to trace) |
 | Expression engine | ~50 identifiers incl. `wiggle`, `valueAtTime`, `velocityAtTime`, `loopOut` (with working `pingpong`), `sourceRectAtTime`, `key(n)`, `numKeys`, and `audio` | Full JS; 26.0 adds per-character styling via expressions | Parity for standard motion; no arbitrary JS by design |
@@ -80,15 +87,22 @@
 | **Variable fonts** | Keyframeable **wght** + **wdth/slnt** via `font-variation-settings` (`fontWidth` / `fontSlant`); font picker **Variable filter + badge** (`fvar` probe, `variableFontProbe.ts`) | 26.0: keyframeable weight/width/slant; 26.3: variable-font filter | Parity |
 | SVG import | SVG parsing + continuous rasterization | **26.0: native SVG → editable shape layers with gradients** | Rough parity |
 | Path operators | **9** chainable (`PathOpType` incl. **wiggleTransform**) | Same set | Parity |
+| **Gradient editing** | On-canvas gizmo (`gradientHandles.ts` + `GradientHandleOverlay.tsx`): axis grips, stop diamonds, add / duplicate / delete stops, colour picker on double-click, per-fill chip | Gradient Ramp effect + shape gradient with on-canvas handles | Parity |
+| **Knife / pathfinder** | Knife tool (`K`, `KnifeTool` in `tools/builtin.ts`) cuts shape paths exactly along a dragged line, cubics included, closed shapes capped into islands (`core/geometry/pathCut.ts`); Pathfinder section for boolean set ops | No knife; Merge Paths only | **Premation wins** (Illustrator-class cutting) |
+| **Smart guides** | Distance badges, equal-spacing and equal-size detection **with snapping**, Alt-hover measuring, View Options toggle (`packages/workspace/src/snap/smartGuides.ts`) | Snapping to layer features; no measurement chrome | **Premation wins** (Figma-class) |
 
 ### 2.6 3D & rigging
 
 | Feature | Premation | AE 26.3 | Status |
 |---|---|---|---|
 | Cameras | 1/2-node (`cameraOrientation`), DoF, **quad view**; **SfM + bundle adjust** camera solve (`sfmCamera.ts`, `bundleAdjust.ts`) | Same + denser commercial solver | Foothold shipped; COLMAP-grade open |
-| Lights | 4 types (`LightType: point, ambient, spot, parallel`), falloff, cone feather, Blinn-Phong | 4 types + cast shadows | Parity |
-| Geometry | Extrusion + bevels + per-face materials (`FACE_SURFACE_IDS`); primitives are FACET QUADS (a cylinder = 20 flat strips, each a layer with its own matrix), not meshes | Advanced 3D: glTF + parametric meshes + Substance PBR, height displacement, IBL | ⚠️ Gap (Tier 2) — displacement needs per-vertex meshes and IBL needs an environment texture in both backends' pipeline layouts: a new mesh pipeline, not a feature on this one |
-| **Shading model** | Phong (original) **or Physical: Cook-Torrance GGX + Smith-Schlick + Schlick Fresnel, roughness / metalness**, in all four 3D shade blocks (WGSL + GLSL, solid + textured); Specular Intensity scales dielectric F₀ (0.5 → 4 %); roughness keyframeable | PBR (roughness / metalness) | Parity on the reflectance model; no IBL |
+| Lights | 5 types (`LightType: point, ambient, spot, parallel, environment`), falloff, cone feather, Blinn-Phong, **light presets + Kelvin colour temperature** (`colorTemperature.ts`); **environment** is an SH irradiance probe (procedural sky presets **or any image / EXR asset**, projected to 9 coefficients, expressed as a derived ambient + up to six parallel lights — zero renderer changes) | 4 types + cast shadows | Parity, plus IBL AE has no equivalent of |
+| **Reflections / IBL** | **Shipped 2026-09-02**: a prefiltered specular atlas built from the environment light's own sky (importance-sampled GGX, one level per roughness) + split-sum IBL with an analytic env-BRDF in **both** dialects (WGSL + GLSL), behind a Reflections row. Physical and Phong reflect; Toon deliberately does not. Gated so pre-existing scenes are byte-identical (`environmentReflections.test.ts`) | Advanced 3D image-based lighting + environment reflections | Parity on the reflection model; no ray-traced/screen-space reflections |
+| **Materials** | Material section with a live shading preview, every reflectance parameter in one place, **per-face overrides**, and a persisted **material library** seeded from the built-in presets (`core/scene/material.ts`, `materialStore.ts`) | Material Options + Substance materials | Parity for the parameter set; no Substance graph |
+| **World settings** | Composition Settings ▸ **World**: default environment for new lights, ground level for the grid, sky backdrop — all optional and absent until set, so old documents round-trip unchanged | Environment layer / renderer settings | Parity |
+| Geometry | Extrusion + bevels (**angular / concave / convex**) + per-face materials (`FACE_SURFACE_IDS`); **real curved primitives** since 2026-09-02 — sphere, cylinder, cone, torus, capsule and box are mesh layers with editable segment counts and smooth per-vertex normals (`core/geometry/primitiveMesh.ts`), while cube and plane keep their bevel-capable extruded forms; **plus imported `.glb` / `.gltf` meshes** — a 3D null per node, a mesh layer per primitive, drawn through the same extrusion mesh render path, with CPU skinning against joint layers, morph-target blend shapes, baked animation clips, and 3D IK (CCD) over joint chains | Advanced 3D: glTF + parametric meshes + Substance PBR, height displacement, IBL | Narrowed to two items — meshes, curved primitives, skinning, morphs, baked clips, PBR maps and IBL+reflections all ship; **shadow maps shipped 2026-09-02** (opt-in per light, PCF, one mapped light per run); still open: **SSAO** (blocked by multisampled scene targets — no sampleable depth on either backend) and **height displacement** |
+| **PBR texture maps** | **Shipped 2026-09-02** (`core/media/gltf.ts`): normal, metallic-roughness, occlusion and emissive on a separate `mesh3d-pbr` material, texture transforms baked into UVs, tangents from derivatives. External `.gltf` files import **with their sidecars**, refusing by naming the ones they cannot find. **File ▸ Import 3D Model** | Substance / glTF PBR maps | Parity for the glTF map set; no Substance graph or height displacement |
+| **Shading model** | Phong (original) **or Physical: Cook-Torrance GGX + Smith-Schlick + Schlick Fresnel, roughness / metalness**, **or Toon** (cel shading, 2–8 bands), in all four 3D shade blocks (WGSL + GLSL, solid + textured); Specular Intensity scales dielectric F₀ (0.5 → 4 %); roughness keyframeable | PBR (roughness / metalness) | Parity on the reflectance model, plus Toon as a third model AE lacks natively; IBL now carries **both** halves — irradiance and split-sum specular reflections (Toon opts out by design) |
 | Rigging | Bones, FK/IK with FABRIK, IK/FK blending, geodesic auto-weights, weight painting, ARAP puppet, bend pins | Puppet pins; bones via paid third-party | 🏆 Premation outclasses native AE |
 
 ### 2.7 Footage, audio, export
@@ -98,8 +112,11 @@
 | Decoding | WebCodecs exact path, mp4box demux, **WebM VP8/VP9 + dual-plane alpha** | Native importers | Done |
 | **Import breadth** | Browser codecs + ffmpeg fallback; sequences; Lottie; **EXR + DPX + layered PSD**; **camera-raw stills (DNG/CR2/… via ffmpeg)**; **MXF/R3D/BRAW ingest attempt**; float EXR cache → GPU | **MXF, camera raw (R3D/BRAW/ARRIRAW)** as working float media | Partial — stills foothold + MXF transcode; vendor raw SDKs / float working copies still open |
 | Tracking applies | Follow, Stabilize, Corner Pin, mask tracking, 2-point, Smooth Stabilize variants, planar/mesh (**RANSAC + temporal H smooth**), **SfM camera solve**, multi-plane nulls | Tracker panel + Warp Stabilizer VFX + 3D Camera Tracker | Classical column shipped |
-| Audio | Multi-voice engine + **time-remap / precomp-ancestor piecewise varispeed** | Basic playback + keyframed levels | Comparable |
-| Export | ProRes 4444, MP4, WebM, GIF, PNG/JPG, **EXR sequence (WebGL2/WebGPU linear RT readback)**, Lottie, **EDL / OTIO / FCPXML / ALE**, **`.mogrt.zip`**, HDR10/HLG | AME formats incl. HEVC, EXR, true `.mogrt` / AAF | Strong; Adobe-native mogrt / binary AAF open |
+| **Scopes** | Waveform (luma / RGB), RGB parade, vectorscope with 75 % targets, histogram (`core/video/scopes.ts`), fed from the RAM preview cache with the comp rect reconstructed out of the viewport, or from a synchronous render-loop tap (`frameTap.ts`) | **None** — AE has no scopes panel (Premiere/Lumetri does) | 🏆 **Premation wins** natively |
+| **Transcript / text-based editing** | Transcribe the comp, click a word to seek, select a run and **delete its time range from every layer at once** (one ripple per range, not per layer), filler-word finder, transcript → captions, SRT/VTT export (`Transcript/`, `core/captions/transcriptEdit.ts`) | **None** in AE (Premiere has Text-Based Editing) | 🏆 **Premation wins** vs AE |
+| Audio | Multi-voice engine + **time-remap / precomp-ancestor piecewise varispeed**; **silence removal** (detect dead air, split picture and sound at the same boundaries, close the gaps, one undo) and **ducking** as level keyframes with Re-duck (`silenceRemoval.ts`, `ducking.ts`) | Basic playback + keyframed levels; no silence removal or ducking | **Premation wins** on the edit verbs |
+| Export | ProRes 4444, MP4, WebM, GIF, PNG/JPG, **EXR sequence (WebGL2/WebGPU linear RT readback)**, Lottie, **EDL / OTIO / FCPXML / ALE**, **`.mogrt.zip`**, HDR10/HLG, plus **chapters from labelled comp markers** on MP4/MOV (ffmetadata sidecar + `-map_chapters`) | AME formats incl. HEVC, EXR, true `.mogrt` / AAF | Strong; Adobe-native mogrt / binary AAF open |
+| **Render queue pause / resume** | **Shipped 2026-09-02** (`renderQueueStore.ts`): Pause one job or Stop the queue — both keep the staged frames and a `resumeFrame`, and a resumed job keeps its progress; **Discard** is the separate destructive verb, and half-rendered jobs are picked up first. Session-scoped: the resume handle is a live sink and is never serialized | Pause / resume in the Render Queue and AME | Parity within a session; AE survives a relaunch |
 | Caching | RAM preview + persistent content-addressed disk cache | Persistent global cache; **26.0 adds lossless compressed cache format** | Parity |
 | Templates | Template fields + **`exportMogrtZip` (Premation package)** | Essential Graphics + Adobe `.mogrt` | Foothold shipped; Premiere-native open |
 
@@ -113,15 +130,18 @@
 **🟡 Tier 2 — pro workflow**
 4. COLMAP-grade SfM / denser planar (Mocha product depth) — RANSAC + **temporal H smooth** + BA footholds shipped
 5. Adobe-quality Content-Aware Fill (classical PatchMatch + bidirectional video shipped)
-8. glTF/3D model import — *explicitly out of scope by design*
+8. ~~glTF/3D model import~~ — **shipped 2026-09-01/02** (was "out of scope by design"; the user reversed that): `.glb` and `.gltf` — embedded **and external-file, with sidecars** — import as ordinary 3D layers (nulls per node, mesh layers per primitive) through the extrusion mesh render path, **plus CPU skinning against joint layers, morph-target blend shapes, baked animation clips, 3D IK (CCD) over joint chains, the full glTF PBR map set, and real curved primitives**. Nothing on this line is open any more; what replaces it is item 13 below
 
 **🟢 Tier 3 — niche/finishing**
 9. ~~3:2 pulldown removal~~ — shipped
 10. ~~Variable-font wdth/slnt~~ — shipped
 11. ~~HDR MaxCLL / master-display~~ — shipped; **libx265 probed** (falls back to tagged H.264 10-bit with UI note)
 12. Adobe-native `.mogrt` / binary AAF — Premation `.mogrt.zip` + **ALE** + OTIO shipped; binary AAF open
+13. **3D occlusion** — the one 3D column left open after 2026-09-02. **Shadow maps shipped** (`rendergraph/passes/shadowMap.ts`: opt-in per light, 3×3 PCF, packed linear-distance target, byte-identical when off; one mapped light per run, point lights along their aim). **SSAO is blocked** by the multisampled scene targets — neither backend can sample a multisampled depth, so it needs a linear-depth prepass bound before the run draws; **height displacement is not started**. A shadow catcher exists as Accepts Shadows ▸ Only
+14. **Cross-layer DOF** — `coc-blur` (per-pixel radius from four corner CoCs) and `bokeh` (polygonal iris) ship in the renderer, but there is no sampleable depth buffer, so blur cannot gather across another layer's silhouette
+15. **Render-queue resume across a relaunch** — pause/resume ships but is session-scoped; the resume handle is a live sink and is never serialized
 
-**Removed from earlier drafts (shipped):** ExactVideoSource; point / stabilize / corner / mask tracking; disk cache; Wiggle Transform; Dissolve modes; field separation; variable-font weight; Pixel Motion; variable mask feather; Smooth Stabilize; Clone Stamp; subspace / RS; SfM + BA; Roto / GrabCut / SAM-class; CAF video; float EXR GPU + HDR10/HLG + MaxCLL; EXR/DPX/PSD; EDL/OTIO/FCPXML/**ALE**; mogrt.zip; font wdth/slnt; **WebGPU float RT readback**.
+**Removed from earlier drafts (shipped):** ExactVideoSource; point / stabilize / corner / mask tracking; disk cache; Wiggle Transform; Dissolve modes; field separation; variable-font weight; Pixel Motion; variable mask feather; Smooth Stabilize; Clone Stamp; subspace / RS; SfM + BA; Roto / GrabCut / SAM-class; CAF video; float EXR GPU + HDR10/HLG + MaxCLL; EXR/DPX/PSD; EDL/OTIO/FCPXML/**ALE**; mogrt.zip; font wdth/slnt; **WebGPU float RT readback**; **glTF import + skinning + morphs + PBR maps**; **environment reflections / IBL**; **curved primitives**; **timeline edit tools + per-cut transitions**; **source monitor**; **scopes**; **transcript editing**; **silence removal + ducking**; **render-queue pause/resume**; **one graph editor**; **modifier stacks**; **audio drivers**; **bake dynamics**; **knife + pathfinder**; **on-canvas gradient editor**; **smart guides**.
 
 ## 4. Roadmap (corrected)
 
@@ -135,5 +155,9 @@
 
 *Sources for the AE side: Adobe release notes and coverage of AE 26.0–26.3
 (January–June 2026). Premation side: this repository; counts are pinned by tests
-(`blendMode.test.ts` = 38, `EffectType` = 174, AI tools = 61, `PathOpType` = 9,
-`MaskMode` = 7, layer styles = 9+1).*
+(`blendMode.test.ts` = 38, `EffectType` = 183, AI tools = 65, `PathOpType` = 9,
+`MaskMode` = 7, layer styles = 9+1). The `EffectType` and AI-tool figures were
+both stale here on 2026-09-02 — 174 and 61 — which is the drift
+`docPropagatedCounts.test.ts` exists to stop; that guard covers
+`EDITOR_REFERENCE.md`, `README.md` and `ROADMAP.md`, and this file is outside
+its scope, so re-derive from `scripts/featureCounts.cjs` before quoting these.*

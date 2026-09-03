@@ -22,8 +22,15 @@
 
 import { readSource } from '@/__testHelpers__/readSource';
 
-/** Menu renderers that must consult `isChecked`. */
-const MENU_RENDERERS = ['layout/Menu/AppMenuBar.tsx', 'layout/Menu/AppMenuButton.tsx'];
+/**
+ * The menu item renderer that must consult `isChecked`.
+ *
+ * Was a list of two — `AppMenuBar.tsx` and `AppMenuButton.tsx` each carried a
+ * byte-identical copy of the item loop. They now share `MenuModelItems`, which
+ * is the whole reason a list of two was a smell: the assertion existed because
+ * the two copies could drift, and the fix for that is one copy.
+ */
+const MENU_RENDERERS = ['layout/Menu/MenuModelItems.tsx'];
 
 /**
  * View toggles and the `guidesStore` field each reports.
@@ -40,6 +47,8 @@ const TOGGLES: ReadonlyArray<readonly [string, string]> = [
   ['view.snapToGrid', 'snapToGrid'],
   ['view.rulers', 'rulers'],
   ['view.motionPath', 'motionPathVisible'],
+  // A preview toggle: lives in preferenceStore, not guidesStore.
+  ['view.useProxies', 'useProxies'],
 ];
 
 describe('Command.isChecked', () => {
@@ -60,6 +69,13 @@ describe('Command.isChecked', () => {
     expect(src).toMatch(/isChecked\?\.\(\)/);
     expect(src).toMatch(/checked=\{checked\}/);
   });
+
+  it.each(['layout/Menu/AppMenuBar.tsx', 'layout/Menu/AppMenuButton.tsx'])(
+    '%s draws its items through the shared renderer, so it cannot drift',
+    (file) => {
+      expect(readSource(file)).toContain('<MenuModelItems');
+    },
+  );
 
   it('MenuItem renders a tick and announces it, rather than only drawing one', () => {
     // A glyph with no `aria-checked` is invisible to a screen reader, and the

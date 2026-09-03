@@ -20,6 +20,18 @@ export interface Bone {
   rotation: number;
   scaleX?: number;
   scaleY?: number;
+  /**
+   * How far this bone's skinning influence reaches THROUGH the artwork, in
+   * layer-local units. Absent = unlimited, which is what every rig authored
+   * before this field says, so it is additive and needs no migration.
+   *
+   * Set it to stop a bone claiming artwork it has no business deforming: a
+   * shoulder bone on a one-armed rig otherwise owns the whole torso simply
+   * because no other bone is closer. Influence fades to zero over the outer
+   * quarter of the radius, and `skinVertex` spends the shortfall on the bind
+   * pose, so the boundary is a smooth fade rather than a tear.
+   */
+  influenceRadius?: number;
 }
 
 export interface Skeleton {

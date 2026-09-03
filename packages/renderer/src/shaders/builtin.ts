@@ -30,6 +30,18 @@ import {
   SRGB_TRANSFER_GLSL,
   SRGB_TRANSFER_WGSL,
 } from './linearWorkingSpace';
+import { ENV_SPEC_LEVELS, ENV_SPEC_BAND_HEIGHT } from '../pipeline/uniforms';
+
+/**
+ * The environment atlas layout, as SHADER LITERALS.
+ *
+ * Interpolated rather than declared as a module-scope WGSL `const`: what WGSL
+ * allows at module scope has moved under this codebase before (`let` there is
+ * now an error), and a literal produced from the same TS constant the packer
+ * reads cannot drift from it either way.
+ */
+const ENV_LEVELS_LIT = `${ENV_SPEC_LEVELS}.0`;
+const ENV_INSET_LIT = String(0.5 / ENV_SPEC_BAND_HEIGHT);
 export { LINEAR_WORKING_SPACE, LINEAR_INTERMEDIATE_STORAGE } from './linearWorkingSpace';
 
 // Solid-colored quad with an optional SDF mask so shapes render with real
@@ -1343,6 +1355,311 @@ void main() {
   },
 };
 
+/**
+ * Per-pixel depth-buffer DOF gather (3D depth groups).
+ *
+ * Reads the group's resolved colour (binding 1) and its single-sample DEPTH
+ * texture (binding 3, via textureLoad/texelFetch — depth textures only
+ * guarantee NEAREST), reconstructs camera-space z per pixel, computes the
+ * circle of confusion with the SAME two models as `dofBlurPx` (legacy ramp /
+ * thin-lens, selected by fStop presence), and gathers with per-tap coverage
+ * weights so foreground defocus scatters over what is behind it while an
+ * in-focus foreground keeps a hard edge against a blurred background.
+ *
+ * params  = (texelX, texelY, blades, roundness)
+ * params2 = (highlightGain, maxRadiusPx = strength cap, depthA, depthB)
+ * dofP    = (focus, aperture, strength, focalLength)
+ * dofP2   = (fStop or 0 = legacy ramp, 0, 0, 0)
+ *
+ * depthA/depthB are the projection's z row (proj[10], proj[14]): the stored
+ * depth inverts to camera z as z = depthB / (ndc − depthA). The two dialects
+ * differ ONLY in the depth-value → NDC step: WebGPU stores NDC z directly,
+ * GL stores (ndc + 1) / 2.
+ */
+const DOF_GATHER: ShaderSource = {
+  name: 'dof-gather',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+  params2 : vec4<f32>,
+  dofP : vec4<f32>,
+  dofP2 : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var depthTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${SRGB_TRANSFER_WGSL}
+// One texel, colour AND depth, from the SAME integer coordinate. Filtering the
+// colour while snapping the depth is how edge ghosts happen: a tap straddling
+// an in-focus silhouette blends its colour outward while its depth snaps to
+// the BACKGROUND texel — whose CoC is the cap — so the straddle sample passes
+// the coverage test at full weight and the sharp edge stamps faint copies of
+// itself at every ring radius.
+fn texelAt(uv : vec2<f32>) -> vec2<i32> {
+  let size = vec2<i32>(textureDimensions(depthTex, 0));
+  return clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
+}
+fn viewZAtTexel(c : vec2<i32>) -> f32 {
+  // WebGPU stores NDC z directly (depth range [0,1]).
+  let ndc = textureLoad(depthTex, c, 0).x;
+  return obj.params2.w / (ndc - obj.params2.z);
+}
+fn cocAt(z : f32) -> f32 {
+  let S = obj.dofP.x;
+  let strength = obj.dofP.z;
+  let fStop = obj.dofP2.x;
+  if (fStop <= 0.0) {
+    // Legacy ramp — identical to dofBlurPx's non-physical branch.
+    let defocus = abs(z - S) / max(1.0, S);
+    return min(strength, defocus * obj.dofP.y);
+  }
+  let f = max(1e-6, obj.dofP.w);
+  if (S <= f || z <= 0.0) { return strength; }
+  let A = f / fStop;
+  return min(strength, (A * f * abs(z - S)) / (z * (S - f)));
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let c0 = textureSampleLevel(tex, smp, uv, 0.0);
+  let maxR = obj.params2.y;
+  if (maxR < 0.34) { return c0; }
+  let zC = viewZAtTexel(texelAt(uv));
+  let cocC = cocAt(zC);
+  let texel = obj.params.xy;
+  let blades = obj.params.z;
+  let roundness = clamp(obj.params.w, 0.0, 1.0);
+  let gain = max(0.0, obj.params2.x);
+  var acc = vec4<f32>(0.0);
+  var wsum = 0.0;
+  // Centre sample, weight 1 — wsum can never be empty.
+  {
+    var lin = c0;
+    if (c0.a > 0.0001) {
+      let straight = c0.rgb / c0.a;
+      lin = vec4<f32>(storageToWorking(straight) * c0.a, c0.a);
+    }
+    let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let w = 1.0 + gain * lum * lum;
+    acc = acc + lin * w;
+    wsum = wsum + w;
+  }
+  // Kernel spans the CAP, not this pixel's own CoC: a sharp pixel must still
+  // RECEIVE a blurred foreground neighbour's scatter. Per-tap coverage decides:
+  // a tap contributes only where its own blur circle reaches this pixel, and a
+  // tap BEHIND the centre is clamped to the centre's CoC so a blurred backdrop
+  // never bleeds over an in-focus edge.
+  if (blades >= 3.0) {
+    let n = max(3.0, min(11.0, floor(blades + 0.5)));
+    for (var ring = 1; ring <= 5; ring = ring + 1) {
+      let r = maxR * f32(ring) / 5.0;
+      for (var b = 0; b < 11; b = b + 1) {
+        if (f32(b) >= n) { break; }
+        let a0 = 6.2831853 * (f32(b) + 0.5 * f32(ring % 2)) / n;
+        let polyR = r / max(0.2, cos(3.14159265 / n));
+        let rd = mix(polyR, r, roundness);
+        let tc = texelAt(clamp(uv + vec2<f32>(cos(a0), sin(a0)) * rd * texel, vec2<f32>(0.0), vec2<f32>(1.0)));
+        let zT = viewZAtTexel(tc);
+        var reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        let w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          let t = textureLoad(tex, tc, 0);
+          var lin = t;
+          if (t.a > 0.0001) {
+            let straight = t.rgb / t.a;
+            lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+          }
+          let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+          let w = w0 * (1.0 + gain * lum * lum);
+          acc = acc + lin * w;
+          wsum = wsum + w;
+        }
+      }
+    }
+  } else {
+    // Concentric-ring disk, taps per ring growing with circumference (4·ring,
+    // 60 total) and a golden rotation per ring so edges don't stamp aligned
+    // ghosts. A 32-tap spiral was visibly stepped at CoC ≈ the cap: one
+    // direction per radius undersamples the disk's rim.
+    for (var ring = 1; ring <= 5; ring = ring + 1) {
+      let rd = maxR * f32(ring) / 5.0;
+      let cnt = 4 * ring;
+      let base = 2.3999632 * f32(ring);
+      for (var b = 0; b < 20; b = b + 1) {
+        if (b >= cnt) { break; }
+        let a = base + 6.2831853 * f32(b) / f32(cnt);
+        let tc = texelAt(clamp(uv + vec2<f32>(cos(a), sin(a)) * rd * texel, vec2<f32>(0.0), vec2<f32>(1.0)));
+        let zT = viewZAtTexel(tc);
+        var reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        let w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          let t = textureLoad(tex, tc, 0);
+          var lin = t;
+          if (t.a > 0.0001) {
+            let straight = t.rgb / t.a;
+            lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+          }
+          let lum = dot(lin.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+          let w = w0 * (1.0 + gain * lum * lum);
+          acc = acc + lin * w;
+          wsum = wsum + w;
+        }
+      }
+    }
+  }
+  let avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    let straight = avg.rgb / avg.a;
+    return vec4<f32>(workingToStorage(straight) * avg.a, avg.a);
+  }
+  return avg;
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; vec4 dofP; vec4 dofP2; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; vec4 dofP; vec4 dofP2; };
+uniform sampler2D uTex;
+uniform highp sampler2D uDepthTex;
+in vec2 vUv;
+out vec4 frag;
+${SRGB_TRANSFER_GLSL}
+// One texel, colour AND depth, from the SAME integer coordinate — see the
+// WGSL twin for why filtering colour against snapped depth ghosts edges.
+ivec2 texelAt(vec2 uv) {
+  ivec2 size = textureSize(uDepthTex, 0);
+  return clamp(ivec2(uv * vec2(size)), ivec2(0), size - ivec2(1));
+}
+float viewZAtTexel(ivec2 c) {
+  // GL stores (ndc + 1) / 2 — undo the depth-range mapping first.
+  float ndc = texelFetch(uDepthTex, c, 0).r * 2.0 - 1.0;
+  return params2.w / (ndc - params2.z);
+}
+float cocAt(float z) {
+  float S = dofP.x;
+  float strength = dofP.z;
+  float fStop = dofP2.x;
+  if (fStop <= 0.0) {
+    float defocus = abs(z - S) / max(1.0, S);
+    return min(strength, defocus * dofP.y);
+  }
+  float f = max(1e-6, dofP.w);
+  if (S <= f || z <= 0.0) { return strength; }
+  float A = f / fStop;
+  return min(strength, (A * f * abs(z - S)) / (z * (S - f)));
+}
+void main() {
+  vec4 c0 = texture(uTex, vUv);
+  float maxR = params2.y;
+  if (maxR < 0.34) { frag = c0; return; }
+  float zC = viewZAtTexel(texelAt(vUv));
+  float cocC = cocAt(zC);
+  vec2 texel = params.xy;
+  float blades = params.z;
+  float roundness = clamp(params.w, 0.0, 1.0);
+  float gain = max(0.0, params2.x);
+  vec4 acc = vec4(0.0);
+  float wsum = 0.0;
+  {
+    vec4 lin = c0;
+    if (c0.a > 0.0001) {
+      vec3 straight = c0.rgb / c0.a;
+      lin = vec4(storageToWorking(straight) * c0.a, c0.a);
+    }
+    float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float w = 1.0 + gain * lum * lum;
+    acc += lin * w;
+    wsum += w;
+  }
+  if (blades >= 3.0) {
+    float n = max(3.0, min(11.0, floor(blades + 0.5)));
+    for (int ring = 1; ring <= 5; ring++) {
+      float r = maxR * float(ring) / 5.0;
+      for (int b = 0; b < 11; b++) {
+        if (float(b) >= n) break;
+        float a0 = 6.2831853 * (float(b) + 0.5 * float(ring % 2)) / n;
+        float polyR = r / max(0.2, cos(3.14159265 / n));
+        float rd = mix(polyR, r, roundness);
+        ivec2 tc = texelAt(clamp(vUv + vec2(cos(a0), sin(a0)) * rd * texel, vec2(0.0), vec2(1.0)));
+        float zT = viewZAtTexel(tc);
+        float reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        float w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          vec4 t = texelFetch(uTex, tc, 0);
+          vec4 lin = t;
+          if (t.a > 0.0001) {
+            vec3 straight = t.rgb / t.a;
+            lin = vec4(storageToWorking(straight) * t.a, t.a);
+          }
+          float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+          float w = w0 * (1.0 + gain * lum * lum);
+          acc += lin * w;
+          wsum += w;
+        }
+      }
+    }
+  } else {
+    // Concentric-ring disk — see the WGSL twin for why the spiral stepped.
+    for (int ring = 1; ring <= 5; ring++) {
+      float rd = maxR * float(ring) / 5.0;
+      int cnt = 4 * ring;
+      float base = 2.3999632 * float(ring);
+      for (int b = 0; b < 20; b++) {
+        if (b >= cnt) break;
+        float a = base + 6.2831853 * float(b) / float(cnt);
+        ivec2 tc = texelAt(clamp(vUv + vec2(cos(a), sin(a)) * rd * texel, vec2(0.0), vec2(1.0)));
+        float zT = viewZAtTexel(tc);
+        float reach = cocAt(zT);
+        if (zT > zC + 1.0) { reach = min(reach, max(cocC, 1.0)); }
+        float w0 = clamp(reach - rd + 1.0, 0.0, 1.0);
+        if (w0 > 0.0) {
+          vec4 t = texelFetch(uTex, tc, 0);
+          vec4 lin = t;
+          if (t.a > 0.0001) {
+            vec3 straight = t.rgb / t.a;
+            lin = vec4(storageToWorking(straight) * t.a, t.a);
+          }
+          float lum = dot(lin.rgb, vec3(0.2126, 0.7152, 0.0722));
+          float w = w0 * (1.0 + gain * lum * lum);
+          acc += lin * w;
+          wsum += w;
+        }
+      }
+    }
+  }
+  vec4 avg = acc / max(wsum, 1e-6);
+  if (avg.a > 0.0001) {
+    vec3 straight = avg.rgb / avg.a;
+    frag = vec4(workingToStorage(straight) * avg.a, avg.a);
+  } else {
+    frag = avg;
+  }
+}
+`,
+  },
+};
 
 export const GRADIENT_RAMP: ShaderSource = {
   name: 'gradient-ramp',
@@ -4007,45 +4324,190 @@ void main() {
 // and depth testing. The mat3 shaders above are UNTOUCHED — 2D output stays
 // bit-identical.
 //
-// Every 3d Object block ends with the SHADE TAIL (must match packShade3D in
-// pipeline/uniforms.ts exactly): model (mat4, unit quad → 3D comp space),
-// eyeLit (xyz camera eye, w = lit flag), shadeParams (light count, specular
-// 0..1, shininess, metal) and lights (MAX_LIGHTS3D × 4 vec4s: pos+type,
-// color+gain, radius/halfCone/aimX/aimY, aimZ/coneFeather/falloffMode/
-// falloffDistance). When the lit flag is 0 the tail is
-// all zeros and shading is a byte-exact identity — unlit layers render exactly
-// as before. When lit, the fragment stage runs the SAME light model as
-// lightShading.ts (two-sided Lambert, linear radius falloff, feathered 2D spot
-// cone, gain clamped to 4) but PER-FRAGMENT — a near light shows a real
-// hotspot across a plane — plus Blinn-Phong specular (specular 0 → Lambert
-// only, matching the CPU per-quad fallback).
-const SOLID3D: ShaderSource = {
-  name: 'solid3d',
-  wgsl: /* wgsl */ `
+// WGSL shade tail + per-fragment light model, shared verbatim by the textured
+// 3d shaders (the Object block layout after the 2D-twin fields is identical).
+const WGSL_TEX3D_OBJECT = /* wgsl */ `
 struct Object {
   mvp : mat4x4<f32>,
-  color : vec4<f32>,
-  shape : vec4<f32>,
+  uvRect : vec4<f32>,
+  tint : vec4<f32>,
+  cr0 : vec4<f32>,
+  cr1 : vec4<f32>,
+  cr2 : vec4<f32>,
+  srcSpace : vec4<f32>,
   model : mat4x4<f32>,
   eyeLit : vec4<f32>,
   shadeParams : vec4<f32>,
   lights : array<vec4<f32>, 32>,
+  envParams : vec4<f32>,
+  aoMatrix : mat4x4<f32>,
+  aoParams : vec4<f32>,
+  shadowMatrix : mat4x4<f32>,
+  shadowAxis : vec4<f32>,
+  shadowOrigin : vec4<f32>,
+  shadowParams : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 
-struct VOut {
-  @builtin(position) pos : vec4<f32>,
-  @location(0) local : vec2<f32>,
-  @location(1) world : vec3<f32>,
-};
+// Specular environment map: the roughness bands, stacked. Bindings 7/8 —
+// clear of the mask (3), a plugin origin (4) and the mesh PBR set (3-6).
+@group(0) @binding(7) var envTex : texture_2d<f32>;
+@group(0) @binding(8) var envSmp : sampler;
 
-@vertex
-fn vs(@location(0) pos : vec2<f32>) -> VOut {
-  var o : VOut;
-  o.pos = obj.mvp * vec4<f32>(pos, 0.0, 1.0);
-  o.local = pos;
-  o.world = (obj.model * vec4<f32>(pos, 0.0, 1.0)).xyz;
-  return o;
+// The shadow map, 9/10. Its own sampler because it is the one texture in a lit
+// draw that must be NEAREST: its texels are a 24-bit depth packed across rgb,
+// and a bilinear blend of two packed depths is not a depth.
+@group(0) @binding(9) var shadowTex : texture_2d<f32>;
+@group(0) @binding(10) var shadowSmp : sampler;
+
+// The run's ambient-occlusion buffer, 11/12. Its own sampler for the opposite
+// reason the shadow map has one: this one must be LINEAR (it is a half-res
+// image being magnified), and solid3d carries no layer sampler at all for the
+// backend to broadcast, so an AO unit without its own would be incomplete.
+@group(0) @binding(11) var ssaoMap : texture_2d<f32>;
+@group(0) @binding(12) var ssaoMapSmp : sampler;
+`;
+
+const WGSL_SHADE3D_FN = /* wgsl */ `
+
+/*
+  Image-based reflections — the split-sum approximation.
+
+  envParams: x = enabled (0 for every scene without an environment light,
+  which is what makes this whole block a no-op there), y = intensity, z = the
+  environment rotation in RADIANS, w = the atlas HDR decode scale.
+
+  envSpecular is textureLod written out by hand: the map is ONE 2D texture
+  holding the roughness levels as equirect bands stacked vertically, so a
+  fractional level is two taps and a mix. A real mip chain would be tidier and
+  is not available - neither backend's writeTexture uploads past level 0.
+*/
+fn envUv(dir : vec3<f32>, level : f32) -> vec2<f32> {
+  // Inverse of the projector's equirectDir (core/scene/environmentLight.ts):
+  // phi sweeps about the compositor's vertical axis with phi = 0 facing +z,
+  // theta measures from "up" (-y). Rotating the environment by +a is sampling
+  // it at -a - the same convention environmentRig counter-rotates its axes
+  // with, so the reflection and the SH light rig turn together.
+  let phi = atan2(dir.x, dir.z) - obj.envParams.z;
+  // No wrap here: the env sampler REPEATS in u, so a rotation may push this
+  // outside [0,1] and the hardware brings it back — including across the seam,
+  // which a fract() would break by clamping the bilinear tap at the edge.
+  let u = phi * 0.15915494309189535;
+  let v = acos(clamp(-dir.y, -1.0, 1.0)) * 0.31830988618379069;
+  // Half-texel inset, or a direction at a pole bilinearly taps the NEXT
+  // roughness band stacked below this one.
+  let vy = clamp(v, ${ENV_INSET_LIT}, 1.0 - ${ENV_INSET_LIT});
+  return vec2<f32>(u, (level + vy) / ${ENV_LEVELS_LIT});
+}
+
+fn envFetch(dir : vec3<f32>, level : f32) -> vec3<f32> {
+  // Explicit LOD (not textureSample) so this stays legal inside the gate's
+  // conditional: WGSL's uniformity analysis rejects implicit derivatives
+  // there, and there is nothing to derive from anyway.
+  let c = textureSampleLevel(envTex, envSmp, envUv(dir, level), 0.0).rgb;
+  // sqrt transfer + one scale - see EnvSpecularMap's encoding note.
+  return c * c * obj.envParams.w;
+}
+
+fn envSpecular(dir : vec3<f32>, roughness : f32) -> vec3<f32> {
+  let lod = clamp(roughness, 0.0, 1.0) * (${ENV_LEVELS_LIT} - 1.0);
+  let l0 = floor(lod);
+  return mix(envFetch(dir, l0), envFetch(dir, min(l0 + 1.0, ${ENV_LEVELS_LIT} - 1.0)), lod - l0);
+}
+
+// Karis' analytic environment BRDF (the mobile fit): the split sum's second
+// factor without a BRDF lookup TEXTURE, which would have cost another binding
+// and another upload to describe a surface this smooth.
+fn envBRDF(NdotV : f32, roughness : f32) -> vec2<f32> {
+  let c0 = vec4<f32>(-1.0, -0.0275, -0.572, 0.022);
+  let c1 = vec4<f32>(1.0, 0.0425, 1.04, -0.04);
+  let r = roughness * c0 + c1;
+  let a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+  return vec2<f32>(-1.04, 1.04) * a004 + r.zw;
+}
+
+/*
+  Geometry-aware shadows — one light's casters, rasterised from the light.
+
+  shadowParams: x = DARKNESS, how much of the light a caster blocks (AE's
+  Shadow Darkness). Zero for every comp that has not turned a light's Shadow Map
+  on, which is the whole gate: the block below never runs there and those frames
+  render the arithmetic they rendered before shadow maps existed. One number
+  rather than a flag plus a strength, because a shadow that blocks nothing IS
+  no shadow. y = depth bias, z = PCF tap spacing in UV, w = 1 when the lookup
+  must flip v (WebGPU, which writes render targets top-down; WebGL2 needs none).
+
+  The map stores a LINEAR distance measured along the light's own axis
+  (shadowAxis.xyz, from shadowOrigin.xyz, scaled by shadowAxis.w = 1/far),
+  packed 24-bit across rgb — NOT a clip-space z. Two reasons, both decisive:
+  (No backticks in here: this shader source is itself a JS template literal.)
+
+    · clip z means [-1,1] on WebGL2 and [0,1] on WebGPU, so one bias would be
+      half the other and a scene tuned on one backend would acne on the other;
+    · an rgba8 colour target is renderable and sampleable on BOTH backends
+      without asking whether a depth TEXTURE can be sampled, which is the trap
+      the DOF gather work already paid for once.
+
+  Outside the map, in front of the light, or past the far plane the answer is
+  LIT. Guessing "shadowed" outside the frustum would black out everything the
+  caster bounds could not cover, which is most of a comp.
+*/
+fn unpackShadowDepth(c : vec4<f32>) -> f32 {
+  return dot(c.rgb, vec3<f32>(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+}
+
+fn shadowFactor(world : vec3<f32>) -> f32 {
+  if (obj.shadowParams.x < 0.0005) { return 1.0; }
+  let clip = obj.shadowMatrix * vec4<f32>(world, 1.0);
+  if (clip.w <= 1e-6) { return 1.0; }
+  var uv = (clip.xy / clip.w) * 0.5 + vec2<f32>(0.5);
+  if (obj.shadowParams.w > 0.5) { uv.y = 1.0 - uv.y; }
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return 1.0; }
+  let d = dot(world - obj.shadowOrigin.xyz, obj.shadowAxis.xyz) * obj.shadowAxis.w - obj.shadowParams.y;
+  if (d <= 0.0 || d >= 1.0) { return 1.0; }
+  let s = obj.shadowParams.z;
+  var lit = 0.0;
+  for (var y = -1; y <= 1; y = y + 1) {
+    for (var x = -1; x <= 1; x = x + 1) {
+      // Explicit LOD, like envFetch: the map has no mip chain, and an implicit
+      // derivative inside this nest is both meaningless and illegal in WGSL.
+      let occ = unpackShadowDepth(textureSampleLevel(shadowTex, shadowSmp, uv + vec2<f32>(f32(x), f32(y)) * s, 0.0));
+      lit = lit + select(0.0, 1.0, d <= occ);
+    }
+  }
+  // Darkness lerps the term back toward fully lit, so 100 % is a black shadow
+  // and 60 % leaves 40 % of the light through — the same meaning the slider has
+  // on the projected path.
+  return 1.0 - (1.0 - lit / 9.0) * obj.shadowParams.x;
+}
+
+/*
+  Screen-space ambient occlusion — the run's own depth prepass, resolved.
+
+  aoParams: x = STRENGTH, how much of the ambient term full occlusion removes.
+  Zero for every comp that has not turned SSAO on, which is the whole gate: the
+  block below returns exactly 1.0 there and the ambient accumulation multiplies
+  by it, and x * 1.0 is x in IEEE — so those frames render the arithmetic they
+  rendered before AO existed, to the byte. y = 1 when the lookup must flip v
+  (WebGL2, which writes render targets bottom-up), the OPPOSITE convention to
+  targetSampleUv and for the same reason shadowParams.w is: the coordinate
+  comes from the camera's own NDC, where +1 is the top of the viewport on both
+  backends.
+
+  Outside the buffer the answer is UNOCCLUDED. Guessing "occluded" off-screen
+  would darken the border of every comp, which is worse than no AO at all.
+*/
+fn aoFactor(world : vec3<f32>) -> f32 {
+  if (obj.aoParams.x < 0.0005) { return 1.0; }
+  let clip = obj.aoMatrix * vec4<f32>(world, 1.0);
+  if (clip.w <= 1e-6) { return 1.0; }
+  var uv = (clip.xy / clip.w) * 0.5 + vec2<f32>(0.5);
+  if (obj.aoParams.y > 0.5) { uv.y = 1.0 - uv.y; }
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) { return 1.0; }
+  // Explicit LOD, like envFetch and the shadow tap: the buffer has no mip
+  // chain, and an implicit derivative inside this gate is illegal in WGSL.
+  let occ = textureSampleLevel(ssaoMap, ssaoMapSmp, uv, 0.0).r;
+  return clamp(1.0 - (1.0 - occ) * obj.aoParams.x, 0.0, 1.0);
 }
 
 fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
@@ -4063,7 +4525,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     out lit identically on both, which is what "it doesn't read as a solid"
     actually was. Only an extrusion's walls and back cap set 2.
   */
-  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
+  // 3 and 4 are the TOON twins of 1 and 2 — same lighting math, quantized
+  // into hard cel bands at the tail (see packShade3D).
+  let toonFlag = obj.eyeLit.w > 2.5;
+  let oneS = (obj.eyeLit.w > 1.5 && obj.eyeLit.w < 2.5) || obj.eyeLit.w > 3.5;
+  let twoSided = select(1.0, 0.0, oneS);
   let N = normalize(obj.model[2].xyz);
   let count = i32(obj.shadeParams.x + 0.5);
   let specI = obj.shadeParams.y;
@@ -4078,7 +4544,20 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   // AE meaning — 0 is no highlight, 1 is a lacquer. A metal reflects its own
   // colour; the metal slider blends between the two.
   let F0 = mix(vec3<f32>(0.08 * obj.shadeParams.y), baseRgb, metal);
-  let shin = max(obj.shadeParams.z, 1.0);
+  // Toon: shadeParams.z carries the band count, not a shininess — shade with
+  // a fixed tight exponent so the stepped highlight stays a crisp blob.
+  let shin = select(max(obj.shadeParams.z, 1.0), 32.0, toonFlag);
+  // Sampled ONCE, before the loop: the shadow term is a fact about this
+  // fragment and this map, not about which light is being accumulated, and
+  // nine texture taps per light for one answer would be eight wasted.
+  // shadowOrigin.w names WHICH light the map was rendered from — resolved by
+  // packShade3D against the same filtered array the loop walks.
+  let shTerm = shadowFactor(world);
+  let shadowIdx = i32(obj.shadowOrigin.w + 0.5);
+  let shadowOn = obj.shadowParams.x > 0.0005;
+  // Sampled once, beside the shadow term and for the same reasons: it is a fact
+  // about this fragment, and a tap per light would be seven wasted.
+  let aoTerm = aoFactor(world);
   var diff = vec3<f32>(0.0);
   var spec = vec3<f32>(0.0);
   for (var i = 0; i < 8; i = i + 1) {
@@ -4089,7 +4568,11 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     let misc2 = obj.lights[i * 4 + 3];
     let lType = i32(posType.w + 0.5);
     let gain = colGain.w;
-    if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
+    // AMBIENT — and the one place the AO term is applied. Multiplied AT the
+    // accumulation rather than over the sum afterwards, so with AO off (aoTerm
+    // exactly 1.0) the additions happen in the same order and the same values
+    // as they always did: x * 1.0 == x, and a reordered float sum is not.
+    if (lType == 0) { diff = diff + colGain.rgb * gain * aoTerm; continue; }
     var toLight = vec3<f32>(0.0, 0.0, -1.0);
     var atten = 1.0;
     var lambert = 1.0;
@@ -4141,6 +4624,12 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
       }
     }
     if (skip) { continue; }
+    // The shadow multiplies ATTENUATION — the one factor both branches below
+    // carry into diffuse AND specular — so a shadowed fragment loses both from
+    // this light and keeps every other light, and keeps ambient (which took
+    // the early continue above and never reaches here). That is what shadow
+    // means: this lamp cannot see you.
+    if (shadowOn && shadowIdx == i) { atten = atten * shTerm; }
     let k = gain * lambert * atten;
     if (pbr) {
       // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V),
@@ -4171,6 +4660,44 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
     }
   }
   diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
+  if (toonFlag) {
+    // Cel quantization: round both responses into hard bands. Rounding (not
+    // flooring) keeps full black and full white reachable at the extremes.
+    let bands = max(2.0, obj.shadeParams.z);
+    diff = floor(diff * bands + vec3<f32>(0.5)) / bands;
+    spec = floor(spec * bands + vec3<f32>(0.5)) / bands;
+  }
+  /*
+    Image-based reflections. Gated on envParams.x, which is ZERO for every
+    scene that has no environment light — so everything above is untouched and
+    those frames render bit-for-bit as they did before reflections existed.
+
+    Placed after the toon quantization and excluded from it on purpose: cel
+    shading's whole point is a flat, stepped surface, and a mirrored room in
+    the highlight would undo it.
+  */
+  if (obj.envParams.x > 0.5 && !toonFlag) {
+    let Ve = normalize(obj.eyeLit.xyz - world);
+    // A two-sided surface has no outside; face the normal at the viewer so the
+    // reflection is the one that would actually be seen from here.
+    let Ne = select(N, -N, twoSided > 0.5 && dot(N, Ve) < 0.0);
+    let R = reflect(-Ve, Ne);
+    if (pbr) {
+      // Split sum: prefiltered radiance x the analytic env BRDF. A metal takes
+      // the scenery through its own F0 — which IS the base colour, so it
+      // reflects tinted; a dielectric keeps a Fresnel-weighted sheen over a
+      // diffuse that the light loop already computed.
+      let ab = envBRDF(max(dot(Ne, Ve), 1e-4), rough);
+      spec = spec + envSpecular(R, rough) * (F0 * ab.x + vec3<f32>(ab.y)) * obj.envParams.y;
+    } else {
+      // Phong: a plain reflection, which the tail below scales by Specular
+      // Intensity and tints by Metal — so the sliders that already exist mean
+      // "how mirrored", and nothing new appears in the UI. Shininess becomes a
+      // roughness by the usual Phong-to-GGX identity, so a tight highlight
+      // reflects a sharp room and a broad one a soft.
+      spec = spec + envSpecular(R, clamp(sqrt(2.0 / (max(obj.shadeParams.z, 1.0) + 2.0)), 0.02, 1.0)) * obj.envParams.y;
+    }
+  }
   if (pbr) {
     // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
     // an intensity-scaled highlight, so specI does not apply.
@@ -4180,6 +4707,288 @@ fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
   // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
   return baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal);
 }
+`;
+
+// GLSL twins of the above (UBO tail + light model), same layout contract.
+const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 aoMatrix; vec4 aoParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };`;
+
+const GLSL_SHADE3D_FN = /* glsl */ `
+
+// Image-based reflections — the split-sum approximation. See the WGSL twin for
+// the full note; the two must stay identical term for term.
+uniform sampler2D uEnvTex;
+vec2 envUv(vec3 dir, float level) {
+  float phi = atan(dir.x, dir.z) - envParams.z;
+  float u = phi * 0.15915494309189535;
+  float v = acos(clamp(-dir.y, -1.0, 1.0)) * 0.31830988618379069;
+  float vy = clamp(v, ${ENV_INSET_LIT}, 1.0 - ${ENV_INSET_LIT});
+  return vec2(u, (level + vy) / ${ENV_LEVELS_LIT});
+}
+vec3 envFetch(vec3 dir, float level) {
+  vec3 c = textureLod(uEnvTex, envUv(dir, level), 0.0).rgb;
+  return c * c * envParams.w;
+}
+vec3 envSpecular(vec3 dir, float roughness) {
+  float lod = clamp(roughness, 0.0, 1.0) * (${ENV_LEVELS_LIT} - 1.0);
+  float l0 = floor(lod);
+  return mix(envFetch(dir, l0), envFetch(dir, min(l0 + 1.0, ${ENV_LEVELS_LIT} - 1.0)), lod - l0);
+}
+vec2 envBRDF(float NdotV, float roughness) {
+  vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+  vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+  vec4 r = roughness * c0 + c1;
+  float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
+  return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+
+// Geometry-aware shadows. See the WGSL twin for the full note; the two must
+// stay identical term for term, including the 3x3 tap pattern.
+uniform sampler2D uShadowTex;
+float unpackShadowDepth(vec4 c) {
+  return dot(c.rgb, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+}
+float shadowFactor(vec3 world) {
+  if (shadowParams.x < 0.0005) return 1.0;
+  vec4 clip = shadowMatrix * vec4(world, 1.0);
+  if (clip.w <= 1e-6) return 1.0;
+  vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+  if (shadowParams.w > 0.5) uv.y = 1.0 - uv.y;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+  float d = dot(world - shadowOrigin.xyz, shadowAxis.xyz) * shadowAxis.w - shadowParams.y;
+  if (d <= 0.0 || d >= 1.0) return 1.0;
+  float s = shadowParams.z;
+  float lit = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      float occ = unpackShadowDepth(textureLod(uShadowTex, uv + vec2(float(x), float(y)) * s, 0.0));
+      lit += d <= occ ? 1.0 : 0.0;
+    }
+  }
+  // Darkness lerps back toward fully lit — see the WGSL twin.
+  return 1.0 - (1.0 - lit / 9.0) * shadowParams.x;
+}
+
+// Screen-space ambient occlusion. See the WGSL twin for the full note; the two
+// must stay identical term for term, including the off-buffer answer.
+uniform sampler2D uSsaoTex;
+float aoFactor(vec3 world) {
+  if (aoParams.x < 0.0005) return 1.0;
+  vec4 clip = aoMatrix * vec4(world, 1.0);
+  if (clip.w <= 1e-6) return 1.0;
+  vec2 uv = (clip.xy / clip.w) * 0.5 + 0.5;
+  if (aoParams.y > 0.5) uv.y = 1.0 - uv.y;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 1.0;
+  float occ = textureLod(uSsaoTex, uv, 0.0).r;
+  return clamp(1.0 - (1.0 - occ) * aoParams.x, 0.0, 1.0);
+}
+
+vec3 shade3d(vec3 world, vec3 baseRgb) {
+  if (eyeLit.w < 0.5) return baseRgb;
+  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided; 3/4 = the toon
+  // twins of 1/2, quantized at the tail. See the WGSL twin.
+  bool toonFlag = eyeLit.w > 2.5;
+  float twoSided = ((eyeLit.w > 1.5 && eyeLit.w < 2.5) || eyeLit.w > 3.5) ? 0.0 : 1.0;
+  vec3 N = normalize(model[2].xyz);
+  int count = int(shadeParams.x + 0.5);
+  float specI = shadeParams.y;
+  float metal = shadeParams.w;
+  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
+  // the PBR model is selected (see packShade3D). Same slot, same layout.
+  bool pbr = shadeParams.z < 0.0;
+  float rough = clamp(-shadeParams.z, 0.02, 1.0);
+  float alpha2 = rough * rough * rough * rough;
+  // F0: 8 % × Specular Intensity for dielectrics (0.5 → the canonical 4 %),
+  // the surface colour for metals.
+  vec3 F0 = mix(vec3(0.08 * shadeParams.y), baseRgb, metal);
+  // Toon: shadeParams.z is the band count — use a fixed tight highlight.
+  float shin = toonFlag ? 32.0 : max(shadeParams.z, 1.0);
+  // Sampled once, before the loop — see the WGSL twin.
+  float shTerm = shadowFactor(world);
+  int shadowIdx = int(shadowOrigin.w + 0.5);
+  bool shadowOn = shadowParams.x > 0.0005;
+  // Sampled once, beside the shadow term — see the WGSL twin.
+  float aoTerm = aoFactor(world);
+  vec3 diff = vec3(0.0);
+  vec3 spec = vec3(0.0);
+  for (int i = 0; i < 8; i++) {
+    if (i >= count) break;
+    vec4 posType = lights[i * 4];
+    vec4 colGain = lights[i * 4 + 1];
+    vec4 misc = lights[i * 4 + 2];
+    vec4 misc2 = lights[i * 4 + 3];
+    int lType = int(posType.w + 0.5);
+    float gain = colGain.w;
+    // AMBIENT — the one term AO multiplies. At the accumulation, not over the
+    // sum, so aoTerm == 1.0 leaves the float additions bit-identical.
+    if (lType == 0) { diff += colGain.rgb * gain * aoTerm; continue; }
+    vec3 toLight = vec3(0.0, 0.0, -1.0);
+    float atten = 1.0;
+    float lambert = 1.0;
+    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
+    // 2D-angle fallback) and unit-length — see toShaderLights.
+    vec3 aim = vec3(misc.z, misc.w, misc2.x);
+    if (lType == 3) {
+      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
+      toLight = -aim;
+    } else {
+      vec3 Lvec = posType.xyz - world;
+      float d = length(Lvec);
+      float radius = misc.x;
+      int fMode = int(misc2.z + 0.5);
+      if (fMode == 0) {
+        // Legacy: hard cutoff at the radius, linear ramp inside it.
+        if (radius > 0.0 && d >= radius) continue;
+        atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
+      } else {
+        // AE falloff curves reach PAST the radius, so the cutoff moves out with
+        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
+        float r = max(1.0, radius);
+        float curve = 1.0;
+        if (d > r) {
+          curve = fMode == 1 ? max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)) : (r * r) / (d * d);
+        }
+        if (curve <= 0.001) continue;
+        atten = curve;
+      }
+      if (d > 1e-6) {
+        toLight = Lvec / d;
+        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+        if (lType == 2) {
+          // Full 3D cone test: with a POI the aim has a z, which the old
+          // 2D-only dot product could not express.
+          float cosA = dot(aim, -Lvec / d);
+          float halfCone = max(misc.y, 1e-3);
+          float ang = acos(clamp(cosA, -1.0, 1.0));
+          if (ang > halfCone) continue;
+          float feather = misc2.y;
+          // Smoothstep across the feather band — see shadeLayer and
+          // spotConeFactor; all three must apply the same curve. (No backticks
+          // in here: this shader source is itself a JS template literal.)
+          if (feather > 1e-6 && ang > halfCone - feather) { float u = (halfCone - ang) / feather; atten *= u * u * (3.0 - 2.0 * u); }
+        }
+      }
+    }
+    // The shadow multiplies ATTENUATION — see the WGSL twin.
+    if (shadowOn && shadowIdx == i) atten *= shTerm;
+    float k = gain * lambert * atten;
+    if (pbr) {
+      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V).
+      vec3 V = normalize(eyeLit.xyz - world);
+      vec3 H = normalize(toLight + V);
+      float NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
+      float NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
+      float NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
+      float VdotH = max(dot(V, H), 0.0);
+      float dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
+      float D = alpha2 / (3.14159265 * dd * dd);
+      float kG = (rough + 1.0) * (rough + 1.0) / 8.0;
+      float G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
+      vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
+      vec3 specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
+      vec3 kd = (vec3(1.0) - F) * (1.0 - metal);
+      diff += colGain.rgb * gain * atten * NdotL * kd;
+      spec += colGain.rgb * gain * atten * NdotL * specular;
+      continue;
+    }
+    diff += colGain.rgb * k;
+    if (specI > 0.0) {
+      vec3 V = normalize(eyeLit.xyz - world);
+      vec3 H = normalize(toLight + V);
+      spec += colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
+    }
+  }
+  diff = clamp(diff, vec3(0.0), vec3(4.0));
+  if (toonFlag) {
+    // Cel quantization — see the WGSL twin.
+    float bands = max(2.0, shadeParams.z);
+    diff = floor(diff * bands + vec3(0.5)) / bands;
+    spec = floor(spec * bands + vec3(0.5)) / bands;
+  }
+  // Image-based reflections — see the WGSL twin for the full note.
+  if (envParams.x > 0.5 && !toonFlag) {
+    vec3 Ve = normalize(eyeLit.xyz - world);
+    vec3 Ne = (twoSided > 0.5 && dot(N, Ve) < 0.0) ? -N : N;
+    vec3 R = reflect(-Ve, Ne);
+    if (pbr) {
+      vec2 ab = envBRDF(max(dot(Ne, Ve), 1e-4), rough);
+      spec += envSpecular(R, rough) * (F0 * ab.x + vec3(ab.y)) * envParams.y;
+    } else {
+      spec += envSpecular(R, clamp(sqrt(2.0 / (max(shadeParams.z, 1.0) + 2.0)), 0.02, 1.0)) * envParams.y;
+    }
+  }
+  if (pbr) {
+    return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
+  }
+  // Metal tints the highlight by the SURFACE colour rather than the light's:
+  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
+  return baseRgb * diff + spec * specI * mix(vec3(1.0), baseRgb, metal);
+}
+`;
+
+// Every 3d Object block ends with the SHADE TAIL (must match packShade3D in
+// pipeline/uniforms.ts exactly): model (mat4, unit quad → 3D comp space),
+// eyeLit (xyz camera eye, w = lit flag), shadeParams (light count, specular
+// 0..1, shininess, metal) and lights (MAX_LIGHTS3D × 4 vec4s: pos+type,
+// color+gain, radius/halfCone/aimX/aimY, aimZ/coneFeather/falloffMode/
+// falloffDistance). When the lit flag is 0 the tail is
+// all zeros and shading is a byte-exact identity — unlit layers render exactly
+// as before. When lit, the fragment stage runs the SAME light model as
+// lightShading.ts (two-sided Lambert, linear radius falloff, feathered 2D spot
+// cone, gain clamped to 4) but PER-FRAGMENT — a near light shows a real
+// hotspot across a plane — plus Blinn-Phong specular (specular 0 → Lambert
+// only, matching the CPU per-quad fallback).
+const SOLID3D: ShaderSource = {
+  name: 'solid3d',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat4x4<f32>,
+  color : vec4<f32>,
+  shape : vec4<f32>,
+  model : mat4x4<f32>,
+  eyeLit : vec4<f32>,
+  shadeParams : vec4<f32>,
+  lights : array<vec4<f32>, 32>,
+  envParams : vec4<f32>,
+  aoMatrix : mat4x4<f32>,
+  aoParams : vec4<f32>,
+  shadowMatrix : mat4x4<f32>,
+  shadowAxis : vec4<f32>,
+  shadowOrigin : vec4<f32>,
+  shadowParams : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+
+// Specular environment map: the roughness bands, stacked. Bindings 7/8 —
+// clear of the mask (3), a plugin origin (4) and the mesh PBR set (3-6).
+@group(0) @binding(7) var envTex : texture_2d<f32>;
+@group(0) @binding(8) var envSmp : sampler;
+
+// The shadow map, 9/10 — see the note on the textured twin's block.
+@group(0) @binding(9) var shadowTex : texture_2d<f32>;
+@group(0) @binding(10) var shadowSmp : sampler;
+
+// The ambient-occlusion buffer, 11/12 — see the note on the textured twin's
+// block. This material has no layer sampler at all, which is exactly why the AO
+// sampler cannot be inherited and has to be declared.
+@group(0) @binding(11) var ssaoMap : texture_2d<f32>;
+@group(0) @binding(12) var ssaoMapSmp : sampler;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) local : vec2<f32>,
+  @location(1) world : vec3<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  o.pos = obj.mvp * vec4<f32>(pos, 0.0, 1.0);
+  o.local = pos;
+  o.world = (obj.model * vec4<f32>(pos, 0.0, 1.0)).xyz;
+  return o;
+}
+
+${WGSL_SHADE3D_FN}
 
 fn shapeAlpha(local : vec2<f32>) -> f32 {
   let kind = i32(obj.shape.x + 0.5);
@@ -4212,7 +5021,7 @@ fn fs(@location(0) local : vec2<f32>, @location(1) world : vec3<f32>) -> @locati
   glsl: {
     vertex: /* glsl */ `#version 300 es
 layout(location = 0) in vec2 pos;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 aoMatrix; vec4 aoParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };
 out vec2 vLocal;
 out vec3 vWorld;
 void main() {
@@ -4223,120 +5032,12 @@ void main() {
 `,
     fragment: /* glsl */ `#version 300 es
 precision highp float;
-layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };
+layout(std140) uniform Object { mat4 mvp; vec4 color; vec4 shape; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; vec4 envParams; mat4 aoMatrix; vec4 aoParams; mat4 shadowMatrix; vec4 shadowAxis; vec4 shadowOrigin; vec4 shadowParams; };
 in vec2 vLocal;
 in vec3 vWorld;
 out vec4 frag;
-vec3 shade3d(vec3 world, vec3 baseRgb) {
-  if (eyeLit.w < 0.5) return baseRgb;
-  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
-  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
-  vec3 N = normalize(model[2].xyz);
-  int count = int(shadeParams.x + 0.5);
-  float specI = shadeParams.y;
-  float metal = shadeParams.w;
-  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
-  // the PBR model is selected (see packShade3D). Same slot, same layout.
-  bool pbr = shadeParams.z < 0.0;
-  float rough = clamp(-shadeParams.z, 0.02, 1.0);
-  float alpha2 = rough * rough * rough * rough;
-  // F0: 8 % × Specular Intensity for dielectrics (0.5 → the canonical 4 %),
-  // the surface colour for metals.
-  vec3 F0 = mix(vec3(0.08 * shadeParams.y), baseRgb, metal);
-  float shin = max(shadeParams.z, 1.0);
-  vec3 diff = vec3(0.0);
-  vec3 spec = vec3(0.0);
-  for (int i = 0; i < 8; i++) {
-    if (i >= count) break;
-    vec4 posType = lights[i * 4];
-    vec4 colGain = lights[i * 4 + 1];
-    vec4 misc = lights[i * 4 + 2];
-    vec4 misc2 = lights[i * 4 + 3];
-    int lType = int(posType.w + 0.5);
-    float gain = colGain.w;
-    if (lType == 0) { diff += colGain.rgb * gain; continue; }
-    vec3 toLight = vec3(0.0, 0.0, -1.0);
-    float atten = 1.0;
-    float lambert = 1.0;
-    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
-    // 2D-angle fallback) and unit-length — see toShaderLights.
-    vec3 aim = vec3(misc.z, misc.w, misc2.x);
-    if (lType == 3) {
-      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
-      toLight = -aim;
-    } else {
-      vec3 Lvec = posType.xyz - world;
-      float d = length(Lvec);
-      float radius = misc.x;
-      int fMode = int(misc2.z + 0.5);
-      if (fMode == 0) {
-        // Legacy: hard cutoff at the radius, linear ramp inside it.
-        if (radius > 0.0 && d >= radius) continue;
-        atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
-      } else {
-        // AE falloff curves reach PAST the radius, so the cutoff moves out with
-        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
-        float r = max(1.0, radius);
-        float curve = 1.0;
-        if (d > r) {
-          curve = fMode == 1 ? max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)) : (r * r) / (d * d);
-        }
-        if (curve <= 0.001) continue;
-        atten = curve;
-      }
-      if (d > 1e-6) {
-        toLight = Lvec / d;
-        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
-        if (lType == 2) {
-          // Full 3D cone test: with a POI the aim has a z, which the old
-          // 2D-only dot product could not express.
-          float cosA = dot(aim, -Lvec / d);
-          float halfCone = max(misc.y, 1e-3);
-          float ang = acos(clamp(cosA, -1.0, 1.0));
-          if (ang > halfCone) continue;
-          float feather = misc2.y;
-          // Smoothstep across the feather band — see shadeLayer and
-          // spotConeFactor; all three must apply the same curve. (No backticks
-          // in here: this shader source is itself a JS template literal.)
-          if (feather > 1e-6 && ang > halfCone - feather) { float u = (halfCone - ang) / feather; atten *= u * u * (3.0 - 2.0 * u); }
-        }
-      }
-    }
-    float k = gain * lambert * atten;
-    if (pbr) {
-      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V).
-      vec3 V = normalize(eyeLit.xyz - world);
-      vec3 H = normalize(toLight + V);
-      float NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
-      float NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
-      float NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
-      float VdotH = max(dot(V, H), 0.0);
-      float dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
-      float D = alpha2 / (3.14159265 * dd * dd);
-      float kG = (rough + 1.0) * (rough + 1.0) / 8.0;
-      float G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
-      vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
-      vec3 specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
-      vec3 kd = (vec3(1.0) - F) * (1.0 - metal);
-      diff += colGain.rgb * gain * atten * NdotL * kd;
-      spec += colGain.rgb * gain * atten * NdotL * specular;
-      continue;
-    }
-    diff += colGain.rgb * k;
-    if (specI > 0.0) {
-      vec3 V = normalize(eyeLit.xyz - world);
-      vec3 H = normalize(toLight + V);
-      spec += colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
-    }
-  }
-  diff = clamp(diff, vec3(0.0), vec3(4.0));
-  if (pbr) {
-    return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
-  }
-  // Metal tints the highlight by the SURFACE colour rather than the light's:
-  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
-  return baseRgb * diff + spec * specI * mix(vec3(1.0), baseRgb, metal);
-}
+
+${GLSL_SHADE3D_FN}
 float shapeAlpha(vec2 local) {
   int kind = int(shape.x + 0.5);
   if (kind == 2) {
@@ -4366,275 +5067,541 @@ void main() {
   },
 };
 
-// WGSL shade tail + per-fragment light model, shared verbatim by the textured
-// 3d shaders (the Object block layout after the 2D-twin fields is identical).
-const WGSL_TEX3D_OBJECT = /* wgsl */ `
+
+/*
+  The shadow-map CASTER pass: the run's shadow casters, rasterised from the
+  light, storing how far each fragment is along the light's axis.
+
+  ## Why a colour target and not a depth texture
+
+  What is written is a LINEAR distance packed 24-bit across rgb, into an ordinary
+  rgba8 colour attachment — not the pass's depth buffer. Three reasons:
+
+    · a depth attachment's stored value is clip-space z, which is [-1,1] on
+      WebGL2 and [0,1] on WebGPU, so one bias could not serve both backends;
+    · WebGL2's sampleable depth texture exists (see `renderTargetDepthTexture`)
+      but only on a non-MSAA target, and the framebuffer-completeness rules
+      around it already cost this codebase a bug once (see the DOF gather work);
+    · perspective z is hyperbolically distributed, so almost all its precision
+      sits at the near plane — a linear distance spends its 24 bits evenly over
+      the range the casters actually occupy.
+
+  The pass still USES a depth buffer, to resolve which caster is nearest; it is
+  simply not what gets read back.
+
+  ## Why the whole tail is not reused
+
+  A caster has no lights, no colour, no texture and no material: giving it the
+  156-float shade tail to carry four numbers would make the map cost more to set
+  up than to draw. `axis`/`origin` here and `shadowAxis`/`shadowOrigin` in the
+  shade tail are the SAME measure and must stay the same measure — that identity
+  is the entire correctness condition of a shadow map, and it is why they are
+  packed by one producer (`shadowCameraFor`) rather than derived twice.
+*/
+const SHADOW_PACK_WGSL = /* wgsl */ `
+fn packShadowDepth(d : f32) -> vec4<f32> {
+  // Clamped just SHORT of 1: fract(1.0) is 0, so an exact 1 would pack as
+  // (0,0,0) and decode as the NEAREST possible caster — the far plane reading
+  // as "everything is occluded", which is the whole frame going black.
+  let c = clamp(d, 0.0, 0.9999847);
+  var e = fract(c * vec3<f32>(1.0, 255.0, 65025.0));
+  e = e - vec3<f32>(e.y, e.z, 0.0) * (1.0 / 255.0);
+  return vec4<f32>(e, 1.0);
+}
+`;
+const SHADOW_PACK_GLSL = /* glsl */ `
+vec4 packShadowDepth(float d) {
+  // Clamped just short of 1 — see the WGSL twin.
+  float c = clamp(d, 0.0, 0.9999847);
+  vec3 e = fract(c * vec3(1.0, 255.0, 65025.0));
+  e -= vec3(e.y, e.z, 0.0) * (1.0 / 255.0);
+  return vec4(e, 1.0);
+}
+`;
+
+const SHADOW_OBJECT_WGSL = /* wgsl */ `
 struct Object {
   mvp : mat4x4<f32>,
-  uvRect : vec4<f32>,
-  tint : vec4<f32>,
-  cr0 : vec4<f32>,
-  cr1 : vec4<f32>,
-  cr2 : vec4<f32>,
-  srcSpace : vec4<f32>,
   model : mat4x4<f32>,
-  eyeLit : vec4<f32>,
-  shadeParams : vec4<f32>,
-  lights : array<vec4<f32>, 32>,
+  axis : vec4<f32>,
+  origin : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 `;
+const SHADOW_OBJECT_GLSL = 'layout(std140) uniform Object { mat4 mvp; mat4 model; vec4 axis; vec4 origin; };';
 
-const WGSL_SHADE3D_FN = /* wgsl */ `
-fn shade3d(world : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {
-  if (obj.eyeLit.w < 0.5) { return baseRgb; }
-  /*
-    Two-sided or one-sided, from the lit flag.
+/** Shadow caster: the unit-quad path (solid / textured / masked 3D layers). */
+const SHADOW_DEPTH: ShaderSource = {
+  name: 'shadow-depth',
+  wgsl: /* wgsl */ `
+${SHADOW_OBJECT_WGSL}
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) world : vec3<f32>,
+};
 
-    eyeLit.w: 0 = unlit, 1 = lit TWO-SIDED, 2 = lit ONE-SIDED. Encoded in the
-    existing flag rather than a new uniform slot, so the shade tail's std140
-    layout is untouched.
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  o.pos = obj.mvp * vec4<f32>(pos, 0.0, 1.0);
+  o.world = (obj.model * vec4<f32>(pos, 0.0, 1.0)).xyz;
+  return o;
+}
+${SHADOW_PACK_WGSL}
+@fragment
+fn fs(@location(0) world : vec3<f32>) -> @location(0) vec4<f32> {
+  return packShadowDepth(dot(world - obj.origin.xyz, obj.axis.xyz) * obj.axis.w);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+${SHADOW_OBJECT_GLSL}
+out vec3 vWorld;
+void main() {
+  gl_Position = mvp * vec4(pos, 0.0, 1.0);
+  vWorld = (model * vec4(pos, 0.0, 1.0)).xyz;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${SHADOW_OBJECT_GLSL}
+in vec3 vWorld;
+out vec4 frag;
+${SHADOW_PACK_GLSL}
+void main() {
+  frag = packShadowDepth(dot(vWorld - origin.xyz, axis.xyz) * axis.w);
+}
+`,
+  },
+};
 
-    Two-sided (abs) is right for the app's primitive — a 2D layer in space has
-    no inside, and a layer seen from behind should still light. It is wrong for
-    a face that BOUNDS A VOLUME: with abs(), a box lit hard from one side comes
-    out lit identically on both, which is what "it doesn't read as a solid"
-    actually was. Only an extrusion's walls and back cap set 2.
-  */
-  let twoSided = select(1.0, 0.0, obj.eyeLit.w > 1.5);
-  let N = normalize(obj.model[2].xyz);
-  let count = i32(obj.shadeParams.x + 0.5);
-  let specI = obj.shadeParams.y;
-  let metal = obj.shadeParams.w;
-  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
-  // the PBR model is selected (see packShade3D). Same slot, same layout.
-  let pbr = obj.shadeParams.z < 0.0;
-  let rough = clamp(-obj.shadeParams.z, 0.02, 1.0);
-  let alpha2 = rough * rough * rough * rough; // GGX α = roughness², squared again in D
-  // F0: a dielectric reflects ~4 % at normal incidence at the default
-  // Specular Intensity (0.5), scaled by that intensity so the slider keeps its
-  // AE meaning — 0 is no highlight, 1 is a lacquer. A metal reflects its own
-  // colour; the metal slider blends between the two.
-  let F0 = mix(vec3<f32>(0.08 * obj.shadeParams.y), baseRgb, metal);
-  let shin = max(obj.shadeParams.z, 1.0);
-  var diff = vec3<f32>(0.0);
-  var spec = vec3<f32>(0.0);
-  for (var i = 0; i < 8; i = i + 1) {
-    if (i >= count) { break; }
-    let posType = obj.lights[i * 4];
-    let colGain = obj.lights[i * 4 + 1];
-    let misc = obj.lights[i * 4 + 2];
-    let misc2 = obj.lights[i * 4 + 3];
-    let lType = i32(posType.w + 0.5);
-    let gain = colGain.w;
-    if (lType == 0) { diff = diff + colGain.rgb * gain; continue; }
-    var toLight = vec3<f32>(0.0, 0.0, -1.0);
-    var atten = 1.0;
-    var lambert = 1.0;
-    var skip = false;
-    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
-    // 2D-angle fallback) and unit-length, so there is no per-type fallback to
-    // keep in step with the CPU here — see toShaderLights.
-    let aim = vec3<f32>(misc.z, misc.w, misc2.x);
-    if (lType == 3) {
-      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
-      toLight = -aim;
-    } else {
-      let Lvec = posType.xyz - world;
-      let d = length(Lvec);
-      let radius = misc.x;
-      let fMode = i32(misc2.z + 0.5);
-      if (fMode == 0) {
-        // Legacy: hard cutoff at the radius, linear ramp inside it.
-        if (radius > 0.0 && d >= radius) { skip = true; }
-        if (!skip) { atten = select(1.0, 1.0 - d / radius, radius > 0.0); }
-      } else {
-        // AE falloff curves reach PAST the radius, so the cutoff moves out with
-        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
-        let r = max(1.0, radius);
-        var curve = 1.0;
-        if (d > r) {
-          if (fMode == 1) { curve = max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)); }
-          else { curve = (r * r) / (d * d); }
-        }
-        if (curve <= 0.001) { skip = true; }
-        if (!skip) { atten = curve; }
-      }
-      if (!skip && d > 1e-6) {
-        toLight = Lvec / d;
-        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
-        if (lType == 2) {
-          // Full 3D cone test: with a POI the aim has a z, which the old
-          // 2D-only dot product could not express.
-          let cosA = dot(aim, -Lvec / d);
-          let halfCone = max(misc.y, 1e-3);
-          let ang = acos(clamp(cosA, -1.0, 1.0));
-          if (ang > halfCone) { skip = true; }
-          let feather = misc2.y;
-          // Smoothstep across the feather band — see shadeLayer and
-          // spotConeFactor; all three must apply the same curve. (No backticks
-          // in here: this shader source is itself a JS template literal.)
-          if (!skip && feather > 1e-6 && ang > halfCone - feather) { let u = (halfCone - ang) / feather; atten = atten * u * u * (3.0 - 2.0 * u); }
-        }
-      }
-    }
-    if (skip) { continue; }
-    let k = gain * lambert * atten;
-    if (pbr) {
-      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V),
-      // times the light's radiance N·L; diffuse is what Fresnel leaves and
-      // metals have none. Two-sided surfaces use |N·x| like the Phong path.
-      let V = normalize(obj.eyeLit.xyz - world);
-      let H = normalize(toLight + V);
-      let NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
-      let NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
-      let NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
-      let VdotH = max(dot(V, H), 0.0);
-      let dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
-      let D = alpha2 / (3.14159265 * dd * dd);
-      let kG = (rough + 1.0) * (rough + 1.0) / 8.0;
-      let G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
-      let F = F0 + (vec3<f32>(1.0) - F0) * pow(1.0 - VdotH, 5.0);
-      let specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
-      let kd = (vec3<f32>(1.0) - F) * (1.0 - metal);
-      diff = diff + colGain.rgb * gain * atten * NdotL * kd;
-      spec = spec + colGain.rgb * gain * atten * NdotL * specular;
-      continue;
-    }
-    diff = diff + colGain.rgb * k;
-    if (specI > 0.0) {
-      let V = normalize(obj.eyeLit.xyz - world);
-      let H = normalize(toLight + V);
-      spec = spec + colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
-    }
-  }
-  diff = clamp(diff, vec3<f32>(0.0), vec3<f32>(4.0));
-  if (pbr) {
-    // Diffuse is already Fresnel-weighted; the specular lobe is radiance, not
-    // an intensity-scaled highlight, so specI does not apply.
-    return baseRgb * diff + clamp(spec, vec3<f32>(0.0), vec3<f32>(8.0));
-  }
-  // Metal tints the highlight by the SURFACE colour rather than the light's:
-  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
-  return baseRgb * diff + spec * specI * mix(vec3<f32>(1.0), baseRgb, metal);
+/** Shadow caster: the indexed MESH path (extrusions, imported models). Same
+ *  block and same packing; only the vertex layout differs. */
+const SHADOW_DEPTH_MESH: ShaderSource = {
+  name: 'shadow-depth-mesh',
+  wgsl: /* wgsl */ `
+${SHADOW_OBJECT_WGSL}
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) world : vec3<f32>,
+};
+
+@vertex
+fn vs(@location(0) pos : vec3<f32>, @location(1) nrm : vec3<f32>, @location(2) uv : vec2<f32>) -> VOut {
+  var o : VOut;
+  o.pos = obj.mvp * vec4<f32>(pos, 1.0);
+  o.world = (obj.model * vec4<f32>(pos, 1.0)).xyz;
+  return o;
+}
+${SHADOW_PACK_WGSL}
+@fragment
+fn fs(@location(0) world : vec3<f32>) -> @location(0) vec4<f32> {
+  return packShadowDepth(dot(world - obj.origin.xyz, obj.axis.xyz) * obj.axis.w);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec3 pos;
+layout(location = 1) in vec3 nrm;
+layout(location = 2) in vec2 uv;
+${SHADOW_OBJECT_GLSL}
+out vec3 vWorld;
+void main() {
+  gl_Position = mvp * vec4(pos, 1.0);
+  vWorld = (model * vec4(pos, 1.0)).xyz;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${SHADOW_OBJECT_GLSL}
+in vec3 vWorld;
+out vec4 frag;
+${SHADOW_PACK_GLSL}
+void main() {
+  frag = packShadowDepth(dot(vWorld - origin.xyz, axis.xyz) * axis.w);
+}
+`,
+  },
+};
+
+/*
+  -- Screen-space ambient occlusion ------------------------------------------
+
+  ## Why this needs a prepass of its own at all
+
+  SSAO wants a sampleable depth buffer, and a 3D run has none. Every
+  depth-eligible run draws into a MULTISAMPLED target (see MSAA_SAMPLES and the
+  3D face-seam note): WebGPU cannot sample a multisampled depth attachment
+  through an ordinary texture binding, and WebGL2's sampleable depth texture is
+  legal only on a non-MSAA framebuffer -- the completeness trap the DOF gather
+  work already paid for once. So the depth is re-rasterised into a COLOUR
+  target instead, which is renderable and sampleable on both backends without
+  asking either of those questions.
+
+  And it is re-rasterised by the SHADOW CASTER shaders, unchanged: point their
+  axis at the camera's forward and their origin at the eye, and the linear
+  distance they already pack 24-bit across rgb IS camera-space z. One producer,
+  two consumers, and no second packing convention to keep in step.
+
+  ## What the two passes below do
+
+  ssao       un-projects that depth to a camera-space position, reconstructs a
+             normal from its four neighbours, walks a cosine hemisphere around
+             it and asks the buffer whether each sample is behind something.
+  ssao-blur  removes the 4x4 noise the rotation leaves, bilaterally, so the
+             result does not bleed across a silhouette.
+
+  ## Why the randomness is an integer hash
+
+  Because the pixels are GOLDEN. fract(sin(x)) is the classic choice and it is
+  not portable -- the sine of a large argument is where drivers disagree most --
+  and a clock would make the frame irreproducible by construction. This is the
+  same u32 hash the Dissolve shader uses, on BUFFER-PIXEL indices, so the same
+  buffer pixel gets the same rotation on every driver and every run.
+*/
+const SSAO_SAMPLE_CAP = 16;
+
+/** Unpack the caster shaders' 24-bit rgb distance -- the inverse of
+ *  `packShadowDepth`, written out per dialect so neither can drift. */
+const SSAO_UNPACK_WGSL = /* wgsl */ `
+fn unpackLinear(c : vec4<f32>) -> f32 {
+  return dot(c.rgb, vec3<f32>(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+}
+`;
+const SSAO_UNPACK_GLSL = /* glsl */ `
+float unpackLinear(vec4 c) {
+  return dot(c.rgb, vec3(1.0, 1.0 / 255.0, 1.0 / 65025.0));
 }
 `;
 
-// GLSL twins of the above (UBO tail + light model), same layout contract.
-const GLSL_TEX3D_UBO = `layout(std140) uniform Object { mat4 mvp; vec4 uvRect; vec4 tint; vec4 cr0; vec4 cr1; vec4 cr2; vec4 srcSpace; mat4 model; vec4 eyeLit; vec4 shadeParams; vec4 lights[32]; };`;
-
-const GLSL_SHADE3D_FN = /* glsl */ `
-vec3 shade3d(vec3 world, vec3 baseRgb) {
-  if (eyeLit.w < 0.5) return baseRgb;
-  // eyeLit.w: 0 unlit, 1 lit two-sided, 2 lit one-sided. See the WGSL twin.
-  float twoSided = eyeLit.w > 1.5 ? 0.0 : 1.0;
-  vec3 N = normalize(model[2].xyz);
-  int count = int(shadeParams.x + 0.5);
-  float specI = shadeParams.y;
-  float metal = shadeParams.w;
-  // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
-  // the PBR model is selected (see packShade3D). Same slot, same layout.
-  bool pbr = shadeParams.z < 0.0;
-  float rough = clamp(-shadeParams.z, 0.02, 1.0);
-  float alpha2 = rough * rough * rough * rough;
-  // F0: 8 % × Specular Intensity for dielectrics (0.5 → the canonical 4 %),
-  // the surface colour for metals.
-  vec3 F0 = mix(vec3(0.08 * shadeParams.y), baseRgb, metal);
-  float shin = max(shadeParams.z, 1.0);
-  vec3 diff = vec3(0.0);
-  vec3 spec = vec3(0.0);
-  for (int i = 0; i < 8; i++) {
-    if (i >= count) break;
-    vec4 posType = lights[i * 4];
-    vec4 colGain = lights[i * 4 + 1];
-    vec4 misc = lights[i * 4 + 2];
-    vec4 misc2 = lights[i * 4 + 3];
-    int lType = int(posType.w + 0.5);
-    float gain = colGain.w;
-    if (lType == 0) { diff += colGain.rgb * gain; continue; }
-    vec3 toLight = vec3(0.0, 0.0, -1.0);
-    float atten = 1.0;
-    float lambert = 1.0;
-    // The aim arrives RESOLVED (Point of Interest, or this type's legacy
-    // 2D-angle fallback) and unit-length — see toShaderLights.
-    vec3 aim = vec3(misc.z, misc.w, misc2.x);
-    if (lType == 3) {
-      lambert = mix(max(dot(N, aim), 0.0), abs(dot(N, aim)), twoSided);
-      toLight = -aim;
-    } else {
-      vec3 Lvec = posType.xyz - world;
-      float d = length(Lvec);
-      float radius = misc.x;
-      int fMode = int(misc2.z + 0.5);
-      if (fMode == 0) {
-        // Legacy: hard cutoff at the radius, linear ramp inside it.
-        if (radius > 0.0 && d >= radius) continue;
-        atten = radius > 0.0 ? 1.0 - d / radius : 1.0;
-      } else {
-        // AE falloff curves reach PAST the radius, so the cutoff moves out with
-        // them — mirrors lightFalloffAt exactly, including its max(1, radius).
-        float r = max(1.0, radius);
-        float curve = 1.0;
-        if (d > r) {
-          curve = fMode == 1 ? max(0.0, 1.0 - (d - r) / max(1.0, misc2.w)) : (r * r) / (d * d);
-        }
-        if (curve <= 0.001) continue;
-        atten = curve;
-      }
-      if (d > 1e-6) {
-        toLight = Lvec / d;
-        lambert = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
-        if (lType == 2) {
-          // Full 3D cone test: with a POI the aim has a z, which the old
-          // 2D-only dot product could not express.
-          float cosA = dot(aim, -Lvec / d);
-          float halfCone = max(misc.y, 1e-3);
-          float ang = acos(clamp(cosA, -1.0, 1.0));
-          if (ang > halfCone) continue;
-          float feather = misc2.y;
-          // Smoothstep across the feather band — see shadeLayer and
-          // spotConeFactor; all three must apply the same curve. (No backticks
-          // in here: this shader source is itself a JS template literal.)
-          if (feather > 1e-6 && ang > halfCone - feather) { float u = (halfCone - ang) / feather; atten *= u * u * (3.0 - 2.0 * u); }
-        }
-      }
-    }
-    float k = gain * lambert * atten;
-    if (pbr) {
-      // Cook-Torrance: D (GGX) · G (Smith-Schlick) · F (Schlick) / (4 N·L N·V).
-      vec3 V = normalize(eyeLit.xyz - world);
-      vec3 H = normalize(toLight + V);
-      float NdotL = mix(max(dot(N, toLight), 0.0), abs(dot(N, toLight)), twoSided);
-      float NdotV = max(mix(max(dot(N, V), 0.0), abs(dot(N, V)), twoSided), 1e-4);
-      float NdotH = mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided);
-      float VdotH = max(dot(V, H), 0.0);
-      float dd = NdotH * NdotH * (alpha2 - 1.0) + 1.0;
-      float D = alpha2 / (3.14159265 * dd * dd);
-      float kG = (rough + 1.0) * (rough + 1.0) / 8.0;
-      float G = (NdotL / (NdotL * (1.0 - kG) + kG)) * (NdotV / (NdotV * (1.0 - kG) + kG));
-      vec3 F = F0 + (vec3(1.0) - F0) * pow(1.0 - VdotH, 5.0);
-      vec3 specular = (D * G) * F / max(4.0 * NdotL * NdotV, 1e-4);
-      vec3 kd = (vec3(1.0) - F) * (1.0 - metal);
-      diff += colGain.rgb * gain * atten * NdotL * kd;
-      spec += colGain.rgb * gain * atten * NdotL * specular;
-      continue;
-    }
-    diff += colGain.rgb * k;
-    if (specI > 0.0) {
-      vec3 V = normalize(eyeLit.xyz - world);
-      vec3 H = normalize(toLight + V);
-      spec += colGain.rgb * (gain * atten * pow(mix(max(dot(N, H), 0.0), abs(dot(N, H)), twoSided), shin));
-    }
-  }
-  diff = clamp(diff, vec3(0.0), vec3(4.0));
-  if (pbr) {
-    return baseRgb * diff + clamp(spec, vec3(0.0), vec3(8.0));
-  }
-  // Metal tints the highlight by the SURFACE colour rather than the light's:
-  // 0 = plastic (highlight keeps the light's colour), 1 = metal (takes the layer's).
-  return baseRgb * diff + spec * specI * mix(vec3(1.0), baseRgb, metal);
+/** The AO estimate: hemisphere sampling against the linear-depth prepass. */
+const SSAO: ShaderSource = {
+  name: 'ssao',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+  params2 : vec4<f32>,
+  proj : mat4x4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
 }
-`;
+${SSAO_UNPACK_WGSL}
+// Field coordinate -> texture coordinate. uvRect carries the backend's V
+// orientation, so going through it is what makes one piece of arithmetic
+// correct on a bottom-up and a top-down render target alike.
+fn texUvOf(q : vec2<f32>) -> vec2<f32> { return obj.uvRect.xy + q * obj.uvRect.zw; }
+fn rawDepthAt(q : vec2<f32>) -> f32 {
+  return unpackLinear(textureSampleLevel(tex, smp, texUvOf(q), 0.0));
+}
+/*
+  Field coordinate -> camera space, at a known linear depth.
+
+  obj.proj is camera space -> CLIP, so this is its inverse restricted to the
+  plane z = depth -- solved rather than inverted, because the only unknowns are
+  x and y and the 2x2 system for them is exact:
+
+    clip.x = K00*x + K10*y + K20*z + K30      ndc.x = clip.x / w
+    clip.y = K01*x + K11*y + K21*z + K31      ndc.y = clip.y / w
+    w      = K23*z + K33
+
+  which covers BOTH camera families this app has without a branch: a
+  perspective projection leaves w = z (K23 = 1, K33 = 0) and an ortho one
+  leaves w = 1 (K23 = 0, K33 = 1).
+*/
+fn viewPosOf(q : vec2<f32>, z : f32) -> vec3<f32> {
+  let ndc = vec2<f32>(q.x * 2.0 - 1.0, 1.0 - q.y * 2.0);
+  let K = obj.proj;
+  let w = K[2].w * z + K[3].w;
+  let rx = ndc.x * w - K[2].x * z - K[3].x;
+  let ry = ndc.y * w - K[2].y * z - K[3].y;
+  let det0 = K[0].x * K[1].y - K[1].x * K[0].y;
+  let det = select(det0, 1e-6, abs(det0) < 1e-12);
+  return vec3<f32>(
+    (K[1].y * rx - K[1].x * ry) / det,
+    (K[0].x * ry - K[0].y * rx) / det,
+    z,
+  );
+}
+// Camera space -> field coordinate, plus the clip w so a sample behind the
+// camera can be rejected instead of wrapping to the far side of the screen.
+fn projectQ(p : vec3<f32>) -> vec3<f32> {
+  let c = obj.proj * vec4<f32>(p, 1.0);
+  let iw = 1.0 / max(c.w, 1e-6);
+  return vec3<f32>(c.x * iw * 0.5 + 0.5, 0.5 - c.y * iw * 0.5, c.w);
+}
+// The Dissolve hash -- u32 only, so every driver agrees bit for bit.
+fn aoHash(px : u32, py : u32, key : u32) -> f32 {
+  var h = (px + 1u) * 374761393u + (py + 1u) * 668265263u + (key + 1u) * 2246822519u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h = h ^ (h >> 16u);
+  return f32(h) / 4294967296.0;
+}
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let q = (uv - obj.uvRect.xy) / obj.uvRect.zw;
+  let raw = rawDepthAt(q);
+  // The prepass clears to WHITE, which decodes just short of 1 -- "no geometry
+  // here". Answering UNOCCLUDED there is what keeps the background clean.
+  if (raw > 0.9995) { return vec4<f32>(1.0, 1.0, 1.0, 1.0); }
+  let far = obj.params.z;
+  let z = raw * far;
+  let P = viewPosOf(q, z);
+  let dq = vec2<f32>(1.0 / max(obj.params2.x, 1.0), 1.0 / max(obj.params2.y, 1.0));
+  // Normal from the NEARER neighbour on each axis, not from a plain central
+  // difference: across a silhouette the far neighbour belongs to another
+  // surface, and averaging the two tilts the normal into the gap -- which is
+  // exactly where AO is most visible.
+  let zR = rawDepthAt(q + vec2<f32>(dq.x, 0.0)) * far;
+  let zL = rawDepthAt(q - vec2<f32>(dq.x, 0.0)) * far;
+  let zD = rawDepthAt(q + vec2<f32>(0.0, dq.y)) * far;
+  let zU = rawDepthAt(q - vec2<f32>(0.0, dq.y)) * far;
+  var dpx = viewPosOf(q + vec2<f32>(dq.x, 0.0), zR) - P;
+  if (abs(zL - z) < abs(zR - z)) { dpx = P - viewPosOf(q - vec2<f32>(dq.x, 0.0), zL); }
+  var dpy = viewPosOf(q + vec2<f32>(0.0, dq.y), zD) - P;
+  if (abs(zU - z) < abs(zD - z)) { dpy = P - viewPosOf(q - vec2<f32>(0.0, dq.y), zU); }
+  let cr = cross(dpy, dpx);
+  if (dot(cr, cr) < 1e-12) { return vec4<f32>(1.0, 1.0, 1.0, 1.0); }
+  // cross(dpy, dpx) faces the camera: camera space is +x right, +y DOWN and
+  // +z away, so a plane facing the viewer gives -z from this order.
+  let N = normalize(cr);
+  // The rotation is keyed on the buffer pixel MOD 4, which is what makes the
+  // noise pattern four texels wide and the 4x4 blur an exact cancellation.
+  let px = u32(clamp(floor(q.x * obj.params2.x), 0.0, 16777215.0)) % 4u;
+  let py = u32(clamp(floor(q.y * obj.params2.y), 0.0, 16777215.0)) % 4u;
+  let rot = aoHash(px, py, 0u) * 6.2831853;
+  // A tangent basis; which tangent is chosen does not matter, only that it is
+  // perpendicular to N -- the kernel is rotationally symmetric about it.
+  let upv = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(N.z) > 0.9);
+  let T = normalize(cross(upv, N));
+  let B = cross(N, T);
+  let n = max(1.0, obj.params2.z);
+  let radius = obj.params.x;
+  var occ = 0.0;
+  for (var i = 0; i < ${SSAO_SAMPLE_CAP}; i = i + 1) {
+    if (f32(i) >= n) { break; }
+    let fi = f32(i);
+    let u = (fi + 0.5) / n;
+    // Cosine-weighted hemisphere by the concentric-disk identity: radius
+    // sqrt(u) on the disk, height sqrt(1-u) above it.
+    let a = fi * 2.3999632 + rot;
+    let rr = sqrt(u);
+    let dir = T * (rr * cos(a)) + B * (rr * sin(a)) + N * sqrt(max(0.0, 1.0 - u));
+    // Samples crowd toward the origin, so contact darkening reads as CONTACT
+    // rather than as a uniform haze out at the radius.
+    let sp = P + dir * (radius * mix(0.25, 1.0, u * u));
+    let sq = projectQ(sp);
+    if (sq.z <= 1e-6 || sq.x < 0.0 || sq.x > 1.0 || sq.y < 0.0 || sq.y > 1.0) { continue; }
+    let sceneRaw = rawDepthAt(sq.xy);
+    if (sceneRaw > 0.9995) { continue; }
+    let sceneZ = sceneRaw * far;
+    // Range check: an occluder far in FRONT of this fragment is a different
+    // object, not a crevice wall, and counting it is what smears AO haloes
+    // around every silhouette.
+    let range = smoothstep(0.0, 1.0, radius / max(abs(z - sceneZ), 1e-4));
+    if (sceneZ <= sp.z - obj.params.w) { occ = occ + range; }
+  }
+  let ao = clamp(1.0 - (occ / n) * obj.params.y, 0.0, 1.0);
+  return vec4<f32>(ao, ao, ao, 1.0);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; mat4 proj; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; vec4 params2; mat4 proj; };
+uniform sampler2D uTex;
+in vec2 vUv;
+out vec4 frag;
+${SSAO_UNPACK_GLSL}
+// Field coordinate -> texture coordinate -- see the WGSL twin.
+vec2 texUvOf(vec2 q) { return uvRect.xy + q * uvRect.zw; }
+float rawDepthAt(vec2 q) { return unpackLinear(textureLod(uTex, texUvOf(q), 0.0)); }
+// Field coordinate -> camera space -- the same 2x2 solve as the WGSL twin.
+vec3 viewPosOf(vec2 q, float z) {
+  vec2 ndc = vec2(q.x * 2.0 - 1.0, 1.0 - q.y * 2.0);
+  float w = proj[2].w * z + proj[3].w;
+  float rx = ndc.x * w - proj[2].x * z - proj[3].x;
+  float ry = ndc.y * w - proj[2].y * z - proj[3].y;
+  float det0 = proj[0].x * proj[1].y - proj[1].x * proj[0].y;
+  float det = abs(det0) < 1e-12 ? 1e-6 : det0;
+  return vec3(
+    (proj[1].y * rx - proj[1].x * ry) / det,
+    (proj[0].x * ry - proj[0].y * rx) / det,
+    z
+  );
+}
+vec3 projectQ(vec3 p) {
+  vec4 c = proj * vec4(p, 1.0);
+  float iw = 1.0 / max(c.w, 1e-6);
+  return vec3(c.x * iw * 0.5 + 0.5, 0.5 - c.y * iw * 0.5, c.w);
+}
+// The Dissolve hash -- must match the WGSL branch above exactly.
+float aoHash(uint px, uint py, uint key) {
+  uint h = (px + 1u) * 374761393u + (py + 1u) * 668265263u + (key + 1u) * 2246822519u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h = h ^ (h >> 16u);
+  return float(h) / 4294967296.0;
+}
+void main() {
+  vec2 q = (vUv - uvRect.xy) / uvRect.zw;
+  float raw = rawDepthAt(q);
+  if (raw > 0.9995) { frag = vec4(1.0); return; }
+  float far = params.z;
+  float z = raw * far;
+  vec3 P = viewPosOf(q, z);
+  vec2 dq = vec2(1.0 / max(params2.x, 1.0), 1.0 / max(params2.y, 1.0));
+  float zR = rawDepthAt(q + vec2(dq.x, 0.0)) * far;
+  float zL = rawDepthAt(q - vec2(dq.x, 0.0)) * far;
+  float zD = rawDepthAt(q + vec2(0.0, dq.y)) * far;
+  float zU = rawDepthAt(q - vec2(0.0, dq.y)) * far;
+  vec3 dpx = viewPosOf(q + vec2(dq.x, 0.0), zR) - P;
+  if (abs(zL - z) < abs(zR - z)) dpx = P - viewPosOf(q - vec2(dq.x, 0.0), zL);
+  vec3 dpy = viewPosOf(q + vec2(0.0, dq.y), zD) - P;
+  if (abs(zU - z) < abs(zD - z)) dpy = P - viewPosOf(q - vec2(0.0, dq.y), zU);
+  vec3 cr = cross(dpy, dpx);
+  if (dot(cr, cr) < 1e-12) { frag = vec4(1.0); return; }
+  vec3 N = normalize(cr);
+  uint px = uint(clamp(floor(q.x * params2.x), 0.0, 16777215.0)) % 4u;
+  uint py = uint(clamp(floor(q.y * params2.y), 0.0, 16777215.0)) % 4u;
+  float rot = aoHash(px, py, 0u) * 6.2831853;
+  vec3 upv = abs(N.z) > 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0);
+  vec3 T = normalize(cross(upv, N));
+  vec3 B = cross(N, T);
+  float n = max(1.0, params2.z);
+  float radius = params.x;
+  float occ = 0.0;
+  for (int i = 0; i < ${SSAO_SAMPLE_CAP}; i++) {
+    if (float(i) >= n) break;
+    float fi = float(i);
+    float u = (fi + 0.5) / n;
+    float a = fi * 2.3999632 + rot;
+    float rr = sqrt(u);
+    vec3 dir = T * (rr * cos(a)) + B * (rr * sin(a)) + N * sqrt(max(0.0, 1.0 - u));
+    vec3 sp = P + dir * (radius * mix(0.25, 1.0, u * u));
+    vec3 sq = projectQ(sp);
+    if (sq.z <= 1e-6 || sq.x < 0.0 || sq.x > 1.0 || sq.y < 0.0 || sq.y > 1.0) continue;
+    float sceneRaw = rawDepthAt(sq.xy);
+    if (sceneRaw > 0.9995) continue;
+    float sceneZ = sceneRaw * far;
+    float range = smoothstep(0.0, 1.0, radius / max(abs(z - sceneZ), 1e-4));
+    if (sceneZ <= sp.z - params.w) occ += range;
+  }
+  float ao = clamp(1.0 - (occ / n) * params.y, 0.0, 1.0);
+  frag = vec4(ao, ao, ao, 1.0);
+}
+`,
+  },
+};
+
+/** The bilateral 4x4 that cancels the estimate's per-pixel rotation. */
+const SSAO_BLUR: ShaderSource = {
+  name: 'ssao-blur',
+  wgsl: /* wgsl */ `
+struct Object {
+  mvp : mat3x3<f32>,
+  uvRect : vec4<f32>,
+  params : vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> obj : Object;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var depthTex : texture_2d<f32>;
+struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
+@vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
+  var o : VOut;
+  let p = obj.mvp * vec3<f32>(pos, 1.0);
+  o.pos = vec4<f32>(p.xy, 0.0, p.z);
+  o.uv = obj.uvRect.xy + pos * obj.uvRect.zw;
+  return o;
+}
+${SSAO_UNPACK_WGSL}
+fn texUvOf(q : vec2<f32>) -> vec2<f32> { return obj.uvRect.xy + q * obj.uvRect.zw; }
+@fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  let q = (uv - obj.uvRect.xy) / obj.uvRect.zw;
+  let far = obj.params.z;
+  let z0 = unpackLinear(textureSampleLevel(depthTex, smp, texUvOf(q), 0.0)) * far;
+  var acc = 0.0;
+  var wsum = 0.0;
+  // -2..+1: four consecutive texels, exactly one period of the rotation tile.
+  for (var y = -2; y <= 1; y = y + 1) {
+    for (var x = -2; x <= 1; x = x + 1) {
+      let sq = q + vec2<f32>(f32(x) * obj.params.x, f32(y) * obj.params.y);
+      let suv = texUvOf(sq);
+      let z = unpackLinear(textureSampleLevel(depthTex, smp, suv, 0.0)) * far;
+      // Bilateral: a neighbour on another surface contributes nothing, which
+      // is what stops the AO under an object leaking onto what is behind it.
+      let w = max(0.0, 1.0 - abs(z - z0) / max(obj.params.w, 1e-4));
+      acc = acc + textureSampleLevel(tex, smp, suv, 0.0).r * w;
+      wsum = wsum + w;
+    }
+  }
+  // Every neighbour rejected leaves the centre tap, never a divide by zero.
+  let ao = select(textureSampleLevel(tex, smp, uv, 0.0).r, acc / wsum, wsum > 1e-4);
+  return vec4<f32>(ao, ao, ao, 1.0);
+}
+`,
+  glsl: {
+    vertex: /* glsl */ `#version 300 es
+layout(location = 0) in vec2 pos;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+out vec2 vUv;
+void main() {
+  vec3 p = mvp * vec3(pos, 1.0);
+  gl_Position = vec4(p.xy, 0.0, p.z);
+  vUv = uvRect.xy + pos * uvRect.zw;
+}
+`,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+layout(std140) uniform Object { mat3 mvp; vec4 uvRect; vec4 params; };
+uniform sampler2D uTex;
+uniform sampler2D uDepthTex;
+in vec2 vUv;
+out vec4 frag;
+${SSAO_UNPACK_GLSL}
+vec2 texUvOf(vec2 q) { return uvRect.xy + q * uvRect.zw; }
+void main() {
+  vec2 q = (vUv - uvRect.xy) / uvRect.zw;
+  float far = params.z;
+  float z0 = unpackLinear(textureLod(uDepthTex, texUvOf(q), 0.0)) * far;
+  float acc = 0.0;
+  float wsum = 0.0;
+  for (int y = -2; y <= 1; y++) {
+    for (int x = -2; x <= 1; x++) {
+      vec2 sq = q + vec2(float(x) * params.x, float(y) * params.y);
+      vec2 suv = texUvOf(sq);
+      float z = unpackLinear(textureLod(uDepthTex, suv, 0.0)) * far;
+      float w = max(0.0, 1.0 - abs(z - z0) / max(params.w, 1e-4));
+      acc += textureLod(uTex, suv, 0.0).r * w;
+      wsum += w;
+    }
+  }
+  float ao = wsum > 1e-4 ? acc / wsum : textureLod(uTex, vUv, 0.0).r;
+  frag = vec4(ao, ao, ao, 1.0);
+}
+`,
+  },
+};
 
 const TEXTURED3D: ShaderSource = {
   name: 'textured3d',
@@ -4847,6 +5814,221 @@ void main() {
   vec4 v = vec4(c.rgb, 1.0);
   vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
   vec3 lit = shade3dN(vWorld, vNrm, graded);
+  frag = vec4(lit * c.a, c.a);
+}
+`,
+  },
+};
+
+// ── Textured 3D mesh with the rest of the PBR maps ──────────────────────────
+/*
+  A THIRD mesh variant, not a widening of the second.
+
+  `mesh3d-textured` keeps its exact bind-group layout, its exact uniform block
+  and therefore its exact pixels: a model with nothing but a base-colour
+  texture (and every extrusion, which is the overwhelming majority of what
+  draws through this path) compiles the same shader it did before, so its
+  goldens cannot move. This variant is selected only when a glTF material
+  actually carries a normal / metallic-roughness / occlusion / emissive map.
+
+  ## Why every map samples unconditionally
+
+  The three multiplicative maps have WHITE as their identity — roughness ×1,
+  metallic ×1, occlusion 1, emissive factor ×1 — so a material missing one
+  binds the shared 1×1 white texture and the arithmetic is a no-op. That
+  removes three uniform flags AND, more importantly, keeps `textureSample` and
+  the derivative calls out of conditional control flow, which WGSL's uniformity
+  analysis polices and which this codebase has already been bitten by once (see
+  uniformPackerSize.test.ts's header). Only the normal map needs a flag,
+  because its identity is (0,0,1) in tangent space, not white.
+
+  ## Why the tangent frame is derived, not an attribute
+
+  Per-vertex tangents would need a wider vertex layout, and the mesh vertex
+  buffer is shared with the morph and skinning deformers, which interleave at a
+  fixed 8-float stride — and the WebGL2 backend binds ONE vertex buffer per
+  draw (its `setVertexBuffer` ignores the slot and reconfigures every attribute
+  against the buffer just bound), so a parallel tangent buffer is not available
+  either. The screen-space cotangent frame below (Schüler) reconstructs T and B
+  from the derivatives of position and UV, which is exact per triangle and
+  follows deformed geometry for free — a skinned character's normal map stays
+  glued through its poses without the deformers learning about tangents.
+*/
+function subOnce(text: string, from: string, to: string, where: string): string {
+  if (!text.includes(from)) throw new Error(`${where}: no site matching ${JSON.stringify(from)}`);
+  return text.split(from).join(to);
+}
+
+// Anchored on the END of the block, not on its last field: the shared shade
+// tail grows from time to time, and this must always append AFTER whatever it
+// holds — `packMesh3DPbr` writes these two vec4s past everything `packTextured3D`
+// produced, so a new field landing between them would misalign every read.
+const WGSL_TEX3D_PBR_OBJECT = subOnce(
+  WGSL_TEX3D_OBJECT,
+  '};\n@group(0) @binding(0) var<uniform> obj : Object;',
+  '  pbrParams : vec4<f32>,\n  pbrEmissive : vec4<f32>,\n};\n@group(0) @binding(0) var<uniform> obj : Object;',
+  'WGSL_TEX3D_PBR_OBJECT',
+);
+const GLSL_TEX3D_PBR_UBO = subOnce(
+  GLSL_TEX3D_UBO,
+  '; };',
+  '; vec4 pbrParams; vec4 pbrEmissive; };',
+  'GLSL_TEX3D_PBR_UBO',
+);
+// GLSL links the two stages as one program, and a uniform block whose members
+// differ between them is a LINK error — so the vertex stage takes the widened
+// block too, even though it reads none of the new fields.
+const GLSL_MESH3D_PBR_VS = subOnce(GLSL_MESH3D_VS, GLSL_TEX3D_UBO, GLSL_TEX3D_PBR_UBO, 'GLSL_MESH3D_PBR_VS');
+
+/**
+ * `shade3dN` with per-FRAGMENT metallic / roughness / occlusion.
+ *
+ * The uniform factors stay where they are — a metallic-roughness map is a
+ * MULTIPLIER on `pbrMetallicRoughness`'s factors per the glTF spec, and those
+ * factors already ride `shadeParams` because the importer writes them into
+ * Material Options. So the map modulates rather than replaces, and the Material
+ * panel's sliders keep meaning what they mean on an untextured model.
+ *
+ * Occlusion multiplies AMBIENT only (the `lType == 0` accumulation), which is
+ * what an AO map is for: it darkens the light that arrives from everywhere,
+ * not the light that arrives from a direction the surface can see.
+ */
+function withPbrMaps(fn: string, lang: 'wgsl' | 'glsl'): string {
+  const edits: Array<[string, string]> = lang === 'wgsl'
+    ? [
+        [
+          'fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f32> {',
+          'fn shade3dNMR(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>, metalMul : f32, roughMul : f32, ao : f32) -> vec3<f32> {',
+        ],
+        ['let metal = obj.shadeParams.w;', 'let metal = clamp(obj.shadeParams.w * metalMul, 0.0, 1.0);'],
+        ['let rough = clamp(-obj.shadeParams.z, 0.02, 1.0);', 'let rough = clamp(-obj.shadeParams.z * roughMul, 0.02, 1.0);'],
+        // The AMBIENT site now carries the screen-space AO term as well, so the
+        // map multiplies ON TOP of it rather than replacing it. Two different
+        // occlusions: `aoTerm` is what the SCENE hides from this fragment, `ao`
+        // is what the MODEL's own author baked into its texture.
+        ['if (lType == 0) { diff = diff + colGain.rgb * gain * aoTerm; continue; }', 'if (lType == 0) { diff = diff + colGain.rgb * gain * aoTerm * ao; continue; }'],
+      ]
+    : [
+        [
+          'vec3 shade3dN(vec3 world, vec3 nrmIn, vec3 baseRgb) {',
+          'vec3 shade3dNMR(vec3 world, vec3 nrmIn, vec3 baseRgb, float metalMul, float roughMul, float ao) {',
+        ],
+        ['float metal = shadeParams.w;', 'float metal = clamp(shadeParams.w * metalMul, 0.0, 1.0);'],
+        ['float rough = clamp(-shadeParams.z, 0.02, 1.0);', 'float rough = clamp(-shadeParams.z * roughMul, 0.02, 1.0);'],
+        ['if (lType == 0) { diff += colGain.rgb * gain * aoTerm; continue; }', 'if (lType == 0) { diff += colGain.rgb * gain * aoTerm * ao; continue; }'],
+      ];
+  let out = fn;
+  for (const [from, to] of edits) out = subOnce(out, from, to, `withPbrMaps(${lang})`);
+  return out;
+}
+
+const WGSL_SHADE3D_NMR_FN = withPbrMaps(WGSL_SHADE3D_N_FN, 'wgsl');
+const GLSL_SHADE3D_NMR_FN = withPbrMaps(GLSL_SHADE3D_N_FN, 'glsl');
+
+/** Screen-space cotangent frame: T and B from d(position)/d(uv), then the
+ *  tangent-space normal rotated into world space. Derivatives are taken by the
+ *  CALLER, at top level, so this never runs inside conditional control flow. */
+const WGSL_TANGENT_FRAME_FN = /* wgsl */ `
+fn perturbNormal(
+  N : vec3<f32>, tsN : vec3<f32>,
+  dp1 : vec3<f32>, dp2 : vec3<f32>, duv1 : vec2<f32>, duv2 : vec2<f32>,
+) -> vec3<f32> {
+  let dp2perp = cross(dp2, N);
+  let dp1perp = cross(N, dp1);
+  let T = dp2perp * duv1.x + dp1perp * duv2.x;
+  let B = dp2perp * duv1.y + dp1perp * duv2.y;
+  // Degenerate UVs (a seam vertex, a flat-shaded facet with no UV gradient)
+  // leave T and B at zero; the epsilon keeps the reciprocal finite and the
+  // result falls back to N because tsN's z dominates.
+  let invmax = 1.0 / sqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+  return normalize(mat3x3<f32>(T * invmax, B * invmax, N) * tsN);
+}
+`;
+
+const GLSL_TANGENT_FRAME_FN = /* glsl */ `
+vec3 perturbNormal(vec3 N, vec3 tsN, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2) {
+  vec3 dp2perp = cross(dp2, N);
+  vec3 dp1perp = cross(N, dp1);
+  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+  float invmax = 1.0 / sqrt(max(max(dot(T, T), dot(B, B)), 1e-20));
+  return normalize(mat3(T * invmax, B * invmax, N) * tsN);
+}
+`;
+
+const MESH3D_PBR: ShaderSource = {
+  name: 'mesh3d-pbr',
+  wgsl: /* wgsl */ `
+${WGSL_TEX3D_PBR_OBJECT}
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var normalTex : texture_2d<f32>;
+@group(0) @binding(4) var mrTex : texture_2d<f32>;
+@group(0) @binding(5) var aoTex : texture_2d<f32>;
+@group(0) @binding(6) var emissiveTex : texture_2d<f32>;
+${WGSL_MESH3D_VS}
+${WGSL_SHADE3D_NMR_FN}
+${WGSL_TANGENT_FRAME_FN}
+@fragment
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(tex, smp, uv) * obj.tint;
+  let v = vec4<f32>(c.rgb, 1.0);
+  let graded = vec3<f32>(dot(obj.cr0, v), dot(obj.cr1, v), dot(obj.cr2, v));
+  let nSample = textureSample(normalTex, smp, uv).xyz;
+  let mrSample = textureSample(mrTex, smp, uv);
+  let aoSample = textureSample(aoTex, smp, uv).r;
+  let eSample = textureSample(emissiveTex, smp, uv).rgb;
+  let dp1 = dpdx(world);
+  let dp2 = dpdy(world);
+  let duv1 = dpdx(uv);
+  let duv2 = dpdy(uv);
+  let Ng = normalize(nrm);
+  let ts = nSample * 2.0 - vec3<f32>(1.0);
+  let scaled = normalize(vec3<f32>(ts.xy * obj.pbrParams.x, max(ts.z, 1e-4)));
+  let N = select(Ng, perturbNormal(Ng, scaled, dp1, dp2, duv1, duv2), obj.pbrParams.z > 0.5);
+  // glTF fixes the channels: G = roughness, B = metallic. AO is R of its own
+  // map (which is very often the same image), lerped by occlusionStrength.
+  let ao = 1.0 + obj.pbrParams.y * (aoSample - 1.0);
+  let emissive = obj.pbrEmissive.rgb * workingFromSample(eSample, 0.0);
+  let lit = shade3dNMR(world, N, graded, mrSample.b, mrSample.g, ao) + emissive;
+  return vec4<f32>(lit * c.a, c.a);
+}
+`,
+  glsl: {
+    vertex: GLSL_MESH3D_PBR_VS,
+    fragment: /* glsl */ `#version 300 es
+precision highp float;
+${GLSL_TEX3D_PBR_UBO}
+uniform sampler2D uTex;
+uniform sampler2D uNormalTex;
+uniform sampler2D uMRTex;
+uniform sampler2D uAOTex;
+uniform sampler2D uEmissiveTex;
+in vec2 vUv;
+in vec3 vWorld;
+in vec3 vNrm;
+out vec4 frag;
+${GLSL_SHADE3D_NMR_FN}
+${GLSL_TANGENT_FRAME_FN}
+void main() {
+  vec4 c = texture(uTex, vUv) * tint;
+  vec4 v = vec4(c.rgb, 1.0);
+  vec3 graded = vec3(dot(cr0, v), dot(cr1, v), dot(cr2, v));
+  vec3 nSample = texture(uNormalTex, vUv).xyz;
+  vec4 mrSample = texture(uMRTex, vUv);
+  float aoSample = texture(uAOTex, vUv).r;
+  vec3 eSample = texture(uEmissiveTex, vUv).rgb;
+  vec3 dp1 = dFdx(vWorld);
+  vec3 dp2 = dFdy(vWorld);
+  vec2 duv1 = dFdx(vUv);
+  vec2 duv2 = dFdy(vUv);
+  vec3 Ng = normalize(vNrm);
+  vec3 ts = nSample * 2.0 - vec3(1.0);
+  vec3 scaled = normalize(vec3(ts.xy * pbrParams.x, max(ts.z, 1e-4)));
+  vec3 N = pbrParams.z > 0.5 ? perturbNormal(Ng, scaled, dp1, dp2, duv1, duv2) : Ng;
+  float ao = 1.0 + pbrParams.y * (aoSample - 1.0);
+  vec3 emissive = pbrEmissive.rgb * workingFromSample(eSample, 0.0);
+  vec3 lit = shade3dNMR(vWorld, N, graded, mrSample.b, mrSample.g, ao) + emissive;
   frag = vec4(lit * c.a, c.a);
 }
 `,
@@ -5234,7 +6416,7 @@ function unpremultiplyingSample(base: ShaderSource, src: 'srgb' | 'linear' = 'sr
       fragment = sub(fragment, 'graded = vec3(lr, lg, lb);', 'graded = srgbToLinearRgb(vec3(lr, lg, lb));', 'glsl lut decode');
     }
   } else if (!LINEAR_INTERMEDIATE_STORAGE) {
-    if (base.name === 'textured3d' || base.name === 'mesh3d-textured') {
+    if (base.name === 'textured3d' || base.name === 'mesh3d-textured' || base.name === 'mesh3d-pbr') {
       wgsl = sub(wgsl, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'wgsl encode lit');
       fragment = sub(fragment, 'lit * c.a', 'linearToSrgbRgb(lit) * c.a', 'glsl encode lit');
     } else if (base.name === 'masked-textured3d') {
@@ -5462,7 +6644,7 @@ void main() {
 };
 
 export const BUILTIN_SHADERS: readonly ShaderSource[] = [
-  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, BOKEH, COC_BLUR, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
+  SOLID, MATTE_COMBINE, BLEND_COMBINE, BLUR, BOKEH, COC_BLUR, DOF_GATHER, GRADIENT_RAMP, FRACTAL_NOISE, DISPLACEMENT_MAP, COMPOUND_BLUR, APPLY_COLOR_LUT, MOTION_TILE,
   FILL, STROKE, SHARPEN, NOISE, SET_MATTE, BEAM, LIGHT_SWEEP, LENS_FLARE, LIGHT_RAYS, BEND,
   BEVEL_ALPHA, BEVEL_EDGES, SPOTLIGHT, SPHERE, CYLINDER, ARITHMETIC,
   // Round-six per-pixel colour ports.
@@ -5470,6 +6652,15 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   // Round-six waves 2–3: warps + neighbourhood passes (fxRoundSix.ts).
   ...FX_ROUND_SIX_SHADERS,
   SOLID3D,
+  // Shadow-map casters. No `-linear` twin and no premultiply handling: neither
+  // samples a texture — they write a packed distance, not a colour.
+  SHADOW_DEPTH, SHADOW_DEPTH_MESH,
+  // Ambient occlusion. Beside the casters because they SHARE the prepass: SSAO
+  // reads exactly what shadow-depth writes, with the camera's axis in the
+  // light's place. Neither of these samples a layer texture either -- the
+  // estimate reads a packed distance and the blur reads its own output -- so
+  // neither takes a `-linear` twin.
+  SSAO, SSAO_BLUR,
   // The six families that sample a layer texture. Every one un-premultiplies.
   // Upload (`srgb`) and RT (`linear`) variants: linear storage keeps graph RTs
   // in working space, so a copy must not run the upload decode.
@@ -5488,6 +6679,11 @@ export const BUILTIN_SHADERS: readonly ShaderSource[] = [
   MESH3D_SOLID,
   unpremultiplyingSample(MESH3D_TEXTURED),
   unpremultiplyingSample(MESH3D_TEXTURED, 'linear'),
+  // No `-linear` twin: this variant exists for imported glTF materials, whose
+  // maps are uploaded image files and never render-target copies. A twin would
+  // be a shader nothing can select, and its emissive decode would have to be
+  // stripped by a substitution site that has no other reason to exist.
+  unpremultiplyingSample(MESH3D_PBR),
   TEXTURED_SILHOUETTE,
   SCENE_BLIT,
   SCENE_BLIT_LUT,

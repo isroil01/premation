@@ -485,68 +485,28 @@
  * for inputs elsewhere. It now reads as something you can type into whether or
  * not the row behind it happens to contrast.
  */
-.searchContainer {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--color-timeline-well);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 0 7px;
-  height: 22px;
+/*
+ * The property filter is a <SearchField> now — icon, clear button, Escape
+ * semantics and focus ring all come from the component, so what is left here
+ * is only what is TRUE OF THIS ROW and of no other search box in the app: it
+ * sits in a 32px sub-header, so it keeps the dense 22px timeline control
+ * height rather than the 28px panel one, and it uses the timeline's own well
+ * colour so it reads as part of the ruler chrome.
+ *
+ * Doubled class on purpose. `.searchContainer` and SearchField's own `.sm` are
+ * both single-class selectors, so which one wins would otherwise depend on the
+ * order the two CSS modules happen to land in the bundle. 0,2,0 beats 0,1,0
+ * regardless of order.
+ */
+.searchContainer.searchContainer {
   flex: 1;
   min-width: 0;
-  box-sizing: border-box;
-  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.searchContainer:hover {
-  border-color: var(--color-border-strong);
-}
-
-.searchContainer:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 1px var(--color-primary);
-}
-
-.searchIcon {
-  color: var(--color-text-tertiary);
-  flex-shrink: 0;
-}
-
-.searchInput {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--color-text-primary);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
   font-size: var(--font-size-xs);
-  padding: 0;
-  width: 100%;
-}
-
-.searchInput::placeholder {
-  color: var(--color-text-tertiary);
-}
-
-.searchClear {
-  background: transparent;
-  border: none;
-  outline: none;
-  cursor: pointer;
-  color: var(--color-text-tertiary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px;
-  border-radius: 3px;
-  margin-right: -3px;
-}
-
-.searchClear:hover {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
+  background: var(--color-timeline-well);
+  border-color: var(--color-border);
+  border-radius: var(--radius-sm);
 }
 
 /* ── Transport controls ────────────────────────────────────────────── */
@@ -1061,3 +1021,14 @@ button.play:hover {
   cursor: pointer;
 }
 
+
+/* The settings chevron beside the onion-skin toggle. Half width and butted
+   against it, so the pair reads as one control with a disclosure rather than
+   as two independent toggles. */
+.toggleIconChevron {
+  composes: toggleBtn;
+  width: 16px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}

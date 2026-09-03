@@ -492,9 +492,23 @@ function resolvePinnedVertices(
   for (const pin of pins) {
     const col = restMesh.weights[pin.id];
     if (!col || col.length < n) continue;
-    // argmax of the weight column (the vertex this pin controls).
-    let best = 0;
-    let bestW = -Infinity;
+    // argmax of the weight column (the vertex this pin controls), with TIES
+    // broken toward the vertex `finishRestMesh` actually bound the pin to.
+    //
+    // The column is not always uniquely maximal. Beyond a pin near the tip of a
+    // limb the harmonic solve saturates: every vertex out there is Dirichlet-1
+    // as far as float32 can tell, so a plain first-wins argmax constrained
+    // whichever of them happened to be compacted first — NOT the vertex under
+    // the user's pin. Measured on the reproduction character: the pin's own
+    // vertex travelled 37.3px of a 40px drag while a vertex 6px away took the
+    // full 40, i.e. the artwork slid out from under the handle.
+    //
+    // Seeding the scan with the bound vertex and keeping the comparison STRICT
+    // changes nothing where the maximum is unique (the scan still lands on the
+    // first true maximum), so every non-degenerate rig solves bit-identically.
+    const bound = restMesh.pinVertexIndices?.[pin.id];
+    let best = bound !== undefined && bound >= 0 && bound < n ? bound : 0;
+    let bestW = bound !== undefined && bound >= 0 && bound < n ? col[best]! : -Infinity;
     for (let i = 0; i < n; i++) {
       const w = col[i]!;
       if (w > bestW) {

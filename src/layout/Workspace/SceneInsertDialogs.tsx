@@ -17,7 +17,13 @@ import { ColorPicker } from '@components/ColorPicker';
 import { openModal } from '@stores/modalStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { Project3D } from '@motion/scene';
-import { insertCamera, insertLight } from '@core/scene/sceneInsert';
+import { insertCamera, insertLight, insert3DPrimitive, type Primitive3DKind } from '@core/scene/sceneInsert';
+import {
+  defaultPrimitiveSpec,
+  isPrimitiveMeshType,
+  PRIMITIVE_FIELDS,
+  type PrimitiveSpec,
+} from '@core/scene/primitiveLayer';
 import type { LightType } from '@core/scene/light';
 import styles from './SceneInsertDialogs.module.css';
 
@@ -110,6 +116,13 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
   const [coneAngleDeg, setConeAngleDeg] = useState(45);
   const [coneFeather, setConeFeather] = useState(50);
   const [castShadows, setCastShadows] = useState(false);
+  // Seeded from the composition's World ▸ default sky, so the dialog opens on
+  // the look the project is working in rather than always on Studio. It is a
+  // starting point, not a lock — the menu below still changes it for this light.
+  const compDefaultSky = useCompositionStore((s) => s.defaultEnvPreset);
+  const [envPreset, setEnvPreset] = useState<'studio' | 'sky' | 'sunset'>(
+    compDefaultSky === 'sky' || compDefaultSky === 'sunset' ? compDefaultSky : 'studio',
+  );
 
   const create = (): void => {
     insertLight({
@@ -119,7 +132,8 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
       color,
       coneAngle: type === 'spot' ? coneAngleDeg : undefined,
       coneFeather: type === 'spot' ? coneFeather : undefined,
-      castShadows,
+      castShadows: type === 'environment' ? false : castShadows,
+      envPreset: type === 'environment' ? envPreset : undefined,
     });
     close();
   };
@@ -145,7 +159,14 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
             >
               <option value="point">Point (radiates everywhere)</option>
               <option value="spot">Spot (directional cone)</option>
+              {/* Parallel was the one LightType the dialog could not create,
+                  so the only way to get sunlight was to insert some other kind
+                  of light and re-type it in the inspector. It needs no extra
+                  seed of its own: like a spot it is aimed, but by `lightAngle`
+                  / Point of Interest, both of which readNodeLight defaults. */}
+              <option value="parallel">Parallel (directional, like sunlight)</option>
               <option value="ambient">Ambient (uniform wash)</option>
+              <option value="environment">Environment (image-based sky)</option>
             </select>
           </label>
           <label className={styles.field}>
@@ -176,6 +197,21 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
               </label>
             </>
           )}
+          {type === 'environment' && (
+            <label className={styles.field}>
+              <span className={styles.fieldLabel}>Sky</span>
+              <select
+                className={styles.select}
+                value={envPreset}
+                onChange={(e) => setEnvPreset(e.target.value as 'studio' | 'sky' | 'sunset')}
+                aria-label="Environment preset"
+              >
+                <option value="studio">Studio (soft top light)</option>
+                <option value="sky">Day sky (blue above)</option>
+                <option value="sunset">Sunset (warm horizon)</option>
+              </select>
+            </label>
+          )}
         </div>
       </div>
 
@@ -197,6 +233,181 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
       </div>
     </div>
   );
+}
+
+/**
+ * New 3D Primitive.
+ *
+ * The "+" menu's 3D Cube / Sphere / Cylinder items insert a fixed default
+ * object, which is fine for the two shapes that only have a size — and useless
+ * for a torus, whose whole character is the ratio of ring to tube, or for
+ * anything where the tessellation is the difference between a sphere and a
+ * faceted ball. So this dialog collects the parameters BEFORE the insert
+ * rather than making you find them in the inspector afterwards.
+ *
+ * Cube and Plane are listed here too, and are the odd ones out: they are not
+ * generated meshes but the extrusion and quad paths (an extruded square is
+ * already a real box, with bevels and per-face colours a plain box mesh would
+ * lose). Their labels say so; picking one ignores the parameters below.
+ */
+type DialogKind = Primitive3DKind;
+
+const DIALOG_KINDS: ReadonlyArray<{ id: DialogKind; label: string }> = [
+  { id: 'sphere', label: 'Sphere' },
+  { id: 'cylinder', label: 'Cylinder' },
+  { id: 'cone', label: 'Cone' },
+  { id: 'torus', label: 'Torus' },
+  { id: 'capsule', label: 'Capsule' },
+  { id: 'box', label: 'Box (mesh)' },
+  { id: 'cube', label: 'Cube (extruded — bevels, per-face colours)' },
+  { id: 'plane', label: 'Plane (flat quad)' },
+];
+
+function PrimitiveDialog({ close }: { close: () => void }): JSX.Element {
+  const [type, setType] = useState<DialogKind>('sphere');
+  // One spec for the whole dialog, re-seeded on every type change so the
+  // ranges shown always belong to the shape being created. Values a shape
+  // shares with the previous one survive the switch (defaultPrimitiveSpec
+  // gives them the same meaning), so nudging the radius then trying it as a
+  // capsule keeps the radius.
+  const [spec, setSpec] = useState<PrimitiveSpec>(() => defaultPrimitiveSpec('sphere'));
+
+  const onType = (next: DialogKind): void => {
+    setType(next);
+    if (isPrimitiveMeshType(next)) {
+      setSpec((prev) => ({ ...defaultPrimitiveSpec(next), ...prev, type: next }));
+    }
+  };
+
+  const mesh = isPrimitiveMeshType(type) ? type : null;
+  const fields = mesh ? PRIMITIVE_FIELDS[mesh] : [];
+  const uses = (f: keyof PrimitiveSpec): boolean => fields.includes(f);
+  const set = (f: keyof PrimitiveSpec) => (v: number): void => setSpec((p) => ({ ...p, [f]: v }));
+
+  const create = (): void => {
+    insert3DPrimitive(type, mesh ? spec : undefined);
+    close();
+  };
+
+  return (
+    <div className={styles.root}>
+      <div className={styles.section}>
+        <label className={styles.field}>
+          <span className={styles.fieldLabel}>Shape</span>
+          <select
+            className={styles.select}
+            value={type}
+            onChange={(e) => onType(e.target.value as DialogKind)}
+            aria-label="Primitive shape"
+          >
+            {DIALOG_KINDS.map((k) => (
+              <option key={k.id} value={k.id}>{k.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {mesh && (
+        <>
+          <div className={styles.section}>
+            <div className={styles.row}>
+              {uses('radius') && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>{mesh === 'torus' ? 'Ring radius' : 'Radius'}</span>
+                  <ValueField value={Math.round(spec.radius)} onChange={set('radius')} min={1} max={4000} unit="px" aria-label="Radius" />
+                </label>
+              )}
+              {uses('radiusTop') && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Top radius</span>
+                  <ValueField value={Math.round(spec.radiusTop)} onChange={set('radiusTop')} min={0} max={4000} unit="px" aria-label="Top radius" />
+                </label>
+              )}
+              {uses('tube') && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Tube radius</span>
+                  <ValueField value={Math.round(spec.tube)} onChange={set('tube')} min={1} max={2000} unit="px" aria-label="Tube radius" />
+                </label>
+              )}
+              {uses('width') && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Width</span>
+                  <ValueField value={Math.round(spec.width)} onChange={set('width')} min={1} max={8000} unit="px" aria-label="Width" />
+                </label>
+              )}
+              {uses('height') && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>{mesh === 'capsule' ? 'Height (total)' : 'Height'}</span>
+                  <ValueField value={Math.round(spec.height)} onChange={set('height')} min={1} max={8000} unit="px" aria-label="Height" />
+                </label>
+              )}
+              {uses('depth') && (
+                <label className={styles.field}>
+                  <span className={styles.fieldLabel}>Depth</span>
+                  <ValueField value={Math.round(spec.depth)} onChange={set('depth')} min={1} max={8000} unit="px" aria-label="Depth" />
+                </label>
+              )}
+            </div>
+          </div>
+
+          {(uses('radialSegments') || uses('heightSegments')) && (
+            <div className={styles.section}>
+              <div className={styles.row}>
+                {uses('radialSegments') && (
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>{mesh === 'torus' ? 'Ring segments' : 'Segments (around)'}</span>
+                    <ValueField value={spec.radialSegments} onChange={(v) => set('radialSegments')(Math.round(v))} min={3} max={256} aria-label="Radial segments" />
+                  </label>
+                )}
+                {uses('heightSegments') && (
+                  <label className={styles.field}>
+                    <span className={styles.fieldLabel}>
+                      {mesh === 'torus' ? 'Tube segments' : mesh === 'capsule' ? 'Cap rows' : 'Segments (rows)'}
+                    </span>
+                    <ValueField value={spec.heightSegments} onChange={(v) => set('heightSegments')(Math.round(v))} min={3} max={256} aria-label="Height segments" />
+                  </label>
+                )}
+              </div>
+              <p className={styles.hint}>
+                More segments means a rounder silhouette and more triangles. The
+                defaults look smooth at typical comp sizes; raise them for a
+                close-up, lower them for a deliberately faceted look.
+              </p>
+            </div>
+          )}
+
+          {uses('capped') && (
+            <div className={styles.section}>
+              <div className={styles.switchRow}>
+                <Switch
+                  checked={spec.capped}
+                  onChange={(e) => setSpec((p) => ({ ...p, capped: e.target.checked }))}
+                  label="End caps"
+                />
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      <div className={styles.footer}>
+        <Button variant="ghost" size="md" onClick={close}>Cancel</Button>
+        <Button variant="primary" size="md" leftIcon={<Icon name="check" size="sm" />} onClick={create}>
+          Create
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Open the "New 3D Primitive" dialog. */
+export function openPrimitiveDialog(): void {
+  openModal({
+    id: 'insert-3d-primitive',
+    title: 'New 3D primitive',
+    size: 'sm',
+    render: (close) => <PrimitiveDialog close={close} />,
+  });
 }
 
 /** Open the AE-style "New Camera" dialog. */

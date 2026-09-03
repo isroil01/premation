@@ -17,7 +17,7 @@
  */
 
 import { readSource } from '@/__testHelpers__/readSource';
-import { dofBlurPx, type DofConfig } from './camera3d';
+import { dofBlurPx, focusRangeAt, type DofConfig } from './camera3d';
 
 /** Legacy config — no `fStop`, so the old ramp. */
 const legacy = (over: Partial<DofConfig> = {}): DofConfig => ({
@@ -155,5 +155,79 @@ describe('degenerate rigs resolve to the cap, never to NaN', () => {
   it.each([0, -100, NaN, Infinity])('a depth of %p stays finite', (d) => {
     const v = dofBlurPx(d, physical({ strength: 7 }));
     expect(Number.isFinite(v)).toBe(true);
+  });
+});
+
+/**
+ * The focus BAND, which is what the viewport's focus-plane gizmo draws.
+ *
+ * The assertion that matters is the round trip: `focusRangeAt` is the algebraic
+ * inverse of `dofBlurPx`, so evaluating the blur AT the limits it returns must
+ * land back on the threshold. A band derived any other way — a search, a fudge
+ * factor, a second copy of the lens maths — drifts off the pixels the renderer
+ * actually blurs, and the drift is invisible in a still.
+ */
+describe('focusRangeAt inverts the blur model', () => {
+  it('round-trips on the legacy ramp', () => {
+    const dof = legacy({ strength: 100, focus: 1000, aperture: 50 });
+    const { near, far } = focusRangeAt(dof, 2);
+    expect(dofBlurPx(near, dof)).toBeCloseTo(2, 9);
+    expect(dofBlurPx(far, dof)).toBeCloseTo(2, 9);
+  });
+
+  it('round-trips on the physical CoC, both sides', () => {
+    const dof = physical({ strength: 1e9, focus: 1000, focalLength: 50, fStop: 2.8 });
+    const { near, far } = focusRangeAt(dof, 0.5);
+    expect(Number.isFinite(far)).toBe(true);
+    expect(dofBlurPx(near, dof)).toBeCloseTo(0.5, 9);
+    expect(dofBlurPx(far, dof)).toBeCloseTo(0.5, 9);
+  });
+
+  it('brackets the focal plane, and the plane itself is sharp', () => {
+    const dof = physical({ strength: 1e9 });
+    const { near, far } = focusRangeAt(dof, 0.5);
+    expect(near).toBeLessThan(dof.focus);
+    expect(far).toBeGreaterThan(dof.focus);
+  });
+
+  it('is ASYMMETRIC under the physical model and symmetric under the ramp', () => {
+    const phys = physical({ strength: 1e9 });
+    const r = focusRangeAt(phys, 0.5);
+    // Depth of field extends further BEHIND the subject than in front — the
+    // classic ~1/3-in-front rule, and something the legacy ramp cannot express.
+    expect(r.far - phys.focus).toBeGreaterThan(phys.focus - r.near);
+
+    const ramp = legacy();
+    const l = focusRangeAt(ramp, 2);
+    expect(l.far - ramp.focus).toBeCloseTo(ramp.focus - l.near, 9);
+  });
+
+  it('runs to infinity past the hyperfocal distance', () => {
+    // A tiny f-number stop is not needed: a large enough tolerance swallows the
+    // saturated background blur entirely, which IS the hyperfocal condition.
+    const dof = physical({ strength: 1e9, focus: 1000, focalLength: 50, fStop: 16 });
+    expect(focusRangeAt(dof, 5).far).toBe(Infinity);
+    expect(focusRangeAt(dof, 5).near).toBeGreaterThan(0);
+  });
+
+  it('reports the whole scene in focus when the threshold is at or above the cap', () => {
+    // Blur saturates at `strength`, so nothing can ever exceed a bigger
+    // threshold — a band that pretended otherwise would draw two planes the
+    // render does not honour.
+    expect(focusRangeAt(physical({ strength: 3 }), 3)).toEqual({ near: 0, far: Infinity });
+    expect(focusRangeAt(legacy({ strength: 3 }), 4)).toEqual({ near: 0, far: Infinity });
+  });
+
+  it('collapses to the plane for a rig that never converges', () => {
+    const dof = physical({ strength: 100, focus: 40, focalLength: 50 });
+    expect(focusRangeAt(dof, 1)).toEqual({ near: 40, far: 40 });
+  });
+
+  it('never returns NaN', () => {
+    for (const over of [{ focus: 0 }, { focus: -10 }, { fStop: 0 }, { aperture: 0 }]) {
+      const { near, far } = focusRangeAt(physical(over), 1);
+      expect(Number.isNaN(near)).toBe(false);
+      expect(Number.isNaN(far)).toBe(false);
+    }
   });
 });

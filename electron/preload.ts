@@ -54,7 +54,14 @@ const bridge = {
   },
 
   render: {
-    beginJob: () => ipcRenderer.invoke('render:beginJob'),
+    beginJob: (info?: { spec?: unknown; format?: string; totalFrames?: number }) =>
+      ipcRenderer.invoke('render:beginJob', info),
+    /** Renders a previous session left half-staged on disk. */
+    listResumableJobs: () => ipcRenderer.invoke('render:listResumableJobs'),
+    /** Re-register one of them under its original id, and say where it got to. */
+    adoptJob: (jobId: string) => ipcRenderer.invoke('render:adoptJob', jobId),
+    /** Delete a staging dir the queue has decided not to finish. */
+    discardJob: (jobId: string) => ipcRenderer.invoke('render:discardJob', jobId),
     stageFrame: (jobId: string, index: number, bytes: Uint8Array, ext?: 'jpg' | 'png') =>
       ipcRenderer.invoke('render:stageFrame', jobId, index, bytes, ext),
     stageAudio: (jobId: string, bytes: Uint8Array) => ipcRenderer.invoke('render:stageAudio', jobId, bytes),

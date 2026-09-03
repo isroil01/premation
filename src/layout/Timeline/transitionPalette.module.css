@@ -1,0 +1,103 @@
+/*
+ * The transition palette, sitting beside the edit-tool row.
+ *
+ * Same tokens and the same control height as `TimelineTools`, because the two
+ * live in one strip and a second set of metrics would read as a second kind of
+ * control. What differs says something true: these are DRAGGABLE sources, not
+ * a radio group, so they are separated chips with their own borders rather than
+ * one seamless segmented strip.
+ */
+
+.palette {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 100%;
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-sans);
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: tl-palette;
+  border-left: 1px solid var(--color-border-subtle, var(--color-border));
+}
+
+.paletteLabel {
+  color: var(--color-text-tertiary);
+  margin-right: var(--space-1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm, 20px);
+  padding: 0 var(--space-2);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: inherit;
+  cursor: grab;
+  flex-shrink: 0;
+  transition:
+    background var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chip:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.chip:active {
+  cursor: grabbing;
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+}
+
+/*
+ * A 10px glyph that says what the transition DOES, drawn in CSS rather than
+ * taken from the icon set: none of the four exists there, and a shared icon
+ * would have to mean all four. A gradient reads as a dissolve, a solid stop as
+ * a dip, a hard split as a wipe — which is the whole vocabulary needed at this
+ * size.
+ */
+.chipGlyph {
+  width: 12px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.chipGlyph[data-kind='crossDissolve'] {
+  background: linear-gradient(90deg, var(--color-primary), transparent);
+}
+
+.chipGlyph[data-kind='dipToBlack'] {
+  background: linear-gradient(90deg, var(--color-primary), #000 50%, var(--color-primary));
+}
+
+.chipGlyph[data-kind='dipToWhite'] {
+  background: linear-gradient(90deg, var(--color-primary), #fff 50%, var(--color-primary));
+}
+
+.chipGlyph[data-kind='wipe'] {
+  background: linear-gradient(90deg, var(--color-primary) 50%, transparent 50%);
+}
+
+/* The label is the first thing to go when the panel narrows — the chips still
+   work without it, and the four glyphs keep their meaning. */
+@container tl-palette (max-width: 300px) {
+  .paletteLabel {
+    display: none;
+  }
+}

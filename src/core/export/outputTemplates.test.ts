@@ -79,6 +79,20 @@ describe('the registry', () => {
     expect(names).not.toContain('Bad');
   });
 
+  it('reads a template saved before the chapters flag existed', () => {
+    // The upgrade case: a required boolean here would have failed `isTemplate`
+    // for every stored template and silently emptied the list.
+    const { chapters: _omitted, ...legacy } = tpl({ name: 'Legacy', chapters: true });
+    localStorage.setItem('motion-editor.outputTemplates.v1', JSON.stringify([legacy]));
+    const found = listOutputTemplates().find((t) => t.name === 'Legacy');
+    expect(found).toBeDefined();
+    expect(found?.chapters).toBeUndefined();
+  });
+
+  it('rejects a non-boolean chapters flag', () => {
+    expect(saveOutputTemplate({ ...tpl(), chapters: 'yes' } as never)).toBe(false);
+  });
+
   it('refuses to save junk', () => {
     expect(saveOutputTemplate({ ...tpl(), scale: 0 })).toBe(false);
     expect(saveOutputTemplate({ ...tpl(), name: '' })).toBe(false);
@@ -114,6 +128,11 @@ describe('applying a template to a comp', () => {
     const out = applyOutputTemplate(tpl({ scale: 0.001 }), { width: 100, height: 100, fps: 30 });
     expect(out.width).toBeGreaterThanOrEqual(2);
     expect(out.height).toBeGreaterThanOrEqual(2);
+  });
+
+  it('normalises the optional chapters flag, so callers never see undefined', () => {
+    expect(applyOutputTemplate(tpl(), COMP_HD).chapters).toBe(false);
+    expect(applyOutputTemplate(tpl({ format: 'mp4', chapters: true }), COMP_HD).chapters).toBe(true);
   });
 
   it('carries format, quality and transparency through untouched', () => {

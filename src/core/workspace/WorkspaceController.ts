@@ -28,6 +28,7 @@ const TOOL_MAP: Record<UITool, string> = {
   brush: 'brush',
   curvature: 'curvature',
   line: 'line',
+  knife: 'knife',
   text: 'text',
   shape: 'rectangle',
   ellipse: 'ellipse',

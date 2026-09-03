@@ -201,12 +201,72 @@ export interface VertexBufferLayout {
   attributes: VertexAttribute[];
 }
 
-export type BindingType = 'uniform-buffer' | 'storage-buffer' | 'texture' | 'sampler';
+/**
+ * `depth-texture` binds a render target's DEPTH texture (renderTargetDepthTexture)
+ * for reading. WebGPU needs the distinction at layout time — a depth-format view
+ * is only bindable where the layout says `unfilterable-float` (or `depth`), and
+ * the default `texture` entry means filterable float, which rejects the bind
+ * group. Shaders read it with textureLoad / texelFetch, never through a
+ * filtering sampler (WebGL2 depth textures only guarantee NEAREST).
+ */
+export type BindingType = 'uniform-buffer' | 'storage-buffer' | 'texture' | 'depth-texture' | 'sampler';
 export interface BindGroupLayoutEntry {
   binding: number;
   type: BindingType;
   stages: ShaderStage[];
 }
+
+/**
+ * Bind slots the specular ENVIRONMENT MAP occupies on every lit-3d material.
+ *
+ * 7 and 8, deliberately past everything else: 3 is the mask texture, 4 a
+ * plugin effect's origin texture, and 3-6 are the mesh PBR map set. A
+ * reflection is a property of the SCENE rather than of the layer, so it sits
+ * clear of every per-layer slot and cannot be renumbered by one arriving later.
+ *
+ * Declared here, not in `pipeline/uniforms.ts`, because the WebGL2 backend has
+ * to recognise the SAMPLER slot by number (it binds the env sampler to the env
+ * texture unit ALONE, where every other sampler is broadcast to all units) and
+ * a backend must not reach up into the pipeline layer for a constant.
+ */
+export const ENV_TEXTURE_BINDING = 7;
+export const ENV_SAMPLER_BINDING = 8;
+
+/**
+ * Bind slots the SHADOW MAP occupies on every lit-3d material.
+ *
+ * 9 and 10, immediately past the environment pair, for the same reason that
+ * pair sits past everything else: a shadow map is a property of the SCENE's
+ * lighting, not of the layer, so it must stay clear of the mask (3), a plugin
+ * origin (4) and the mesh PBR set (3-6) and cannot be renumbered by a
+ * per-layer slot arriving later.
+ *
+ * Declared beside the env pair, and for the same backend reason: the WebGL2
+ * backend has to recognise the SAMPLER slot by number, because the shadow map
+ * is the one texture in a lit draw that must be sampled NEAREST (its texels
+ * are a 24-bit depth packed across rgb — bilinear blending of two packed
+ * values is not a depth), while every other sampler is broadcast to all units.
+ */
+export const SHADOW_TEXTURE_BINDING = 9;
+export const SHADOW_SAMPLER_BINDING = 10;
+
+/**
+ * Bind slots the AMBIENT-OCCLUSION map occupies on every lit-3d material.
+ *
+ * 11 and 12, immediately past the shadow pair, and for the third time the same
+ * reason: AO is a property of the RUN — one screen-space buffer every receiver
+ * in the depth group reads — not of the layer, so it sits past the mask (3), a
+ * plugin origin (4) and the mesh PBR set (3-6) where no per-layer slot arriving
+ * later can renumber it.
+ *
+ * Declared beside the other two because the WebGL2 backend must recognise the
+ * SAMPLER slot by number as well: this one is LINEAR-clamp, and an unlit
+ * material (solid3d) carries no layer sampler at all, so there is no broadcast
+ * sampler for its AO unit to inherit. Without its own slot the unit would be
+ * INCOMPLETE and sample (0,0,0,1) — black AO, i.e. every ambient term erased.
+ */
+export const AO_TEXTURE_BINDING = 11;
+export const AO_SAMPLER_BINDING = 12;
 
 export interface PipelineDescriptor {
   label?: string;
@@ -220,6 +280,12 @@ export interface PipelineDescriptor {
   colorFormat: TextureFormat;
   /** Optional depth attachment format for this pipeline. */
   depthFormat?: TextureFormat;
+  /**
+   * GLSL sampler uniform names in TEXTURE-entry order (WebGL2 only; WebGPU
+   * binds by number and ignores this). Set by materials with more than the two
+   * textures the backend can name by itself — see `MaterialDescriptor.glslSamplers`.
+   */
+  samplerNames?: string[];
   /** Depth-tested pipeline (3D layer path). When set the pipeline is only
    *  valid inside a render pass that carries a depth attachment (WebGPU bakes
    *  the depth state into the pipeline; WebGL2 applies it at bind time). */

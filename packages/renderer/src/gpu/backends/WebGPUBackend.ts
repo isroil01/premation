@@ -202,11 +202,11 @@ export class WebGPUBackend implements RenderBackend {
 
   createBuffer(desc: BufferDescriptor): BufferHandle {
     const buffer = this.device.createBuffer({ label: desc.label, size: align4(desc.sizeBytes), usage: bufferUsageBits(desc.usage) });
-    if (desc.data) this.device.queue.writeBuffer(buffer, 0, desc.data);
+    if (desc.data) this.device.queue.writeBuffer(buffer, 0, align4Write(desc.data));
     return h('buffer', buffer);
   }
   writeBuffer(buffer: BufferHandle, byteOffset: number, data: ArrayBufferView): void {
-    this.device.queue.writeBuffer(buffer.native as GPUBuffer, byteOffset, data);
+    this.device.queue.writeBuffer(buffer.native as GPUBuffer, byteOffset, align4Write(data));
   }
   destroyBuffer(buffer: BufferHandle): void {
     (buffer.native as GPUBuffer).destroy();
@@ -334,6 +334,10 @@ export class WebGPUBackend implements RenderBackend {
         if (e.type === 'uniform-buffer') entry.buffer = { type: 'uniform' };
         else if (e.type === 'storage-buffer') entry.buffer = { type: 'read-only-storage' };
         else if (e.type === 'texture') entry.texture = {};
+        // A depth-format view (depth24plus) may only bind where the layout says
+        // so — the default `{}` means filterable float and rejects the group.
+        // `unfilterable-float` pairs with WGSL `texture_2d<f32>` + textureLoad.
+        else if (e.type === 'depth-texture') entry.texture = { sampleType: 'unfilterable-float' };
         else entry.sampler = {};
         return entry;
       }),
@@ -704,6 +708,26 @@ class WebGPUPassEncoder implements RenderPassEncoder {
 
 function align4(n: number): number {
   return (n + 3) & ~3;
+}
+
+/**
+ * A view whose byte length is a multiple of 4, as `queue.writeBuffer` demands.
+ *
+ * A `Uint16Array` index buffer with an ODD number of indices is 2 mod 4, and
+ * WebGPU rejects the write outright — "Number of bytes to write must be a
+ * multiple of 4" — which takes the whole draw with it. `createBuffer` already
+ * rounds the ALLOCATION up with align4; this is the other half of that, and
+ * the half that was missing: an extruded mesh whose triangle list happens to
+ * end on an odd index (a bevelled ellipse does) could not upload at all.
+ *
+ * Copies only when it has to, so every aligned upload — which is all of them
+ * but this one case — pays nothing.
+ */
+function align4Write(data: ArrayBufferView): ArrayBufferView {
+  if (data.byteLength % 4 === 0) return data;
+  const padded = new Uint8Array(align4(data.byteLength));
+  padded.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+  return padded;
 }
 function mipCount(w: number, h: number): number {
   return 1 + Math.floor(Math.log2(Math.max(w, h)));

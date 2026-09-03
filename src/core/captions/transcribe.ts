@@ -17,6 +17,7 @@ import { aiRunsThroughBackend } from '@core/config/edition';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 import type { AiVaultProvider } from '@app-types/motionEditor';
 import { deoverlap, type Cue } from './captionFormat';
+import type { SpokenWord } from './transcriptEdit';
 import { speechWav } from './speechAudio';
 
 export interface TranscribeOptions {
@@ -41,15 +42,45 @@ export function transcriptionAvailable(): boolean {
   return typeof globalThis.window?.motionEditor?.ai?.transcribe === 'function';
 }
 
+/** A transcript as the provider gave it: segments, and words when it had them. */
+export interface Transcription {
+  /** One per SENTENCE — what a caption is, and what SRT/VTT export writes. */
+  cues: Cue[];
+  /**
+   * One per WORD, when the model returned word timings.
+   *
+   * Empty when it did not, which is the signal to estimate word times inside
+   * each segment instead. Never used to build captions: a caption per word is
+   * a stroboscope, and `cues` is the segment list either way.
+   */
+  words: SpokenWord[];
+}
+
 /**
  * Mix the composition's audio and turn it into cues.
+ *
+ * The segment-only view, for the three callers that write captions (layers,
+ * SRT/VTT export, the headless CLI). Word timings are not their business.
+ */
+export async function transcribeComposition(opts: TranscribeOptions): Promise<Cue[]> {
+  return (await transcribeCompositionDetailed(opts)).cues;
+}
+
+/**
+ * Mix the composition's audio and turn it into cues AND word timings.
  *
  * Overlaps are removed before the cues are returned. Speech models routinely
  * emit segments that touch or overlap by a few milliseconds, and two captions
  * on screen at once renders as text over text — a defect that looks like a
  * renderer bug and is actually a transcript artefact.
+ *
+ * Words are NOT de-overlapped: they are a measurement of when each word was
+ * said, not something drawn on screen, so a two-millisecond overlap between
+ * neighbours is a fact about the audio rather than a defect to correct.
  */
-export async function transcribeComposition(opts: TranscribeOptions): Promise<Cue[]> {
+export async function transcribeCompositionDetailed(
+  opts: TranscribeOptions,
+): Promise<Transcription> {
   const transcribe = globalThis.window?.motionEditor?.ai?.transcribe;
   if (aiRunsThroughBackend()) {
     throw new TranscribeError(
@@ -84,6 +115,16 @@ export async function transcribeComposition(opts: TranscribeOptions): Promise<Cu
 
   // Cues come back relative to the AUDIO, which started at `startSec` — so a
   // work area over the second half of a comp would otherwise caption it from
-  // zero, with every caption sitting under the wrong picture.
-  return deoverlap(result.cues.map((c) => ({ ...c, start: c.start + opts.startSec, end: c.end + opts.startSec })));
+  // zero, with every caption sitting under the wrong picture. Words share that
+  // time base, so they are re-based by the same amount.
+  return {
+    cues: deoverlap(
+      result.cues.map((c) => ({ ...c, start: c.start + opts.startSec, end: c.end + opts.startSec })),
+    ),
+    words: (result.words ?? []).map((w) => ({
+      text: w.text,
+      start: w.start + opts.startSec,
+      end: w.end + opts.startSec,
+    })),
+  };
 }

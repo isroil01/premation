@@ -85,6 +85,12 @@
   --bar-height-panel:  32px;
   --bar-height-status: 22px;
 
+  /* The dock rail — one icon per docked panel down a sidebar's outer edge —
+     and therefore the width a sidebar collapses TO. Mirrored by
+     `COLLAPSED_SIDEBAR_SIZE` in stores/layoutStore.ts; the two must agree or a
+     collapsed sidebar clips its own rail. 36 = 28 (lg control) + 4 + 4. */
+  --dock-rail-width: 36px;
+
   /* Layout-specific (composed) */
   --space-panel-padding:    var(--space-6);
   --space-panel-gap:        var(--space-2);

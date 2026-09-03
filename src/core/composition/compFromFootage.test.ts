@@ -118,13 +118,13 @@ describe('the clip lands inside', () => {
 
 describe('the control is reachable', () => {
   it('the Assets panel offers it from the asset context menu', () => {
-    const ui = readSource('layout/EditorLayout/DemoPanels.tsx');
+    const ui = readSource('layout/Assets/AssetsPanel.tsx');
     expect(ui).toMatch(/createCompositionFromFootage/);
     expect(ui).toMatch(/New Comp from Footage/);
   });
 
   it('the metadata footer renders from the same panel', () => {
-    const ui = readSource('layout/EditorLayout/DemoPanels.tsx');
+    const ui = readSource('layout/Assets/AssetsPanel.tsx');
     expect(ui).toMatch(/assetMetaFooter/);
     // fps only when probed — the honesty rule, pinned as prose in the source.
     expect(ui).toMatch(/m\.fps && m\.fps > 0/);

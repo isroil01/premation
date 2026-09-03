@@ -142,6 +142,15 @@ export interface Preferences {
    * made you select it.
    */
   inspectorSections: Record<string, boolean>;
+  /**
+   * The Properties sub-tab last chosen (Transform / Style / Layer / Animation).
+   * Remembered like the sections above: which group you live in is working
+   * style, and the panel unmounts on every tab switch. Spelled as a literal
+   * union rather than the inspector's own type so the store does not import
+   * from the layout tree. Falls back to the first tab the layer HAS when the
+   * remembered one is empty for it.
+   */
+  inspectorTab: 'transform' | 'style' | 'layer' | 'animation';
 }
 
 interface PreferenceActions {
@@ -182,6 +191,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   libraryFavorites: [],
   effectFavorites: [],
   inspectorSections: {},
+  inspectorTab: 'transform',
 };
 
 /** Pluggable persistence backend. */

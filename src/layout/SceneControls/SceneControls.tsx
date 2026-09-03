@@ -10,15 +10,29 @@
  *    "New layer" dropdown, the single home for creating layers.
  *  - "CPU fallback" badge → ViewportTools, in the timeline's tool row.
  *
+ * FOUR MENUS, NOT THIRTEEN BUTTONS. This used to spend thirteen slots of the
+ * toolbar on three- and four-way choices where only ONE member of each is in
+ * effect at a time: three camera tools, four gizmo modes, three axis spaces.
+ * Twelve of those thirteen glyphs were therefore drawing a state you are not
+ * in. Each set collapses to a menu whose trigger draws the member that IS in
+ * effect — the same pattern the pointer / pen / shape tools next door have
+ * always used.
+ *
+ * The three view toggles are the exception that proves the rule: they are
+ * INDEPENDENT booleans, any combination of which can be on, so they share one
+ * menu but as checkboxes rather than as a choice.
+ *
  * Icon note: orbit/pan/dolly and the ground plane use dedicated glyphs
- * (`orbit`, `hand-grab`, `perspective`, `ground-grid`) instead of borrowing
+ * (`orbit`, `pan-camera`, `perspective`, `ground-grid`) instead of borrowing
  * `refresh`/`hand`/`zoom-in`/`grid`, which are the Hand tool, the Zoom tool and
  * the 2D grid overlay elsewhere in this same toolbar.
  */
 import { useGuidesStore, type CameraTool, type Gizmo3dState, type Gizmo3dAxisMode } from '@stores/guidesStore';
 import { Icon, type IconName } from '@components/Icon';
+import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import styles from './SceneControls.module.css';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { useFocusPlaneStore } from '@stores/focusPlaneStore';
 
 const CAMERA_TOOLS: ReadonlyArray<{ id: CameraTool; icon: IconName; label: string }> = [
   // "Orbit Around Camera POI", because that is what orbitCameraBy actually
@@ -31,10 +45,10 @@ const CAMERA_TOOLS: ReadonlyArray<{ id: CameraTool; icon: IconName; label: strin
 ];
 
 const GIZMO_MODES: ReadonlyArray<{ id: Gizmo3dState; icon: IconName; label: string }> = [
-  { id: 'universal', icon: 'axis-3d', label: 'Universal Gizmo (move · rotate · scale)' },
-  { id: 'position', icon: 'move', label: 'Position Gizmo' },
-  { id: 'scale', icon: 'scale', label: 'Scale Gizmo' },
-  { id: 'rotation', icon: 'rotate-cw', label: 'Rotation Gizmo' },
+  { id: 'universal', icon: 'gizmo-universal', label: 'Universal Gizmo (move · rotate · scale)' },
+  { id: 'position', icon: 'gizmo-position', label: 'Position Gizmo (move along X, Y, Z axes)' },
+  { id: 'scale', icon: 'gizmo-scale', label: 'Scale Gizmo (scale along X, Y, Z axes)' },
+  { id: 'rotation', icon: 'gizmo-rotation', label: 'Rotation Gizmo (rotate around X, Y, Z axes)' },
 ];
 
 /**
@@ -44,11 +58,16 @@ const GIZMO_MODES: ReadonlyArray<{ id: Gizmo3dState; icon: IconName; label: stri
  * `Gizmo3D.getGizmoBasis`), but `setGizmo3dAxisMode` had NO caller — so the
  * gizmo was permanently stuck in 'local' and world/view space were unreachable.
  * The engine half was finished; only the switch was missing.
+ *
+ * These were the bare letters L / W / V, on the argument that three axis glyphs
+ * differing only in ORIENTATION would be harder to tell apart than initials.
+ * That is true, and it is why the glyphs do not differ in orientation: one
+ * tripod, three frames around it. See `axis-local` in the icon generator.
  */
-const AXIS_MODES: ReadonlyArray<{ id: Gizmo3dAxisMode; label: string; short: string }> = [
-  { id: 'local', label: 'Local axes — aligned to the layer', short: 'L' },
-  { id: 'world', label: 'World axes — aligned to the composition', short: 'W' },
-  { id: 'view', label: 'View axes — aligned to the camera', short: 'V' },
+const AXIS_MODES: ReadonlyArray<{ id: Gizmo3dAxisMode; icon: IconName; label: string }> = [
+  { id: 'local', icon: 'axis-local', label: 'Local axes — aligned to the layer' },
+  { id: 'world', icon: 'axis-world', label: 'World axes — aligned to the composition' },
+  { id: 'view', icon: 'axis-view', label: 'View axes — aligned to the camera' },
 ];
 
 export function SceneControls(): JSX.Element {
@@ -67,100 +86,173 @@ export function SceneControls(): JSX.Element {
   const setPreference = usePreferenceStore((s) => s.set);
   const toggleLayerBoxesVisible = (): void => setPreference('showLayerBounds', !layerBoxesVisible);
 
+  const armedCamera = CAMERA_TOOLS.find((t) => t.id === cameraTool);
+  const gizmo = GIZMO_MODES.find((g) => g.id === gizmo3dState) ?? GIZMO_MODES[0]!;
+  const axis = AXIS_MODES.find((a) => a.id === gizmo3dAxisMode) ?? AXIS_MODES[0]!;
+  const focusPlaneVisibility = useFocusPlaneStore((s) => s.visibility);
+  const setFocusPlaneVisibility = useFocusPlaneStore((s) => s.setVisibility);
+  const focusPlaneOn = focusPlaneVisibility !== 'off';
+  // The focus plane defaults ON, so it does not count toward lighting the
+  // trigger — a button that is lit in a fresh project is saying nothing.
+  const viewOnCount = [draft3d, groundGridVisible, layerBoxesVisible].filter(Boolean).length;
+
+  const cameraItems: DropdownItem[] = [
+    ...CAMERA_TOOLS.map((t) => ({
+      type: 'item' as const,
+      id: `cam-${t.id}`,
+      label: t.label,
+      icon: t.icon,
+      onSelect: () => setCameraTool(t.id),
+    })),
+    { type: 'separator' },
+    // The buttons armed on click and DISARMED on a second click. A menu item
+    // cannot carry that: picking the row you already picked reading as "turn it
+    // off" is a guess, not an affordance. So the release gets its own row, and
+    // greys out when there is nothing to release.
+    {
+      type: 'item',
+      id: 'cam-none',
+      label: 'Release camera tool',
+      icon: 'close',
+      disabled: cameraTool === 'none',
+      onSelect: () => setCameraTool('none'),
+    },
+  ];
+
   return (
-    <div className={styles.sceneControls}>
-      {/* Camera navigation — click to arm, click again to disarm (C cycles). */}
-      {CAMERA_TOOLS.map(({ id, icon, label }) => (
-        <button
-          key={id}
-          type="button"
-          className={`${styles.button} ${cameraTool === id ? styles.buttonActive : ''}`}
-          onClick={() => setCameraTool(cameraTool === id ? 'none' : id)}
-          aria-pressed={cameraTool === id}
-          title={`${label}${cameraTool === id ? ' (active)' : ''} — hold Alt to use temporarily, C to cycle`}
-        >
-          <Icon name={icon} size="sm" />
-        </button>
-      ))}
-      {cameraTool !== 'none' ? (
-        <span className={styles.cameraToolLabel} aria-live="polite">
-          {CAMERA_TOOLS.find((t) => t.id === cameraTool)?.label}
-        </span>
-      ) : null}
+    <div className={styles.sceneControls} data-tour="scene-3d">
+      {/* Camera navigation — Alt uses one temporarily, C cycles. */}
+      <Dropdown
+        placement="bottom-start"
+        items={cameraItems}
+        trigger={
+          <button
+            type="button"
+            className={armedCamera ? styles.triggerActive : styles.trigger}
+            aria-label="Camera tool"
+            title={
+              armedCamera
+                ? `${armedCamera.label} (active) — hold Alt to use temporarily, C to cycle`
+                : 'Camera tool — none armed. Hold Alt to use one temporarily, C to cycle'
+            }
+          >
+            <Icon name={armedCamera?.icon ?? 'orbit'} size="md" />
+            <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
+          </button>
+        }
+      />
 
       <div className={styles.divider} />
 
       {/* 3D gizmo mode for the selection. */}
-      {GIZMO_MODES.map(({ id, icon, label }) => (
-        <button
-          key={id}
-          type="button"
-          className={`${styles.button} ${gizmo3dState === id ? styles.buttonActive : ''}`}
-          onClick={() => setGizmo3dState(id)}
-          aria-pressed={gizmo3dState === id}
-          title={label}
-        >
-          <Icon name={icon} size="sm" />
-        </button>
-      ))}
-
-      <div className={styles.divider} />
+      <Dropdown
+        placement="bottom-start"
+        items={GIZMO_MODES.map((g) => ({
+          type: 'item' as const,
+          id: `gizmo-${g.id}`,
+          label: g.label,
+          icon: g.icon,
+          onSelect: () => setGizmo3dState(g.id),
+        }))}
+        trigger={
+          <button
+            type="button"
+            className={styles.trigger}
+            aria-label="Gizmo mode"
+            title={`Gizmo mode — ${gizmo.label}`}
+          >
+            <Icon name={gizmo.icon} size="md" />
+            <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
+          </button>
+        }
+      />
 
       {/* Axis space for the gizmo above — AE's Local/World/View. */}
-      {AXIS_MODES.map(({ id, label, short }) => (
-        <button
-          key={id}
-          type="button"
-          className={`${styles.button} ${gizmo3dAxisMode === id ? styles.buttonActive : ''}`}
-          onClick={() => setGizmo3dAxisMode(id)}
-          aria-pressed={gizmo3dAxisMode === id}
-          title={label}
-        >
-          <span className={styles.axisGlyph}>{short}</span>
-        </button>
-      ))}
+      <Dropdown
+        placement="bottom-start"
+        items={AXIS_MODES.map((a) => ({
+          type: 'item' as const,
+          id: `axis-${a.id}`,
+          label: a.label,
+          icon: a.icon,
+          onSelect: () => setGizmo3dAxisMode(a.id),
+        }))}
+        trigger={
+          <button
+            type="button"
+            className={styles.trigger}
+            aria-label="Axis space"
+            title={`Axis space — ${axis.label}`}
+          >
+            <Icon name={axis.icon} size="md" />
+            <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
+          </button>
+        }
+      />
 
       <div className={styles.divider} />
 
-      <button
-        type="button"
-        className={`${styles.button} ${draft3d ? styles.buttonActive : ''}`}
-        onClick={toggleDraft3d}
-        aria-pressed={draft3d}
-        title={
-          draft3d
-            ? 'Draft 3D ON — Fast viewport preview (skips heavy lights & shadows)'
-            : 'Draft 3D OFF — Full 3D shading. Click to enable fast preview.'
-        }
-      >
-        <Icon name="draft-3d" size="sm" />
-      </button>
-
-      <button
-        type="button"
-        className={`${styles.button} ${groundGridVisible ? styles.buttonActive : ''}`}
-        onClick={toggleGroundGridVisible}
-        aria-pressed={groundGridVisible}
-        title={groundGridVisible ? 'Hide 3D ground plane' : 'Show 3D ground plane'}
-      >
-        <Icon name="ground-grid" size="sm" />
-      </button>
-
       {/*
-        Layer bounding boxes. Next to the ground plane because they are the same
-        kind of thing — reference geometry that never renders — but a separate
-        control because wanting to know which way is up is not the same as
-        wanting an outline around every layer.
+        Reference geometry and draft shading. Checkboxes rather than a choice:
+        any combination of the three can be on, and wanting to know which way is
+        up is not the same as wanting an outline around every layer.
       */}
-      <button
-        type="button"
-        className={`${styles.button} ${layerBoxesVisible ? styles.buttonActive : ''}`}
-        onClick={toggleLayerBoxesVisible}
-        aria-pressed={layerBoxesVisible}
-        title={layerBoxesVisible ? 'Hide layer bounding boxes' : 'Show layer bounding boxes'}
-      >
-        <Icon name="frame" size="sm" />
-      </button>
+      <Dropdown
+        placement="bottom-start"
+        items={[
+          {
+            type: 'checkbox',
+            id: 'view-draft-3d',
+            label: 'Draft 3D — fast preview, skips heavy lights & shadows',
+            checked: draft3d,
+            onChange: () => toggleDraft3d(),
+          },
+          {
+            type: 'checkbox',
+            id: 'view-ground-grid',
+            label: '3D ground plane',
+            checked: groundGridVisible,
+            onChange: () => toggleGroundGridVisible(),
+          },
+          {
+            type: 'checkbox',
+            id: 'view-layer-boxes',
+            label: 'Layer bounding boxes',
+            checked: layerBoxesVisible,
+            onChange: () => toggleLayerBoxesVisible(),
+          },
+          { type: 'separator' },
+          // The focus plane is three-valued in its store (off / selected /
+          // always) but reads as two decisions here: whether to draw it at
+          // all, and whether the ACTIVE camera counts or only a selected one.
+          {
+            type: 'checkbox',
+            id: 'view-focus-plane',
+            label: 'Camera focus plane',
+            checked: focusPlaneOn,
+            onChange: (on) => setFocusPlaneVisibility(on ? 'always' : 'off'),
+          },
+          {
+            type: 'checkbox',
+            id: 'view-focus-plane-selected-only',
+            label: 'Focus plane only for the selected camera',
+            checked: focusPlaneVisibility === 'selected',
+            disabled: !focusPlaneOn,
+            onChange: (only) => setFocusPlaneVisibility(only ? 'selected' : 'always'),
+          },
+        ]}
+        trigger={
+          <button
+            type="button"
+            className={viewOnCount > 0 ? styles.triggerActive : styles.trigger}
+            aria-label="3D view options"
+            title="3D view — draft shading, ground plane, layer bounding boxes, focus plane"
+          >
+            <Icon name="cube" size="md" />
+            <Icon name="chevron-down" size="sm" style={{ opacity: 0.6 }} />
+          </button>
+        }
+      />
     </div>
   );
 }

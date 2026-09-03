@@ -35,6 +35,7 @@ import type {
   VertexBufferLayout,
   IndexFormat,
 } from '../types';
+import { AO_SAMPLER_BINDING, AO_TEXTURE_BINDING, ENV_SAMPLER_BINDING, ENV_TEXTURE_BINDING, SHADOW_SAMPLER_BINDING, SHADOW_TEXTURE_BINDING } from '../types';
 import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
@@ -66,6 +67,22 @@ interface NativePipeline {
    *  masks, displacement map, colour LUT. Previously never resolved or set, so
    *  every second sampler silently read texture unit 0. */
   tex1Uniform: WebGLUniformLocation | null;
+  /**
+   * Sampler uniforms in TEXTURE-entry order, for a material that DECLARED them
+   * (`MaterialDescriptor.glslSamplers`). Non-empty only for shaders with more
+   * than two textures — the mesh PBR path — because two is as far as the
+   * name-guessing above can reach. When set it supersedes both fields above.
+   */
+  texUniforms: (WebGLUniformLocation | null)[];
+  /**
+   * Bindings the material declared as `depth-texture` — those units must NOT
+   * get the draw's sampler object. A DEPTH_COMPONENT texture with compare mode
+   * NONE is texture-COMPLETE only under NEAREST; the shared linear sampler
+   * bound over it made it incomplete, and an incomplete texture returns
+   * (0,0,0,1) for EVERY lookup — texelFetch included — so the DOF gather read
+   * depth 0 everywhere and blurred the whole group at the cap.
+   */
+  depthTexBindings: ReadonlySet<number>;
 }
 interface NativeRenderTarget {
   /** Single-sample FBO wrapping `texture` — what everything SAMPLES from. */
@@ -401,7 +418,8 @@ export class WebGL2Backend implements RenderBackend {
       gl.getUniformLocation(program, 'uMaskTex') ??
       gl.getUniformLocation(program, 'uMapTex') ??
       gl.getUniformLocation(program, 'uLutTex') ??
-      gl.getUniformLocation(program, 'uMatteTex');
+      gl.getUniformLocation(program, 'uMatteTex') ??
+      gl.getUniformLocation(program, 'uDepthTex');
     return h('pipeline', {
       program,
       blend: desc.blend,
@@ -411,6 +429,8 @@ export class WebGL2Backend implements RenderBackend {
       depthWrite: desc.depthWrite ?? desc.depthTest === true,
       texUniform,
       tex1Uniform,
+      texUniforms: (desc.samplerNames ?? []).map((n) => gl.getUniformLocation(program, n)),
+      depthTexBindings: new Set(desc.layout.filter((e) => e.type === 'depth-texture').map((e) => e.binding)),
     } satisfies NativePipeline);
   }
   destroyPipeline(_pipeline: PipelineHandle): void {}
@@ -761,6 +781,28 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // never assigned. That is why masks / displacement never sampled right.
     let texIndex = 0;
     let sampler: WebGLSampler | null = null;
+    // The environment map gets its OWN sampler on its OWN unit. Every other
+    // sampler is broadcast (see below), and the env one must not be: it wraps
+    // in u, and letting it reach unit 0 would silently switch every layer
+    // texture from clamp to repeat.
+    let envSampler: WebGLSampler | null = null;
+    let envUnit = -1;
+    // Same exception, second reason: the shadow map must sample NEAREST. Its
+    // texels are a 24-bit depth packed across rgb, and the broadcast sampler
+    // below is LINEAR — a bilinear blend of two packed depths decodes to a
+    // number that is neither of them, which reads as noise along every shadow
+    // edge rather than as a soft one.
+    let shadowSampler: WebGLSampler | null = null;
+    let shadowUnit = -1;
+    // A THIRD exception, and the one that is not about filtering. `solid3d`
+    // declares no layer texture at all, so `sampler` below stays null and the
+    // broadcast never runs — which would leave the AO unit with its default
+    // NEAREST_MIPMAP_LINEAR min filter, i.e. INCOMPLETE, i.e. sampling
+    // (0,0,0,1). Black AO erases the ambient term of every unlit-textured 3D
+    // solid in the comp; carrying the AO sampler explicitly is what stops it.
+    let aoSampler: WebGLSampler | null = null;
+    let aoUnit = -1;
+    const depthUnits: number[] = [];
     for (const e of (group.native as { entries: BindGroupResource[] }).entries) {
       if ('buffer' in e) {
         const nb = e.buffer.native as NativeBuffer;
@@ -769,9 +811,22 @@ class WebGL2PassEncoder implements RenderPassEncoder {
       } else if ('texture' in e) {
         gl.activeTexture(gl.TEXTURE0 + texIndex);
         gl.bindTexture(gl.TEXTURE_2D, glTexture(e.texture.native));
-        const uni = texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform;
+        const declared = this.pipeline?.texUniforms;
+        const uni = declared && declared.length > 0
+          ? declared[texIndex]
+          : (texIndex === 0 ? this.pipeline?.texUniform : this.pipeline?.tex1Uniform);
         if (uni) gl.uniform1i(uni, texIndex);
+        if (e.binding === ENV_TEXTURE_BINDING) envUnit = texIndex;
+        if (e.binding === SHADOW_TEXTURE_BINDING) shadowUnit = texIndex;
+        if (e.binding === AO_TEXTURE_BINDING) aoUnit = texIndex;
+        if (this.pipeline?.depthTexBindings.has(e.binding)) depthUnits.push(texIndex);
         texIndex += 1;
+      } else if (e.binding === ENV_SAMPLER_BINDING) {
+        envSampler = e.sampler.native as WebGLSampler;
+      } else if (e.binding === SHADOW_SAMPLER_BINDING) {
+        shadowSampler = e.sampler.native as WebGLSampler;
+      } else if (e.binding === AO_SAMPLER_BINDING) {
+        aoSampler = e.sampler.native as WebGLSampler;
       } else {
         sampler = e.sampler.native as WebGLSampler;
       }
@@ -783,9 +838,22 @@ class WebGL2PassEncoder implements RenderPassEncoder {
     // to the unit before it in entry order (unit 0), which left every
     // SECONDARY texture (mask/matte/LUT/displacement map) incomplete: alpha
     // read as 1, so masks silently did nothing on the GL backend.
+    //
+    // EXCEPT the depth-texture units, which the rule inverts for: a depth
+    // texture (compare mode NONE) is only complete under NEAREST, and its
+    // NEAREST filter is set with texParameteri at creation — so a LINEAR
+    // sampler object over it made it incomplete and every texelFetch returned
+    // 0. Those units must carry NO sampler object at all (and any object left
+    // by an earlier draw must be unbound).
     if (sampler) {
       for (let u = 0; u < Math.max(1, texIndex); u++) gl.bindSampler(u, sampler);
     }
+    // AFTER the broadcast, so the env unit keeps the wrapping sampler even
+    // when the draw also carries a layer sampler.
+    if (envSampler && envUnit >= 0) gl.bindSampler(envUnit, envSampler);
+    if (shadowSampler && shadowUnit >= 0) gl.bindSampler(shadowUnit, shadowSampler);
+    if (aoSampler && aoUnit >= 0) gl.bindSampler(aoUnit, aoSampler);
+    for (const u of depthUnits) gl.bindSampler(u, null);
   }
   setVertexBuffer(_slot: number, buffer: BufferHandle): void {
     this.vertexBuffer = buffer.native as NativeBuffer;

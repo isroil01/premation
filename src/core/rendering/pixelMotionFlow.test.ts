@@ -157,6 +157,53 @@ describe('warpBlend', () => {
     expect(peakWarp).toBeGreaterThan(peakMix + 20);
   });
 
+  it('matches the composed sampleFlow-per-pixel formulation bit-exactly', () => {
+    // warpBlend unrolls the flow bilinear (hoisting the row/column-constant
+    // halves); this pins that the unrolled per-pixel expressions still
+    // evaluate to the byte-identical output of the straightforward
+    // composition it replaced.
+    const reference = (t: number): Uint8ClampedArray => {
+      const out = new Uint8ClampedArray(W * H * 4);
+      // Float32, like the real bilinearRgba's scratch — the store rounds each
+      // channel to f32 before the blend, and bit-identity includes that.
+      const px = new Float32Array(4);
+      const bilinear = (d: Uint8ClampedArray, x: number, y: number): void => {
+        const cx = Math.min(W - 1, Math.max(0, x));
+        const cy = Math.min(H - 1, Math.max(0, y));
+        const x0 = Math.floor(cx);
+        const y0 = Math.floor(cy);
+        const x1 = Math.min(W - 1, x0 + 1);
+        const y1 = Math.min(H - 1, y0 + 1);
+        const fx = cx - x0;
+        const fy = cy - y0;
+        for (let c = 0; c < 4; c++) {
+          px[c] =
+            (d[(y0 * W + x0) * 4 + c]! * (1 - fx) + d[(y0 * W + x1) * 4 + c]! * fx) * (1 - fy) +
+            (d[(y1 * W + x0) * 4 + c]! * (1 - fx) + d[(y1 * W + x1) * 4 + c]! * fx) * fy;
+        }
+      };
+      const scale = 2; // non-unit, so the scale terms are exercised too
+      let o = 0;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++, o += 4) {
+          const [fdx, fdy] = sampleFlow(flow, x / scale, y / scale);
+          const dx = fdx * scale;
+          const dy = fdy * scale;
+          bilinear(a, x - dx * t, y - dy * t);
+          const pa = [px[0]!, px[1]!, px[2]!, px[3]!];
+          bilinear(b, x + dx * (1 - t), y + dy * (1 - t));
+          for (let c = 0; c < 4; c++) out[o + c] = pa[c]! * (1 - t) + px[c]! * t;
+        }
+      }
+      return out;
+    };
+    for (const t of [0.25, 0.5]) {
+      const fast = new Uint8ClampedArray(W * H * 4);
+      warpBlend(a, b, W, H, flow, 2, 2, t, fast);
+      expect(Array.from(fast)).toEqual(Array.from(reference(t)));
+    }
+  });
+
   it('zero flow degrades exactly to Frame Mix', () => {
     const still = computeFlow(lumaOf(a, W, H), lumaOf(a, W, H), W, H);
     const out = new Uint8ClampedArray(W * H * 4);

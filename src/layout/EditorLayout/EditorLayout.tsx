@@ -31,7 +31,7 @@ import { WorkspaceViewport, type WorkspaceViewportProps } from '@layout/Workspac
 import { EditorTabs } from '@layout/Tabs/EditorTabs';
 import { PluginDetailTab } from '@layout/Plugins/PluginDetailTab';
 import { Icon } from '@components/Icon';
-import { useLayoutStore, type RegionId } from '@stores/layoutStore';
+import { useLayoutStore, COLLAPSED_SIDEBAR_SIZE, type RegionId } from '@stores/layoutStore';
 import styles from './EditorLayout.module.css';
 
 export interface EditorLayoutProps {
@@ -162,9 +162,9 @@ export function EditorLayout({
       direction="horizontal"
       primary={sidebarFirst ? 'first' : 'last'}
       defaultSize={left.size}
-      minSize={left.collapsed ? 44 : left.minSize}
+      minSize={left.collapsed ? COLLAPSED_SIDEBAR_SIZE : left.minSize}
       maxSize={Math.min(left.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : left.maxSize)}
-      size={left.collapsed ? 44 : left.size}
+      size={left.collapsed ? COLLAPSED_SIDEBAR_SIZE : left.size}
       collapsed={left.collapsed}
       storageKey="leftSidebar"
       onResize={(s) => resizeRegionLive('leftSidebar', s, left.collapsed)}
@@ -231,9 +231,9 @@ export function EditorLayout({
           direction="horizontal"
           primary={inspectorLast ? 'last' : 'first'}
           defaultSize={right.size}
-          minSize={right.collapsed ? 44 : right.minSize}
+          minSize={right.collapsed ? COLLAPSED_SIDEBAR_SIZE : right.minSize}
           maxSize={Math.min(right.maxSize, typeof window !== 'undefined' ? window.innerWidth - 100 : right.maxSize)}
-          size={right.collapsed ? 44 : right.size}
+          size={right.collapsed ? COLLAPSED_SIDEBAR_SIZE : right.size}
           collapsed={right.collapsed}
           storageKey="rightInspector"
           onResize={(s) => resizeRegionLive('rightInspector', s, right.collapsed)}

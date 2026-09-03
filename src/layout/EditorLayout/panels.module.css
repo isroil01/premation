@@ -26,6 +26,28 @@
   width: 100%;
 }
 
+/* The Assets header's one NAMED action. `flex: none` so it keeps its label at
+   any panel width and the search box absorbs the rest — a button that shrinks
+   until only its glyph is left is the icon-only dock button again. */
+.importModelBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.importModelBtn:hover {
+  color: var(--color-text-primary);
+}
+
 /* Properties: header + search stay put; the accordion is the only scroller.
    One gutter (`--space-5`) from search through section names through extras. */
 .inspectorShell {
@@ -36,15 +58,21 @@
   overflow: hidden;
 }
 
+/*
+ * The selected layer's identity: glyph, name, kind, and the search toggle.
+ * Sits on the panel ground, not the header colour — the dock header directly
+ * above it is already the dark band, and two stacked bands read as two
+ * headers for one panel.
+ */
 .layerHead {
   flex: none;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-3);
-  min-height: var(--control-height-lg);
-  padding: var(--space-3) var(--space-5);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-panel-header);
+  height: var(--bar-height-panel);
+  padding: 0 var(--space-3) 0 var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-panel);
 }
 
 .layerKind {
@@ -67,6 +95,97 @@
   white-space: nowrap;
 }
 
+.layerHeadBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.layerHeadBtn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.layerHeadBtn:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.layerHeadBtnActive {
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+}
+
+/*
+ * The Properties sub-tabs: Transform · Style · Layer · Animation. Underline
+ * tabs, evenly spread, the same idiom the Library strip uses — a row of text
+ * with one rule under the active word, no boxes.
+ */
+.inspectorTabs {
+  flex: none;
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-panel);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.inspectorTabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Natural width, never truncated: a tab whose label reads "Transfo…" is not a
+   label. Four words at 11px fit a 200px column with room to spare. */
+.inspectorTab {
+  flex: none;
+  height: var(--control-height-lg);
+  padding: 0 var(--space-1);
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.inspectorTab:hover {
+  color: var(--color-text-primary);
+}
+
+.inspectorTab:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.inspectorTabActive {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
+  border-bottom-color: var(--color-primary);
+}
+
 .inspectorBody {
   flex: 1 1 auto;
   min-height: 0;
@@ -85,9 +204,17 @@
 /* Horizontal padding matches the accordion trigger's gutter below it, so the
    search field and every section name share one left edge. */
 .searchRow {
-  padding: var(--space-4) var(--space-5);
-  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-panel);
+  flex: none;
+}
+
+.layerGlyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-tertiary);
   flex: none;
 }
 
@@ -278,6 +405,16 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
+}
+
+/* The rule between Layer Styles and the saved-preset shelf below it. Was an
+   inline `style={{ marginTop: 12, paddingTop: 12, borderTop: … }}` — the same
+   measurements, but written where no stylesheet could keep them in step with
+   the section spacing around them. */
+.stylePresetsRule {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .rowAction {

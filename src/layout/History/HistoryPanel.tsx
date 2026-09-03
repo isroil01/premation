@@ -66,7 +66,12 @@ export function HistoryPanel(): JSX.Element {
 
       <div className={styles.list} role="listbox" aria-label="History states">
         {entries.length === 0 ? (
-          <EmptyState icon="undo" message="No history yet — edits will appear here." />
+          <EmptyState
+            icon="undo"
+            title="Nothing to undo yet"
+            message="Every edit lands here as a state you can click back to — including the ones you have already undone."
+            action={{ label: 'Snapshot current state', onClick: () => record('Snapshot', true) }}
+          />
         ) : (
           entries.map((e, i) => {
             const isCurrent = i === index;

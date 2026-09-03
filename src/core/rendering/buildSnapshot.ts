@@ -32,7 +32,9 @@ import { readNodeFill, readNodeFills, sampleFillAt, type FillPaint } from '@core
 import { readNodeStroke, readNodeRenderStrokes } from '@core/paint/stroke';
 import { useAssetStore } from '@stores/assetStore';
 import { localMatrix, worldTransformOf, worldMatrixOf, localUnderParent, type LocalOf, type ParentOf } from '@core/scene/worldTransform';
-import { parentWorld3d, resolveNode3DTransform } from '@core/scene/nodeMatrix';
+import { parentWorld3d, resolveNode3DTransform, composeNodeWorld3d } from '@core/scene/nodeMatrix';
+import { skinnedMeshFor, type SkinResolvers } from '@core/scene/modelSkinning';
+import { morphedMeshFor } from '@core/scene/modelMorph';
 import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodeLayerTime, remapTime } from '@core/scene/layerTime';
 import { readNode3D, is3DEnabled, isPerChar3D } from '@core/scene/threeD';
@@ -53,10 +55,17 @@ import { resolveAudioSpectrum } from '@core/audio/audioSpectrum';
 import { readNodeMaterial } from '@core/scene/material';
 import { extrusionGeometry, EXTRUSION_WALL_FALLBACK_FILL, GRADIENT_WALL_SEGMENTS, EXTRUSION_SLICE_STEP_PX, MAX_EXTRUSION_SLICES } from '@core/scene/extrusion';
 import { extrusionOutlineFor, extrusionMeshFor } from '@core/scene/extrusionMesh';
+import { readNodeModelRef, modelPrimitiveFor } from '@core/scene/modelMesh';
+import { primitiveEntryFor, isPrimitiveMeshNode } from '@core/scene/primitiveLayer';
+import { environmentRigFor, environmentSpecularMap } from '@core/scene/environmentLight';
+// Side-effect import: registers the image → SH decoder, so an environment light
+// pointed at an HDRI resolves it on the first frame that asks rather than only
+// when the inspector happens to be open. See environmentImage.ts.
+import '@core/scene/environmentImage';
 import { isColorEffect } from '@core/effects/effectColorMatrix';
 import { readNodeFaceMaterials, resolveFaceMaterial, faceKindOf } from '@core/scene/faceMaterials';
 import { faceEffectsFor } from '@core/scene/faceEffects';
-import { shadeLayer, planeNormalOf, toShaderLights, lightAim3D, type SceneLight } from '@core/scene/lightShading';
+import { shadeLayer, planeNormalOf, toShaderLights, lightAim3D, aimToCompAngleDeg, type SceneLight } from '@core/scene/lightShading';
 import { readNodePaint } from '@core/paint/paintStrokes';
 import { contentAwareFillAt } from '@core/effects/contentAwareFillVideo';
 import { resolvePathOps, applyPathOpChain, shapeOutline, type PolyRun } from '@core/scene/pathOps';
@@ -89,14 +98,14 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 const DEG = Math.PI / 180;
 import type { MotionSample } from './RenderBackend';
 import type { AnimationEngine } from '@motion/animation';
-import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint } from './RenderBackend';
+import type { RenderSnapshot, RenderLayer, LayerKind, SubpathPaint, SsaoConfig } from './RenderBackend';
 import { contentHashOf } from './contentHash';
 import { rasterPadding } from './raster/vectorDraw';
 import { readNodePuppet, getCachedRestMesh, deform, silhouetteFromPathPoints, resolvePuppetSilhouette, overlapDepthField, sortTrianglesByDepth } from '../rig/puppet';
 import { resolveLivePins } from '../rig/livePins';
 import { resolveActiveIkTargets } from '../rig/liveIkTargets';
 import { readNodeAudioWaveform, resolveAudioWaveformPoints } from '@core/audio/audioWaveformGen';
-import { readNodeSkeleton } from '../rig/skeletonCommands';
+import { readNodeSkeleton, bindPoseBones } from '../rig/skeletonCommands';
 import { computeWorldTransforms, type Bone } from '../rig/skeleton';
 import { resolveLiveBones } from '../rig/liveBones';
 import { applyIk, getSkeletonBinding, skinRigVertices, type IkTargetResolved } from '../rig/rigDeform';
@@ -149,6 +158,21 @@ export interface SnapshotComp {
    * headless paths never set it, so their output is untouched.
    */
   customViewCamera?: Project3D.Camera3D;
+  /**
+   * Screen-space AMBIENT OCCLUSION, from Composition Settings > World.
+   *
+   * Optional, and absent on every document that predates it -- which is the
+   * whole compatibility story: the renderer's gate is `enabled`, an absent
+   * block never reaches the shade tail, and a comp that never opted in packs
+   * the identical uniform bytes it packed before AO existed.
+   *
+   * Rides on `comp` rather than on its own parameter for the reason
+   * `forExport` does: `buildSnapshot` recurses for a comp INSTANCE and
+   * spreads `{...comp}` into that call, so a field here propagates into
+   * nested comps for free -- which is what a look belonging to the
+   * composition should do.
+   */
+  ssao?: SsaoConfig;
   /**
    * Draft 3D (AE's lightning bolt): skip depth-of-field blur and all lighting
    * (light washes, Lambert shading, cast shadows) for a fast interactive
@@ -1072,6 +1096,22 @@ export function buildSnapshot(
       parent3dCache,
     );
 
+  // Skinned-model pose resolution: joint layers' world matrices through the
+  // SAME local/parent resolvers as 3D parenting, so a skin follows its joints
+  // wherever keyframes, gizmo drags, or reparenting put them this frame.
+  const jointMapCache = new Map<string, Map<number, string> | null>();
+  const skinResolvers: SkinResolvers = {
+    nodeById,
+    parentOf,
+    jointWorld: (layerId) => {
+      const local = local3DOf(layerId);
+      if (!local) return null;
+      const own = composeNodeWorld3d(local);
+      const p3 = parent3dOf(layerId);
+      return p3 ? Matrix4Math.multiply(p3, own) : own;
+    },
+  };
+
   // Precomp routing: a layer whose node sits inside a precomp group
   // is collected into that group's texture instead of the top-level comp. The
   // precomp container layer is emitted (once) at the first descendant's position
@@ -1265,8 +1305,14 @@ export function buildSnapshot(
    *
    * WORLD rotation, not local, so a spot parented to a spinning null sweeps
    * with the rig — the same parent-awareness `nodeWorldPosition` gives the
-   * origin. A TARGETED light is unaffected: a POI is a real 3D aim and wins
-   * over `angle` outright (see `lightAim3D`), exactly as in AE.
+   * origin.
+   *
+   * This is the UNTARGETED aim, and only that. A POI is a real 3D aim and wins
+   * over `angle` outright, exactly as in AE — resolved once at the
+   * `sceneLights` push below (`lightAim3D` → `aimToCompAngleDeg`), which every
+   * consumer including the wash then reads back off the resolved light. Do not
+   * call this at a render site: a targeted light called here aims at Direction,
+   * which is the bug this note used to claim was impossible.
    */
   const nodeLightAimDeg = (n: SceneNode, lt: { angle: number }): number => {
     const base = valuesOf(n.id).get('lightAngle') ?? lt.angle;
@@ -1428,13 +1474,30 @@ export function buildSnapshot(
     x: number; y: number; z: number;
     intensity: number; darkness: number; diffusion: number;
   };
+  /**
+   * True when some light in the comp renders a geometric shadow MAP instead of
+   * a projected caster copy.
+   *
+   * A separate signal because `shadowLights` (the projection's input list)
+   * deliberately excludes those lights: without this, a 3D caster lit only by a
+   * map light would fall through to the 2D CSS drop-shadow branch below and
+   * acquire a flat screen-space smudge on top of its real shadow.
+   */
+  let hasShadowMapLight = false;
   const shadowLights: ShadowLight[] = (() => {
     if (comp.draft3d) return [];
     const out: ShadowLight[] = [];
     for (const n of nodes) {
       if (readNodeKind(n) !== 'light') continue;
       const lt = readNodeLight(n);
-      if (!lt.shadows || lt.type === 'ambient') continue;
+      if (!lt.shadows || lt.type === 'ambient' || lt.type === 'environment') continue;
+      // A light rendering a real shadow MAP must not also throw a projected
+      // caster copy — one lamp, two shadows, offset from each other, is the
+      // single most visible way this feature can go wrong. Suppressed here,
+      // where the projection's input list is built, rather than at the
+      // projection site: the caster and receiver bookkeeping below is shared
+      // with the beam wash and must keep running.
+      if (lt.shadowMap) { hasShadowMapLight = true; continue; }
       const av = valuesOf(n.id);
       const wp = nodeWorldPosition(n);
       out.push({
@@ -1532,12 +1595,78 @@ export function buildSnapshot(
    * of a light's position, which is the bug this file has fixed three times.
    */
   const sceneLightById = new Map<string, SceneLight>();
+  /**
+   * The environment light's REFLECTION half, as the three numbers it takes to
+   * ask for it. The ATLAS itself is fetched at the end, and only if the frame
+   * turned out to have a 3D layer — building it is a real (if memoised) cost,
+   * and a purely 2D comp that happens to carry an environment light must not
+   * pay it for a map nothing can reflect in.
+   *
+   * Read from the same props, on the same frame, as the irradiance rig below,
+   * so the two halves of one environment light can never disagree about which
+   * sky the comp is in. Last environment light wins, matching the rig (which
+   * simply sums, and where a second environment is already a pathological
+   * scene).
+   */
+  let envReflect: { sky: unknown; intensity: number; rotationDeg: number } | undefined;
   for (const n of comp.draft3d ? [] : nodes) {
     if (readNodeKind(n) !== 'light') continue;
     const lt = readNodeLight(n);
     const av = valuesOf(n.id);
     const wp = nodeWorldPosition(n);
-    sceneLights.push({
+    if (lt.type === 'environment') {
+      /*
+        Environment light: expand the SH probe into its derived rig (one
+        ambient floor + up to six axis parallels) so image-based lighting
+        rides the EXISTING light array — both shading paths, both shader
+        dialects, zero renderer changes. Direction is encoded the way every
+        targeted parallel is: source far along the arrival axis, aimed at the
+        comp centre. Env lights never cast 2.5D shadows and never wash.
+      */
+      const envRot = av.get('envRotation') ?? lt.envRotation;
+      const envIntensity = av.get('intensity') ?? lt.intensity;
+      const centre = { x: comp.width / 2, y: comp.height / 2, z: 0 };
+      // Reflections strength folds into the intensity the shader gets rather
+      // than riding as a fourth number: the split-sum term is linear in it, so
+      // one multiply here is the whole feature.
+      const envRefl = (av.get('envReflections') ?? lt.envReflections) / 100;
+      envReflect = {
+        sky: lt.envPreset,
+        intensity: Math.max(0, (envIntensity / 100) * envRefl),
+        rotationDeg: envRot,
+      };
+      for (const rl of environmentRigFor(lt.envPreset, envIntensity, envRot)) {
+        if (rl.kind === 'ambient') {
+          sceneLights.push({
+            ...lt,
+            type: 'ambient', color: rl.color, intensity: rl.intensity,
+            // An environment light is a PROBE, not a fixture: it has no
+            // position to rasterise a map from, and its rig is six synthesised
+            // parallels that would each claim the one shadow binding.
+            shadows: false, shadowMap: false, falloff: 'none', poi: null,
+            x: centre.x, y: centre.y, z: 0,
+          });
+        } else {
+          const FAR = 100000;
+          // The engine's parallel `aim` (poi − position) is the direction LIT
+          // NORMALS FACE, not the light's travel direction — pinned by the
+          // shadeLayer sign test in environmentLight.test.ts, which caught
+          // the first encoding lighting the ground from the sky's slot. So
+          // the position sits OPPOSITE the arrival axis: aim = `from`.
+          sceneLights.push({
+            ...lt,
+            type: 'parallel', color: rl.color, intensity: rl.intensity,
+            shadows: false, shadowMap: false, falloff: 'none',
+            x: centre.x - rl.from!.x * FAR,
+            y: centre.y - rl.from!.y * FAR,
+            z: 0 - rl.from!.z * FAR,
+            poi: centre,
+          });
+        }
+      }
+      continue;
+    }
+    const resolved: SceneLight = {
       ...lt,
       intensity: av.get('intensity') ?? lt.intensity,
       radius: av.get('radius') ?? lt.radius,
@@ -1545,6 +1674,14 @@ export function buildSnapshot(
       cone: av.get('lightCone') ?? lt.cone,
       coneFeather: av.get('lightConeFeather') ?? lt.coneFeather,
       falloffDistance: av.get('falloffDistance') ?? lt.falloffDistance,
+      // The shadow-map settings, sampled from the ANIMATION map like every
+      // other numeric light prop. The inspector offers all three as keyframe
+      // rows, and a row that keyframes a value nothing samples is a control
+      // that appears to work and does not — the trap `shadowDarkness` and the
+      // light's own z each fell into once already.
+      shadowDarkness: av.get('shadowDarkness') ?? lt.shadowDarkness,
+      shadowBias: av.get('shadowBias') ?? lt.shadowBias,
+      shadowSoftness: av.get('shadowSoftness') ?? lt.shadowSoftness,
       // A keyframed POI aims the light in 3D over time. Any single component
       // being animated is enough to make the light a targeted one, so the base
       // POI (which may be null) has to be filled in rather than spread through.
@@ -1568,8 +1705,34 @@ export function buildSnapshot(
       x: wp.x,
       y: wp.y,
       z: wp.z,
-    });
-    sceneLightById.set(n.id, sceneLights[sceneLights.length - 1]!);
+    };
+    /*
+      ONE resolved aim, and this is where it is resolved.
+
+      A targeted light's direction is `poi − position` in real 3D, and both
+      those numbers only exist HERE — the world position and the parent-lifted
+      target. The per-fragment shader and the per-quad Lambert term already
+      read it (`lightAim3D` wins over `angle` inside `shadeLayer` and
+      `toShaderLights`), and so does the viewport cone gizmo. The glow WASH did
+      not: it aimed its quad with `nodeLightAimDeg`, i.e. Direction + world
+      rotation, which a POI is supposed to override outright.
+
+      So a targeted spot lit its 3D layers at the target while its visible cone
+      stayed pinned to Direction — moving the light re-aimed the shading and
+      the gizmo and left the glow pointing the old way, which reads as "only
+      the blueprint points at the target". Folding the comp-plane angle of the
+      resolved aim back into `angle` is what makes the flat consumer read the
+      same aim as the 3D ones instead of re-deriving its own.
+
+      An aim perpendicular to the comp plane has no comp angle at all
+      (`aimToCompAngleDeg` returns null); it keeps the untargeted value, and the
+      landed-pool projection below is what draws that case honestly.
+    */
+    const aim3 = lightAim3D(resolved);
+    const aimedDeg = aim3 ? aimToCompAngleDeg(aim3) : null;
+    if (aimedDeg !== null) resolved.angle = aimedDeg;
+    sceneLights.push(resolved);
+    sceneLightById.set(n.id, resolved);
   }
 
   const withShadow = (f: string | undefined, lx: number, ly: number): string | undefined => {
@@ -1781,6 +1944,11 @@ export function buildSnapshot(
     if (kind === 'light') {
       const av = valuesOf(node.id);
       const lt = readNodeLight(node);
+      // An environment light LIGHTS but never GLOWS: it has no position to
+      // wash from — its whole contribution is the rig expanded into
+      // sceneLights above. Emitting the point-glow here painted a radial
+      // bloom for a light that is everywhere.
+      if (lt.type === 'environment') continue;
       // PROJECT the glow through the current view. The wash used to be emitted
       // at the light's raw comp x/y, so it ignored both the light's depth and
       // the active view entirely: switch to Left view and every layer moved
@@ -1807,7 +1975,14 @@ export function buildSnapshot(
       // CPU — a scrub of Direction, or any rotation keyframe, re-baked on every
       // frame. Rotating the renderable instead makes the sweep a matrix change,
       // and lets the texture be cached across the whole rotation.
-      const aimDeg = nodeLightAimDeg(node, lt);
+      // The SAME light the shading reads, not a second derivation of it. Its
+      // `angle` is already the resolved aim: the target's comp-plane direction
+      // when the light has one, Direction + world rotation when it does not.
+      // Re-deriving here is exactly how the wash came to point along Direction
+      // while the shader, the Lambert term and the cone gizmo pointed at the
+      // target. (A light that never reached `sceneLights` — draft 3D, which
+      // draws no wash at all — keeps the untargeted sum as the fallback.)
+      const aimDeg = sceneLightById.get(node.id)?.angle ?? nodeLightAimDeg(node, lt);
       const shape = {
         falloff: lt.falloff,
         radius: av?.get('radius') ?? lt.radius,
@@ -2802,6 +2977,7 @@ export function buildSnapshot(
           shininess: mat.shininess,
           ...(mat.metal > 0 ? { metal: mat.metal / 100 } : {}),
           ...(mat.shading === 'pbr' ? { roughness: mat.roughness / 100 } : {}),
+          ...(mat.shading === 'toon' ? { toonBands: mat.toonBands } : {}),
           ambient: mat.ambient,
           diffuse: mat.diffuse,
         };
@@ -2837,7 +3013,18 @@ export function buildSnapshot(
       // density/expansion off its own config.
       const meshRig = hasPuppet
         ? puppetRig!
-        : { pins: [], meshDensity: skelRig!.meshDensity, meshExpansion: skelRig!.meshExpansion };
+        : {
+            pins: [],
+            meshDensity: skelRig!.meshDensity,
+            meshExpansion: skelRig!.meshExpansion,
+            // Forwarded so a bone-only layer can reach the alpha-OUTLINE mesh.
+            // Without it the skeleton is pinned to the bbox grid whatever the rig
+            // asks for, and a thin arm has no triangles of its own to bend.
+            // `nodeRestMesh` forwards the same field; the two must stay equal or
+            // the overlay's weight heatmap addresses different vertices from the
+            // render (overlayMeshParity covers exactly this).
+            meshMode: skelRig!.meshMode,
+          };
       const w = layer.width ?? 100;
       const h = layer.height ?? 100;
       const silhouette = resolvePuppetSilhouette(pathSilhouette, coverage, w, h, meshRig.meshMode);
@@ -2886,7 +3073,10 @@ export function buildSnapshot(
         // Weights bound once per (mesh × rest skeleton) and cached — not
         // recomputed per frame. Skinning positions come from the (possibly
         // puppet-deformed) vertex buffer; weights always from rest positions.
-        const binding = getSkeletonBinding(restMesh, skelRig!.bones, skelRig!.weightPaint);
+        // BIND to the rig's stored rest pose (`bones` itself when it has never
+        // been posed statically), POSE with the live/solved one. Binding to the
+        // posed bones would make every pose·bindInverse the identity.
+        const binding = getSkeletonBinding(restMesh, bindPoseBones(skelRig!), skelRig!.weightPaint);
         deformedVertices = skinRigVertices(binding, poseWorld, deformedVertices);
       }
 
@@ -3158,7 +3348,7 @@ export function buildSnapshot(
         // (emitted after this walk, once every receiver plane is known). The
         // screen-space drop-shadow stays for 2D layers, where there is no depth
         // to project through and it is the only thing that reads as a shadow.
-        if (is3D && shadowLight) {
+        if (is3D && (shadowLight || hasShadowMapLight)) {
           // The WORLD matrix rides along. The projection below used to build the
           // shadow from `layer.x`/`layer.y`, which for a 3D layer are already
           // PROJECTED screen coordinates, while the light's x/y/z are world —
@@ -3172,6 +3362,20 @@ export function buildSnapshot(
         }
       }
       if (is3D && mat.acceptsShadows) shadowReceivers.push({ z: z3, depth });
+      /*
+        The same two switches, carried to the GPU shadow-map path.
+
+        Set on `layer` here — before the extrusion / model-mesh branches clone
+        it — so a solid inherits them along with everything else it inherits.
+        Separate fields rather than a reuse of `lighting`/`shade3d`: a layer
+        that refuses LIGHTS still blocks them, so casting cannot hang off the
+        shade block, and a receiver that accepts none must stay fully lit where
+        the map says it is occluded.
+      */
+      if (is3D) {
+        if (mat.castsShadows) layer.castsShadow3d = true;
+        if (!mat.acceptsShadows) layer.acceptsShadows3d = false;
+      }
       // A lit plane is a plane a beam can land on. Same {z, depth} record, taken
       // at the same moment, so the wash projection and the shadow projection
       // measure the scene identically.
@@ -3272,7 +3476,11 @@ export function buildSnapshot(
     let frontInset = 0;
     /** The extrusion mesh drew the front cap itself — do not emit the quad. */
     let frontDrawnByMesh = false;
-    if (is3D && world3d && extrusionDepth > 0) {
+    // A parametric primitive owns its whole surface, so it must not ALSO be
+    // extruded: both carriers would draw, one inside the other. (Extrusion
+    // Depth still shows in the 3D panel for such a layer; it simply has
+    // nothing to sweep.)
+    if (is3D && world3d && extrusionDepth > 0 && !isPrimitiveMeshNode(node)) {
       const isComplexContent =
         layer.kind === 'text' ||
         (layer.kind === 'shape' && layer.primitive !== 'rect' && layer.primitive !== 'ellipse');
@@ -3465,7 +3673,7 @@ export function buildSnapshot(
               oneSided: true,
               ambient: extMat.ambient,
               diffuse: extMat.diffuse,
-              ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}),
+              ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}),
             };
           }
           emitLayer(meshLayer, node);
@@ -3569,7 +3777,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights);
             if (lg) {
               sliceLayer.lighting = lg;
-              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
+              sliceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // Same rule as the geometric path: an explicit per-face colour is
@@ -3743,7 +3951,7 @@ export function buildSnapshot(
             const lg = shadeLayer(planeNormalOf(M), { x: world.x, y: world.y, z: z3 }, sceneLights, undefined, true);
             if (lg) {
               faceLayer.lighting = lg;
-              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}) };
+              faceLayer.shade3d = { specular: extMat.specular / 100, shininess: extMat.shininess, oneSided: true, ambient: extMat.ambient, diffuse: extMat.diffuse, ...(extMat.shading === 'pbr' ? { roughness: extMat.roughness / 100, metal: extMat.metal / 100 } : {}), ...(extMat.shading === 'toon' ? { toonBands: extMat.toonBands, metal: extMat.metal / 100 } : {}) };
             }
           } else {
             // An explicit per-face fill is taken literally — dimming a colour
@@ -3763,6 +3971,115 @@ export function buildSnapshot(
     // ring; the depth-path bridge (model3dFor) re-centres the smaller quad on
     // the same world3d origin, so it stays glued. No bevel ⇒ emitted verbatim
     // (byte-identical).
+    /*
+      Imported 3D model (glTF): the layer IS a triangle mesh, so the mesh
+      carrier REPLACES the quad instead of accompanying it the way an
+      extrusion's does. Rides the exact `extrudedMesh` path the extrusion
+      built — depth-grouped, per-fragment lit, GPU buffers cached by key — so
+      an imported model costs the renderer nothing new. A textured primitive
+      is an image-kind layer whose `src` IS its baseColor texture (rewritten
+      per session by modelHydrate), and the single `textured` range samples it
+      through the mesh's own UVs. Role picks lighting sidedness downstream:
+      'front' lights two-sided (glTF doubleSided), 'side' stays one-sided.
+      Registry still loading → nothing draws this frame; hydration bumps the
+      scene when the parse lands.
+    */
+    const modelRef = is3D && world3d ? readNodeModelRef(node) : null;
+    /*
+      A PARAMETRIC primitive (sphere / cylinder / cone / torus / capsule / box)
+      is the same thing wearing different clothes: primitiveLayer generates the
+      surface from the numbers on its `Primitive` component and hands back an
+      entry in exactly this shape, so it lands on the identical carrier below —
+      no skin, no morph targets, and its fill comes from the LAYER's own colour
+      rather than a baked-in material. An imported model always wins, since a
+      node cannot honestly be both.
+    */
+    const modelEntry = modelRef
+      ? modelPrimitiveFor(modelRef)
+      : (is3D && world3d
+          ? primitiveEntryFor(node, typeof layer.fill === 'string' ? layer.fill : undefined)
+          : null);
+    let modelMeshLayer: RenderLayer | null = null;
+    if (modelEntry) {
+      const mMat = readNodeMaterial(node, a);
+      const mLit = mMat.acceptsLights && sceneLights.length > 0;
+      const textured = !!modelEntry.textureUrl && layer.kind === 'image' && !!layer.src;
+      // Morph, then skin (the glTF order). Each stage swaps in deformed
+      // vertices under a weight-/pose-hashed buffer key; an unresolvable
+      // skin pose (joint layer deleted, degenerate matrix) falls back to the
+      // morphed or rigid bind pose, visible and honest.
+      const morphed = modelEntry.morphTargets.length > 0
+        ? morphedMeshFor(node, modelEntry, a)
+        : null;
+      const skinned = modelRef && modelEntry.skinData && world3d
+        ? skinnedMeshFor(
+            node, modelRef, modelEntry, world3d as import('@motion/scene').Matrix4,
+            skinResolvers, jointMapCache, morphed ?? undefined,
+          )
+        : null;
+      const deformed = skinned ?? morphed;
+      modelMeshLayer = {
+        ...layer,
+        // Same scrub as the extrusion carrier: features the mesh path cannot
+        // stage yet must not half-apply (colour-effect folding is a follow-up).
+        effects: undefined,
+        matte: undefined,
+        isMatteSource: undefined,
+        isAdjustment: undefined,
+        motionSamples: undefined,
+        deformedMesh: undefined,
+        frameBlend: undefined,
+        glass: undefined,
+        backdropBlur: undefined,
+        preserveTransparency: undefined,
+        lighting: undefined,
+        shade3d: undefined,
+        extrudedMesh: {
+          key: deformed ? deformed.key : modelEntry.key,
+          vertices: deformed ? deformed.vertices : modelEntry.vertices,
+          indices: modelEntry.indices,
+          ranges: [{
+            role: modelEntry.doubleSided ? 'front' : 'side',
+            first: 0,
+            count: modelEntry.indices.length,
+            fill: textured ? '#ffffffff' : modelEntry.fill,
+            gain: 1,
+            ...(textured ? { textured: true } : {}),
+          }],
+          // Only when the material actually carries one of them: absent, the
+          // draw keeps the narrow mesh pipeline it has always used, so no
+          // existing scene's pixels can move.
+          ...(modelEntry.maps.normal || modelEntry.maps.metallicRoughness
+            || modelEntry.maps.occlusion || modelEntry.maps.emissive
+            || modelEntry.emissive.some((v) => v !== 0)
+            ? {
+                pbr: {
+                  ...(modelEntry.maps.normal ? { normalSrc: modelEntry.maps.normal } : {}),
+                  ...(modelEntry.maps.metallicRoughness ? { metallicRoughnessSrc: modelEntry.maps.metallicRoughness } : {}),
+                  ...(modelEntry.maps.occlusion ? { occlusionSrc: modelEntry.maps.occlusion } : {}),
+                  ...(modelEntry.maps.emissive ? { emissiveSrc: modelEntry.maps.emissive } : {}),
+                  normalScale: modelEntry.normalScale,
+                  occlusionStrength: modelEntry.occlusionStrength,
+                  emissive: modelEntry.emissive,
+                },
+              }
+            : {}),
+        },
+      };
+      if (mLit) {
+        modelMeshLayer.lighting = [1, 1, 1];
+        modelMeshLayer.shade3d = {
+          specular: mMat.specular / 100,
+          shininess: mMat.shininess,
+          oneSided: true,
+          ambient: mMat.ambient,
+          diffuse: mMat.diffuse,
+          ...(mMat.shading === 'pbr' ? { roughness: mMat.roughness / 100, metal: mMat.metal / 100 } : {}),
+          ...(mMat.shading === 'toon' ? { toonBands: mMat.toonBands, metal: mMat.metal / 100 } : {}),
+        };
+      }
+    }
+
     // Per-character 3D: replace the single string plane with one plane per
     // glyph, each carried by its own world matrix so glyphs depth-test,
     // intersect, and light individually — and a text animator's z /
@@ -3788,7 +4105,9 @@ export function buildSnapshot(
           })
         : [];
 
-    if (perCharGlyphs.length > 0 && world3d) {
+    if (modelMeshLayer) {
+      emitLayer(modelMeshLayer, node);
+    } else if (perCharGlyphs.length > 0 && world3d) {
       const pcMat = readNodeMaterial(node, a);
       const pcLit = pcMat.acceptsLights && sceneLights.length > 0;
       for (const g of perCharGlyphs) {
@@ -3841,7 +4160,7 @@ export function buildSnapshot(
           const lg = shadeLayer(planeNormalOf(M), { x: O.x, y: O.y, z: z3 + g.offsetZ }, sceneLights);
           if (lg) {
             glyphLayer.lighting = lg;
-            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess, ambient: pcMat.ambient, diffuse: pcMat.diffuse, ...(pcMat.shading === 'pbr' ? { roughness: pcMat.roughness / 100, metal: pcMat.metal / 100 } : {}) };
+            glyphLayer.shade3d = { specular: pcMat.specular / 100, shininess: pcMat.shininess, ambient: pcMat.ambient, diffuse: pcMat.diffuse, ...(pcMat.shading === 'pbr' ? { roughness: pcMat.roughness / 100, metal: pcMat.metal / 100 } : {}), ...(pcMat.shading === 'toon' ? { toonBands: pcMat.toonBands, metal: pcMat.metal / 100 } : {}) };
           }
         }
         emitLayer(glyphLayer, node);
@@ -4207,6 +4526,11 @@ export function buildSnapshot(
           // Eye for Blinn-Phong specular on the per-fragment path. Ortho views
           // have no eye — specular degrades gracefully there (adapter omits it).
           eye: [camera!.position.x, camera!.position.y, camera!.position.z] as const,
+          // The camera's DOF, for the per-pixel depth-buffer gather over 3D
+          // depth groups. The per-layer `id: 'dof'` blurs above stay on the
+          // layers as the fallback; the renderer drops them (dofSource) only
+          // for renderables it actually gathers, so the two never both apply.
+          ...(dof ? { dof } : {}),
         }
     : undefined;
   // Scene lights in shader terms — only worth carrying when a 3D layer exists
@@ -4226,6 +4550,28 @@ export function buildSnapshot(
     view,
     camera3d,
     lights3d,
+    // Only worth carrying with a 3D layer to reflect in — and only when the
+    // environment actually contributes: a zeroed Intensity or Reflections
+    // leaves the shader multiplying the map by 0, which is a texture upload
+    // and a bind for nothing.
+    //
+    // The atlas is memoised on the SKY alone (intensity and rotation are
+    // shader uniforms), so this is a map lookup on every frame but the first —
+    // which is what lets a keyframed environment cost nothing per frame.
+    // Ambient occlusion. Carried only with a 3D layer to occlude and only
+    // when the comp actually turned it on: a disabled block would add a key
+    // to every snapshot of every project that never opted in, and the
+    // renderer would then have to re-derive "off" from it every frame.
+    ...(has3d && comp.ssao?.enabled ? { ssao: comp.ssao } : {}),
+    ...(has3d && envReflect && envReflect.intensity > 0
+      ? {
+        envMap: {
+          ...environmentSpecularMap(envReflect.sky),
+          intensity: envReflect.intensity,
+          rotationDeg: envReflect.rotationDeg,
+        },
+      }
+      : {}),
   };
 }
 

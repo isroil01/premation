@@ -101,6 +101,62 @@ describe('buildSnapshot — DOF blur / cast shadow as GPU effect entries', () =>
     expect(gpu).toMatchObject({ type: 'blur', radiusPx: 24, blades: 6, roundness: 0.4, highlightGain: 1.5 });
   });
 
+  test('the camera DOF config rides camera3d into the FrameScene (per-pixel gather input)', () => {
+    const graph = new SceneGraph();
+    graph.addNode(bareShape('far', { z: 600 }));
+    graph.addNode({
+      id: 'cam', name: 'cam', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 240, y: 180 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        {
+          id: 'cam_t',
+          type: 'Transform',
+          props: {
+            [SCENE_KIND_PROP]: 'camera',
+            x: 240, y: 180, z: -1000, focalLength: 1000,
+            dofStrength: 24, focusDistance: 900, dofAperture: 40, irisBlades: 6,
+          },
+        },
+      ],
+    } as unknown as SceneNode);
+    const snap = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, comp);
+    expect(snap.camera3d?.dof).toMatchObject({ strength: 24, focus: 900, aperture: 40, irisBlades: 6 });
+    const scene = snapshotToFrameScene(snap);
+    expect(scene.camera3d?.dof).toMatchObject({ strength: 24, focus: 900 });
+    // The per-layer entry is TAGGED as dof-sourced, so CompositionPass can drop
+    // it for renderables it defocuses through the depth-buffer gather — while a
+    // user's own blur (untagged) always stands.
+    const r = scene.renderables.find((x) => x.id === 'far')!;
+    const gpu = r.effects?.find((e) => e.type === 'blur');
+    expect(gpu && 'dofSource' in gpu && gpu.dofSource).toBe(true);
+  });
+
+  test('a DOF-less camera emits camera3d WITHOUT a dof config, and user blurs stay untagged', () => {
+    const graph = new SceneGraph();
+    graph.addNode({
+      ...bareShape('p', { z: 200 }),
+      components: [
+        { id: 'p_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'shape', x: 240, y: 180, width: 100, height: 80, z: 200 } },
+        { id: 'p_s', type: 'Style', props: { opacity: 100, fill: '#4ad0a0' } },
+        { id: 'p_fx', type: 'fx', props: { effects: [{ id: 'fx_1', type: 'blur', amount: 6 }] } },
+      ],
+    } as unknown as SceneNode);
+    graph.addNode({
+      id: 'cam', name: 'cam', parent: null, children: [], visible: true, locked: false,
+      transform: { position: { x: 240, y: 180 }, rotation: 0, scale: { x: 1, y: 1 } },
+      components: [
+        { id: 'cam_t', type: 'Transform', props: { [SCENE_KIND_PROP]: 'camera', x: 240, y: 180, z: -1000, focalLength: 1000 } },
+      ],
+    } as unknown as SceneNode);
+    const snap = buildSnapshot(graph, new AnimationEngine(), 0, undefined, undefined, undefined, undefined, comp);
+    expect(snap.camera3d).toBeDefined();
+    expect(snap.camera3d?.dof).toBeUndefined();
+    const scene = snapshotToFrameScene(snap);
+    const gpu = scene.renderables.find((x) => x.id === 'p')?.effects?.find((e) => e.type === 'blur');
+    expect(gpu).toBeDefined();
+    expect(gpu && 'dofSource' in gpu && gpu.dofSource).toBeFalsy();
+  });
+
   test('tilted 3D quads get planar CoC corner radii instead of strip layers', () => {
     const graph = new SceneGraph();
     // Large rotationX so corner depths differ enough for planDofCocCorners.

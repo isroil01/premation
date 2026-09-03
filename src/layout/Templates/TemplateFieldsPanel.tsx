@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, type ChangeEvent } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
+import { EmptyState } from '@components/EmptyState';
 import { Input } from '@components/Input';
 import { ValueField } from '@components/ValueField';
 import { ColorPicker } from '@components/ColorPicker';
@@ -224,6 +225,15 @@ export function TemplateAuthoringSection(): JSX.Element | null {
         {selectedId ? 'Expose selected layer' : 'Select a layer first'}
       </Button>
 
+      {fields.length === 0 && (
+        <EmptyState
+          compact
+          icon="component"
+          title="No fields exposed yet"
+          message="Expose a text, image or video layer above and it becomes an automation input other tools can fill."
+        />
+      )}
+
       {fields.length > 0 && (
         <>
           <div className={styles.authoredList}>
@@ -318,6 +328,14 @@ export function ActiveTemplateFields(): JSX.Element {
           Change
         </Button>
       </div>
+
+      {groups.length === 0 && (
+        <EmptyState
+          icon="component"
+          title="This template exposes no fields"
+          message="Nothing here is editable as template content — switch templates, or expose a layer from the authoring section."
+        />
+      )}
 
       {groups.map(([group, fields]) => (
         <div key={group} className={styles.group}>

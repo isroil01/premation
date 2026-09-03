@@ -1,0 +1,56 @@
+/**
+ * PrimitiveSection — the parametric-primitive parameter group.
+ *
+ * Same row shape as the other 3D panels (label left, control right, one line
+ * each) so switching between Transform ▸ 3D, Material and Primitive does not
+ * feel like switching applications. No borders per row: a stack of hairlines
+ * reads as a spreadsheet.
+ */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1, 4px);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 6px);
+  min-height: var(--control-height-sm, 22px);
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.select {
+  width: 108px;
+  height: var(--control-height-xs, 20px);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary, #ddd);
+  background: var(--color-surface-1, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--radius-sm, 3px);
+  padding: 0 var(--space-1, 4px);
+}
+.select:hover {
+  border-color: var(--color-border, rgba(255, 255, 255, 0.2));
+}
+.select:focus-visible {
+  outline: 2px solid var(--color-accent, #4a8cff);
+  outline-offset: 1px;
+}
+
+.hint {
+  margin: var(--space-1, 4px) 0 0;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}

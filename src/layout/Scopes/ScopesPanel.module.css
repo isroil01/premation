@@ -1,0 +1,176 @@
+/**
+ * Scopes panel.
+ *
+ * The scope colours live here rather than in the component because they ARE a
+ * theme decision, and the canvas painters take CSS colour strings — so the
+ * panel reads these custom properties off its own root element with
+ * `getComputedStyle` and hands them straight to `drawScope`. A theme that
+ * redefines them moves the traces with it, and the TypeScript never learns
+ * that themes exist.
+ *
+ * Note the graticule and label colours are alpha-over-the-plot rather than
+ * solid greys: the plot is deliberately near-black in BOTH themes (a scope
+ * with a light background cannot show a trace's density, which is the one
+ * thing a scope is for), so a light-theme grey would be invisible on it. What
+ * the light theme changes is the panel chrome around the plot, not the plot.
+ */
+
+.root {
+  --scope-bg: #0b0b0c;
+  --scope-graticule: rgba(255, 255, 255, 0.10);
+  --scope-graticule-strong: rgba(255, 255, 255, 0.24);
+  --scope-label: rgba(255, 255, 255, 0.45);
+  --scope-luma: #d5dbe5;
+  --scope-red: #ef5a6a;
+  --scope-green: #34c98e;
+  --scope-blue: #4d8dff;
+
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+}
+
+/* The plot stays dark on light themes; only its surround follows. */
+:global([data-theme='light']) .root {
+  --scope-bg: #14151a;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  flex-wrap: wrap;
+}
+
+.group {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.tab {
+  height: var(--control-height-xs);
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+  white-space: nowrap;
+}
+
+.tab:last-child {
+  border-right: 0;
+}
+
+.tab:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.tab[aria-pressed='true'] {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+  box-shadow: inset 0 -2px 0 0 var(--color-primary);
+}
+
+.spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.status {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.warn {
+  color: var(--color-warning, var(--color-text-secondary));
+}
+
+/* ── Plots ───────────────────────────────────────────────────────── */
+
+/* Holds the plot grid and the "no signal" overlay in the same box. */
+.plotsWrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Scrimmed rather than opaque: the graticule underneath is still the thing
+   that says "a scope is here and it is reading nothing". */
+.plotsEmpty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--color-overlay-scrim);
+  pointer-events: none;
+}
+
+.plots {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.plots.grid2 {
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
+}
+
+.cell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--scope-bg);
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.cellLabel {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  pointer-events: none;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+}
+
+/* Only the 2×2 grid needs per-cell labels; a single plot is named by its tab. */
+.plots:not(.grid2) .cellLabel {
+  display: none;
+}

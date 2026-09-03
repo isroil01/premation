@@ -4,11 +4,12 @@ import { Icon } from '@components/Icon';
 import { useSceneRevision } from '@stores/sceneStore';
 import { useUIStore } from '@stores/uiStore';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode } from '@core/rig/skeletonCommands';
+import { readNodeSkeleton, updateBone, deleteBone, setIKTarget, updateSkeletonSettings, setChainMode, bindPoseBones } from '@core/rig/skeletonCommands';
 import { chainModeOf, resolveActiveIkTargets } from '@core/rig/liveIkTargets';
 import { applyRigPreset } from '@core/rig/skeletonCommands';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
 import { readGeometry } from '@core/workspace/geometry';
+import { MESH_DENSITY_DEFAULT, MESH_EXPANSION_DEFAULT } from '@core/rig/rigMeshInputs';
 import { chainModePropPath, type ChainMode } from '@core/rig/ikfk';
 import { defaultAnimation } from '@motion/animation';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -161,7 +162,9 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
       );
     }
 
-    const binding = getSkeletonBinding(restMesh, bones, skel?.weightPaint);
+    // Weights are read off the BIND pose, not the posed one — the numeric
+    // editor must show the same influences the renderer skinned with.
+    const binding = getSkeletonBinding(restMesh, bindPoseBones(skel), skel?.weightPaint);
     // Strongest first: the order an animator reads them in, and it makes the
     // dominant bone obvious without comparing four numbers.
     const influences = [...(binding.weights[selectedVertex] ?? [])]
@@ -327,10 +330,15 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               <span>Skinning Mesh</span>
             </div>
           </div>
+          {/* These two rows used to read 15 and 8 while `buildRestMesh` actually
+              meshed at 22 and 0 — the panel described a mesh the renderer was
+              not building, and an expansion of 8 in particular turns on the
+              one-cell dilation that wraps a PNG character in a ring of empty
+              pixels. Read the engine's defaults instead of restating them. */}
           <div className={styles.paramRow}>
             <span className={styles.paramLabel}>Density</span>
             <ValueField
-              value={skel?.meshDensity ?? 15}
+              value={skel?.meshDensity ?? MESH_DENSITY_DEFAULT}
               min={2}
               max={50}
               onChange={(v) => updateSkeletonSettings(nodeId, { meshDensity: Math.round(v) })}
@@ -338,9 +346,31 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             />
           </div>
           <div className={styles.paramRow}>
+            <span className={styles.paramLabel}>Mesh</span>
+            {/* Grid = a lattice over the bounding box, culled against the alpha.
+                Outline = the alpha OUTLINE traced and Delaunay-filled, so a thin
+                limb is its own strip of triangles and a bone bends it instead of
+                dragging the rectangle it sits in. New rigs on an image layer pick
+                Outline; an existing rig keeps the mesh its weights were painted
+                on until you switch it here. */}
+            <select
+              value={skel?.meshMode ?? 'grid'}
+              aria-label="Skinning mesh mode"
+              onChange={(e) =>
+                updateSkeletonSettings(nodeId, {
+                  meshMode: e.target.value as 'grid' | 'silhouette',
+                })
+              }
+              style={{ fontSize: 'var(--font-size-xs)' }}
+            >
+              <option value="grid">Grid</option>
+              <option value="silhouette">Outline</option>
+            </select>
+          </div>
+          <div className={styles.paramRow}>
             <span className={styles.paramLabel}>Expansion</span>
             <ValueField
-              value={skel?.meshExpansion ?? 8}
+              value={skel?.meshExpansion ?? MESH_EXPANSION_DEFAULT}
               min={0}
               max={100}
               unit="px"
@@ -471,6 +501,26 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 unit="px"
                 onChange={(v) => updateBone(nodeId, bone.id, { length: Math.max(1, v) })}
                 aria-label={`${bone.name || bone.id} length`}
+              />
+            </div>
+
+            <div className={styles.paramRow}>
+              <span className={styles.paramLabel}>Falloff</span>
+              {/* How far this bone's influence travels THROUGH the artwork.
+                  0 = unlimited, which is what a bone holds until you set it and
+                  what every rig authored before the field does. Bounding it is
+                  how you stop a shoulder bone owning the whole torso simply
+                  because nothing else is nearer — see `Bone.influenceRadius`. */}
+              <ValueField
+                value={bone.influenceRadius ?? 0}
+                min={0}
+                unit="px"
+                onChange={(v) =>
+                  updateBone(nodeId, bone.id, {
+                    influenceRadius: v > 0 ? v : undefined,
+                  })
+                }
+                aria-label={`${bone.name || bone.id} influence radius`}
               />
             </div>
 

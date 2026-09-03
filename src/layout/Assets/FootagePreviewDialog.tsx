@@ -16,9 +16,15 @@
  * exactly as this header used to promise. The mode is offered only when the
  * platform has WebCodecs and the clip demuxes; anything else falls back to
  * the player with a note instead of dressing imprecision as precision.
+ *
+ * The MECHANICS (the exact stepper, the facts row) now live in
+ * `footagePreviewHooks.ts`: the docked Source Monitor shows the same clip the
+ * same way, and two decoders in one app would eventually disagree about which
+ * frame is frame 12. What stays here is the MODAL — its layout, its commit
+ * actions, and this argument.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
@@ -27,181 +33,11 @@ import { insertMedia } from '@core/scene/sceneInsert';
 import { insertMediaAtPlayhead, retargetLayerSource, replaceableSelectedLayer } from '@core/scene/footageWorkflow';
 import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { demuxMp4 } from '@core/video/mp4Demuxer';
-import { demuxWebm, isWebmMagic } from '@core/video/webmDemuxer';
-import { ExactVideoSource, webCodecsAvailable } from '@core/video/exactVideoSource';
+import { webCodecsAvailable } from '@core/video/exactVideoSource';
+import { openSourceMonitor } from '@stores/sourceMonitorStore';
+import { factsOf, fmtSec, useExactStepper } from './footagePreviewHooks';
 import type { ImportedAsset } from '@stores/assetStore';
 import styles from './FootagePreviewDialog.module.css';
-
-function factsOf(asset: ImportedAsset): string {
-  const m = asset.metadata ?? {};
-  const parts: string[] = [];
-  const par = asset.interpret?.par ?? 1;
-  if (m.width && m.height) parts.push(`${Math.round(m.width * par)}×${m.height}`);
-  if (m.duration && m.duration > 0) parts.push(`${m.duration.toFixed(2)}s`);
-  // Probed rate only — the browser cannot report one, and printing the comp's
-  // rate here would be a lie wearing units. Same rule as the panel footer.
-  if (m.fps && m.fps > 0) parts.push(`${m.fps % 1 === 0 ? m.fps : m.fps.toFixed(3)} fps`);
-  if (m.hasAudioTrack) parts.push('audio');
-  return parts.join(' · ');
-}
-
-const fmtSec = (us: number): string => (us / 1e6).toFixed(3);
-
-/** The exact-mode machinery for one video asset. Kept as a hook so the modal
- *  body stays a rendering function; the source is built lazily on first use
- *  and closed with the dialog. */
-function useExactStepper(asset: ImportedAsset): {
-  mode: 'player' | 'frames';
-  note: string | null;
-  frameIdx: number;
-  frameCount: number;
-  timeUs: number;
-  canvasRef: React.RefObject<HTMLCanvasElement>;
-  videoRef: React.RefObject<HTMLVideoElement>;
-  enter: () => void;
-  exit: () => void;
-  step: (by: number) => void;
-} {
-  const [mode, setMode] = useState<'player' | 'frames'>('player');
-  const [note, setNote] = useState<string | null>(null);
-  const [frameIdx, setFrameIdx] = useState(0);
-  const [frameCount, setFrameCount] = useState(0);
-  const [timeUs, setTimeUs] = useState(0);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const sourceRef = useRef<ExactVideoSource | null>(null);
-  /** Container rotation of the current source (decoder output is unrotated). */
-  const rotationRef = useRef<0 | 90 | 180 | 270>(0);
-  /** In-flight guard: a second click while the first fetch+demux is still
-   *  resolving must not start a second one — the loser's decoder leaked. */
-  const enteringRef = useRef(false);
-
-  useEffect(() => () => {
-    sourceRef.current?.close();
-    sourceRef.current = null;
-  }, []);
-
-  // The modal REPLACES its body when a second asset is previewed under the
-  // same modal id — the stepper must not keep serving the previous asset's
-  // frames from its cached source.
-  useEffect(() => {
-    if (!sourceRef.current && mode === 'player') return;
-    sourceRef.current?.close();
-    sourceRef.current = null;
-    enteringRef.current = false;
-    setMode('player');
-    setNote(null);
-    setFrameIdx(0);
-    setFrameCount(0);
-    setTimeUs(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asset.src]);
-
-  const show = (src: ExactVideoSource, idx: number): void => {
-    const clamped = Math.max(0, Math.min(src.frameCount - 1, idx));
-    void src.frameAt(clamped).then((frame) => {
-      if (sourceRef.current !== src) return; // dialog closed mid-decode
-      const canvas = canvasRef.current;
-      const ctx = canvas?.getContext('2d');
-      if (canvas && ctx) {
-        // Cache owns the frame — draw, never close.
-        const rot = rotationRef.current;
-        if (rot !== 0) {
-          const swap = rot === 90 || rot === 270;
-          const dw = swap ? canvas.height : canvas.width;
-          const dh = swap ? canvas.width : canvas.height;
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate((rot * Math.PI) / 180);
-          ctx.drawImage(frame as unknown as CanvasImageSource, -dw / 2, -dh / 2, dw, dh);
-          ctx.restore();
-        } else {
-          ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0, canvas.width, canvas.height);
-        }
-      }
-      setFrameIdx(clamped);
-      setTimeUs(src.timeUsOf(clamped));
-    }).catch((e: unknown) => {
-      setNote(`Frame-by-frame failed: ${e instanceof Error ? e.message : String(e)}`);
-      setMode('player');
-    });
-  };
-
-  const enter = (): void => {
-    // The player keeps running (with audio) behind the stepper otherwise.
-    videoRef.current?.pause();
-    const existing = sourceRef.current;
-    if (existing) {
-      setMode('frames');
-      show(existing, frameIdx);
-      return;
-    }
-    if (enteringRef.current) return;
-    enteringRef.current = true;
-    setNote(null);
-    // Promise.resolve first: a platform with no fetch (or one that throws
-    // synchronously on an unsupported scheme) must land in the SAME catch as
-    // a failed read, not escape the handler.
-    void Promise.resolve()
-      .then(() => fetch(asset.src))
-      .then((r) => {
-        if (!r.ok) throw new Error(`source unreadable (${r.status})`);
-        return r.arrayBuffer();
-      })
-      .then((buf) => {
-        // Same whole-file-in-memory contract as the render path's loader —
-        // and the same ceiling, so a multi-GB clip cannot double into the
-        // JS heap from a preview click.
-        if (buf.byteLength > 1536 * 1024 * 1024) {
-          throw new Error('file too large for frame-by-frame — generate a proxy');
-        }
-        // WebM and MP4, like the timeline: this dialog was MP4-only, so WebM
-        // clips offered the button and always failed even though the renderer
-        // decodes them exactly.
-        const head = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
-        return isWebmMagic(head) ? demuxWebm(buf) : demuxMp4(buf);
-      })
-      .then((demuxed) => {
-        const src = new ExactVideoSource(demuxed);
-        sourceRef.current = src;
-        enteringRef.current = false;
-        rotationRef.current = demuxed.rotation ?? 0;
-        setFrameCount(src.frameCount);
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const swap = rotationRef.current === 90 || rotationRef.current === 270;
-          canvas.width = swap ? demuxed.codedHeight : demuxed.codedWidth;
-          canvas.height = swap ? demuxed.codedWidth : demuxed.codedHeight;
-          // Anamorphic footage: the canvas holds coded (unstretched) pixels,
-          // so the PAR correction is display-side, like the facts row does.
-          const par = asset.interpret?.par ?? 1;
-          if (par !== 1) canvas.style.aspectRatio = `${canvas.width * par} / ${canvas.height}`;
-        }
-        setMode('frames');
-        // Land where the player was paused, not back at 0 — stepping exists
-        // to inspect the moment you were just looking at.
-        const t = videoRef.current?.currentTime ?? 0;
-        // +1µs: frame starts in the index are fractional microseconds, so an
-        // integer-µs query at an exact boundary (t = N/fps) lands just below
-        // frame N's start and resolves N-1. Same bias as exactVideoFrames.
-        show(src, src.frameIndexAt(Math.round(t * 1e6) + 1));
-      })
-      .catch((e: unknown) => {
-        enteringRef.current = false;
-        setNote(`Frame-by-frame unavailable: ${e instanceof Error ? e.message : String(e)}`);
-        setMode('player');
-      });
-  };
-
-  const exit = (): void => setMode('player');
-  const step = (by: number): void => {
-    const src = sourceRef.current;
-    if (src) show(src, frameIdx + by);
-  };
-
-  return { mode, note, frameIdx, frameCount, timeUs, canvasRef, videoRef, enter, exit, step };
-}
 
 function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void }): JSX.Element {
   const [failed, setFailed] = useState(false);
@@ -277,6 +113,20 @@ function PreviewBody({ asset, close }: { asset: ImportedAsset; close: () => void
       <div className={styles.facts}>{factsOf(asset) || 'No metadata probed for this file.'}</div>
 
       <div className={styles.actions}>
+        {asset.type !== 'image' && (
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => { openSourceMonitor(asset); close(); }}
+            // The modal is where you LOOK; the monitor is where you WORK. In
+            // and out points, JKL shuttle and trimmed inserts live there, and
+            // a modal cannot host them — it covers the timeline the trimmed
+            // clip is going into.
+            title="Open in the docked Source Monitor to mark in/out and insert a trimmed range"
+          >
+            <Icon name="tv" size="sm" /> Open in Source Monitor
+          </Button>
+        )}
         <Button size="sm" variant="secondary" onClick={() => { void insertMedia(asset); close(); }}>
           <Icon name="plus" size="sm" /> Add to Comp
         </Button>

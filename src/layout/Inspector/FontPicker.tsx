@@ -11,7 +11,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Popover } from '@components/Popover';
-import { Input } from '@components/Input';
+import { SearchField } from '@components/SearchField';
+import { EmptyState } from '@components/EmptyState';
 import { VirtualList } from '@components/VirtualList';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
@@ -236,16 +237,14 @@ export function FontPicker({ value, onChange }: FontPickerProps): JSX.Element {
     >
       <div className={styles.panel}>
         <div className={styles.searchWrap}>
-          <Input
+          <SearchField
             size="sm"
-            leftIcon="search"
             placeholder="Search fonts…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={setSearch}
             onKeyDown={onSearchKeyDown}
-            fullWidth
             autoFocus
-            aria-label="Search fonts"
+            ariaLabel="Search fonts"
           />
           <button
             type="button"
@@ -263,7 +262,12 @@ export function FontPicker({ value, onChange }: FontPickerProps): JSX.Element {
         {!fonts ? (
           <div className={styles.status}>Loading fonts…</div>
         ) : filtered.length === 0 ? (
-          <div className={styles.status}>No fonts match “{search}”</div>
+          <EmptyState
+            compact
+            icon="type"
+            message={`No fonts match “${search}”.`}
+            action={{ label: 'Show all fonts', onClick: () => setSearch('') }}
+          />
         ) : (
           <div
             ref={listWrapRef}

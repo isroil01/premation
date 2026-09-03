@@ -213,3 +213,12 @@
 }
 
 .dismiss:hover { color: var(--color-text-secondary); }
+
+/* The two text actions under the grid. A row, so "Take the tour" reads as a
+   peer of "Continue without a project" rather than as another list item —
+   both are ways of entering the editor without opening a file. */
+.footerRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}

@@ -25,10 +25,17 @@ import { corner as bezierCorner } from '../math/BezierPoint';
 import { commands } from '../commands/WorkspaceCommands';
 import * as Mat from '../math/Mat2D';
 import type { HandleId } from '../selection/handles';
-import { resizeBounds, resizeBoundsAboutPivot, rotationDelta } from '../selection/transform';
+import {
+  resizeBounds,
+  resizeBoundsAboutPivot,
+  rotationDelta,
+  scaleAboutPivot,
+  orbitAboutPivot,
+  oppositePivot,
+} from '../selection/transform';
 import { handleCursor, visibleHandleIds, CORNER_HANDLES } from '../selection/handles';
 import type { CursorType } from '../cursor/CursorManager';
-import type { Tool, ToolContext, ToolPointerEvent, ToolDragEvent, ToolKeyEvent } from './Tool';
+import type { Tool, ToolContext, ToolPointerEvent, ToolDragEvent, ToolKeyEvent, ToolHud } from './Tool';
 
 /** Default size used when a create/text tool is clicked without dragging. */
 const DEFAULT_CREATE_SIZE = 100;
@@ -79,22 +86,41 @@ export class SelectTool implements Tool {
   private startMatrix: Mat.Mat2D | null = null;
   private appliedDelta: Vec2 = { x: 0, y: 0 };
   private excludeIds: Set<string> = new Set();
-  /** Live drag readout (Δ / size / angle) — see Tool.getHud. */
-  private hud: { anchorWorld: Vec2; lines: readonly string[] } | null = null;
+  /** Live drag readout (Δ / size / angle / scale %) — see Tool.getHud. */
+  private hud: ToolHud | null = null;
   /** Grip under the cursor (idle only) — drives the overlay's lit grip. */
   private hoverHandleId: string | null = null;
   // Transform (single-node) state.
   private transformId: NodeId | null = null;
   private transformPivot: Vec2 = { x: 0, y: 0 };
   private cursorPop: (() => void) | null = null;
+  /**
+   * Multi-selection transform state, captured at drag START so every tick
+   * resolves against the same base — the ratio contract `resizeRotated.test.ts`
+   * pins for single layers, extended per node. Empty while a single-node (or
+   * no) transform is in flight; `transformId` stays null for a multi drag, so
+   * the two paths cannot both fire.
+   */
+  private multiStart: Array<{ id: NodeId; anchor: Vec2; scale: Vec2; rotation: number }> = [];
+  /** Rotate pivot for a multi drag: the group box centre, frozen at start. */
+  private multiPivot: Vec2 = { x: 0, y: 0 };
 
   getHandles(ctx: ToolContext): readonly OverlayHandle[] {
     const sel = ctx.selectionIds();
-    if (sel.length !== 1) {
-      // Multi-select: the bounding box still draws (buildOverlay), but the
-      // transform handles are single-node only — painting them would offer
-      // grips that can't be grabbed, so draw none.
-      return [];
+    if (sel.length === 0) return [];
+    if (sel.length > 1) {
+      // Multi-select: the eight grips on the selection's union AABB —
+      // axis-aligned is correct here, a group has no single orientation to
+      // honour (`SelectionController.handles` already computes exactly this).
+      // A drag scales/rotates the whole selection about the group box, AE
+      // style. Only when NO selected layer can take a 2D transform (all 3D or
+      // devices) is there nothing to offer.
+      if (!this.multiTransformIds(ctx)) return [];
+      const allowed = new Set(this.visibleIds(ctx));
+      return ctx.selection
+        .handles()
+        .filter((h) => allowed.has(h.id))
+        .map((h) => ({ id: h.id, position: h.position, kind: h.kind }));
     }
     // Degrade with on-screen size: eight 8px grips on a 30px box overlap into
     // an unusable blob. Filtering HERE (rather than in the painter) is what
@@ -110,6 +136,54 @@ export class SelectTool implements Tool {
     // crosshair, never a square, so it cannot be mistaken for a resize grip.
     const node = ctx.scene.getNode(sel[0]!);
     if (node) out.push({ id: `anchor_${sel[0]!}`, position: anchorWorld(node), kind: 'anchor' });
+    return out;
+  }
+
+  /**
+   * The nodes a multi-selection transform applies to, or null when the
+   * selection cannot take the 2D handles at all.
+   *
+   * 3D layers and devices are FILTERED rather than vetoing the gesture: their
+   * transforms belong to the 3D gizmo / don't exist (see
+   * `SelectionController.handles`), but a camera caught in a select-all must
+   * not disarm scaling the artwork around it. They simply stay put. Null only
+   * when nothing transformable remains — then the grips would be a lie.
+   */
+  private multiTransformIds(ctx: ToolContext): NodeId[] | null {
+    const sel = ctx.selectionIds();
+    if (sel.length < 2) return null;
+    const out: NodeId[] = [];
+    for (const id of sel) {
+      const n = ctx.scene.getNode(id);
+      if (!n || n.is3D || n.device || n.locked) continue;
+      out.push(id);
+    }
+    return out.length > 0 ? out : null;
+  }
+
+  /**
+   * Per-node world pose at drag start, the base every tick's absolute target
+   * is computed from. Scale comes off the world matrix's columns — the same
+   * derivation the single-node resize uses — and rotation off its first
+   * column, so a drag tick is `start × ratio` / `start + delta`, never a
+   * compounding read of the live (already edited) node.
+   */
+  private captureMultiStart(
+    ctx: ToolContext,
+    ids: readonly NodeId[],
+  ): Array<{ id: NodeId; anchor: Vec2; scale: Vec2; rotation: number }> {
+    const out: Array<{ id: NodeId; anchor: Vec2; scale: Vec2; rotation: number }> = [];
+    for (const id of ids) {
+      const n = ctx.scene.getNode(id);
+      if (!n) continue;
+      const m = n.worldMatrix;
+      out.push({
+        id,
+        anchor: anchorWorld(n),
+        scale: { x: Math.hypot(m.a, m.b), y: Math.hypot(m.c, m.d) },
+        rotation: Math.atan2(m.b, m.a),
+      });
+    }
     return out;
   }
 
@@ -217,6 +291,41 @@ export class SelectTool implements Tool {
         return;
       }
     }
+    // Drag from outside a corner of a MULTI-selection → rotate the group about
+    // its box centre: every layer's anchor orbits the pivot and its rotation
+    // adds the same sweep, so the selection turns as one body (AE's group
+    // rotate). Pivoting on the frozen START centre — not the live box — is
+    // what keeps the maths stable while the layers move under it.
+    if (this.downRotate && sel.length > 1) {
+      const ids = this.multiTransformIds(ctx);
+      const bounds = ctx.selection.selectionBounds();
+      if (ids && bounds) {
+        this.mode = 'rotate';
+        this.multiPivot = R.center(bounds);
+        this.multiStart = this.captureMultiStart(ctx, ids);
+        this.startAngle = Math.atan2(
+          e.startWorld.y - this.multiPivot.y,
+          e.startWorld.x - this.multiPivot.x,
+        );
+        return;
+      }
+    }
+    // Handle drag on a MULTI-selection → scale the group about a fixed pivot:
+    // the opposite corner/edge of the union AABB (Alt = the box centre). Each
+    // layer's Scale multiplies by the drag's ratio and its anchor moves
+    // toward/away from the pivot by the same ratio. There is no group anchor
+    // to pivot on (each layer keeps its own), so the design-tool convention
+    // applies rather than the single-layer anchor rule.
+    if (this.downHandle && sel.length > 1) {
+      const ids = this.multiTransformIds(ctx);
+      const bounds = ctx.selection.selectionBounds();
+      if (ids && bounds) {
+        this.mode = 'resize';
+        this.startBounds = bounds;
+        this.multiStart = this.captureMultiStart(ctx, ids);
+        return;
+      }
+    }
     // Handle drag → resize the single selected node.
     if (this.downHandle && sel.length === 1) {
       this.transformId = sel[0]!;
@@ -245,6 +354,10 @@ export class SelectTool implements Tool {
       this.startScale = rn
         ? { x: Math.hypot(rn.worldMatrix.a, rn.worldMatrix.b), y: Math.hypot(rn.worldMatrix.c, rn.worldMatrix.d) }
         : { x: 1, y: 1 };
+      // Equal-size snapping measures the layer against its NEIGHBOURS; without
+      // this the layer being resized is one of its own neighbours and matches
+      // its own width at every size.
+      this.excludeIds = new Set([this.transformId]);
       return;
     }
     if (this.downNodeId === null) {
@@ -294,6 +407,73 @@ export class SelectTool implements Tool {
       ctx.requestRender();
       return;
     }
+    if (this.mode === 'rotate' && this.multiStart.length > 0) {
+      const angle = Math.atan2(
+        e.currentWorld.y - this.multiPivot.y,
+        e.currentWorld.x - this.multiPivot.x,
+      );
+      let delta = angle - this.startAngle;
+      // Shift snaps the SWEEP, not each layer's absolute angle — the layers
+      // start at different rotations, and snapping each to its own 15° grid
+      // would shear the group apart on the first tick.
+      if (e.modifiers.shift) {
+        const step = Math.PI / 12;
+        delta = Math.round(delta / step) * step;
+      }
+      ctx.execute(
+        commands.multiRotateNodes(
+          this.multiStart.map((s) => ({
+            id: s.id,
+            rotation: s.rotation + delta,
+            position: orbitAboutPivot(s.anchor, this.multiPivot, delta),
+          })),
+        ),
+      );
+      // The group readout is the SWEEP, signed — the layers went in at
+      // different angles, so there is no single absolute angle to show (the
+      // single-layer path above shows its layer's own, normalized).
+      const deg = (delta * 180) / Math.PI;
+      this.hud = {
+        anchorWorld: e.currentWorld,
+        lines: [`${deg >= 0 ? '+' : ''}${deg.toFixed(1)}°`],
+      };
+      ctx.requestRender();
+      return;
+    }
+    if (this.mode === 'resize' && this.multiStart.length > 0 && this.startBounds && this.downHandle) {
+      const from = this.startBounds;
+      if (from.width <= 0 && from.height <= 0) return;
+      // Alt re-pivots on the box centre each tick (like the single-node path,
+      // where Alt is read live), otherwise the opposite corner/edge holds.
+      const pivot = e.modifiers.alt ? R.center(from) : oppositePivot(from, this.downHandle);
+      const next = resizeBoundsAboutPivot(
+        from, this.downHandle, e.currentWorld, pivot, undefined, e.modifiers.shift,
+      );
+      // The drag as a RATIO of the start box — the same contract the
+      // single-node resize keeps (`resizeRotated.test.ts`): every tick is
+      // absolute against drag-start state, so repeating a tick cannot compound.
+      const ratio = {
+        x: from.width > 0 ? next.width / from.width : 1,
+        y: from.height > 0 ? next.height / from.height : 1,
+      };
+      ctx.execute(
+        commands.multiResizeNodes(
+          this.multiStart.map((s) => ({
+            id: s.id,
+            scale: { x: s.scale.x * ratio.x, y: s.scale.y * ratio.y },
+            position: scaleAboutPivot(s.anchor, pivot, ratio),
+          })),
+        ),
+      );
+      // The group has no single Scale property, so the readout is the drag's
+      // ratio — same format as the single-layer scale readout below.
+      this.hud = {
+        anchorWorld: e.currentWorld,
+        lines: [`${Math.round(ratio.x * 100)}% × ${Math.round(ratio.y * 100)}%`],
+      };
+      ctx.requestRender();
+      return;
+    }
     if (this.mode === 'resize' && this.transformId && this.startBounds && this.downHandle) {
       const base = this.startScale ?? { x: 1, y: 1 };
 
@@ -323,11 +503,23 @@ export class SelectTool implements Tool {
           ? { x: from.x + from.width / 2, y: from.y + from.height / 2 }
           : Mat.apply(inv, this.transformPivot ?? e.startWorld);
 
-        const local = e.modifiers.alt
+        const dragged = e.modifiers.alt
           ? resizeBounds(from, this.downHandle, pointerLocal, true, undefined, e.modifiers.shift)
           : resizeBoundsAboutPivot(
               from, this.downHandle, pointerLocal, pivotLocal, undefined, e.modifiers.shift,
             );
+
+        // Equal-SIZE snapping. The local box is in the LAYER's units, so the
+        // conversion to the world size a neighbour is measured in is the scale
+        // the drag started from (`base`); the fixed point is whatever this
+        // gesture is holding still, so the snap grows the box the same way the
+        // drag does.
+        const local = this.snapEqualSize(ctx, dragged, base, {
+          fixed: e.modifiers.alt
+            ? { x: from.x + from.width / 2, y: from.y + from.height / 2 }
+            : pivotLocal,
+          uniform: e.modifiers.shift,
+        });
 
         /*
          * Ctrl (⌘ on macOS) switches the drag from SCALE to SIZE.
@@ -405,7 +597,7 @@ export class SelectTool implements Tool {
       // No local box to work in (a node kind that reports none). Falls back to
       // the world-AABB path every layer used before, still correct unrotated.
       // (HUD set below, after the new bounds exist.)
-      const bounds = e.modifiers.alt
+      const draggedBounds = e.modifiers.alt
         ? resizeBounds(this.startBounds, this.downHandle, e.currentWorld, true, undefined, e.modifiers.shift)
         : resizeBoundsAboutPivot(
             this.startBounds,
@@ -415,6 +607,11 @@ export class SelectTool implements Tool {
             undefined,
             e.modifiers.shift,
           );
+      // Already world units here, so the local→world scale is 1:1.
+      const bounds = this.snapEqualSize(ctx, draggedBounds, { x: 1, y: 1 }, {
+        fixed: e.modifiers.alt ? R.center(this.startBounds) : this.transformPivot,
+        uniform: e.modifiers.shift,
+      });
       const from = this.startBounds;
       const scale = {
         x: from.width > 0 ? base.x * (bounds.width / from.width) : base.x,
@@ -476,7 +673,85 @@ export class SelectTool implements Tool {
     }
   }
 
-  getHud(): { anchorWorld: Vec2; lines: readonly string[] } | null {
+  /**
+   * Equal-SIZE snapping for a resize drag.
+   *
+   * `equalSizeCandidates` has always known the exact delta that would make the
+   * dragged layer as wide (or as tall) as a neighbour; until now only the
+   * overlay read it, so the highlight lit up while the drag sailed past. This
+   * applies it.
+   *
+   * Three things the gesture already decided are respected rather than
+   * re-derived, because re-deriving them is how a snap starts fighting the
+   * drag:
+   *
+   *  • **The fixed point.** Whatever the gesture holds still — the anchor, or
+   *    the box centre under Alt — is passed in, and the box is scaled ABOUT it.
+   *    So a centre-anchored resize stays centred and an anchored one keeps its
+   *    anchor, without this having to know which it was.
+   *  • **Aspect lock.** Under Shift both axes take the SAME factor, so the
+   *    snap lands one axis on the neighbour's size and the other follows the
+   *    locked ratio. Snapping one axis alone would silently break the lock.
+   *  • **Which axes the handle moves.** An `e` handle changes width only, so a
+   *    height match is ignored (unless Shift has tied the two together) — a
+   *    magnet must not resize an axis the user is not dragging.
+   *
+   * `scale` converts the box's units to world units (the units neighbours are
+   * measured in): the layer's start scale for the local-space path, 1 for the
+   * world-AABB fallback. For a ROTATED layer this compares the layer's oriented
+   * size — what the W×H readout shows — against a neighbour's axis-aligned
+   * box; exact when the layer is unrotated, which is when the comparison is
+   * one the user can see.
+   */
+  private snapEqualSize(
+    ctx: ToolContext,
+    box: Rect,
+    scale: Vec2,
+    opts: { fixed: Vec2; uniform: boolean },
+  ): Rect {
+    const EPS = 1e-6;
+    const handle = this.downHandle;
+    if (!handle) return box;
+    const sx = Math.abs(scale.x);
+    const sy = Math.abs(scale.y);
+    const w = Math.abs(box.width);
+    const h = Math.abs(box.height);
+    if (sx <= EPS || sy <= EPS || w <= EPS || h <= EPS) return box;
+
+    const movesX = handle === 'w' || handle === 'e' || handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se';
+    const movesY = handle === 'n' || handle === 's' || handle === 'nw' || handle === 'ne' || handle === 'sw' || handle === 'se';
+    // Under aspect lock either grip drives both axes, so both are in play.
+    const liveX = opts.uniform ? movesX || movesY : movesX;
+    const liveY = opts.uniform ? movesX || movesY : movesY;
+    if (!liveX && !liveY) return box;
+
+    // The probe only needs the right SIZE — `equalSizeCandidates` ignores
+    // position — but it is placed on the live selection so the neighbour query
+    // looks in the right part of the world.
+    const near = ctx.selection.selectionBounds() ?? this.startBounds;
+    if (!near) return box;
+    const probe = R.rect(near.x, near.y, w * sx, h * sy);
+    const matches = ctx.sizeMatches(probe, this.excludeIds);
+    const best = matches.find((m) => (m.axis === 'x' ? liveX : liveY));
+    if (!best) return box;
+
+    // Back out of world units into the box's own.
+    const target = best.size / (best.axis === 'x' ? sx : sy);
+    const factor = target / (best.axis === 'x' ? w : h);
+    if (!Number.isFinite(factor) || factor <= EPS) return box;
+    const fx = best.axis === 'x' || opts.uniform ? factor : 1;
+    const fy = best.axis === 'y' || opts.uniform ? factor : 1;
+
+    const { fixed } = opts;
+    return {
+      x: fixed.x + (box.x - fixed.x) * fx,
+      y: fixed.y + (box.y - fixed.y) * fy,
+      width: box.width * fx,
+      height: box.height * fy,
+    };
+  }
+
+  getHud(): ToolHud | null {
     return this.hud;
   }
 
@@ -497,12 +772,15 @@ export class SelectTool implements Tool {
     this.startLocalBounds = null;
     this.startMatrix = null;
     this.moveIds = [];
+    this.multiStart = [];
     ctx.requestRender();
   }
 
   deactivate(): void {
     this.cursorPop?.();
     this.cursorPop = null;
+    this.multiStart = [];
+    this.hud = null;
   }
 
   /** Which selection handle is under a screen point, if any. */
@@ -521,7 +799,11 @@ export class SelectTool implements Tool {
    * screen to explain it.
    */
   private inRotateRing(screen: Vec2, ctx: ToolContext): boolean {
-    if (ctx.selectionIds().length !== 1) return false;
+    const sel = ctx.selectionIds();
+    if (sel.length === 0) return false;
+    // Multi-select rotates too (about the group centre) — but only when the
+    // selection can take the grips at all, the same gate `getHandles` applies.
+    if (sel.length > 1 && !this.multiTransformIds(ctx)) return false;
     const bounds = ctx.selection.selectionBounds();
     if (!bounds) return false;
     const allowed = new Set(this.visibleIds(ctx));
@@ -541,7 +823,9 @@ export class SelectTool implements Tool {
   }
 
   private pickHandle(screen: Vec2, ctx: ToolContext): HandleId | null {
-    if (ctx.selectionIds().length !== 1) return null;
+    const sel = ctx.selectionIds();
+    if (sel.length === 0) return null;
+    if (sel.length > 1 && !this.multiTransformIds(ctx)) return null;
     // Only the handles that are actually drawn — an invisible grip that still
     // resizes is worse than no grip at all.
     const allowed = new Set(this.visibleIds(ctx));
@@ -1294,6 +1578,142 @@ export class LineTool implements Tool {
   }
 }
 
+// ── Knife (drag a line; every crossing splits the path) ─────────────
+
+/**
+ * Slice shape layers along a dragged line.
+ *
+ * The tool itself is deliberately thin — it collects two world points, decides
+ * WHICH layers the cut applies to, and submits one command. All the geometry
+ * lives app-side in `core/geometry/pathCut`, because the engine has no opinion
+ * about how a layer stores its outline (points, runs, or a primitive it has
+ * never been converted from) and should not grow one.
+ *
+ * TARGETING. A selection wins, so "cut these two" is expressible. With nothing
+ * selected the cut falls to every layer whose world box the line actually
+ * straddles — the corner test below, not a bounds intersection, because a
+ * diagonal line can clip a box's AABB while passing nowhere near the box. A
+ * knife that silently cut a layer on the far side of the comp would be much
+ * worse than one that needs a selection.
+ *
+ * The submitted line is EXTENDED past both drag endpoints (see the payload's
+ * note): the drag says where to cut, not how far, and stopping short would ask
+ * the path model to hold a shape with a slit in it.
+ */
+export class KnifeTool implements Tool {
+  readonly id = 'knife';
+  readonly label = 'Knife';
+  /**
+   * `k` — free across the whole builtin set (v m h z r q g n l t w y a are
+   * taken), asserted against `createBuiltinTools` rather than assumed.
+   *
+   * NOTE for the host: declaring it here does not make it fire in the editor.
+   * `ToolManager.activateByShortcut` only sees keys the host feeds through
+   * `Workspace.feedKeyDown`, and the app feeds it Space and nothing else —
+   * every other tool key arrives as a registered command chord. This is the
+   * engine-side reservation; the app-side binding is `tool.knife`.
+   */
+  readonly shortcut = 'k';
+  readonly cursor = 'crosshair' as const;
+
+  private start: Vec2 | null = null;
+  private end: Vec2 | null = null;
+
+  /** Preview: the live cut line, painted by the overlay's pending-path pass. */
+  get pendingPoints(): readonly BezierPoint[] {
+    if (!this.start || !this.end) return [];
+    return [bezierCorner(this.start.x, this.start.y), bezierCorner(this.end.x, this.end.y)];
+  }
+
+  getHud(): ToolHud | null {
+    if (!this.start || !this.end) return null;
+    const dx = this.end.x - this.start.x;
+    const dy = this.end.y - this.start.y;
+    const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+    return { anchorWorld: this.end, lines: [`${deg.toFixed(1)}°`] };
+  }
+
+  onDragStart(e: ToolDragEvent, ctx: ToolContext): void {
+    this.start = { x: e.startWorld.x, y: e.startWorld.y };
+    this.end = { x: e.currentWorld.x, y: e.currentWorld.y };
+    ctx.requestRender();
+  }
+
+  onDrag(e: ToolDragEvent, ctx: ToolContext): void {
+    if (!this.start) return;
+    this.end = { x: e.currentWorld.x, y: e.currentWorld.y };
+    // Shift constrains to the horizontal / vertical / 45° the eye expects, the
+    // same modifier every other drag in this file honours.
+    if (e.modifiers.shift) this.end = constrainToAxis(this.start, this.end);
+    ctx.requestRender();
+  }
+
+  onDragEnd(e: ToolDragEvent, ctx: ToolContext): void {
+    const a = this.start;
+    let b: Vec2 = { x: e.currentWorld.x, y: e.currentWorld.y };
+    this.start = null;
+    this.end = null;
+    ctx.requestRender();
+    if (!a) return;
+    if (e.modifiers.shift) b = constrainToAxis(a, b);
+    // A tap is not a cut. Below the drag threshold the direction is noise, and
+    // an infinite line through a noisy direction cuts something arbitrary.
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 2) return;
+
+    const ids = this.targets(a, b, ctx);
+    if (ids.length === 0) return;
+    ctx.execute(commands.cutPaths(ids, a, b));
+  }
+
+  deactivate(): void {
+    this.start = null;
+    this.end = null;
+  }
+
+  /** Selected layers, or — with nothing selected — everything the line crosses. */
+  private targets(a: Vec2, b: Vec2, ctx: ToolContext): NodeId[] {
+    const selected = ctx.selectionIds();
+    if (selected.length > 0) return selected.map((id) => id as NodeId);
+    const out: NodeId[] = [];
+    for (const node of ctx.scene.getNodes()) {
+      if (node.locked) continue;
+      if (lineStraddles(a, b, node)) out.push(node.id);
+    }
+    return out;
+  }
+}
+
+/** Snap a drag to the nearest of the 8 principal directions (Shift). */
+function constrainToAxis(a: Vec2, b: Vec2): Vec2 {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-9) return b;
+  const step = Math.PI / 4;
+  const angle = Math.round(Math.atan2(dy, dx) / step) * step;
+  return { x: a.x + Math.cos(angle) * len, y: a.y + Math.sin(angle) * len };
+}
+
+/**
+ * Does the (infinite) line a→b pass through this node's box?
+ *
+ * True when the four corners do not all fall on the same side. Uses the node's
+ * ORIENTED corners where it has them — a rotated layer's AABB is bigger than
+ * the layer, and the difference is exactly the region where a near-miss would
+ * read as a hit.
+ */
+function lineStraddles(a: Vec2, b: Vec2, node: WorkspaceNode): boolean {
+  const cs = node.worldCorners ?? R.corners(node.worldBounds);
+  let pos = false;
+  let neg = false;
+  for (const c of cs) {
+    const s = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+    if (s > 0) pos = true;
+    else if (s < 0) neg = true;
+  }
+  return pos && neg;
+}
+
 // ── Polygon / Star (drag to size a regular filled shape) ────────────
 abstract class CreatePolyTool implements Tool {
   abstract readonly id: string;
@@ -1789,6 +2209,7 @@ export function createBuiltinTools(): Tool[] {
     new PolygonTool(),
     new StarTool(),
     new LineTool(),
+    new KnifeTool(),
     new PenTool(),
     new PencilTool(),
     new BrushTool(),

@@ -1,8 +1,10 @@
 /**
  * TransportBar — the whole tool row that used to sit atop the timeline panel:
  * the layer split / trim buttons, the transport itself (go-to-start · prev ·
- * play · next · go-to-end · loop · marker), the preview-quality picker, the
- * viewport tools and the zoom field.
+ * play · next · go-to-end · loop · marker), the viewport tools and the zoom
+ * field. The preview-quality picker was here too, and is now in the Preview
+ * menu inside `ViewportTools` — one home for every fidelity-for-speed lever
+ * instead of a picker here and a second copy of it in View Options.
  *
  * All of it drives the VIEWPORT, so all of it lives with the viewport. Moving
  * only the play cluster would have been the worse half-measure: the buttons on
@@ -18,7 +20,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
-import { Dropdown } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { bumpScene } from '@stores/sceneStore';
@@ -28,12 +29,6 @@ import { framesToTimecode } from '@core/time/timecode';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import {
-  useRenderQualityStore,
-  RESOLUTION_LABELS,
-  RESOLUTION_PERCENT,
-  type PreviewResolution,
-} from '@stores/renderQualityStore';
 import { isDemoted, useTransportOverflow } from './transportOverflow';
 import { useTransportDemote } from './useTransportDemote';
 import styles from './TransportBar.module.css';
@@ -45,11 +40,6 @@ export function TransportBar(): JSX.Element {
   const fps = useCompositionStore((s) => s.fps);
   const startFrame = useCompositionStore((s) => s.startFrame);
   const duration = useCompositionStore((s) => s.durationSeconds);
-  const previewResolution = useRenderQualityStore((s) => s.resolution);
-  const setResolution = useRenderQualityStore((s) => s.setResolution);
-  const adaptive = useRenderQualityStore((s) => s.adaptive);
-  const adaptiveFloor = useRenderQualityStore((s) => s.adaptiveFloor);
-  const setAdaptive = useRenderQualityStore((s) => s.setAdaptive);
 
   // Looping is PER COMP; a state seeded once showed the previous tab's value
   // after switching comps.
@@ -86,21 +76,6 @@ export function TransportBar(): JSX.Element {
     ctrl.addMarkerAtPlayhead();
   };
 
-  const qualityItems = ([1, 2, 3, 4] as PreviewResolution[]).map((r) => ({
-    type: 'item' as const,
-    id: `res-${r}`,
-    label: `${RESOLUTION_LABELS[r]} · ${RESOLUTION_PERCENT[r]}`,
-    icon: (r === previewResolution ? 'check' : undefined) as any,
-    onSelect: () => setResolution(r),
-  }));
-  const adaptiveItem = {
-    type: 'checkbox' as const,
-    id: 'adaptive',
-    label: `Adaptive Resolution while dragging (${RESOLUTION_LABELS[adaptiveFloor]})`,
-    checked: adaptive,
-    onChange: setAdaptive,
-  };
-
   // Everything the row has shed, as menu items for View Options. Built here
   // because these are the handlers' home; `ViewControls` only renders them.
   const setOverflowItems = useTransportOverflow((s) => s.setItems);
@@ -113,15 +88,6 @@ export function TransportBar(): JSX.Element {
         { type: 'item' as const, id: 'tb-trim-out', label: 'Trim Out-Point to Playhead', icon: 'trim-out' as const, shortcut: 'Alt+]', onSelect: trimOutToPlayhead },
       );
     }
-    if (shed('quality')) {
-      items.push({
-        type: 'item' as const,
-        id: 'tb-quality',
-        label: `Preview Quality: ${RESOLUTION_LABELS[previewResolution]}`,
-        icon: 'graph-speed' as const,
-        submenu: [...qualityItems, { type: 'separator' as const }, adaptiveItem],
-      });
-    }
     if (shed('loopMarker')) {
       items.push(
         { type: 'checkbox' as const, id: 'tb-loop', label: 'Loop Playback', checked: looping, onChange: toggleLoop },
@@ -130,7 +96,7 @@ export function TransportBar(): JSX.Element {
     }
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [level, looping, previewResolution, adaptive, adaptiveFloor, selectedIds]);
+  }, [level, looping, selectedIds]);
 
   useEffect(() => {
     setOverflowItems(overflowItems);
@@ -141,7 +107,7 @@ export function TransportBar(): JSX.Element {
     <div ref={barRef} className={styles.bar} role="toolbar" aria-label="Viewport transport and tools">
       {/*
         Left of play: everything about TIME — clip edits at the playhead, the
-        timecode, the loop flag, the marker key, the playback resolution.
+        timecode, the loop flag, the marker key.
         Right of play: everything about DISPLAY — the viewport's own tools and
         its zoom.
 
@@ -226,30 +192,16 @@ export function TransportBar(): JSX.Element {
         </>
       )}
 
-      {/* Preview quality ("Full", "Half", …) — a property of the playback, so
-          it sits on the playback side of the bar. */}
-      {!shed('quality') && (
-        <>
-          <div className={styles.divider} />
+      {/* Preview resolution used to sit here as a second picker, next to the
+          one in View Options that reads the same store — two controls for one
+          setting, each able to show the other's stale label. It now has exactly
+          one home: the Preview menu, on this same bar, with the rest of the
+          fidelity-for-speed levers (adaptive resolution, motion blur, draft,
+          onion skin). Nothing about the store or the rendering changed.
 
-          <div className={styles.cluster}>
-            <Dropdown
-              placement="top-start"
-              trigger={
-                <button
-                  type="button"
-                  className={cn(styles.btn, styles.qualityBtn, previewResolution !== 1 && styles.btnActive)}
-                  title="Preview Quality"
-                >
-                  <Icon name="graph-speed" size="sm" />
-                  <span>{RESOLUTION_LABELS[previewResolution]}</span>
-                </button>
-              }
-              items={[...qualityItems, { type: 'separator' as const }, adaptiveItem]}
-            />
-          </div>
-        </>
-      )}
+          `quality` stays in TRANSPORT_DEMOTE_ORDER: that file is not this
+          change's to edit, and a rung that sheds nothing costs one extra
+          measure pass, not correctness. */}
       </div>
 
       {/* The centre column: go-to-start · prev · PLAY · next · go-to-end.

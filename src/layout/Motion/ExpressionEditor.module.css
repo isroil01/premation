@@ -133,6 +133,79 @@
   border-radius: 2px;
 }
 
+/* ── Autocomplete popup ───────────────────────────────────────────────────
+   Positioned by the component in `em`/`ch` of the SAME mono token the editor
+   uses, so `line`/`column` land on the caret without measuring anything. That
+   only holds while this block's font matches `.editor` above — change one and
+   change both. */
+.complete {
+  position: absolute;
+  z-index: 5;
+  min-width: 240px;
+  max-width: calc(100% - var(--space-3));
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-caption);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--color-surface-2);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.35));
+  overflow: hidden;
+}
+
+.completeList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 176px;
+  overflow-y: auto;
+}
+
+.completeItem {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 2px var(--space-3);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.completeItem:hover {
+  background: var(--color-hover);
+}
+
+.completeItemActive,
+.completeItemActive:hover {
+  background: var(--color-active);
+}
+
+.completeLabel {
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.completeHint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-muted);
+}
+
+/* The example form of the highlighted row — what Enter would insert. */
+.completeSignature {
+  padding: 2px var(--space-3);
+  border-top: 1px solid var(--color-divider);
+  background: var(--color-surface-1);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status {
   min-height: 16px;
   font-size: var(--font-size-xs);
@@ -158,10 +231,39 @@
   color: var(--color-text-muted);
 }
 
+/* The full API, collapsed. Open it and the chips are exactly what they were. */
+.reference {
+  border-top: 1px solid var(--color-divider);
+  padding-top: var(--space-2);
+}
+
+.referenceSummary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+.referenceSummary:hover {
+  color: var(--color-text-secondary);
+}
+
+.referenceHint {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-micro);
+}
+
 .api {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  padding-top: var(--space-2);
+  max-height: 132px;
+  overflow-y: auto;
 }
 
 .apiChip {

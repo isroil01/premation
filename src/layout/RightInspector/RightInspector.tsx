@@ -17,9 +17,12 @@ export function RightInspector({ renderers, headerExtras, header, className }: R
   const isCollapsed = className?.includes('collapsed-view') || false;
   const isSplit = useLayoutStore((s) => s.rightInspectorSplit);
   const toggleSplit = () => useLayoutStore.getState().toggleSidebarSplit('right');
+  // The rail lives on the OUTER edge: right when the inspector is docked right,
+  // left when the user has moved it to the left side of the window.
+  const railSide = useLayoutStore((s) => (s.rightInspectorPosition === 'left' ? 'left' : 'right'));
 
   return (
-    <aside className={cn(styles.root, className)}>
+    <aside className={cn(styles.root, className)} data-tour="inspector">
       {!isCollapsed && header ? <div className={styles.header}>{header}</div> : null}
       {isSplit && !isCollapsed ? (
         <SplitPane
@@ -38,6 +41,7 @@ export function RightInspector({ renderers, headerExtras, header, className }: R
             isSplit
             splitPosition="top"
             onToggleSplit={toggleSplit}
+            railSide={railSide}
           />
           <DockPanel
             region="rightInspector_bottom"
@@ -46,6 +50,7 @@ export function RightInspector({ renderers, headerExtras, header, className }: R
             isSplit
             splitPosition="bottom"
             onToggleSplit={toggleSplit}
+            railSide={railSide}
           />
         </SplitPane>
       ) : (
@@ -56,6 +61,7 @@ export function RightInspector({ renderers, headerExtras, header, className }: R
           className={className}
           isSplit={false}
           onToggleSplit={toggleSplit}
+          railSide={railSide}
         />
       )}
     </aside>

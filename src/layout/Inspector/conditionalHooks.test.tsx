@@ -27,8 +27,11 @@
  * moment it exists, with no edit here.
  *
  * WHAT THE DERIVATION CANNOT COVER, stated so nobody reads it as total:
- *   • sections outside this directory (`EditorLayout/DemoPanels.tsx` hosts
- *     several inline ones);
+ *   • sections outside this directory. This used to name `DemoPanels.tsx`,
+ *     which hosted several sections as inline JSX inside its push chain and so
+ *     had no component for this suite to find. They are components in
+ *     `inspectorSectionParts.tsx` now, in this directory, and covered — but a
+ *     section written anywhere else still would not be;
  *   • components whose props are not literally `nodeId` — a section keyed on
  *     something else is skipped, and `at least the known sections are present`
  *     below is the positive control that the discovery found anything at all.
@@ -97,10 +100,16 @@ describe("the discovery found real subjects", () => {
   });
 
   it("includes the sections that have actually broken this way", () => {
-    // Named here as a floor, not as the list: these three are the ones with a
+    // Named here as a floor, not as the list: these are the ones with a
     // recorded incident. If the discovery stops finding them it has broken.
+    //
+    // `TextSection` was a third. It is deleted — `CharacterPanel` had
+    // superseded it and nothing mounted it — and its name is not replaced
+    // here: `CharacterPanel` takes no `nodeId`, so it is not a subject of this
+    // suite at all, and naming it would be a floor that quietly matches
+    // nothing. Two named sections still hold the discovery honest.
     const names = SECTIONS.map(([n]) => n);
-    for (const want of ["AppearanceSection.AppearanceSection", "TextSection.TextSection", "BoneControls.BoneControls"]) {
+    for (const want of ["AppearanceSection.AppearanceSection", "BoneControls.BoneControls"]) {
       expect({ want, found: names.includes(want) }).toEqual({ want, found: true });
     }
   });

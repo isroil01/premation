@@ -47,6 +47,7 @@ import { createCompositionFromFootage } from '@core/composition/compositionOps';
 import { asCommandId } from '@app-types/common';
 import { Button } from '@components/Button';
 import { useUIStore } from '@stores/uiStore';
+import { useOnboardingStore } from '@stores/onboardingStore';
 import styles from './StartScreen.module.css';
 
 /** One card: an index row, an MRU entry, or both — joined on the path. */
@@ -256,9 +257,25 @@ export function StartScreen({ onDismiss }: { onDismiss: () => void }): JSX.Eleme
           })}
         </div>
 
-        <button type="button" className={styles.dismiss} onClick={onDismiss}>
-          Continue without a project
-        </button>
+        <div className={styles.footerRow}>
+          <button type="button" className={styles.dismiss} onClick={onDismiss}>
+            Continue without a project
+          </button>
+          {/* The tour runs OVER the editor and spotlights real controls, so it
+              cannot start while this screen covers them — dismiss first, then
+              start. Same `start()` the Help menu calls; it always runs when a
+              person asks for it, regardless of the first-run flag. */}
+          <button
+            type="button"
+            className={styles.dismiss}
+            onClick={() => {
+              onDismiss();
+              useOnboardingStore.getState().start();
+            }}
+          >
+            Take the tour
+          </button>
+        </div>
       </div>
     </div>
   );

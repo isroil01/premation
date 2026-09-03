@@ -10,19 +10,18 @@
 
 import { useMemo, useState, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
+import { SearchField } from '@components/SearchField';
 import { useCompositionStore } from '@stores/compositionStore';
 import { framesToTimecode } from '@core/time/timecode';
 import { Timeline, headerWidthFor, type TimelineProps } from '@layout/Timeline';
+import { CacheActions } from '@layout/Timeline/CacheActions';
 import { GraphEditor } from '@layout/Timeline/GraphEditor';
 import { cn } from '@utils/cn';
 import { useWorkspaceStore } from '@stores/projectStore';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useRenderQualityStore } from '@stores/renderQualityStore';
-import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { usePropertySelectionStore } from '@stores/propertySelectionStore';
 import { useUIStore } from '@stores/uiStore';
-import { useMotionBlurStore } from '@stores/motionBlurStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
 import { useFocusStore } from '@stores/focusStore';
@@ -75,13 +74,6 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
   const timelineColumns = useUIStore((s) => s.timelineColumns);
   const cycleTimelineColumns = useUIStore((s) => s.cycleTimelineColumns);
   
-  const motionBlurEnabled = useMotionBlurStore((s) => s.enabled);
-  const setMotionBlurEnabled = useMotionBlurStore((s) => s.setEnabled);
-
-  const draftQuality = useRenderQualityStore((s) => s.draft);
-  const setDraftQuality = useRenderQualityStore((s) => s.setDraft);
-  const onionEnabled = useOnionSkinStore((s) => s.enabled);
-  const toggleOnion = useOnionSkinStore((s) => s.toggle);
   const updateComp = useCompositionStore((s) => s.update);
   // Horizontal scroll mirror from Timeline → GraphEditor for pixel-alignment
   const [scrollLeft, setScrollLeft] = useState(0);
@@ -291,27 +283,14 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               </span>
             </div>
 
-            <div className={styles.searchContainer}>
-              <Icon name="search" size="sm" className={styles.searchIcon} />
-              <input
-                type="text"
-                placeholder="Filter layers & props..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className={styles.searchInput}
-                aria-label="Search layers and properties"
-              />
-              {searchQuery && (
-                <button
-                  type="button"
-                  className={styles.searchClear}
-                  onClick={() => setSearchQuery('')}
-                  title="Clear search filter"
-                >
-                  <Icon name="close" size="sm" />
-                </button>
-              )}
-            </div>
+            <SearchField
+              className={styles.searchContainer}
+              size="sm"
+              placeholder="Filter layers & props…"
+              ariaLabel="Search layers and properties"
+              value={searchQuery}
+              onChange={setSearchQuery}
+            />
 
             <div className={styles.timelineSwitchesGroup}>
               <button
@@ -340,46 +319,15 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
                 <Icon name="shy" size="sm" />
               </button>
 
-              <button
-                type="button"
-                className={motionBlurEnabled ? styles.toggleIconActive : styles.toggleIcon}
-                title={motionBlurEnabled ? 'Enable Motion Blur (Active)' : 'Enable Motion Blur (Inactive)'}
-                aria-label="Enable Motion Blur"
-                aria-pressed={motionBlurEnabled}
-                onClick={() => setMotionBlurEnabled(!motionBlurEnabled)}
-              >
-                <Icon name="motion-blur" size="sm" />
-              </button>
-
-              <button
-                type="button"
-                className={draftQuality ? styles.toggleIconActive : styles.toggleIcon}
-                title="Draft 3D / Fast Preview"
-                aria-label="Draft 3D"
-                aria-pressed={draftQuality}
-                onClick={() => setDraftQuality(!draftQuality)}
-              >
-                <Icon name="zap" size="sm" />
-              </button>
-
-              <button
-                type="button"
-                className={onionEnabled ? styles.toggleIconActive : styles.toggleIcon}
-                title={
-                  onionEnabled
-                    ? 'Onion Skinning (Active) — ghosts of nearby frames, while paused'
-                    : 'Onion Skinning (Inactive)'
-                }
-                aria-label="Onion Skinning"
-                aria-pressed={onionEnabled}
-                onClick={toggleOnion}
-              >
-                {/* Onion skinning is about TIME — ghosts of the frames either
-                    side of the playhead. `layers` is the stack glyph, which is
-                    the other axis entirely (depth), and is already the comp
-                    tab's icon two rows up. */}
-                <Icon name="history" size="sm" />
-              </button>
+              {/* Motion blur, Draft 3D and Onion Skinning used to sit here, in
+                  a row otherwise made of TIMELINE switches (graph editor, shy,
+                  columns, row height). All three are PREVIEW settings — what
+                  the viewport draws, not how the timeline lists it — and each
+                  had a second home besides: resolution was in two places, draft
+                  3D in the 3D menu, onion skin only here. They now live in one
+                  Preview menu on the viewport bar (`ViewControls`), which is
+                  also where the resolution they trade against lives. Stores and
+                  shortcuts are unchanged; only the button moved. */}
 
               <button
                 type="button"
@@ -426,6 +374,22 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
               >
                 <Icon name="expand" size="sm" />
               </button>
+
+              {/*
+                The cache lanes' actions, at the end of the switch row — which
+                is the row directly above the ruler the green and blue strips
+                are painted on, and the closest a control can get to them
+                without moving INSIDE the lane.
+
+                Not at the lane's right end, which is where it was first put and
+                is the wrong place twice over: inside the lane the group scrolls
+                horizontally with the composition and slides off the panel edge,
+                and in the navigator column beside it the group shortens the
+                time navigator — a bar deliberately sized to span exactly what
+                the ruler spans, so that a click at a given x lands on the same
+                frame in both. See CacheActions.
+              */}
+              <CacheActions />
             </div>
           </div>
 
@@ -495,6 +459,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         {graphEditorOpen && (
           <GraphEditor
             selectedNodeIds={selectedIds}
+            propertyFilter={searchQuery}
             currentTime={playheadTime}
             duration={props.model.duration}
             pixelsPerSecond={pps}

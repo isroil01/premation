@@ -17,6 +17,7 @@ import type { HitTester } from '../hit/HitTester';
 import type { OverlayHandle } from '../ports';
 import type { CursorManager, CursorType } from '../cursor/CursorManager';
 import type { SnapEngine, SnapTarget, SnapResult, SnapLine } from '../snap/SnapEngine';
+import type { SizeCandidate } from '../snap/smartGuides';
 import type { Grid } from '../grid/Grid';
 import type { Guides } from '../guides/Guides';
 import type { CommandPort, SceneGraphPort, WorkspaceCommand } from '../ports';
@@ -60,6 +61,18 @@ export interface ToolWheelEvent {
 
 export type ToolKeyEvent = KeyInput;
 
+/**
+ * A transient readout a tool wants floated beside the pointer while a gesture
+ * is in flight — "200% × 200%", "+32.5°", "+40, -12". World-anchored so the
+ * overlay builder projects it exactly like every handle (`WorkspaceOverlay
+ * .dragHud`); the painter adds its own screen offset. Null (or an absent
+ * `getHud`) means nothing to show.
+ */
+export interface ToolHud {
+  anchorWorld: Vec2;
+  lines: readonly string[];
+}
+
 /** Shared services a tool operates through. Provided by the Workspace. */
 export interface ToolContext {
   readonly camera: Camera;
@@ -96,6 +109,15 @@ export interface ToolContext {
   buildSnapTargets(region: Rect, excludeIds?: ReadonlySet<string>): { targets: SnapTarget[]; thresholdWorld: number };
   /** Convenience: run snapping on a rect using freshly-built targets. */
   snapRect(rect: Rect, excludeIds?: ReadonlySet<string>): SnapResult<Rect>;
+  /**
+   * Neighbours this rect is nearly the same size as — the equal-SIZE half of
+   * smart guides, for RESIZE gestures.
+   *
+   * Advisory, not applied: a resize holds a point fixed (the opposite edge,
+   * the anchor, or the centre under Alt) and only the tool knows which, so the
+   * tool grows the box itself. At most one match per axis, nearest first.
+   */
+  sizeMatches(rect: Rect, excludeIds?: ReadonlySet<string>): readonly SizeCandidate[];
 }
 
 /**
@@ -126,7 +148,7 @@ export interface Tool {
    * host as a badge beside the pointer (the 2D twin of the 3D gizmo's
    * measurement HUD). Null when no drag is measuring anything.
    */
-  getHud?(ctx: ToolContext): { anchorWorld: Vec2; lines: readonly string[] } | null;
+  getHud?(ctx: ToolContext): ToolHud | null;
 
   /** Optional: id of the overlay handle under the cursor, for hover styling. */
   hoveredHandleId?(): string | null;

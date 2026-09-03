@@ -35,6 +35,22 @@ import { readNodePuppet, getCachedRestMesh, silhouetteFromPathPoints, resolvePup
 import { readNodeSkeleton } from './skeletonCommands';
 import type { PuppetCoverageMask, PuppetRig, PuppetSilhouette } from './puppet';
 
+/**
+ * The mesh settings `buildRestMesh` falls back to when a rig stores none.
+ *
+ * They live here, beside the other shared mesh inputs, because a PANEL that
+ * shows a default is making the same claim the mesher acts on. The bone rig's
+ * Skinning Mesh card had drifted to 15 / 8 while the mesher used 22 / 0 — so it
+ * described a mesh nobody was building, and its expansion default in particular
+ * named the value that switches on the one-cell dilation that wraps a PNG
+ * character in a ring of empty pixels.
+ *
+ * `buildRestMesh` still spells its own fallbacks inline (it is the puppet half's
+ * file); these must stay equal to those two literals.
+ */
+export const MESH_DENSITY_DEFAULT = 22;
+export const MESH_EXPANSION_DEFAULT = 0;
+
 /** The media reference scanned off a node's components (mirrors readBase). */
 export interface RigMediaRef {
   src?: string;
@@ -179,6 +195,12 @@ export function nodeRestMesh(
   const skel = readNodeSkeleton(node);
   const puppetRig = readNodePuppet(node);
   const hasPins = (puppetRig?.pins?.length ?? 0) > 0;
+  const kind = readNodeKind(node);
+  // Pinless preview: mirror the mesh mode `addPuppetPin` will WRITE on the first
+  // pin (`defaultMeshMode` in puppetCommands), so the lattice the user aims at
+  // is the lattice they get. An image layer means the alpha outline mesh.
+  const previewMeshMode: PuppetRig['meshMode'] =
+    kind === 'image' || kind === 'svg' ? 'silhouette' : 'grid';
   const meshRig = hasPins
     ? puppetRig!
     : authoringPreview || puppetRig
@@ -186,18 +208,26 @@ export function nodeRestMesh(
           pins: [] as PuppetRig['pins'],
           meshDensity: puppetRig?.meshDensity ?? skel?.meshDensity,
           meshExpansion: puppetRig?.meshExpansion ?? 0,
-          meshMode: puppetRig?.meshMode ?? 'grid',
+          meshMode: puppetRig?.meshMode ?? previewMeshMode,
           solver: puppetRig?.solver,
           maxRotationDeg: puppetRig?.maxRotationDeg,
         }
-      : { pins: [], meshDensity: skel?.meshDensity, meshExpansion: skel?.meshExpansion };
+      : {
+          pins: [],
+          meshDensity: skel?.meshDensity,
+          meshExpansion: skel?.meshExpansion,
+          // Forwarded so a BONE-only layer can reach the alpha-outline mesh too.
+          // Only density and expansion used to cross this boundary, so a skeleton
+          // was pinned to the bbox grid no matter what the rig asked for, and a
+          // thin arm had no triangles of its own for a bone to bend.
+          meshMode: skel?.meshMode,
+        };
 
   const geometryComponent = node.components.find((c) => c.type === 'Geometry');
   const pathSilhouette = silhouetteFromPathPoints(
     geometryComponent?.props.points as Array<{ x: number; y: number }> | undefined,
     geometryComponent?.props.open === true,
   );
-  const kind = readNodeKind(node);
   const media = readNodeMediaRef(node);
   const coverage = rigCoverageMask(
     rigLayerKind(kind),

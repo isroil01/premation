@@ -35,6 +35,17 @@ export interface OutputTemplate {
   scale: number;
   /** `'comp'` follows the composition; a number overrides. */
   fps: number | 'comp';
+  /**
+   * Write the comp's labelled markers as chapter marks (MP4/MOV only).
+   *
+   * Optional, unlike every other field, and that asymmetry is deliberate:
+   * templates already on disk were saved before this key existed, and a
+   * required boolean would have made `isTemplate` reject every one of them —
+   * silently emptying a user's template list on upgrade. Undefined therefore
+   * reads as false, and the flag rides along like `transparent`: a per-format
+   * intent that a template exists to stop people re-dialling.
+   */
+  chapters?: boolean;
 }
 
 const STORAGE_KEY = 'motion-editor.outputTemplates.v1';
@@ -60,6 +71,8 @@ function isTemplate(v: unknown): v is OutputTemplate {
     && typeof t.transparent === 'boolean'
     && typeof t.scale === 'number' && Number.isFinite(t.scale) && t.scale > 0
     && (t.fps === 'comp' || (typeof t.fps === 'number' && Number.isFinite(t.fps) && t.fps > 0))
+    // Absent is valid — see OutputTemplate.chapters for why this one is optional.
+    && (t.chapters === undefined || typeof t.chapters === 'boolean')
   );
 }
 
@@ -121,12 +134,22 @@ export function isBuiltinOutputTemplate(name: string): boolean {
 export function applyOutputTemplate(
   template: OutputTemplate,
   comp: { width: number; height: number; fps: number },
-): { format: OutputFormat; quality: ExportQuality; transparent: boolean; width: number; height: number; fps: number } {
+): {
+  format: OutputFormat;
+  quality: ExportQuality;
+  transparent: boolean;
+  chapters: boolean;
+  width: number;
+  height: number;
+  fps: number;
+} {
   const even = (n: number): number => Math.max(2, 2 * Math.round((n * template.scale) / 2));
   return {
     format: template.format,
     quality: template.quality,
     transparent: template.transparent,
+    // Normalised here so callers never have to know the field is optional.
+    chapters: template.chapters ?? false,
     width: even(comp.width),
     height: even(comp.height),
     fps: template.fps === 'comp' ? comp.fps : template.fps,

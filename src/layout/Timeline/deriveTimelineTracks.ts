@@ -17,7 +17,7 @@ import { readNodeAdjustment } from '@core/effects/adjustment';
 import { readIsGuideLayer } from '@core/scene/guideLayer';
 import { readNodePreserveTransparency } from '@core/effects/preserveTransparency';
 import { is3DEnabled } from '@core/scene/threeD';
-import { readNodeKind, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
+import { readNodeKind, stackOrderedChildren, KIND_COLOR, KIND_ICON, KIND_FILL } from '@core/scene/sceneDerive';
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation, makeKeyframeId } from '@motion/animation';
@@ -58,7 +58,9 @@ export function deriveTimelineTracks(args: DeriveTimelineTracksArgs): TimelineTr
   const result: TimelineTrack[] = [];
 
   const traverse = (parentId: string, depth: number): void => {
-    const nodes = [...defaultSceneGraph.getChildren(parentId)].reverse();
+    // Front-most first — the same projection of the graph's child array the
+    // Scene tree uses, so the two panels can never disagree about the stack.
+    const nodes = stackOrderedChildren(defaultSceneGraph, parentId);
     for (const node of nodes) {
       const kind = readNodeKind(node);
       const isExpanded = expandedIds.includes(node.id);

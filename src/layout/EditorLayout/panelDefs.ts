@@ -66,6 +66,24 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   // parameter in this panel, and no other tab already speaks it.
   { id: 'effectControls', title: 'Effect Controls', icon: 'stopwatch', region: 'leftSidebar', weight: 9, closable: false },
   { id: 'assets',      title: 'Assets',    icon: 'image',       region: 'leftSidebar', weight: 8,   closable: false },
+  /**
+   * Text-based editing: the composition's spoken words, as chips you can seek
+   * to, select in runs and DELETE — which cuts that time out of every layer and
+   * closes the gap.
+   *
+   * NOT `onDemand`, and the argument is the one `marketplace` and
+   * `sourceMonitor` already made in this file: the routes that open an
+   * on-demand panel all live in a menu, so a surface nobody knows exists is a
+   * surface nobody summons. This one has the additional problem that its whole
+   * premise — that you can edit video by editing text — is not something a user
+   * goes looking for unless they have already seen it.
+   *
+   * `mic` because it is the only unclaimed glyph that names SPEECH. `type` and
+   * `text-left` are the Character and Paragraph tabs', `audio` and `waves` name
+   * a waveform rather than words, and `voice` aliases the same Phosphor
+   * component as `mic`.
+   */
+  { id: 'transcript',  title: 'Transcript', icon: 'mic',        region: 'leftSidebar', weight: 7,   closable: false },
   { id: 'library',     title: 'Library',   icon: 'component',   region: 'leftSidebar', weight: 6,   closable: false },
   // Both editions — see PANEL_AVAILABILITY / `aiEnabled()`. Local runs BYOK;
   // server runs through the hosted gateway.
@@ -98,8 +116,38 @@ export const PANEL_DEFS: readonly PanelDef[] = [
   { id: 'character',   title: 'Character', icon: 'type',        region: 'rightInspector', weight: 4.8, closable: false },
   { id: 'paragraph',   title: 'Paragraph', icon: 'text-left',   region: 'rightInspector', weight: 4.7, closable: false },
   { id: 'align',       title: 'Align',     icon: 'align-center', region: 'rightInspector', weight: 4.6, closable: false },
+  // The project palette. NOT `onDemand`: a palette nobody can see is a palette
+  // nobody fills, and the swatches it holds are document state that has to be
+  // discoverable from the file rather than from a menu the user has to already
+  // know about — the same argument that made `marketplace` permanent.
+  { id: 'swatches',    title: 'Swatches',  icon: 'palette',     region: 'rightInspector', weight: 4.55, closable: false },
   { id: 'info',        title: 'Info & Audio', icon: 'info',     region: 'rightInspector', weight: 4.5, closable: false },
+  // Video scopes: waveform, RGB parade, vectorscope, histogram. NOT `onDemand`
+  // — an on-demand panel needs something that opens it (see
+  // `onDemandPanelsReachable.test.ts`), and a measurement surface you have to
+  // already know exists before you can find it is a measurement surface nobody
+  // grades against. `waves` is the one unclaimed glyph that reads as a signal
+  // trace; every other candidate (`graph-value`, `graph-speed`) is already the
+  // Graph panel's, and a tab whose icon names another tab is worse than none.
+  { id: 'scopes',      title: 'Scopes',    icon: 'waves',       region: 'rightInspector', weight: 4.45, closable: false },
   { id: 'preview',     title: 'Preview',   icon: 'play',        region: 'rightInspector', weight: 4.4, closable: false },
+  /**
+   * The SOURCE viewer — one clip, before it is in the edit, with in/out points
+   * and the four verbs that put the marked range into a comp.
+   *
+   * NOT `onDemand`, and the reason is the same one that made `marketplace`
+   * permanent: every route that opens an on-demand panel lives in a menu model
+   * or a command registration, and a viewer nobody can see is a viewer nobody
+   * loads a clip into. It is also the panel the Assets context menu and the
+   * footage dialog's "Open in Source Monitor" hand a clip to — `openPanel` on
+   * a registered-but-closed panel would work, but the first time a user meets
+   * this surface should not require already knowing to summon it.
+   *
+   * `tv` because every other glyph in this rail is spoken for and a monitor is
+   * what this is: `video` and `image` name media KINDS (the Assets panel), and
+   * `play` is the Preview panel's.
+   */
+  { id: 'sourceMonitor', title: 'Source',  icon: 'tv',          region: 'rightInspector', weight: 4.42, closable: false },
   { id: 'tracker',     title: 'Tracker',   icon: 'crosshair',   region: 'rightInspector', weight: 4.2, closable: false },
   { id: 'rig',         title: 'Rigging',   icon: 'bone',        region: 'rightInspector', weight: 3.5, closable: false },
   // `magic-wand`, not `zap`: Lightning is the app's speed/quick-action glyph and

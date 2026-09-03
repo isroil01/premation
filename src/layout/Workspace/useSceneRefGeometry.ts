@@ -42,6 +42,12 @@ export interface SceneRefGeometry {
   scene3d: boolean;
   /** Ground plane visibility, with Draft 3D forcing it on. */
   groundGridVisible: boolean;
+  /**
+   * Where the ground plane sits, as an offset in comp units from the comp's
+   * bottom edge (Composition Settings ▸ World ▸ Ground level). 0 is the plane
+   * at y = compHeight this has always drawn, to the pixel.
+   */
+  groundLevel: number;
   /** Camera frustums, light cones and layer boxes, in comp space. */
   sceneGizmos: readonly SceneGizmo[];
   compWidth: number;
@@ -56,6 +62,10 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   const draft3d = useGuidesStore((s) => s.draft3d);
   const compWidth = useCompositionStore((s) => s.width);
   const compHeight = useCompositionStore((s) => s.height);
+  // Per-COMP, not a view setting: where the floor is is a fact about the scene
+  // being blocked out, so it has to follow the composition across views, panes
+  // and sessions rather than resetting with the viewport chrome.
+  const groundLevelSetting = useCompositionStore((s) => s.groundLevel);
   // Scoped like the renderer's, so the overlay never draws a different camera
   // than the one the frame was rendered through.
   const compRootId = useCompositionStore((s) => s.id);
@@ -66,6 +76,9 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   // that pairing is the point of the mode, so the ground plane is forced rather
   // than left to a separate toggle the user has to find.
   const groundGridVisible = groundGridSetting || draft3d;
+  // Absent (every document written before World settings existed) reads as 0,
+  // which is byte-for-byte the plane this drew before.
+  const groundLevel = Number.isFinite(groundLevelSetting) ? (groundLevelSetting as number) : 0;
 
   // Resolve the projection camera at the CURRENT playhead — the same chain the
   // renderer (buildSnapshot) and the selection chrome (ports.ts) use.
@@ -134,7 +147,7 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
     [scene3d, time, compWidth, compHeight, selectedIds, mode, activeCameraId, sceneRev, layerBoxesVisible],
   );
 
-  return { camera, orthoView, activeCameraId, scene3d, groundGridVisible, sceneGizmos, compWidth, compHeight };
+  return { camera, orthoView, activeCameraId, scene3d, groundGridVisible, groundLevel, sceneGizmos, compWidth, compHeight };
 }
 
 /**

@@ -42,6 +42,8 @@ export type {
   OverlayHandle,
   OverlayGuide,
   SnapLine as OverlaySnapLine,
+  SmartGuideSpan,
+  SmartGuideOverlayData,
 } from './ports';
 
 // ── Viewport / camera / coordinates ───────────────────────────────
@@ -62,6 +64,19 @@ export {
   type SnapResult,
   type SnapSource,
 } from './snap/SnapEngine';
+export {
+  nearestGaps,
+  spacingCandidates,
+  equalSizeCandidates,
+  smartGuides,
+  measureBetween,
+  gapBetween,
+  type Gap,
+  type GapSide,
+  type SpacingCandidate,
+  type SizeCandidate,
+  type SmartGuideInfo,
+} from './snap/smartGuides';
 
 // ── Hit testing ───────────────────────────────────────────────────
 export { HitTester, type HitOptions, type HitResult } from './hit/HitTester';
@@ -82,7 +97,15 @@ export {
   type Handle,
   type HandleId,
 } from './selection/handles';
-export { resizeBounds, resizeBoundsAboutPivot, rotationDelta, isResizeHandle } from './selection/transform';
+export {
+  resizeBounds,
+  resizeBoundsAboutPivot,
+  rotationDelta,
+  isResizeHandle,
+  scaleAboutPivot,
+  orbitAboutPivot,
+  oppositePivot,
+} from './selection/transform';
 export * as Gizmo3D from './selection/gizmo3d';
 export type { GizmoHandleType, RenderedGizmo3D, RenderedGizmoAxis, RenderedGizmoArc, RenderedGizmoPlane } from './selection/gizmo3d';
 export * as SceneGizmos from './selection/sceneGizmos';
@@ -130,6 +153,7 @@ export {
   PolygonTool,
   StarTool,
   LineTool,
+  KnifeTool,
   PenTool,
   PencilTool,
   BrushTool,
@@ -143,6 +167,7 @@ export {
   type ToolDragEvent,
   type ToolWheelEvent,
   type ToolKeyEvent,
+  type ToolHud,
 } from './tools';
 
 // ── Commands ──────────────────────────────────────────────────────
@@ -153,11 +178,15 @@ export {
   type MoveNodesPayload,
   type ResizeNodePayload,
   type RotateNodePayload,
+  type MultiTransformItem,
+  type MultiResizeNodesPayload,
+  type MultiRotateNodesPayload,
   type MoveAnchorPayload,
   type CreateNodePayload,
   type DeleteNodesPayload,
   type UpdateNodePathPayload,
   type UpdateMaskPathPayload,
+  type CutPathsPayload,
 } from './commands/WorkspaceCommands';
 
 // ── In-memory adapters (headless / tests) ─────────────────────────

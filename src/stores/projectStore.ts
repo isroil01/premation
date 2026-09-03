@@ -8,6 +8,7 @@ import { immer } from 'zustand/middleware/immer';
 import { getEventBus } from '@core/events/EventBus';
 import { shortId } from '@utils/lang';
 import type { FillPaint } from '@core/paint/fill';
+import type { EnvironmentPresetId } from '@core/scene/environmentLight';
 
 export interface TabInfo {
   id: string; // The UI tab ID
@@ -76,6 +77,90 @@ export interface CompositionSettings {
    */
   globalLightAngle?: number;
   globalLightAltitude?: number;
+
+  // ── World (Composition Settings ▸ World) ──────────────────────────
+  //
+  // All three are OPTIONAL and all three default to exactly the behaviour that
+  // existed before them, so a document written without them reads back
+  // byte-identical and renders byte-identical. `DEFAULT_COMP_SETTINGS`
+  // deliberately does NOT state them: a stated value would be written into
+  // every new comp record and change every document on disk.
+
+  /**
+   * The sky a NEW environment light starts on (see `insertLight`). A project
+   * shot against one HDRI look wants every probe it adds to begin there rather
+   * than on Studio; this is per-COMP because that is the unit a look belongs
+   * to. Absent = 'studio', the hardcoded default it replaces.
+   */
+  defaultEnvPreset?: EnvironmentPresetId;
+  /**
+   * Where the 3D reference floor sits, as an OFFSET in comp units from the
+   * comp's bottom edge (positive = further down). The ground grid has always
+   * been nailed to y = compHeight; a scene blocked out around a different floor
+   * had no way to say so and the grid read as a lie. Absent or 0 = the legacy
+   * plane, to the pixel.
+   *
+   * Reference geometry only — nothing rendered reads it.
+   */
+  groundLevel?: number;
+  /**
+   * "Show sky as backdrop" — STORED ONLY. The environment probe is an
+   * irradiance field, not a reflection map, so there is nothing to draw behind
+   * the scene yet; the setting exists so a project can carry the intent (and so
+   * the control has a home) and the UI disables it and says so. No renderer
+   * reads this.
+   */
+  showSkyBackdrop?: boolean;
+  /**
+   * AMBIENT OCCLUSION — contact darkening for the comp's 3D runs.
+   *
+   * Per-COMPOSITION and not per-layer, because that is what the effect is: how
+   * much light reaches a point given everything ELSE near it. No layer owns
+   * that question, and a per-layer switch would be a switch on the wrong noun.
+   *
+   * ABSENT by default, and the whole object is absent rather than present-with-
+   * `enabled: false`. A stated default would be written into every comp record
+   * the first time a project is saved, which is a change to every document on
+   * disk for a feature nobody turned on. Read it through `resolveSsao`.
+   */
+  ssao?: SsaoSettings;
+}
+
+/** Composition Settings ▸ World ▸ Ambient Occlusion. */
+export interface SsaoSettings {
+  enabled: boolean;
+  /** Hemisphere radius in COMP PX — a fixed size in the SCENE, not on screen,
+   *  so zooming the viewport does not change how deep a crevice reads. */
+  radius: number;
+  /** How much of the ambient term full occlusion removes, 0..2. */
+  intensity: number;
+  /** Buffer resolution. 'half' is the default: AO is low-frequency and the
+   *  shader magnifies it through a linear sampler on the way back. */
+  quality: 'half' | 'full';
+}
+
+/** The values an absent `ssao` block means. */
+export const DEFAULT_SSAO: SsaoSettings = {
+  enabled: false,
+  radius: 40,
+  intensity: 1,
+  quality: 'half',
+};
+
+/**
+ * Resolve a composition's ambient occlusion, filling in the defaults for
+ * documents saved before it existed. Every consumer goes through here, so a
+ * partially-written block can never reach the shader as a NaN radius.
+ */
+export function resolveSsao(comp: Pick<CompositionSettings, 'ssao'> | undefined): SsaoSettings {
+  const s = comp?.ssao;
+  if (!s) return DEFAULT_SSAO;
+  return {
+    enabled: s.enabled === true,
+    radius: Number.isFinite(s.radius) ? s.radius : DEFAULT_SSAO.radius,
+    intensity: Number.isFinite(s.intensity) ? s.intensity : DEFAULT_SSAO.intensity,
+    quality: s.quality === 'full' ? 'full' : 'half',
+  };
 }
 
 /** The composition's light direction, with the pre-global-light defaults. */

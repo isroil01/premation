@@ -14,17 +14,37 @@
  * at most a couple of pairs at once.
  *
  * The WARP is a function of (pair, weight) and runs per rendered frame — one
- * bilinear pass over the output. At 1080p that is real CPU work (tens of ms);
- * Pixel Motion is an opt-in per-layer mode, exactly as heavy as it looks in
- * AE, and the render loop's caches (RAM + disk frame cache, export staging)
- * absorb repeats.
+ * bilinear pass over the output. Pixel Motion is an opt-in per-layer mode,
+ * exactly as heavy as it looks in AE, and the render loop's caches (RAM +
+ * disk frame cache, export staging) absorb repeats.
  *
  * Estimation runs at a DOWNSCALED size (max dim ~384): adjacent-frame motion
  * is small and smooth, so a coarse grid catches it, and the 25× area saving is
  * what makes the whole thing interactive. The warp runs at full resolution.
+ *
+ * Both halves prefer the GPU, under two different gates:
+ *
+ *  - Estimation (`pixelMotionFlowGpu.ts`): an integer WebGL2 twin of the CPU
+ *    search that proves itself BIT-EQUAL at init, so the choice of backend —
+ *    decided once per session, or even flapping on a context loss — can
+ *    never make preview and export disagree.
+ *
+ *  - Warp (`pixelMotionWarpGpu.ts`): float bilinear, where bit-equality is
+ *    not on offer. Its gate is the session decision itself: self-check once,
+ *    then EVERY frame this session (preview and export) warps on the chosen
+ *    backend, so the backends' sub-count float differences are never visible
+ *    as a mismatch. On the GPU path the full-res frames go straight from the
+ *    bracket canvases to textures and the result comes back via drawImage —
+ *    the two full-res getImageData reads and the putImageData below are CPU-
+ *    path-only costs.
+ *
+ * No WebGL2, or a failed self-check, and everything runs on the CPU below,
+ * exactly as before.
  */
 
-import { computeFlow, lumaOf, warpBlend, type FlowField } from './pixelMotionFlow';
+import { computeFlow, lumaIntOf, warpBlend, type FlowField } from './pixelMotionFlow';
+import { getGpuFlowEstimator } from './pixelMotionFlowGpu';
+import { getGpuWarper } from './pixelMotionWarpGpu';
 
 /** Max dimension of the flow-estimation raster. */
 const FLOW_MAX_DIM = 384;
@@ -89,22 +109,29 @@ function flowFor(pairKey: string, a: HTMLCanvasElement, b: HTMLCanvasElement): F
   const scale = Math.min(1, FLOW_MAX_DIM / Math.max(w, h));
   const fw = Math.max(8, Math.round(w * scale));
   const fh = Math.max(8, Math.round(h * scale));
-  const surf = canvas2d(scaleCanvas, fw, fh);
-  if (!surf) return null;
-  scaleCanvas = surf.canvas;
-  let lumA: Float32Array;
-  let lumB: Float32Array;
-  try {
-    surf.ctx.clearRect(0, 0, fw, fh);
-    surf.ctx.drawImage(a, 0, 0, fw, fh);
-    lumA = lumaOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
-    surf.ctx.clearRect(0, 0, fw, fh);
-    surf.ctx.drawImage(b, 0, 0, fw, fh);
-    lumB = lumaOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
-  } catch {
-    return null;
+  // GPU search first — bit-equal to the CPU one below (enforced by its init
+  // self-check), so a null here (no WebGL2, lost context, failed check) can
+  // fall through mid-session without preview and export ever diverging.
+  let flow = getGpuFlowEstimator()?.compute(a, b, fw, fh) ?? null;
+  if (!flow) {
+    const surf = canvas2d(scaleCanvas, fw, fh);
+    if (!surf) return null;
+    scaleCanvas = surf.canvas;
+    let lumA: Int32Array;
+    let lumB: Int32Array;
+    try {
+      surf.ctx.clearRect(0, 0, fw, fh);
+      surf.ctx.drawImage(a, 0, 0, fw, fh);
+      lumA = lumaIntOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
+      surf.ctx.clearRect(0, 0, fw, fh);
+      surf.ctx.drawImage(b, 0, 0, fw, fh);
+      lumB = lumaIntOf(surf.ctx.getImageData(0, 0, fw, fh).data, fw, fh);
+    } catch {
+      return null;
+    }
+    flow = computeFlow(lumA, lumB, fw, fh);
   }
-  const entry: FlowEntry = { flow: computeFlow(lumA, lumB, fw, fh), fw, fh };
+  const entry: FlowEntry = { flow, fw, fh };
   flowCache.set(pairKey, entry);
   while (flowCache.size > FLOW_CACHE_MAX) {
     const oldest = flowCache.keys().next();
@@ -134,6 +161,22 @@ export function renderPixelMotion(
   if (w < 1 || h < 1 || b.width !== w || b.height !== h) return null;
   const entry = flowFor(pairKey, a, b);
   if (!entry) return null;
+  const t = Math.max(0, Math.min(1, weight));
+  // GPU warp first — session-gated by its self-check (see the header note on
+  // why this gate differs from the estimator's). A null mid-session (context
+  // loss) drops THIS AND LATER frames to the CPU warp below; that is the one
+  // seam where warp pixels can change within a session, by design.
+  const warper = getGpuWarper();
+  if (warper) {
+    const warped = warper.warp(pairKey, a, b, w, h, entry.flow, w / entry.fw, h / entry.fh, t);
+    if (warped) {
+      const surf = canvas2d(out, w, h);
+      if (!surf) return null;
+      surf.ctx.clearRect(0, 0, w, h);
+      surf.ctx.drawImage(warped, 0, 0);
+      return surf.canvas;
+    }
+  }
   const da = imageDataOf('a', a, w, h);
   const db = imageDataOf('b', b, w, h);
   if (!da || !db) return null;
@@ -143,7 +186,7 @@ export function renderPixelMotion(
   warpBlend(
     da.data, db.data, w, h,
     entry.flow, w / entry.fw, h / entry.fh,
-    Math.max(0, Math.min(1, weight)),
+    t,
     result.data,
   );
   surf.ctx.putImageData(result, 0, 0);
