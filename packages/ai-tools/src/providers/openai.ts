@@ -12,6 +12,9 @@ import { toOpenAiTools } from '../emit';
 import { SseReader, safeJson } from './sse';
 import type { ProviderAdapter, StreamParser } from './types';
 
+/** What an image-only turn says when the user typed nothing. */
+const IMPLICIT_PROMPT = 'Look at the attached image(s).';
+
 function toOpenAiMessages(system: string, messages: readonly AiMessage[]): unknown[] {
   const out: unknown[] = [{ role: 'system', content: system }];
   for (const m of messages) {
@@ -26,9 +29,12 @@ function toOpenAiMessages(system: string, messages: readonly AiMessage[]): unkno
                   type: 'image_url',
                   image_url: { url: `data:${img.mediaType};base64,${img.dataBase64}` },
                 })),
-                { type: 'text', text: m.content },
+                // OpenAI tolerates the empty text part that makes Gemini and
+                // Anthropic 400, but it is never the intent — an attachment
+                // with no caption means "look at this", so say that.
+                { type: 'text', text: m.content || IMPLICIT_PROMPT },
               ]
-            : m.content,
+            : m.content || IMPLICIT_PROMPT,
         });
         break;
       case 'assistant':

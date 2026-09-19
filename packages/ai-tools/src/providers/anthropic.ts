@@ -15,6 +15,9 @@ import { toAnthropicTools } from '../emit';
 import { SseReader, safeJson } from './sse';
 import type { ProviderAdapter, StreamParser } from './types';
 
+/** What an image-only turn says when the user typed nothing. */
+const IMPLICIT_PROMPT = 'Look at the attached image(s).';
+
 function toAnthropicMessages(messages: readonly AiMessage[]): unknown[] {
   const out: unknown[] = [];
   for (const m of messages) {
@@ -25,7 +28,10 @@ function toAnthropicMessages(messages: readonly AiMessage[]): unknown[] {
           type: 'image',
           source: { type: 'base64', media_type: img.mediaType, data: img.dataBase64 },
         }));
-        content.push({ type: 'text', text: m.content });
+        // Never an empty text block — Anthropic rejects one outright ("text
+        // content blocks must be non-empty"), and the composer allows an
+        // attachment with no caption. Same defect as Gemini's 400.
+        content.push({ type: 'text', text: m.content || IMPLICIT_PROMPT });
         out.push({ role: 'user', content });
         break;
       }
