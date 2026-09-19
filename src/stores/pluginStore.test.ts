@@ -131,6 +131,8 @@ describe('manifest normalisation on load', () => {
       tools: [],
       shortcuts: [],
       expressions: [],
+      // And the audio effects, for the same reason one more grammar on.
+      audioEffects: [],
       // `net` is present as `null`, which is the same discipline stated
       // differently: no network at all is a real state and gets a real value.
       // The empty list is NOT its zero — "reach nowhere" is refused at parse

@@ -64,7 +64,7 @@ describe('normalisation', () => {
     // normalised into the first.
     expect(manifest?.contributes).toEqual({
       commands: [], panels: [], layerKinds: [], effects: [], exporters: [], importers: [], presets: [], net: null,
-      inspector: [], tools: [], shortcuts: [], expressions: [],
+      inspector: [], tools: [], shortcuts: [], expressions: [], audioEffects: [],
     });
   });
 

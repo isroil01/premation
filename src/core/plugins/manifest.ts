@@ -32,6 +32,7 @@ import { parseExporters, type ExporterContribution } from './exporterSchema';
 import { parseImporters, type ImporterContribution } from './importerSchema';
 import { parsePresets, type PresetContribution } from './presetSchema';
 import { parseNet, type NetContribution } from './netSchema';
+import { parseAudioEffects, type AudioEffectContribution } from './audioEffectSchema';
 import { parseInspectorPanels, type PluginInspectorPanelContribution } from './uiParams';
 import { parsePluginTools, type PluginToolContribution } from './uiTools';
 import { parsePluginShortcuts, type PluginShortcutContribution } from './uiShortcuts';
@@ -69,6 +70,15 @@ import { RUNTIME_TIERS, DEFAULT_RUNTIME_TIER, type RuntimeTier } from './runtime
  *     sides, and a plugin that contributes a tool with no way to draw, or
  *     parameters with no way to act on them, is half of something.
  *
+ * 8 — `contributes.audioEffects`. A plugin can process SOUND — declared as a
+ *     chain of the same WebAudio primitives the built-in audio effects are
+ *     made of, so the one graph builder wires both and live playback cannot
+ *     drift from an export. See `audioEffectSchema.ts` for why it is a
+ *     declared graph rather than AE's sample callback.
+ *
+ *     A grammar bump only: the ability to CALL anything new is a capability
+ *     (`audio.effects`), which is the axis an author needs to ask about.
+ *
  *     `contributes.exporters`. A plugin can write a file format the editor does
  *     not know: the host renders and hands over frames, the plugin returns
  *     bytes, the host writes the file. A GRAMMAR bump only — it adds a
@@ -99,7 +109,7 @@ export const HOST_API_VERSION = 5;
  * changed — reading a document with keys whose meaning is unknown is how a
  * validator silently accepts something it does not understand.
  */
-export const MANIFEST_VERSION = 7;
+export const MANIFEST_VERSION = 8;
 
 /** Everything a plugin may ask for. Nothing outside this list is grantable. */
 export const PERMISSIONS = {
@@ -397,6 +407,14 @@ export interface PluginContributes {
   shortcuts: PluginShortcutContribution[];
   /** Functions callable from expressions — see `uiExpressions.ts`. */
   expressions: PluginExpressionContribution[];
+  /**
+   * Audio effects this plugin declares. Requires `apiVersion: 8`.
+   *
+   * A CHAIN of WebAudio primitives rather than a sample callback — see
+   * `audioEffectSchema.ts`, which explains at length why the parity rule in
+   * `audioEffects.ts` makes that the only shape that can work here.
+   */
+  audioEffects: AudioEffectContribution[];
 }
 
 /**
@@ -627,7 +645,7 @@ export interface ManifestResult {
 function emptyContributes(): PluginContributes {
   return {
     commands: [], panels: [], layerKinds: [], effects: [], exporters: [], importers: [], presets: [],
-    net: null, inspector: [], tools: [], shortcuts: [], expressions: [],
+    net: null, inspector: [], tools: [], shortcuts: [], expressions: [], audioEffects: [],
   };
 }
 
@@ -1035,6 +1053,12 @@ function parseContributes(
     } else if (c.expressions.length > 0) {
       errors.push('"contributes.expressions" requires "apiVersion": 7.');
     }
+  }
+
+  // Grammar 8. The parser owns its own version gate (it needs the number to
+  // word the message), so unlike the four above there is no wrapper here.
+  if (c.audioEffects !== undefined) {
+    out.audioEffects = parseAudioEffects(c.audioEffects, errors, apiVersion);
   }
 
   return out;

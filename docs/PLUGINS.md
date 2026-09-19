@@ -3235,3 +3235,258 @@ so the renderer-to-main hop is a copy. `SharedArrayBuffer` would remove it and
 is deliberately not the default — shared memory has no ownership at all, and the
 torn frame that results from a plugin writing while the compositor reads is not
 reproducible.
+
+### Pixel precision — what each tier actually carries
+
+Worth stating plainly, because the format names invite the wrong conclusion.
+
+**Your GPU effect already runs at half-float.** The renderer's compositing
+targets are `rgba16float` throughout, so a WGSL or GLSL pass reads and writes
+at that precision with nothing to ask for. If your effect needs the bits, ship
+a shader.
+
+**Your CPU kernel and your native addon are 8-bit at source.** Every route
+into them starts at Canvas2D's `getImageData`, which has no wider form.
+`pixelFormat: "f32-premul"` is therefore a *container*, not a promise: you get
+8-bit data widened to float, and the conversion happens once in your own
+process instead of inside your inner loop. That is a real benefit and it is
+not more bits.
+
+So the CPU kernel is the **twin** that keeps your effect working when a layer
+is baked — a mask-scoped effect beside it, fill opacity, a path-following
+style — rather than the place to do high-precision work. An effect that needs
+precision ships a shader and uses the kernel as its fallback.
+
+### Sequence data — what your effect remembers between frames
+
+A native effect call used to be stateless. Every frame handed you pixels,
+params and a time, and threw away everything you worked out. For a colour grade
+that is correct and free. For the plugins this tier exists to host it is the
+whole cost: an optical-flow retimer re-derives the flow field, a denoiser
+re-builds its noise model, a raytracer re-builds its BVH — once per frame, for
+a value that did not change.
+
+After Effects calls this `sequence_data`, and essentially every serious AE
+plugin is built on it, because it is what lets a plugin be expensive **once**.
+
+**The round trip.** `request.state` is whatever you returned as `state` from
+this instance's previous frame:
+
+```c
+/* frame 1 */  request.state === undefined   →  answer { ok: true, output, state: myBVH }
+/* frame 2 */  request.state === myBVH       →  answer { ok: true, output }
+/* frame 3 */  request.state === myBVH       →  answer { ok: true, output }
+```
+
+- **Omit `state`** to keep what the host holds. This is the case you want on
+  almost every frame. Returning your cache again each frame is also correct and
+  costs a structured clone of the whole thing per frame — which is exactly the
+  cost the field exists to avoid.
+- **Return `null`** to clear it.
+
+**It is a cache, and the host may drop it at any moment.** `state` is absent on
+the first frame, after a param you named in `invalidateOn` changes, when the
+host is over its ceiling and yours was the least recently used, and after
+anything that restarts your process — an unload, a reload, a crash, a
+revocation. An addon that cannot rebuild from nothing will fail on somebody's
+second frame.
+
+**Nothing here is saved.** AE flattens sequence data into the project, which is
+why AE plugins implement flatten/unflatten and why a corrupt one breaks the
+project rather than the render. What the user authored belongs in params —
+typed, validated, animatable, saved. What you *derived* from those params
+belongs in `state`, where losing it costs a recompute and nothing else.
+
+**Saying what invalidates it.** By default nothing does, and that is the right
+default rather than the lazy one: the expensive caches this exists for depend
+on the SOURCE, not on the controls, and rebuilding a flow field because a
+slider moved is the cost you came here to remove. If your cache *does* depend
+on a control, name it:
+
+```json
+{
+  "id": "retime",
+  "label": "Optical Retime",
+  "params": {
+    "speed":   { "type": "number", "default": 50 },
+    "quality": { "type": "number", "default": 2 }
+  },
+  "invalidateOn": ["quality"]
+}
+```
+
+Moving `speed` keeps the flow field; moving `quality` throws it away. Names are
+checked against the effect's own params at parse, because a typo here is a
+cache that silently never invalidates — which surfaces as a wrong frame long
+after the manifest was written.
+
+**Ceilings.** 64 instances across all plugins, 64 MB per entry. Go over the
+per-entry limit and the host refuses to hold it, tells you so against your
+plugin's name in its log, and renders the frame anyway: a refused cache is
+slow, never broken.
+
+## 20. Param supervision — reacting to your own controls
+
+An effect's parameters were a one-way street: the user moved them, the shader
+read them, and the plugin had no say in between. That is enough for a colour
+grade and not enough for an effect with a **preset** — pick "Filmic" and eight
+sliders should move to the values that mean Filmic, and dragging one of those
+sliders should set the dropdown to "Custom".
+
+After Effects calls this `PF_Cmd_USER_CHANGED_PARAM`. It is also how an effect
+keeps itself coherent: a "lock aspect" checkbox that makes height follow width,
+a radius that clamps itself against a quality budget, a colour that recomputes
+its complement.
+
+**Declare which params you want to hear about**, in the manifest:
+
+```json
+{
+  "id": "filmic",
+  "label": "Filmic Grade",
+  "supervises": ["preset"],
+  "params": {
+    "preset": { "type": "number", "default": 0, "min": 0, "max": 3 },
+    "lift":   { "type": "number", "default": 0 },
+    "gain":   { "type": "number", "default": 1 }
+  }
+}
+```
+
+**Then answer:**
+
+```js
+motion.effects.onParamChanged('filmic', ({ changed, params }) => {
+  if (changed !== 'preset') return null;
+  return PRESETS[params.preset] ?? null;   // { lift, gain }
+});
+```
+
+Return an object of params to write, or `null` to change nothing.
+
+### The rules, and why each one is there
+
+**It is opt-in, per param.** An effect that names nothing in `supervises` costs
+exactly what it always did: no round trip, no timer, nothing. Names are checked
+against your own params at parse — a name matching nothing is a callback that
+never fires, and nothing on screen would say so.
+
+**You are called once per gesture, not once per commit.** A slider commits
+thirty times a second; supervising each one would put a worker round trip
+inside a drag loop. The call is trailing-debounced per (layer, effect), so a
+drag fires one supervision carrying the value it **ended** on.
+
+**You cannot loop.** The params you write back are applied with supervision
+suppressed for that instance, so normalising a value you also supervise is safe
+rather than an infinite exchange.
+
+**Your answer is filtered.** Keys the effect does not declare are dropped, and
+values that did not actually move are ignored — a reply is plugin output
+arriving through a channel the user did not initiate, and writing what is
+already there would manufacture an undo step out of "no change".
+
+**Taking too long costs the user nothing.** Past 1.5 s the host gives up on
+that edit. The user's own change already landed, so nothing is lost but your
+adjustment.
+
+**Your answer is its own undo entry**, labelled after your effect — "Filmic
+Grade adjusted Lift and Gain". AE folds the supervised change into the user's
+edit because its plugins are in-process and answer synchronously; ours answer
+across a boundary, and awaiting that inside the user's edit would mean a
+dropdown that hangs for as long as a plugin feels like taking. Two undos rather
+than one, and the history says what happened.
+
+**A stopped plugin does not supervise.** The trigger is a slider, not something
+the user named by hand, so it never wakes a worker — the same rule generator
+layers follow.
+
+## 21. Audio effects (API 8)
+
+A plugin can process **sound**, not just pixels.
+
+```json
+{
+  "id": "air",
+  "label": "Air",
+  "category": "Filters",
+  "params": [
+    { "key": "amount", "label": "Amount", "unit": "dB", "min": 0, "max": 12, "default": 3 }
+  ],
+  "chain": [
+    { "kind": "biquad", "type": "highshelf", "set": { "frequency": 8000, "gain": { "param": "amount" } } },
+    { "kind": "gain", "set": { "gain": 1 } }
+  ]
+}
+```
+
+That is the whole plugin. There is no code to write: the effect appears in the
+audio-effect menu, its parameters appear in the inspector, and they keyframe.
+
+### Why it is a declared graph and not a sample callback
+
+After Effects' `PF_Cmd_AUDIO_RENDER` hands a plugin a buffer of samples and
+takes one back. Copying that here would break the one rule this app's audio is
+built on, and it is worth being exact about which.
+
+`audioEffects.ts` states it: there is **exactly one** function that turns a
+list of effects into audio nodes, and both the live `AudioEngine` and the
+offline `audioMixdown` call it. The failure that rule prevents is a mix that
+sounds right while scrubbing and renders differently — "discoverable only by
+exporting and listening, which is the worst possible feedback loop".
+
+A sample callback cannot keep that. Live playback would need an AudioWorklet,
+which this codebase has a standing rule against and which the gate and duck
+effects already route around by baking to keyframes, while the offline path
+could call your plugin directly. That is two implementations of one effect,
+and the one that is wrong is the one you only hear after a twenty-minute
+export.
+
+So you declare a chain of the same primitives the built-in effects are made
+of, and the same builder wires it. Parity is structural rather than something
+to test for, and your effect works in preview and in export because it is the
+same nodes in both.
+
+**What that costs, honestly:** you cannot write a sample loop. No convolution
+reverb from your own impulse response, no spectral denoiser, nothing whose
+maths is not expressible as WebAudio nodes. That is a real limit and the
+deliberate price of the parity rule. The families it does cover — EQ, filters,
+delay, modulation, distortion, stereo work, gain staging — are what most audio
+plugins actually are.
+
+### The primitives
+
+`biquad` · `gain` · `delay` · `panner` · `compressor` · `waveshaper`
+
+Every one exists identically on `AudioContext` and `OfflineAudioContext`,
+which is what makes the parity a property of the list. A node that behaved
+differently between the two would not belong here whatever it could do.
+
+### Settings, and how a parameter animates one
+
+A setting is a fixed number, or `{ "param": "<name>" }` naming one of your
+declared parameters. The reference is what makes your effect **animatable**:
+the host resolves it through `buildParamRamp`, the same seam level, pan and
+fades ride, so a keyframed plugin parameter schedules exactly like a keyframed
+built-in one. A bare number costs no ramp at all.
+
+Settings are checked against the node kind. `{ "kind": "gain", "set":
+{ "frequency": 800 } }` would typecheck and build and do nothing, so it is
+refused — as is a `{ "param": ... }` naming a parameter you did not declare,
+which would be a slider the user can move that reaches no node.
+
+### Limits
+
+8 effects per plugin · 8 nodes per chain · 12 params per effect · 5 s of delay
+line · 256-point shaper curve.
+
+A delay whose `delayTime` is driven by a parameter reserves against that
+parameter's **maximum**, because `DelayNode` takes its ceiling at construction
+and cannot grow — otherwise an animated sweep silently stops getting longer.
+
+### When your plugin is not there
+
+A document that uses your audio effect keeps it. Disable or uninstall the
+plugin and the signal passes through untouched, with the layer's parameters
+intact; re-enable it and the sound comes back. A project must not fall silent
+because a plugin was toggled — silence is the one failure nobody notices until
+they have exported.

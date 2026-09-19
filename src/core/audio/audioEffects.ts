@@ -62,6 +62,7 @@
 
 import { defaultAnimation, type PropPath } from '@motion/animation';
 import { buildRamp, applyRamp } from './audioParams';
+import { connectPluginAudioEffect } from '@core/plugins/pluginAudioGraph';
 
 /** Every audio effect. See the header for what each is built from. */
 export type AudioEffectType =
@@ -1342,10 +1343,24 @@ export function connectAudioEffects(
           node = merge;
         }
         break;
-      default:
-        // An unknown type passes the signal through untouched. A stored project
-        // from a newer build must stay audible, not fall silent.
+      default: {
+        /*
+          A PLUGIN's audio effect, or a type this build does not know.
+
+          Consulted here, in the one builder, rather than wired anywhere of its
+          own — that is the whole reason a plugin audio effect is a declared
+          CHAIN of these same primitives. Live playback and offline mixdown
+          both arrive at this line, so they cannot disagree about a plugin
+          effect any more than they can about a Parametric EQ.
+
+          Anything that is not a plugin effect — or is one whose plugin is
+          uninstalled, disabled, or a version that no longer declares it —
+          falls through unchanged. A stored project from a newer build must
+          stay audible, not fall silent.
+        */
+        node = connectPluginAudioEffect(ctx, node, fx.type, bind);
         break;
+      }
     }
   }
   return { node, sources };
