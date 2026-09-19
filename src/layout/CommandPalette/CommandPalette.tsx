@@ -43,8 +43,10 @@ import { useSceneRevision } from '@stores/sceneStore';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { flattenScene, readNodeKind, KIND_COLOR } from '@core/scene/sceneDerive';
-import type { SceneKind } from '@core/scene/seedDefaultScene';
+// The glyph table is `sceneDerive`'s, not a copy of it: this file used to keep
+// its own, which had already drifted from the timeline's (a group drew a
+// `layers` stack here and a `folder` there) for the same kind of object.
+import { flattenScene, readNodeKind, KIND_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
 import { asCommandId } from '@app-types/common';
 import { formatChord } from '@layout/Menu/formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
@@ -86,22 +88,6 @@ interface Item {
   disabled?: boolean;
   run: () => void;
 }
-
-const KIND_ICON: Record<SceneKind, IconName> = {
-  group: 'layers',
-  null: 'crosshair',
-  shape: 'shape',
-  text: 'type',
-  image: 'image',
-  video: 'video',
-  svg: 'shape',
-  audio: 'audio',
-  camera: 'camera',
-  light: 'light',
-  adjustment: 'adjustment',
-  particle: 'sparkles',
-  comp: 'component',
-};
 
 const SR_ONLY: CSSProperties = {
   position: 'absolute',
@@ -264,7 +250,7 @@ function buildItems({ query, closePalette, recent, context, docs, now }: BuildIn
           section: 'Layers',
           label: n.name ?? 'Layer',
           hint: kind,
-          icon: KIND_ICON[kind] ?? 'shape',
+          icon: (KIND_ICON[kind] ?? 'shape') as IconName,
           color: KIND_COLOR[kind],
           run: () => {
             closePalette();

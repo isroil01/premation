@@ -102,21 +102,9 @@ import { AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP } from '@core/audio/audioParams';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { setNodeBlend } from '@core/effects/blendMode';
 import { setNodeMatte } from '@core/effects/matte';
-import { readNodeFxEnabled, setNodeFxEnabled } from '@core/effects/effects';
-import { readNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
-import { readNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
-import { toggleGuideLayer, isGuideLayer } from '@core/scene/guideLayer';
-import { readNodePreserveTransparency, setNodePreserveTransparency } from '@core/effects/preserveTransparency';
-import {
-  enableLayerMotionBlurWithFeedback,
-  disableLayerMotionBlur,
-  setAdjustmentWithFeedback,
-  notifyGuideLayerChange,
-} from '@core/effects/layerSwitchFeedback';
 import { reparentNode, moveNodeAdjacent } from '@core/scene/parenting';
 import { renameLayer } from '@core/scene/renameLayer';
-import { is3DEnabled, set3DEnabled, canBe3D } from '@core/scene/threeD';
-import { notifyCameraTipIfMissing } from '@core/workspace/cameraNav';
+import { toggleLayerFlags } from '@core/scene/layerFlags';
 import { useFocusStore } from '@stores/focusStore';
 import { useFocusContext } from '@layout/focus/useFocusContext';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -308,9 +296,13 @@ function EditorShellInner(): JSX.Element {
     void clipRev;
     void markerRev;
     void valueRev;
-    void sceneRev;
     return deriveTimelineTracks({ activeCompId, compFps, expandedIds });
-  }, [graphRev, animRev, clipRev, markerRev, valueRev, sceneRev, compFps, expandedIds, activeCompId]);
+  // `sceneRev` is deliberately NOT a dependency — `valueRev` is, and it IS
+  // `sceneRev` gated on there being an expanded row to show a value on. Listing
+  // the raw counter here as well defeated that gate completely: the memo ran on
+  // every drag tick again, which is the cost the gate exists to avoid, and the
+  // comment above went on describing a fix the deps array had cancelled.
+  }, [graphRev, animRev, clipRev, markerRev, valueRev, compFps, expandedIds, activeCompId]);
 
   // Mirror the scene graph into the Timeline Engine's layers on STRUCTURAL
   // changes only (add/remove/reparent). Pure keyframe or property edits do not
@@ -1659,56 +1651,19 @@ function EditorShellInner(): JSX.Element {
                 bumpScene();
               }}
               onTrackToggleFlag={(trackId, flag) => {
-                const n = defaultSceneGraph.getNode(trackId);
-                if (!n) return;
-                // Each switch must write where the RENDERER reads. These used to
-                // assign a top-level property on the node view, which the render
-                // pipeline never consults — so the icon lit up and no pixel
-                // changed, while the inspector's equivalent switch (writing the
-                // `fx` component) changed pixels without lighting the icon.
-                if (flag === 'preserveTransparency') {
-                  setNodePreserveTransparency(trackId, !readNodePreserveTransparency(n));
-                  bumpScene();
-                  return;
-                }
-                if (flag === 'guide') {
-                  const next = !isGuideLayer(trackId);
-                  toggleGuideLayer(trackId);
-                  notifyGuideLayerChange(next);
-                  bumpScene();
-                  return;
-                }
-                if (flag === 'threeD') {
-                  // Honest gating: kinds the renderer can't project in 3D
-                  // (groups/nulls/cameras/lights/solids/particles/audio) must
-                  // not light a cube that changes no pixel.
-                  if (!canBe3D(n)) {
-                    useUIStore.getState().notify({
-                      level: 'warning',
-                      message: `3D isn't available for ${readNodeKind(n)} layers`,
-                      durationMs: 2600,
-                    });
-                    return;
-                  }
-                  const next = !is3DEnabled(n);
-                  set3DEnabled(trackId, next);
-                  if (next) {
-                    notifyCameraTipIfMissing((message, level) =>
-                      useUIStore.getState().notify({ level, message, durationMs: 3200 }),
-                    );
-                  }
-                } else if (flag === 'motionBlur') {
-                  if (readNodeMotionBlur(n)) disableLayerMotionBlur(trackId, setNodeMotionBlur);
-                  else enableLayerMotionBlurWithFeedback(trackId, setNodeMotionBlur);
-                } else if (flag === 'adjustment') {
-                  setAdjustmentWithFeedback(trackId, !readNodeAdjustment(n), setNodeAdjustment);
-                } else if (flag === 'fxEnabled') {
-                  setNodeFxEnabled(trackId, !readNodeFxEnabled(n));
-                } else {
-                  // `shy` is timeline-only state with no render meaning.
-                  (n as any)[flag] = !(n as any)[flag];
-                }
-                bumpScene();
+                // The switch VERBS live in `@core/scene/layerFlags`, beside the
+                // graph they write. They used to be spelled out right here —
+                // which is where the TIMELINE happens to draw its switches, so
+                // the Layers panel could not offer the same switch without a
+                // second copy, and `CompositingSection` and `SelectionHeader`
+                // already had two more. One set of verbs, three sets of buttons.
+                //
+                // `collapse` is the exception: `TrackHeaderColumn` calls
+                // `toggleCollapseSwitch` on its own because the switch means two
+                // different things by layer kind (Collapse Transformations on a
+                // comp, Continuous Rasterize on a vector), so it never arrives.
+                if (flag === 'collapse') return;
+                toggleLayerFlags([trackId], flag, trackId);
               }}
               onKeyframeSeek={handleKeyframeSeek}
               onKeyframeMove={handleKeyframeMove}

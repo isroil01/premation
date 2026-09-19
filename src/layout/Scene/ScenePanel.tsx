@@ -4,57 +4,61 @@
  *
  * Three jobs, all of them the document's structure rather than its values:
  *   • the composition list (open, duplicate, settings, delete);
- *   • the layer tree — selection, rename, visibility, drag-to-reparent, and
- *     the per-layer kebab that hosts arrange / lock / solo / label colour,
- *     grouping and pre-compose, the SVG actions, and the boolean path
- *     operators (Merge Paths, live and baked);
- *   • the search box that filters the tree, keeping ancestors of any match.
+ *   • the layer tree — selection, rename, the switch column, drag-to-reparent,
+ *     the parent pick-whip, and the row menu (`sceneMenu`);
+ *   • the filter row that narrows the tree five ways, and the view menu that
+ *     says how much of the document to list and how densely.
  *
  * It reads the live scene graph directly (`defaultSceneGraph`) and re-derives
- * the tree from a scene revision bump, so there is one source of truth for
- * what the document contains and this panel never holds a second copy of it.
+ * the tree from a structural change, so there is one source of truth for what
+ * the document contains and this panel never holds a second copy of it.
+ *
+ * ── Why STRUCTURE and not the scene revision ──────────────────────────
+ * The tree used to be keyed on `useSceneRevision().rev`. That counter ticks on
+ * every value write as well as every structural one — `bumpSceneRevision` is
+ * called per pointer move by `viewportGesture` — so dragging a layer on canvas
+ * rebuilt this entire tree thirty to sixty times a second: every node of every
+ * composition, its plugin ownership, its label colour and a fresh JSX label,
+ * then the filter walk, the match count, the kind list and the footer's flatten
+ * on top. The timeline was moved off `rev` for exactly this reason and the
+ * Layers panel was not. Structure arrives as `SceneGraphChanged`; VALUES that
+ * this tree actually displays (a name, a visibility flag, a label colour) each
+ * announce themselves as `NodeUpdated`, which is the second signal below.
  *
  * Panel chrome (rows, the footer, the search row) comes from the shared
  * `EditorLayout/panels.module.css`, which the Scene, Assets and Inspector
  * panels all draw from — they are three views of one dock, not three designs.
  */
 
-import { useMemo, useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Panel } from '@components/Panel';
-import { TreeView, type TreeNode } from '@components/TreeView';
+import { TreeView } from '@components/TreeView';
 import { SearchField } from '@components/SearchField';
-import { Icon, type IconName } from '@components/Icon';
+import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
+import { PickWhip } from '@components/PickWhip';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useSceneRevision } from '@stores/sceneStore';
 import { useAnimationRevision } from '@hooks/useAnimationRevision';
 import { useProjectStore } from '@stores/projectStore';
 import { useUIStore } from '@stores/uiStore';
-import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { openContextMenu } from '@stores/contextMenuStore';
+import {
+  ROW_DENSITY,
+  useSceneViewStore,
+  type RowDensity,
+  type SearchField as SearchFieldId,
+} from '@stores/sceneViewStore';
 import { getEventBus } from '@core/events/EventBus';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { renameLayer } from '@core/scene/renameLayer';
 import { type SceneKind } from '@core/scene/seedDefaultScene';
-import { flattenComposition, readNodeKind, stackOrderedChildren } from '@core/scene/sceneDerive';
+import { KIND_LABEL, flattenComposition } from '@core/scene/sceneDerive';
 import { activeCompRootId } from '@core/scene/activeComp';
-import {
-  toggleSelectedLocked,
-  toggleSelectedSolo,
-  groupSelectedLayers,
-  ungroupSelected,
-  duplicateSelectedLayers,
-  deleteSelectedLayers,
-  toggleNodeVisible,
-  toggleSelectedVisible,
-} from '@core/scene/sceneInsert';
-import { mergeSelectedPaths, liveMergeSelectedPaths } from '@core/scene/mergePaths';
-import { rigLogoForAnimation } from '@core/scene/rigLogo';
-import { reparentNode, moveNodeAdjacent, canReparent, arrangeNodes } from '@core/scene/parenting';
-import { LABEL_COLORS, readNodeLabelColor, setNodeLabelColor, nodesWithLabelColor } from '@core/scene/labelColor';
-import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
-import { svgContextMenuItems } from '@layout/Inspector/svgLayerActions';
-import { getNodeEffects } from '@core/effects/effects';
-import { defaultAnimation } from '@motion/animation';
+import { canReparent, eligibleParents, moveNodeAdjacent, parentOptionsFor, reparentNode } from '@core/scene/parenting';
+import { LABEL_COLORS } from '@core/scene/labelColor';
+import { LAYER_FLAGS } from '@core/scene/layerFlags';
+import { runDocumentEdit } from '@core/commands/documentEdit';
+import { batchScene } from '@stores/sceneStore';
 import {
   countSceneMatches,
   filterSceneTree,
@@ -62,318 +66,158 @@ import {
   toggleKind,
   withRevealed,
   type SceneFilter,
-  type SceneNodeFacts,
 } from './sceneFilters';
-import { findLayerKind, findKindFor } from '@core/plugins/layerKindRegistry';
-import { ownerOf, readCustomLayer } from '@core/plugins/customLayers';
-import type { SceneNode } from '@core/types';
+import {
+  collectIds,
+  makeFactsReader,
+  presentKinds,
+  sceneGraphToTree,
+} from './sceneRows';
+import { SceneRowSwitches } from './SceneRowSwitches';
+import { deleteLayersWithFeedback, sceneNodeMenuItems } from './sceneMenu';
 import styles from '@layout/EditorLayout/panels.module.css';
 import { CompositionList } from './CompositionList';
 
-/** What the TreeView carries per row beyond its label — used for the glyph. */
-interface SceneNodeData {
-  type: SceneKind;
-}
+const KIND_ORDER = Object.keys(KIND_LABEL) as SceneKind[];
 
-const KIND_ICON: Record<SceneKind, IconName> = {
-  group: 'layers',
-  null: 'crosshair',
-  shape: 'shape',
-  text: 'type',
-  image: 'image',
-  video: 'video',
-  svg: 'shape',
-  audio: 'audio',
-  camera: 'camera',
-  light: 'light',
-  adjustment: 'adjustment',
-  particle: 'sparkles',
-  comp: 'component',
-};
+const SEARCH_FIELDS: ReadonlyArray<{ id: SearchFieldId; label: string }> = [
+  { id: 'name', label: 'Layer name' },
+  { id: 'effects', label: 'Effect names' },
+  { id: 'expressions', label: 'Expression text' },
+  { id: 'source', label: 'Source file / comp' },
+];
+
+const DENSITIES: ReadonlyArray<{ id: RowDensity; label: string }> = [
+  { id: 'compact', label: 'Compact' },
+  { id: 'cozy', label: 'Cozy' },
+  { id: 'comfortable', label: 'Comfortable' },
+];
+
+/** Re-export for the layer-ordering tests, which assert what this panel LISTS. */
+export { sceneGraphToTree } from './sceneRows';
 
 /**
- * Per-kind glyph tint. The COLOURS live in `tokens/domain.css` as
- * `--color-kind-*` — they used to be thirteen hex literals here, which put a
- * palette outside the theme layer: light mode, high contrast and the CVD
- * overrides could not reach them, and nothing checked they still contrasted
- * with the row behind them.
+ * A counter that ticks on the things THIS tree draws: structure, and the node
+ * values that appear on a row.
+ *
+ * Deliberately narrower than `useSceneRevision` — see the file header. A value
+ * write announces itself as `NodeUpdated` whether or not it is one this panel
+ * shows, which is still far less often than the raw revision and, unlike it,
+ * never fires on a viewport drag tick for a node that is not being drawn here.
  */
-const KIND_COLOR: Record<SceneKind, string> = {
-  group: 'var(--color-kind-group)',
-  null: 'var(--color-kind-null)',
-  shape: 'var(--color-kind-shape)',
-  text: 'var(--color-kind-text)',
-  image: 'var(--color-kind-image)',
-  video: 'var(--color-kind-video)',
-  svg: 'var(--color-kind-svg)',
-  audio: 'var(--color-kind-audio)',
-  camera: 'var(--color-kind-camera)',
-  light: 'var(--color-kind-light)',
-  adjustment: 'var(--color-kind-adjustment)',
-  particle: 'var(--color-kind-particle)',
-  comp: 'var(--color-kind-comp)',
-};
-
-/** Kind names as the filter menu says them (`svg` is not "Svg"). */
-const KIND_LABEL: Record<SceneKind, string> = {
-  group: 'Group',
-  null: 'Null',
-  shape: 'Shape',
-  text: 'Text',
-  image: 'Image',
-  video: 'Video',
-  svg: 'SVG',
-  audio: 'Audio',
-  camera: 'Camera',
-  light: 'Light',
-  adjustment: 'Adjustment',
-  particle: 'Particles',
-  comp: 'Composition',
-};
-
-function toTreeNode(node: SceneNode): TreeNode<SceneNodeData> {
-  const kind = readNodeKind(node);
-  // Stacking convention (matches the timeline): the TOP entry is the
-  // FRONT-most layer. `stackOrderedChildren` is that one convention, shared
-  // with `deriveTimelineTracks` so the tree and the timeline rows cannot drift.
-  const children = stackOrderedChildren(defaultSceneGraph, node.id).map(toTreeNode);
-  
-  let iconName: IconName = KIND_ICON[kind];
-  if (kind === 'shape') {
-    const fxComp = node.components.find((c) => c.type === 'fx');
-    const isSolid = fxComp?.props?.solid === true || node.name?.toLowerCase().includes('solid');
-    if (isSolid) {
-      iconName = 'solid';
-    } else {
-      const transformComp = node.components.find((c) => c.type === 'Transform');
-      const shapeType = transformComp?.props?.shapeType;
-      if (shapeType === 'rect') iconName = 'square';
-      else if (shapeType === 'ellipse') iconName = 'circle';
-      else if (shapeType === 'line') iconName = 'line';
-      else if (shapeType === 'star') iconName = 'star';
-      else if (shapeType === 'polygon') iconName = 'polygon';
-      else if (shapeType === 'triangle') iconName = 'polygon'; // Fallback or customize
-      else if (shapeType === 'arrow') iconName = 'arrow-up';
-      else if (shapeType === 'heart') iconName = 'heart';
-      else if (shapeType === 'cross') iconName = 'cross';
-      else if (shapeType === 'diamond') iconName = 'diamond';
-      else if (shapeType === 'crescent') iconName = 'crescent';
-    }
-  }
-
-  /*
-    Two plugin markers, both read from the DOCUMENT rather than from what
-    happens to be installed.
-
-    A generated child needs one because it is about to be overwritten by its
-    plugin — or, once the user edits it, deliberately not. A user who cannot
-    tell a managed layer from their own will edit one and be surprised either
-    way, which is the whole reason the ownership mark is stored at all.
-
-    An inert custom layer needs one because it renders and is selectable and
-    behaves like a normal layer, and the one thing it will not do is respond to
-    its own properties.
-  */
-  const owner = ownerOf(node);
-  const custom = readCustomLayer(node);
-  const inert = custom ? !findKindFor(custom.pluginId, custom.kindId) : false;
-
-  // A composition root is labelled from the PROJECT record, the source of truth
-  // the comp tabs and the timeline read. The root node carries a name of its
-  // own, seeded as "Composition 1" and only kept in step by `renameComposition`
-  // — so a fresh project's tree said "Composition 1" under a tab titled
-  // "Main Comp".
-  const compName = node.parent ? undefined : useProjectStore.getState().comps[node.id]?.name;
-  let label: React.ReactNode = compName ?? node.name ?? node.id;
-  if (owner) {
-    label = (
-      <span className={styles.pluginManagedRow} title={`Managed by ${owner}. Editing it takes it over.`}>
-        {label}
-        <Icon name="plugin" size="sm" />
-      </span>
-    );
-  } else if (inert) {
-    label = (
-      <span className={styles.pluginInertRow} title={`Needs the plugin "${custom!.pluginId}".`}>
-        {label}
-        <Icon name="warning" size="sm" />
-      </span>
-    );
-  }
-
-  if (custom) {
-    const registered = findLayerKind(custom.kind);
-    iconName = (registered?.kind.icon as IconName) ?? 'plugin';
-  }
-
-  // A hidden layer reads as hidden in the tree, not only through its eye
-  // glyph: the eye is on the far right and fades out until the row is
-  // hovered, so a stack with three hidden layers looked identical to one
-  // with none. Dimmed, not removed — it is still the user's layer.
-  if (node.visible === false) {
-    label = <span className={styles.hiddenRow}>{label}</span>;
-  }
-
-  return {
-    id: node.id,
-    label,
-    icon: iconName,
-    iconColor: KIND_COLOR[kind],
-    labelColor: readNodeLabelColor(node),
-    data: { type: kind },
-    children: children.length ? children : undefined,
-  };
-}
-
-/** Build the Scene tree from the live scene graph (single source of truth).
- *  Exported for the layer-ordering tests, which assert what this panel LISTS
- *  after an arrange without standing the whole React tree up. */
-export function sceneGraphToTree(): TreeNode<SceneNodeData>[] {
-  return defaultSceneGraph.getRoots().map(toTreeNode);
-}
-
-/** A small round swatch shown next to a color name in the Label Color menu.
- *  Everything but the colour itself is in `panels.module.css`; the colour is
- *  the one genuinely dynamic value here. */
-function LabelSwatch({ color }: { color: string }): JSX.Element {
-  return <span aria-hidden="true" className={styles.labelSwatch} style={{ background: color }} />;
-}
-
-/**
- * "Label Color" submenu (AE-style): the fixed swatch palette + a None entry
- * that clears back to the layer kind's default category color. Applies to the
- * whole selection when the clicked layer is part of it (AE behavior).
- */
-function labelColorMenuItems(targetId: string): ContextMenuItem[] {
-  const sel = useSelectionStore.getState().ids;
-  const ids: string[] = sel.includes(targetId) ? [...sel] : [targetId];
-  const node = defaultSceneGraph.getNode(targetId);
-  const current = node ? readNodeLabelColor(node) : undefined;
-  return [
-    {
-      id: 'label-none',
-      label: 'None (Default)',
-      icon: current === undefined ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(ids, undefined),
-    },
-    { id: 'label-sep', separator: true },
-    ...LABEL_COLORS.map((c): ContextMenuItem => ({
-      id: `label-${c.id}`,
-      label: (
-        <>
-          <LabelSwatch color={c.color} />
-          {c.label}
-        </>
-      ),
-      icon: current === c.color ? 'check' : undefined,
-      onSelect: () => setNodeLabelColor(ids, c.color),
-    })),
-    { id: 'label-select-sep', separator: true },
-    {
-      id: 'label-select-same',
-      // The other half of what a label is FOR. Assigning colours only pays off
-      // if you can then act on the group; without this the palette is
-      // decoration. Matches the UNLABELLED set too, which is how you find the
-      // layers you forgot to tag.
-      label: 'Select All with This Label',
-      onSelect: () => {
-        const matches = nodesWithLabelColor(targetId);
-        if (matches.length) useSelectionStore.getState().set(matches);
-      },
-    },
-  ];
-}
-
-/**
- * What the filter knows about one layer. Read from the live scene graph and
- * the animation engine — `sceneFilters` itself stays pure and takes these.
- */
-function sceneNodeFacts(id: string): SceneNodeFacts | null {
-  const node = defaultSceneGraph.getNode(id);
-  if (!node) return null;
-  return {
-    kind: readNodeKind(node),
-    label: readNodeLabelColor(node),
-    animated: defaultAnimation.hasAnimation(id),
-    hasEffects: getNodeEffects(id).length > 0,
-    name: node.name ?? id,
-  };
-}
-
-/** Every kind actually present, in KIND_LABEL's order — the menu lists what
- *  this composition HAS, not the thirteen kinds that exist. */
-function presentKinds(nodes: ReadonlyArray<TreeNode<SceneNodeData>>): SceneKind[] {
-  const seen = new Set<SceneKind>();
-  const walk = (list: ReadonlyArray<TreeNode<SceneNodeData>>): void => {
-    for (const n of list) {
-      if (n.data) seen.add(n.data.type);
-      if (n.children) walk(n.children as TreeNode<SceneNodeData>[]);
-    }
-  };
-  walk(nodes);
-  return (Object.keys(KIND_LABEL) as SceneKind[]).filter((k) => seen.has(k));
-}
-
-function collectIds(nodes: TreeNode<SceneNodeData>[]): string[] {
-  return nodes.flatMap((n) => [n.id, ...(n.children ? collectIds(n.children as TreeNode<SceneNodeData>[]) : [])]);
+function useSceneStructure(): number {
+  const [rev, setRev] = useState(0);
+  useEffect(() => {
+    const bump = (): void => setRev((r) => r + 1);
+    const subs = [
+      getEventBus().on('SceneGraphChanged', bump),
+      getEventBus().on('NodeUpdated', bump),
+      getEventBus().on('LayerReparented', bump),
+    ];
+    return () => { for (const s of subs) s.dispose(); };
+  }, []);
+  return rev;
 }
 
 export function ScenePanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
   const setSelected = useSelectionStore((s) => s.set);
-  const rev = useSceneRevision((s) => s.rev);
-  const [query, setQuery] = useState('');
-  const [kindFilter, setKindFilter] = useState<ReadonlySet<SceneKind> | null>(null);
-  const [labelFilter, setLabelFilter] = useState<string | 'none' | null>(null);
-  const [animatedOnly, setAnimatedOnly] = useState(false);
-  const [effectsOnly, setEffectsOnly] = useState(false);
-  const clearFilters = (): void => {
-    setKindFilter(null);
-    setLabelFilter(null);
-    setAnimatedOnly(false);
-    setEffectsOnly(false);
-    setQuery('');
-  };
+  const rev = useSceneStructure();
 
-  // The comp records are an input to the tree: a composition root is labelled
-  // with its project name (see `toTreeNode`), so a rename must rebuild it.
   const comps = useProjectStore((s) => s.comps);
   const activeTabId = useProjectStore((s) => s.activeTabId);
+  const activeCompId = activeTabId ? comps[useProjectStore.getState().tabs[activeTabId]?.compositionId ?? '']?.id : undefined;
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const tree = useMemo(() => sceneGraphToTree(), [rev, comps]);
-  const q = query.trim().toLowerCase();
+  // ── View settings: panel-wide, persisted, outlive the panel's mount ──
+  const scope = useSceneViewStore((s) => s.scope);
+  const density = useSceneViewStore((s) => s.density);
+  const switches = useSceneViewStore((s) => s.switches);
+  const thumbnails = useSceneViewStore((s) => s.thumbnails);
+  const hideShy = useSceneViewStore((s) => s.hideShy);
+  const view = useSceneViewStore((s) => ({
+    setScope: s.setScope, setDensity: s.setDensity, toggleSwitch: s.toggleSwitch,
+    setThumbnails: s.setThumbnails, setHideShy: s.setHideShy,
+  }));
+
+  // ── Filters: per composition, so "show me the cameras" is a question
+  //    about THIS comp and does not follow you into one with no cameras ──
+  const filters = useSceneViewStore((s) => s.filters);
+  const patchFilter = useSceneViewStore((s) => s.patchFilter);
+  const clearFilterFor = useSceneViewStore((s) => s.clearFilter);
+  const stored = useMemo(
+    () => useSceneViewStore.getState().filterFor(activeCompId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filters, activeCompId],
+  );
+  const patch = useCallback(
+    (p: Parameters<typeof patchFilter>[1]) => patchFilter(activeCompId, p),
+    [patchFilter, activeCompId],
+  );
+
+  const tree = useMemo(
+    () => sceneGraphToTree(scope, { thumbnails }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rev, comps, activeTabId, scope, thumbnails],
+  );
+
+  const q = stored.query.trim().toLowerCase();
   /*
     Search is one of FIVE questions this panel answers, not the only one. A
     stack of forty layers is narrowed by kind ("show me the cameras"), by label
     colour ("the shots I tagged red"), by whether a layer is animated and by
     whether it carries effects — and they compose, with the search, in
-    `sceneFilters.ts`.
+    `sceneFilters.ts`. The search itself now asks four FIELDS, because "where
+    is that glow" is one question whether the word names the layer or the
+    effect on it.
   */
-  const filter: SceneFilter = { kinds: kindFilter, label: labelFilter, animatedOnly, effectsOnly, query: q };
+  const kindFilter = useMemo(() => (stored.kinds ? new Set(stored.kinds) : null), [stored.kinds]);
+  const filter: SceneFilter = {
+    kinds: kindFilter,
+    label: stored.label,
+    animatedOnly: stored.animatedOnly,
+    effectsOnly: stored.effectsOnly,
+    query: q,
+    fields: stored.fields,
+    hideShy,
+  };
   const filterActive = isSceneFilterActive(filter);
-  // Keyframes and effects do not live in the scene graph: `sceneNodeFacts`
-  // reads them from the animation engine, which announces edits as
-  // `AnimationChanged` (effects edits emit it too — see `writeNodeEffects`)
-  // and never bumps the scene revision `tree` is keyed on. Without this the
-  // "with keyframes" / "with effects" filters kept the answer from whenever
-  // the tree last rebuilt: add a keyframe and the layer stayed filtered out.
+
+  // Keyframes, effects and expressions do not live in the scene graph:
+  // `makeFactsReader` reads them from the animation engine, which announces
+  // edits as `AnimationChanged` (effects edits emit it too — see
+  // `writeNodeEffects`) and never bumps the structure counter `tree` is keyed
+  // on. Without this the "with keyframes" / "with effects" filters kept the
+  // answer from whenever the tree last rebuilt: add a keyframe and the layer
+  // stayed filtered out.
   const animRev = useAnimationRevision();
+
+  /*
+    ONE facts reader per pass, shared by the filter walk and the match count.
+    The expensive fields (every expression in the document; the asset list) are
+    indexed once here and only when they are actually being searched, instead
+    of being re-derived per node per keystroke by both walks.
+  */
+  const factsOf = useMemo(
+    () => makeFactsReader(stored.fields, q.length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [stored.fields, q, rev, animRev],
+  );
+
   const filtered = useMemo(
-    () => filterSceneTree(tree, filter, sceneNodeFacts),
+    () => filterSceneTree(tree, filter, factsOf),
     // The filter object is rebuilt every render; its FIELDS are the dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tree, kindFilter, labelFilter, animatedOnly, effectsOnly, q, animRev],
+    [tree, kindFilter, stored.label, stored.animatedOnly, stored.effectsOnly, q, stored.fields, hideShy, factsOf],
   );
   const matchCount = useMemo(
-    () => (filterActive ? countSceneMatches(filtered, filter, sceneNodeFacts) : 0),
+    () => (filterActive ? countSceneMatches(filtered, filter, factsOf) : 0),
     // Same fields as `filtered`, which already carries them.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filtered, filterActive],
+    [filtered, filterActive, factsOf],
   );
-  const kindChoices = useMemo(() => presentKinds(tree), [tree]);
+  const kindChoices = useMemo(() => presentKinds(tree, KIND_ORDER), [tree]);
   const expandIds = useMemo(() => collectIds(filtered), [filtered]);
-  // Expand only the composition roots by default, so their LAYERS are visible
+  // Expand only the top-level roots by default, so their LAYERS are visible
   // but groups stay shut. `collectIds` returns every descendant, so an imported
   // SVG icon — one group of dozens of paths — unfolded into dozens of rows the
   // moment it was added, burying the rest of the scene. The icon is one body on
@@ -394,7 +238,7 @@ export function ScenePanel(): JSX.Element {
    * Keep a reparented layer on screen.
    *
    * `parent` IS the tree here, so parenting MOVES the layer into the parent's
-   * branch — and only composition roots are expanded by default. Parent a
+   * branch — and only top-level roots are expanded by default. Parent a
    * rectangle to a Null and it lands inside a branch that has never been
    * expanded (a Null has no children until that moment), so it vanishes from
    * this panel entirely while still rendering on canvas. Reported as
@@ -425,12 +269,39 @@ export function ScenePanel(): JSX.Element {
   // its branch the same way it does without one.
   const controlledExpandIds = useMemo(() => withRevealed(expandIds, revealIds), [expandIds, revealIds]);
 
-  const [renamingId, setRenamingId] = useState<string | null>(null);
+  /*
+    Follow a selection this panel did not make.
 
-  // Undoable, like every other visibility path (the timeline's eye, the Layer
-  // menu). This used to flip `visible` in place and bump — the one hide in the
-  // app that Ctrl+Z could not take back.
-  const toggleVisible = (id: string): void => toggleNodeVisible(id);
+    Clicking a layer on canvas, in the timeline, or through a command selects
+    it everywhere — and this tree, which may have it scrolled a thousand rows
+    away or shut inside a group, simply did not react. The tree scrolls to the
+    newest member of the selection and opens its ancestors, but only when the
+    selection CHANGED from outside: `ownSelection` marks the ids this panel just
+    set, so clicking a row here does not make the list jump under the cursor.
+  */
+  const ownSelection = useRef<string | null>(null);
+  const [scrollToId, setScrollToId] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    const id = selected[selected.length - 1];
+    if (!id || ownSelection.current === id) return;
+    setScrollToId(id);
+    const chain: string[] = [];
+    let cur: string | null = defaultSceneGraph.getNode(id)?.parent ?? null;
+    const seen = new Set<string>();
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      chain.push(cur);
+      cur = defaultSceneGraph.getNode(cur)?.parent ?? null;
+    }
+    if (chain.length) setRevealIds(chain);
+  }, [selected]);
+
+  const selectFromTree = useCallback((ids: ReadonlyArray<string>) => {
+    ownSelection.current = ids[ids.length - 1] ?? null;
+    setSelected(ids);
+  }, [setSelected]);
+
+  const [renamingId, setRenamingId] = useState<string | null>(null);
 
   /** True (and says so) when the row is locked — locked means not editable here. */
   const refuseIfLocked = (id: string, what: string): boolean => {
@@ -438,6 +309,11 @@ export function ScenePanel(): JSX.Element {
     if (!n?.locked) return false;
     useUIStore.getState().notify({ level: 'info', message: `“${n.name ?? id}” is locked — unlock it to ${what}.`, durationMs: 3000 });
     return true;
+  };
+
+  const startRename = (id: string): void => {
+    if (refuseIfLocked(id, 'rename it')) return;
+    setRenamingId(id);
   };
 
   const commitRename = (id: string, name: string): void => {
@@ -484,82 +360,122 @@ export function ScenePanel(): JSX.Element {
     }
   };
 
-  // Drag-to-reorder / reparent from the layer tree. The tree DISPLAYS front
-  // first (reversed child order), while moveNodeAdjacent speaks child order —
-  // so display-before means child-after and vice versa.
+  /*
+    Drag-to-reorder / reparent from the layer tree.
+
+    Three things the single-id version got wrong, all of them visible with more
+    than one row selected or more than one lock in the stack:
+      • it moved ONE layer of a multi-row drag and left the rest behind;
+      • it checked the DRAGGED layer's lock and not the destination's, so a
+        locked group happily accepted children;
+      • each moved layer was its own undo entry.
+
+    The tree DISPLAYS front first (reversed child order), while
+    `moveNodeAdjacent` speaks child order — so display-before means child-after
+    and vice versa. Dropped in reverse so a multi-row drag keeps the order the
+    rows were in rather than inverting it.
+  */
   const handleReorder = (
-    dragId: string,
-    targetId: string,
+    ids: ReadonlyArray<string>,
+    targetId: string | null,
     pos: 'before' | 'after' | 'inside',
   ): void => {
-    if (refuseIfLocked(dragId, 'move it')) return;
-    if (pos === 'inside') {
-      if (canReparent(dragId, targetId)) reparentNode(dragId, targetId);
-      // Cannot nest: land it just in front of the target instead. Display
-      // "before" is child-order "after" — the same flip as the branch below;
-      // passing the display word straight through dropped it on the far side.
-      else moveNodeAdjacent(dragId, targetId, 'after');
-    } else {
-      moveNodeAdjacent(dragId, targetId, pos === 'before' ? 'after' : 'before');
+    const movable = ids.filter((id) => {
+      const n = defaultSceneGraph.getNode(id);
+      // A composition root is not a layer and cannot be moved into one.
+      return !!n && n.parent !== null && !n.locked;
+    });
+    if (movable.length === 0) {
+      if (ids.length > 0) refuseIfLocked(ids[0]!, 'move it');
+      return;
     }
+    if (targetId !== null) {
+      const target = defaultSceneGraph.getNode(targetId);
+      if (target?.locked && pos === 'inside') {
+        useUIStore.getState().notify({
+          level: 'info',
+          message: `“${target.name ?? targetId}” is locked — unlock it to put layers inside it.`,
+          durationMs: 3000,
+        });
+        return;
+      }
+    }
+
+    const label = movable.length === 1 ? 'Move layer' : `Move ${movable.length} layers`;
+    runDocumentEdit(label, () => {
+      batchScene(() => {
+        for (const id of [...movable].reverse()) {
+          if (targetId === null) {
+            // Dropped below the last row: out to the enclosing composition.
+            const root = activeCompRootId();
+            if (root && canReparent(id, root)) reparentNode(id, root);
+            continue;
+          }
+          if (pos === 'inside') {
+            if (canReparent(id, targetId)) reparentNode(id, targetId);
+            // Cannot nest: land it just in front of the target instead. Display
+            // "before" is child-order "after" — the same flip as the branch
+            // below; passing the display word straight through dropped it on
+            // the far side.
+            else moveNodeAdjacent(id, targetId, 'after');
+          } else {
+            moveNodeAdjacent(id, targetId, pos === 'before' ? 'after' : 'before');
+          }
+        }
+      });
+    });
   };
 
   const openNodeMenu = (id: string, e: React.MouseEvent): void => {
-    const node = defaultSceneGraph.getNode(id);
-    const hidden = node?.visible === false;
-    const locked = (node as { locked?: boolean } | undefined)?.locked === true;
-    const solo = (node as { solo?: boolean } | undefined)?.solo === true;
-    const isGroup = node ? readNodeKind(node) === 'group' : false;
-    openContextMenu(e.clientX, e.clientY, [
-      { id: 'rename', label: 'Rename', onSelect: () => setRenamingId(id) },
-      { id: 'duplicate', label: 'Duplicate', onSelect: () => duplicateSelectedLayers() },
-      // `arrangeNodes` over the WHOLE selection, never a loop over it — the
-      // loop moved a multi-selection one layer at a time and the members
-      // leapfrogged each other (see `reorderSiblings`). Same call the Layer ▸
-      // Arrange commands and the viewport's context menu make.
-      { id: 'arrange', label: 'Arrange', children: [
-        { id: 'arr-front', label: 'Bring to Front', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'front'); } },
-        { id: 'arr-forward', label: 'Bring Forward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'forward'); } },
-        { id: 'arr-backward', label: 'Send Backward', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'backward'); } },
-        { id: 'arr-back', label: 'Send to Back', onSelect: () => { arrangeNodes(useSelectionStore.getState().ids, 'back'); } },
-      ] },
-      { id: 'sep1', separator: true },
-      // Anchored on the clicked row, so the label ("Unlock") and the action
-      // agree even when the rest of the selection is in the other state.
-      { id: 'toggle', label: hidden ? 'Show' : 'Hide', onSelect: () => toggleSelectedVisible(id) },
-      { id: 'lock', label: locked ? 'Unlock' : 'Lock', onSelect: () => toggleSelectedLocked(id) },
-      { id: 'solo', label: solo ? 'Unsolo' : 'Solo', onSelect: () => toggleSelectedSolo(id) },
-      { id: 'labelColor', label: 'Label Color', children: labelColorMenuItems(id) },
-      { id: 'sep2', separator: true },
-      { id: 'group', label: 'Group Selection', onSelect: () => groupSelectedLayers() },
-      ...(isGroup ? [{ id: 'ungroup', label: 'Ungroup', onSelect: () => ungroupSelected() }] : []),
-      { id: 'precompose', label: 'Pre-compose…', onSelect: () => openPrecomposeDialog() },
-      { id: 'rig-logo', label: 'Rig Logo for Animation', onSelect: () => { void rigLogoForAnimation(); } },
-      ...svgContextMenuItems(id),
-      ...(useSelectionStore.getState().ids.length >= 2
-        ? [
-            { id: 'sep_merge', separator: true },
-            {
-              id: 'merge-paths',
-              label: 'Merge Paths',
-              children: [
-                { id: 'merge-live-union', label: 'Live Union (Add)', onSelect: () => liveMergeSelectedPaths('union') },
-                { id: 'merge-live-subtract', label: 'Live Subtract', onSelect: () => liveMergeSelectedPaths('subtract') },
-                { id: 'merge-live-intersect', label: 'Live Intersect', onSelect: () => liveMergeSelectedPaths('intersect') },
-                { id: 'merge-live-exclude', label: 'Live Exclude (XOR)', onSelect: () => liveMergeSelectedPaths('exclude') },
-                { id: 'merge-sep', label: '—', disabled: true },
-                { id: 'merge-union', label: 'Bake Union', onSelect: () => mergeSelectedPaths('union') },
-                { id: 'merge-subtract', label: 'Bake Subtract', onSelect: () => mergeSelectedPaths('subtract') },
-                { id: 'merge-intersect', label: 'Bake Intersect', onSelect: () => mergeSelectedPaths('intersect') },
-                { id: 'merge-exclude', label: 'Bake Exclude', onSelect: () => mergeSelectedPaths('exclude') },
-              ],
-            },
-          ]
-        : []),
-      { id: 'sep3', separator: true },
-      { id: 'delete', label: 'Delete', danger: true, onSelect: () => deleteSelectedLayers() },
-    ]);
+    openContextMenu(e.clientX, e.clientY, sceneNodeMenuItems(id, { startRename }));
   };
+
+  const rowHeight = ROW_DENSITY[density];
+
+  /** The view menu: scope, density, which switches, thumbnails, shy. */
+  const viewMenuItems: DropdownItem[] = [
+    { type: 'label', label: 'Show' },
+    ...(['comp', 'project'] as const).map((s): DropdownItem => ({
+      type: 'item',
+      id: `v-scope-${s}`,
+      label: s === 'comp' ? 'This composition' : 'Whole project',
+      icon: scope === s ? 'check' : undefined,
+      onSelect: () => view.setScope(s),
+    })),
+    { type: 'separator' },
+    { type: 'label', label: 'Row height' },
+    ...DENSITIES.map((d): DropdownItem => ({
+      type: 'item',
+      id: `v-density-${d.id}`,
+      label: d.label,
+      icon: density === d.id ? 'check' : undefined,
+      onSelect: () => view.setDensity(d.id),
+    })),
+    { type: 'separator' },
+    { type: 'label', label: 'Switches on each row' },
+    ...LAYER_FLAGS.map((f): DropdownItem => ({
+      type: 'checkbox',
+      id: `v-switch-${f.id}`,
+      label: f.label,
+      checked: switches.includes(f.id),
+      onChange: () => view.toggleSwitch(f.id),
+    })),
+    { type: 'separator' },
+    {
+      type: 'checkbox',
+      id: 'v-thumbs',
+      label: 'Source thumbnails',
+      checked: thumbnails,
+      onChange: () => view.setThumbnails(!thumbnails),
+    },
+    {
+      type: 'checkbox',
+      id: 'v-shy',
+      label: 'Hide shy layers',
+      checked: hideShy,
+      onChange: () => view.setHideShy(!hideShy),
+    },
+  ];
 
   return (
     <Panel
@@ -574,13 +490,51 @@ export function ScenePanel(): JSX.Element {
         <CompositionList collapsible />
         <div className={styles.layerSectionHead}>
           <span className={styles.compSectionLabel}>Layers</span>
+          <Dropdown
+            placement="bottom-end"
+            trigger={
+              <button
+                type="button"
+                className={styles.sceneFilterBtn}
+                title="How this panel lists layers"
+                aria-label="Layers panel view options"
+              >
+                <Icon name="settings" size="sm" />
+              </button>
+            }
+            items={viewMenuItems}
+          />
         </div>
       <div className={styles.searchRow}>
         <SearchField
-          placeholder="Search layers…"
+          placeholder={searchPlaceholder(stored.fields)}
           ariaLabel="Search layers"
-          value={query}
-          onChange={setQuery}
+          value={stored.query}
+          onChange={(query) => patch({ query })}
+        />
+        {/* WHICH fields the box searches. A separate control rather than a
+            syntax ("fx:glow") because the answer has to be visible without
+            being typed — a search that silently looks in four places is as
+            confusing as one that silently looks in one. */}
+        <Dropdown
+          placement="bottom-end"
+          trigger={
+            <button
+              type="button"
+              className={styles.sceneFilterBtn}
+              title={`Searching: ${stored.fields.map((f) => SEARCH_FIELDS.find((s) => s.id === f)?.label ?? f).join(', ')}`}
+              aria-label="Choose what the search looks in"
+            >
+              <Icon name="search" size="sm" />
+            </button>
+          }
+          items={SEARCH_FIELDS.map((f): DropdownItem => ({
+            type: 'checkbox',
+            id: `field-${f.id}`,
+            label: f.label,
+            checked: stored.fields.includes(f.id),
+            onChange: () => patch({ fields: toggleField(stored.fields, f.id) }),
+          }))}
         />
       </div>
       <div className={styles.sceneFilterRow} aria-label="Layer filters">
@@ -599,7 +553,7 @@ export function ScenePanel(): JSX.Element {
             </button>
           }
           items={[
-            { type: 'item', id: 'all-kinds', label: 'All kinds', icon: kindFilter === null ? 'check' : undefined, onSelect: () => setKindFilter(null) },
+            { type: 'item', id: 'all-kinds', label: 'All kinds', icon: kindFilter === null ? 'check' : undefined, onSelect: () => patch({ kinds: null }) },
             { type: 'separator' },
             ...kindChoices.map((k): DropdownItem => ({
               type: 'checkbox',
@@ -608,7 +562,10 @@ export function ScenePanel(): JSX.Element {
               checked: kindFilter?.has(k) ?? false,
               // An empty set collapses back to "every kind" — unchecking the
               // last box means "stop filtering", not "show nothing".
-              onChange: () => setKindFilter((cur) => toggleKind(cur, k)),
+              onChange: () => {
+                const next = toggleKind(kindFilter, k);
+                patch({ kinds: next ? [...next] : null });
+              },
             })),
           ]}
         />
@@ -620,31 +577,31 @@ export function ScenePanel(): JSX.Element {
               className={styles.sceneFilterBtn}
               title="Filter by label colour"
               aria-label="Filter by label colour"
-              aria-pressed={labelFilter !== null}
+              aria-pressed={stored.label !== null}
             >
-              {labelFilter && labelFilter !== 'none' ? (
-                <span className={styles.sceneFilterLabelDot} style={{ background: labelFilter }} aria-hidden />
+              {stored.label && stored.label !== 'none' ? (
+                <span className={styles.sceneFilterLabelDot} style={{ background: stored.label }} aria-hidden />
               ) : (
                 <Icon name="palette" size="sm" />
               )}
             </button>
           }
           items={[
-            { type: 'item', id: 'any-label', label: 'Any label', icon: labelFilter === null ? 'check' : undefined, onSelect: () => setLabelFilter(null) },
+            { type: 'item', id: 'any-label', label: 'Any label', icon: stored.label === null ? 'check' : undefined, onSelect: () => patch({ label: null }) },
             // The set you forgot to tag — the other half of what a label is for.
-            { type: 'item', id: 'no-label', label: 'Unlabelled', icon: labelFilter === 'none' ? 'check' : undefined, onSelect: () => setLabelFilter('none') },
+            { type: 'item', id: 'no-label', label: 'Unlabelled', icon: stored.label === 'none' ? 'check' : undefined, onSelect: () => patch({ label: 'none' }) },
             { type: 'separator' },
             ...LABEL_COLORS.map((c): DropdownItem => ({
               type: 'item',
               id: c.id,
               label: (
                 <>
-                  <LabelSwatch color={c.color} />
+                  <span aria-hidden="true" className={styles.labelSwatch} style={{ background: c.color }} />
                   {c.label}
                 </>
               ),
-              icon: labelFilter === c.color ? 'check' : undefined,
-              onSelect: () => setLabelFilter(labelFilter === c.color ? null : c.color),
+              icon: stored.label === c.color ? 'check' : undefined,
+              onSelect: () => patch({ label: stored.label === c.color ? null : c.color }),
             })),
           ]}
         />
@@ -653,8 +610,8 @@ export function ScenePanel(): JSX.Element {
           className={styles.sceneFilterBtn}
           title="Only layers with keyframes"
           aria-label="Only layers with keyframes"
-          aria-pressed={animatedOnly}
-          onClick={() => setAnimatedOnly((v) => !v)}
+          aria-pressed={stored.animatedOnly}
+          onClick={() => patch({ animatedOnly: !stored.animatedOnly })}
         >
           <Icon name="keyframe" size="sm" />
         </button>
@@ -663,8 +620,8 @@ export function ScenePanel(): JSX.Element {
           className={styles.sceneFilterBtn}
           title="Only layers with effects"
           aria-label="Only layers with effects"
-          aria-pressed={effectsOnly}
-          onClick={() => setEffectsOnly((v) => !v)}
+          aria-pressed={stored.effectsOnly}
+          onClick={() => patch({ effectsOnly: !stored.effectsOnly })}
         >
           <Icon name="magic-wand" size="sm" />
         </button>
@@ -674,7 +631,7 @@ export function ScenePanel(): JSX.Element {
             className={styles.sceneFilterBtn}
             title="Clear layer filters"
             aria-label="Clear layer filters"
-            onClick={clearFilters}
+            onClick={() => clearFilterFor(activeCompId)}
           >
             <Icon name="close" size="sm" />
           </button>
@@ -691,70 +648,44 @@ export function ScenePanel(): JSX.Element {
         {filtered.length ? (
           <TreeView
             nodes={filtered}
+            ariaLabel="Layers"
+            rowHeight={rowHeight}
             selectedIds={selected}
-            onSelect={setSelected}
+            onSelect={selectFromTree}
             defaultExpandedIds={defaultExpandIds}
             expandedIds={filterActive ? controlledExpandIds : undefined}
             revealIds={revealIds}
+            scrollToId={scrollToId}
             onNodeContextMenu={openNodeMenu}
             onReorder={handleReorder}
             renamingId={renamingId ?? undefined}
             onRename={commitRename}
             onRenameCancel={() => setRenamingId(null)}
-            renderActions={(node) => {
+            onRenameRequest={startRename}
+            onDelete={(ids) => deleteLayersWithFeedback(ids)}
+            /*
+              The parent pick-whip, the gesture AE users reach for a hundred
+              times a day. The tree was already a whip TARGET; being only a
+              target meant you could parent a layer TO one of these rows and
+              never FROM one. Composition roots get no whip — they are the
+              document, not a layer that can have a parent.
+            */
+            renderLead={(node) => {
               const n = defaultSceneGraph.getNode(node.id);
-              const hidden = n?.visible === false;
-              const locked = n?.locked === true;
-              const solo = n?.solo === true;
-              // Eye · solo · lock, the timeline's order (`TrackHeaderColumn`),
-              // and its glyphs, so the two panels read as one document. Lock
-              // and solo used to live only in the kebab: a locked layer looked
-              // exactly like an unlocked one until a drag on it was refused.
-              // `data-on` keeps a set switch visible without hover, the way the
-              // closed eye already stayed.
+              if (!n || n.parent === null) return null;
+              const options = eligibleParents(node.id);
               return (
-                <>
-                  <button
-                    type="button"
-                    className={styles.rowAction}
-                    data-kind="visible"
-                    data-on={hidden || undefined}
-                    aria-label={hidden ? 'Show layer' : 'Hide layer'}
-                    title={hidden ? 'Show' : 'Hide'}
-                    onClick={(e) => { e.stopPropagation(); toggleVisible(node.id); }}
-                  >
-                    <Icon name={hidden ? 'eye-off' : 'eye'} size="sm" />
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.rowAction}
-                    data-kind="solo"
-                    data-on={solo || undefined}
-                    aria-label={solo ? 'Unsolo layer' : 'Solo layer'}
-                    title={solo ? 'Unsolo' : 'Solo'}
-                    // Anchored on the row: the whole selection when the row is
-                    // part of it, just this layer otherwise — one undo step.
-                    onClick={(e) => { e.stopPropagation(); toggleSelectedSolo(node.id); }}
-                  >
-                    <Icon name="circle" size="sm" />
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.rowAction}
-                    data-kind="lock"
-                    data-on={locked || undefined}
-                    aria-label={locked ? 'Unlock layer' : 'Lock layer'}
-                    title={locked ? 'Unlock' : 'Lock'}
-                    onClick={(e) => { e.stopPropagation(); toggleSelectedLocked(node.id); }}
-                  >
-                    <Icon name={locked ? 'lock' : 'unlock'} size="sm" />
-                  </button>
-                </>
+                <PickWhip
+                  label="Parent pick-whip — drag onto a layer (Shift: jump to the parent · Alt: keep values)"
+                  accept={(target) => options.some((o) => o.id === target.nodeId)}
+                  onPick={(target, m) => reparentNode(node.id, target.nodeId, parentOptionsFor(m))}
+                />
               );
             }}
+            renderActions={(node) => <SceneRowSwitches nodeId={node.id} flags={switches} />}
           />
         ) : (
-          <div className={styles.empty}>
+          <div className={styles.empty} role="status">
             {filterActive
               ? 'No layers match this filter.'
               : 'No layers yet. Add one from the “+ New layer” menu in the toolbar.'}
@@ -775,4 +706,19 @@ export function ScenePanel(): JSX.Element {
       </div>
     </Panel>
   );
+}
+
+/** Placeholder that says where the box is looking, so the answer is visible
+ *  before a fruitless search rather than after it. */
+function searchPlaceholder(fields: ReadonlyArray<SearchFieldId>): string {
+  if (fields.length === 0 || (fields.length === 1 && fields[0] === 'name')) return 'Search layers…';
+  if (fields.length === SEARCH_FIELDS.length) return 'Search layers, effects, expressions…';
+  return `Search ${fields.map((f) => SEARCH_FIELDS.find((s) => s.id === f)?.label.toLowerCase() ?? f).join(' · ')}…`;
+}
+
+/** Toggle a search field; unchecking the last one falls back to the name,
+ *  because a search box that looks in nothing is a box that does nothing. */
+function toggleField(fields: ReadonlyArray<SearchFieldId>, id: SearchFieldId): SearchFieldId[] {
+  const next = fields.includes(id) ? fields.filter((f) => f !== id) : [...fields, id];
+  return next.length === 0 ? ['name'] : [...next];
 }

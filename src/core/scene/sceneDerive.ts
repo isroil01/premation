@@ -118,8 +118,15 @@ export const KIND_FILL: Record<SceneKind, string> = {
 };
 
 /**
- * Type glyph per scene kind — shown on the left of a timeline track so each
+ * Type glyph per scene kind — shown on the left of a timeline track, a Layers
+ * tree row, a Command Palette hit and the Inspector's selection header, so each
  * object is identifiable at a glance. Names map to the shared Icon set.
+ *
+ * ONE map. There used to be three: this one, a copy in `ScenePanel` and a copy
+ * in `CommandPalette`, and they had already drifted — a group drew a `folder`
+ * on its timeline track and a `layers` stack on its Layers row, which reads as
+ * two different kinds of object rather than one object in two panels. A kind
+ * added to the scene now has exactly one place to declare its glyph.
  */
 export const KIND_ICON: Record<SceneKind, string> = {
   group: 'folder',
@@ -136,3 +143,117 @@ export const KIND_ICON: Record<SceneKind, string> = {
   particle: 'sparkles',
   comp: 'component',
 };
+
+/**
+ * Kind names as a menu says them. `svg` is not "Svg" and `particle` is plural,
+ * which is the whole reason this is a table and not `capitalize(kind)`.
+ */
+export const KIND_LABEL: Record<SceneKind, string> = {
+  group: 'Group',
+  null: 'Null',
+  shape: 'Shape',
+  text: 'Text',
+  image: 'Image',
+  video: 'Video',
+  svg: 'SVG',
+  audio: 'Audio',
+  camera: 'Camera',
+  light: 'Light',
+  adjustment: 'Adjustment',
+  particle: 'Particles',
+  comp: 'Composition',
+};
+
+/**
+ * Vivid per-kind tint for an 18px GLYPH, as opposed to `KIND_COLOR` above,
+ * which tints a 26px bar sitting behind text and is deliberately muted for it.
+ * Both are declared in `tokens/domain.css` and both are overridden under
+ * `[data-cvd="deuteranopia"]`; they live side by side here so a kind added to
+ * the scene cannot pick up one of them and silently miss the other.
+ */
+export const KIND_GLYPH_COLOR: Record<SceneKind, string> = {
+  group: 'var(--color-kind-group)',
+  null: 'var(--color-kind-null)',
+  shape: 'var(--color-kind-shape)',
+  text: 'var(--color-kind-text)',
+  image: 'var(--color-kind-image)',
+  video: 'var(--color-kind-video)',
+  svg: 'var(--color-kind-svg)',
+  audio: 'var(--color-kind-audio)',
+  camera: 'var(--color-kind-camera)',
+  light: 'var(--color-kind-light)',
+  adjustment: 'var(--color-kind-adjustment)',
+  particle: 'var(--color-kind-particle)',
+  comp: 'var(--color-kind-comp)',
+};
+
+/**
+ * Glyph per SHAPE SUBTYPE — a rectangle and a star are both `kind: 'shape'`,
+ * and a tree of eleven identical `shape` glyphs is a tree you have to read
+ * rather than scan.
+ *
+ * Keyed by the `shapeType` prop `insertShape` writes onto the Transform
+ * component (see `sceneInsert.ts`'s `ShapeKind`). `path` — a pen-drawn or
+ * imported outline — has no primitive glyph and correctly falls through to the
+ * generic shape mark.
+ */
+const SHAPE_TYPE_ICON: Readonly<Record<string, string>> = {
+  rect: 'square',
+  ellipse: 'circle',
+  line: 'line',
+  star: 'star',
+  polygon: 'polygon',
+  // No dedicated triangle glyph in the icon set; the n-gon mark is the closest
+  // true statement about the layer, and both are polystars underneath.
+  triangle: 'polygon',
+  arrow: 'arrow-up',
+  heart: 'heart',
+  cross: 'cross',
+  diamond: 'diamond',
+  crescent: 'crescent',
+};
+
+/** The `shapeType` a node carries, if it is a shape and has one. */
+export function readShapeType(node: SceneNode): string | undefined {
+  for (const c of renderComponentsOf(node)) {
+    const t = (c.props as Record<string, unknown>)['shapeType'];
+    if (typeof t === 'string') return t;
+  }
+  return undefined;
+}
+
+/**
+ * Is this node a solid?
+ *
+ * The `fx` component's `solid` flag, which is what `insertSolid` writes. It
+ * used to be `fx.solid === true || node.name.toLowerCase().includes('solid')`
+ * in the Layers tree — so a shape the user called "Solid Ground" drew the solid
+ * glyph, and a solid they renamed "Backdrop" stopped drawing it. A layer's KIND
+ * is not a function of what it is called.
+ */
+export function isSolidNode(node: SceneNode): boolean {
+  for (const c of renderComponentsOf(node)) {
+    if (c.type === 'fx' && (c.props as Record<string, unknown>)['solid'] === true) return true;
+  }
+  return false;
+}
+
+/**
+ * The glyph for ONE node: its kind's mark, narrowed by shape subtype and by
+ * solid-ness, and overridden entirely by a plugin layer kind's own icon.
+ *
+ * `customIconOf` is injected rather than imported so this module keeps no
+ * dependency on the plugin registry — it runs per node per frame on live views.
+ */
+export function nodeIconName(
+  node: SceneNode,
+  customIconOf?: (node: SceneNode) => string | undefined,
+): string {
+  const custom = customIconOf?.(node);
+  if (custom) return custom;
+  const kind = readNodeKind(node);
+  if (kind !== 'shape') return KIND_ICON[kind];
+  if (isSolidNode(node)) return 'solid';
+  const shapeType = readShapeType(node);
+  return (shapeType && SHAPE_TYPE_ICON[shapeType]) ?? KIND_ICON.shape;
+}

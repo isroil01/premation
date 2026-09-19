@@ -55,6 +55,11 @@ export const sceneProjectIO: ProjectDocumentIO<ProjectFile> = {
         visible: n.visible,
         locked: n.locked,
         solo: n.solo,
+        // Written by the timeline and the Layers panel as plain node state.
+        // Omitted here until now, which put it outside every document snapshot:
+        // shy could not be undone and was lost on save. Conditional so a
+        // document full of un-shy layers does not grow a field per node.
+        ...(n.shy ? { shy: true } : {}),
         ...(n.color !== undefined ? { color: n.color } : {}),
       });
     });

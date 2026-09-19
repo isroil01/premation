@@ -35,6 +35,17 @@ export interface SceneNode {
   locked?: boolean;
   /** Solo — when ANY node is soloed, only soloed nodes render (AE-style). */
   solo?: boolean;
+  /**
+   * Shy — hidden from the layer LIST while "Hide Shy Layers" is on. View state
+   * with no render meaning, which is why it sits beside `solo` rather than in a
+   * component the renderer reads.
+   *
+   * Declared here, and captured by `sceneProjectIO`, because it was neither:
+   * the timeline wrote it straight onto the node as an untyped property, so it
+   * was outside the document snapshot — arming shy on ten layers could not be
+   * undone and did not survive a save.
+   */
+  shy?: boolean;
   /** Label color (AE-style) — hex tint for the layer's Scene row / timeline
    *  track & clip bar. Absent = the kind's default category color. */
   color?: string;

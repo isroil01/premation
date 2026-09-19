@@ -243,10 +243,21 @@
 /* Horizontal padding matches the accordion trigger's gutter below it, so the
    search field and every section name share one left edge. */
 .searchRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-panel);
   flex: none;
+}
+
+/* The field takes the row; the "what does this search look in" menu sits
+   beside it, at the same size as the filter buttons on the row below so the
+   two rows read as one control strip. */
+.searchRow > *:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .layerGlyph {
@@ -524,6 +535,56 @@
 .rowAction:hover {
   background: var(--color-hover);
   color: var(--color-text-primary);
+}
+
+/* The two switches AE draws as text rather than as a glyph ("fx", "T"). Sized
+   to the icon beside them so the switch column keeps one rhythm. */
+.switchGlyph {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  font-style: italic;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+/* A set switch reads as SET without hovering the row, the way the closed eye
+   and the lock already do. 3D and motion blur get the accent because they
+   change how the layer renders; the rest stay secondary so a row with four
+   switches armed is not four competing highlights. */
+.rowAction[data-kind='threeD'][data-on],
+.rowAction[data-kind='motionBlur'][data-on] {
+  color: var(--color-accent);
+}
+
+.rowAction[data-kind='adjustment'][data-on],
+.rowAction[data-kind='guide'][data-on],
+.rowAction[data-kind='collapse'][data-on],
+.rowAction[data-kind='frameBlend'][data-on],
+.rowAction[data-kind='shy'][data-on] {
+  color: var(--color-text-primary);
+}
+
+/* Quality cycles rather than toggling, so it is always drawn — the glyph IS
+   the state (/ Best, \ Draft, box Wireframe) and only the two non-default
+   positions are worth colouring. */
+.rowAction[data-kind='quality'] {
+  opacity: 1;
+}
+
+.rowAction[data-kind='quality'][data-on] {
+  color: var(--color-warning);
+}
+
+/* fx is ON by default, so the interesting state is OFF: the glyph is drawn
+   struck through rather than lit, because "effects are suppressed on this
+   layer" is the thing worth noticing. */
+.rowAction[data-kind='fxEnabled']:not([data-on]) .switchGlyph {
+  text-decoration: line-through;
+  color: var(--color-warning);
+}
+
+.rowAction[data-kind='fxEnabled']:not([data-on]) {
+  opacity: 1;
 }
 
 .footer {
