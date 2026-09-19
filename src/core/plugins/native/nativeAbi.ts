@@ -62,6 +62,26 @@ export const NATIVE_EXPORTS = [
 
 export type NativeCallKind = 'effect' | 'generate' | 'invoke';
 
+/**
+ * What an addon wants pixels in.
+ *
+ * ── The precision this does NOT change ──────────────────────────────────────
+ *
+ * `f32-premul` is a CONTAINER, not a promise about precision. Every route into
+ * a CPU or native effect starts at an 8-bit source — `pluginCpuEffect` reads
+ * the bake through Canvas2D's `getImageData`, which has no wider form — so
+ * asking for float gets 8-bit data widened to float, not high-precision data.
+ *
+ * It is still the right ask for an addon whose maths wants floats: the
+ * conversion happens once, in the plugin's own process, instead of inside its
+ * inner loop. What it is not is a way to get more bits than the host has.
+ *
+ * Where a plugin DOES get real precision is the GPU path: the renderer's
+ * compositing targets are `rgba16float`, so a plugin's WGSL or GLSL effect
+ * already reads and writes at half-float throughout. An effect that needs the
+ * precision should ship a shader; the CPU kernel is the twin that keeps it
+ * working when a layer is baked, not the place to do 16-bit work.
+ */
 export type NativePixelFormat = 'f32-premul' | 'rgba8-premul' | 'rgba8-straight';
 
 /** What `describe()` came back with, after the host has checked its shape. */
@@ -201,6 +221,19 @@ export interface NativeEffectRequest {
   params: Record<string, unknown>;
   host: NativeFrameInfo;
   neighbours?: Array<{ offset: number; pixels: Uint8ClampedArray }>;
+  /**
+   * What this instance returned from the previous frame — AE's sequence data.
+   *
+   * Absent on the first call, after a param the effect declared in
+   * `invalidateOn` changes, and after anything that restarts the addon. The
+   * host guarantees only that it is either the last value THIS instance
+   * returned or nothing at all; a plugin that cannot rebuild from nothing is a
+   * plugin that will fail on the second frame of a render.
+   *
+   * See `nativeSequenceData.ts` for what is dropped when, and why none of it
+   * is saved with the document.
+   */
+  state?: unknown;
 }
 
 export interface NativeGenerateRequest {
@@ -232,6 +265,16 @@ export interface NativeEffectResult {
   /** Absent when `identity` — the caller keeps the buffer it already had. */
   pixels?: Uint8ClampedArray;
   identity?: boolean;
+  /**
+   * What to hand this instance on the next frame.
+   *
+   * Omit to keep whatever the host is already holding — the common case, since
+   * an effect that built its cache on frame one has nothing new to say on frame
+   * two. Return `null` to clear it. Returning it unchanged every frame is also
+   * correct and costs a structured clone per frame, which is exactly the cost
+   * this field exists to avoid, so omitting is the documented default.
+   */
+  state?: unknown;
 }
 
 export interface NativeGenerateResult {

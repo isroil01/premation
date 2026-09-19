@@ -113,9 +113,11 @@ describe('the two version numbers', () => {
       would pass forever and say nothing the day they move again.
     */
     expect(HOST_API_VERSION).toBe(5);
-    // 7 since the UI block (`contributes.inspector` / `tools` / `shortcuts` /
-    // `expressions`) — a GRAMMAR change, so this moved and the host API did not.
-    expect(MANIFEST_VERSION).toBe(7);
+    // 8 since `contributes.audioEffects`, and 7 before it for the UI block
+    // (`inspector` / `tools` / `shortcuts` / `expressions`). Both are GRAMMAR
+    // changes, so this has now moved twice while the host API has not moved
+    // once — which is the split doing exactly what it was separated for.
+    expect(MANIFEST_VERSION).toBe(8);
   });
 
   it('refuses a manifest whose GRAMMAR is newer than this host reads', () => {

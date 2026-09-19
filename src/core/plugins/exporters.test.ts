@@ -167,9 +167,9 @@ describe('the version split', () => {
     // `contributes.exporters` adds a manifest KEY and no host method, so
     // MANIFEST_VERSION moved and HOST_API_VERSION did not. Whether a plugin may
     // CALL the new surface is the `exporters` capability, not a version.
-    // 7 as of the UI block; the point of the assertion is the GAP, not the
-    // number, and every bump since has been on this side of it.
-    expect(MANIFEST_VERSION).toBe(7);
+    // 8 as of `contributes.audioEffects`; the point of the assertion is the
+    // GAP, not the number, and every bump since has been on this side of it.
+    expect(MANIFEST_VERSION).toBe(8);
     expect(HOST_API_VERSION).toBe(5);
     expect(MANIFEST_VERSION).not.toBe(HOST_API_VERSION);
   });

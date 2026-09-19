@@ -129,6 +129,17 @@ extern "C" {
  *     `output` buffer you were handed and return it, or return `identity: true`
  *     to say you changed nothing, which lets the host skip the copy back.
  *
+ *     SEQUENCE DATA. `request.state` is whatever you returned as `state` from
+ *     this instance's previous frame, and it is AE's sequence data by another
+ *     name: the place to keep the thing that was expensive to work out and did
+ *     not change — a decoded LUT, a BVH, a flow field, a noise model. Omit
+ *     `state` from your answer to keep what the host holds; return `null` to
+ *     clear it. It is absent on the first frame, after a param your manifest
+ *     named in `invalidateOn` changes, and after anything that restarts this
+ *     process, so an addon that cannot rebuild from nothing will fail on
+ *     somebody's second frame. It is a CACHE: it is never saved with the
+ *     document, and the host may drop it at any moment.
+ *
  *   void motion_plugin_dispose(void)
  *
  *     Called before the process exits normally — an idle timeout, a reload, a

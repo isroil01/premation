@@ -297,6 +297,26 @@ export type GenerateHandler = (request: unknown) => unknown;
 
 const generators = new Map<string, GenerateHandler>();
 
+/**
+ * What a supervisor is handed, and what it may answer.
+ *
+ * `params` is the WHOLE block rather than just the one that moved: a preset
+ * needs to know what it is about to overwrite, and a clamp needs the value it
+ * is clamping against.
+ */
+export interface SuperviseContext {
+  effectId: string;
+  instanceId: string;
+  changed: string;
+  params: Record<string, unknown>;
+}
+
+export type SuperviseHandler = (
+  ctx: SuperviseContext,
+) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
+
+const supervisors = new Map<string, SuperviseHandler>();
+
 function buildApi(
   manifest: PluginManifest,
   permissions: PluginPermission[],
@@ -678,6 +698,34 @@ function buildApi(
      * never heard of is refused rather than quietly doing nothing.
      */
     effects: {
+      /**
+       * React to one of your own effect's controls moving — AE's
+       * `PF_Cmd_USER_CHANGED_PARAM`, and what makes a preset possible:
+       *
+       *   motion.effects.onParamChanged('filmic', ({ changed, params }) => {
+       *     if (changed !== 'preset') return null;
+       *     return PRESETS[params.preset] ?? null;
+       *   });
+       *
+       * Called only for params the effect named in `supervises`, and only once
+       * a drag has SETTLED — a slider commits thirty times a second and the
+       * host coalesces those into one call carrying the value it ended on.
+       *
+       * Return an object of params to write, or `null` to change nothing. The
+       * host keeps only keys this effect declares, ignores values that did not
+       * move, and does NOT call you again for the params you just wrote — so
+       * normalising a value you also supervise is safe rather than a loop.
+       *
+       * Take too long and the host gives up on this edit: the user's own
+       * change already landed, so nothing is lost but your adjustment.
+       */
+      onParamChanged: (effectId: string, supervise: SuperviseHandler) => {
+        if (typeof supervise !== 'function') {
+          throw new Error(`effects.onParamChanged("${effectId}") needs a function.`);
+        }
+        supervisors.set(effectId, supervise);
+        return () => supervisors.delete(effectId);
+      },
       list: (layerId: string) => call('effects.list', layerId) as Promise<Array<{
         id: string; type: string; enabled: boolean; params: Record<string, unknown>;
       }>>,
@@ -966,6 +1014,41 @@ async function runImport(msg: Extract<HostMessage, { k: 'import' }>): Promise<vo
  * instances, and duplicating the rule here would make the two copies the thing
  * that has to agree.
  */
+/**
+ * The user moved one of this effect's controls, and the plugin may answer by
+ * moving the others.
+ *
+ * A plugin that declared `supervises` and never registered a handler is a
+ * manifest promising a callback nothing implements — reported as such, rather
+ * than answered with silence, because the symptom otherwise is a preset
+ * dropdown that does nothing and says nothing.
+ */
+async function runSupervise(msg: Extract<HostMessage, { k: 'supervise' }>): Promise<void> {
+  const supervise = supervisors.get(msg.effectId);
+  if (!supervise) {
+    post({
+      k: 'superviseResult',
+      id: msg.id,
+      ok: false,
+      error:
+        `This plugin declares "supervises" on the effect "${msg.effectId}" but never called `
+        + `motion.effects.onParamChanged("${msg.effectId}", ...).`,
+    });
+    return;
+  }
+  try {
+    const params = await supervise({
+      effectId: msg.effectId,
+      instanceId: msg.instanceId,
+      changed: msg.changed,
+      params: msg.params,
+    });
+    post({ k: 'superviseResult', id: msg.id, ok: true, params: params ?? null });
+  } catch (err) {
+    post({ k: 'superviseResult', id: msg.id, ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
 async function runGenerate(msg: Extract<HostMessage, { k: 'generate' }>): Promise<void> {
   const generate = generators.get(msg.kindId);
   if (!generate) {
@@ -1112,6 +1195,10 @@ self.onmessage = (ev: MessageEvent<HostMessage>): void => {
     }
     case 'generate': {
       void runGenerate(msg);
+      return;
+    }
+    case 'supervise': {
+      void runSupervise(msg);
       return;
     }
     case 'renderFinished': {

@@ -31,6 +31,26 @@ export const MOTION_PLUGIN_ABI_VERSION = MOTION_PLUGIN_ABI_MAJOR * 1000 + MOTION
 export type MotionNativeCallKind = 'effect' | 'generate' | 'invoke';
 
 /** What the addon wants pixels in. See the header for why float is the default. */
+/**
+ * What an addon wants pixels in.
+ *
+ * ── The precision this does NOT change ──────────────────────────────────────
+ *
+ * `f32-premul` is a CONTAINER, not a promise about precision. Every route into
+ * a CPU or native effect starts at an 8-bit source — the host's CPU bake reads
+ * the bake through Canvas2D's `getImageData`, which has no wider form — so
+ * asking for float gets 8-bit data widened to float, not high-precision data.
+ *
+ * It is still the right ask for an addon whose maths wants floats: the
+ * conversion happens once, in the plugin's own process, instead of inside its
+ * inner loop. What it is not is a way to get more bits than the host has.
+ *
+ * Where a plugin DOES get real precision is the GPU path: the renderer's
+ * compositing targets are `rgba16float`, so a plugin's WGSL or GLSL effect
+ * already reads and writes at half-float throughout. An effect that needs the
+ * precision should ship a shader; the CPU kernel is the twin that keeps it
+ * working when a layer is baked, not the place to do 16-bit work.
+ */
 export type MotionNativePixelFormat = 'f32-premul' | 'rgba8-premul' | 'rgba8-straight';
 
 /** The same three words every other tier declares. */
@@ -123,6 +143,15 @@ export interface MotionNativeEffectRequest {
   output: Uint8ClampedArray | Float32Array;
   params: Record<string, unknown>;
   host: MotionNativeFrameInfo;
+  /**
+   * What this instance returned last frame — the host's sequence data.
+   *
+   * Absent on the first call, after a param you named in `invalidateOn`
+   * changes, and after anything that restarts this process. Treat it as a
+   * CACHE and nothing more: an addon that cannot rebuild from nothing will
+   * fail on the second frame of somebody's render.
+   */
+  state?: unknown;
   /** Neighbouring frames of the layer's own source, keyed by offset (−1 = previous). */
   neighbours?: Array<{ offset: number; pixels: Uint8ClampedArray | Float32Array }>;
 }
@@ -163,6 +192,18 @@ export interface MotionNativeEffectResponse {
   output?: Uint8ClampedArray | Float32Array;
   /** "I changed nothing" — the host reuses the input and skips the copy back. */
   identity?: boolean;
+  /**
+   * What to hand this instance next frame — the host's sequence data.
+   *
+   * OMIT to keep what the host already holds. That is the case you want on
+   * almost every frame: build the expensive thing once, return it once, and
+   * say nothing thereafter. Returning it again each frame is also correct and
+   * costs a structured clone of the whole cache per frame, which is the cost
+   * the field exists to avoid.
+   *
+   * Return `null` to clear it.
+   */
+  state?: unknown;
 }
 
 export interface MotionNativeGenerateResponse {

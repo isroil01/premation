@@ -40,6 +40,12 @@ import {
 } from './nativeTrust';
 import { collectTransfers, reclaimAll } from './nativeBuffers';
 import {
+  dropPluginSequenceData,
+  readSequenceData,
+  sequenceSignature,
+  writeSequenceData,
+} from './nativeSequenceData';
+import {
   NativeScheduler,
   nativeScheduler,
   type NativeJob,
@@ -225,6 +231,11 @@ export async function loadNativePlugin(input: NativeLoadInput): Promise<NativeSt
  */
 export async function unloadNativePlugin(pluginId: string, reason = 'unload'): Promise<void> {
   nativeScheduler()?.forget(pluginId);
+  // Everything this plugin remembered between frames. The next process never
+  // saw it and may not even be the same build of the same addon, so handing it
+  // back would be handing a stranger's data to code that trusts it. Covers
+  // unload, reload (which is an unload then a load) and revocation.
+  dropPluginSequenceData(pluginId);
   statuses.delete(pluginId);
   for (const fn of [...statusListeners]) fn();
   await bridge()?.unload(pluginId, reason);
@@ -326,10 +337,22 @@ export async function runNativeEffect(request: {
   host: NativeFrameInfo;
   neighbours?: Array<{ offset: number; pixels: Uint8ClampedArray }>;
   threadSafety?: ThreadSafety;
+  /** Params whose change invalidates this effect's cached state — the
+   *  effect's own declaration, from its manifest. */
+  invalidateOn?: ReadonlyArray<string>;
 }): Promise<Uint8ClampedArray | null> {
   if (!nativeReady(request.pluginId, 'effect')) return null;
   const pool = scheduler();
   if (!pool) return null;
+
+  /*
+    Sequence data: what this instance remembered from the last frame. The
+    signature is computed here rather than in the store so the store never has
+    to know what a param is — see `nativeSequenceData.ts` for why none of this
+    is saved, and why dropping all of it must only ever cost speed.
+  */
+  const signature = sequenceSignature(request.params, request.invalidateOn);
+  const state = readSequenceData(request.pluginId, request.instanceId, signature);
 
   const native: NativeEffectRequest = {
     call: 'effect',
@@ -343,6 +366,7 @@ export async function runNativeEffect(request: {
     ...(request.neighbours && request.neighbours.length > 0
       ? { neighbours: request.neighbours }
       : {}),
+    ...(state !== undefined ? { state } : {}),
   };
 
   const outcome = await pool.submit({
@@ -354,6 +378,30 @@ export async function runNativeEffect(request: {
     request: native,
   });
   if (!outcome || !outcome.ok || outcome.result.call !== 'effect') return null;
+
+  /*
+    An OMITTED `state` keeps what the host already holds; `null` clears it.
+    The distinction is the whole ergonomics of the field: an effect that built
+    its cache on frame one says nothing on frame two, and saying nothing has to
+    be free rather than meaning "forget everything".
+  */
+  if ('state' in outcome.result) {
+    const next = outcome.result.state;
+    const kept = writeSequenceData(
+      request.pluginId,
+      request.instanceId,
+      signature,
+      next === null ? undefined : next,
+    );
+    if (!kept) {
+      pool.note(
+        request.pluginId,
+        request.instanceId,
+        'returned more cached state than the host will hold; it will be rebuilt every frame',
+      );
+    }
+  }
+
   // `identity` means the addon changed nothing. The caller's own buffer is
   // already the answer, and handing it back saves a copy of the whole frame.
   if (outcome.result.identity) return request.pixels;
