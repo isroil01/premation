@@ -34,6 +34,7 @@ import {
   type PluginVisibility,
   type PublisherRecord,
 } from '@core/plugins/registry';
+import { ListingMediaEditor } from './ListingMediaEditor';
 import styles from './MyPluginsSection.module.css';
 
 export function MyPluginsSection(): JSX.Element {
@@ -273,20 +274,34 @@ function PublishedRow({
   const [changelog, setChangelog] = useState('');
   const [license, setLicense] = useState('');
   const [categories, setCategories] = useState<string[]>([]);
+  // The listing's pictures, kept beside the text fields because they are the
+  // same edit from the user's side. `mediaRev` re-reads after an upload so the
+  // gallery reflects what the registry actually stored, not what was sent.
+  const [iconUrl, setIconUrl] = useState<string | null>(null);
+  const [screenshots, setScreenshots] = useState<Array<{ id: string; url: string }>>([]);
+  const [mediaRev, setMediaRev] = useState(0);
 
   useEffect(() => {
-    if (!open || loaded) return;
+    if (!open) return;
     let alive = true;
     void fetchRegistryDetail(plugin.id).then((d) => {
       if (!alive || !d) return;
-      setReadme(d.readme ?? '');
-      setChangelog(d.changelog ?? '');
-      setLicense(d.license ?? '');
-      setCategories(d.categories ?? []);
-      setLoaded(true);
+      if (!loaded) {
+        // Text fields load ONCE. Re-seeding them on a media refetch would
+        // discard whatever the user has typed since — an icon upload must not
+        // silently revert an unsaved README.
+        setReadme(d.readme ?? '');
+        setChangelog(d.changelog ?? '');
+        setLicense(d.license ?? '');
+        setCategories(d.categories ?? []);
+        setLoaded(true);
+      }
+      setIconUrl(d.iconUrl ?? null);
+      setScreenshots(d.screenshots ?? []);
     });
     return () => { alive = false; };
-  }, [open, loaded, plugin.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, plugin.id, mediaRev]);
 
   const save = async (): Promise<void> => {
     setSaving(true);
@@ -424,8 +439,16 @@ function PublishedRow({
       {open && loaded && (
         <div className={styles.editorDrawer}>
           <div className={styles.infoNote}>
-            Name and summary are verified from <code>plugin.json</code> in your signed package. Edit README, changelog, categories, and license below to refine your listing.
+            Name and summary are verified from <code>plugin.json</code> in your signed package — they cannot be edited here, because they are part of what your signature covers. Everything below is listing copy: pictures, guide, changelog, categories and licence.
           </div>
+
+          <ListingMediaEditor
+            pluginId={plugin.id}
+            iconUrl={iconUrl}
+            screenshots={screenshots}
+            onChanged={() => { setMediaRev((r) => r + 1); onChanged(); }}
+            onError={onError}
+          />
 
           <div className={styles.formField}>
             <label className={styles.fieldLabel} htmlFor={`readme-${plugin.id}`}>

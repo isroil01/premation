@@ -13,6 +13,8 @@ import { MyPluginsSection } from './MyPluginsSection';
 
 const updateListing = jest.fn(async () => undefined);
 const deletePublishedPlugin = jest.fn(async () => undefined);
+const uploadPluginMedia = jest.fn(async () => ({ id: 'm1', url: '/plugins/media/m1' }));
+const deletePluginMedia = jest.fn(async () => undefined);
 
 jest.mock('@core/config/edition', () => ({ pluginRegistryEnabled: () => true }));
 jest.mock('@core/plugins/registry', () => ({
@@ -46,6 +48,16 @@ jest.mock('@core/plugins/registry', () => ({
   registerPublisher: jest.fn(),
   updateListing: (...a: unknown[]) => updateListing(...(a as [])),
   deletePublishedPlugin: (...a: unknown[]) => deletePublishedPlugin(...(a as [])),
+  // The listing's pictures. Mocked with the REAL constants rather than
+  // placeholders: the media editor renders the limits into its own labels
+  // ("up to 2 MB", "up to 6"), so stand-ins would make the copy under test say
+  // something the product does not.
+  MAX_PLUGIN_IMAGE_BYTES: 2 * 1024 * 1024,
+  MAX_PLUGIN_SCREENSHOTS: 6,
+  PLUGIN_IMAGE_MIME: ['image/png', 'image/jpeg', 'image/webp'],
+  registryMediaUrl: (p: string | null) => (p ? `https://registry.test${p}` : null),
+  uploadPluginMedia: (...a: unknown[]) => uploadPluginMedia(...(a as [])),
+  deletePluginMedia: (...a: unknown[]) => deletePluginMedia(...(a as [])),
 }));
 
 interface PublishArg { bytes: Uint8Array; visibility: string }
@@ -58,6 +70,9 @@ const pluginPublish = jest.fn<Promise<PublishRes>, [PublishArg]>(async () => ({ 
 beforeEach(() => {
   updateListing.mockClear();
   deletePublishedPlugin.mockClear();
+  uploadPluginMedia.mockClear();
+  uploadPluginMedia.mockResolvedValue({ id: 'm1', url: '/plugins/media/m1' });
+  deletePluginMedia.mockClear();
   pluginPublish.mockClear();
   pluginPublish.mockResolvedValue({ ok: true });
   (window as unknown as { motionEditor?: unknown }).motionEditor = { pluginPublish };

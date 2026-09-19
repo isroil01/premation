@@ -326,9 +326,9 @@
   font-size: 0.76rem;
   color: var(--color-text-secondary);
   background: var(--color-surface-2);
-  border-left: 3px solid var(--color-primary);
+  border: 1px solid var(--color-border-subtle);
   padding: 8px 12px;
-  border-radius: 0 6px 6px 0;
+  border-radius: 6px;
   line-height: 1.4;
 }
 
@@ -699,4 +699,136 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+
+/* ── Listing media (icon + screenshots) ──────────────────────────────────── */
+
+/* The file inputs are driven by the buttons beside them; they stay in the DOM
+   so the label association and keyboard activation still work, rather than
+   being replaced by a click handler on a div. */
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mediaRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Square, because the icon IS square everywhere it is shown; a slot of the
+   wrong shape would flatter an image that is about to be cropped. */
+.iconSlot {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--color-surface-2);
+  color: var(--color-text-tertiary);
+}
+
+.iconSlot[data-empty] {
+  border: 1px dashed var(--color-border-subtle);
+}
+
+.iconPreview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mediaActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mediaHint {
+  font-size: 0.72rem;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+
+.shotGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: 8px;
+}
+
+.shotCard {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface-2);
+}
+
+/* Contain, not cover: a screenshot cropped to fit is a screenshot of the wrong
+   thing, and the point of the gallery is what the plugin looks like. */
+.shotImg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.shotRemove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast, 120ms) ease;
+}
+
+.shotCard:hover .shotRemove,
+.shotCard:focus-within .shotRemove {
+  opacity: 1;
+}
+
+.shotAdd {
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  grid-auto-flow: row;
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.shotAdd:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.shotAdd:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
