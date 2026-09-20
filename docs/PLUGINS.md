@@ -1094,6 +1094,12 @@ nothing installs.
 
 ### Publishing
 
+Everything a publisher does lives on one page: **Dashboard ▸ Plugins ▸
+Publishing** (`?tab=plugins&view=publishing`). Claiming your namespace, cutting
+a release, editing a listing's copy and pictures, flipping a listing between
+public and private, and withdrawing one are all there, as a rail of your
+listings beside the one you are working on.
+
 **From the app.** Hit publish and you are asked how to sign:
 
 | | |

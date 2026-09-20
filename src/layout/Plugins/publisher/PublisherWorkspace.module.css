@@ -1,0 +1,1147 @@
+/**
+ * The publisher workspace.
+ *
+ * Everything here composes from the semantic layer in `themes/` — no literals,
+ * no `var(--token, <hard-coded grey>)` fallbacks. The fallbacks were the tell in the old
+ * shelf: a fallback means the token might not exist, and every one of these
+ * does, in all three themes. A hard-coded grey also does not follow the light
+ * theme, which is how the previous version ended up with grey-on-grey there.
+ *
+ * Two surfaces, deliberately: the rail sits on `surface-2` and the detail pane
+ * on `surface-1`, so the split reads as structure without a heavy divider.
+ */
+
+/* ── Shell ─────────────────────────────────────────────────────── */
+
+.workspace {
+  display: grid;
+  /* The rail is fixed; the detail takes the rest. `minmax(0, 1fr)` and not
+     `1fr`: a long README in a <pre> would otherwise widen the column past the
+     viewport instead of scrolling inside it. */
+  grid-template-columns: 264px minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  background: var(--color-surface-1);
+}
+
+@media (max-width: 900px) {
+  .workspace {
+    /* Below this the two panes stop being a split and become a stack: the rail
+       is a horizontal strip of listings above its own editor. */
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+}
+
+/* ── Rail ──────────────────────────────────────────────────────── */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-2);
+}
+
+.railHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-6);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius-control);
+  background: var(--color-accent-subtle);
+  color: var(--color-accent);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  /* The letter, not the box, is what identifies the namespace. */
+  text-transform: uppercase;
+}
+
+.identity {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.namespace {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  font-variant-ligatures: none;
+}
+
+.namespaceText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.displayName {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verified {
+  display: inline-grid;
+  place-items: center;
+  color: var(--color-success);
+  flex-shrink: 0;
+}
+
+.railScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.railGroupLabel {
+  padding: var(--space-4) var(--space-4) var(--space-3);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+/**
+ * A listing row.
+ *
+ * Selection is carried by a background tint and the name's weight, never by a
+ * `border-left` — a coloured left stripe is the tell, and a border appearing on
+ * selection would also shift the row's content by its own width.
+ */
+.railItem {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
+  padding: var(--space-4) var(--space-4);
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.railItem:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.railItem:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+/**
+ * Selected — a TINT, not a full-bleed accent fill.
+ *
+ * Measured, not chosen by taste. A saturated `--color-selected` row puts white
+ * on the selection blue, which is **3.47:1** — under the 4.5 this row's 11px name needs,
+ * and the 10px meta line was worse still: tertiary grey on that blue came out
+ * at **1.03:1**, so the version and install count vanished the moment you
+ * selected the row they were on.
+ *
+ * The tint keeps the text on a near-black surface where it already clears AA,
+ * and it is what the dashboard's own sidebar does for its active destination —
+ * so a selected row here and a selected page there read as the same idea.
+ */
+.railItemActive,
+.railItemActive:hover {
+  background: var(--color-primary-subtle);
+  color: var(--color-text-primary);
+}
+
+/**
+ * The selected row's name is WEIGHT, not colour.
+ *
+ * `--color-primary` on this surface measures 3.26:1 — the sidebar next door
+ * does exactly that for its active destination and is the reason not to copy
+ * it. The tint behind the row already says "selected"; the text stays at the
+ * colour that reads.
+ */
+.railItemActive .railItemName {
+  font-weight: var(--font-weight-semibold);
+}
+
+.railItemLabel {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.railItemName {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/**
+ * `text-secondary`, not tertiary.
+ *
+ * This line is 10px, so it needs 4.5:1 like any other body text. Tertiary is
+ * tuned against `surface-1` and measured 4.20:1 here on the rail's lighter
+ * `surface-2` — the kind of near-miss that reads as "slightly hard to read"
+ * rather than as a bug, on the line carrying the version number.
+ */
+.railItemMeta {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/** Visibility, as a dot. A word here would repeat what the detail pane says. */
+.visDot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.visPublic {
+  background: var(--color-success);
+}
+
+.visPrivate {
+  background: var(--color-text-tertiary);
+}
+
+.railFooter {
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+/**
+ * Stacked.
+ *
+ * The rail does not become a short vertical list — capping it at 40vh left its
+ * header and footer eating almost all of it, with the listings themselves in a
+ * sliver you had to scroll to see at all. It becomes a horizontal STRIP
+ * instead: identity on its own line, listings as a row you swipe, the action
+ * below. Each row keeps both its lines, so a listing is still identifiable by
+ * version and installs rather than by name alone.
+ */
+@media (max-width: 900px) {
+  .rail {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .railScroll {
+    flex-direction: row;
+    align-items: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    gap: var(--space-3);
+    padding: var(--space-4) var(--space-6);
+  }
+
+  /* The count is a vertical list's header; in a row it is just an obstacle. */
+  .railGroupLabel {
+    display: none;
+  }
+
+  .railItem {
+    width: auto;
+    flex: 0 0 auto;
+    border: 1px solid var(--color-border-subtle);
+  }
+
+  .railItemActive {
+    border-color: var(--color-primary);
+  }
+
+  .railItemName,
+  .railItemMeta {
+    overflow: visible;
+    white-space: nowrap;
+  }
+
+  .railFooter {
+    border-top: none;
+    padding-top: 0;
+  }
+}
+
+/* ── Detail pane ───────────────────────────────────────────────── */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.detailScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/**
+ * The reading column.
+ *
+ * Capped rather than full-bleed: listing copy is prose, and a README input
+ * stretched across a 1600px dashboard is unreadable to write in as well as to
+ * read.
+ */
+.column {
+  max-width: 760px;
+  padding: var(--space-8) var(--space-9) var(--space-11);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+@media (max-width: 720px) {
+  .column {
+    padding: var(--space-7) var(--space-6) var(--space-10);
+  }
+}
+
+.detailHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-6);
+  padding: var(--space-7) var(--space-9) var(--space-6);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+@media (max-width: 720px) {
+  .detailHeader {
+    padding: var(--space-6);
+    flex-direction: column;
+  }
+}
+
+.detailTitles {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.detailTitleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  text-wrap: balance;
+}
+
+.detailSub {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  max-width: 68ch;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.detailActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-shrink: 0;
+}
+
+/* ── Facts strip ───────────────────────────────────────────────── */
+
+/**
+ * Installs / version / updated, as a row of labelled figures.
+ *
+ * Not cards. Three bordered boxes around three short numbers is the
+ * hero-metric template, and these are reference values a publisher glances at,
+ * not a dashboard's headline.
+ */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-9);
+  padding-bottom: var(--space-2);
+}
+
+.fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.factValue {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.factLabel {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+}
+
+/* ── Tabs ──────────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: var(--space-2);
+  padding: 0 var(--space-9);
+  border-bottom: 1px solid var(--color-border-subtle);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .tabs {
+    padding: 0 var(--space-6);
+  }
+}
+
+.tab {
+  position: relative;
+  padding: var(--space-5) var(--space-4) var(--space-5);
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -4px;
+  border-radius: var(--radius-xs);
+}
+
+.tabActive {
+  color: var(--color-text-primary);
+}
+
+/** The underline is a child element so it can animate width without reflow. */
+.tabActive::after {
+  content: '';
+  position: absolute;
+  inset-inline: var(--space-4);
+  bottom: -1px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+
+.tabCount {
+  margin-left: var(--space-3);
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-3);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  font-variant-numeric: tabular-nums;
+}
+
+/** A tab whose fields the user has edited but not saved. */
+.tabDirty::before {
+  content: '';
+  position: absolute;
+  top: var(--space-4);
+  right: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-modified);
+}
+
+/* ── Fields ────────────────────────────────────────────────────── */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.sectionHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.sectionTitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.sectionHint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.labelHint {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-tertiary);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-xs);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    box-shadow var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  /* `text-tertiary`, not a lighter grey: placeholder text is text, and has to
+     clear the same contrast bar as everything else. */
+  color: var(--color-text-tertiary);
+}
+
+.input:hover,
+.textarea:hover {
+  border-color: var(--color-field-border-hover);
+}
+
+.input:focus-visible,
+.textarea:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-focus-ring);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.6;
+  font-family: var(--font-family-mono);
+}
+
+.inputInvalid,
+.inputInvalid:hover {
+  border-color: var(--color-danger);
+}
+
+.fieldError {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-micro);
+  color: var(--color-danger);
+}
+
+.charCount {
+  align-self: flex-end;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Namespace preview ─────────────────────────────────────────── */
+
+.preview {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow-x: auto;
+}
+
+.previewStrong {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ── Chips ─────────────────────────────────────────────────────── */
+
+.chipRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.chip {
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  text-transform: capitalize;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.chip:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.chipActive,
+.chipActive:hover {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+/* ── Status pills ──────────────────────────────────────────────── */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.pillPublic {
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  color: var(--color-success);
+}
+
+.pillPrivate {
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
+}
+
+/**
+ * The one button treatment this file still owns.
+ *
+ * Withdraw is destructive but not the primary action on the screen, so it is a
+ * ghost `<Button>` tinted red rather than a filled danger one — loud enough to
+ * read as dangerous, quiet enough not to compete with Make private beside it.
+ * Everything else here is a plain `<Button>` from the design system, which is
+ * where size, focus ring and density live.
+ */
+.dangerText {
+  color: var(--color-danger);
+}
+
+/* ── Save bar ──────────────────────────────────────────────────── */
+
+/**
+ * Only present while there is something to save.
+ *
+ * Sticky to the bottom of the detail pane rather than following the page: the
+ * README field is tall, and a Save button that scrolls out of reach while you
+ * are typing in it is the thing that makes people lose edits.
+ */
+.saveBar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-index-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-9);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  box-shadow: var(--shadow-panel);
+  animation: saveBarIn var(--motion-duration-base) var(--motion-ease-decelerate);
+}
+
+@media (max-width: 720px) {
+  .saveBar {
+    padding: var(--space-5) var(--space-6);
+  }
+}
+
+@keyframes saveBarIn {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.saveBarText {
+  flex: 1;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.savedFlash {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-success);
+}
+
+/* ── Notices ───────────────────────────────────────────────────── */
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-control);
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+}
+
+.noticeInfo {
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
+}
+
+.noticeWarn {
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-text-primary);
+}
+
+.noticeError {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+  color: var(--color-text-primary);
+}
+
+.noticeIcon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.noticeBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.noticeTitle {
+  font-weight: var(--font-weight-semibold);
+}
+
+.noticeActions {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* ── States ────────────────────────────────────────────────────── */
+
+.centered {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  padding: var(--space-9);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  max-width: 44ch;
+  text-align: center;
+}
+
+.emptyGlyph {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  color: var(--color-text-tertiary);
+}
+
+.emptyTitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.emptyBody {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.6;
+  text-wrap: pretty;
+}
+
+/** Skeletons, not a spinner parked in the middle of the content. */
+.skeletonRail,
+.skeletonLine {
+  border-radius: var(--radius-control);
+  background: var(--color-surface-3);
+  animation: pulse 1.4s var(--motion-ease-standard) infinite;
+}
+
+.skeletonRail {
+  height: 38px;
+}
+
+.skeletonLine {
+  height: 12px;
+}
+
+.skeletonStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Dropzone ──────────────────────────────────────────────────── */
+
+.dropzone {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 168px;
+  padding: var(--space-8);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-surface);
+  background: var(--color-surface-2);
+  text-align: center;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.dropzoneActive {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+.dropzoneInput {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.dropzoneGlyph {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
+}
+
+.dropzoneTitle {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.dropzoneHint {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+}
+
+.chosenFile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-0);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  /* Above the dropzone's own full-bleed file input, or the remove button
+     cannot be clicked — it re-opens the picker instead. */
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+}
+
+.chosenName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chosenSize {
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+/* ── Radio cards ───────────────────────────────────────────────── */
+
+.choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+}
+
+.choice {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.choice:hover {
+  border-color: var(--color-border-strong);
+}
+
+.choiceActive {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle);
+}
+
+.choice:focus-within {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* The native control stays in the tree for keyboard and screen readers; the
+   card is its label, so clicking anywhere in the card selects it. */
+.choiceInput {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.choiceMark {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-0);
+}
+
+.choiceActive .choiceMark {
+  border-color: var(--color-accent);
+}
+
+.choiceDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  transform: scale(0);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-emphasized);
+}
+
+.choiceActive .choiceDot {
+  transform: scale(1);
+}
+
+.choiceBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.choiceTitle {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.choiceDesc {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+/* ── Terminal fallback ─────────────────────────────────────────── */
+
+.terminal {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: var(--color-surface-0);
+}
+
+.terminalBar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-2);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+}
+
+.terminalCode {
+  margin: 0;
+  padding: var(--space-5);
+  overflow-x: auto;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro);
+  line-height: 1.7;
+  color: var(--color-text-secondary);
+  white-space: pre;
+}
+
+/* ── Withdraw dialog ───────────────────────────────────────────── */
+
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.dialogActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.dialogActions > .dialogAlt {
+  margin-right: auto;
+}
+
+.confirmName {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+/* ── Reduced motion ────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .saveBar {
+    animation: none;
+  }
+
+  .skeletonRail,
+  .skeletonLine {
+    animation: none;
+    opacity: 0.7;
+  }
+
+  .spin {
+    animation-duration: 2s;
+  }
+
+  .btn:active:not(:disabled) {
+    transform: none;
+  }
+
+  .choiceDot {
+    transition: none;
+  }
+}

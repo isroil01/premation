@@ -30,6 +30,7 @@
 
 import { useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
+import { Button } from '@components/Button';
 import {
   MAX_PLUGIN_IMAGE_BYTES,
   MAX_PLUGIN_SCREENSHOTS,
@@ -39,7 +40,7 @@ import {
   uploadPluginMedia,
   type PluginMediaRef,
 } from '@core/plugins/registry';
-import styles from './MyPluginsSection.module.css';
+import styles from './ListingMediaEditor.module.css';
 
 export interface ListingMediaEditorProps {
   pluginId: string;
@@ -129,16 +130,15 @@ export function ListingMediaEditor({
               : <Icon name="image" size="md" />}
           </div>
           <div className={styles.mediaActions}>
-            <button
-              type="button"
-              className={`${styles.btn} ${styles.btnSecondary}`}
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={busy === 'icon'}
               disabled={busy !== null}
               onClick={() => iconInput.current?.click()}
             >
-              {busy === 'icon'
-                ? <><Icon name="refresh" className={styles.spin} size="sm" /><span>Uploading…</span></>
-                : icon ? 'Replace icon' : 'Choose icon'}
-            </button>
+              {busy === 'icon' ? 'Uploading…' : icon ? 'Replace icon' : 'Choose icon'}
+            </Button>
             {/* No delete for the icon: the registry replaces rather than
                 accumulates, so "choose another" is the whole operation, and a
                 listing with no icon at all is not a state worth offering. */}

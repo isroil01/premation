@@ -39,6 +39,7 @@
  */
 
 import { useState, useRef, useCallback, useMemo, useEffect, useLayoutEffect } from 'react';
+import { clampPps, TIMELINE_PPS_MAX } from './zoomAnchor';
 import { Icon } from '@components/Icon';
 import { defaultAnimation, makeKeyframeId, parseKeyframeId, expandKeyframeProp, EASY_EASE_BEZIER, EASY_EASE_IN_BEZIER, EASY_EASE_OUT_BEZIER, type EasingKind } from '@motion/animation';
 import { beginAnimEdit, recordAnimEdit, runAnimEdit } from '@core/animation/animationCommands';
@@ -226,7 +227,7 @@ const KF_SIZE = 8;
 /** Show value labels next to every in-view diamond once zoomed in this far. */
 const LABEL_PPS = 120;
 const GRAPH_PPS_MIN = 4;
-const GRAPH_PPS_MAX = 800;
+const GRAPH_PPS_MAX = TIMELINE_PPS_MAX;
 /** Pointer must travel this far before a press becomes a drag (click ≠ nudge). */
 const DRAG_DEAD_ZONE_PX = 2;
 /** Handle y is clamped to this band around the segment (overshoot allowed, runaway not). */
@@ -709,7 +710,7 @@ export function GraphEditor({
         if (!onZoom) return;
         e.preventDefault();
         const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-        const next = clamp(pps * factor, 4, 800);
+        const next = clampPps(pps * factor);
         const rect = el.getBoundingClientRect();
         const localX = e.clientX - rect.left;
         // Re-anchored by the layout effect below once the new pps has rendered.

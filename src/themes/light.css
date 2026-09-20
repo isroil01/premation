@@ -89,6 +89,8 @@
   --color-primary-subtle:    rgba(59, 118, 224, 0.12);
   --color-primary-glow:      rgba(59, 118, 224, 0.35);
   --color-primary-foreground: var(--color-slate-0);
+  /* The accent as a LABEL — see the note in dark.css. Darkened here, lifted there. */
+  --color-primary-text:      var(--color-azure-800);
 
   /* ── Accent === primary (single accent identity) ───────────── */
   --color-accent:            var(--color-azure-600);

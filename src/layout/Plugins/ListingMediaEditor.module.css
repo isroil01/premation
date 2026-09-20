@@ -1,0 +1,199 @@
+/**
+ * The listing's pictures.
+ *
+ * Lifted out of `MyPluginsSection.module.css` when that shelf was replaced by
+ * the publisher workspace: the media editor is the one part of the old portal
+ * that survived intact, and it was the only thing left importing a 104-class
+ * stylesheet written for a screen that no longer exists.
+ *
+ * Values are the originals, re-expressed in tokens — the old file hard-coded
+ * `0.72rem`, `8px` and `rgba(0, 0, 0, 0.55)`, which is why it did not follow
+ * the density preference or the light theme.
+ */
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fieldLabel {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+/** Visually hidden, but still in the tree so the label and keyboard reach it. */
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Icon ──────────────────────────────────────────────────────── */
+
+.mediaRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+}
+
+/**
+ * Square, because the icon IS square everywhere it is shown; a slot of the
+ * wrong shape would flatter an image that is about to be cropped.
+ */
+.iconSlot {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--color-surface-2);
+  color: var(--color-text-tertiary);
+}
+
+.iconSlot[data-empty] {
+  border: 1px dashed var(--color-border-subtle);
+}
+
+.iconPreview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mediaActions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.mediaHint {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+
+/* ── Screenshots ───────────────────────────────────────────────── */
+
+.shotGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  gap: var(--space-4);
+}
+
+.shotCard {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-control);
+  overflow: hidden;
+  background: var(--color-surface-2);
+}
+
+/**
+ * Contain, not cover: a screenshot cropped to fit is a screenshot of the wrong
+ * thing, and the point of the gallery is what the plugin looks like.
+ */
+.shotImg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/**
+ * Revealed on hover or focus.
+ *
+ * `focus-within` and not hover alone: a keyboard user tabbing through the
+ * gallery would otherwise focus a button they cannot see.
+ */
+.shotRemove {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-overlay-scrim);
+  color: var(--color-text-inverse);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.shotCard:hover .shotRemove,
+.shotCard:focus-within .shotRemove {
+  opacity: 1;
+}
+
+.shotRemove:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
+.shotAdd {
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  gap: var(--space-2);
+  grid-auto-flow: row;
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.shotAdd:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.shotAdd:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.shotAdd:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.spin {
+  animation: iconSpin 900ms linear infinite;
+}
+
+@keyframes iconSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation-duration: 2s;
+  }
+
+  .shotRemove {
+    transition: none;
+  }
+}

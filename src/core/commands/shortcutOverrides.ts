@@ -10,7 +10,7 @@
 
 import type { KeyChord } from '@app-types/common';
 import { chordKey } from '@core/commands/Command';
-import { getSettingsManager } from '@core/services/coreServices';
+import { readPersisted, writePersisted } from '@core/settings/persistedValue';
 
 /** commandId → chord (rebind) or null (disabled). Absent = use default. */
 export type ShortcutOverrides = Record<string, KeyChord | null>;
@@ -38,19 +38,11 @@ export const DEFAULT_PRESET: ShortcutOverrides = AE_PRESET;
 const SETTINGS_KEY = 'shortcutOverrides';
 
 export function getShortcutOverrides(): ShortcutOverrides {
-  try {
-    return getSettingsManager().get<ShortcutOverrides>(SETTINGS_KEY, DEFAULT_PRESET);
-  } catch {
-    return DEFAULT_PRESET;
-  }
+  return readPersisted<ShortcutOverrides>(SETTINGS_KEY, DEFAULT_PRESET);
 }
 
 function persist(overrides: ShortcutOverrides): void {
-  try {
-    getSettingsManager().set<ShortcutOverrides>(SETTINGS_KEY, overrides);
-  } catch {
-    /* settings not booted — DOM/apply side still runs via the caller */
-  }
+  writePersisted<ShortcutOverrides>(SETTINGS_KEY, overrides);
 }
 
 /** Set (or, with null, disable) a command's chord. */

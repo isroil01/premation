@@ -32,9 +32,27 @@
   gap: var(--space-2);
 }
 
+.titleGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .title {
   font-weight: 600;
   color: var(--color-text-primary);
+}
+
+.devBadge {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(234, 179, 8, 0.15);
+  color: var(--color-warning, #eab308);
 }
 
 .headActions {
@@ -260,3 +278,49 @@
 .log_log { color: var(--color-text-secondary); }
 .log_warn { color: var(--color-warning, var(--color-text-primary)); }
 .log_error { color: var(--color-danger); }
+
+/* ── The info modal ─────────────────────────────────────────────────────── */
+
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  font-size: var(--font-size-label);
+}
+
+.modalSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.modalSectionTitle {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+}
+
+.modalNote {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-label);
+  line-height: 1.5;
+}
+
+.modalNote code {
+  font-family: var(--font-family-mono);
+  font-size: 0.85em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--color-surface-2);
+}
+
+.modalFooterActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  width: 100%;
+}

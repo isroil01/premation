@@ -63,6 +63,7 @@
   --color-azure-500: #4d8dff;  /* accent */
   --color-azure-600: #3b76e0;  /* pressed / light-theme primary */
   --color-azure-700: #2f5fc0;  /* light-theme pressed */
+  --color-azure-800: #2a55ad;  /* light-theme accent AS TEXT — see --color-primary-text */
 
   /* ── Coral (reserved exclusively for the playhead) ───────────── */
   --color-coral-500: #ff6b45;

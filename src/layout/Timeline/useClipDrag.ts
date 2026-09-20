@@ -12,11 +12,15 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { clamp } from '@utils/lang';
 import type { TimelineModel, TimelineClip } from './TimelineModel';
 import { exceedsDragThreshold } from './marqueeSelection';
+import { groupDragStarts, groupDragTargets, groupRows, type GroupClip } from './clipGroupDrag';
+import { staggerOffsets, type StaggerMode } from './staggerOffsets';
+import { getStaggerSettings, STAGGER_PX_PER_FRAME } from './staggerStore';
+import type { SelectModifiers } from './trackRangeSelect';
 import { createEdgeAutoScroller } from './playheadFollow';
 import { snapForDrag } from './snapCommands';
 import { ROLL_GRAB_PX } from './timelineShared';
 import type { Dispatch, SetStateAction, MutableRefObject } from 'react';
-import { hudLines, type DragHudState } from './DragHudOverlay';
+import { hudLines, staggerHudLines, type DragHudState } from './DragHudOverlay';
 import type { TimelineEditMode } from './timelineEditMode';
 import type { TimelineProps } from './Timeline';
 
@@ -47,8 +51,18 @@ export interface UseClipDragArgs {
   lastDragEventRef: MutableRefObject<PointerEvent | null>;
   setDragHud: Dispatch<SetStateAction<DragHudState | null>>;
   selectedTrackIds: TimelineProps['selectedTrackIds'];
-  onTrackSelect: TimelineProps['onTrackSelect'];
+  /**
+   * Modifier-aware row selection (Shift spans, Ctrl toggles) — the Timeline's.
+   * Replaces the raw `onTrackSelect` this hook used to take: a bar click has
+   * to resolve a span the same way a layer-name click does, and only the
+   * Timeline knows the row order a span runs along.
+   */
+  selectTrack: (trackId: string, mods: SelectModifiers) => void;
+  /** Layer-row ids in display order; what a stagger's offsets are indexed by. */
+  rowOrder: ReadonlyArray<string>;
   onClipMove: TimelineProps['onClipMove'];
+  /** Commit a whole group of bar moves as ONE undoable action. */
+  onClipMoveMany: TimelineProps['onClipMoveMany'];
   onClipTrim: TimelineProps['onClipTrim'];
   onClipSlip: TimelineProps['onClipSlip'];
   onClipSlide: TimelineProps['onClipSlide'];
@@ -72,8 +86,10 @@ export function useClipDrag({
   lastDragEventRef,
   setDragHud,
   selectedTrackIds,
-  onTrackSelect,
+  selectTrack,
+  rowOrder,
   onClipMove,
+  onClipMoveMany,
   onClipTrim,
   onClipSlip,
   onClipSlide,
@@ -96,6 +112,23 @@ export function useClipDrag({
       moved: boolean;
       mode: 'move' | 'start' | 'end' | 'slip' | 'slide' | 'roll';
       ripple: boolean;
+      /**
+       * MOVE only — every bar travelling with this one, and the rows they sit
+       * on in display order.
+       *
+       * Snapshotted at pointer-down rather than recomputed per move event: the
+       * selection can change mid-drag (an auto-scroll that brings a row into
+       * view, a stray modifier), and a group that grew or shrank underneath a
+       * gesture would commit bars the user never picked up. Empty for a
+       * single-bar drag, which keeps the old single-bar path exactly as it was.
+       */
+      group: { targets: GroupClip[]; rows: string[] } | null;
+      /** Latest previewed destinations, keyed by bar id — what release commits. */
+      groupStarts?: Map<string, number>;
+      /** Live stagger for this drag — vertical travel while Ctrl/Cmd is held. */
+      stagger: { step: number; mode: StaggerMode } | null;
+      /** Pointer y when the stagger gesture last (re)started, for the step. */
+      staggerAnchorY: number;
       startX: number;
       start: number;
       duration: number;
@@ -176,13 +209,14 @@ export function useClipDrag({
         return;
       }
 
-      const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+      const mods: SelectModifiers = { shift: e.shiftKey, meta: e.ctrlKey || e.metaKey };
+      const additive = mods.shift || mods.meta;
       const alreadySelected = selectedTrackIds?.includes(clip.trackId) ?? false;
       let collapseSelectionOnUp = false;
-      if (onTrackSelect) {
-        if (additive || !alreadySelected) onTrackSelect(clip.trackId, additive);
-        else collapseSelectionOnUp = true;
-      }
+      // Shift on a BAR is the row span, exactly as it is on the layer name —
+      // the two halves of a row must not disagree about what a modifier means.
+      if (additive || !alreadySelected) selectTrack(clip.trackId, mods);
+      else collapseSelectionOnUp = true;
 
       // A LOCKED layer still selects — you can point at it — but no drag
       // starts. The controller refused the edit on release before; the bar
@@ -240,10 +274,44 @@ export function useClipDrag({
       else if (mode === 'move' && e.altKey && onClipSlip) actualMode = 'slip';
       const lanesRect = lanesRef.current.getBoundingClientRect();
       const sourceInSec = clip.sourceInSec ?? 0;
+
+      // Which bars travel with this one. Only a plain MOVE: a trim, a slip, a
+      // slide and a roll are all single-bar edits by definition, and applying
+      // them across a selection would mean four more multi-bar commit paths
+      // for gestures nobody performs on a group.
+      //
+      // `selectedTrackIds` is read here, at pointer-down, AFTER the selection
+      // above has been requested — but that request is asynchronous (it goes
+      // out to the host and comes back through props), so the value in hand is
+      // the PRE-click selection. That is the correct one to use: the rule is
+      // "a drag starting on an already-selected bar moves the selection", and
+      // a click that just changed the selection has, by that same rule,
+      // collapsed it to the one bar under the pointer.
+      let group: { targets: GroupClip[]; rows: string[] } | null = null;
+      if (actualMode === 'move' && alreadySelected && (selectedTrackIds?.length ?? 0) > 1) {
+        const all: GroupClip[] = [];
+        for (const t of model.tracks) {
+          for (const c of t.clips ?? []) {
+            all.push({
+              id: c.id,
+              trackId: c.trackId ?? t.id,
+              start: c.start,
+              duration: c.duration,
+              locked: t.locked,
+            });
+          }
+        }
+        const targets = groupDragTargets(all, selectedTrackIds ?? [], clip.id);
+        if (targets.length > 1) group = { targets, rows: groupRows(targets, rowOrder) };
+      }
+
       clipDrag.current = {
         id: clip.id,
         trackId: clip.trackId,
         collapseSelectionOnUp,
+        group,
+        stagger: null,
+        staggerAnchorY: e.clientY,
         downX: e.clientX,
         downY: e.clientY,
         moved: false,
@@ -294,7 +362,7 @@ export function useClipDrag({
             : '';
     },
     [
-      onClipMove, onClipTrim, onClipSlip, onClipSlide, onTrackSelect, selectedTrackIds,
+      onClipMove, onClipTrim, onClipSlip, onClipSlide, selectTrack, selectedTrackIds, rowOrder,
       editMode, lanesTimeAt, razorAtTime, snapRazorTime, model.tracks, model.frameRate, pps,
       // Stable for the life of the composer (refs); listed so the array is honest.
       clipCutsRef, clipSnapCtx, lanesRef,
@@ -424,6 +492,74 @@ export function useClipDrag({
             sourceInSec: r.right.sourceInSec + wanted,
           },
         ]);
+      } else if (d.mode === 'move' && d.group) {
+        // The group travels by the delta the GRABBED bar actually resolved to
+        // — the one that went through snapping — so the bar under the pointer
+        // still latches onto the playhead and its neighbours, and the rest of
+        // the selection follows by exactly the same amount.
+        d.live = { start, duration, sourceInSec };
+        const groupDelta = start - d.start;
+
+        // Ctrl/Cmd turns the vertical component of the drag into a STAGGER:
+        // drag sideways to move the block, then pull up or down to fan its
+        // rows out. Only on a group — a single bar has nothing to stagger
+        // against, and Ctrl there keeps meaning nothing, as before.
+        if (e.ctrlKey || e.metaKey) {
+          // Re-anchor on the frame the modifier goes down, so the fan starts
+          // from zero wherever the pointer happens to be rather than jumping
+          // by however far the move drag had already travelled vertically.
+          if (!d.stagger) d.staggerAnchorY = e.clientY;
+          const dy = e.clientY - d.staggerAnchorY;
+          const settings = getStaggerSettings();
+          const rawStep = (dy / STAGGER_PX_PER_FRAME) * frameDur;
+          // Quantize the STEP, not just the resulting positions, while snapping
+          // is on. Rounding only the positions is closer to the ideal ladder in
+          // the least-squares sense — a 3.5-frame step lands rows at 0,4,7,11,14
+          // — but what the user sees is gaps that alternate 4,3,4,3, which reads
+          // as a bug rather than as precision. A whole-frame step gives the
+          // uniform ladder they were dragging for. Snapping OFF keeps the step
+          // continuous, which is what makes a sub-frame stagger reachable at all.
+          const step = snapDisabled || frameDur <= 0
+            ? rawStep
+            : Math.round(rawStep / frameDur) * frameDur;
+          d.stagger = { step, mode: settings.mode };
+        } else {
+          d.stagger = null;
+        }
+
+        const offsets = d.stagger
+          ? staggerOffsets(d.group.rows.length, {
+            mode: d.stagger.mode,
+            step: d.stagger.step,
+            reverse: getStaggerSettings().reverse,
+            // Balanced: an unbalanced fan drags the whole block later as the
+            // step grows, so the horizontal position you just set slides out
+            // from under you while you are setting the spread.
+            balance: true,
+          })
+          : undefined;
+
+        const starts = groupDragStarts(d.group.targets, groupDelta, {
+          rowOffsets: offsets,
+          rowOrder: d.group.rows,
+          frameDuration: snapDisabled ? undefined : frameDur,
+        });
+        d.groupStarts = starts;
+        setClipPreviews(
+          d.group.targets.map((c) => ({
+            id: c.id,
+            start: starts.get(c.id) ?? c.start,
+            duration: c.duration,
+            sourceInSec: 0,
+          })),
+        );
+        if (d.moved && d.stagger) {
+          setDragHud({
+            x: e.clientX,
+            y: e.clientY,
+            lines: staggerHudLines(d.group.targets.length, d.group.rows.length, d.stagger, fpsRef.current),
+          });
+        }
       } else {
         d.live = { start, duration, sourceInSec };
         setClipPreviews([{ id: d.id, start, duration, sourceInSec }]);
@@ -449,7 +585,10 @@ export function useClipDrag({
       }
       // A click that never became a drag on an already-selected bar collapses
       // the selection down to it (the deferred half of the rule in onClipDown).
-      if (d.collapseSelectionOnUp && !d.moved) onTrackSelect?.(d.trackId, false);
+      // Through the resolver, not straight to the host: collapsing to one row
+      // is a plain click by any other name, and it has to re-anchor the span
+      // or the next Shift+click would run from whatever row was clicked last.
+      if (d.collapseSelectionOnUp && !d.moved) selectTrack(d.trackId, { shift: false, meta: false });
       const { start, duration, sourceInSec } = d.live;
       // Below the drag threshold this was a SELECT, not an edit. Committing
       // anyway pushed an identity move onto the undo stack, so every click on
@@ -475,7 +614,19 @@ export function useClipDrag({
         }
       } else if (d.mode === 'slip') onClipSlip?.(d.id, sourceInSec);
       else if (d.mode === 'slide') onClipSlide?.(d.id, start);
-      else if (d.mode === 'move') onClipMove?.(d.id, start);
+      else if (d.mode === 'move' && d.group && d.groupStarts && onClipMoveMany) {
+        // ONE undoable action for the whole gesture. Bars that did not
+        // actually move are dropped rather than committed as identity moves:
+        // a balanced stagger leaves the middle row exactly where it was, and
+        // an identity move is a command the engine would record and the user
+        // would have to undo.
+        const moves: Array<{ clipId: string; start: number }> = [];
+        for (const c of d.group.targets) {
+          const to = d.groupStarts.get(c.id) ?? c.start;
+          if (Math.abs(to - c.start) > 1e-9) moves.push({ clipId: c.id, start: to });
+        }
+        if (moves.length > 0) onClipMoveMany(moves, d.stagger ? 'Stagger Layers' : 'Move Layers');
+      } else if (d.mode === 'move') onClipMove?.(d.id, start);
       else if (d.mode === 'start') onClipTrim?.(d.id, 'start', start, { ripple: d.ripple });
       else onClipTrim?.(d.id, 'end', start + duration, { ripple: d.ripple });
       clipDrag.current = null;
@@ -499,7 +650,7 @@ export function useClipDrag({
       }
     };
   }, [
-    pps, totalSeconds, onClipMove, onClipTrim, onClipSlip, onClipSlide, onTrackSelect, model.frameRate, snapOn,
+    pps, totalSeconds, onClipMove, onClipMoveMany, onClipTrim, onClipSlip, onClipSlide, selectTrack, model.frameRate, snapOn,
     // Stable for the life of the composer (refs + a state setter); listed so the array is honest.
     dragScrollBusyRef, edgeScrollerRef, fpsRef, lanesRef, lastDragEventRef, setDragHud,
   ]);

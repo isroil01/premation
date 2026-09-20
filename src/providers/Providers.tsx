@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
+import { openStaggerDialog } from '@layout/Motion/StaggerDialog';
 import { Application } from '@core/application/Application';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
@@ -262,6 +263,65 @@ function reportSave(outcome: SaveOutcome, opts?: { forkedFrom?: string | null })
     'error',
   );
   return false;
+}
+
+/**
+ * `file.openAfterEffects` — open an After Effects project.
+ *
+ * Deliberately its own verb rather than a filter on Open Project. Opening a
+ * `.aep` is a CONVERSION: it reads someone else's document, rebuilds it here,
+ * and can only ever be an approximation of it — so it starts a new untitled
+ * project rather than adopting the AE file's path, which is what stops a later
+ * Save silently writing over a file After Effects still needs to open.
+ *
+ * The picker is a plain file input for the same reason every other importer
+ * uses one: it works identically in the desktop and browser builds, and the
+ * bytes arrive without a round trip through the main process.
+ */
+async function pickAndOpenAfterEffectsProject(): Promise<void> {
+  const file = await new Promise<File | null>((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.aep,.aepx';
+    input.addEventListener('change', () => resolve(input.files?.[0] ?? null));
+    // Chromium fires this on dismissal; without it the promise never settles
+    // and the command looks like it hung.
+    input.addEventListener('cancel', () => resolve(null));
+    input.click();
+  });
+  if (!file) return;
+
+  const { confirmDiscardChanges } = await import('@core/project/confirmDiscard');
+  if (!await confirmDiscardChanges('Open an After Effects project')) return;
+
+  const { importAepFile } = await import('@core/aep/aepImport');
+  const { reportAepImport, reportAepImportFailure } = await import('@core/aep/aepImportReport');
+
+  // A blank document first: the import ADDS compositions, and adding four of
+  // someone else's on top of the user's own would produce a project belonging
+  // to neither. `newProject` also clears the path, so Save asks where to go.
+  getProjectManager().newProject(file.name.replace(/\.aepx?$/i, ''));
+  resetProjectWorkspace();
+
+  notify(`Opening “${file.name}”…`, 'info');
+  let result: Awaited<ReturnType<typeof importAepFile>>;
+  try {
+    result = await importAepFile(file);
+  } catch (err) {
+    reportAepImportFailure(file.name, err instanceof Error ? err.message : 'the file could not be read');
+    return;
+  }
+  if (!result.ok) {
+    reportAepImportFailure(file.name, result.message);
+    return;
+  }
+  // The same document transition Open and New make, and it needs the same
+  // undo re-baseline: one Ctrl+Z after an import must not reach back into
+  // whatever was open before it.
+  baselineProjectHistory('Open After Effects Project');
+  bumpScene();
+  afterProjectLoaded();
+  reportAepImport(file.name, result);
 }
 
 /**
@@ -1109,9 +1169,35 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       },
     },
     {
-      /** Stagger keyframe timing across selected animated layers (does not move bars). */
+      /**
+       * Stagger Layers — offset the selection in time in a pattern (cascade,
+       * zigzag, from the centre, a wave, a seeded scatter), applied either to
+       * the clip BARS or to each layer's keyframes.
+       *
+       * Distinct from Sequence Layers next door, which butts bars end-to-end
+       * and so cannot express a fixed trail or keep existing spacing.
+       */
+      id: asCommandId('animation.staggerLayers'),
+      label: 'Stagger Layers…',
+      icon: 'layers',
+      enabled: () => useSelectionStore.getState().ids.length >= 2,
+      execute: async () => {
+        const ids = useSelectionStore.getState().ids;
+        if (ids.length < 2) return;
+        const summary = await openStaggerDialog(ids);
+        if (summary) notify(summary, 'success');
+      },
+    },
+    {
+      /**
+       * Stagger keyframe timing across selected animated layers (does not move
+       * bars). Kept beside the dialog as the no-questions version: a 0.3s
+       * cascade is the shape people want most of the time, and going through a
+       * modal for it is friction. The dialog is where the other patterns and an
+       * exact amount live.
+       */
       id: asCommandId('animation.sequenceLayers'),
-      label: 'Stagger Animations…',
+      label: 'Stagger Animations',
       icon: 'layers',
       enabled: () => useSelectionStore.getState().ids.length >= 2,
       execute: () => {
@@ -2528,6 +2614,13 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
               const comp = useCompositionStore.getState();
               openExportDialog(comp.durationSeconds, comp.fps);
             },
+          });
+          registry.register({
+            id: asCommandId('file.openAfterEffects'), label: 'Open After Effects Project…', icon: 'upload',
+            // Always available: it starts its own document, so there is no
+            // state in which opening one would not make sense.
+            enabled: () => true,
+            execute: () => { void pickAndOpenAfterEffectsProject(); },
           });
           registry.register({
             id: asCommandId('file.import3DModel'), label: 'Import 3D Model…', icon: 'cube',

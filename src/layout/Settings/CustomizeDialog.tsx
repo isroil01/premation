@@ -18,6 +18,7 @@ import { Icon, type IconName } from '@components/Icon';
 import { useLayoutStore } from '@stores/layoutStore';
 import { openModal } from '@stores/modalStore';
 import { getCommandRegistry } from '@core/commands/Command';
+import { ensureCommandsRegistered } from '@core/commands/ensureCommandsRegistered';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { chordFromEvent } from '@core/commands/CommandSystem';
 import { formatChord } from '@layout/Menu/formatChord';
@@ -45,7 +46,7 @@ import { AudioHardwareSection } from './AudioHardwareSection';
 import { aiEnabled } from '@core/config/edition';
 import styles from './CustomizeDialog.module.css';
 
-type Tab = 'shortcuts' | 'tabs' | 'appearance' | 'audio' | 'files' | 'ai';
+export type Tab = 'shortcuts' | 'tabs' | 'appearance' | 'audio' | 'files' | 'ai';
 
 /** Modifier-only keydowns aren't a chord — keep listening until a real key. */
 function isModifierKey(key: string): boolean {
@@ -74,7 +75,12 @@ function getCommandCategory(id: string, label: string): { key: string; label: st
 
 function renderChordKeys(chord: KeyChord | undefined): JSX.Element {
   if (!chord) {
-    return <span className={styles.unassigned}>Unassigned</span>;
+    return (
+      <span className={styles.unassignedWrap}>
+        <Icon name="plus" size="sm" />
+        <span className={styles.unassigned}>Assign shortcut</span>
+      </span>
+    );
   }
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform);
   const keys: string[] = [];
@@ -98,6 +104,7 @@ function renderChordKeys(chord: KeyChord | undefined): JSX.Element {
 
 /** Exported so its empty state can be asserted without opening the modal. */
 export function ShortcutsTab(): JSX.Element {
+  ensureCommandsRegistered();
   const [, force] = useState(0);
   const [recording, setRecording] = useState<string | null>(null);
   const [conflict, setConflict] = useState<{ id: string; withId: string } | null>(null);
@@ -108,13 +115,13 @@ export function ShortcutsTab(): JSX.Element {
   const commands = getCommandRegistry().all();
   const rows: Row[] = useMemo(() => {
     return commands
+      .filter((c) => Boolean(c.label))
       .map((c) => ({
         id: c.id as unknown as string,
         label: c.label,
         chord: resolveChord(c.id as unknown as string, c.shortcut, overrides),
         overridden: (c.id as unknown as string) in overrides,
-      }))
-      .filter((r) => r.chord || r.overridden || commands.find((c) => (c.id as unknown as string) === r.id)?.shortcut);
+      }));
   }, [commands, overrides]);
 
   const resolved = useMemo(() => rows.map((r) => ({ commandId: r.id, chord: r.chord })), [rows]);
@@ -287,6 +294,16 @@ export function ShortcutsTab(): JSX.Element {
                   </div>
 
                   <div className={styles.colActions}>
+                    <button
+                      type="button"
+                      className={styles.rowActionBtn}
+                      title={r.chord ? 'Edit shortcut' : 'Add shortcut'}
+                      aria-label={r.chord ? 'Edit shortcut' : 'Add shortcut'}
+                      onClick={() => beginRecord(r.id)}
+                    >
+                      <Icon name={r.chord ? 'pencil' : 'plus'} size="sm" />
+                    </button>
+
                     {r.overridden ? (
                       <button
                         type="button"
@@ -302,12 +319,12 @@ export function ShortcutsTab(): JSX.Element {
                     {r.chord ? (
                       <button
                         type="button"
-                        className={styles.rowActionBtn}
-                        title="Unassign shortcut"
-                        aria-label="Unassign shortcut"
+                        className={cn(styles.rowActionBtn, styles.rowActionDelete)}
+                        title="Delete shortcut"
+                        aria-label="Delete shortcut"
                         onClick={() => disable(r.id)}
                       >
-                        <Icon name="close" size="sm" />
+                        <Icon name="trash" size="sm" />
                       </button>
                     ) : null}
                   </div>
@@ -327,7 +344,7 @@ export function ShortcutsTab(): JSX.Element {
   );
 }
 
-function WorkspacesTab(): JSX.Element {
+export function WorkspacesTab(): JSX.Element {
   const [, force] = useState(0);
   const [name, setName] = useState('');
   const manager = getWorkspaceManager();
@@ -446,7 +463,7 @@ function themeAccentColor(): string {
   return v || '#2988ff';
 }
 
-function AppearanceTab(): JSX.Element {
+export function AppearanceTab(): JSX.Element {
   const [accent, setAccent] = useState<string>(() => getAccentColor());
   const applyAccent = (c: string): void => { setAccent(c); setAccentColor(c); };
 
@@ -960,7 +977,7 @@ function AppearanceTab(): JSX.Element {
   );
 }
 
-function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string; icon: IconName }> {
+export function tabsForEdition(): ReadonlyArray<{ id: Tab; label: string; icon: IconName }> {
   return [
     { id: 'shortcuts', label: 'Shortcuts', icon: 'keyboard' as IconName },
     { id: 'tabs', label: 'Workspaces', icon: 'layout' as IconName },
@@ -1049,7 +1066,7 @@ function PreviewCacheControl(): JSX.Element {
   );
 }
 
-function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): JSX.Element {
+export function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): JSX.Element {
   const tabs = tabsForEdition();
   const [tab, setTab] = useState<Tab>(
     tabs.some((t) => t.id === initialTab) ? initialTab : 'shortcuts',

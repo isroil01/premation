@@ -472,6 +472,21 @@ export function WorkspaceViewport({
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
       e.preventDefault();
+      // An After Effects project is a DOCUMENT, not footage — dropping one
+      // opens it rather than adding a layer, which is also what AE itself
+      // does with a dropped .aep. Checked before the media filter so a project
+      // never falls through to "drop video, image or audio files".
+      const aep = Array.from(files).find((f) => /\.(aep|aepx)$/i.test(f.name));
+      if (aep) {
+        const [{ importAepFile }, { reportAepImport, reportAepImportFailure }] = await Promise.all([
+          import('@core/aep/aepImport'),
+          import('@core/aep/aepImportReport'),
+        ]);
+        const result = await importAepFile(aep);
+        if (result.ok) reportAepImport(aep.name, result);
+        else reportAepImportFailure(aep.name, result.message);
+        return;
+      }
       const media = Array.from(files).filter((f) =>
         /^(video|image|audio)\//.test(f.type) || /\.(mp4|mov|webm|m4v|png|jpe?g|gif|svg|webp|exr|mp3|wav|m4a|aac|ogg|mxf|avi|wmv|flv|mts|m2ts|mpg|mpeg|vob|ts|mkv)$/i.test(f.name));
       if (media.length === 0) {

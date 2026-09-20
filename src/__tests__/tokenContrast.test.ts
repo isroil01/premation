@@ -140,6 +140,27 @@ describe.each(THEMES)('$name theme', ({ vars, elevationLightens }) => {
     expect(ratio('--color-text-tertiary')).toBeGreaterThanOrEqual(3);
   });
 
+  /*
+   * The selected row must not be the hardest row to read.
+   *
+   * `--color-primary` is a FILL — it is tuned to carry white text, and the
+   * dashboard used it as the label colour on a `--color-primary-subtle` tint.
+   * Measured live that was 2.80:1: the nav item for the page you were on was
+   * less legible than every item you were not on. `--color-primary-text` is
+   * the accent tuned the other way round, and this pins it there.
+   *
+   * Both grounds are real: the sidebar tints over `--surface-2`, the segmented
+   * controls over `--surface-0`.
+   */
+  it('--color-primary-text clears AA on the selection tint', () => {
+    const ink = color('--color-primary-text', scope);
+    for (const groundName of ['--surface-0', '--surface-2']) {
+      const base = color(groundName, scope);
+      const tinted = over(color('--color-primary-subtle', scope), base);
+      expect(contrast(ink, tinted)).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it('defines the whole surface contract', () => {
     for (const t of [
       '--surface-0', '--surface-1', '--surface-2', '--surface-3',

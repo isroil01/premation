@@ -23,6 +23,7 @@ import { parseKeyframeId, expandKeyframeProp, setDataKeyframeEasing } from '@mot
 import type { BezierHandles, EasingKind, Keyframe, PropPath, PropertyTrack } from '@motion/animation';
 import { sampleTrack, smoothTrackTangents } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
+import { staggerOffsets, type StaggerOptions } from '@layout/Timeline/staggerOffsets';
 import type { PresetTrack } from '@core/animation/animationPresets';
 import { easePresetById, type EasePresetId } from '@core/animation/easePresets';
 import {
@@ -121,19 +122,42 @@ export function easyEaseAll(nodeId: string, engine: AnimationEngine = defaultAni
 }
 
 /**
- * Stagger the selected layers' animations: layer i starts `intervalSec` after
- * layer i-1 (the first stays put). One undoable command for the whole set.
+ * Stagger the selected layers' animations in a chosen PATTERN.
+ *
+ * Used to be a fixed linear cascade — layer i starts `intervalSec` after layer
+ * i-1 — which is one of the several shapes people actually build by hand. A
+ * cascade is the right default and stays the default; the others (alternating,
+ * fanning out from the middle, a wave, a seeded scatter) were each a manual
+ * per-layer drag before, which is exactly the work this assistant exists to
+ * remove.
+ *
+ * The pattern is computed by `staggerOffsets`, the same function the timeline's
+ * Ctrl-drag uses on clip BARS, so a "zigzag" means the same shape whichever of
+ * the two you reach for.
+ *
+ * Still one undoable command for the whole set.
  */
 export function sequenceLayers(
   nodeIds: ReadonlyArray<string>,
   intervalSec: number,
   engine: AnimationEngine = defaultAnimation,
+  pattern: Partial<StaggerOptions> = {},
 ): boolean {
   const animated = nodeIds.filter((id) => currentTracks(id, engine).length > 0);
   if (animated.length < 2) return false;
+  const offsets = staggerOffsets(animated.length, {
+    mode: pattern.mode ?? 'cascade',
+    step: intervalSec,
+    reverse: pattern.reverse ?? false,
+    // Unbalanced by default: the historical behaviour is that the FIRST layer
+    // stays put and the rest trail after it, and a stagger applied to an
+    // existing animation should not move animation that was already timed.
+    balance: pattern.balance ?? false,
+    seed: pattern.seed ?? 1,
+  });
   const shifted = animated.map((id, i) => ({
     id,
-    tracks: shiftTracks(currentTracks(id, engine), i * intervalSec),
+    tracks: shiftTracks(currentTracks(id, engine), offsets[i] ?? 0),
   }));
   runAnimEdit('Sequence layers', () => {
     for (const s of shifted) writeTracks(s.id, s.tracks, engine);

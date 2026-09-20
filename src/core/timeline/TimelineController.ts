@@ -598,6 +598,48 @@ export class TimelineController {
   }
 
   /**
+   * Every bar a scene node owns, as `{ layerId, startSeconds }`.
+   *
+   * The unit a user selects is a NODE (a timeline row); the unit a move is
+   * addressed to is a BAR, and a split layer is one node with several bars.
+   * Callers that offset a selection in time need both halves of that mapping,
+   * and deriving it from `getLayersForNode` at each call site means each of
+   * them also re-derives the frames-to-seconds conversion.
+   */
+  clipStartsForNode(nodeId: string): Array<{ layerId: string; startSeconds: number }> {
+    const fps = this.timeline.getFrameRate().fps || 30;
+    return this.getLayersForNode(nodeId).map((l) => ({ layerId: l.id, startSeconds: l.start / fps }));
+  }
+
+  /**
+   * Move SEVERAL bars in one undoable action — what a multi-row drag release
+   * commits.
+   *
+   * Calling `setClipStart` in a loop is not the same thing: each call is its
+   * own engine command, so a drag of twenty selected layers put twenty entries
+   * on the undo stack and took twenty Ctrl+Z to put back. Worse, undoing half
+   * of them leaves the selection in a state it was never in — the spacing the
+   * user was arranging is gone and there is no single step that restores it.
+   *
+   * The transaction folds them into one composite whose undo replays the parts
+   * in reverse, which is what makes two bars that cross each other reversible.
+   */
+  setClipStarts(
+    moves: ReadonlyArray<{ layerId: string; startSeconds: number }>,
+    label = 'Move Layers',
+  ): void {
+    if (moves.length === 0) return;
+    if (moves.length === 1) {
+      this.setClipStart(moves[0]!.layerId, moves[0]!.startSeconds);
+      return;
+    }
+    const fr = this.timeline.getFrameRate();
+    this.timeline.history.transaction(label, () => {
+      for (const m of moves) this.timeline.setLayerStart(m.layerId, secondsToFrames(m.startSeconds, fr));
+    });
+  }
+
+  /**
    * After Effects "Sequence Layers": lay the given layers' BARS end-to-end in
    * time, in the order supplied — each layer starts where the previous one ends
    * (minus `overlapSeconds` for a cross-dissolve-style overlap). The first layer

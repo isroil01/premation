@@ -52,6 +52,26 @@ export function hudLines(
 }
 
 /**
+ * The read-out for a live multi-row stagger: what the pattern is, how far
+ * apart adjacent rows now sit, and how much of the timeline it is rearranging.
+ *
+ * The step is reported as the value a user could type into the Stagger dialog
+ * to reproduce it, not as the raw pointer travel — the gesture is a way to
+ * DIAL a number, and a badge that shows pixels would make it unrepeatable.
+ */
+export function staggerHudLines(
+  barCount: number,
+  rowCount: number,
+  stagger: { step: number; mode: string },
+  fps: number,
+): string[] {
+  const frames = Math.round(stagger.step * fps * 10) / 10;
+  const label = stagger.mode.charAt(0).toUpperCase() + stagger.mode.slice(1);
+  const bars = barCount === rowCount ? `${rowCount} rows` : `${rowCount} rows · ${barCount} bars`;
+  return [`${label} ${frames > 0 ? '+' : ''}${frames}f`, bars];
+}
+
+/**
  * The badge. Positioned in CLIENT coordinates and rendered at the panel root:
  * the pointer is captured by the lanes but travels over the ruler, the header
  * column and out of the panel entirely, and a badge positioned inside the

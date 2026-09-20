@@ -14,6 +14,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { clampPps } from '@layout/Timeline/zoomAnchor';
 import { Providers } from '@providers/Providers';
 import { useLayoutStore, consumeLayoutMigration } from '@stores/layoutStore';
 import { reconcileActiveWorkspace } from '@core/layout/workspaceManager';
@@ -407,9 +408,11 @@ function EditorShellInner(): JSX.Element {
     void viewRev;
     return getTimelineController().getPixelsPerSecond();
   }, [viewRev]);
-  const handleZoom = useCallback((next: number): void => {
+  const handleZoom = useCallback((next: number, anchorSeconds?: number): void => {
     const c = getTimelineController();
-    c.setPixelsPerSecond(Math.min(800, Math.max(4, next)), c.currentSeconds);
+    // Anchor on the point the gesture was aimed at, falling back to the
+    // playhead when there was none (a slider, a keyboard zoom).
+    c.setPixelsPerSecond(clampPps(next), anchorSeconds ?? c.currentSeconds);
   }, []);
 
   const toggleExpand = useCallback((id: string): void => {
@@ -777,6 +780,12 @@ function EditorShellInner(): JSX.Element {
   const handleTrackSelect = (trackId: string, additive: boolean): void => {
     if (additive) addSelected(trackId);
     else setSelected([trackId]);
+  };
+
+  // A Shift span or a lane marquee arrives already resolved — the timeline is
+  // the only thing that knows the row order a span runs along.
+  const handleTrackSelectMany = (trackIds: ReadonlyArray<string>): void => {
+    setSelected([...trackIds]);
   };
 
   // Rename a scene node — committed when user confirms via Enter or blur.
@@ -1260,6 +1269,16 @@ function EditorShellInner(): JSX.Element {
   const handleClipMove = (clipId: string, start: number): void => {
     getTimelineController().setClipStart(clipId, start);
   };
+  // A multi-row drag or a stagger: one undo entry for the whole gesture.
+  const handleClipMoveMany = (
+    moves: ReadonlyArray<{ clipId: string; start: number }>,
+    label?: string,
+  ): void => {
+    getTimelineController().setClipStarts(
+      moves.map((m) => ({ layerId: m.clipId, startSeconds: m.start })),
+      label,
+    );
+  };
   const handleClipTrim = (clipId: string, edge: 'start' | 'end', time: number, opts?: { ripple?: boolean }): void => {
     const c = getTimelineController();
     if (opts?.ripple && edge === 'end') c.rippleTrimClipEnd(clipId, time);
@@ -1628,6 +1647,7 @@ function EditorShellInner(): JSX.Element {
               onScrub={handleScrub}
               onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
               onClipMove={handleClipMove}
+              onClipMoveMany={handleClipMoveMany}
               onClipTrim={handleClipTrim}
               onClipSlip={handleClipSlip}
               onClipSlide={handleClipSlide}
@@ -1635,6 +1655,7 @@ function EditorShellInner(): JSX.Element {
               onScroll={(px) => getTimelineController().setScrollPixels(px)}
               onZoom={handleZoom}
               onTrackSelect={handleTrackSelect}
+              onTrackSelectMany={handleTrackSelectMany}
               onTrackToggleVisible={toggleTrackVisible}
               onTrackToggleLock={toggleTrackLock}
               onTrackToggleSolo={toggleTrackSolo}

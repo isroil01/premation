@@ -174,17 +174,71 @@ export function rulerProgressWidth(time: number, duration: number, pixelsPerSeco
   return Math.max(0, Math.min(duration * pixelsPerSecond, time * pixelsPerSecond));
 }
 
-export function generateRulerTicks(durationSec: number, pps: number, fps: number, startSec = 0, offset = 0): { x: number; major: boolean; label: string }[] {
-  const targetPxBetweenMajor = 100;
-  const candidateSec = [0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600];
+/** Aim for roughly this many pixels between labelled ticks. */
+const TARGET_PX_BETWEEN_MAJOR = 100;
+
+/**
+ * The tick spacings the ruler may choose from, finest first.
+ *
+ * FRAME-derived steps are in the ladder, not just decimal seconds, and that is
+ * the point of it. The ladder used to bottom out at 0.1s, so once the zoom was
+ * deep enough to see individual frames the ruler went on drawing 100ms majors
+ * that lined up with no frame at all — the gridlines disagreed with the only
+ * grid the editor actually snaps to. Below a frame it keeps subdividing, since
+ * keyframe times are continuous and the sub-frame nudge can reach those times.
+ *
+ * Sorted at run time rather than written in order because the relationship
+ * between a frame and half a second depends on the frame rate: 10 frames is
+ * 0.33s at 30fps but 0.83s at 12fps, so no fixed spelling is ordered for both.
+ */
+function tickCandidates(frameDur: number): number[] {
+  const seconds = [0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600];
+  const frames = frameDur > 0
+    ? [frameDur / 8, frameDur / 4, frameDur / 2, frameDur, 2 * frameDur, 5 * frameDur, 10 * frameDur]
+    : [];
+  return [...frames, ...seconds].sort((a, b) => a - b);
+}
+
+/**
+ * Ruler ticks for a time range.
+ *
+ * `window` bounds the generation, and it is not an optimisation detail — it is
+ * what makes deep zoom survivable. Ticks used to be generated for the WHOLE
+ * comp and filtered afterwards, which was fine while the finest spacing was
+ * 20ms: a 10-minute comp cost 30,000 objects. With a frame-aware ladder and a
+ * zoom ceiling that reaches individual milliseconds, the same code would build
+ * close to a million objects on every zoom change and hang the panel. The
+ * window it is given is page-snapped (`pagedTimeWindow`), so this still only
+ * re-runs when the view crosses a page boundary rather than on every scroll.
+ */
+export function generateRulerTicks(
+  durationSec: number,
+  pps: number,
+  fps: number,
+  startSec = 0,
+  offset = 0,
+  window?: { t0: number; t1: number },
+): { x: number; major: boolean; label: string }[] {
+  const frameDur = fps > 0 ? 1 / fps : 0;
   let majorSec = 1;
-  for (const c of candidateSec) {
-    if (c * pps >= targetPxBetweenMajor) { majorSec = c; break; }
+  for (const c of tickCandidates(frameDur)) {
+    if (c * pps >= TARGET_PX_BETWEEN_MAJOR) { majorSec = c; break; }
   }
   const minorSec = majorSec / 5;
+  if (!(minorSec > 0)) return [];
+
+  // Clamp the range to the comp and to the window. Half-open at the top like
+  // the window itself, plus one minor tick of slack either side so a tick that
+  // straddles the edge of a page is not missing while that page is on screen.
+  const from = Math.max(0, (window ? window.t0 : 0) - minorSec);
+  const to = Math.min(durationSec, (window ? window.t1 : durationSec) + minorSec);
+  if (!(to >= from)) return [];
+
   const ticks: { x: number; major: boolean; label: string }[] = [];
-  for (let t = 0; t <= durationSec + 1e-6; t += minorSec) {
-    const snapped = Math.round(t / minorSec) * minorSec;
+  const firstIndex = Math.ceil(from / minorSec - 1e-6);
+  const lastIndex = Math.floor(to / minorSec + 1e-6);
+  for (let i = firstIndex; i <= lastIndex; i++) {
+    const snapped = i * minorSec;
     const isMajor = Math.abs((snapped / majorSec) - Math.round(snapped / majorSec)) < 1e-6;
     // The tick's POSITION is 0-based plus left margin offset (pixel layout is the real time domain); its
     // LABEL adds the comp's start offset so the ruler reads the same timecode
@@ -194,9 +248,16 @@ export function generateRulerTicks(durationSec: number, pps: number, fps: number
   return ticks;
 }
 
-function formatTime(sec: number, _fps: number, majorSec: number): string {
+function formatTime(sec: number, fps: number, majorSec: number): string {
+  // Below a frame, milliseconds need a decimal or adjacent labels collide:
+  // at 30fps an eighth of a frame is 4.2ms, and three consecutive labels all
+  // round to "4ms", "8ms", "12ms" with the spacing silently wrong.
+  if (majorSec < 0.01) return `${(sec * 1000).toFixed(1)}ms`;
+  // At frame scale the frame NUMBER is the unit people edit in, and a bare
+  // millisecond reading cannot be matched against the timecode field.
+  if (majorSec < 0.5 && fps > 0) return `${Math.round(sec * fps)}f`;
   if (majorSec < 1) return `${(sec * 1000).toFixed(0)}ms`;
-  if (majorSec < 60) return `${sec.toFixed(majorSec < 1 ? 2 : 0)}s`;
+  if (majorSec < 60) return `${sec.toFixed(0)}s`;
   const m = Math.floor(sec / 60);
   const s = sec - m * 60;
   return `${m}:${s.toFixed(0).padStart(2, '0')}`;

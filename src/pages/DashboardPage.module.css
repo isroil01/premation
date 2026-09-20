@@ -75,8 +75,16 @@
   flex-shrink: 0;
 }
 
+/*
+ * Selected, and still readable.
+ *
+ * This used to put `--color-primary` on the tint: 2.80:1 measured in the
+ * running app, which made the page you are ON the hardest label in the
+ * sidebar to read. `--color-primary-text` is the same blue tuned to be ink
+ * rather than a fill.
+ */
 .navLinkActive {
-  color: var(--color-primary) !important;
+  color: var(--color-primary-text) !important;
   background: var(--color-primary-subtle) !important;
   font-weight: var(--font-weight-semibold);
 }
@@ -313,35 +321,32 @@
   padding: 6px 12px 6px 28px;
   color: var(--color-text-primary);
   font-size: var(--font-size-xs);
-  width: 200px;
+  width: 240px;
   outline: none;
-  transition: border-color 140ms ease, width 140ms ease;
+  /*
+   * Colour only. This used to grow 200px → 240px on focus, which animated a
+   * layout property every frame and shoved the format filter sideways the
+   * moment the field was clicked — the neighbour moving is what the eye reads,
+   * not the field arriving. It is simply 240px now, focused or not.
+   */
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .projectSearchInput:focus,
 .projectSearchInput:focus-visible {
   border-color: var(--color-primary);
   background: var(--color-surface-2);
-  width: 240px;
   outline: none;
   box-shadow: none;
 }
 
-.filterDropdown {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-control);
-  padding: 6px 12px;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-  outline: none;
-  transition: border-color 140ms ease;
-}
-
-.filterDropdown:focus {
-  border-color: var(--color-primary);
-}
+/*
+ * `.filterDropdown` lived here until the format filter stopped being a native
+ * <select> and became the shared segmented control (`.segmentedGroup`). It had
+ * no other consumer, so it left with the element it dressed.
+ */
 
 .actionButtons {
   display: flex;
@@ -487,19 +492,39 @@
   gap: 12px;
 }
 
+/**
+ * The poster frame.
+ *
+ * Bigger than it was (44×30) and a true 16:9, because in a motion tool the
+ * frame IS how you recognise a project — a name you skim, a picture you spot.
+ * At the old size it was a stamp you could not read.
+ *
+ * `--thumb-hue` gives the no-poster case a colour of its own, derived from the
+ * project's id (see `thumbHue`). Every project without a poster used to draw
+ * the same blue glyph on the same dark square, so a list of them was a column
+ * of identical tiles — the fallback made rows harder to tell apart, which is
+ * the opposite of a thumbnail's job.
+ */
 .projectThumb {
-  width: 44px;
-  height: 30px;
-  border-radius: var(--radius-control);
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
+  width: 56px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(
+      135deg,
+      oklch(0.42 0.09 var(--thumb-hue, 250)),
+      oklch(0.28 0.06 calc(var(--thumb-hue, 250) + 40))
+    );
   display: grid;
   place-items: center;
-  color: var(--color-primary);
+  color: color-mix(in srgb, var(--color-text-inverse) 72%, transparent);
   cursor: pointer;
-  transition: border-color 140ms ease;
+  transition: box-shadow 140ms ease;
   flex-shrink: 0;
   overflow: hidden;
+  /* An inset hairline instead of a border: a border would eat 2px of a 56px
+     frame and shift the image inside it. */
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
 }
 
 .thumbImg {
@@ -511,7 +536,12 @@
 }
 
 .projectThumb:hover {
-  border-color: var(--color-primary);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.projectThumb:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
 }
 
 .thumbIcon {
@@ -526,7 +556,7 @@
 }
 
 .projectName:hover {
-  color: var(--color-primary);
+  color: var(--color-primary-text);
 }
 
 .projectTime {
@@ -544,9 +574,43 @@
   color: var(--color-text-secondary);
 }
 
+/*
+ * ── On monospace ───────────────────────────────────────────────────────────
+ *
+ * This sheet used a code face for every number and half the prose: plan names,
+ * storage totals, aspect tags, a description. The dashboard read as a terminal
+ * emulator rather than a place to manage work.
+ *
+ * The rule now: `--font-family-mono` is for strings a person COMPARES
+ * character by character — an API key prefix, a plugin id. Everything a person
+ * READS is set in the UI face, and anything numeric that sits in a column adds
+ * `font-variant-numeric: tabular-nums`, which is the alignment the mono face
+ * was really being used for.
+ */
+
+/**
+ * A data cell: a resolution, a duration, an age.
+ *
+ * NOT monospace. These are numbers a person reads, not identifiers a machine
+ * matches, and setting `1920×1080 · 16:9` and `3h ago` in a code face made
+ * every table on this dashboard read as log output. `tabular-nums` keeps the
+ * digits aligned down the column, which is the only thing the mono face was
+ * actually buying.
+ *
+ * Monospace is still right for API key prefixes and plugin ids — things you
+ * compare character by character. Those use `.identCell`.
+ */
 .monoCell {
-  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/** A true identifier — compared by eye, character by character. */
+.identCell {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro);
   color: var(--color-text-secondary);
 }
 
@@ -557,37 +621,240 @@
   gap: 8px;
 }
 
-.badge {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+/**
+ * Loading, as the shape of what is coming.
+ *
+ * Replaces a centred "Loading projects…". The rows are the height the real
+ * rows will be, so the card does not resize under the reader when the data
+ * lands, and the pulse says "working" without a spinner parked in the middle
+ * of the content.
+ */
+.skeletonTable {
+  display: flex;
+  flex-direction: column;
+}
+
+.skeletonRow {
   display: flex;
   align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.skeletonRow:last-child {
+  border-bottom: none;
+}
+
+.skeletonThumb {
+  width: 56px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-3);
+  animation: skeletonPulse 1.4s ease-in-out infinite;
+}
+
+.skeletonLines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.skeletonLine {
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--color-surface-3);
+  animation: skeletonPulse 1.4s ease-in-out infinite;
+}
+
+.skeletonLineSub {
+  height: 7px;
+  opacity: 0.6;
+}
+
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonThumb,
+  .skeletonLine {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/**
+ * A table row's actions.
+ *
+ * Right-aligned as a pair so the destructive icon sits at the row's edge,
+ * furthest from the name you are reading and furthest from the pointer's path
+ * to Open.
+ */
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
   gap: 4px;
 }
 
-.badgeDefault {
-  background: var(--color-surface-0);
+.rowActionOpen {
+  padding: 4px 10px;
   border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition:
+    background-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 150ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rowActionOpen:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-subtle);
+  color: var(--color-primary-text);
+}
+
+.rowActionOpen:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/**
+ * Home's status strip.
+ *
+ * Replaces `.statsGrid` — three equal bordered cards, each a number over a
+ * label. Signals here are conditional and shaped by what they mean: a failure
+ * is red and a render in flight pulses, while the library's own totals are a
+ * plain line of text, because a count of projects is context, not an alert.
+ *
+ * Deliberately NOT cards. Three boxes of zeroes is the look of a dashboard
+ * rather than the use of one.
+ */
+.overviewStrip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-bottom: 26px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.overviewSignal {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: none;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background-color 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.overviewSignal:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.overviewSignalDanger {
+  background: color-mix(in srgb, var(--color-danger) 15%, transparent);
+  color: var(--color-danger);
+}
+
+.overviewSignalDanger:hover {
+  background: color-mix(in srgb, var(--color-danger) 24%, transparent);
+}
+
+.overviewSignalBusy {
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+  color: var(--color-warning);
+}
+
+.overviewSignalBusy:hover {
+  background: color-mix(in srgb, var(--color-warning) 24%, transparent);
+}
+
+/** The quiet half: what the library holds, as a sentence. */
+.overviewFacts {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/**
+ * The reason a render failed, under its status pill.
+ *
+ * Wrapped rather than truncated to one line: an encoder error names a frame
+ * and a cause, and the half of it that fits is rarely the half that helps.
+ * Capped so one very long message cannot push the table's other rows apart.
+ */
+.jobError {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-top: 4px;
+  max-width: 34ch;
+  font-size: var(--font-size-micro);
+  line-height: 1.4;
+  color: var(--color-danger);
+}
+
+/** A job with no progress to show — finished, failed or cancelled. */
+.progressIdle {
+  color: var(--color-text-tertiary);
+}
+
+/**
+ * A status pill.
+ *
+ * Tinted fill, no coloured outline. Every variant used to carry a 1px border in
+ * its own hue, which turned four statuses into four outlined boxes of ALL-CAPS
+ * text — the look of a terminal, not of a product, and the thing that made this
+ * table read as debug output more than any other single detail.
+ *
+ * `inline-flex`, not `flex`: as a `flex` element the pill stretched to the
+ * column's height and the tint became a block behind the row's whole cell.
+ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+}
+
+.badgeDefault {
+  background: var(--color-surface-3);
   color: var(--color-text-secondary);
 }
 
 .badgeSuccess {
-  background: color-mix(in srgb, var(--color-success) 12%, transparent);
-  border: 1px solid var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
   color: var(--color-success);
 }
 
 .badgeProgress {
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
-  border: 1px solid var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
   color: var(--color-warning);
 }
 
 .badgeDanger {
-  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
-  border: 1px solid var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
   color: var(--color-danger);
 }
 
@@ -793,7 +1060,7 @@
 .sectionLink {
   border: none;
   background: transparent;
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
@@ -926,7 +1193,7 @@
   font-weight: var(--font-weight-semibold);
 }
 
-.assetTabs {
+.segmentedGroup {
   display: flex;
   background: var(--color-surface-0);
   border: 1px solid var(--color-border-subtle);
@@ -935,7 +1202,7 @@
   gap: 3px;
 }
 
-.assetTab {
+.segment {
   background: transparent;
   border: none;
   padding: 4px 10px;
@@ -947,14 +1214,21 @@
   transition: background-color 120ms ease, color 120ms ease;
 }
 
-.assetTab:hover {
+.segment:hover {
   color: var(--color-text-primary);
   background: var(--color-hover);
 }
 
-.assetTabActive {
+/* The group had no focus ring at all — keyboard users could not see where they were. */
+.segment:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+/* Same story as `.navLinkActive`: the accent is ink here, so it uses the ink token. */
+.segmentActive {
   background: var(--color-primary-subtle);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   font-weight: var(--font-weight-semibold);
 }
 
@@ -1063,21 +1337,28 @@
 }
 
 .progressText {
-  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   width: 28px;
   text-align: right;
 }
 
+/**
+ * Settings keeps a narrow measure, but not a centred one.
+ *
+ * The panel and its header used to be centred in the content area, so Settings
+ * was the only page whose title did not start where every other page's title
+ * starts — switching to it slid the whole page 144px sideways. A reading width
+ * is worth keeping; a moving left edge is not.
+ */
 .settingsTitleRow {
   max-width: 680px;
   width: 100%;
-  margin-left: auto;
-  margin-right: auto;
 }
 
-/* Developer & Billing Wide Panels */
+/* Customize, Developer & Billing Wide Panels */
+.customizePanel,
 .developerPanel,
 .billingPanel {
   display: flex;
@@ -1085,7 +1366,6 @@
   gap: 18px;
   max-width: 1040px;
   width: 100%;
-  margin: 0 auto;
 }
 
 /* Settings Tab Panel */
@@ -1095,7 +1375,6 @@
   gap: 18px;
   max-width: 680px;
   width: 100%;
-  margin: 0 auto;
 }
 
 .settingsCard {
@@ -1145,8 +1424,7 @@
 
 .profileNodeBadge {
   font-size: var(--font-size-micro);
-  font-family: var(--font-family-mono);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   margin-top: 2px;
 }
 
@@ -1167,7 +1445,7 @@
 }
 
 .monoValue {
-  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-secondary);
 }
 
@@ -1520,7 +1798,7 @@
 .categoryPillActive {
   background: var(--color-surface-2);
   border-color: var(--color-primary);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   font-weight: 600;
 }
 
@@ -1614,7 +1892,7 @@
 .presetCardDims {
   font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
-  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Dimension Controls & Swap Button ── */
@@ -1669,7 +1947,7 @@
   background: var(--color-surface-1);
   color: var(--color-text-secondary);
   font-size: var(--font-size-micro);
-  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: all var(--motion-duration-fast);
 }
@@ -1682,7 +1960,7 @@
 .durationChipActive {
   background: var(--color-surface-2);
   border-color: var(--color-primary);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   font-weight: 600;
 }
 
@@ -1755,8 +2033,8 @@
 .previewAspectTag {
   font-size: var(--font-size-micro);
   font-weight: 600;
-  font-family: var(--font-family-mono);
-  color: var(--color-primary);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-primary-text);
   background: var(--color-surface-0);
   border: 1px solid var(--color-border);
   padding: 1px 6px;
@@ -1797,7 +2075,7 @@
 }
 
 .canvasOverlayBadge {
-  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--font-size-micro);
   font-weight: 600;
   color: #ffffff;
@@ -1831,7 +2109,7 @@
 .specValue {
   font-size: var(--font-size-micro);
   font-weight: 500;
-  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
   text-align: right;
 }
@@ -1977,17 +2255,42 @@
   font-weight: var(--font-weight-semibold);
 }
 
+/**
+ * The switch between the installed list and the publisher workspace.
+ *
+ * Its own row above the host rather than inside it: `PluginsList` and
+ * `PublisherWorkspace` each own their header, and a control that belongs to
+ * neither cannot live inside either without one of them having to know about
+ * the other.
+ */
+.pluginsViewSwitch {
+  display: flex;
+  margin-bottom: 12px;
+}
+
 .pluginsPanelHost {
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-surface);
   overflow: hidden;
   min-height: 420px;
+  /**
+   * A real height, not just a floor.
+   *
+   * The publisher workspace is a two-pane split whose rail and detail scroll
+   * independently, and `min-height` alone gives them nothing to be a
+   * percentage of — both panes grow instead, the page scrolls as one, and the
+   * save bar that is supposed to be pinned to the pane scrolls away with it.
+   */
+  height: clamp(420px, calc(100vh - 220px), 900px);
+  display: flex;
+  flex-direction: column;
 }
 
-.modalPublishContainer {
-  max-height: min(70vh, 640px);
-  overflow: auto;
+/* Both views fill the host and manage their own scrolling. */
+.pluginsPanelHost > * {
+  flex: 1;
+  min-height: 0;
 }
 
 .colorRow {
@@ -2011,6 +2314,7 @@
   outline-offset: 1px;
 }
 
+/** Mono on purpose: a hex value is compared character by character. */
 .colorHexInput {
   width: 88px;
   background: var(--color-surface-1);
@@ -2125,7 +2429,6 @@
 .launchpadDesc {
   font-size: var(--font-size-micro);
   color: var(--color-text-tertiary);
-  font-family: var(--font-family-mono);
 }
 
 /* Responsive Breakpoints */

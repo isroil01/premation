@@ -5,6 +5,7 @@
  */
 
 import { memo, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import type { SelectModifiers } from './trackRangeSelect';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
 import { StopwatchButton, KeyframeNavigator } from '@components/PropertyRow';
@@ -118,7 +119,10 @@ export const TrackHeader = memo(function TrackHeader({
   /** `recursive` is Alt+click: the layer and everything under it. */
   onToggleExpand: (recursive: boolean) => void;
   onActivate: () => void;
-  onClick: (additive: boolean) => void;
+  /** The click's modifiers — Shift spans, Ctrl/Cmd toggles. Resolved by the
+   *  Timeline, which is the only thing that knows the row ORDER a span runs
+   *  along. A boolean here could not express the difference. */
+  onClick: (mods: SelectModifiers) => void;
   onToggleVisible: () => void;
   onToggleLock: () => void;
   /** `exclusive` is Alt+click: AE's "turn off all other solo switches". */
@@ -231,7 +235,7 @@ export const TrackHeader = memo(function TrackHeader({
       data-hidden={hidden || undefined}
       data-ghost={track.ghosted || undefined}
       data-locked={locked || undefined}
-      onClick={(e) => onClick(e.ctrlKey || e.metaKey || e.shiftKey)}
+      onClick={(e) => onClick({ shift: e.shiftKey, meta: e.ctrlKey || e.metaKey })}
       onDoubleClick={onActivate}
       onFocus={onRowFocus}
       onKeyDown={(e) => {
