@@ -111,8 +111,9 @@ describe('the folder list', () => {
     expect(screen.getByText(/1\.2\.0 · Folder/)).toBeInTheDocument();
   });
 
-  it('shows the folders it is scanning, so "why is it not here" is answerable', async () => {
+  it('shows the folders it is scanning in the info modal, so "why is it not here" is answerable', async () => {
     render(<LocalPluginsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /plugins folder info/i }));
     expect(await screen.findByText('/plugins')).toBeInTheDocument();
   });
 
@@ -142,12 +143,24 @@ describe('the folder list', () => {
     fireEvent.click(await screen.findByRole('button', { name: /open plugins folder/i }));
     await waitFor(() => expect(openFolder).toHaveBeenCalled());
   });
+
+  it('opens and closes the plugins folder info modal', async () => {
+    render(<LocalPluginsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /plugins folder info/i }));
+    expect(await screen.findByText('Plugins Folder')).toBeInTheDocument();
+    expect(screen.getByText('Scanned Folders')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    await waitFor(() => {
+      expect(screen.queryByText('Scanned Folders')).not.toBeInTheDocument();
+    });
+  });
 });
 
-describe('the Developer Mode switch', () => {
+describe('the Developer Mode switch in info modal', () => {
   it('does not turn on until the warning is accepted', async () => {
     confirmResult.ok = false;
     render(<LocalPluginsSection />);
+    fireEvent.click(await screen.findByRole('button', { name: /plugins folder info/i }));
     const toggle = await screen.findByRole('checkbox');
     fireEvent.click(toggle);
     await waitFor(() => expect(screen.getByRole('checkbox')).not.toBeChecked());
@@ -155,7 +168,9 @@ describe('the Developer Mode switch', () => {
 
   it('turns on when it is', async () => {
     render(<LocalPluginsSection />);
-    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.click(await screen.findByRole('button', { name: /plugins folder info/i }));
+    const toggle = await screen.findByRole('checkbox');
+    fireEvent.click(toggle);
     await waitFor(() => expect(screen.getByRole('checkbox')).toBeChecked());
   });
 
@@ -164,7 +179,9 @@ describe('the Developer Mode switch', () => {
   it('turns off without asking', async () => {
     act(() => { setDeveloperMode(true); });
     render(<LocalPluginsSection />);
-    fireEvent.click(await screen.findByRole('checkbox'));
+    fireEvent.click(await screen.findByRole('button', { name: /plugins folder info/i }));
+    const toggle = await screen.findByRole('checkbox');
+    fireEvent.click(toggle);
     await waitFor(() => expect(screen.getByRole('checkbox')).not.toBeChecked());
   });
 });

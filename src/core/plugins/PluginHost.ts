@@ -39,7 +39,9 @@ import { useUIStore } from '@stores/uiStore';
 import { registerLayerKinds, unregisterLayerKinds } from './layerKindRegistry';
 import { resetGeneratorsForPlugin, setGeneratorRunner } from './generator/generatorScheduler';
 import { forgetPluginAssetTextures, setPluginAssetHost } from './pluginAssetTextures';
+import { setSuperviseHandler } from './paramSupervision';
 import { registerEffects, unregisterEffects } from './pluginEffects';
+import { registerAudioEffects, unregisterAudioEffects } from './pluginAudioEffects';
 import { registerPluginTools, unregisterPluginTools } from './uiTools';
 import { setPluginExpressionScope } from '@motion/animation';
 import {
@@ -116,7 +118,9 @@ type HostTaskReply =
   | ArrayBuffer
   | undefined
   | { width: number; height: number; pixels: ArrayBuffer }
-  | { generated: unknown };
+  | { generated: unknown }
+  /** A supervisor's answer: params to write back, or nothing to change. */
+  | { supervised: Record<string, unknown> | null };
 
 type ExportStepInput<T = Extract<HostMessage, { k: 'export' }>> =
   T extends unknown ? Omit<T, 'id'> : never;
@@ -1209,6 +1213,15 @@ class PluginHost {
         break;
       }
 
+      case 'superviseResult': {
+        const pending = this.exportWaiters.get(msg.id);
+        if (!pending) break;
+        this.exportWaiters.delete(msg.id);
+        if (msg.ok) pending.resolve({ supervised: msg.params });
+        else pending.reject(new Error(msg.error));
+        break;
+      }
+
       case 'generateResult': {
         const pending = this.exportWaiters.get(msg.id);
         // Normal, and frequent: the scheduler abandons a frame the moment the
@@ -1432,6 +1445,10 @@ class PluginHost {
       nobody can rely on in a project they hand to someone else.
     */
     registerEffects(pid, entry.manifest.name, entry.manifest.contributes.effects);
+    // And its AUDIO effects. Registered on enable like the visual ones and for
+    // the same reason: an effect has to be addable to a layer before the
+    // plugin's worker boots. A declared node chain needs no worker at all.
+    registerAudioEffects(pid, entry.manifest.name, entry.manifest.contributes.audioEffects);
   }
 
   private unregisterContributions(id: string): void {
@@ -1460,6 +1477,7 @@ class PluginHost {
     // keep drawing — including one the user disabled BECAUSE it was implicated
     // in a device loss, which is the case where that matters most.
     unregisterEffects(id);
+    unregisterAudioEffects(id);
     /*
       And its UI. All four for the same reason, which is the one this whole
       block is about: a contribution that outlives the plugin is a control the
@@ -1800,6 +1818,25 @@ class PluginHost {
    * the layer draws empty — which is the same thing that happens when the
    * plugin is uninstalled, and is what `render: "generator"` costs.
    */
+  /**
+   * Ask a running plugin what to do about one of its own controls moving.
+   *
+   * Does NOT start the plugin. A stopped plugin simply does not supervise, and
+   * the user's own edit stands — which is the same degradation a generator
+   * layer takes, and for the same reason: the trigger here is a slider, not a
+   * thing the user named.
+   */
+  async runSupervise(
+    pluginId: string,
+    req: { effectId: string; instanceId: string; changed: string; params: Record<string, unknown> },
+  ): Promise<Record<string, unknown> | null> {
+    const live = this.runtimes.get(pluginId);
+    if (!live || live.info.status !== 'running') return null;
+    const reply = await this.runExportStep(pluginId, { k: 'supervise', ...req } as never);
+    if (!reply || reply instanceof ArrayBuffer || !('supervised' in reply)) return null;
+    return (reply as { supervised: Record<string, unknown> | null }).supervised;
+  }
+
   async runGenerate(pluginId: string, kindId: string, request: unknown): Promise<unknown> {
     const live = this.runtimes.get(pluginId);
     if (!live || live.info.status !== 'running') {
@@ -2135,4 +2172,23 @@ setPluginAssetHost({
   read: (pluginId, path) => pluginHost.readPackageBytes(pluginId, path),
   log: (pluginId, message) => pluginHost.reportError(pluginId, message),
 });
+
+/*
+  And the route for param supervision.
+
+  Wired here for the third time for the third instance of the same reason:
+  `paramSupervision` is reached from `updateEffectParam`, which the AI tools,
+  the CLI and the export path all call — none of which has a plugin host. The
+  orchestration (coalescing, the loop guard, filtering the answer) lives there
+  and is tested over a plain function; this is the one line that makes it talk
+  to a real worker.
+*/
+setSuperviseHandler((req) =>
+  pluginHost.runSupervise(req.pluginId, {
+    effectId: req.effectId,
+    instanceId: req.instanceId,
+    changed: req.changed,
+    params: req.params,
+  }),
+);
 export default pluginHost;

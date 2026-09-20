@@ -32,6 +32,20 @@ import type { AuthStatus } from '../../types/motionEditor';
 const LEGACY_TOKEN_KEY = 'motion-editor.auth-token';
 /** WEB ONLY. Browser-build home for the refresh token. */
 const WEB_REFRESH_KEY = 'motion-editor.refresh-token';
+/**
+ * Which tab is currently spending the refresh token. See `claimRefresh`.
+ *
+ * Not a real mutex — localStorage has no compare-and-swap — but the failure it
+ * guards is two tabs refreshing in the same instant, and for that a claim plus
+ * a short wait is enough. The worst case if it is lost is the behaviour we
+ * already handle: one tab presents a rotated token and adopts the new one.
+ */
+const WEB_REFRESH_LOCK_KEY = 'motion-editor.refresh-lock';
+/** How long a claim is honoured before it is assumed to belong to a dead tab. */
+const REFRESH_LOCK_TTL_MS = 10_000;
+/** How long to wait for the tab that holds the claim, before going anyway. */
+const REFRESH_LOCK_POLL_MS = 150;
+const REFRESH_LOCK_WAIT_TRIES = 20;
 
 export interface SessionTokens {
   token: string;
@@ -197,6 +211,7 @@ export async function clearSession(): Promise<void> {
     webRefreshToken = null;
     safeRemove(WEB_REFRESH_KEY);
     safeRemove(LEGACY_TOKEN_KEY);
+    releaseRefresh();
   }
   for (const fn of listeners) fn(false);
 }
@@ -209,8 +224,60 @@ export async function clearSession(): Promise<void> {
  * the server correctly reads as token reuse and answers by revoking the whole
  * session. On desktop this property is now structural rather than a discipline
  * kept here: main is the only thing that can refresh at all.
+ *
+ * This guard is per-TAB, because a module scope is. Two tabs of the same
+ * account are the case it does not cover, and the one production actually hit
+ * (`refresh token reuse detected ... session revoked`, same user, same family,
+ * twice): both tabs read the stored token at launch, tab A refreshes and
+ * rotates it, tab B still holds the old string in `webRefreshToken` and
+ * presents it on its next expiry. The server is right to call that reuse — it
+ * cannot tell a second tab from a stolen token — and it revokes the family,
+ * signing the user out of BOTH tabs mid-edit.
+ *
+ * So the stored value, not the in-memory one, is the source of truth at the
+ * moment of presenting, and a refusal is re-checked against storage before it
+ * is allowed to end the session. See `readStoredRefreshToken`.
  */
 let refreshInFlight: Promise<boolean> | null = null;
+
+/** This tab's identity for the duration of the page. */
+const TAB_ID = Math.random().toString(36).slice(2);
+
+/**
+ * Take the cross-tab refresh claim, or report who holds it.
+ *
+ * Re-read after writing: two tabs that write in the same instant both see the
+ * last write, so exactly one of them sees its own id and proceeds. That is the
+ * whole guarantee, and it is the one that matters — the loser waits instead of
+ * presenting the same token a moment later and getting the family revoked.
+ */
+function claimRefresh(): boolean {
+  const held = safeGet(WEB_REFRESH_LOCK_KEY);
+  if (held) {
+    const [, at] = held.split(':');
+    const age = Date.now() - Number(at);
+    // A claim from a tab that was closed mid-refresh must not deadlock the
+    // account, so it expires. Longer than any refresh round trip, shorter than
+    // a user will wait staring at a stalled app.
+    if (Number.isFinite(age) && age >= 0 && age < REFRESH_LOCK_TTL_MS) return false;
+  }
+  safeSet(WEB_REFRESH_LOCK_KEY, `${TAB_ID}:${Date.now()}`);
+  return safeGet(WEB_REFRESH_LOCK_KEY)?.startsWith(`${TAB_ID}:`) ?? true;
+}
+
+function releaseRefresh(): void {
+  if (safeGet(WEB_REFRESH_LOCK_KEY)?.startsWith(`${TAB_ID}:`)) safeRemove(WEB_REFRESH_LOCK_KEY);
+}
+
+/**
+ * The refresh token as it is RIGHT NOW, not as this tab last saw it.
+ *
+ * `webRefreshToken` is seeded once in `loadSession` and updated only by this
+ * tab's own `setSession`, so it goes stale the moment another tab rotates.
+ */
+function readStoredRefreshToken(): string | null {
+  return safeGet(WEB_REFRESH_KEY) ?? webRefreshToken;
+}
 
 export function refreshSession(): Promise<boolean> {
   // Desktop: `api.request` refreshes inside main, before and after the call it
@@ -219,10 +286,30 @@ export function refreshSession(): Promise<boolean> {
   if (IS_ELECTRON) return Promise.resolve(Boolean(desktopStatus?.signedIn));
 
   if (refreshInFlight) return refreshInFlight;
-  if (!webRefreshToken) return Promise.resolve(false);
 
-  const presented = webRefreshToken;
+  if (!readStoredRefreshToken()) return Promise.resolve(false);
+
   refreshInFlight = (async () => {
+    // Another tab is already spending the token. Wait for it rather than
+    // presenting the same string — a second presentation is indistinguishable
+    // from a stolen token and costs the whole session.
+    let claimed = claimRefresh();
+    for (let i = 0; !claimed && i < REFRESH_LOCK_WAIT_TRIES; i++) {
+      await new Promise((r) => setTimeout(r, REFRESH_LOCK_POLL_MS));
+      claimed = claimRefresh();
+    }
+
+    // Re-read AFTER the wait: if the other tab succeeded, storage now holds a
+    // fresh token and this is the whole refresh — nothing to present.
+    const presented = readStoredRefreshToken();
+    if (!presented) {
+      if (claimed) releaseRefresh();
+      return false;
+    }
+    // Adopt what storage says, so a token another tab rotated is not left
+    // behind in memory to be presented again later.
+    webRefreshToken = presented;
+
     try {
       // A bare fetch, not `request`: that helper retries through *this*
       // function on a 401, and a refresh that refreshes is an infinite loop.
@@ -237,7 +324,19 @@ export function refreshSession(): Promise<boolean> {
         // 401/403 means the token is spent, revoked or expired — all terminal.
         // A 5xx or a network failure is not: the session may well be fine, and
         // dropping it would sign a user out because the server hiccuped.
-        if (res.status === 401 || res.status === 403) await clearSession();
+        if (res.status === 401 || res.status === 403) {
+          // Unless another tab rotated it while this call was in flight, which
+          // is the ONE benign reason a well-formed refresh is refused. Storage
+          // now holds a token this tab has never presented; the session is
+          // alive and clearing it here would sign the user out of a working
+          // account. Adopt it and let the caller retry.
+          const current = safeGet(WEB_REFRESH_KEY);
+          if (current && current !== presented) {
+            webRefreshToken = current;
+            return false;
+          }
+          await clearSession();
+        }
         return false;
       }
 
@@ -247,6 +346,7 @@ export function refreshSession(): Promise<boolean> {
       // Offline. Keep the refresh token — the session is probably still valid.
       return false;
     } finally {
+      if (claimed) releaseRefresh();
       refreshInFlight = null;
     }
   })();

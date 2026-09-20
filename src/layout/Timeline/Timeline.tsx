@@ -61,6 +61,8 @@ import {
 } from '@core/timeline/transitions';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { registerTimelineScroll, setTimelineLaneGeometry, setTimelineViewportWidth } from './timelineViewport';
+import { zoomAroundTime, zoomStep } from './zoomAnchor';
+import { resolveTrackSelection, selectIntentFor, type SelectModifiers } from './trackRangeSelect';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import { clamp } from '@utils/lang';
@@ -135,6 +137,18 @@ export interface TimelineProps {
   onWorkAreaChange?: (start: number, end: number) => void;
   /** Clip moved to a new absolute start (seconds). */
   onClipMove?: (clipId: string, start: number) => void;
+  /**
+   * Move several bars as ONE undoable action — what a multi-row drag and a
+   * stagger commit.
+   *
+   * Not expressible as a loop over `onClipMove`: each of those is a separate
+   * engine command, so a twenty-layer drag would cost twenty Ctrl+Z and could
+   * be half-undone into a state the user never arranged.
+   */
+  onClipMoveMany?: (
+    moves: ReadonlyArray<{ clipId: string; start: number }>,
+    label?: string,
+  ) => void;
   /** Clip edge trimmed to an absolute time (seconds). `ripple` closes the gap on in/out trim. */
   onClipTrim?: (clipId: string, edge: 'start' | 'end', time: number, opts?: { ripple?: boolean }) => void;
   /** Alt-drag clip body: slip source under a fixed bar (sourceInSec). */
@@ -144,6 +158,16 @@ export interface TimelineProps {
   /** Right-click a clip (for split / delete). */
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
   onTrackSelect?: (trackId: string, additive: boolean) => void;
+  /**
+   * Replace the layer selection wholesale — what a Shift+click span and a
+   * lane marquee produce.
+   *
+   * Separate from `onTrackSelect` because that one is per-row and additive,
+   * and a span cannot be expressed as a sequence of those without the host
+   * seeing (and re-rendering for) every intermediate selection. A host that
+   * does not provide it keeps the old per-row behaviour, minus range select.
+   */
+  onTrackSelectMany?: (trackIds: ReadonlyArray<string>) => void;
   onScroll?: (scrollLeft: number) => void;
   /**
    * Horizontal scroll to RESTORE (px). The lanes own their scroll position, but
@@ -151,7 +175,13 @@ export interface TimelineProps {
    * lanes jump to wherever the graph left off so the two views stay aligned.
    */
   scrollLeftSync?: number;
-  onZoom?: (pixelsPerSecond: number) => void;
+  /**
+   * `anchorSeconds` is the time the gesture was aimed at — the point under
+   * the pointer for a wheel zoom. A host that keeps its own scroll position
+   * should anchor on it; omitted, the host's own default (the playhead) is
+   * the right fallback for a zoom with no pointer, like a slider or a chord.
+   */
+  onZoom?: (pixelsPerSecond: number, anchorSeconds?: number) => void;
   selectedTrackIds?: ReadonlyArray<string>;
   /** Tracks whose animated properties are revealed (expanded). */
   expandedTrackIds?: ReadonlyArray<string>;
@@ -247,11 +277,13 @@ function Timeline({
   onScrub,
   onWorkAreaChange,
   onClipMove,
+  onClipMoveMany,
   onClipTrim,
   onClipSlip,
   onClipSlide,
   onClipContextMenu,
   onTrackSelect,
+  onTrackSelectMany,
   onScroll,
   scrollLeftSync,
   onZoom,
@@ -767,6 +799,73 @@ function Timeline({
    * with Tab should land on.
    */
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
+
+  // ── Row selection (click, Shift span, Ctrl toggle) ──────────────
+  //
+  // The ORDER a Shift span runs along is the flattened, filtered, shy-aware
+  // row list — which only this component has. That is why the span is resolved
+  // here and the host is handed a finished selection rather than a modifier.
+  const trackRowOrder = useMemo<string[]>(
+    () => rows.filter((r) => r.type === 'track').map((r) => r.track.id as string),
+    [rows],
+  );
+  /**
+   * Where the last span started. A ref, not state: it is read inside click
+   * handlers and never rendered, and putting it in state would re-render every
+   * row on a plain click for a value none of them display.
+   */
+  const selectionAnchorRef = useRef<string | null>(null);
+
+  /**
+   * Everything the click resolver reads that CHANGES, refreshed each render.
+   *
+   * `selectTrack` below has to be referentially stable, and this is why.
+   * `areRowPropsEqual` — the memo every row subcomponent uses — deliberately
+   * treats two functions as equal whatever their identity, on the stated
+   * assumption that row callbacks close over nothing but the row's stable id.
+   * A `selectTrack` that closed over `selectedTrackIds` would break that
+   * assumption silently: the rows keep the FIRST closure they were given, so
+   * every click after the first would resolve against the selection as it was
+   * when the row last genuinely re-rendered. Ctrl+click would replace instead
+   * of toggling, and a span would be computed from a stale base.
+   *
+   * A ref is the fix rather than widening the comparator: the comparator is
+   * load-bearing (the panel re-renders up to 60×/s during playback and these
+   * rows must not follow), and the callback genuinely does not need to change.
+   */
+  const selectLiveRef = useRef({ order: trackRowOrder, selected: selectedTrackIds ?? [] as ReadonlyArray<string>, onTrackSelect, onTrackSelectMany });
+  selectLiveRef.current = { order: trackRowOrder, selected: selectedTrackIds ?? [], onTrackSelect, onTrackSelectMany };
+
+  /**
+   * Apply a click on `trackId` with its modifiers.
+   *
+   * Falls back to the per-row callback when the host has not provided the
+   * many-at-once one, so a host that only wired `onTrackSelect` keeps working
+   * (with Shift behaving as the plain toggle it always did there).
+   */
+  const selectTrack = useCallback((trackId: string, mods: SelectModifiers) => {
+    const live = selectLiveRef.current;
+    const intent = selectIntentFor(mods);
+    if (!live.onTrackSelectMany) {
+      live.onTrackSelect?.(trackId, intent !== 'replace');
+      selectionAnchorRef.current = trackId;
+      return;
+    }
+    const next = resolveTrackSelection({
+      order: live.order,
+      selected: live.selected,
+      anchor: selectionAnchorRef.current,
+      clicked: trackId,
+      intent,
+    });
+    selectionAnchorRef.current = next.anchor;
+    // Re-publishing an identical selection re-renders every row for nothing,
+    // and a plain click on the already-selected row is the commonest click.
+    if (!next.unchanged) live.onTrackSelectMany(next.ids);
+  }, []);
+  /** Live handle for the drag hooks, which run outside the render closure. */
+  const selectTrackRef = useRef(selectTrack);
+  selectTrackRef.current = selectTrack;
   /** Where an untouched list puts its tab stop: the first layer row. */
   const firstTrackRowIndex = rows.findIndex((r) => r.type === 'track');
   const pendingFocusRef = useRef<string | null>(null);
@@ -825,8 +924,9 @@ function Timeline({
             lanes.scrollTop = top + trackHeight - lanes.clientHeight;
           }
         }
-        // Shift extends; a plain move replaces, the way a file list does.
-        onTrackSelect?.(id, e.shiftKey);
+        // Shift extends the span from the anchor, a plain move replaces and
+        // re-anchors — the same rules as a click, so the two agree.
+        selectTrackRef.current(id, { shift: e.shiftKey, meta: false });
       };
 
       switch (e.key) {
@@ -857,7 +957,7 @@ function Timeline({
         default:
       }
     },
-    [rows, trackHeight, onTrackSelect, onTrackToggleVisible, toggleExpandRow],
+    [rows, trackHeight, onTrackToggleVisible, toggleExpandRow],
   );
 
   // ── Derived geometry ───────────────────────────────────────────
@@ -944,10 +1044,31 @@ function Timeline({
   // every tick without re-subscribing when the zoom or the mode changes.
   const followGeomRef = useRef({ followMode, pps });
   followGeomRef.current = { followMode, pps };
+  /**
+   * The playhead position the last follow acted on. Follow exists to keep an
+   * ADVANCING playhead visible; when the playhead has not moved, any re-page
+   * is being caused by something else — a zoom, a resize, or simply another
+   * render — and overruling the user's scroll position for those is wrong.
+   *
+   * This is what made the anchored wheel-zoom appear not to work. The zoom
+   * anchor set the correct scroll, and then `useLivePlayhead` — which calls
+   * this after EVERY render, not just on a clock tick — immediately paged back
+   * to a playhead that had not moved since. Guarding the one `useEffect` was
+   * not enough precisely because that is not the only caller; the rule belongs
+   * here, where every caller goes through it.
+   */
+  const lastFollowedRef = useRef<number | null>(null);
+  // Turning follow ON (or switching mode) should snap to the playhead even
+  // though it has not moved — that IS the user asking for it.
+  useEffect(() => {
+    lastFollowedRef.current = null;
+  }, [followMode]);
   const followTo = useCallback((t: number): void => {
     const el = lanesRef.current;
     const { followMode: mode, pps: p } = followGeomRef.current;
     if (!el || mode === 'off' || dragScrollBusyRef.current) return;
+    if (lastFollowedRef.current !== null && Math.abs(lastFollowedRef.current - t) < 1e-6) return;
+    lastFollowedRef.current = t;
     const next = followScrollLeft({
       mode,
       playheadX: TIMELINE_LEFT_OFFSET + t * p,
@@ -966,17 +1087,59 @@ function Timeline({
     followTo(livePlayhead ? getLiveTime() : currentTime);
   }, [followMode, currentTime, pps, livePlayhead, followTo]);
 
-  // ── Wheel zoom (Ctrl + Wheel) ──────────────────────────────────
+  // ── Wheel zoom (Ctrl + Wheel), anchored at the pointer ─────────
+  //
+  // The zoom is published to the host, which pushes a new `pixelsPerSecond`
+  // back down through the model; the scroll that keeps the pointer's time
+  // still can only be applied once that has rendered, because it is measured
+  // in the NEW scale. So the gesture records where the anchor must land and a
+  // layout effect below applies it on the frame the zoom arrives — the same
+  // two-step the graph editor uses.
+  //
+  // The anchor is recorded as a PAIR — hold this TIME at this screen x — not
+  // as a finished scroll position. The requested zoom does not survive the
+  // round trip unchanged: the host clamps it and the engine stores it as
+  // pixels-per-FRAME, so what comes back differs from what went out by a float
+  // hair. A pending scroll computed from the requested zoom would either be
+  // slightly wrong or, if guarded on the zoom matching, be discarded on every
+  // single gesture. Resolving the pair against whatever zoom actually arrives
+  // is correct for both.
+  const zoomAnchorRef = useRef<{ time: number; viewportX: number } | null>(null);
   const onWheel = useCallback(
     (e: ReactWheelEvent<HTMLDivElement>) => {
       if (!e.ctrlKey && !e.metaKey) return;
+      const lanes = lanesRef.current;
+      if (!lanes || !onZoom) return;
       e.preventDefault();
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const next = clamp(pps * factor, 4, 800);
-      onZoom?.(next);
+      const next = zoomStep(pps, e.deltaY);
+      if (next === pps) return;
+      const viewportX = e.clientX - lanes.getBoundingClientRect().left;
+      const time = pps > 0 ? (viewportX + lanes.scrollLeft - TIMELINE_LEFT_OFFSET) / pps : 0;
+      zoomAnchorRef.current = { time, viewportX };
+      // The host also hands the engine an anchor for its own `scrollX`; tell
+      // it the point the gesture is about, or the engine re-anchors on the
+      // playhead and the two disagree about where the view is.
+      onZoom(next, time);
     },
     [pps, onZoom],
   );
+
+  // Apply a pending zoom anchor the moment the new scale is on screen.
+  useLayoutEffect(() => {
+    const pending = zoomAnchorRef.current;
+    if (!pending) return;
+    zoomAnchorRef.current = null;
+    const lanes = lanesRef.current;
+    if (!lanes) return;
+    const { scrollLeft } = zoomAroundTime({
+      pps,
+      nextPps: pps,
+      time: pending.time,
+      viewportX: pending.viewportX,
+      leftOffset: TIMELINE_LEFT_OFFSET,
+    });
+    lanes.scrollLeft = scrollLeft;
+  }, [pps]);
 
   // Stable, so <Minimap>'s memo can actually skip — an inline arrow here is a
   // new prop identity on every frame of playback, which would make the memo
@@ -1567,8 +1730,10 @@ function Timeline({
     lastDragEventRef,
     setDragHud,
     selectedTrackIds,
-    onTrackSelect,
+    selectTrack,
+    rowOrder: trackRowOrder,
     onClipMove,
+    onClipMoveMany,
     onClipTrim,
     onClipSlip,
     onClipSlide,
@@ -1717,8 +1882,16 @@ function Timeline({
 
   // ── Ruler ticks ────────────────────────────────────────────────
   const allTicks = useMemo(
-    () => generateRulerTicks(totalSeconds, pps, model.frameRate, (model.startFrame ?? 0) / (model.frameRate || 30), TIMELINE_LEFT_OFFSET),
-    [totalSeconds, pps, model.frameRate, model.startFrame],
+    () => generateRulerTicks(
+      totalSeconds,
+      pps,
+      model.frameRate,
+      (model.startFrame ?? 0) / (model.frameRate || 30),
+      TIMELINE_LEFT_OFFSET,
+      // Page-snapped, so this re-runs on a page crossing, not on every scroll.
+      timeWindow === OPEN_WINDOW ? undefined : timeWindow,
+    ),
+    [totalSeconds, pps, model.frameRate, model.startFrame, timeWindow],
   );
   // Only the ticks on screen (plus a page either side) reach the DOM: a long
   // comp zoomed in is thousands of ticks, almost all of them off-screen.
@@ -1966,7 +2139,7 @@ function Timeline({
                     hasProps={row.hasProps}
                     onToggleExpand={(recursive) => toggleExpandRow(row.track.id, recursive)}
                     onActivate={() => onTrackActivate?.(row.track.id)}
-                    onClick={(additive) => onTrackSelect?.(row.track.id, additive)}
+                    onClick={(mods) => selectTrack(row.track.id, mods)}
                     onToggleVisible={() => onTrackToggleVisible?.(row.track.id)}
                     onToggleLock={() => onTrackToggleLock?.(row.track.id)}
                     onToggleSolo={(exclusive) => onTrackToggleSolo?.(row.track.id, exclusive)}

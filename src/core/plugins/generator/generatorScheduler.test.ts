@@ -111,6 +111,37 @@ describe('serving a frame', () => {
     expect(xOf(requestGeneratorFrame(demand(0)))).toBe(0);
   });
 
+  it('re-asks when a PARAMETER changed, with the playhead standing still', async () => {
+    /*
+      The case a cache keyed on the frame number alone gets wrong, and the one a
+      user hits constantly: they drag a property and watch the viewport. The
+      playhead has not moved, so every repaint asks for the same frame — and
+      answering it from the cache shows the geometry from before the edit, which
+      reads as the plugin having stopped working.
+
+      Stateless, so the count is about the cache and not about a seek replaying
+      the frames before this one.
+    */
+    const runner = makeRunner({ stateful: false });
+    setGeneratorRunner(runner);
+    const at = (size: number) => demand(5, { request: { params: { size } } as never });
+
+    requestGeneratorFrame(at(10));
+    await settle();
+    const first = runner.calls.length;
+    expect(first).toBeGreaterThan(0);
+
+    // A repaint with nothing changed must cost nothing.
+    requestGeneratorFrame(at(10));
+    await settle();
+    expect(runner.calls.length).toBe(first);
+
+    // The same frame, one property different: that is a different picture.
+    requestGeneratorFrame(at(40));
+    await settle();
+    expect(runner.calls.length).toBe(first + 1);
+  });
+
   it('HOLDS the previous frame rather than blanking while the next is made', async () => {
     const runner = makeRunner({ delayMs: -1 });
     setGeneratorRunner(runner);

@@ -17,6 +17,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@stores/authStore';
 import { cloudAccountsEnabled, cloudProjectsEnabled } from '@core/config/edition';
+import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { RequireAuth } from './RequireAuth';
 import { TitleBar } from '@layout/TitleBar/TitleBar';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
@@ -47,6 +48,9 @@ const VerifyEmailPage = lazy(() =>
 );
 const OAuthCallbackPage = lazy(() =>
   import('../pages/OAuthCallbackPage').then(m => ({ default: m.OAuthCallbackPage })),
+);
+const WelcomePage = lazy(() =>
+  import('../pages/WelcomePage').then(m => ({ default: m.WelcomePage })),
 );
 
 function AppLayout(): JSX.Element {
@@ -103,11 +107,35 @@ function AppLayout(): JSX.Element {
                   types the 6-digit code (the page itself requires a session and
                   bounces a verified user on to the dashboard). */}
               <Route path="/verify-email" element={<VerifyEmailPage />} />
+              {/* The one-question welcome step, owed by a verified account that
+                  has not said how it found us. Sits outside RequireAuth for the
+                  same reason /verify-email does — the gate is what sends people
+                  here, so wrapping it in the gate would be a redirect loop. The
+                  page does its own checks and bounces anyone who does not
+                  belong on it. */}
+              <Route path="/welcome" element={<WelcomePage />} />
             </>
           )}
           <Route path="/popout/:panelId" element={<PopoutRoute />} />
           {cloudProjectsEnabled() && (
-            <Route path="/dashboard" element={<RequireAuth><DashboardPage /></RequireAuth>} />
+            <Route
+              path="/dashboard"
+              element={
+                <RequireAuth>
+                  {/*
+                    Its own boundary, for two reasons. The fallback can say
+                    "Dashboard error / Reload page" instead of the root's
+                    editor wording, which is what a user whose Billing page
+                    threw was previously told. And a dashboard that breaks now
+                    breaks alone: the root boundary above it stays armed for
+                    the editor rather than being the thing that already fired.
+                  */}
+                  <ErrorBoundary scope="dashboard">
+                    <DashboardPage />
+                  </ErrorBoundary>
+                </RequireAuth>
+              }
+            />
           )}
           <Route path="/editor" element={<RequireAuth><EditorPage /></RequireAuth>} />
           {/* A `:projectId` names a CLOUD project — it is what binds autosave,

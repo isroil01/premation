@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { clampPps } from '@layout/Timeline/zoomAnchor';
 import { BottomTimeline } from './BottomTimeline';
 import { TransportBar } from '@layout/Workspace/TransportBar';
 import { deriveTimelineTracks } from '@layout/Timeline/deriveTimelineTracks';
@@ -165,14 +166,21 @@ export function PopoutTimeline(): JSX.Element {
       onScrub={(t) => getTimelineController().seekSeconds(t)}
       onWorkAreaChange={(start, end) => getTimelineController().setWorkArea(start, end)}
       onScroll={(px) => getTimelineController().setScrollPixels(px)}
-      onZoom={(next) => {
+      onZoom={(next, anchorSeconds) => {
         const c = getTimelineController();
-        c.setPixelsPerSecond(Math.min(800, Math.max(4, next)), c.currentSeconds);
+        c.setPixelsPerSecond(clampPps(next), anchorSeconds ?? c.currentSeconds);
       }}
       onTrackSelect={(trackId, additive) => {
         if (additive) useSelectionStore.getState().add(trackId);
         else useSelectionStore.getState().set([trackId]);
       }}
+      onTrackSelectMany={(trackIds) => useSelectionStore.getState().set([...trackIds])}
+      onClipMoveMany={(moves, label) =>
+        getTimelineController().setClipStarts(
+          moves.map((mv) => ({ layerId: mv.clipId, startSeconds: mv.start })),
+          label,
+        )
+      }
       onTrackToggleVisible={(id) => toggleFlag(id, 'visible')}
       onTrackToggleLock={(id) => toggleFlag(id, 'locked')}
       onTrackToggleSolo={(id) => toggleFlag(id, 'solo')}

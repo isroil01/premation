@@ -233,6 +233,7 @@ function buildAnimateItems(
     // Sequence / stagger live as registered commands (Animation menu + palette);
     // TopNav reuses them so the prompt and undo path stay one.
     { type: 'item', id: 'anim-sequence-bars', label: 'Sequence Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayerBars')); } },
+    { type: 'item', id: 'anim-stagger-layers', label: 'Stagger Layers…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.staggerLayers')); } },
     { type: 'item', id: 'anim-sequence', label: 'Stagger Animations…', icon: 'layers', disabled: selectedIds.length < 2, onSelect: () => { void getCommandSystem().execute(asCommandId('animation.sequenceLayers')); } },
     { type: 'separator' },
     {

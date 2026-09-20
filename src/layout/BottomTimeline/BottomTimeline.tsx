@@ -9,6 +9,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from 'react';
+import { TIMELINE_PPS_MAX, TIMELINE_PPS_MIN } from '@layout/Timeline/zoomAnchor';
 import { Icon } from '@components/Icon';
 import { SearchField } from '@components/SearchField';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
@@ -69,9 +70,13 @@ export interface BottomTimelineProps extends Omit<TimelineProps, 'className'> {
 }
 
 /* The zoom CONTROL moved to the status bar (`TimelineZoom`); these two survive
-   because the graph editor still clamps whatever it is handed. */
-const ZOOM_MIN = 4;
-const ZOOM_MAX = 800;
+   because the graph editor still clamps whatever it is handed. Re-exported
+   from `zoomAnchor` rather than re-declared: three files clamping to numbers
+   they each spelled out is three chances for them to disagree, and they did —
+   the panel's ceiling was raised for sub-frame work while these stayed at 800,
+   which would have silently capped it. */
+const ZOOM_MIN = TIMELINE_PPS_MIN;
+const ZOOM_MAX = TIMELINE_PPS_MAX;
 
 /**
  * What the toolbar's LEFT column gives up when it runs short, in order.

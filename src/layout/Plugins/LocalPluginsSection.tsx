@@ -23,6 +23,8 @@
 
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Icon } from '@components/Icon';
+import { Button } from '@components/Button';
+import { Modal } from '@components/Modal';
 import { customAlert, customConfirm } from '@components/Modal/Dialogs';
 import pluginHost from '@core/plugins/PluginHost';
 import { usePluginStore } from '@stores/pluginStore';
@@ -74,6 +76,7 @@ export function LocalPluginsSection(): JSX.Element | null {
   >(null);
   const [logFor, setLogFor] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showInfoModal, setShowInfoModal] = useState(false);
 
   // The first scan waits for hydration, because deciding whether a candidate
   // needs consent means comparing it against what is already installed — and
@@ -163,8 +166,24 @@ export function LocalPluginsSection(): JSX.Element | null {
   return (
     <section className={styles.section} aria-label="Plugins folder">
       <header className={styles.head}>
-        <span className={styles.title}>Plugins folder</span>
+        <div className={styles.titleGroup}>
+          <span className={styles.title}>Plugins folder</span>
+          {devMode && (
+            <span className={styles.devBadge} title="Developer Mode is enabled">
+              Dev
+            </span>
+          )}
+        </div>
         <div className={styles.headActions}>
+          <button
+            type="button"
+            className={styles.iconBtn}
+            title="Plugins folder info and settings"
+            aria-label="Plugins folder info"
+            onClick={() => setShowInfoModal(true)}
+          >
+            <Icon name="info" size="sm" />
+          </button>
           <button
             type="button"
             className={styles.iconBtn}
@@ -189,43 +208,11 @@ export function LocalPluginsSection(): JSX.Element | null {
         </div>
       </header>
 
-      {/*
-        The switch, with what it costs on the same line as the switch. A warning
-        one screen away from the decision is a warning nobody reads.
-      */}
-      <label className={styles.devRow}>
-        <input
-          type="checkbox"
-          checked={devMode}
-          onChange={(e) => { void toggleDevMode(e.target.checked); }}
-        />
-        <span>
-          <strong>Developer Mode</strong>
-          <span className={styles.devHint}>
-            {devMode
-              ? 'Unsigned plugins in these folders are loaded, and a change on disk reloads them.'
-              : 'Off — only signed packages load. Turn on to run a plugin you are writing.'}
-          </span>
-        </span>
-      </label>
-
-      {state.paths.length > 0 && (
-        <ul className={styles.paths}>
-          {state.paths.map((p) => (
-            <li key={p.dir} title={p.dir}>
-              <span className={styles.pathKind}>{SOURCE_LABEL[p.kind]}</span>
-              <code>{p.dir}</code>
-            </li>
-          ))}
-        </ul>
-      )}
-
       {state.error && <p className={styles.problem}>{state.error}</p>}
 
       {state.plugins.length === 0 && !state.scanning && (
         <p className={styles.empty}>
-          Nothing here yet. Put a plugin folder — or a signed <code>.mplugin</code> — in the folder
-          above and press rescan.
+          No local plugins found.
         </p>
       )}
 
@@ -319,6 +306,75 @@ export function LocalPluginsSection(): JSX.Element | null {
           />
         </ConsentOverlay>
       )}
+
+      {showInfoModal && (
+        <Modal
+          open={showInfoModal}
+          onClose={() => setShowInfoModal(false)}
+          title="Plugins Folder"
+          description="Local plugin locations and development settings"
+          size="sm"
+          footer={
+            <div className={styles.modalFooterActions}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  const problem = await openPluginsFolder();
+                  if (problem) void customAlert('Could not open the folder', problem, { isDanger: true });
+                }}
+              >
+                Open Folder
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setShowInfoModal(false)}
+              >
+                Done
+              </Button>
+            </div>
+          }
+        >
+          <div className={styles.modalBody}>
+            <label className={styles.devRow}>
+              <input
+                type="checkbox"
+                checked={devMode}
+                onChange={(e) => { void toggleDevMode(e.target.checked); }}
+              />
+              <span>
+                <strong>Developer Mode</strong>
+                <span className={styles.devHint}>
+                  {devMode
+                    ? 'Unsigned plugins in these folders are loaded, and a change on disk reloads them.'
+                    : 'Off — only signed packages load. Turn on to run a plugin you are writing.'}
+                </span>
+              </span>
+            </label>
+
+            {state.paths.length > 0 && (
+              <div className={styles.modalSection}>
+                <span className={styles.modalSectionTitle}>Scanned Folders</span>
+                <ul className={styles.paths}>
+                  {state.paths.map((p) => (
+                    <li key={p.dir} title={p.dir}>
+                      <span className={styles.pathKind}>{SOURCE_LABEL[p.kind]}</span>
+                      <code>{p.dir}</code>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <p className={styles.modalNote}>
+              Put a plugin folder — or a signed <code>.mplugin</code> file — in the folder
+              above and press rescan to load it.
+            </p>
+          </div>
+        </Modal>
+      )}
+
       {logFor && <PluginLogSheet pluginId={logFor} onClose={() => setLogFor(null)} />}
     </section>
   );

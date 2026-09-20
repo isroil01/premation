@@ -1,7 +1,14 @@
 /**
- * The timeline switches that write through core helpers rather than through
- * App's `onTrackToggleFlag` handler: Collapse Transformations / Continuous
- * Rasterize, Quality, and Frame Blending — plus Select Label Group.
+ * The timeline's Collapse / Quality / Frame Blending switches, and Select
+ * Label Group.
+ *
+ * The first three are now thin wrappers over `@core/scene/layerFlags`, which is
+ * where every AE layer switch lives. They used to be the only three that wrote
+ * through their own helpers rather than through App's `onTrackToggleFlag`,
+ * which is exactly why the Layers panel could not offer them: there was no one
+ * place that knew what the switch column IS. The reading and availability rules
+ * below moved with them; what stays here is the timeline's own vocabulary
+ * (`CollapseSwitchKind`) and Select Label Group, which is not a switch.
  *
  * ── One sunburst, two meanings ─────────────────────────────────────────────
  * AE draws a single switch in this column and gives it one meaning per layer
@@ -24,81 +31,56 @@
 
 import type { SceneNode } from '@core/types';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { readNodeKind } from '@core/scene/sceneDerive';
-import { isPrecomp, setCompCollapse } from '@core/scene/precomp';
-import { readCompCollapse } from '@core/scene/compInstance';
-import { readContinuousRaster, setContinuousRaster, supportsContinuousRaster } from '@core/scene/continuousRaster';
-import { nextQuality, readNodeQuality, setNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
-import { getNodeLayerTime, updateNodeLayerTime } from '@core/scene/layerTime';
+import {
+  collapseSwitchKind as collapseKindOf,
+  layerFlagAvailable,
+  readLayerFlag,
+  toggleLayerFlags,
+} from '@core/scene/layerFlags';
+import { nextQuality, readNodeQuality, type LayerQuality } from '@core/effects/layerQuality';
 import { nodesWithLabelColor } from '@core/scene/labelColor';
-import { runDocumentEdit } from '@core/commands/documentEdit';
 import { useSelectionStore } from '@stores/selectionStore';
 
 export type CollapseSwitchKind = 'collapse' | 'raster';
 
 /** What the sunburst means on this layer, or null when it means nothing. */
-export function collapseSwitchKind(node: SceneNode | undefined): CollapseSwitchKind | null {
-  if (!node) return null;
-  if (readNodeKind(node) === 'comp') return 'collapse';
-  if (supportsContinuousRaster(node)) return 'raster';
-  return null;
-}
+export const collapseSwitchKind = collapseKindOf;
 
 export function readCollapseSwitch(node: SceneNode): boolean {
-  const kind = collapseSwitchKind(node);
-  if (kind === 'collapse') return readCompCollapse(node);
-  if (kind === 'raster') return readContinuousRaster(node);
-  return false;
+  return readLayerFlag(node, 'collapse');
 }
 
 export function toggleCollapseSwitch(nodeId: string): void {
-  const node = defaultSceneGraph.getNode(nodeId);
-  const kind = collapseSwitchKind(node);
-  if (!node || !kind) return;
-  const next = !readCollapseSwitch(node);
-  runDocumentEdit(kind === 'collapse' ? 'Collapse Transformations' : 'Continuous Rasterization', () => {
-    if (kind === 'collapse') setCompCollapse(nodeId, next);
-    else setContinuousRaster(nodeId, next);
-  });
+  toggleLayerFlags([nodeId], 'collapse', nodeId);
 }
 
 /** Layers with pixels to sample: everything but the chrome-only kinds. */
 export function qualitySwitchAvailable(node: SceneNode | undefined): boolean {
-  if (!node) return false;
-  return !['null', 'camera', 'light', 'audio', 'group'].includes(readNodeKind(node)) || isPrecomp(node);
+  return !!node && layerFlagAvailable(node, 'quality');
 }
-
-const QUALITY_LABEL: Readonly<Record<LayerQuality, string>> = {
-  best: 'Best Quality',
-  draft: 'Draft Quality',
-  wireframe: 'Wireframe Quality',
-};
 
 /** Advance the Quality switch one position: Best → Draft → Wireframe → Best. */
 export function toggleQualitySwitch(nodeId: string): LayerQuality | null {
   const node = defaultSceneGraph.getNode(nodeId);
   if (!node) return null;
   const next = nextQuality(readNodeQuality(node));
-  runDocumentEdit(QUALITY_LABEL[next], () => setNodeQuality(nodeId, next));
+  toggleLayerFlags([nodeId], 'quality', nodeId);
   return next;
 }
 
 /** Frame blending only means something on a layer with source frames. */
 export function frameBlendSwitchAvailable(node: SceneNode | undefined): boolean {
-  if (!node) return false;
-  return readNodeKind(node) === 'video' || isPrecomp(node);
+  return !!node && layerFlagAvailable(node, 'frameBlend');
 }
 
 export function readFrameBlendSwitch(nodeId: string): boolean {
-  return getNodeLayerTime(nodeId).frameBlend !== 'none';
+  const node = defaultSceneGraph.getNode(nodeId);
+  return !!node && readLayerFlag(node, 'frameBlend');
 }
 
 /** Off → Frame Mix; any mode → Off (AE's switch cycles the same way). */
 export function toggleFrameBlendSwitch(nodeId: string): void {
-  const on = readFrameBlendSwitch(nodeId);
-  runDocumentEdit(on ? 'Frame Blending Off' : 'Frame Blending', () =>
-    updateNodeLayerTime(nodeId, { frameBlend: on ? 'none' : 'mix' }),
-  );
+  toggleLayerFlags([nodeId], 'frameBlend', nodeId);
 }
 
 /** AE's label menu "Select Label Group": every layer carrying this label. */

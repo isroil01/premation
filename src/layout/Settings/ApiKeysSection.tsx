@@ -127,7 +127,7 @@ export function ApiKeysSection({ onViewPlans }: ApiKeysSectionProps = {}): JSX.E
 
   const create = async (e?: FormEvent): Promise<void> => {
     e?.preventDefault();
-    if (!usage?.limits.apiEnabled) {
+    if (!usage?.limits?.apiEnabled) {
       setError('API access is not included in your current plan. Upgrade your plan to create and use API keys.');
       return;
     }
@@ -210,10 +210,14 @@ export function ApiKeysSection({ onViewPlans }: ApiKeysSectionProps = {}): JSX.E
   // loading or when the usage call failed — a free user saw an open page whose
   // every action the server would 403. Unknown now renders as locked-pending,
   // and `locked` (server-confirmed) is what shows the upgrade pitch.
-  const apiEnabled = usage?.limits.apiEnabled === true;
+  // `?.` on `limits` as well as on `usage`: the type says `limits` is always
+  // there, but this is a payload from a server that can be older than the
+  // client, and a missing field threw straight through to the root error
+  // boundary — one absent property blanked the whole dashboard.
+  const apiEnabled = usage?.limits?.apiEnabled === true;
   const locked = usage !== null && !apiEnabled;
   const activeKeys = keys.filter((key) => !key.revokedAt).length;
-  const activeKeyLimit = usage?.limits.maxActiveApiKeys ?? null;
+  const activeKeyLimit = usage?.limits?.maxActiveApiKeys ?? null;
 
   const getCodeSnippet = (tab: CodeTab): string => {
     const keyPlaceholder = fresh?.secret || 'pm_live_your_api_key_here';

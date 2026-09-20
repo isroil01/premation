@@ -13,7 +13,6 @@ import { setPendingFootage } from '@core/project/pendingFootage';
 import { AiSettingsSection } from '@layout/Settings/AiSettingsSection';
 import { ApiKeysSection } from '@layout/Settings/ApiKeysSection';
 import { BillingSection } from '@layout/Settings/BillingSection';
-import { openCustomizeDialog } from '@layout/Settings/CustomizeDialog';
 import { billingEnabled } from '@core/config/edition';
 import { ColorPicker } from '@components/ColorPicker';
 import { cn } from '@utils/cn';
@@ -39,7 +38,32 @@ import { getTimelineController } from '@core/timeline/TimelineController';
 import { sceneProjectIO } from '@core/scene/sceneProjectIO';
 import type { EditorDocument } from '@core/api/cloudDocument';
 import { DashboardPluginsTab } from './DashboardPluginsTab';
+import { DashboardCustomizeTab } from './DashboardCustomizeTab';
+import { ReviewPrompt } from '@layout/Reviews/ReviewPrompt';
+import { useReviewPromptStore } from '@stores/reviewPromptStore';
 import styles from './DashboardPage.module.css';
+
+/**
+ * A stable hue for a project's fallback tile, from its id.
+ *
+ * Only reached when there is no poster frame. The point is not decoration: a
+ * column of projects that have never been rendered used to be a column of
+ * identical blue glyphs, so the tile actively made rows harder to tell apart.
+ * A hue derived from the id is consistent across sessions and across pages —
+ * the same project is the same colour in Projects, on Home and in the Trash —
+ * so it becomes something you can actually recognise.
+ *
+ * FNV-1a, because it has to spread short similar ids (`p1`, `p2`) across the
+ * wheel; summing char codes would put them next to each other.
+ */
+function thumbHue(id: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return Math.abs(hash) % 360;
+}
 
 function timeAgo(iso: string): string {
   const d = Date.parse(iso);
@@ -70,12 +94,13 @@ type TabType =
   | 'plugins'
   | 'renders'
   | 'trash'
+  | 'customize'
   | 'billing'
   | 'developer'
   | 'settings';
 
 const TABS: readonly TabType[] = [
-  'home', 'projects', 'assets', 'plugins', 'renders', 'trash', 'billing', 'developer', 'settings',
+  'home', 'projects', 'assets', 'plugins', 'renders', 'trash', 'customize', 'billing', 'developer', 'settings',
 ];
 
 /**
@@ -91,6 +116,21 @@ function isTab(value: string | null): value is TabType {
 }
 
 type Orientation = 'landscape' | 'portrait' | 'square';
+
+/**
+ * Render statuses, as a person would say them.
+ *
+ * `job.status.toUpperCase()` shouted RUNNING / QUEUED / FAILED at the reader
+ * and, for `canceled`, spelled it the American way in a UI that is otherwise
+ * British. A table maps the wire value to the label once.
+ */
+const RENDER_STATUS_LABEL: Record<RenderJobDto['status'], string> = {
+  queued: 'Queued',
+  running: 'Rendering',
+  completed: 'Done',
+  failed: 'Failed',
+  canceled: 'Cancelled',
+};
 
 /** Rows per page for the queue and the trash — both are read, not browsed. */
 const TABLE_PAGE_SIZE = 20;
@@ -231,20 +271,27 @@ export function DashboardPage(): JSX.Element {
   const [overview, setOverview] = useState<{
     projects: number;
     activeRenders: number;
+    /** Renders that ended badly and the user has not looked at yet. */
+    failedRenders: number;
     recent: ProjectSummary | null;
-  }>({ projects: 0, activeRenders: 0, recent: null });
+  }>({ projects: 0, activeRenders: 0, failedRenders: 0, recent: null });
 
   const refreshOverview = useCallback(async (): Promise<void> => {
     try {
-      const [me, newest, active] = await Promise.all([
+      // Four one-row queries rather than four lists: every number here is a
+      // `total` the server already knows, and asking for the rows to count them
+      // would download a library to display one integer.
+      const [me, newest, active, failed] = await Promise.all([
         api.me(),
         api.listProjects({ limit: 1 }),
         api.listRenders({ limit: 1, status: 'active' }),
+        api.listRenders({ limit: 1, status: 'failed' }),
       ]);
       setAccount(me);
       setOverview({
         projects: newest.total,
         activeRenders: active.total,
+        failedRenders: failed.total,
         recent: newest.items[0] ?? null,
       });
     } catch (err) {
@@ -314,6 +361,24 @@ export function DashboardPage(): JSX.Element {
   useEffect(() => {
     void refreshOverview();
   }, [refreshOverview]);
+
+  const considerReviewPrompt = useReviewPromptStore((s) => s.consider);
+
+  /*
+    Ask for a review, once, from someone who has actually made something.
+
+    Armed by "has at least one project" — the trigger asked for — but fired on
+    arrival here rather than at the instant a project is created: creating one
+    navigates straight into the editor, so a dialog opened at that moment would
+    flash past on the way out of the page.
+
+    `consider` is a no-op after the first call per session and swallows its own
+    failures, so this is safe on every mount and on every overview refresh.
+  */
+  useEffect(() => {
+    if (overview.projects <= 0) return;
+    void considerReviewPrompt({ hasProjects: true });
+  }, [overview.projects, considerReviewPrompt]);
 
   // A different folder or media type is a different list — start it at page 1
   // rather than on whatever page number the previous one happened to be.
@@ -680,34 +745,58 @@ export function DashboardPage(): JSX.Element {
               </div>
             )}
 
-            <div className={styles.statsGrid}>
-              <button type="button" className={styles.statCard} onClick={() => openTab('projects')}>
-                <div className={`${styles.statIcon} ${styles.statIconProjects}`}>
-                  <Icon name="folder" size="md" />
-                </div>
-                <div className={styles.statMeta}>
-                  <div className={styles.statValue}>{overview.projects.toLocaleString()}</div>
-                  <div className={styles.statLabel}>Projects</div>
-                </div>
-              </button>
-              <button type="button" className={styles.statCard} onClick={() => openTab('renders')}>
-                <div className={`${styles.statIcon} ${styles.statIconRenders}`}>
-                  <Icon name="queue" size="md" />
-                </div>
-                <div className={styles.statMeta}>
-                  <div className={styles.statValue}>{overview.activeRenders.toLocaleString()}</div>
-                  <div className={styles.statLabel}>Active renders</div>
-                </div>
-              </button>
-              <button type="button" className={styles.statCard} onClick={() => openTab('assets')}>
-                <div className={`${styles.statIcon} ${styles.statIconStorage}`}>
-                  <Icon name="image" size="md" />
-                </div>
-                <div className={styles.statMeta}>
-                  <div className={styles.statValue}>{formatBytes(account?.storageBytes ?? 0)}</div>
-                  <div className={styles.statLabel}>Storage used</div>
-                </div>
-              </button>
+            {/*
+              What is happening, not how many things exist.
+
+              This was three bordered cards — Projects / Active renders /
+              Storage — each a big number over a small label, each a link to a
+              tab already one click away in the sidebar. That is the
+              hero-metric template: furniture that looks like a dashboard
+              without telling you anything you would act on.
+
+              What replaces it says only what is true right now. Renders in
+              flight and renders that failed are states you do something about;
+              when there are none of either, the strip is a quiet line about the
+              library rather than three boxes of zeroes.
+            */}
+            <div className={styles.overviewStrip}>
+              {overview.failedRenders > 0 && (
+                <button
+                  type="button"
+                  className={`${styles.overviewSignal} ${styles.overviewSignalDanger}`}
+                  onClick={() => openTab('renders')}
+                >
+                  <Icon name="warning" size="sm" />
+                  <span>
+                    {overview.failedRenders === 1
+                      ? '1 render failed'
+                      : `${overview.failedRenders.toLocaleString()} renders failed`}
+                  </span>
+                </button>
+              )}
+
+              {overview.activeRenders > 0 && (
+                <button
+                  type="button"
+                  className={`${styles.overviewSignal} ${styles.overviewSignalBusy}`}
+                  onClick={() => openTab('renders')}
+                >
+                  <span className={styles.pulseDot} />
+                  <span>
+                    {overview.activeRenders === 1
+                      ? '1 render in progress'
+                      : `${overview.activeRenders.toLocaleString()} renders in progress`}
+                  </span>
+                </button>
+              )}
+
+              <span className={styles.overviewFacts}>
+                {overview.projects.toLocaleString()} {overview.projects === 1 ? 'project' : 'projects'}
+                {account ? ` · ${formatBytes(account.storageBytes)} stored` : ''}
+                {account && account.assetCount > 0
+                  ? ` · ${account.assetCount.toLocaleString()} ${account.assetCount === 1 ? 'asset' : 'assets'}`
+                  : ''}
+              </span>
             </div>
 
             <div className={styles.sectionHeaderRow}>
@@ -716,7 +805,13 @@ export function DashboardPage(): JSX.Element {
                 View all
               </button>
             </div>
-            {renderProjectsTable()}
+            {/*
+              A shortlist. Home used to render the SAME table as the Projects
+              tab, in full, under its own search box — so the two pages differed
+              by a banner and three boxes, and "View all" led to what you were
+              already looking at.
+            */}
+            {renderProjectsTable({ max: 5 })}
           </>
         );
 
@@ -727,31 +822,31 @@ export function DashboardPage(): JSX.Element {
         return (
           <div className={styles.assetsContainer}>
             <div className={styles.assetsHeader}>
-              <div className={styles.assetTabs}>
+              <div className={styles.segmentedGroup}>
                 <button
                   type="button"
-                  className={`${styles.assetTab} ${assetTypeFilter === 'all' ? styles.assetTabActive : ''}`}
+                  className={`${styles.segment} ${assetTypeFilter === 'all' ? styles.segmentActive : ''}`}
                   onClick={() => setAssetTypeFilter('all')}
                 >
                   All
                 </button>
                 <button
                   type="button"
-                  className={`${styles.assetTab} ${assetTypeFilter === 'video' ? styles.assetTabActive : ''}`}
+                  className={`${styles.segment} ${assetTypeFilter === 'video' ? styles.segmentActive : ''}`}
                   onClick={() => setAssetTypeFilter('video')}
                 >
                   Videos
                 </button>
                 <button
                   type="button"
-                  className={`${styles.assetTab} ${assetTypeFilter === 'image' ? styles.assetTabActive : ''}`}
+                  className={`${styles.segment} ${assetTypeFilter === 'image' ? styles.segmentActive : ''}`}
                   onClick={() => setAssetTypeFilter('image')}
                 >
                   Images
                 </button>
                 <button
                   type="button"
-                  className={`${styles.assetTab} ${assetTypeFilter === 'audio' ? styles.assetTabActive : ''}`}
+                  className={`${styles.segment} ${assetTypeFilter === 'audio' ? styles.segmentActive : ''}`}
                   onClick={() => setAssetTypeFilter('audio')}
                 >
                   Audio
@@ -827,10 +922,36 @@ export function DashboardPage(): JSX.Element {
 
             {dataError ? <p className={styles.emptyHint}>{dataError}</p> : null}
 
+            {/*
+              An empty state earns its space by offering the one thing that is
+              missing. The old copy listed all three toolbar buttons back at the
+              user — a caption for a toolbar they can already see — so it now
+              gets a heading, a reason, and the primary action itself.
+            */}
             {subfoldersInView.length === 0 && visibleAssetsInView.length === 0 ? (
               <div className={styles.emptyState}>
-                <Icon name="folder" size="lg" style={{ color: FOLDER_COLOR }} />
-                <p>{currentFolderId === null ? 'No assets yet. Import files, upload a folder, or create a new folder.' : 'This folder is empty. Import assets or create subfolders here.'}</p>
+                <Icon name="folder" size={48} className={styles.emptyStateIcon} />
+                <h3>{currentFolderId === null ? 'No assets yet' : 'This folder is empty'}</h3>
+                <p>
+                  {currentFolderId === null
+                    ? 'Footage, stills and audio you import here are available to every project in your library.'
+                    : 'Import media into this folder, or drop a subfolder inside it to keep things sorted.'}
+                </p>
+                <label className={`${styles.btnPrimary} ${assetsBusy ? styles.fileLabelBusy : styles.fileLabel}`}>
+                  <Icon name="upload" size="md" />
+                  <span>{assetsBusy ? 'Uploading…' : 'Import asset'}</span>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*,video/*,audio/*"
+                    className={styles.hiddenFileInput}
+                    disabled={assetsBusy}
+                    onChange={(e) => {
+                      void handleImportAssetFiles(e.currentTarget.files);
+                      e.currentTarget.value = '';
+                    }}
+                  />
+                </label>
               </div>
             ) : (
               <>
@@ -986,12 +1107,23 @@ export function DashboardPage(): JSX.Element {
                         </td>
                         <td className={styles.monoCell}>{job.format.toUpperCase()}</td>
                         <td>
-                          <div className={styles.progressCellWrapper}>
-                            <div className={styles.progressBar}>
-                              <div className={styles.progressFill} style={{ '--fill': Math.min(1, job.progress) } as React.CSSProperties} />
+                          {/*
+                            A progress bar only while there is progress to
+                            report. A finished job drew a full bar reading
+                            "100%" in every row, which is three columns of
+                            furniture saying what the status pill beside it
+                            already says.
+                          */}
+                          {job.status === 'running' || job.status === 'queued' ? (
+                            <div className={styles.progressCellWrapper}>
+                              <div className={styles.progressBar}>
+                                <div className={styles.progressFill} style={{ '--fill': Math.min(1, job.progress) } as React.CSSProperties} />
+                              </div>
+                              <span className={styles.progressText}>{Math.round(job.progress * 100)}%</span>
                             </div>
-                            <span className={styles.progressText}>{Math.round(job.progress * 100)}%</span>
-                          </div>
+                          ) : (
+                            <span className={styles.progressIdle}>—</span>
+                          )}
                         </td>
                         <td>
                           <span
@@ -1004,11 +1136,24 @@ export function DashboardPage(): JSX.Element {
                                     ? styles.badgeDanger
                                     : styles.badgeDefault
                             }`}
-                            title={job.error ?? undefined}
                           >
                             {job.status === 'running' && <span className={styles.pulseDot} />}
-                            {job.status.toUpperCase()}
+                            {RENDER_STATUS_LABEL[job.status]}
                           </span>
+                          {/*
+                            Why it failed, in the row.
+                            
+                            This was a `title` on the pill — the one piece of
+                            information a failed render exists to give you,
+                            behind a hover most people never try, unreachable
+                            on a touch screen and unreadable by a screen
+                            reader that does not announce title text.
+                          */}
+                          {job.status === 'failed' && job.error && (
+                            <span className={styles.jobError} title={job.error}>
+                              {job.error}
+                            </span>
+                          )}
                         </td>
                         <td className={styles.monoCell}>{timeAgo(job.createdAt)}</td>
                         <td style={{ textAlign: 'center' }}>
@@ -1061,8 +1206,9 @@ export function DashboardPage(): JSX.Element {
               </div>
             ) : trash.items.length === 0 ? (
               <div className={styles.emptyState}>
-                <Icon name="trash" size="lg" />
-                <p>The trash is empty. Deleted projects rest here for 30 days before they're gone for good.</p>
+                <Icon name="trash" size={48} className={styles.emptyStateIcon} />
+                <h3>Nothing in the trash</h3>
+                <p>Deleted projects rest here for 30 days, and can be restored at any point before that.</p>
               </div>
             ) : (
               <>
@@ -1152,10 +1298,13 @@ export function DashboardPage(): JSX.Element {
                           </td>
                           <td>
                             <div className={styles.projectCell}>
-                              <div className={styles.projectThumb}>
+                              <div
+                                className={styles.projectThumb}
+                                style={{ '--thumb-hue': thumbHue(p.id) } as React.CSSProperties}
+                              >
                                 {p.thumbnailUrl
                                   ? <img src={p.thumbnailUrl} alt="" className={styles.thumbImg} />
-                                  : <Icon name="video" size="md" className={styles.thumbIcon} />}
+                                  : <Icon name="video" size="sm" className={styles.thumbIcon} />}
                               </div>
                               <div>
                                 <div className={styles.projectName}>{p.name}</div>
@@ -1229,6 +1378,13 @@ export function DashboardPage(): JSX.Element {
           </div>
         );
 
+      case 'customize':
+        return (
+          <div className={styles.customizePanel}>
+            <DashboardCustomizeTab />
+          </div>
+        );
+
       case 'settings':
         return (
           <div className={styles.settingsPanel}>
@@ -1266,32 +1422,22 @@ export function DashboardPage(): JSX.Element {
             </div>
 
             {/*
-              Editor preferences live in ONE place: the Customize dialog.
-
-              This card used to restate four of them — confirm-on-close,
-              auto-keyframe, reduce-motion and sidebar density — while the same
-              four also sat in Customize → Appearance. Two controls for one
-              value is two chances to disagree about which is authoritative, and
-              the reason to reach for any of them is "I am editing and want this
-              different", which is exactly when the dashboard is not on screen.
-
-              So this is a pointer now, not a second copy.
+              Editor preferences live on their own first-class Customize page.
             */}
             <div className={styles.settingsCard}>
               <h3 className={styles.settingsLabel}>Editor Preferences</h3>
               <p className={styles.optionDesc} style={{ marginBottom: 'var(--space-4)' }}>
                 Appearance, interface scale, panel layout, editing behaviour and keyboard
-                shortcuts are all set from Customize — available here and from anywhere in
-                the editor.
+                shortcuts can all be tailored to your workflow on the dedicated Customize page.
               </p>
               <div className={styles.settingsRow}>
                 <Button
-                  variant="secondary"
-                  onClick={() => openCustomizeDialog()}
+                  variant="primary"
+                  onClick={() => openTab('customize')}
                   style={{ width: '100%', justifyContent: 'center' }}
                 >
-                  <Icon name="settings" size="md" style={{ marginRight: 8 }} />
-                  Open Customize…
+                  <Icon name="sliders-h" size="md" style={{ marginRight: 8 }} />
+                  Customize Editor
                 </Button>
               </div>
             </div>
@@ -1301,12 +1447,41 @@ export function DashboardPage(): JSX.Element {
     }
   };
 
-  const renderProjectsTable = () => {
+  /**
+   * The projects table.
+   *
+   * `max` truncates it for Home's shortlist. The rows, the empty state and
+   * the error state are the same ones the Projects tab uses — two tables that
+   * drift apart is exactly what this page had before, and the shortlist is a
+   * view of the list, not a second implementation of it.
+   */
+  const renderProjectsTable = ({ max }: { max?: number } = {}) => {
+    // `max`, not `limit`: the library store already has a `limit` in scope and
+    // shadowing it here made the pager read the shortlist's size as the page size.
+    const rows = max === undefined ? projects : projects.slice(0, max);
+    /** Empty because of a search or a format filter, rather than empty full stop. */
+    const isFiltered = searchQuery.trim().length > 0 || orientation !== 'all';
     return (
       <div className={styles.tableCard}>
+        {/*
+          Skeleton rows, not the words "Loading projects…".
+          
+          The table arrives at the height it will keep, so the page does not
+          jump when the rows land, and the shape tells you what is coming. A
+          sentence in the middle of an empty card tells you only that something
+          is missing.
+        */}
         {status === 'loading' && (
-          <div className={styles.loadingState}>
-            <p>Loading projects...</p>
+          <div className={styles.skeletonTable} aria-busy="true" aria-label="Loading projects">
+            {Array.from({ length: max ?? 6 }, (_, i) => (
+              <div key={i} className={styles.skeletonRow}>
+                <span className={styles.skeletonThumb} />
+                <span className={styles.skeletonLines}>
+                  <span className={styles.skeletonLine} style={{ width: `${38 + ((i * 13) % 28)}%` }} />
+                  <span className={`${styles.skeletonLine} ${styles.skeletonLineSub}`} style={{ width: `${22 + ((i * 7) % 16)}%` }} />
+                </span>
+              </div>
+            ))}
           </div>
         )}
 
@@ -1320,20 +1495,56 @@ export function DashboardPage(): JSX.Element {
           </div>
         )}
 
+        {/*
+          Two different empty states, because they are two different problems.
+
+          "You have no projects" wants a Create button. "Nothing matched
+          `aurroa`" wants the search cleared — offering to create a project
+          there answers a question the user did not ask, and the old single
+          state did exactly that while hedging with "or adjusting your
+          filters".
+        */}
         {status === 'ready' && projects.length === 0 && (
           <div className={styles.emptyState}>
-            <Icon name="folder" size={48} className={styles.emptyStateIcon} />
-            <h3>No projects found</h3>
-            <p>Start by creating a new video project or adjusting your filters.</p>
-            <button
-              type="button"
-              className={styles.btnPrimary}
-              onClick={onCreate}
-              disabled={creating}
-            >
-              <Icon name="plus" size="md" />
-              <span>Create a project</span>
-            </button>
+            {isFiltered ? (
+              <>
+                <Icon name="search" size={48} className={styles.emptyStateIcon} />
+                <h3>No projects match</h3>
+                <p>
+                  {searchQuery.trim()
+                    ? `Nothing in your library is called “${searchQuery.trim()}”.`
+                    : orientation === 'all'
+                      ? 'Nothing matched the current filters.'
+                      : `No ${ORIENTATION_LABEL[orientation].toLowerCase()} projects yet.`}
+                </p>
+                <button
+                  type="button"
+                  className={styles.btnSecondary}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedIds(new Set());
+                    void load({ orientation: 'all' });
+                  }}
+                >
+                  Clear filters
+                </button>
+              </>
+            ) : (
+              <>
+                <Icon name="folder" size={48} className={styles.emptyStateIcon} />
+                <h3>No projects yet</h3>
+                <p>A project is one composition — its comps, layers and renders live inside it.</p>
+                <button
+                  type="button"
+                  className={styles.btnPrimary}
+                  onClick={onCreate}
+                  disabled={creating}
+                >
+                  <Icon name="plus" size="md" />
+                  <span>{creating ? 'Creating…' : 'Create your first project'}</span>
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -1357,7 +1568,7 @@ export function DashboardPage(): JSX.Element {
               </tr>
             </thead>
             <tbody>
-              {projects.map((p) => {
+              {rows.map((p) => {
                 const isSelected = selectedIds.has(p.id);
                 const orientation = orientationOf(p);
                 const thumb = p.thumbnailUrl;
@@ -1372,16 +1583,19 @@ export function DashboardPage(): JSX.Element {
                     </td>
                     <td>
                       <div className={styles.projectCell}>
-                        <div
+                        <button
+                          type="button"
                           className={styles.projectThumb}
+                          style={{ '--thumb-hue': thumbHue(p.id) } as React.CSSProperties}
                           onClick={() => navigate(`/editor/${p.id}`)}
+                          aria-label={`Open ${p.name}`}
                         >
                           {thumb ? (
                             <img src={thumb} alt="" className={styles.thumbImg} />
                           ) : (
-                            <Icon name="video" size="md" className={styles.thumbIcon} />
+                            <Icon name="video" size="sm" className={styles.thumbIcon} />
                           )}
-                        </div>
+                        </button>
                         <div>
                           <div
                             className={styles.projectName}
@@ -1402,15 +1616,33 @@ export function DashboardPage(): JSX.Element {
                     <td className={styles.monoCell}>
                       {describeDuration(p.durationSeconds)} · {p.fps} fps
                     </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <button
-                        type="button"
-                        className={styles.actionBtn}
-                        onClick={() => onDelete(p.id, p.name)}
-                        title="Delete project"
-                      >
-                        <Icon name="trash" size="md" />
-                      </button>
+                    <td>
+                      {/*
+                        Open is the thing you came here to do, and it had no
+                        control at all — only the name and the thumbnail were
+                        clickable, neither of which looks clickable, while the
+                        one button in the row deleted the project. The verb the
+                        column is for now appears in it, and the destructive
+                        one stays a quiet icon beside it.
+                      */}
+                      <div className={styles.rowActions}>
+                        <button
+                          type="button"
+                          className={styles.rowActionOpen}
+                          onClick={() => navigate(`/editor/${p.id}`)}
+                        >
+                          Open
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.actionBtn}
+                          onClick={() => onDelete(p.id, p.name)}
+                          title={`Move ${p.name} to trash`}
+                          aria-label={`Move ${p.name} to trash`}
+                        >
+                          <Icon name="trash" size="md" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1419,7 +1651,12 @@ export function DashboardPage(): JSX.Element {
           </table>
         )}
 
-        {status === 'ready' && (
+        {/*
+          No pager on the shortlist: Home shows the newest five and links to the
+          full list, so a "1–5 of 43" footer with page arrows would offer to
+          page through a list this table is not showing.
+        */}
+        {status === 'ready' && max === undefined && (
           <Pagination
             total={total}
             limit={limit}
@@ -1475,6 +1712,11 @@ export function DashboardPage(): JSX.Element {
         return {
           title: 'Developer',
           desc: 'API keys and usage for rendering templates from scripts, n8n, or CI.',
+        };
+      case 'customize':
+        return {
+          title: 'Customize Editor',
+          desc: 'Workspaces, keyboard shortcuts, appearance, audio hardware, and editor behaviors.',
         };
       case 'settings':
         return {
@@ -1573,6 +1815,15 @@ export function DashboardPage(): JSX.Element {
           </button>
           <button
             type="button"
+            className={`${styles.navLink} ${activeTab === 'customize' ? styles.navLinkActive : ''}`}
+            aria-current={activeTab === 'customize' ? 'page' : undefined}
+            onClick={() => openTab('customize')}
+          >
+            <Icon name="sliders-h" size="md" className={styles.navIcon} />
+            <span>Customize</span>
+          </button>
+          <button
+            type="button"
             className={`${styles.navLink} ${activeTab === 'settings' ? styles.navLinkActive : ''}`}
             aria-current={activeTab === 'settings' ? 'page' : undefined}
             onClick={() => openTab('settings')}
@@ -1639,7 +1890,7 @@ export function DashboardPage(): JSX.Element {
             )}
           </div>
 
-          {(activeTab === 'home' || activeTab === 'projects') && (
+          {activeTab === 'projects' && (
             <div className={styles.actionBar}>
               <div className={styles.filterGroup}>
                 <div className={styles.searchWrapper}>
@@ -1654,20 +1905,29 @@ export function DashboardPage(): JSX.Element {
                   />
                 </div>
 
-                <select
-                  value={orientation}
-                  onChange={(e) => {
-                    setSelectedIds(new Set());
-                    void load({ orientation: e.target.value as OrientationFilter });
-                  }}
-                  className={styles.filterDropdown}
-                  aria-label="Filter by format"
-                >
-                  <option value="all">Format: All</option>
-                  <option value="landscape">Landscape</option>
-                  <option value="portrait">Portrait</option>
-                  <option value="square">Square</option>
-                </select>
+                {/*
+                  Four mutually exclusive options, all of them short: a
+                  segmented control shows the whole choice and the current
+                  answer at once, where the dropdown showed one word and hid the
+                  rest behind a native OS popup that ignores the dark theme.
+                */}
+                <div className={styles.segmentedGroup} role="group" aria-label="Filter by format">
+                  {(['all', 'landscape', 'portrait', 'square'] as const).map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`${styles.segment} ${orientation === value ? styles.segmentActive : ''}`}
+                      aria-pressed={orientation === value}
+                      onClick={() => {
+                        if (orientation === value) return;
+                        setSelectedIds(new Set());
+                        void load({ orientation: value as OrientationFilter });
+                      }}
+                    >
+                      {value === 'all' ? 'All' : ORIENTATION_LABEL[value]}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className={styles.actionButtons}>
@@ -2030,6 +2290,10 @@ export function DashboardPage(): JSX.Element {
           </div>
         </form>
       </Modal>
+
+      {/* Renders nothing until the store opens it. At the root rather than
+          inside a tab, so switching tabs cannot unmount a dialog mid-answer. */}
+      <ReviewPrompt />
     </div>
   );
 }

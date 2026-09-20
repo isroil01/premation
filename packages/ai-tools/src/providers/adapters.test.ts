@@ -270,6 +270,56 @@ describe('request bodies', () => {
     expect((modelTurn.parts[0]!.functionCall as Record<string, unknown>).name).toBe('describe_scene');
   });
 
+  /**
+   * The composer accepts an attachment with no caption — `submit` only refuses
+   * when there is neither text nor an image. That turn used to reach Gemini as
+   * `{parts:[inlineData,{text:''}]}`, which comes back 400 INVALID_ARGUMENT
+   * with no indication of which part was wrong, and reached Anthropic as an
+   * empty text block, which it rejects outright.
+   */
+  describe('an image with no caption (400 INVALID_ARGUMENT in production)', () => {
+    const imageOnly: AiRequest = {
+      model: 'm',
+      system: 'x',
+      tools: [],
+      messages: [
+        { role: 'user', content: '', images: [{ mediaType: 'image/png', dataBase64: 'AAAA' }] },
+      ],
+    };
+
+    it('gemini emits no empty text part', () => {
+      const body = geminiAdapter.buildBody(imageOnly) as { contents: { parts: Record<string, unknown>[] }[] };
+      const parts = body.contents[0]!.parts;
+      expect(parts.some((p) => p.text === '')).toBe(false);
+      expect(parts[0]!.inlineData).toBeDefined();
+      // Still says something, rather than shipping a bare attachment.
+      expect(parts).toHaveLength(2);
+      expect(parts[1]!.text).toBeTruthy();
+    });
+
+    it('anthropic emits no empty text block', () => {
+      const body = anthropicAdapter.buildBody(imageOnly) as { messages: { content: Record<string, unknown>[] }[] };
+      const content = body.messages[0]!.content;
+      expect(content.some((c) => c.type === 'text' && c.text === '')).toBe(false);
+      expect(content[0]!.type).toBe('image');
+    });
+
+    it('openai emits no empty text part', () => {
+      const body = openAiAdapter.buildBody(imageOnly) as { messages: { content: Record<string, unknown>[] }[] };
+      const content = body.messages[1]!.content;
+      expect(content.some((c) => c.type === 'text' && c.text === '')).toBe(false);
+    });
+
+    it('a captioned image still carries the caption', () => {
+      const captioned: AiRequest = {
+        ...imageOnly,
+        messages: [{ role: 'user', content: 'what is this?', images: [{ mediaType: 'image/png', dataBase64: 'AAAA' }] }],
+      };
+      const body = geminiAdapter.buildBody(captioned) as { contents: { parts: Record<string, unknown>[] }[] };
+      expect(body.contents[0]!.parts[1]!.text).toBe('what is this?');
+    });
+  });
+
   it('anthropic merges consecutive tool results into one user turn', () => {
     const multi: AiRequest = {
       ...req,

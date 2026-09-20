@@ -1,0 +1,239 @@
+/**
+ * The review prompt's form.
+ *
+ * Everything structural — the dialog, its scrim, the header and the focus trap
+ * — comes from `Modal`. Only the star row and the field rhythm live here.
+ */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* ── Rating ───────────────────────────────────────────────────── */
+
+.ratingField {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.legend {
+  padding: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.stars {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/**
+ * A star is a button with the chrome taken off.
+ *
+ * Kept as a real `<button role="radio">` rather than a styled span: this is a
+ * choice of one from five, and the keyboard and screen-reader behaviour of that
+ * is not something worth reimplementing on a div.
+ */
+.star {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  /* Unfilled stars are outlines, not a lighter version of the filled colour —
+     "dim gold" reads as a partially-selected rating. */
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition:
+    color var(--motion-duration-fast) var(--motion-ease-standard),
+    transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.star:hover:not(:disabled) {
+  transform: scale(1.1);
+}
+
+.star:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.star:disabled {
+  cursor: not-allowed;
+  opacity: var(--opacity-disabled);
+}
+
+/**
+ * Amber, and this is the one place in the app that uses it decoratively.
+ *
+ * `--color-modified` is the chrome amber and means "unsaved"; borrowing it here
+ * would tie a rating widget to the meaning of a dirty document. A star rating
+ * is gold everywhere a person has ever seen one, so it gets the primitive
+ * directly rather than a semantic token that means something else.
+ */
+.starOn {
+  color: var(--color-amber-500);
+}
+
+.ratingLabel {
+  margin-left: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  /* Reserved so choosing a rating does not shift the form below it. */
+  min-height: 1em;
+}
+
+/* ── Fields ───────────────────────────────────────────────────── */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.count {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.count[data-over] {
+  color: var(--color-danger);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  outline: none;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.input:hover:not(:disabled),
+.textarea:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+}
+
+.input:focus-visible,
+.textarea:focus-visible {
+  border-color: var(--color-primary);
+}
+
+.input:disabled,
+.textarea:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.input::placeholder,
+.textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.hint {
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+}
+
+/**
+ * Two optional fields side by side, stacking on a narrow dialog.
+ *
+ * `minmax(0, 1fr)` and not `1fr`: a grid track's default minimum is its
+ * content, so a long placeholder would push the column wider than the dialog.
+ */
+.optionalRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--space-3);
+}
+
+/* ── Notice, error, actions ───────────────────────────────────── */
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-2);
+  font-size: var(--font-size-micro);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.noticeIcon {
+  flex: none;
+  margin-top: 1px;
+  color: var(--color-text-tertiary);
+}
+
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 30%, transparent);
+  color: var(--color-danger);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .star,
+  .input,
+  .textarea {
+    transition: none;
+  }
+
+  .star:hover:not(:disabled) {
+    transform: none;
+  }
+}

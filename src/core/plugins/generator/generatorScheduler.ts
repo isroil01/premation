@@ -121,6 +121,14 @@ interface LayerEntry {
   key: string;
   state: GeneratorStateCache;
   frames: Map<number, GeneratorFrame>;
+  /**
+   * What the PARAMETERS were when each cached frame was produced.
+   *
+   * Kept beside `frames` rather than inside `GeneratorFrame`, which is the
+   * shape the renderer consumes and has no business carrying the scheduler's
+   * bookkeeping.
+   */
+  frameParams: Map<number, string>;
   /** The newest frame produced, whatever its number. Served when the exact one
    *  is not ready, which is what "never blank" means. */
   latest: GeneratorFrame | null;
@@ -184,6 +192,7 @@ export function requestGeneratorFrame(demand: GeneratorDemand): GeneratorFrame |
       key,
       state: createStateCache(),
       frames: new Map(),
+      frameParams: new Map(),
       latest: null,
       pending: null,
       running: false,
@@ -213,15 +222,57 @@ export function requestGeneratorFrame(demand: GeneratorDemand): GeneratorFrame |
     entry.sequential = frame === entry.lastFrame + 1;
   }
   entry.lastFrame = frame;
+
+  /*
+    A cached frame is only the frame that was ASKED FOR if its parameters still
+    match.
+
+    The playhead standing still is the common case while a user works: they drag
+    a property and watch. The frame number does not change, so a cache keyed on
+    the frame number alone answers every repaint with the geometry from before
+    the edit — the viewport freezes, and the plugin looks broken while the
+    inspector insists the value changed. (Export never saw it: `exactMode` asks
+    for every frame regardless.)
+
+    So the params are part of the cache key. `paramsKey` is a stringify of the
+    sampled properties — at most a few dozen scalars, built in the kind's own
+    declared order — and it costs a few microseconds against a frame that costs
+    milliseconds.
+  */
+  const params = paramsKey(demand);
   const have = entry.frames.get(frame);
-  if (!have || exactMode || demand.exact) {
+  const stale = have !== undefined && entry.frameParams.get(frame) !== params;
+  if (stale) {
+    entry.frames.delete(frame);
+    entry.frameParams.delete(frame);
+  }
+  if (!have || stale || exactMode || demand.exact) {
     // Re-stating the demand for a frame already served is what keeps the
     // look-ahead moving during playback; the pump drops it as a no-op when the
     // frame is cached and nothing further is wanted.
     entry.pending = demand;
     void pump(demand.layerId);
   }
-  return have ?? entry.latest;
+  return (stale ? undefined : have) ?? entry.latest;
+}
+
+/**
+ * The identity of a request's parameters.
+ *
+ * Deliberately the whole params object rather than a hash: a hash would be
+ * smaller and would collide, and a collision here is a frame that silently
+ * refuses to update — the exact bug this key exists to prevent.
+ */
+function paramsKey(demand: GeneratorDemand): string {
+  try {
+    return JSON.stringify(demand.request.params);
+  } catch {
+    // A parameter that cannot be stringified (a cycle, a BigInt) is not
+    // something the prop schema can produce, but a key that throws would take
+    // the render down. An empty key means "always a miss", which is slow and
+    // correct rather than fast and wrong.
+    return '';
+  }
 }
 
 /**
@@ -447,7 +498,7 @@ async function pump(layerId: string): Promise<void> {
         // Only the TARGET's instances are kept. A catch-up frame's buffer is a
         // megabyte nobody will draw, and holding forty-eight of them to reach
         // one is how a scrub becomes an out-of-memory.
-        if (frame === target) store(entry, frame, result.frame);
+        if (frame === target) store(entry, frame, result.frame, paramsKey(demand));
       }
 
       if (failed) {
@@ -461,6 +512,7 @@ async function pump(layerId: string): Promise<void> {
         resetStateCache(entry.state);
         entry.state.stateful = true;
         entry.frames.delete(target);
+        entry.frameParams.delete(target);
         continue;
       }
       if (plan.truncated) continue; // Another chunk of the same seek.
@@ -544,14 +596,18 @@ function nextLookAhead(entry: LayerEntry, demand: GeneratorDemand): GeneratorDem
   return null;
 }
 
-function store(entry: LayerEntry, frame: number, produced: GeneratorFrame): void {
+function store(entry: LayerEntry, frame: number, produced: GeneratorFrame, params: string): void {
   entry.frames.set(frame, produced);
+  entry.frameParams.set(frame, params);
   entry.latest = produced;
   if (entry.frames.size > MAX_CACHED_FRAMES) {
     // Insertion order is production order, and the oldest produced frame is the
     // one furthest from whatever the playhead is doing now.
     const oldest = entry.frames.keys().next();
-    if (!oldest.done) entry.frames.delete(oldest.value);
+    if (!oldest.done) {
+      entry.frames.delete(oldest.value);
+      entry.frameParams.delete(oldest.value);
+    }
   }
 }
 

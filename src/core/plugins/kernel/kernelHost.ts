@@ -173,6 +173,10 @@ export async function runEffectKernel(request: KernelRunRequest): Promise<Uint8C
       host: request.host,
       ...(request.neighbours && request.neighbours.length > 0 ? { neighbours: request.neighbours } : {}),
       ...(request.effect.threadSafety ? { threadSafety: request.effect.threadSafety } : {}),
+      // The effect's own declaration of what busts the state it keeps between
+      // frames. Passed from the manifest rather than inferred: only the author
+      // knows whether their cached flow field depends on a slider.
+      ...(request.effect.invalidateOn ? { invalidateOn: request.effect.invalidateOn } : {}),
     });
     if (native) return native;
   }

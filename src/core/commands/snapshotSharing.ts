@@ -231,6 +231,7 @@ function rowOf(n: SceneNode): Record<string, unknown> {
     visible: n.visible,
     locked: n.locked,
     solo: n.solo,
+    ...(n.shy ? { shy: true } : {}),
     ...(n.color !== undefined ? { color: n.color } : {}),
   };
 }
@@ -252,6 +253,7 @@ function materialize(live: SceneNode, json: string): SceneNode {
     visible: live.visible,
     locked: live.locked,
     solo: live.solo,
+    ...(live.shy ? { shy: true } : {}),
     ...(live.color !== undefined ? { color: live.color } : {}),
   };
 }

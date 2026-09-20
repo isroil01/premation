@@ -132,6 +132,15 @@
   --color-primary-subtle:    rgba(29, 120, 227, 0.15);  /* selection tint */
   --color-primary-glow:      rgba(29, 120, 227, 0.35);
   --color-primary-foreground: var(--color-slate-0);      /* white on blue */
+  /*
+   * The accent as a LABEL, not a fill.
+   *
+   * `--color-primary` is tuned to be a background with white on top; used as
+   * text on a dark surface it measures 2.8:1, so a selected row was the LEAST
+   * readable row on the screen. This is the same blue lifted until it clears
+   * AA on the selection tint. Reach for it whenever the accent is the ink.
+   */
+  --color-primary-text:      var(--color-azure-400);
 
   --color-accent:            #1d78e3;
   --color-accent-subtle:     rgba(29, 120, 227, 0.15);

@@ -177,6 +177,24 @@ export type HostMessage =
       kindId: string;
       request: unknown;
     }
+  /**
+   * The user moved one of this effect's own controls — AE's
+   * `PF_Cmd_USER_CHANGED_PARAM`. Only sent for params the effect named in
+   * `contributes.effects[].supervises`, and only once a drag has settled; see
+   * `paramSupervision.ts` for the coalescing and the loop guard.
+   */
+  | {
+      k: 'supervise';
+      id: number;
+      /** Plugin-local effect id, not the namespaced type. */
+      effectId: string;
+      /** The instance on the layer — two copies supervise separately. */
+      instanceId: string;
+      /** The param that moved. */
+      changed: string;
+      /** Every param of this instance, as it stands now. */
+      params: Record<string, unknown>;
+    }
   | { k: 'ping'; id: number };
 
 /** A line in a plugin's log, as shown in the manager. */
@@ -196,6 +214,10 @@ export type WorkerMessage =
   /** RGBA8, `width * height * 4` bytes. */
   | { k: 'importResult'; id: number; ok: true; width: number; height: number; pixels: ArrayBuffer }
   | { k: 'importResult'; id: number; ok: false; error: string }
+  /** Params to write back, or `null` for "nothing to change". The host
+   *  filters these to the effect's own declared params before applying. */
+  | { k: 'superviseResult'; id: number; ok: true; params: Record<string, unknown> | null }
+  | { k: 'superviseResult'; id: number; ok: false; error: string }
   /**
    * One generated frame. `value` is the plugin's raw return — validated by the
    * host in `generator/generatorContract.ts`, never trusted here.

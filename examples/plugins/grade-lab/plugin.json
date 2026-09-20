@@ -1,0 +1,51 @@
+{
+  "id": "studio.example.gradelab",
+  "name": "Grade Lab",
+  "version": "1.0.0",
+  "description": "A film grade with presets, and the air EQ to go under it. Demonstrates param supervision, sequence data and an audio effect in one package.",
+  "author": "Premation examples",
+  "apiVersion": 8,
+  "main": "main.js",
+  "permissions": [],
+  "activationEvents": ["onStartup"],
+  "contributes": {
+    "effects": [
+      {
+        "id": "filmic",
+        "label": "Filmic Grade",
+        "shader": "@fragment\nfn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {\n  let c = textureSample(src, samp, uv);\n  let lifted = c.rgb + vec3<f32>(lift) * (1.0 - c.rgb);\n  let gained = lifted * vec3<f32>(gain);\n  return vec4<f32>(mix(c.rgb, gained, strength), c.a);\n}",
+        "cpu": { "module": "kernels/filmic.js", "entry": "render", "format": "js" },
+        "threadSafety": "instance",
+
+        "supervises": ["preset"],
+        "invalidateOn": ["quality"],
+
+        "identity": [{ "param": "strength", "equals": 0 }],
+
+        "params": {
+          "preset": { "type": "number", "label": "Preset", "default": 0, "min": 0, "max": 3, "animatable": false },
+          "strength": { "type": "number", "label": "Strength", "default": 1, "min": 0, "max": 1, "animatable": true },
+          "lift": { "type": "number", "label": "Lift", "default": 0, "min": 0, "max": 1, "animatable": true },
+          "gain": { "type": "number", "label": "Gain", "default": 1, "min": 0, "max": 4, "animatable": true },
+          "quality": { "type": "number", "label": "Quality", "default": 2, "min": 1, "max": 4, "animatable": false }
+        }
+      }
+    ],
+
+    "audioEffects": [
+      {
+        "id": "air",
+        "label": "Air",
+        "category": "Filters",
+        "params": [
+          { "key": "amount", "label": "Amount", "unit": "dB", "min": 0, "max": 12, "default": 3 },
+          { "key": "warmth", "label": "Warmth", "unit": "dB", "min": -6, "max": 6, "default": 0 }
+        ],
+        "chain": [
+          { "kind": "biquad", "type": "highshelf", "set": { "frequency": 8000, "gain": { "param": "amount" } } },
+          { "kind": "biquad", "type": "lowshelf", "set": { "frequency": 200, "gain": { "param": "warmth" } } }
+        ]
+      }
+    ]
+  }
+}

@@ -66,29 +66,52 @@
   background: var(--color-active);
 }
 
+/* A real <button> on rows that disclose, an inert spacer on rows that do not —
+   so the two line up and only the operable one is announced. */
 .chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 16px;
   height: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--color-text-tertiary);
   flex: none;
   transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-/* Only rows with children get a clickable disclosure; empty chevrons stay inert. */
-.chevron:not(:empty) {
+button.chevron {
   cursor: pointer;
 }
 
-.chevron:not(:empty):hover {
+button.chevron:hover {
   color: var(--color-text-primary);
 }
 
 .icon {
   color: var(--color-text-secondary);
   flex: none;
+}
+
+/* Host-supplied control between the triangle and the glyph (a pick-whip). */
+.lead {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+/* Source thumbnail, drawn in the kind glyph's slot so the row does not reflow
+   when thumbnails are switched on. Letterboxed rather than cropped: a 16:9
+   frame squeezed into a square reads as the wrong shot. */
+.thumb {
+  width: 24px;
+  height: 16px;
+  flex: none;
+  object-fit: contain;
+  border-radius: var(--radius-xs);
+  background: var(--color-hover);
 }
 
 /* Small per-row label-color dot (AE-style layer label). */
@@ -147,4 +170,17 @@
 .row[data-drop='inside'] {
   background: var(--color-primary-subtle);
   box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+/* The rows travelling with the drag. A multi-row drag shows only the browser's
+   one drag image, so without this the other four give no sign they are moving. */
+.row[data-dragging] {
+  opacity: 0.45;
+}
+
+/* Hovering the empty space under the last row: dropping there moves the layer
+   out to the root, so the whole list gets the same ring a branch would. */
+.root[data-root-drop] {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+  border-radius: var(--radius-sm);
 }

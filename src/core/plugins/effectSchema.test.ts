@@ -342,3 +342,106 @@ describe('★ the vertex header', () => {
     expect(view.getFloat32(block.layout[0]!.offset, true)).toBeCloseTo(0.5);
   });
 });
+
+describe('invalidateOn — which params bust the cached state', () => {
+  /*
+    Sequence data's invalidation list. The failure this validation prevents is
+    silent and late: a typo means a cache that never invalidates, so the plugin
+    keeps returning frames derived from a stale analysis and the author hears
+    about it from a user's render.
+  */
+  const v7 = (entries: unknown[]) => {
+    const errors: string[] = [];
+    const out = parseEffects(entries, errors, { apiVersion: 7 });
+    return { out, errors };
+  };
+
+  it('accepts a name the effect actually has', () => {
+    const { out, errors } = v7([effect({ invalidateOn: ['amount'] })]);
+    expect(errors).toEqual([]);
+    expect(out[0]!.invalidateOn).toEqual(['amount']);
+  });
+
+  it('refuses a name that matches no parameter', () => {
+    const { errors } = v7([effect({ invalidateOn: ['radius'] })]);
+    expect(errors.join()).toMatch(/"radius".*not a parameter/);
+    expect(errors.join()).toMatch(/never invalidates/);
+  });
+
+  it('refuses anything that is not a list of names', () => {
+    expect(v7([effect({ invalidateOn: 'amount' })]).errors.join()).toMatch(/array of parameter names/);
+    expect(v7([effect({ invalidateOn: [1] })]).errors.join()).toMatch(/array of parameter names/);
+  });
+
+  it('drops a duplicate rather than signing the same param twice', () => {
+    const { out } = v7([effect({ invalidateOn: ['amount', 'amount'] })]);
+    expect(out[0]!.invalidateOn).toEqual(['amount']);
+  });
+
+  it('treats an empty list as absent — nothing invalidates it', () => {
+    const { out, errors } = v7([effect({ invalidateOn: [] })]);
+    expect(errors).toEqual([]);
+    expect(out[0]!.invalidateOn).toBeUndefined();
+  });
+
+  it('is absent by default, which means the cache survives a param change', () => {
+    // The right default: the caches this exists for depend on the SOURCE.
+    const { out } = v7([effect()]);
+    expect(out[0]!.invalidateOn).toBeUndefined();
+  });
+
+  it('needs the grammar it was added in', () => {
+    const errors: string[] = [];
+    parseEffects([effect({ invalidateOn: ['amount'] })], errors, { apiVersion: 6 });
+    expect(errors.join()).toMatch(/"apiVersion": 7/);
+  });
+});
+
+describe('supervises — which params the plugin wants to hear about', () => {
+  /*
+    AE's `PF_Cmd_USER_CHANGED_PARAM`. Same validation shape as `invalidateOn`
+    and the same reason for it: a name matching nothing is a callback that
+    never fires, which from the author's side is indistinguishable from a
+    plugin that simply does not work.
+  */
+  const v7 = (entries: unknown[]) => {
+    const errors: string[] = [];
+    const out = parseEffects(entries, errors, { apiVersion: 7 });
+    return { out, errors };
+  };
+
+  it('accepts a name the effect actually has', () => {
+    const { out, errors } = v7([effect({ supervises: ['amount'] })]);
+    expect(errors).toEqual([]);
+    expect(out[0]!.supervises).toEqual(['amount']);
+  });
+
+  it('refuses a name that matches no parameter', () => {
+    const { errors } = v7([effect({ supervises: ['preset'] })]);
+    expect(errors.join()).toMatch(/"preset".*not a parameter/);
+    expect(errors.join()).toMatch(/never fires/);
+  });
+
+  it('refuses anything that is not a list of names', () => {
+    expect(v7([effect({ supervises: 'amount' })]).errors.join()).toMatch(/array of parameter names/);
+  });
+
+  it('is absent by default — supervision is a round trip nobody opted into', () => {
+    expect(v7([effect()]).out[0]!.supervises).toBeUndefined();
+    expect(v7([effect({ supervises: [] })]).out[0]!.supervises).toBeUndefined();
+  });
+
+  it('needs the grammar it was added in', () => {
+    const errors: string[] = [];
+    parseEffects([effect({ supervises: ['amount'] })], errors, { apiVersion: 6 });
+    expect(errors.join()).toMatch(/"apiVersion": 7/);
+  });
+
+  it('is independent of invalidateOn — they answer different questions', () => {
+    // One says "my cache is stale"; the other says "tell me so I can react".
+    const { out, errors } = v7([effect({ supervises: ['amount'], invalidateOn: ['amount'] })]);
+    expect(errors).toEqual([]);
+    expect(out[0]!.supervises).toEqual(['amount']);
+    expect(out[0]!.invalidateOn).toEqual(['amount']);
+  });
+});

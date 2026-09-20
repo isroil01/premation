@@ -14,6 +14,7 @@
  *   Ctrl/Cmd+V              → paste keyframes at playhead (onto selected layers)
  *   Ctrl/Cmd+Alt+S          → smooth motion path for selected layers
  *   ← / →                   → nudge selected KEYFRAMES one frame (Shift: ten)
+ *   Ctrl/Cmd+← / →          → nudge them a TENTH of a frame (sub-frame)
  *   Alt+↑ / Alt+↓           → nudge their VALUE by one (Shift: ten)
  *
  * Space is owned by the viewport. Arrow keys are shared with it by SELECTION:
@@ -48,9 +49,19 @@ export function useTimelineKeys(): void {
       // ── Arrow-key keyframe nudge ────────────────────────────────
       // Before the Ctrl branch, and gated on a keyframe selection so the
       // viewport keeps the arrows whenever this is not what you meant.
-      if (!e.ctrlKey && !e.metaKey && e.key.startsWith('Arrow')) {
+      //
+      // Ctrl/Cmd is INCLUDED here rather than falling through to the Ctrl
+      // combos below, because Ctrl+Arrow is the sub-frame nudge. The combos
+      // below are all letter chords, so nothing is shadowed — and an arrow
+      // that reaches them today is simply swallowed by their trailing return.
+      if (e.key.startsWith('Arrow')) {
+        const meta = e.ctrlKey || e.metaKey;
         if (useKeyframeSelectionStore.getState().ids.size > 0) {
-          const delta = nudgeForKey(e.key, { shift: e.shiftKey, alt: e.altKey }, 1 / (c.fps || 30));
+          const delta = nudgeForKey(
+            e.key,
+            { shift: e.shiftKey, alt: e.altKey, meta },
+            1 / (c.fps || 30),
+          );
           if (delta) {
             e.preventDefault();
             e.stopPropagation();
@@ -58,7 +69,10 @@ export function useTimelineKeys(): void {
             return;
           }
         }
-        return;
+        // With nothing selected the arrows belong to the viewport — but only
+        // the UNMODIFIED ones ever did. A Ctrl+Arrow with no keyframe
+        // selection falls through to the Ctrl branch exactly as before.
+        if (!meta) return;
       }
       // Anything else lands while a burst is open — commit it first, so the
       // nudge and whatever follows are two undo entries and not one.

@@ -19,6 +19,18 @@ import { toGeminiDeclarations, stripUnsupported } from '../emit';
 import { SseReader, safeJson } from './sse';
 import type { ProviderAdapter, StreamParser } from './types';
 
+/**
+ * What an image-only turn says when the user typed nothing.
+ *
+ * An EMPTY text part is not an empty prompt to Gemini — it is a malformed
+ * request, and the whole call comes back 400 INVALID_ARGUMENT naming no part in
+ * particular. The composer deliberately allows an attachment with no caption
+ * (`!text && !images?.length` is the only thing `submit` refuses), so in
+ * production every image-only turn produced that 400. Anthropic rejects the
+ * equivalent empty text block for the same reason.
+ */
+const IMPLICIT_PROMPT = 'Look at the attached image(s).';
+
 function toGeminiContents(messages: readonly AiMessage[]): unknown[] {
   const out: unknown[] = [];
   for (const m of messages) {
@@ -28,7 +40,11 @@ function toGeminiContents(messages: readonly AiMessage[]): unknown[] {
         const parts: unknown[] = (m.images ?? []).map((img) => ({
           inlineData: { mimeType: img.mediaType, data: img.dataBase64 },
         }));
-        parts.push({ text: m.content });
+        // Never `{ text: '' }` — see IMPLICIT_PROMPT. An attachment alone is a
+        // legal turn for Gemini, but it is not a useful one in a tool-calling
+        // loop: the model is handed a picture and no instruction. Say the
+        // thing the user meant by attaching it.
+        parts.push({ text: m.content || IMPLICIT_PROMPT });
         out.push({ role: 'user', parts });
         break;
       }

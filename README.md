@@ -333,6 +333,9 @@ Deep dives on individual subsystems:
   deformation, the math and the current gaps
 - [`docs/ANIMATED_SVG_PIPELINE.md`](docs/ANIMATED_SVG_PIPELINE.md) — SVG import,
   end to end
+- [`docs/AFTER_EFFECTS_IMPORT.md`](docs/AFTER_EFFECTS_IMPORT.md) — opening `.aep`
+  and `.aepx` projects: what converts, what does not, and the undocumented
+  binary format behind it
 - [`docs/PLUGINS.md`](docs/PLUGINS.md) — plugin architecture and authoring
 - [`docs/MOTION_FORMAT_FREEZE.md`](docs/MOTION_FORMAT_FREEZE.md) — what the
   `.motion` bundle is, the six migrations behind it, and what a 1.0

@@ -514,6 +514,71 @@ export async function updateListing(
 }
 
 /**
+ * The biggest image the registry ingests. Mirrors `MAX_IMAGE_BYTES` there, and
+ * is checked HERE as well so a 5 MB screenshot fails instantly and locally
+ * rather than after crossing the network and coming back as a 400.
+ */
+export const MAX_PLUGIN_IMAGE_BYTES = 2 * 1024 * 1024;
+
+/** How many screenshots one listing may carry — the registry's own ceiling. */
+export const MAX_PLUGIN_SCREENSHOTS = 6;
+
+/** What the registry will re-encode. Anything else is refused before upload. */
+export const PLUGIN_IMAGE_MIME = ['image/png', 'image/jpeg', 'image/webp'] as const;
+
+export interface PluginMediaRef {
+  id: string;
+  /** Registry-relative; resolve with `registryMediaUrl`. */
+  url: string;
+}
+
+/**
+ * Attach an icon or a screenshot to a listing you own.
+ *
+ * ── Why this exists ─────────────────────────────────────────────────────────
+ *
+ * `RegistryPlugin.iconUrl` and `RegistryDetail.screenshots` have been read and
+ * RENDERED by the browse card and the detail tab since they were written; the
+ * registry has stored them, re-encoded them and served them the whole time.
+ * The one missing piece was any way for a publisher to supply one — so every
+ * listing in the marketplace drew the same generic glyph, and a plugin author
+ * had no way to show what their plugin looks like. A store whose listings
+ * cannot carry a picture is a list of filenames.
+ *
+ * ── An icon REPLACES; a screenshot APPENDS ──────────────────────────────────
+ *
+ * The registry enforces both, and it is worth knowing on this side because the
+ * UI should not offer "add another icon". One icon is a property of the plugin;
+ * a second has no meaning.
+ *
+ * The bytes are re-encoded server-side, so what is served is always something
+ * the registry produced — an uploader controls the pixels, never the container.
+ */
+export async function uploadPluginMedia(
+  id: string,
+  kind: 'icon' | 'screenshot',
+  file: Blob,
+): Promise<PluginMediaRef> {
+  if (file.size > MAX_PLUGIN_IMAGE_BYTES) {
+    throw new Error(`Images are limited to ${MAX_PLUGIN_IMAGE_BYTES / 1024 / 1024} MB.`);
+  }
+  if (file.type && !(PLUGIN_IMAGE_MIME as readonly string[]).includes(file.type)) {
+    throw new Error('Use a PNG, JPEG or WebP image.');
+  }
+  const form = new FormData();
+  form.append('file', file, kind === 'icon' ? 'icon.png' : 'screenshot.png');
+  return request<PluginMediaRef>(
+    `/plugins/${encodeURIComponent(id)}/media/${kind}`,
+    { method: 'POST', body: form },
+  );
+}
+
+/** Remove one image from a listing you own. */
+export async function deletePluginMedia(mediaId: string): Promise<void> {
+  await request<unknown>(`/plugins/media/${encodeURIComponent(mediaId)}`, { method: 'DELETE' });
+}
+
+/**
  * Withdraw a plugin you published.
  *
  * Errors are thrown, never swallowed. Most calls in this file degrade quietly

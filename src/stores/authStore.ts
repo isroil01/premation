@@ -38,6 +38,18 @@ export interface AuthUser {
    * server are the real enforcement — this only drives routing.
    */
   emailVerified: boolean;
+  /**
+   * Whether the "how did you hear about us" step is still owed.
+   *
+   * Optional because the sign-in and OAuth responses do not carry it — only
+   * /auth/me does — and absent must read as "nothing to ask", never as "ask".
+   * Getting that default backwards would put a required step in front of every
+   * returning user for the one render before `me()` answers.
+   *
+   * The server decides it (verified AND unanswered). This copy exists so
+   * RequireAuth can route on it synchronously.
+   */
+  needsSignupSource?: boolean;
 }
 
 interface AuthState {
@@ -64,6 +76,8 @@ interface AuthActions {
   adoptSession: (user: AuthUser) => Promise<void>;
   /** Flip the local user to verified after the confirm-code step succeeds. */
   markEmailVerified: () => void;
+  /** Answered — take the welcome step back down without re-reading /auth/me. */
+  markSignupSourceAnswered: () => void;
   clearError: () => void;
 }
 
@@ -83,6 +97,27 @@ async function afterAuth(userId: string): Promise<void> {
   // Not forced: hydrate() has just populated the `account` cache from the same
   // /auth/me, so this reads it rather than making a second identical round trip.
   await useEntitlementStore.getState().refresh().catch(() => undefined);
+  // Whether the welcome question is still owed.
+  //
+  // Here rather than on each sign-in path, because EVERY way into a session has
+  // to learn it and only one of them carries it: `login` and `adoptSession` are
+  // handed the auth response, which says nothing about a column of ours. Without
+  // this, someone who verified on one machine and signed in on another was never
+  // asked — the question waited for the next cold boot, which is the one path
+  // that happened to read /auth/me.
+  //
+  // Free in practice: the `account` cache was just filled by `hydrate` or by the
+  // entitlement refresh above, so this is a read of it rather than a round trip.
+  // Best-effort — failing to discover an outstanding question is not a reason to
+  // fail a sign-in.
+  try {
+    const me = await api.me();
+    useAuthStore.setState((s) =>
+      s.user ? { user: { ...s.user, needsSignupSource: me.needsSignupSource } } : {},
+    );
+  } catch {
+    /* Asked on the next boot instead. */
+  }
 }
 
 export const useAuthStore = create<AuthState & AuthActions>((set) => ({
@@ -177,11 +212,32 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
 
   adoptSession: async (user) => {
     set({ user, status: 'authenticated', error: null });
+    // `afterAuth` is what learns whether the welcome question is owed. It
+    // matters most on this path: an OAuth account arrives already verified, so
+    // it never sees the code screen — the one moment that could have known.
     await afterAuth(user.id);
   },
 
   markEmailVerified: () =>
-    set((s) => (s.user ? { user: { ...s.user, emailVerified: true } } : {})),
+    set((s) =>
+      s.user
+        ? {
+            user: {
+              ...s.user,
+              emailVerified: true,
+              // Definitionally true at this instant, not a guess: the server
+              // refuses to record an answer before verification, so an account
+              // that has only just verified cannot already have one. Setting it
+              // here is what lets the welcome step follow the code screen
+              // without a round trip in between.
+              needsSignupSource: true,
+            },
+          }
+        : {},
+    ),
+
+  markSignupSourceAnswered: () =>
+    set((s) => (s.user ? { user: { ...s.user, needsSignupSource: false } } : {})),
 
   clearError: () => set({ error: null }),
 }));

@@ -22,6 +22,7 @@ DELETE /api/v1/animations/{id}
 DELETE /api/v1/keys/{id}
 DELETE /api/v1/templates/{id}
 GET /api/admin/announcements
+GET /api/admin/attribution
 GET /api/admin/audit
 GET /api/admin/blog
 GET /api/admin/blog/images
@@ -39,6 +40,9 @@ GET /api/admin/overview
 GET /api/admin/plans
 GET /api/admin/projects
 GET /api/admin/renders
+GET /api/admin/reviews
+GET /api/admin/reviews/audience
+GET /api/admin/reviews/stats
 GET /api/admin/settings
 GET /api/admin/system
 GET /api/admin/templates
@@ -97,6 +101,8 @@ GET /api/publishers/mine
 GET /api/render
 GET /api/render/capabilities
 GET /api/render/{id}
+GET /api/reviews/me
+GET /api/reviews/public
 GET /api/sync/{projectId}
 GET /api/sync/{projectId}/chunks/{hash}
 GET /api/sync/{projectId}/chunks/{hash}/exists
@@ -114,6 +120,7 @@ GET /files/*
 PATCH /api/admin/announcements/{id}
 PATCH /api/admin/blog/{id}
 PATCH /api/admin/lessons/{id}
+PATCH /api/admin/reviews/{id}
 PATCH /api/admin/users/{id}
 PATCH /api/plugins/{id}/listing
 PATCH /api/projects/{id}
@@ -127,6 +134,7 @@ POST /api/admin/lessons
 POST /api/admin/lessons/{id}/reorder
 POST /api/admin/plans
 POST /api/admin/renders/{id}/cancel
+POST /api/admin/reviews/request
 POST /api/admin/system/cache/clear
 POST /api/admin/users/{id}/email
 POST /api/admin/users/{id}/resync-subscription
@@ -150,6 +158,7 @@ POST /api/auth/oauth/exchange
 POST /api/auth/refresh
 POST /api/auth/register
 POST /api/auth/reset-password
+POST /api/auth/signup-source
 POST /api/auth/verify-email
 POST /api/auth/verify-email/resend
 POST /api/billing/cancel
@@ -180,6 +189,10 @@ POST /api/publishers/{id}/verify/admin
 POST /api/render
 POST /api/render/{id}/cancel
 POST /api/render/{id}/frames
+POST /api/reviews
+POST /api/reviews/dismiss
+POST /api/reviews/invite/resolve
+POST /api/reviews/invite/submit
 POST /api/v1/animations
 POST /api/v1/assets
 POST /api/v1/keys

@@ -148,6 +148,19 @@ export class NativeScheduler {
   }
 
   /**
+   * Record something that went wrong ABOUT a call rather than IN it.
+   *
+   * The call itself succeeded — the addon returned pixels — but the host
+   * refused something it asked for, and the author needs to know. Same channel
+   * as a failure so it reaches the same log and the same export gate, because
+   * "your plugin renders but its cache is being thrown away every frame" is a
+   * thing a publisher must be able to find out without a profiler.
+   */
+  note(pluginId: string, instanceId: string, message: string): void {
+    this.errors.push({ pluginId, instanceId, message });
+  }
+
+  /**
    * Run a call, eventually.
    *
    * Resolves `null` for every "this did not happen" case — superseded, benched,

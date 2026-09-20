@@ -26,6 +26,9 @@ export class History {
   private readonly onPush?: (command: Command) => void;
   private enabled = true;
   private applying = false;
+  /** Non-null while a {@link transaction} is open — commands land here
+   *  instead of on the stack, and are pushed as one composite on close. */
+  private collecting: Command[] | null = null;
 
   constructor(opts: HistoryOptions = {}) {
     this.limit = opts.limit ?? 200;
@@ -54,6 +57,14 @@ export class History {
   run(command: Command): void {
     command.do();
     if (!this.enabled || this.applying) return;
+
+    // Inside a transaction the command is only COLLECTED. It has already run,
+    // so the caller sees the change immediately; what is deferred is the
+    // recording, which `transaction` closes as a single composite entry.
+    if (this.collecting) {
+      this.collecting.push(command);
+      return;
+    }
 
     if (this.onPush) {
       this.onPush(command);
@@ -93,6 +104,60 @@ export class History {
   clear(): void {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
+  }
+
+  /**
+   * Run `fn` and record everything it changes as ONE undo entry.
+   *
+   * A gesture that moves twenty selected bars calls `setLayerStart` twenty
+   * times, and each of those is a reversible command in its own right — so
+   * without this the user's single drag costs twenty Ctrl+Z presses. The
+   * commands still `do()` as they are issued (the change is live, which is
+   * what a drag release needs); only the RECORDING is deferred, and closing
+   * the transaction pushes one composite whose `undo` replays the parts in
+   * reverse order.
+   *
+   * Reverse order is not cosmetic: two moves that pass through the same frame
+   * only land back where they started if they are undone last-in-first-out.
+   *
+   * Nests — an inner transaction folds into the outer one, because an inner
+   * group is part of the outer action by construction. A transaction that
+   * collects nothing pushes nothing, so an all-no-op gesture leaves the stack
+   * alone rather than seeding an undo entry that does nothing.
+   */
+  transaction<T>(label: string, fn: () => T): T {
+    if (this.collecting) return fn(); // nested — the outer entry owns it
+    const collected: Command[] = [];
+    this.collecting = collected;
+    let result: T;
+    try {
+      result = fn();
+    } finally {
+      this.collecting = null;
+    }
+    if (collected.length === 0) return result;
+    // A lone command keeps its own identity (and its own label) rather than
+    // being wrapped in a composite that says the same thing less precisely.
+    const composite: Command =
+      collected.length === 1
+        ? collected[0]!
+        : {
+            label,
+            do: () => {
+              for (const c of collected) c.do();
+            },
+            undo: () => {
+              for (let i = collected.length - 1; i >= 0; i--) collected[i]!.undo();
+            },
+          };
+    if (this.onPush) {
+      this.onPush(composite);
+    } else {
+      this.undoStack.push(composite);
+      if (this.undoStack.length > this.limit) this.undoStack.shift();
+      this.redoStack.length = 0;
+    }
+    return result;
   }
 
   /** Run `fn` without recording (e.g. deserialization, migrations). */

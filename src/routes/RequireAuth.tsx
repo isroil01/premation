@@ -14,6 +14,12 @@
  * may reach nothing here — every protected route bounces it to the confirm-code
  * page until it enters the code. OAuth accounts arrive already verified, so this
  * only ever stops fresh email/password sign-ups.
+ *
+ * And, once verified, the one-question welcome step. It is ordered AFTER
+ * verification on purpose: an unproven address is not yet a person, and
+ * collecting an acquisition channel from every throwaway signup biases the
+ * whole report toward however throwaway accounts arrive. The server decides
+ * whether the question is owed; this only routes on its answer.
  */
 
 import type { ReactNode } from 'react';
@@ -24,6 +30,11 @@ import { cloudAccountsEnabled } from '@core/config/edition';
 export function RequireAuth({ children }: { children: ReactNode }): JSX.Element {
   const status = useAuthStore((s) => s.status);
   const emailVerified = useAuthStore((s) => s.user?.emailVerified ?? false);
+  // `?? false` and not `?? true`: the sign-in and OAuth responses do not carry
+  // this field, so "we have not been told" must mean "do not interrupt". The
+  // other default would flash a required step at every returning user for the
+  // render before /auth/me answers.
+  const needsSignupSource = useAuthStore((s) => s.user?.needsSignupSource ?? false);
   const location = useLocation();
 
   if (!cloudAccountsEnabled()) return <>{children}</>;
@@ -33,6 +44,9 @@ export function RequireAuth({ children }: { children: ReactNode }): JSX.Element 
   }
   if (!emailVerified) {
     return <Navigate to="/verify-email" replace />;
+  }
+  if (needsSignupSource) {
+    return <Navigate to="/welcome" replace />;
   }
   return <>{children}</>;
 }

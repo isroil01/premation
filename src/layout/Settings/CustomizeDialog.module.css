@@ -247,7 +247,7 @@
 }
 
 .colActions {
-  width: 60px;
+  width: 88px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -374,6 +374,14 @@
   border: 1px solid var(--color-border);
 }
 
+.unassignedWrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
 .unassigned {
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
@@ -398,6 +406,12 @@
   background: var(--color-surface-2);
   color: var(--color-text-primary);
   border-color: var(--color-border);
+}
+
+.rowActionDelete:hover {
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 15%, transparent);
+  color: var(--color-danger, #ef4444);
+  border-color: var(--color-danger, #ef4444);
 }
 
 .conflictBadge {

@@ -105,6 +105,10 @@ export const APP_MENU: MenuGroupModel[] = [
     items: [
       { commandId: ProjectCommands.New, label: 'New Project' },
       { commandId: ProjectCommands.Open, label: 'Open Project…' },
+      // Next to Open, not under Import: what arrives is a whole DOCUMENT —
+      // compositions, footage, a folder tree — and it replaces what is open
+      // rather than adding to it, which is what Open means and Import does not.
+      { commandId: 'file.openAfterEffects', label: 'Open After Effects Project…' },
       { separator: true },
       { commandId: ProjectCommands.Save, label: 'Save' },
       { commandId: ProjectCommands.SaveAs, label: 'Save As…' },
@@ -504,6 +508,7 @@ export const APP_MENU: MenuGroupModel[] = [
           // The two that act across LAYERS rather than within one property's
           // keyframes, below a rule.
           { commandId: 'animation.sequenceLayerBars', label: 'Sequence Layers…' },
+          { commandId: 'animation.staggerLayers', label: 'Stagger Layers…' },
           { commandId: 'animation.sequenceLayers', label: 'Stagger Animations…' },
         ],
       },

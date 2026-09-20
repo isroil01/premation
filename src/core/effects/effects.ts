@@ -4940,6 +4940,22 @@ export function updateEffectParam(
       e.id === effectId ? { ...e, params: { ...e.params, [key]: value } } : e,
     ),
   );
+  /*
+    Tell a PLUGIN effect that one of its own controls moved — AE's
+    `PF_Cmd_USER_CHANGED_PARAM`, and what makes a preset dropdown possible.
+
+    Here rather than in the inspector, because this is the one write every
+    route goes through: the panel, the AI, a script and a plugin all arrive at
+    the same function, and a supervision that only fired for one of them would
+    be a rule the author cannot reason about.
+
+    Costs nothing for a built-in or for an effect that supervises nothing —
+    see `noteParamCommitted`, which returns before allocating. Loaded lazily so
+    the effects module keeps no static edge into the plugin system.
+  */
+  void import('@core/plugins/paramSupervision')
+    .then((m) => m.noteParamCommitted(nodeId, effectId, key))
+    .catch(() => { /* the plugin system is absent in some builds */ });
 }
 
 /**

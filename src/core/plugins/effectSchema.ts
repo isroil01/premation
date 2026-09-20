@@ -368,6 +368,44 @@ export interface EffectContribution {
    */
   frames?: [number, number];
   /**
+   * Which of this effect's params invalidate the state it remembers between
+   * frames — AE's sequence data, see `native/nativeSequenceData.ts`.
+   *
+   * Only meaningful for a NATIVE effect, which is the only tier that gets a
+   * state round trip; a WGSL pass has nothing to remember between frames by
+   * construction.
+   *
+   * Absent means "nothing invalidates it", and that is the right default
+   * rather than the lazy one. The expensive caches this exists for — a decoded
+   * LUT, a BVH over a mesh, an optical-flow field over the plate — depend on
+   * the SOURCE, not on the controls, and rebuilding them whenever a slider
+   * moves is exactly the cost the feature removes. An effect whose cache does
+   * depend on a control names it here; nobody else can know which.
+   *
+   * Names are param names. Unknown ones are refused at parse rather than
+   * ignored: a typo here is a cache that silently never invalidates, which
+   * shows up as a wrong frame long after the manifest was written.
+   */
+  invalidateOn?: string[];
+  /**
+   * Which of this effect's params the plugin wants to be TOLD about — AE's
+   * `PF_Cmd_USER_CHANGED_PARAM`.
+   *
+   * When one of these is committed, the host calls the plugin with the whole
+   * parameter block and applies whatever it hands back. That is what makes a
+   * preset dropdown possible: pick "Filmic" and the plugin writes the eight
+   * sliders under it, rather than the eight being the only interface there is.
+   *
+   * Absent means never, and that is the default because supervision is a round
+   * trip per commit. An effect that names nothing here costs exactly what it
+   * always did.
+   *
+   * Names are checked against this effect's own params, for the same reason
+   * `invalidateOn`'s are: a name matching nothing is a callback that never
+   * fires, and nothing on screen says so.
+   */
+  supervises?: string[];
+  /**
    * Which ceiling tier this effect's kernels are checked against.
    *
    * `extended` is available only to a plugin the user installed themselves —
@@ -536,6 +574,11 @@ export const EFFECT_FIELD_SINCE: Readonly<Record<string, number>> = {
   threadSafety: 7,
   frames: 7,
   limits: 7,
+  // Sequence data's invalidation list. Grammar 7 like the rest of this round —
+  // it is a new manifest key, and the ability to USE the state round trip is a
+  // property of the native tier rather than of the grammar.
+  invalidateOn: 7,
+  supervises: 7,
 };
 
 /**
@@ -1017,6 +1060,60 @@ export function parseEffects(
       frames = [f[0] as number, f[1] as number];
     }
 
+    /*
+      Which params bust the cache this effect keeps between frames.
+
+      Checked against the effect's OWN params rather than accepted as free
+      text, because the failure mode of a typo is silent and late: the state is
+      never invalidated, the plugin keeps returning frames derived from a stale
+      analysis, and the author finds out from a user's render.
+    */
+    let invalidateOn: string[] | undefined;
+    if (entry.invalidateOn !== undefined) {
+      if (gateField('invalidateOn', at, options.apiVersion, errors)) return;
+      const raw = entry.invalidateOn;
+      if (!Array.isArray(raw) || raw.some((n) => typeof n !== 'string')) {
+        errors.push(`"${at}.invalidateOn" must be an array of parameter names.`);
+        return;
+      }
+      const unknown = (raw as string[]).filter((n) => !(n in params));
+      if (unknown.length > 0) {
+        errors.push(
+          `"${at}.invalidateOn" names ${unknown.map((n) => `"${n}"`).join(', ')}, which `
+          + `${unknown.length === 1 ? 'is not a parameter' : 'are not parameters'} of this effect. `
+          + `A name that matches nothing is a cache that never invalidates.`,
+        );
+        return;
+      }
+      if (raw.length > 0) invalidateOn = [...new Set(raw as string[])];
+    }
+
+    /*
+      Which params the plugin wants to hear about. Same validation as
+      `invalidateOn` and for the same reason: a name that matches nothing is a
+      callback that never fires, which is indistinguishable from a plugin that
+      simply does not work.
+    */
+    let supervises: string[] | undefined;
+    if (entry.supervises !== undefined) {
+      if (gateField('supervises', at, options.apiVersion, errors)) return;
+      const raw = entry.supervises;
+      if (!Array.isArray(raw) || raw.some((n) => typeof n !== 'string')) {
+        errors.push(`"${at}.supervises" must be an array of parameter names.`);
+        return;
+      }
+      const unknown = (raw as string[]).filter((n) => !(n in params));
+      if (unknown.length > 0) {
+        errors.push(
+          `"${at}.supervises" names ${unknown.map((n) => `"${n}"`).join(', ')}, which `
+          + `${unknown.length === 1 ? 'is not a parameter' : 'are not parameters'} of this effect. `
+          + `A name that matches nothing is a callback that never fires.`,
+        );
+        return;
+      }
+      if (raw.length > 0) supervises = [...new Set(raw as string[])];
+    }
+
     out.push({
       id, label, shader, params,
       ...(glsl ? { glsl } : {}),
@@ -1027,6 +1124,8 @@ export function parseEffects(
       ...(identity ? { identity } : {}),
       ...(threadSafety ? { threadSafety } : {}),
       ...(frames ? { frames } : {}),
+      ...(invalidateOn ? { invalidateOn } : {}),
+      ...(supervises ? { supervises } : {}),
       ...(tier !== 'standard' ? { limits: tier } : {}),
     });
   });

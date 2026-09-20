@@ -358,4 +358,23 @@ export default tseslint.config(
     },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },
+  {
+    // A plugin's CPU kernel. NOT a Node module and NOT an ES module.
+    //
+    // The host hands the source to a sandboxed evaluator with an `exports`
+    // object injected, and reads `exports.render` back off it — that contract
+    // is in docs/PLUGINS.md and `effectSchema.ts`, and it is the only spelling
+    // the loader accepts. So `exports` here is a real global that genuinely
+    // exists at runtime; it was simply undeclared, and `no-undef` was right to
+    // say so and wrong about what to conclude.
+    //
+    // Declared rather than silenced. Turning `no-undef` off for these files
+    // would also stop it catching a kernel that reaches for `window` or
+    // `require` — neither of which the sandbox has, and both of which are the
+    // mistake this rule should still catch here.
+    files: ['examples/plugins/*/kernels/**/*.js'],
+    languageOptions: {
+      globals: { exports: 'writable' },
+    },
+  },
 );

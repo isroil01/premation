@@ -1,0 +1,172 @@
+/**
+ * The welcome step's own pieces.
+ *
+ * Everything shared with the sign-in screens — the card, the grid backdrop, the
+ * primary button, the error alert — comes from `AuthPage.module.css`, because
+ * this screen is the last panel of that flow and a second card that is almost
+ * the same card is how two screens start drifting apart. Only the radio list
+ * lives here; nothing else on the platform looks like it.
+ */
+
+/**
+ * Wider than the sign-in card.
+ *
+ * The options are full sentences ("ChatGPT, Claude or another AI assistant"),
+ * and at 420px the longest of them wrap onto a second line. A list where some
+ * rows are one line and some are two reads as a list with structure it does not
+ * have, and the eye spends its first pass working out what the grouping means.
+ */
+.card {
+  max-width: 520px;
+}
+
+/* A fieldset for the grouping semantics, with none of its chrome. */
+.fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.legend {
+  padding: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/**
+ * One option.
+ *
+ * A row, not a card: eight stacked cards is a wall, and the thing being chosen
+ * here is a line of text. The hit target is the whole row rather than the dot —
+ * a radio you have to aim at is the classic way to make a one-tap question feel
+ * like work.
+ */
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-0);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
+    background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.option:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-hover);
+}
+
+/**
+ * Selected: a tint and a border, never a saturated fill.
+ *
+ * A filled row would put this label on the accent colour, and `--color-primary`
+ * is tuned to carry white text rather than to be read against. The tint keeps
+ * the label on the same ink it had a moment ago, which is also why the row does
+ * not appear to change meaning when it is chosen.
+ */
+.optionActive {
+  border-color: var(--color-primary);
+  background: var(--color-primary-subtle);
+}
+
+/** In the tree for the keyboard and the screen reader; never drawn. */
+.radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.optionMark {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border-strong);
+  display: grid;
+  place-items: center;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.optionActive .optionMark {
+  border-color: var(--color-primary);
+}
+
+.optionDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  transform: scale(0);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.optionActive .optionDot {
+  transform: scale(1);
+}
+
+/**
+ * The focus ring goes on the ROW, because the input it belongs to is visually
+ * hidden. Without this the keyboard path through eight options is invisible.
+ */
+.radio:focus-visible + .optionMark {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.optionIcon {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+.optionActive .optionIcon {
+  color: var(--color-primary-text);
+}
+
+.optionLabel {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+  line-height: 1.4;
+}
+
+.otherField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.otherHint {
+  margin: 0;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .option,
+  .optionMark,
+  .optionDot {
+    transition: none;
+  }
+}

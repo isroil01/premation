@@ -1,8 +1,10 @@
 # Example plugins
 
-Two working plugins, and the reason there are two: they solve the same problem —
-depth from a flat image — from opposite ends of the API, and the trade between
-them is the interesting part.
+Three working plugins.
+
+The first two solve the same problem — depth from a flat image — from opposite
+ends of the API, and the trade between them is the interesting part. The third
+is about the surfaces that let an effect be more than a row of sliders.
 
 | | Depth Stack | Parallax 3D |
 |---|---|---|
@@ -14,6 +16,26 @@ them is the interesting part.
 | Cost | One full-size RGBA allocation per card | Four texture samples per pixel |
 | Reversible | Delete the layers | Delete the effect |
 | Renderer | Any | **WebGPU only** — passthrough on WebGL2 |
+
+## Grade Lab
+
+A film grade with presets, and the air EQ to go under it. One package, three
+things that were not possible before API 7/8:
+
+| | What it shows |
+|---|---|
+| **Param supervision** | Pick a preset and the sliders under it move. `supervises: ["preset"]` in the manifest, `motion.effects.onParamChanged` in `main.js`. This is AE's `PF_Cmd_USER_CHANGED_PARAM`. |
+| **Sequence data** | The CPU kernel builds its lookup table once per *quality* setting rather than once per frame. `invalidateOn: ["quality"]` is the manifest telling the host what busts that cache. |
+| **Audio effects** | An `air` EQ declared as a node chain — two shelves, each gain driven by a parameter. No code at all, and it works in preview and in export because the same builder wires both. |
+
+It also ships a **CPU twin** of its shader, which is what keeps the grade alive
+when a layer is baked (a mask-scoped effect beside it, fill opacity, a
+path-following style). Note the export shape: `exports.render = …`, not ESM —
+a kernel is evaluated with `new Function`, which has no module semantics.
+
+`src/core/plugins/exampleGradeLab.test.ts` loads this exact folder through the
+real host, so if the example drifts from the API it goes red rather than
+quietly becoming wrong advice.
 
 ## Installing
 

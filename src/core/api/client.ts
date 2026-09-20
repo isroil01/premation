@@ -153,12 +153,71 @@ export interface AccountRecord {
    */
   access: CloudAccess;
   emailVerified: boolean;
+  /**
+   * Whether to put the "how did you hear about us" question on screen.
+   *
+   * Decided on the server, never derived here. The rule has two halves — the
+   * address is verified AND the question is unanswered — and only one of them
+   * is visible on this object. A client that reimplemented it would be a second
+   * opinion about when to interrupt someone, and the two would disagree the
+   * first time either moved.
+   */
+  needsSignupSource: boolean;
+  signupSource: SignupSource | null;
   trialEndsAt: string | null;
   storageBytes: number;
   assetCount: number;
   projectCount: number;
   createdAt: string;
 }
+
+/**
+ * The acquisition channels the server will accept.
+ *
+ * A closed set, mirroring the Prisma enum: free text alone produces a column
+ * nobody can group by, because "youtube", "YouTube" and "a video" are one
+ * channel and three answers. `other` is the escape hatch and the only variant
+ * that carries prose with it.
+ */
+/** Where a review is in the moderation queue. */
+export type ReviewStatus = 'pending' | 'published' | 'rejected';
+
+/** What the author wrote. `authorName` defaults to the account name server-side. */
+export interface ReviewDraft {
+  rating: number;
+  title?: string;
+  body: string;
+  authorName?: string;
+  authorRole?: string;
+}
+
+/** The signed-in account's own review, and whether the prompt is owed. */
+export interface MyReview {
+  review: {
+    id: string;
+    rating: number;
+    title: string | null;
+    body: string;
+    status: ReviewStatus;
+  } | null;
+  promptedAt: string | null;
+  /**
+   * Decided on the server. It depends on verification, on whether this account
+   * has been asked on ANY machine, and on whether a review already exists —
+   * three terms, only one of which a client can see.
+   */
+  shouldPrompt: boolean;
+}
+
+export type SignupSource =
+  | 'google'
+  | 'ai_assistant'
+  | 'youtube'
+  | 'social'
+  | 'friend'
+  | 'article'
+  | 'forum'
+  | 'other';
 
 /**
  * A project as the list needs it — the comp facts included, so a card can show
@@ -884,6 +943,52 @@ export const api = {
     ).then(tap(['billing', 'account'])),
   resendVerification: () =>
     request<{ sent: true }>('/auth/verify-email/resend', { method: 'POST' }),
+
+  // reviews — the customer's own review, and whether to ask for one.
+  /**
+   * "Have I written one, and should you be asking me?"
+   *
+   * `shouldPrompt` is the server's decision, not a local one: it depends on
+   * verification, on whether this account has already been asked ON ANY
+   * machine, and on whether a review exists. A dismissal kept in local storage
+   * is a dismissal that expires at the next reinstall.
+   */
+  myReview: (opts: { force?: boolean } = {}) =>
+    cachedGet<MyReview>('/reviews/me', { tags: ['review'], force: opts.force }),
+  /**
+   * Submit or, while it is still pending, edit.
+   *
+   * Taps 'review' so the prompt state is re-read rather than remembered — the
+   * server stamps "asked" as part of accepting this, and the UI must not have
+   * to duplicate that rule to stop asking.
+   */
+  submitReview: (review: ReviewDraft) =>
+    request<{ id: string; status: ReviewStatus }>('/reviews', {
+      method: 'POST',
+      body: JSON.stringify(review),
+    }).then(tap(['review'])),
+  /** "Not now" — recorded server-side so it is honoured everywhere they sign in. */
+  dismissReviewPrompt: () =>
+    request<{ promptedAt: string }>('/reviews/dismiss', { method: 'POST' }).then(
+      tap(['review']),
+    ),
+
+  /**
+   * Answer "how did you hear about us".
+   *
+   * `other` carries the write-in and every other variant must not — the server
+   * refuses both halves of that rule, because a write-in attached to a counted
+   * channel quietly turns the closed set back into an open one.
+   *
+   * Taps 'account' so the cached /auth/me drops: it carries
+   * `needsSignupSource`, and without the tap the question returns on the next
+   * read and asks again for something just answered.
+   */
+  setSignupSource: (source: SignupSource, other?: string) =>
+    request<{ signupSource: SignupSource }>('/auth/signup-source', {
+      method: 'POST',
+      body: JSON.stringify(other === undefined ? { source } : { source, other }),
+    }).then(tap(['account'])),
 
   // ai — the backend is the gateway. Keys are stored server-side (encrypted;
   // only {present, hint} ever comes back) and model calls stream through

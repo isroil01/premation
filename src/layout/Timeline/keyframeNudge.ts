@@ -1,10 +1,22 @@
 /**
  * Arrow-key keyframe nudging.
  *
- *   ← / →          one frame earlier / later
- *   Shift + ← / →  ten frames
- *   Alt + ↑ / ↓    value ±1
- *   Alt+Shift ↑/↓  value ±10
+ *   ← / →              one frame earlier / later
+ *   Shift + ← / →      ten frames
+ *   Ctrl/Cmd + ← / →   a TENTH of a frame — sub-frame, for audio sync
+ *   Alt + ↑ / ↓        value ±1
+ *   Alt+Shift ↑/↓      value ±10
+ *
+ * The sub-frame step exists because keyframe times are continuous — the engine
+ * compares them at 1e-9 and the renderer samples between frames for motion
+ * blur — but every gesture that moved a key quantized to the frame grid, so a
+ * time between two frames was reachable by nothing at all. Landing a hit on a
+ * transient that falls 4ms after a frame boundary was therefore impossible,
+ * and the workaround was to change the comp frame rate.
+ *
+ * A tenth of a frame (3.3ms at 30fps) is the step because it is fine enough to
+ * beat human audio-sync perception (~10ms) and coarse enough that ten presses
+ * is one frame, which keeps the relationship between the two steps legible.
  *
  * A burst of presses is ONE undo step: holding → for a second moves the key
  * thirty frames and should cost one Ctrl+Z, not thirty. The batcher applies
@@ -19,6 +31,12 @@ import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 
 export const NUDGE_BATCH_MS = 300;
 
+/**
+ * Presses per frame for the sub-frame nudge. Ten, so the fine and coarse steps
+ * are related by a round number the user can count.
+ */
+export const SUBFRAME_NUDGE_DIVISIONS = 10;
+
 export interface NudgeDelta {
   /** Seconds, on the comp axis. */
   dt: number;
@@ -29,19 +47,26 @@ export interface NudgeDelta {
 /** What a key means, or null when it is not a nudge. */
 export function nudgeForKey(
   key: string,
-  mods: { shift: boolean; alt: boolean },
+  mods: { shift: boolean; alt: boolean; meta?: boolean },
   frameDuration: number,
 ): NudgeDelta | null {
-  const step = mods.shift ? 10 : 1;
+  // Ctrl/Cmd goes FINE, Shift goes coarse. Both together is read as fine: the
+  // two are the same axis, and a "ten sub-frames" step is just one frame,
+  // which the unmodified key already does.
+  const fine = mods.meta === true;
+  const timeStep = fine
+    ? frameDuration / SUBFRAME_NUDGE_DIVISIONS
+    : (mods.shift ? 10 : 1) * frameDuration;
+  const valueStep = mods.shift ? 10 : 1;
   switch (key) {
     case 'ArrowLeft':
-      return mods.alt ? null : { dt: -step * frameDuration, dv: 0 };
+      return mods.alt ? null : { dt: -timeStep, dv: 0 };
     case 'ArrowRight':
-      return mods.alt ? null : { dt: step * frameDuration, dv: 0 };
+      return mods.alt ? null : { dt: timeStep, dv: 0 };
     case 'ArrowUp':
-      return mods.alt ? { dt: 0, dv: step } : null;
+      return mods.alt ? { dt: 0, dv: valueStep } : null;
     case 'ArrowDown':
-      return mods.alt ? { dt: 0, dv: -step } : null;
+      return mods.alt ? { dt: 0, dv: -valueStep } : null;
     default:
       return null;
   }
