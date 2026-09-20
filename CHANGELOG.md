@@ -3,6 +3,45 @@
 Newest first. Each entry is what a person opening the app after an update
 would want to know; the engine-level detail is in `ROADMAP.md`.
 
+## 0.8.5 — 2026-09-20
+
+Open an After Effects project, and a plugin publishing screen that is no
+longer a pop-up.
+
+- **After Effects projects open directly.** `File ▸ Open` now takes `.aep` and
+  `.aepx`: compositions, layers and their parenting, transforms with their
+  keyframes and easing, masks, text with its font and tracking, and effects
+  matched by name. Footage is relinked by filename where it can be found and
+  clearly listed where it cannot, so a project with missing media still opens
+  and tells you exactly what to point at. The import report says what came
+  across and what did not — nothing is silently dropped.
+- **Publishing a plugin has a real workspace.** It used to be a single modal
+  with the namespace claim, every listing and the upload form stacked inside
+  it. It is now a proper screen: your listings down one side, the one you are
+  editing beside them with its own tabs for details, media, guide and
+  changelog, a save bar that appears only when something is unsaved, and a
+  withdraw dialog that offers "make it private instead" rather than making
+  removal the only exit. Your signing key still never touches the app — the
+  system file prompt hands it straight to the signer.
+- **The cloud dashboard reads like a tool.** The clearest fix: the row you had
+  selected was the hardest one to read. Selected items in the sidebar sat at
+  2.80:1 contrast against 7.36:1 for everything else, so the page you were on
+  was the one you could not see. Selection now reads at 4.73:1 and is pinned
+  by a test in all three themes. Alongside that: the format filter is a
+  segmented control instead of an operating-system dropdown that ignored the
+  dark theme, the search field stopped resizing itself and shoving the control
+  beside it, render rows show progress only while something is actually
+  rendering and show the failure reason inline when it is not, and the empty
+  Assets and Trash screens offer the action instead of describing the buttons
+  above them.
+- **Timeline editing in bulk.** Select a range of clips, drag a whole group as
+  one bar, stagger a selection (including a zigzag), zoom anchored to the
+  pointer rather than the playhead, and nudge by less than a frame.
+- **Two small asks.** Once your email is confirmed the app asks, once, how you
+  found it — and once you have made something it asks how it is going. Both
+  are remembered on your account, so declining is honoured on every machine
+  you sign in on rather than coming back after a reinstall.
+
 ## 0.8.3 — 2026-09-14
 
 Text that reads like After Effects set it, and a batch of shape and render
