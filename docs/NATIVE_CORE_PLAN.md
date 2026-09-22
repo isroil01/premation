@@ -170,7 +170,7 @@ in parallel.
 | A2 | Safe saves, one undo history | done |
 | A3 | Isolated export process + raw pipe | done, verified in the real app |
 | A4 | C++ toolchain, C ABI, `motion_eval` | done; bit-exact on 5 of 6 CI targets |
-| A5 | Windows CI green; C++ toolchain on the dev machine (needs the owner's OK to install) | in progress |
+| A5 | Windows CI green; C++ toolchain on the dev machine | **done** — all six CI targets green (Windows clang-cl, macOS, Linux, ASan/UBSan, TSan, WASM); local build + tests + N-API smoke pass |
 
 ### Phase B — The seam: every UI change goes through the engine API (TypeScript, no C++ needed)
 
@@ -220,9 +220,9 @@ in parallel.
 
 | Step | What | Exit | Size |
 |---|---|---|---|
-| G1 | Native plugin SDK: published C ABI, GPU texture handoff, per-plugin crash isolation | A sample native GPU effect loads, renders, and survives its own crash | 6 wk |
-| G2 | Decide the path for today's JavaScript kernel plugins: an embedded JS runtime in the engine, or a texture round-trip to a sandboxed worker | Decision recorded; existing plugins keep working | 3 wk |
-| G3 | AE-SDK compatibility shim — a separate product decision after G1 | — | later |
+| G1 | **After Effects-style native plugin SDK.** Modelled on the AE effect API: a single entry point dispatching command selectors (about, global setup, params setup, sequence setup/resetup/flatten, frame setup, render, smart pre-render + smart render, user-changed-param, update-params-UI, GPU device setup and GPU render); a declarative parameter model (sliders, angles, points 2D/3D, colours, popups, checkboxes, layers, paths, groups, arbitrary data) keyframeable by the engine; checkout of other layers and of input at other times; 8/16/32-bit float pixel worlds; a GPU path that hands the plugin Dawn/D3D12/Metal textures; sequence data for per-instance state. Loaded in the engine process with per-plugin crash isolation, a published versioned C ABI and headers, and a sample plugin set (a CPU effect, a GPU effect, a generator, a layer-checkout effect) | The samples load, render at 8/16/32-bit, animate their params, survive their own crash, and export identically to preview | 8–10 wk |
+| G2 | **Decided (owner, 2026-09-22): today's JavaScript/WGSL plugin system is not ported.** Existing installed plugins are left untouched and may be removed; the native SDK is the plugin system of the C++ engine | — | done |
+| G3 | AE-SDK compatibility shim (loading real AE `.aex`/`.plugin` binaries) — a separate product decision after G1; G1's API is shaped so it stays possible | — | later |
 
 ---
 
@@ -291,11 +291,15 @@ and C1 may change the viewport route.
 
 ---
 
-## 10. Decisions still needed from the owner
+## 10. Owner decisions (2026-09-22)
 
-1. Install the C++ toolchain on the dev machine (LLVM, CMake, Ninja, Visual
-   Studio Build Tools C++ workload, vcpkg, emsdk).
-2. Confirm the phase order, in particular that phase B (the API seam) starts
-   now in parallel with C1.
-3. After C1: accept the measured viewport route.
-4. Before G1: the JavaScript plugin strategy.
+1. **Toolchain:** approved and installed — Clang 23 (clang-cl), CMake 4.4,
+   Ninja, VS Build Tools C++ workload, vcpkg at the pinned baseline beside the
+   repo. Future toolchain installs need no confirmation.
+2. **Order:** phase B starts now in parallel with C1.
+3. **Target and scope:** After Effects level, everything in this plan.
+4. **Plugins:** an After Effects-style native SDK (G1); the JavaScript/WGSL
+   plugin system is not ported (G2).
+5. **Delivery:** all phases are built without stopping; local commits only on
+   `native-core`; no push and no release until the full product is ready.
+6. Still open, decided by measurement: the viewport route (C1).
