@@ -53,6 +53,14 @@ target_include_directories(motion_napi SYSTEM PRIVATE ${CMAKE_JS_INC} ${NODE_ADD
 target_compile_definitions(motion_napi PRIVATE NAPI_VERSION=8 NAPI_DISABLE_CPP_EXCEPTIONS)
 target_link_libraries(motion_napi PRIVATE motion::eval motion::options ${CMAKE_JS_LIB})
 
+# cmake-js links with /DELAYLOAD:NODE.EXE so the addon binds to whichever
+# host process loads it. MSVC's link.exe pulls in the delay-load helper
+# (__delayLoadHelper2) implicitly; LLVM's lld-link does not, and the first
+# Windows CI link failed on exactly that symbol. Name it.
+if(WIN32)
+  target_link_libraries(motion_napi PRIVATE delayimp.lib)
+endif()
+
 # Windows: Node/Electron resolve the addon's imports from the host executable
 # at load time; cmake-js hands us a .def to build the delay-load import lib.
 # MSVC's lib.exe is used for the /def step even under clang-cl (it is on PATH
