@@ -40,6 +40,7 @@ import type { PaintConfig } from '@core/paint/paintStrokes';
 type LightWash = NonNullable<RenderLayer['light']>;
 import { rasterPadding } from './raster/vectorDraw';
 import { layerSubpaths } from './raster/subpaths';
+import { pointsSignature } from './raster/pointsSignature';
 import { resolutionTier, paddingClass, continuousResolutionTier, RESOLUTION_TIERS, DEFAULT_MAX_RASTER_DIMENSION, rasterCacheKey } from '@motion/renderer';
 
 /**
@@ -840,8 +841,14 @@ const VIDEO_LOAD_STALL_MS = 6000;
  * baked pixels, in one string. Built per frame for every text layer that
  * misses the `RasterReuse` fast path — which is why it is a named function:
  * `src/core/perf/bench/rasterKey.bench.test.ts` times exactly this, and the
- * NATIVE_CORE_PLAN (T3) replaces its per-frame `JSON.stringify` calls with a
- * key memoised per node revision. Pure; `tier` is the caller's resolution tier.
+ * NATIVE_CORE_PLAN (T3) names its per-frame `JSON.stringify` calls as the cost
+ * to memoise. Measured before memoising (raster/pointsSignature.ts): none of
+ * this key's stringified parts — `effects`, `mask.paths`, `runs`, `glyphs`,
+ * `textPath`, `textExtras`, `fontAxes`, the paints — keeps object identity
+ * across frames (buildSnapshot resolves each from tracks into a fresh object),
+ * so a memo here would miss every frame; the T3 memo lives in the PATH key,
+ * whose point array is the scene's own. Pure; `tier` is the caller's
+ * resolution tier.
  */
 export function textRasterSignature(spec: TextSpec, tier: number): string {
   // Fill opacity changes the baked pixels, so it belongs in the cache key.
@@ -890,8 +897,12 @@ export function pathRasterSignature(layer: RenderLayer, tier: number): string {
   // different picture, and without this the second layer reuses the first's
   // texture — the same failure the run boundary above prevents, but with
   // matching geometry, so nothing else in the key would catch it.
+  // The point list is the expensive term and the one that keeps its identity
+  // frame to frame (a static outline is the scene's own array), so it is
+  // memoised by identity + content hash in raster/pointsSignature.ts — same
+  // bytes, formatted once per distinct array instead of once per frame.
   const ptsSig = layerSubpaths(layer)
-    .map((s) => `${s.open ? 'o' : 'c'}:${s.paint ? JSON.stringify(s.paint) : ''}:${s.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|')}`)
+    .map((s) => `${s.open ? 'o' : 'c'}:${s.paint ? JSON.stringify(s.paint) : ''}:${pointsSignature(s.points)}`)
     .join('//');
   const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
   const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';
