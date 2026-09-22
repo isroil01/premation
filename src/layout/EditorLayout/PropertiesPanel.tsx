@@ -68,7 +68,7 @@ import { getEventBus } from '@core/events/EventBus';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { useNodesRevision } from '@core/inspector/nodeRevision';
+import { useNodesRevision } from '@hooks/useNodeRevision';
 import { InspectorContent } from '@layout/Inspector/InspectorContent';
 import { InspectorSelectionProvider } from '@layout/Inspector/inspectorSelection';
 import {

@@ -25,9 +25,14 @@
  *
  * Once installed the pair is cached (`samModelCache.ts`) and restored at boot
  * with no network at all.
+ *
+ * ── Where the state lives ──────────────────────────────────────────────
+ * This module does the work and reports through a `(status) => void`
+ * callback; the zustand store the UI subscribes to is
+ * `@stores/samModelStore`. `src/core` does not import zustand
+ * (docs/NATIVE_CORE_PLAN.md §4 T0).
  */
 
-import { create } from 'zustand';
 import { ModelCache, SAM_MODEL_KEY, type CachedModel } from './samModelCache';
 import { tryRegisterSamPipeline, unregisterSamOnnx } from './samOnnxLoader';
 
@@ -60,18 +65,6 @@ export type ModelStatus =
    *  installing a custom model overrides it for the session. */
   | { kind: 'bundled'; bytes: number }
   | { kind: 'failed'; message: string };
-
-interface SamModelState {
-  status: ModelStatus;
-  /** Restore a cached pair and register it. Safe to call repeatedly. */
-  restore: () => Promise<void>;
-  /** Fetch, cache and register. Rejects nothing — the status carries failure. */
-  install: (encoderUrl: string, decoderUrl: string) => Promise<void>;
-  /** Forget the cached model and unregister the session. */
-  remove: () => Promise<void>;
-  /** Abort a download in flight. */
-  cancel: () => void;
-}
 
 let inFlight: AbortController | null = null;
 
@@ -226,158 +219,138 @@ function checkUrls(encoderUrl: string, decoderUrl: string): string | null {
   return null;
 }
 
-export const useSamModelStore = create<SamModelState>((set) => ({
-  status: { kind: 'absent' },
+/** How the install flow reports: every state change goes through here. */
+export type StatusReporter = (status: ModelStatus) => void;
 
-  async restore() {
-    const cached = await ModelCache.get();
-    if (!cached) return;
-    if (!cached.decoderData) {
-      // A record from before the install flow spoke the real SAM protocol: one
-      // file, loadable only by the legacy naive wrapper, which no published SAM
-      // export answers. Registering it would look like success while every
-      // click fell through — worse, it would take precedence over the bundled
-      // pair that actually works. Reported, not deleted: discarding someone's
-      // download is not this module's decision to make.
+/** Restore a cached pair and register it. Safe to call repeatedly. */
+export async function restoreSamModel(set: StatusReporter): Promise<void> {
+  const cached = await ModelCache.get();
+  if (!cached) return;
+  if (!cached.decoderData) {
+    // A record from before the install flow spoke the real SAM protocol: one
+    // file, loadable only by the legacy naive wrapper, which no published SAM
+    // export answers. Registering it would look like success while every
+    // click fell through — worse, it would take precedence over the bundled
+    // pair that actually works. Reported, not deleted: discarding someone's
+    // download is not this module's decision to make.
+    set({
+      kind: 'failed',
+      message:
+        'The installed model is a single file from an earlier version, which the segmenter '
+        + 'no longer uses. Install again to fetch an encoder/decoder pair.',
+    });
+    return;
+  }
+  const [encoder, decoder] = await Promise.all([
+    cached.data.arrayBuffer().then((b) => new Uint8Array(b)),
+    cached.decoderData.arrayBuffer().then((b) => new Uint8Array(b)),
+  ]);
+  const result = await tryRegisterSamPipeline(encoder, decoder);
+  if (result.status === 'ok') {
+    set(statusFor(cached));
+    return;
+  }
+  // Cached but unusable — a runtime that is no longer installed, or a model
+  // this build cannot read. Reported rather than silently discarded, for the
+  // same reason as above.
+  set({ kind: 'failed', message: result.reason });
+}
+
+/** Fetch, cache and register. Rejects nothing — the status carries failure. */
+export async function installSamModel(encoderUrl: string, decoderUrl: string, set: StatusReporter): Promise<void> {
+  const encTrimmed = encoderUrl.trim();
+  const decTrimmed = decoderUrl.trim();
+  const refusal = checkUrls(encTrimmed, decTrimmed);
+  if (refusal) {
+    set({ kind: 'failed', message: refusal });
+    return;
+  }
+
+  inFlight?.abort();
+  const controller = new AbortController();
+  inFlight = controller;
+  set({ kind: 'downloading', receivedBytes: 0, totalBytes: null });
+
+  try {
+    // One progress envelope across both files. The combined total is only
+    // claimed once both are known — a percentage over half the bytes would
+    // be a lie, so until then the UI shows megabytes received.
+    let encReceived = 0;
+    let encTotal: number | null = null;
+    let decReceived = 0;
+    let decTotal: number | null = null;
+    const report = (): void =>
       set({
-        status: {
-          kind: 'failed',
-          message:
-            'The installed model is a single file from an earlier version, which the segmenter '
-            + 'no longer uses. Install again to fetch an encoder/decoder pair.',
-        },
-      });
-      return;
-    }
-    const [encoder, decoder] = await Promise.all([
-      cached.data.arrayBuffer().then((b) => new Uint8Array(b)),
-      cached.decoderData.arrayBuffer().then((b) => new Uint8Array(b)),
-    ]);
-    const result = await tryRegisterSamPipeline(encoder, decoder);
-    if (result.status === 'ok') {
-      set({ status: statusFor(cached) });
-      return;
-    }
-    // Cached but unusable — a runtime that is no longer installed, or a model
-    // this build cannot read. Reported rather than silently discarded, for the
-    // same reason as above.
-    set({ status: { kind: 'failed', message: result.reason } });
-  },
-
-  async install(encoderUrl, decoderUrl) {
-    const encTrimmed = encoderUrl.trim();
-    const decTrimmed = decoderUrl.trim();
-    const refusal = checkUrls(encTrimmed, decTrimmed);
-    if (refusal) {
-      set({ status: { kind: 'failed', message: refusal } });
-      return;
-    }
-
-    inFlight?.abort();
-    const controller = new AbortController();
-    inFlight = controller;
-    set({ status: { kind: 'downloading', receivedBytes: 0, totalBytes: null } });
-
-    try {
-      // One progress envelope across both files. The combined total is only
-      // claimed once both are known — a percentage over half the bytes would
-      // be a lie, so until then the UI shows megabytes received.
-      let encReceived = 0;
-      let encTotal: number | null = null;
-      let decReceived = 0;
-      let decTotal: number | null = null;
-      const report = (): void =>
-        set({
-          status: {
-            kind: 'downloading',
-            receivedBytes: encReceived + decReceived,
-            totalBytes: encTotal !== null && decTotal !== null ? encTotal + decTotal : null,
-          },
-        });
-
-      const encoder = await fetchModelBytes(encTrimmed, controller.signal, (received, total) => {
-        encReceived = received;
-        encTotal = total;
-        report();
-      });
-      encReceived = encoder.byteLength;
-      encTotal = encoder.byteLength;
-      const decoder = await fetchModelBytes(decTrimmed, controller.signal, (received, total) => {
-        decReceived = received;
-        decTotal = total;
-        report();
+        kind: 'downloading',
+        receivedBytes: encReceived + decReceived,
+        totalBytes: encTotal !== null && decTotal !== null ? encTotal + decTotal : null,
       });
 
-      if (!looksLikeOnnx(encoder)) {
-        throw new Error('The encoder URL did not return an ONNX model — check it points at the .onnx file itself.');
-      }
-      if (!looksLikeOnnx(decoder)) {
-        throw new Error('The decoder URL did not return an ONNX model — check it points at the .onnx file itself.');
-      }
+    const encoder = await fetchModelBytes(encTrimmed, controller.signal, (received, total) => {
+      encReceived = received;
+      encTotal = total;
+      report();
+    });
+    encReceived = encoder.byteLength;
+    encTotal = encoder.byteLength;
+    const decoder = await fetchModelBytes(decTrimmed, controller.signal, (received, total) => {
+      decReceived = received;
+      decTotal = total;
+      report();
+    });
 
-      const registered = await tryRegisterSamPipeline(encoder, decoder);
-      if (registered.status !== 'ok') {
-        // NOT cached on failure. Keeping bytes that cannot be loaded would give
-        // every future boot a "failed" state to report over files nothing can
-        // use, which is worse than having to download again.
-        throw new Error(registered.reason);
-      }
-
-      // Copied into fresh ArrayBuffers: a Uint8Array can be backed by a
-      // SharedArrayBuffer, which Blob does not accept, and the copy is also
-      // what detaches the cached bytes from the download buffers.
-      const asBlob = (bytes: Uint8Array): Blob =>
-        new Blob([new Uint8Array(bytes).buffer as ArrayBuffer], { type: 'application/octet-stream' });
-      const model: CachedModel = {
-        id: SAM_MODEL_KEY,
-        data: asBlob(encoder),
-        sourceUrl: encTrimmed,
-        decoderData: asBlob(decoder),
-        decoderUrl: decTrimmed,
-        installedAt: Date.now(),
-        bytes: encoder.byteLength + decoder.byteLength,
-      };
-      await ModelCache.put(model);
-      set({ status: statusFor(model) });
-    } catch (err) {
-      const aborted = err instanceof DOMException && err.name === 'AbortError';
-      set({
-        status: aborted
-          ? { kind: 'absent' }
-          : { kind: 'failed', message: err instanceof Error ? err.message : String(err) },
-      });
-    } finally {
-      if (inFlight === controller) inFlight = null;
+    if (!looksLikeOnnx(encoder)) {
+      throw new Error('The encoder URL did not return an ONNX model — check it points at the .onnx file itself.');
     }
-  },
+    if (!looksLikeOnnx(decoder)) {
+      throw new Error('The decoder URL did not return an ONNX model — check it points at the .onnx file itself.');
+    }
 
-  async remove() {
-    inFlight?.abort();
-    unregisterSamOnnx();
-    await ModelCache.remove();
-    set({ status: { kind: 'absent' } });
-  },
+    const registered = await tryRegisterSamPipeline(encoder, decoder);
+    if (registered.status !== 'ok') {
+      // NOT cached on failure. Keeping bytes that cannot be loaded would give
+      // every future boot a "failed" state to report over files nothing can
+      // use, which is worse than having to download again.
+      throw new Error(registered.reason);
+    }
 
-  cancel() {
-    inFlight?.abort();
-  },
-}));
+    // Copied into fresh ArrayBuffers: a Uint8Array can be backed by a
+    // SharedArrayBuffer, which Blob does not accept, and the copy is also
+    // what detaches the cached bytes from the download buffers.
+    const asBlob = (bytes: Uint8Array): Blob =>
+      new Blob([new Uint8Array(bytes).buffer as ArrayBuffer], { type: 'application/octet-stream' });
+    const model: CachedModel = {
+      id: SAM_MODEL_KEY,
+      data: asBlob(encoder),
+      sourceUrl: encTrimmed,
+      decoderData: asBlob(decoder),
+      decoderUrl: decTrimmed,
+      installedAt: Date.now(),
+      bytes: encoder.byteLength + decoder.byteLength,
+    };
+    await ModelCache.put(model);
+    set(statusFor(model));
+  } catch (err) {
+    const aborted = err instanceof DOMException && err.name === 'AbortError';
+    set(
+      aborted
+        ? { kind: 'absent' }
+        : { kind: 'failed', message: err instanceof Error ? err.message : String(err) },
+    );
+  } finally {
+    if (inFlight === controller) inFlight = null;
+  }
+}
 
-/**
- * Restore a cached model at boot, if there is one.
- *
- * Fire-and-forget and completely silent when nothing is cached: a build that
- * has never installed a model must not pay for this, log about it, or touch the
- * network because of it.
- */
-export function restoreSamModelAtBoot(): Promise<void> {
-  return ModelCache.get()
-    .then((cached) => {
-      if (cached) return useSamModelStore.getState().restore();
-      return undefined;
-    })
-    // The boot sequence awaits this to decide whether the bundled model should
-    // load instead; a cache read that throws must answer "no user model", not
-    // reject the whole chain.
-    .catch(() => undefined);
+/** Forget the cached model and unregister the session. */
+export async function removeSamModel(set: StatusReporter): Promise<void> {
+  inFlight?.abort();
+  unregisterSamOnnx();
+  await ModelCache.remove();
+  set({ kind: 'absent' });
+}
+
+/** Abort a download in flight. */
+export function cancelSamDownload(): void {
+  inFlight?.abort();
 }

@@ -31,7 +31,7 @@
  */
 
 import { useEffect } from 'react';
-import { useUpdateStore } from './updateStore';
+import { useUpdateStore } from '@stores/updateStore';
 import type { UpdateStatus } from '@app-types/motionEditor';
 
 /** The bridge, or null in a browser build where there is nothing to update. */

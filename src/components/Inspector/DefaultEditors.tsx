@@ -1,4 +1,4 @@
-import { propertyRegistry } from '@core/inspector/PropertyRegistry';
+import { propertyRegistry } from './PropertyRegistry';
 import { Input } from '@components/Input';
 import { Switch } from '@components/Switch/Switch';
 import { ValueField } from '@components/ValueField';

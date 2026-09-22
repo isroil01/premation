@@ -33,7 +33,8 @@ jest.mock('./samModelCache', () => ({
   },
 }));
 
-import { looksLikeOnnx, restoreSamModelAtBoot, useSamModelStore } from './samModelInstall';
+import { looksLikeOnnx } from './samModelInstall';
+import { restoreSamModelAtBoot, useSamModelStore } from '@stores/samModelStore';
 
 /** A minimal byte string that passes the ONNX sniff (protobuf field 1). */
 const ONNX_BYTES = new Uint8Array([0x08, 0x07, ...new Array(30).fill(0)]);

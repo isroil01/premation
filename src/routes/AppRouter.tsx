@@ -21,7 +21,7 @@ import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { RequireAuth } from './RequireAuth';
 import { TitleBar } from '@layout/TitleBar/TitleBar';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
-import { useAutoUpdate } from '@core/update/useAutoUpdate';
+import { useAutoUpdate } from '@hooks/useAutoUpdate';
 import { applyPasteboardColor } from '@core/theme/pasteboard';
 import { applyAccentColor } from '@core/theme/accent';
 import { useOAuthDeepLink } from '@hooks/useOAuthDeepLink';

@@ -79,8 +79,8 @@ import type { HistoryService } from '@core/commands/HistoryService';
 import { useHistoryStore } from '@stores/historyStore';
 import { runAsOneHistoryEntry } from '@core/composition/compositeEdit';
 import { getTimelineController, compToKeyframeTime } from './TimelineController';
+import { useTransitionStore } from '@stores/transitionStore';
 import {
-  useTransitionStore,
   newTransitionId,
   TRANSITION_LABEL,
   DEFAULT_TRANSITION_FRAMES,
@@ -88,26 +88,27 @@ import {
   type TransitionKind,
   type TransitionAlignment,
   type TransitionSnapshot,
-} from './transitionStore';
+} from './transitionModel';
 
-// The record and its store live one module down, at the leaf, so that
-// `cloudDocument` can read them without closing an import cycle through
-// `compositeEdit` — see `transitionStore.ts`. Re-exported here so callers only
-// ever have to know about `transitions.ts`.
+// The record lives one module down, at the leaf (`transitionModel.ts`), and
+// its store in `@stores/transitionStore`, so that `cloudDocument` can read
+// them without closing an import cycle through `compositeEdit` — see the
+// store's module doc. Re-exported here so callers only ever have to know
+// about `transitions.ts`.
+export { useTransitionStore } from '@stores/transitionStore';
 export {
-  useTransitionStore,
   newTransitionId,
   TRANSITION_LABEL,
   TRANSITION_SHORT,
   TRANSITION_KINDS,
   DEFAULT_TRANSITION_FRAMES,
-} from './transitionStore';
+} from './transitionModel';
 export type {
   TransitionRecord,
   TransitionKind,
   TransitionAlignment,
   TransitionSnapshot,
-} from './transitionStore';
+} from './transitionModel';
 
 /** The two kinds that need the bars to OVERLAP; the dips do not. */
 export function transitionOverlaps(kind: TransitionKind): boolean {

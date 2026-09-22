@@ -1,4 +1,4 @@
-import type { ID } from '../types';
+import type { ID } from '@core/types';
 import type { ReactNode } from 'react';
 
 export type PropertyEditorRender = (params: {

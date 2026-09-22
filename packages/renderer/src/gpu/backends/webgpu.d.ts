@@ -71,12 +71,32 @@ interface GPURenderPassEncoder {
   end(): void;
 }
 
+interface GPUQuerySet {
+  readonly count: number;
+  destroy(): void;
+}
+
 interface GPUCommandEncoder {
   beginRenderPass(desc: Record<string, unknown>): GPURenderPassEncoder;
   copyTextureToBuffer(
     source: Record<string, unknown>,
     destination: Record<string, unknown>,
     copySize: Record<string, unknown>,
+  ): void;
+  copyBufferToBuffer(
+    source: GPUBuffer,
+    sourceOffset: number,
+    destination: GPUBuffer,
+    destinationOffset: number,
+    size: number,
+  ): void;
+  /** Write `queryCount` timestamp results from `firstQuery` into `destination` as u64 ns. */
+  resolveQuerySet(
+    querySet: GPUQuerySet,
+    firstQuery: number,
+    queryCount: number,
+    destination: GPUBuffer,
+    destinationOffset: number,
   ): void;
   finish(): GPUCommandBuffer;
 }
@@ -103,6 +123,8 @@ interface GPUDevice {
   createRenderPipeline(desc: Record<string, unknown>): GPURenderPipeline;
   createBindGroup(desc: Record<string, unknown>): GPUBindGroup;
   createCommandEncoder(desc?: Record<string, unknown>): GPUCommandEncoder;
+  /** Only valid when the device was created with the `timestamp-query` feature. */
+  createQuerySet(desc: { type: 'timestamp' | 'occlusion'; count: number; label?: string }): GPUQuerySet;
   destroy(): void;
   /**
    * Resolves — never rejects — when the device is lost.

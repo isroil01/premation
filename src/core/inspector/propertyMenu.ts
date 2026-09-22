@@ -27,7 +27,7 @@ import {
 } from '@core/animation/expressionCommands';
 import { keyframeToCompTime } from '@core/timeline/TimelineController';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { formatChord } from '@layout/Menu/formatChord';
+import { formatChord } from '@core/commands/formatChord';
 import type { KeyChord } from '@app-types/common';
 import { resolvePropertyMeta } from './propertyMeta';
 import { isPinnedProp, setPinnedProp } from './pinnedProps';

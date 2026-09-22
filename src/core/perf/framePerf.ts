@@ -14,9 +14,36 @@
  *   gpuSubmit      renderer.render — pass encoding and queue submit
  *   cacheReadback  copying a finished frame into the RAM preview
  *   total          the whole render tick, cache blits excluded
+ *   gpuTime        the GPU's OWN time for a frame's passes, from WebGPU
+ *                  timestamp queries (see below) — not a CPU stage at all
  *
  * Stages NEST where the code does: `textureFeed` contains `raster` and `bake`,
  * and `total` contains everything. They are not meant to sum.
+ *
+ * ## `gpuTime` lags
+ *
+ * Every other stage is measured on the CPU inside the frame it belongs to.
+ * `gpuTime` is read back from a mapped buffer once the GPU has finished the
+ * frame's command buffer, which is one to three frames AFTER that frame was
+ * submitted — and it arrives outside any open frame. `reportGpuTime` therefore
+ * attributes it to the most recently COMMITTED frame in the ring, so the
+ * `gpuTime` column of frame N usually holds the GPU time of frame N-1 or N-2.
+ * Over a rolling window that is the same distribution; per-frame it is off by
+ * the pipeline depth, and nothing should correlate it with the CPU columns of
+ * the same row. Frames with no readback hold 0 with a run count of 0, so
+ * `mean / perFrame` is the mean over frames that were measured.
+ *
+ * Only WebGPU with the `timestamp-query` feature reports it. WebGL2, the null
+ * backend, SwiftShader and an adapter without the feature never call
+ * `reportGpuTime`, and the stage stays at zero with `perFrame` 0 — the HUD
+ * shows "n/a" for that, never "0 ms".
+ *
+ * ## VRAM
+ *
+ * `reportGpuMemory` carries the renderer's byte estimate (its ResourceManager
+ * counts what it allocates; see `packages/renderer/src/gpu/gpuMemory.ts`).
+ * It is a gauge, not a per-frame timing: `sample()` reports the latest value
+ * and the peak the renderer has seen.
  *
  * ## Cost
  *
@@ -45,6 +72,7 @@ export const PERF_STAGES = [
   'gpuSubmit',
   'cacheReadback',
   'total',
+  'gpuTime',
 ] as const;
 
 export type PerfStageName = (typeof PERF_STAGES)[number];
@@ -59,6 +87,7 @@ export const PerfStage = {
   gpuSubmit: 5,
   cacheReadback: 6,
   total: 7,
+  gpuTime: 8,
 } as const satisfies Record<PerfStageName, number>;
 
 export type PerfStageId = (typeof PerfStage)[PerfStageName];
@@ -85,6 +114,10 @@ export interface PerfSample {
   stages: Record<PerfStageName, PerfStageStats>;
   /** Mean GPU completion latency after submit, ms — null when not measured. */
   gpuDoneMs: number | null;
+  /** Renderer's estimated GPU memory in use, bytes — null until a renderer reports. */
+  gpuBytes: number | null;
+  /** High-water mark of `gpuBytes` — null until a renderer reports. */
+  gpuBytesPeak: number | null;
 }
 
 const now: () => number =
@@ -109,6 +142,8 @@ class FramePerf {
   private frameOpen = false;
   private gpuDoneAcc = 0;
   private gpuDoneN = 0;
+  private gpuBytes = -1;
+  private gpuBytesPeak = -1;
 
   /** Mirror stages into `performance.measure` (DevTools). Allocates — dev only. */
   userTiming = false;
@@ -180,6 +215,28 @@ class FramePerf {
     this.gpuDoneN += 1;
   }
 
+  /**
+   * A frame's GPU time from a completed timestamp readback (see "`gpuTime`
+   * lags" above). Attributed to the most recently committed frame; a second
+   * report before the next commit replaces the first. Nothing is recorded
+   * until a frame has been committed — a readback from the idle pre-render
+   * pump or an export has no viewport frame to describe.
+   */
+  reportGpuTime(ms: number): void {
+    if (!this.enabled || !Number.isFinite(ms) || this.filled === 0) return;
+    const lastIdx = (this.head - 1 + PERF_WINDOW) % PERF_WINDOW;
+    const i = lastIdx * STAGE_COUNT + PerfStage.gpuTime;
+    this.ms[i] = ms;
+    this.counts[i] = 1;
+  }
+
+  /** The renderer's VRAM estimate, any time. Latest value wins; the peak is the renderer's. */
+  reportGpuMemory(bytes: number, peak: number): void {
+    if (!this.enabled || !Number.isFinite(bytes) || !Number.isFinite(peak)) return;
+    this.gpuBytes = bytes;
+    this.gpuBytesPeak = peak;
+  }
+
   sample(): PerfSample {
     const n = this.filled;
     const stages = {} as Record<PerfStageName, PerfStageStats>;
@@ -211,7 +268,13 @@ class FramePerf {
     // has no frame to ride in.
     this.gpuDoneAcc = 0;
     this.gpuDoneN = 0;
-    return { frames: n, stages, gpuDoneMs };
+    return {
+      frames: n,
+      stages,
+      gpuDoneMs,
+      gpuBytes: this.gpuBytes >= 0 ? this.gpuBytes : null,
+      gpuBytesPeak: this.gpuBytesPeak >= 0 ? this.gpuBytesPeak : null,
+    };
   }
 
   reset(): void {
@@ -222,6 +285,8 @@ class FramePerf {
     this.frameOpen = false;
     this.gpuDoneAcc = 0;
     this.gpuDoneN = 0;
+    this.gpuBytes = -1;
+    this.gpuBytesPeak = -1;
   }
 
   private measure(stage: PerfStageId, start: number, end: number): void {

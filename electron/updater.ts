@@ -26,7 +26,7 @@
  *    "Restart to update" button in the title bar rather than a modal that
  *    blocks the app. It was a dismissible toast first, and users reported not
  *    seeing it — a pending update outlives any transient, so it is now drawn as
- *    the standing fact it is (`src/core/update/updateStore.ts`).
+ *    the standing fact it is (`src/stores/updateStore.ts`).
  *
  * ── What stayed ──────────────────────────────────────────────────────────────
  *  • Failures are logged, never shown, unless the user asked the question via

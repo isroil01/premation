@@ -30,6 +30,7 @@ import { NullBackend, Renderer } from '@motion/renderer';
 import { GEN_STRIDE, measureInstanceBounds, validateGeneratorFrame } from '@core/plugins/generator';
 import { snapshotToFrameScene } from '@core/rendering/snapshotToFrameScene';
 import type { RenderLayer, RenderSnapshot } from '@core/rendering/RenderBackend';
+import { recordBench, type BenchMetricInput } from './benchRecord';
 
 const W = 1920;
 const H = 1080;
@@ -59,13 +60,15 @@ function field(count: number): Float32Array {
   return out;
 }
 
-function stats(samples: number[]): { mean: number; p50: number; p95: number } {
+function stats(samples: number[]): { mean: number; p50: number; p95: number; min: number } {
   const sorted = [...samples].sort((a, b) => a - b);
   const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))]!;
   return {
     mean: samples.reduce((a, b) => a + b, 0) / samples.length,
     p50: at(0.5),
     p95: at(0.95),
+    // What the ratchet gates — see `Stat` in benchScenes.ts.
+    min: sorted[0] ?? 0,
   };
 }
 
@@ -140,5 +143,16 @@ describe('generator field', () => {
     const dir = join(process.cwd(), '.artifacts', 'bench');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'generatorField.latest.json'), JSON.stringify(results, null, 2));
+
+    // The ratcheted headline: MIN ms of each stage per instance count (mean,
+    // p50 and p95 stay in the suite JSON).
+    const metrics: BenchMetricInput[] = [];
+    for (const count of COUNTS) {
+      for (const stage of ['validate', 'bounds', 'flatten', 'render'] as const) {
+        const s = results[`${stage}-${count}`] as { min: number } | undefined;
+        if (s) metrics.push({ name: `generatorField/${count}`, metric: `${stage}.min`, unit: 'ms', value: s.min, samples: RUNS });
+      }
+    }
+    recordBench(metrics);
   });
 });

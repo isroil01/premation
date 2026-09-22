@@ -5,7 +5,7 @@ import { ErrorBoundary } from '@components/ErrorBoundary/ErrorBoundary';
 import { TooltipProvider } from '@components/Tooltip';
 import { setLocalFirst } from '@core/config/flags';
 import { tryRegisterSamOnnxFromUrl } from '@core/tracking/samOnnxLoader';
-import { restoreSamModelAtBoot, useSamModelStore } from '@core/tracking/samModelInstall';
+import { restoreSamModelAtBoot, useSamModelStore } from '@stores/samModelStore';
 import { registerBundledSamAtBoot } from '@core/tracking/samBundled';
 import { parseEdition, setEdition } from '@core/config/edition';
 import { setDevRendererBuild } from '@core/rendering/rendererIdentity';

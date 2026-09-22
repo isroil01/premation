@@ -1,7 +1,14 @@
 /**
- * CPU effect-bake benchmarks — `npm run bench -- effectBake`.
+ * CPU effect-bake benchmarks — `npm run bench:all` (or `BENCH_FULL=1 npm run
+ * bench -- effectBake`).
  *
- * NOT part of the default `jest` run (jest.config.cjs ignores `*.bench.test.ts`).
+ * NOT part of the default `jest` run (jest.config.cjs ignores `*.bench.test.ts`),
+ * and NOT part of the default `npm run bench` either: ~170 effects at up to
+ * 2.5 s each is about 15 minutes, and this is a ranking tool rather than one
+ * of the ratcheted T0 metrics (jest.bench.config.cjs skips it unless
+ * BENCH_FULL=1). Its five headline numbers still go to results.json when it
+ * runs, so `bench:check` reports them as `n/a` on a default run rather than
+ * failing.
  *
  * Times every effect the bake chain can draw (`hasCanvas2dImplementation`) on a
  * 1920×1080 layer, one effect per chain, through `applyEffectChain` — so the
@@ -36,6 +43,7 @@ import { hasCanvas2dImplementation, isCanvas2dOnlyEffect } from '@core/effects/c
 import { packMaskPaths } from '@core/effects/strokePaint';
 import type { MaskPath } from '@core/effects/mask';
 import { runBakeJob } from '@core/effects/bakeWorkerCore';
+import { recordBench } from './benchRecord';
 
 const W = 1920;
 const H = 1080;
@@ -184,6 +192,17 @@ describe('effect bake cost @1920×1080', () => {
       join(dir, 'effectBake.latest.json'),
       JSON.stringify({ at: new Date().toISOString(), w: W, h: H, floorMs: floor.ms, jobMs, rows, scenarios }, null, 2),
     );
+    // The ratcheted headline: the transfer floor, the worker job, and the three
+    // scenarios. The ~200 per-effect rows stay in the suite JSON only — Skia
+    // medians of 3 runs are too noisy to gate one by one at 10 %.
+    recordBench([
+      { name: 'effectBake/transfer-floor-1080p', metric: 'get+put.median', unit: 'ms', value: floor.ms, samples: floor.runs },
+      { name: 'effectBake/runBakeJob-gaussian-blur', metric: 'job.mean', unit: 'ms', value: jobMs, samples: 3 },
+      ...scenarios.map((s) => ({
+        name: `effectBake/${s.name.replace(/[^a-z0-9-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase()}`,
+        metric: 'chain.median' as const, unit: 'ms' as const, value: s.ms, samples: MAX_RUNS,
+      })),
+    ]);
     expect(rows.length).toBeGreaterThan(0);
   });
 });

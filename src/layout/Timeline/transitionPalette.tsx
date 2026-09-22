@@ -28,8 +28,8 @@ import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
-import { TRANSITION_KINDS, TRANSITION_LABEL, TRANSITION_SHORT } from '@core/timeline/transitionStore';
-import type { TransitionKind } from '@core/timeline/transitionStore';
+import { TRANSITION_KINDS, TRANSITION_LABEL, TRANSITION_SHORT } from '@core/timeline/transitionModel';
+import type { TransitionKind } from '@core/timeline/transitionModel';
 import { TRANSITION_COMMAND_PREFIX } from './transitionCommands';
 import styles from './transitionPalette.module.css';
 

@@ -24,7 +24,7 @@
  */
 
 import type { TimelineTrack, TimelineClip } from './TimelineModel';
-import type { TransitionRecord } from '@core/timeline/transitionStore';
+import type { TransitionRecord } from '@core/timeline/transitionModel';
 import {
   layoutTransitions,
   pickCutBars,

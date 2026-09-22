@@ -3,7 +3,7 @@
  * window; stages outside a frame, and frames discarded as blits, do not.
  */
 
-import { framePerf, PerfStage, perfBegin, perfEnd, PERF_WINDOW, measureGpuDone } from './framePerf';
+import { framePerf, PerfStage, PERF_STAGES, perfBegin, perfEnd, PERF_WINDOW, measureGpuDone } from './framePerf';
 
 let clock = 0;
 beforeEach(() => {
@@ -86,5 +86,70 @@ describe('framePerf', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(framePerf.sample().gpuDoneMs).toBe(7);
+  });
+
+  describe('gpuTime (timestamp readback)', () => {
+    it('is a stage with a numeric id matching its PERF_STAGES slot', () => {
+      expect(PERF_STAGES[PerfStage.gpuTime]).toBe('gpuTime');
+      expect(PERF_STAGES).toHaveLength(Object.keys(PerfStage).length);
+    });
+
+    it('attributes a late readback to the most recently committed frame', () => {
+      frame([[PerfStage.total, 5]]);
+      frame([[PerfStage.total, 6]]);
+      framePerf.reportGpuTime(3.5); // arrives after frame two committed
+      const s = framePerf.sample();
+      expect(s.stages.gpuTime.last).toBe(3.5);
+      // 3.5 ms across two frames, but only one frame measured: mean 1.75, ×0.5/frame.
+      expect(s.stages.gpuTime.mean).toBe(1.75);
+      expect(s.stages.gpuTime.perFrame).toBe(0.5);
+      expect(s.stages.gpuTime.mean / s.stages.gpuTime.perFrame).toBe(3.5);
+    });
+
+    it('a second readback before the next commit replaces the first', () => {
+      frame([[PerfStage.total, 5]]);
+      framePerf.reportGpuTime(2);
+      framePerf.reportGpuTime(4);
+      const g = framePerf.sample().stages.gpuTime;
+      expect(g.last).toBe(4);
+      expect(g.perFrame).toBe(1);
+    });
+
+    it('records nothing before any frame committed, when disabled, or for a non-finite value', () => {
+      framePerf.reportGpuTime(9); // idle pump / export: no viewport frame yet
+      expect(framePerf.sample().frames).toBe(0);
+      frame([[PerfStage.total, 5]]);
+      framePerf.reportGpuTime(NaN);
+      framePerf.enabled = false;
+      framePerf.reportGpuTime(9);
+      framePerf.enabled = true;
+      const g = framePerf.sample().stages.gpuTime;
+      expect(g.last).toBe(0);
+      expect(g.perFrame).toBe(0);
+    });
+
+    it('does not disturb the CPU stages of the frame it lands on', () => {
+      frame([[PerfStage.snapshot, 4], [PerfStage.gpuSubmit, 2]]);
+      framePerf.reportGpuTime(11);
+      const s = framePerf.sample();
+      expect(s.stages.snapshot.last).toBe(4);
+      expect(s.stages.gpuSubmit.last).toBe(2);
+      expect(s.stages.gpuTime.last).toBe(11);
+    });
+  });
+
+  describe('VRAM gauge', () => {
+    it('is null until a renderer reports, then the latest value and peak', () => {
+      const before = framePerf.sample();
+      expect(before.gpuBytes).toBeNull();
+      expect(before.gpuBytesPeak).toBeNull();
+      framePerf.reportGpuMemory(1000, 1000);
+      framePerf.reportGpuMemory(500, 1200);
+      const s = framePerf.sample();
+      expect(s.gpuBytes).toBe(500);
+      expect(s.gpuBytesPeak).toBe(1200);
+      framePerf.reset();
+      expect(framePerf.sample().gpuBytes).toBeNull();
+    });
   });
 });

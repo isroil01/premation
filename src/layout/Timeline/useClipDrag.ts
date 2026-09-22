@@ -13,7 +13,7 @@ import { clamp } from '@utils/lang';
 import type { TimelineModel, TimelineClip } from './TimelineModel';
 import { exceedsDragThreshold } from './marqueeSelection';
 import { groupDragStarts, groupDragTargets, groupRows, type GroupClip } from './clipGroupDrag';
-import { staggerOffsets, type StaggerMode } from './staggerOffsets';
+import { staggerOffsets, type StaggerMode } from '@core/animation/staggerOffsets';
 import { getStaggerSettings, STAGGER_PX_PER_FRAME } from './staggerStore';
 import type { SelectModifiers } from './trackRangeSelect';
 import { createEdgeAutoScroller } from './playheadFollow';

@@ -37,7 +37,7 @@ import { is3DEnabled, canBe3D } from '@core/scene/threeD';
 import { setAnchor, estimateNodeBounds } from '@core/scene/anchor';
 import { readNodeKind } from '@core/scene/sceneDerive';
 import { defaultAnimation } from '@motion/animation';
-import { useNodeRevision } from '@core/inspector/nodeRevision';
+import { useNodeRevision } from '@hooks/useNodeRevision';
 import { staticOrDefaultValue } from '@core/inspector/propertyValue';
 import { type PropertyAccess } from '@core/inspector/multiSelection';
 import { applyTransformPreset, captureTransformPreset } from '@core/inspector/sectionPresets';

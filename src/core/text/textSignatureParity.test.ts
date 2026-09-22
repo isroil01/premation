@@ -70,20 +70,22 @@ function interfaceFields(src: string, name: string): string[] {
 }
 
 /**
- * `setText` up to and including the `signature` assignment.
+ * The body of `textRasterSignature` — the pure function that builds the
+ * cache key (`setText` assigns `const signature = textRasterSignature(spec,
+ * tier)` and only rasterizes after it).
  *
- * Deliberately not the whole method: everything after the key is built is
+ * Deliberately not `setText` itself: everything after the key is built is
  * rasterization, and a field read only there is read too late to invalidate
- * anything. Cutting at the assignment is what makes this test about the KEY
- * rather than about the function.
+ * anything. Scoping to the key function is what makes this test about the KEY
+ * rather than about the raster.
  */
 function signatureScope(src: string): string {
-  const at = src.indexOf('setText(');
-  if (at < 0) throw new Error('textSignatureParity: no `setText`');
-  const sigAt = src.indexOf('const signature =', at);
-  if (sigAt < 0) throw new Error('textSignatureParity: no `signature` assignment in setText');
-  const end = src.indexOf(';', src.indexOf('`|t${tier}`', sigAt));
-  if (end < 0) throw new Error('textSignatureParity: cannot find the end of the signature');
+  const at = src.indexOf('export function textRasterSignature(');
+  if (at < 0) throw new Error('textSignatureParity: no `textRasterSignature`');
+  const use = src.indexOf('const signature = textRasterSignature(spec, tier)', at);
+  if (use < 0) throw new Error('textSignatureParity: setText no longer assigns `signature` from textRasterSignature');
+  const end = src.indexOf(';', src.indexOf('`|t${tier}`', at));
+  if (end < 0 || end > use) throw new Error('textSignatureParity: cannot find the end of the signature');
   return src.slice(at, end);
 }
 

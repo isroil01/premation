@@ -31,7 +31,7 @@ import { whipExpression } from '@core/whip/whipTarget';
 import { resolvePropertyMeta, type PropertyMeta } from '@core/inspector/propertyMeta';
 import { buildPropertyMenu } from '@core/inspector/propertyMenu';
 import { isPinnedProp } from '@core/inspector/pinnedProps';
-import { useNodesRevision } from '@core/inspector/nodeRevision';
+import { useNodesRevision } from '@hooks/useNodeRevision';
 import { readModifierStack } from '@core/animation/modifierStack';
 import {
   aggregateProperty,

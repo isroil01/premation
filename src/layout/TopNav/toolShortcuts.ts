@@ -46,7 +46,7 @@
 
 import { getCommandRegistry } from '@core/commands/Command';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
-import { formatChord } from '@layout/Menu/formatChord';
+import { formatChord } from '@core/commands/formatChord';
 import { asCommandId } from '@app-types/common';
 import type { Tool } from '@stores/uiStore';
 

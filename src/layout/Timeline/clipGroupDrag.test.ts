@@ -5,7 +5,7 @@ import {
   groupRows,
   type GroupClip,
 } from './clipGroupDrag';
-import { staggerOffsets } from './staggerOffsets';
+import { staggerOffsets } from '@core/animation/staggerOffsets';
 
 const clip = (id: string, trackId: string, start: number, extra: Partial<GroupClip> = {}): GroupClip => ({
   id,

@@ -1,10 +1,22 @@
 # Native core plan — C++ engine libraries under the existing Electron/React editor
 
 > Written 2026-09-22 on branch `native-core`, cut from `dev` at `c47c2053`.
-> **PLAN. Nothing in it is implemented.** It records the decisions taken in the
-> architecture discussion of the same day and the order in which to act on
-> them. Every measured number quotes the document it came from so a later
-> reader can re-measure and disagree with evidence.
+> It records the decisions taken in the architecture discussion of the same
+> day and the order in which to act on them. Every measured number quotes the
+> document it came from so a later reader can re-measure and disagree with
+> evidence.
+>
+> **Status (2026-09-22): T0 landed on `native-core`, everything else is plan.**
+> T0 delivered: the two lint boundaries (`eslint.config.js`, with 7
+> `TODO(T0)` allow-listed `src/core` files that need a dialog/icon port
+> injected rather than a move), 10 hook/store/component relocations out of
+> `src/core` and 2 pure modules moved in, GPU frame time via `timestamp-query`
+> (`gpuTime` stage, lags 1–3 frames) and a VRAM gauge (`gpuBytes`/peak) on
+> the HUD, and the bench ratchet (`npm run bench:check`, `bench/baseline.json`,
+> `bench` CI job — non-blocking until **2026-10-06**, then regenerate the
+> baseline from a runner artifact and flip `continue-on-error`). Not done from
+> T0's list: scrub-latency and RAM-preview-fill benches (need a real decoder
+> and GPU; they belong to T3's exit criteria instead).
 >
 > Companion documents: `ENGINE_STRENGTH_PLAN.md` (the TypeScript-side
 > performance program), `VIEWPORT_WORKER_PLAN.md` (why the scene walk is not
@@ -40,7 +52,7 @@ What already matches the target and must **not** be rebuilt:
   expressions are already sandboxed.
 - `packages/scene`, `packages/timeline`, `packages/audio`, `packages/workspace`.
 - Effects: 204 effect types, metadata-driven; the Inspector discovers
-  parameters through `src/core/inspector/PropertyRegistry.ts`.
+  parameters through `src/components/Inspector/PropertyRegistry.ts`.
 - Plugins: capability permissions (`src/core/plugins/capabilities.ts`), worker
   isolation, WGSL/GLSL validation, versioned grammar, native SDK stub
   (`packages/plugin-native-sdk`).

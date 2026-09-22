@@ -12,7 +12,10 @@
  * goes: rolling mean and p95 per render stage from `core/perf/framePerf`
  * (snapshot, flatten, texture feed, raster, CPU bake, GPU submit, cache
  * readback), plus how many rasters and bakes a frame pays and, on WebGPU, how
- * long the GPU takes to finish after submit.
+ * long the GPU takes to finish after submit. Two more rows come from the GPU
+ * side: `gpu time`, the GPU's own time for a frame's passes (WebGPU timestamp
+ * queries; lags the CPU rows by a frame or three, see framePerf's notes), and
+ * `vram`, the renderer's estimate of the GPU memory it holds, with its peak.
  *
  * ## Why it does not re-render sixty times a second
  *
@@ -68,6 +71,10 @@ const STAGE_ROWS: ReadonlyArray<{ stage: PerfStageName; label: string; counted?:
 ];
 
 const ms = (v: number): string => (v >= 10 ? v.toFixed(0) : v.toFixed(1));
+const mb = (bytes: number): string => {
+  const v = bytes / (1024 * 1024);
+  return v >= 100 ? v.toFixed(0) : v.toFixed(1);
+};
 
 export function ViewportHud(): JSX.Element | null {
   const on = useViewportDisplayStore((s) => s.hud);
@@ -163,6 +170,26 @@ export function ViewportHud(): JSX.Element | null {
           })}
           <span className={styles.key}>gpu done</span>
           <span className={styles.value}>{perf?.gpuDoneMs != null ? `${ms(perf.gpuDoneMs)} ms` : 'n/a'}</span>
+          {/* GPU-side time, from timestamp queries. Frames without a readback
+              hold 0 with a run count of 0, so mean ÷ perFrame is the mean over
+              MEASURED frames; no measured frame in the window → n/a, not 0. */}
+          {(() => {
+            const g = perf?.stages.gpuTime;
+            const measured = g && g.perFrame > 0;
+            const meanMeasured = measured ? g.mean / g.perFrame : 0;
+            return [
+              <span key="gpuTime-k" className={styles.key}>gpu time</span>,
+              <span key="gpuTime-v" className={`${styles.value} ${measured && g.p95 > SLOW_FRAME_MS ? styles.warn : ''}`}>
+                {measured ? `${ms(meanMeasured)} · ${ms(g.p95)}` : 'n/a'}
+              </span>,
+            ];
+          })()}
+          <span className={styles.key}>vram</span>
+          <span className={styles.value}>
+            {perf?.gpuBytes != null && perf.gpuBytesPeak != null
+              ? `${mb(perf.gpuBytes)} MB · pk ${mb(perf.gpuBytesPeak)}`
+              : 'n/a'}
+          </span>
         </>
       )}
     </div>

@@ -37,6 +37,8 @@ on:
     branches: [dev, main]
   pull_request:
     branches: [dev, main]
+  # For the bench job: re-run the benchmarks on demand without a push.
+  workflow_dispatch:
 
 # A newer push to the same branch/PR makes the older run pointless.
 concurrency:
@@ -77,6 +79,54 @@ jobs:
         run: npm test -- --ci
       - if: '!cancelled()'
         run: npm run lint
+
+  # The benchmark ratchet (docs/NATIVE_CORE_PLAN.md §4 T0).
+  #
+  # `npm run bench:check` runs the T0 `*.bench.test.ts` set (scene walk at
+  # 500/1000/2000 layers, offline export fps, raster-key cost, generator field;
+  # the 15-minute effect-bake sweep is `bench:all` only), writes
+  # `.artifacts/bench/results.json`, and compares it with the committed
+  # `bench/baseline.json` through `scripts/bench-check.mjs`. Tolerance
+  # is 25% here rather than the local 10%: a shared runner's clock is noisier
+  # than a developer's laptop, and the same adapter class is not guaranteed.
+  #
+  # ── Non-blocking until 2026-10-06 ────────────────────────────────────────
+  # T0's exit criterion is "bench numbers in CI for two weeks". Added
+  # 2026-09-22; `continue-on-error: true` until 2026-10-06, so a noisy runner
+  # cannot block merges before there are two weeks of numbers to judge the
+  # tolerance against. To flip it to blocking on that date: (1) download a
+  # green run's `bench-results` artifact, copy its results.json over
+  # `.artifacts/bench/results.json` and run `npm run bench:baseline`, so the
+  # baseline carries the RUNNER's machine block (the committed one was
+  # measured on a developer laptop and only ever gates that machine class);
+  # (2) remove `continue-on-error`. Leave it out of the required checks.
+  #
+  # Push + manual only: a PR run would compare a fork's runner against a
+  # baseline nobody on the PR can regenerate.
+  bench:
+    name: bench · ratchet
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Same as the verify job: native modules are not needed to bench.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run bench:check -- --tolerance 25
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: .artifacts/bench/
+          retention-days: 30
+          if-no-files-found: warn
 
   # The IPC frame guard, in a real Electron process.
   #

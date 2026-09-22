@@ -20,7 +20,7 @@ import { getCommandRegistry } from '@core/commands/Command';
 import { ensureCommandsRegistered } from '@core/commands/ensureCommandsRegistered';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { chordFromEvent } from '@core/commands/CommandSystem';
-import { chordKeys, formatChord } from '@layout/Menu/formatChord';
+import { chordKeys, formatChord } from '@core/commands/formatChord';
 import {
   getShortcutOverrides,
   setShortcutOverride,

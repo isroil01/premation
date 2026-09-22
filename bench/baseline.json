@@ -1,0 +1,273 @@
+{
+  "machine": {
+    "platform": "win32",
+    "cpuModel": "AMD Ryzen 7 8845HS w/ Radeon 780M Graphics",
+    "cores": 16,
+    "node": "v24.16.0"
+  },
+  "commit": "b4d15a80",
+  "timestamp": "2026-09-22T10:59:33.442Z",
+  "node": "v24.16.0",
+  "note": "Written by `npm run bench:baseline` from .artifacts/bench/results.json. Compare only against the same machine class; regenerate after an intentional perf change.",
+  "records": [
+    {
+      "name": "buildSnapshot/animated-paths-300",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 3.3343,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/animated-paths-300",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 3.6247,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/deep-chain-200x50",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 1.5911,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/deep-chain-200x50",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 0.6829,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/deep-chains-1000x8",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 7.9911,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/deep-chains-1000x8",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 3.5397,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/flat-shapes-1000",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 8.4434,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/flat-shapes-1000",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 3.2046,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/flat-shapes-2000",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 18.2091,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/flat-shapes-2000",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 6.2978,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/flat-shapes-500",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 4.0876,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/flat-shapes-500",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 1.5835,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/precomps-50x20-cache-off",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 10.6563,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/precomps-50x20-cache-off",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 3.9425,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/precomps-50x20",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 1.0558,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/precomps-50x20",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 3.816,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-200",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 2.3881,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-200",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 0.7715,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-feed-200-paused",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 2.7613,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-feed-200-paused",
+      "metric": "feed.min",
+      "unit": "ms",
+      "value": 0.8153,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-feed-200-paused",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 0.7663,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-feed-200-reuse-off",
+      "metric": "buildSnapshot.min",
+      "unit": "ms",
+      "value": 2.8751,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-feed-200-reuse-off",
+      "metric": "feed.min",
+      "unit": "ms",
+      "value": 0.8539,
+      "samples": 180
+    },
+    {
+      "name": "buildSnapshot/text-feed-200-reuse-off",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 0.764,
+      "samples": 180
+    },
+    {
+      "name": "export/solid-text-shapes-1080p",
+      "metric": "fps.best10",
+      "unit": "fps",
+      "value": 224.757,
+      "samples": 180
+    },
+    {
+      "name": "export/solid-text-shapes-1080p",
+      "metric": "frame.best10",
+      "unit": "ms",
+      "value": 4.4493,
+      "samples": 180
+    },
+    {
+      "name": "generatorField/10000",
+      "metric": "bounds.min",
+      "unit": "ms",
+      "value": 3.5109,
+      "samples": 20
+    },
+    {
+      "name": "generatorField/10000",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 0.0173,
+      "samples": 20
+    },
+    {
+      "name": "generatorField/10000",
+      "metric": "render.min",
+      "unit": "ms",
+      "value": 2.1502,
+      "samples": 20
+    },
+    {
+      "name": "generatorField/10000",
+      "metric": "validate.min",
+      "unit": "ms",
+      "value": 3.5265,
+      "samples": 20
+    },
+    {
+      "name": "generatorField/50000",
+      "metric": "bounds.min",
+      "unit": "ms",
+      "value": 18.267,
+      "samples": 20
+    },
+    {
+      "name": "generatorField/50000",
+      "metric": "flatten.min",
+      "unit": "ms",
+      "value": 0.009,
+      "samples": 20
+    },
+    {
+      "name": "generatorField/50000",
+      "metric": "render.min",
+      "unit": "ms",
+      "value": 2.1446,
+      "samples": 20
+    },
+    {
+      "name": "generatorField/50000",
+      "metric": "validate.min",
+      "unit": "ms",
+      "value": 18.228,
+      "samples": 20
+    },
+    {
+      "name": "rasterKey/animated-paths-300",
+      "metric": "key.min",
+      "unit": "ms",
+      "value": 0.4065,
+      "samples": 180
+    },
+    {
+      "name": "rasterKey/flat-shapes-1000",
+      "metric": "key.min",
+      "unit": "ms",
+      "value": 0.2768,
+      "samples": 180
+    },
+    {
+      "name": "rasterKey/text-200",
+      "metric": "key.min",
+      "unit": "ms",
+      "value": 0.1457,
+      "samples": 180
+    }
+  ]
+}

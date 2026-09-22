@@ -12,7 +12,7 @@
  * the control unmounts with the dialog and the download does not.
  */
 
-import { useSamModelStore } from '@core/tracking/samModelInstall';
+import { useSamModelStore } from '@stores/samModelStore';
 import { useUIStore } from '@stores/uiStore';
 
 export const OBJECT_MATTE_JOB_ID = 'object-matte-model';

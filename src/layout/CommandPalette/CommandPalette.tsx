@@ -48,7 +48,7 @@ import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 // `layers` stack here and a `folder` there) for the same kind of object.
 import { flattenScene, readNodeKind, KIND_COLOR, KIND_ICON } from '@core/scene/sceneDerive';
 import { asCommandId } from '@app-types/common';
-import { formatChord } from '@layout/Menu/formatChord';
+import { formatChord } from '@core/commands/formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import { parseQuery, fuzzyScore, parseTimecode } from './paletteSearch';
 import { effectHits, presetHits } from './quickApply';

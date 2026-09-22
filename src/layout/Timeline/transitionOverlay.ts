@@ -30,8 +30,8 @@ import type {
   TransitionRecord,
   TransitionKind,
   TransitionAlignment,
-} from '@core/timeline/transitionStore';
-import { TRANSITION_SHORT } from '@core/timeline/transitionStore';
+} from '@core/timeline/transitionModel';
+import { TRANSITION_SHORT } from '@core/timeline/transitionModel';
 import { transitionOverlaps, transitionRegion } from '@core/timeline/transitions';
 
 /**

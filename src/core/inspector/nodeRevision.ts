@@ -22,9 +22,12 @@
  * Wired lazily — the first subscriber mounts the bus subscriptions — and
  * re-armed when the bus instance changes, because `Application.boot()` swaps
  * the bus (the trap `attachHistoryBaselineSync` documents).
+ *
+ * The React hooks over this counter (`useNodeRevision`, `useNodesRevision`)
+ * live in `@hooks/useNodeRevision` — `src/core` does not import React
+ * (docs/NATIVE_CORE_PLAN.md §4 T0).
  */
 
-import { useEffect, useState } from 'react';
 import { getEventBus } from '@core/events/EventBus';
 import { isMediaDecodeRepaint } from '@core/rendering/mediaRepaint';
 import { useSceneRevision } from '@stores/sceneStore';
@@ -115,31 +118,3 @@ export function subscribeNodeRevision(nodeId: string, listener: Listener): () =>
   };
 }
 
-/**
- * Re-render when THIS node changes — and only then. A null id subscribes to
- * nothing.
- */
-export function useNodeRevision(nodeId: string | null | undefined): number {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    if (!nodeId) return undefined;
-    return subscribeNodeRevision(nodeId, () => setTick((t) => t + 1));
-  }, [nodeId]);
-  return tick;
-}
-
-/** The same, for a whole selection: any of these nodes changing re-renders. */
-export function useNodesRevision(nodeIds: ReadonlyArray<string>): number {
-  const [tick, setTick] = useState(0);
-  const key = nodeIds.join(' ');
-  useEffect(() => {
-    const ids = key ? key.split(' ') : [];
-    if (ids.length === 0) return undefined;
-    const bump = (): void => setTick((t) => t + 1);
-    const unsubs = ids.map((id) => subscribeNodeRevision(id, bump));
-    return () => {
-      for (const u of unsubs) u();
-    };
-  }, [key]);
-  return tick;
-}

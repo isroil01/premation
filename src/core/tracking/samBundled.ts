@@ -24,7 +24,8 @@
  * still a real matte.
  */
 
-import { looksLikeOnnx, useSamModelStore } from './samModelInstall';
+import { looksLikeOnnx } from './samModelInstall';
+import { useSamModelStore } from '@stores/samModelStore';
 import { setOrtWasmAssets, tryRegisterSamPipeline } from './samOnnxLoader';
 
 export const BUNDLED_DIR = 'models/object-matte';

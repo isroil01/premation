@@ -835,6 +835,73 @@ const MAX_PARKED_VIDEOS = 6;
  */
 const VIDEO_LOAD_STALL_MS = 6000;
 
+/**
+ * The raster-cache signature of a text layer: every input that changes the
+ * baked pixels, in one string. Built per frame for every text layer that
+ * misses the `RasterReuse` fast path — which is why it is a named function:
+ * `src/core/perf/bench/rasterKey.bench.test.ts` times exactly this, and the
+ * NATIVE_CORE_PLAN (T3) replaces its per-frame `JSON.stringify` calls with a
+ * key memoised per node revision. Pure; `tier` is the caller's resolution tier.
+ */
+export function textRasterSignature(spec: TextSpec, tier: number): string {
+  // Fill opacity changes the baked pixels, so it belongs in the cache key.
+  const fillSig = spec.fillOpacity !== undefined && spec.fillOpacity < 1 ? `|fo${spec.fillOpacity}` : '';
+  const fxSig = effectsNeedCpuBake(spec.effects)
+    ? `|fx:${JSON.stringify(spec.effects)}|mask:${spec.mask ? JSON.stringify(spec.mask.paths) : 0}`
+    : '';
+  return (
+    `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}` +
+    `|${spec.fontFamily ?? ''}|${spec.fontWeight ?? ''}|${spec.fontStyle ?? ''}` +
+    `|wd${spec.fontWidth ?? ''}|sl${spec.fontSlant ?? ''}` +
+    `|${spec.align ?? ''}|${spec.letterSpacing ?? 0}|${spec.lineHeight ?? ''}` +
+    `|${spec.paragraphSpacing ?? 0}|${spec.strokeOverFill ? 'sof' : ''}` +
+    `|${spec.textTransform ?? ''}|${spec.fontVariant ?? ''}|${spec.verticalAlign ?? ''}|${spec.verticalScale ?? ''}|${spec.horizontalScale ?? ''}|${spec.baselineShift ?? ''}|${spec.textStroke ?? ''}|${spec.textStrokeWidth ?? ''}` +
+    `${spec.textExtras ? `|x${JSON.stringify(spec.textExtras)}` : ''}` +
+    `|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}${fillSig}` +
+    // Animator output and path placement change the baked pixels, so they
+    // belong in the cache key — otherwise frame 1 of a sweep is reused for
+    // every frame of it.
+    `${spec.glyphs && spec.glyphs.length ? `|g${JSON.stringify(spec.glyphs)}` : ''}` +
+    `${spec.textPath ? `|tp${JSON.stringify(spec.textPath)}` : ''}` +
+    `${spec.fontAxes ? `|ax${JSON.stringify(spec.fontAxes)}` : ''}` +
+    `${spec.fillPaint ? `|fp${JSON.stringify(spec.fillPaint)}` : ''}` +
+    `${spec.strokePaint ? `|sp${JSON.stringify(spec.strokePaint)}` : ''}` +
+    // Paint strokes are drawn into this raster, so they sign it — by digest,
+    // not by value (a long stroke is thousands of points, keyed every frame).
+    `${hasPaintStrokes(spec.paint) ? `|pt${paintSignature(spec.paint)}` : ''}` +
+    // An alias face that finishes loading changes the pixels without changing
+    // the spec — the epoch is what turns the key over when it does.
+    `${textNeedsFontVariants(spec) ? `|fv${fontVariantEpoch()}` : ''}` +
+    `|t${tier}`
+  );
+}
+
+/**
+ * The raster-cache signature of a vector path layer — `textRasterSignature`'s
+ * twin for `setPath`, extracted for the same reason (the per-frame key cost is
+ * benchmarked and is a T3 target). Pure.
+ */
+export function pathRasterSignature(layer: RenderLayer, tier: number): string {
+  // Runs are joined by a separator that cannot appear inside a run, so two
+  // different splits of the same points are two different signatures. Without
+  // the boundary marker a path cut into 2+2 points and one cut into 1+3 sign
+  // identically and the second silently reuses the first's texture.
+  // Per-run PAINT signs too. Identical geometry with different run paint is a
+  // different picture, and without this the second layer reuses the first's
+  // texture — the same failure the run boundary above prevents, but with
+  // matching geometry, so nothing else in the key would catch it.
+  const ptsSig = layerSubpaths(layer)
+    .map((s) => `${s.open ? 'o' : 'c'}:${s.paint ? JSON.stringify(s.paint) : ''}:${s.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|')}`)
+    .join('//');
+  const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
+  const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';
+  const fillSig = layer.fillOpacity !== undefined && layer.fillOpacity < 1 ? `|fo${layer.fillOpacity}` : '';
+  const fxSig = effectsNeedCpuBake(layer.effects)
+    ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
+    : '';
+  return `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|cr:${layer.cornerRadii ? layer.cornerRadii.join(',') : ''}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
+}
+
 export class AppTextureProvider implements TextureProvider {
   /** Shared scratch surface for field separation — sequential per-call use,
    *  resized by `deinterlaceInto`, so one canvas serves every video key. */
@@ -1254,35 +1321,7 @@ export class AppTextureProvider implements TextureProvider {
       perfEnd(PerfStage.raster);
       return;
     }
-    // Fill opacity changes the baked pixels, so it belongs in the cache key.
-    const fillSig = spec.fillOpacity !== undefined && spec.fillOpacity < 1 ? `|fo${spec.fillOpacity}` : '';
-    const fxSig = effectsNeedCpuBake(spec.effects)
-      ? `|fx:${JSON.stringify(spec.effects)}|mask:${spec.mask ? JSON.stringify(spec.mask.paths) : 0}`
-      : '';
-    const signature =
-      `${spec.text}|${spec.fontSize}|${spec.color}|${Math.round(spec.width)}x${Math.round(spec.height)}` +
-      `|${spec.fontFamily ?? ''}|${spec.fontWeight ?? ''}|${spec.fontStyle ?? ''}` +
-      `|wd${spec.fontWidth ?? ''}|sl${spec.fontSlant ?? ''}` +
-      `|${spec.align ?? ''}|${spec.letterSpacing ?? 0}|${spec.lineHeight ?? ''}` +
-      `|${spec.paragraphSpacing ?? 0}|${spec.strokeOverFill ? 'sof' : ''}` +
-      `|${spec.textTransform ?? ''}|${spec.fontVariant ?? ''}|${spec.verticalAlign ?? ''}|${spec.verticalScale ?? ''}|${spec.horizontalScale ?? ''}|${spec.baselineShift ?? ''}|${spec.textStroke ?? ''}|${spec.textStrokeWidth ?? ''}` +
-      `${spec.textExtras ? `|x${JSON.stringify(spec.textExtras)}` : ''}` +
-      `|${spec.runs && spec.runs.length ? JSON.stringify(spec.runs) : ''}${fxSig}${fillSig}` +
-      // Animator output and path placement change the baked pixels, so they
-      // belong in the cache key — otherwise frame 1 of a sweep is reused for
-      // every frame of it.
-      `${spec.glyphs && spec.glyphs.length ? `|g${JSON.stringify(spec.glyphs)}` : ''}` +
-      `${spec.textPath ? `|tp${JSON.stringify(spec.textPath)}` : ''}` +
-      `${spec.fontAxes ? `|ax${JSON.stringify(spec.fontAxes)}` : ''}` +
-      `${spec.fillPaint ? `|fp${JSON.stringify(spec.fillPaint)}` : ''}` +
-      `${spec.strokePaint ? `|sp${JSON.stringify(spec.strokePaint)}` : ''}` +
-      // Paint strokes are drawn into this raster, so they sign it — by digest,
-      // not by value (a long stroke is thousands of points, keyed every frame).
-      `${hasPaintStrokes(spec.paint) ? `|pt${paintSignature(spec.paint)}` : ''}` +
-      // An alias face that finishes loading changes the pixels without changing
-      // the spec — the epoch is what turns the key over when it does.
-      `${textNeedsFontVariants(spec) ? `|fv${fontVariantEpoch()}` : ''}` +
-      `|t${tier}`;
+    const signature = textRasterSignature(spec, tier);
     if (!this.fontVariantSub) this.fontVariantSub = onFontVariantsChanged(() => this.onChange?.());
 
     // Non-zero only when a CPU-baked chain would bleed outside the text box
@@ -1544,25 +1583,8 @@ export class AppTextureProvider implements TextureProvider {
         return;
       }
     }
-    // Runs are joined by a separator that cannot appear inside a run, so two
-    // different splits of the same points are two different signatures. Without
-    // the boundary marker a path cut into 2+2 points and one cut into 1+3 sign
-    // identically and the second silently reuses the first's texture.
-    // Per-run PAINT signs too. Identical geometry with different run paint is a
-    // different picture, and without this the second layer reuses the first's
-    // texture — the same failure the run boundary above prevents, but with
-    // matching geometry, so nothing else in the key would catch it.
-    const ptsSig = layerSubpaths(layer)
-      .map((s) => `${s.open ? 'o' : 'c'}:${s.paint ? JSON.stringify(s.paint) : ''}:${s.points.map(p => `${p.x},${p.y},${p.inX},${p.inY},${p.outX},${p.outY}`).join('|')}`)
-      .join('//');
-    const strokeSig = layer.stroke ? `${layer.stroke.width},${layer.stroke.color},${layer.stroke.align}` : 'no-stroke';
-    const paintSig = layer.fillPaint && layer.fillPaint.type !== 'solid' ? JSON.stringify(layer.fillPaint) : 'solid';
-    const fillSig = layer.fillOpacity !== undefined && layer.fillOpacity < 1 ? `|fo${layer.fillOpacity}` : '';
-    const fxSig = effectsNeedCpuBake(layer.effects)
-      ? `|fx:${JSON.stringify(layer.effects)}|mask:${layer.mask ? JSON.stringify(layer.mask.paths) : 0}`
-      : '';
     const tier = this.tierFor(effectiveScale, layer.continuousRaster, layer.width ?? 1, layer.height ?? 1);
-      const signature = `h:${layer.contentHash ?? ''}|${layer.width}x${layer.height}|${layer.primitive ?? 'path'}|r:${layer.cornerRadius ?? 0}|cr:${layer.cornerRadii ? layer.cornerRadii.join(',') : ''}|${ptsSig}|${layer.fill}|${paintSig}|${strokeSig}|${layer.pathOpen ? 'open' : 'closed'}${fxSig}${fillSig}|t${tier}`;
+    const signature = pathRasterSignature(layer, tier);
 
     const pad = rasterPadding(layer);
     perfBegin(PerfStage.raster);

@@ -135,7 +135,7 @@ import { measureTextNodeBoxes } from '@core/text/measureText';
 import { flattenComposition, readNodeKind } from '@core/scene/sceneDerive';
 import { layerSpaceAt } from '@core/scene/layerSpace';
 import { audioEngine } from '@core/audio/AudioEngine';
-import { AudioPlaybackBridge } from '@core/audio/useAudioPlayback';
+import { AudioPlaybackBridge } from '@hooks/useAudioPlayback';
 import { controlValue } from '@core/animation/expressionControls';
 import { ProjectCommands } from '@layout/Menu';
 import { CommandPalette } from '@layout/CommandPalette';

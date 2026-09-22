@@ -286,6 +286,110 @@ export default tseslint.config(
     },
   },
   {
+    // ── T0: the engine does not import the UI ──────────────────────────
+    //
+    // docs/NATIVE_CORE_PLAN.md §4 T0. `src/core` is the engine that the native
+    // libraries will replace function-by-function; a React hook or a zustand
+    // store inside it is a piece of the editor that can never be swapped,
+    // measured or run out of process. Hooks live in src/hooks, stores in
+    // src/stores, dialogs beside their callers in src/layout.
+    //
+    // Two blocks: the React/zustand ban applies to core TESTS too (a test of
+    // engine code that needs React is testing the wrong thing), while the
+    // layout/components ban exempts tests, because a handful of them import
+    // the UI catalogue on purpose to cross-check it against the engine
+    // (panelDefs vs edition surface, menu model vs i18n keys, icon names vs
+    // plugin manifests).
+    files: ['src/core/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            { name: 'react', message: 'T0: src/core must not import React. Move the hook/component to src/hooks or src/layout and keep the engine logic here — docs/NATIVE_CORE_PLAN.md §4 T0.' },
+            { name: 'react-dom', message: 'T0: src/core must not import react-dom — docs/NATIVE_CORE_PLAN.md §4 T0.' },
+            { name: 'zustand', message: 'T0: src/core must not create zustand stores. Keep the logic here behind a plain function/callback and put the store in src/stores — docs/NATIVE_CORE_PLAN.md §4 T0.' },
+          ],
+          patterns: [
+            { group: ['react/*', 'react-dom/*'], message: 'T0: src/core must not import React — docs/NATIVE_CORE_PLAN.md §4 T0.' },
+            { group: ['zustand/*'], message: 'T0: src/core must not import zustand — docs/NATIVE_CORE_PLAN.md §4 T0.' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/core/**/*.{ts,tsx}'],
+    ignores: [
+      '**/*.test.{ts,tsx}',
+      '**/__tests__/**',
+      // TODO(T0): engine modules that still call UI dialogs or read the icon
+      // vocabulary. Each needs the UI dependency injected (a dialog port, an
+      // icon-name registry the components side fills in) rather than a move;
+      // listed here so the rule stays an error everywhere else. Remove an entry
+      // when its import is gone — the list may only shrink.
+      'src/core/aep/aepImportReport.tsx',
+      'src/core/lottie/lottieImportReport.tsx',
+      'src/core/animation/layerTimeCommands.ts',
+      'src/core/project/confirmDiscard.ts',
+      'src/core/tracking/sceneEditCommand.ts',
+      'src/core/plugins/manifest.ts',
+      'src/core/plugins/uiTools.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/layout', '@/layout/*', '@layout', '@layout/*', '**/src/layout/*', '../**/layout/*'],
+              message: 'T0: src/core must not import src/layout. Move the shared piece into src/core or inject it from the caller — docs/NATIVE_CORE_PLAN.md §4 T0.',
+            },
+            {
+              group: ['@/components', '@/components/*', '@components', '@components/*', '**/src/components/*', '../**/components/*'],
+              message: 'T0: src/core must not import src/components. Move the shared piece into src/core or inject it from the caller — docs/NATIVE_CORE_PLAN.md §4 T0.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // ── T0: packages do not reach back into the app ────────────────────
+    //
+    // `packages/*` are the libraries the editor is built from; `src/` is the
+    // editor. A package that imports `src/**` is not a package, and it breaks
+    // the moment the render worker or the CLI bundles it without the app.
+    // The render-tests HARNESS (packages/render-tests/harness) is the app's
+    // own page and is deliberately outside this glob.
+    files: ['packages/**/src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '@/*',
+                '@core', '@core/*',
+                '@components', '@components/*',
+                '@layout', '@layout/*',
+                '@stores', '@stores/*',
+                '@hooks', '@hooks/*',
+                '@providers', '@providers/*',
+                '@app-types', '@app-types/*',
+                '@utils', '@utils/*',
+                '@styles/*', '@tokens/*', '@themes/*', '@assets/*',
+                '../**/src/*',
+              ],
+              message: 'T0: packages/** must not import from the editor (src/**). Move the shared code into a package or pass it in — docs/NATIVE_CORE_PLAN.md §4 T0.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // ── Design system: no colour literals in layout code ────────────────
     // Canvas overlays draw with the 2D context and legitimately hold colour
     // literals for things that are not chrome (marching ants, snap guides).

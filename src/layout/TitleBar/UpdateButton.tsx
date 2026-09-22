@@ -23,7 +23,7 @@
  */
 
 import { Icon } from '@components/Icon';
-import { useUpdateStore } from '@core/update/updateStore';
+import { useUpdateStore } from '@stores/updateStore';
 import styles from './TitleBar.module.css';
 
 export function UpdateButton(): JSX.Element | null {

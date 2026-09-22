@@ -102,6 +102,23 @@ export interface RenderBackend {
    */
   onDeviceLost?(handler: (reason: string) => void): void;
 
+  /**
+   * Receive the GPU's own time for a frame, in milliseconds, once the device
+   * has reported it.
+   *
+   * Optional because only WebGPU with the `timestamp-query` feature can
+   * measure it (`capabilities.timestampQueries`); WebGL2 has no portable
+   * equivalent and the null backend has no GPU. A backend that cannot measure
+   * never calls the handler, and the caller must read silence as "not
+   * measured", never as zero.
+   *
+   * The value arrives ASYNCHRONOUSLY: it is read back from a mapped buffer
+   * after the frame's commands complete, so a handler runs one to a few
+   * frames after the frame it describes was submitted. It is never called
+   * from inside `beginFrame`/`endFrame`.
+   */
+  onGpuFrameTime?(handler: (ms: number) => void): void;
+
   // ── Resource creation ───────────────────────────────────────────
   createBuffer(desc: BufferDescriptor): BufferHandle;
   writeBuffer(buffer: BufferHandle, byteOffset: number, data: ArrayBufferView): void;

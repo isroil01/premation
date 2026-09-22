@@ -23,7 +23,7 @@ import { parseKeyframeId, expandKeyframeProp, setDataKeyframeEasing } from '@mot
 import type { BezierHandles, EasingKind, Keyframe, PropPath, PropertyTrack } from '@motion/animation';
 import { sampleTrack, smoothTrackTangents } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';
-import { staggerOffsets, type StaggerOptions } from '@layout/Timeline/staggerOffsets';
+import { staggerOffsets, type StaggerOptions } from './staggerOffsets';
 import type { PresetTrack } from '@core/animation/animationPresets';
 import { easePresetById, type EasePresetId } from '@core/animation/easePresets';
 import {

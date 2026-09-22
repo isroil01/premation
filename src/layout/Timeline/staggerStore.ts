@@ -27,7 +27,7 @@
  */
 
 import { create } from 'zustand';
-import type { StaggerMode } from './staggerOffsets';
+import type { StaggerMode } from '@core/animation/staggerOffsets';
 
 /**
  * Vertical pointer travel, in pixels, worth one frame of stagger step.

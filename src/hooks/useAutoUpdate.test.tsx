@@ -18,7 +18,7 @@
 
 import { render, screen, act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { useAutoUpdate } from './useAutoUpdate';
-import { useUpdateStore } from './updateStore';
+import { useUpdateStore } from '@stores/updateStore';
 import { UpdateButton } from '@layout/TitleBar/UpdateButton';
 import { useUIStore } from '@stores/uiStore';
 import type { UpdateStatus } from '@app-types/motionEditor';

@@ -40,7 +40,7 @@ import {
   staggerOffsets,
   STAGGER_MODES,
   type StaggerMode,
-} from '@layout/Timeline/staggerOffsets';
+} from '@core/animation/staggerOffsets';
 import { useStaggerStore } from '@layout/Timeline/staggerStore';
 import styles from './AssistantDialog.module.css';
 

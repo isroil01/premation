@@ -19,7 +19,7 @@ import type { BodyKind, ColliderShape, PhysicsBodyConfig } from '@core/simulatio
 // boot, and the Inspector is the surface that owns the feature — so the
 // commands need no entry in the boot sequence to exist.
 import { runPhysicsBake } from '@core/simulation/bakeCommands';
-import { BakeDialog } from '@core/simulation/BakeDialog';
+import { BakeDialog } from './BakeDialog';
 import panel from '@layout/Effects/EffectsPanel.module.css';
 
 export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | null {

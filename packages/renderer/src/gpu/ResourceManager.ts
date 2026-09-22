@@ -28,18 +28,33 @@ import type {
   TextureHandle,
   TextureSource,
 } from './types';
+import {
+  GpuMemoryMeter,
+  estimateBufferBytes,
+  estimateRenderTargetBytes,
+  estimateTextureBytes,
+} from './gpuMemory';
 
 interface Entry<H> {
   handle: H;
   lastFrame: number;
   pinned: boolean;
+  /** Estimated GPU bytes this entry holds (0 for pipelines, samplers, …). */
+  bytes: number;
 }
 
 class Pool<H extends ResourceHandle<string>> {
   private readonly map = new Map<string, Entry<H>>();
-  constructor(private readonly destroy: (h: H) => void) {}
+  constructor(
+    private readonly destroy: (h: H) => void,
+    private readonly meter: GpuMemoryMeter,
+  ) {}
 
-  acquire(key: string, frame: number, create: () => H, pinned: boolean): H {
+  /**
+   * `bytes` is the estimate for a NEW allocation; it is only charged when the
+   * key misses, so a dedup hit costs nothing and never double-counts.
+   */
+  acquire(key: string, frame: number, create: () => H, pinned: boolean, bytes = 0): H {
     const existing = this.map.get(key);
     if (existing) {
       existing.lastFrame = frame;
@@ -47,7 +62,8 @@ class Pool<H extends ResourceHandle<string>> {
       return existing.handle;
     }
     const handle = create();
-    this.map.set(key, { handle, lastFrame: frame, pinned });
+    this.map.set(key, { handle, lastFrame: frame, pinned, bytes });
+    this.meter.add(bytes);
     return handle;
   }
 
@@ -60,7 +76,7 @@ class Pool<H extends ResourceHandle<string>> {
     let n = 0;
     for (const [key, e] of this.map) {
       if (!e.pinned && frame - e.lastFrame > maxIdle) {
-        this.destroy(e.handle);
+        this.release(e);
         this.map.delete(key);
         n += 1;
       }
@@ -75,14 +91,19 @@ class Pool<H extends ResourceHandle<string>> {
   free(key: string): void {
     const entry = this.map.get(key);
     if (entry) {
-      this.destroy(entry.handle);
+      this.release(entry);
       this.map.delete(key);
     }
   }
 
   disposeAll(): void {
-    for (const e of this.map.values()) this.destroy(e.handle);
+    for (const e of this.map.values()) this.release(e);
     this.map.clear();
+  }
+
+  private release(e: Entry<H>): void {
+    this.destroy(e.handle);
+    this.meter.sub(e.bytes);
   }
 }
 
@@ -99,7 +120,18 @@ export interface ResourceManagerStats {
   pipelines: number;
   bindGroups: number;
   renderTargets: number;
+  /**
+   * Estimated GPU bytes currently held by the pools (see `gpuMemory.ts` for
+   * what is counted and how). Buffers, textures and render targets only —
+   * pipelines, samplers, bind groups and shader modules are counted as 0.
+   */
+  gpuBytes: number;
+  /** High-water mark of `gpuBytes` over the manager's lifetime. */
+  gpuBytesPeak: number;
 }
+
+/** The pools a caller can ask `has` about (the count fields of the stats). */
+export type PoolKind = Exclude<keyof ResourceManagerStats, 'gpuBytes' | 'gpuBytesPeak'>;
 
 export class ResourceManager {
   private frame = 0;
@@ -112,19 +144,22 @@ export class ResourceManager {
   private readonly pipelines: Pool<PipelineHandle>;
   private readonly bindGroups: Pool<BindGroupHandle>;
   private readonly renderTargets: Pool<RenderTargetHandle>;
+  /** VRAM estimate across every pool — the HUD's gauge. */
+  private readonly memory = new GpuMemoryMeter();
 
   constructor(
     private readonly backend: RenderBackend,
     options: ResourceManagerOptions = {},
   ) {
     this.maxIdle = options.maxIdleFrames ?? 120;
-    this.buffers = new Pool((h) => this.backend.destroyBuffer(h));
-    this.textures = new Pool((h) => this.backend.destroyTexture(h));
-    this.samplers = new Pool((h) => this.backend.destroySampler(h));
-    this.shaders = new Pool((h) => this.backend.destroyShaderModule(h));
-    this.pipelines = new Pool((h) => this.backend.destroyPipeline(h));
-    this.bindGroups = new Pool((h) => this.backend.destroyBindGroup(h));
-    this.renderTargets = new Pool((h) => this.backend.destroyRenderTarget(h));
+    const m = this.memory;
+    this.buffers = new Pool((h) => this.backend.destroyBuffer(h), m);
+    this.textures = new Pool((h) => this.backend.destroyTexture(h), m);
+    this.samplers = new Pool((h) => this.backend.destroySampler(h), m);
+    this.shaders = new Pool((h) => this.backend.destroyShaderModule(h), m);
+    this.pipelines = new Pool((h) => this.backend.destroyPipeline(h), m);
+    this.bindGroups = new Pool((h) => this.backend.destroyBindGroup(h), m);
+    this.renderTargets = new Pool((h) => this.backend.destroyRenderTarget(h), m);
   }
 
   /** Advance the frame clock; call once per rendered frame. */
@@ -133,10 +168,15 @@ export class ResourceManager {
   }
 
   buffer(key: string, desc: BufferDescriptor, pinned = false): BufferHandle {
-    return this.buffers.acquire(key, this.frame, () => this.backend.createBuffer(desc), pinned);
+    return this.buffers.acquire(
+      key, this.frame, () => this.backend.createBuffer(desc), pinned, estimateBufferBytes(desc),
+    );
   }
   texture(key: string, desc: TextureDescriptor, pinned = false): TextureHandle {
-    return this.textures.acquire(key, this.frame, () => this.backend.createTexture(desc), pinned);
+    return this.textures.acquire(
+      key, this.frame, () => this.backend.createTexture(desc), pinned,
+      estimateTextureBytes(desc, this.backend.capabilities.maxTextureSize || Infinity),
+    );
   }
   /** Upload pixel data into a texture (image bitmap, canvas, video frame, or raw
    *  bytes). Thin passthrough so a `TextureProvider` — which only receives the
@@ -157,7 +197,9 @@ export class ResourceManager {
     return this.bindGroups.acquire(key, this.frame, () => this.backend.createBindGroup(desc), pinned);
   }
   renderTarget(key: string, desc: RenderTargetDescriptor, pinned = false): RenderTargetHandle {
-    return this.renderTargets.acquire(key, this.frame, () => this.backend.createRenderTarget(desc), pinned);
+    return this.renderTargets.acquire(
+      key, this.frame, () => this.backend.createRenderTarget(desc), pinned, estimateRenderTargetBytes(desc),
+    );
   }
 
   freeTexture(key: string): void {
@@ -174,7 +216,7 @@ export class ResourceManager {
     return this.backend.capabilities.maxTextureSize;
   }
 
-  has(kind: keyof ResourceManagerStats, key: string): boolean {
+  has(kind: PoolKind, key: string): boolean {
     return this.poolFor(kind).has(key);
   }
 
@@ -200,6 +242,8 @@ export class ResourceManager {
       pipelines: this.pipelines.size,
       bindGroups: this.bindGroups.size,
       renderTargets: this.renderTargets.size,
+      gpuBytes: this.memory.bytes,
+      gpuBytesPeak: this.memory.peak,
     };
   }
 
@@ -213,7 +257,7 @@ export class ResourceManager {
     this.renderTargets.disposeAll();
   }
 
-  private poolFor(kind: keyof ResourceManagerStats): { has(key: string): boolean } {
+  private poolFor(kind: PoolKind): { has(key: string): boolean } {
     switch (kind) {
       case 'buffers':
         return this.buffers;

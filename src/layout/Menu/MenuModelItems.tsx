@@ -20,7 +20,7 @@ import { MenuItem, MenuSeparator } from '@components/Menu';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
-import { formatChord } from './formatChord';
+import { formatChord } from '@core/commands/formatChord';
 import { resolveChord, getShortcutOverrides } from '@core/commands/shortcutOverrides';
 import { visibleItems } from './useAppMenuGroups';
 import type { MenuItemModel } from './menuModel';

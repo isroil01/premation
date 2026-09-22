@@ -24,7 +24,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { openPalette } from '@stores/commandPaletteStore';
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { useActiveCompName } from '@layout/Composition/activeCompName';
-import { isMacKeyboard } from '@layout/Menu/formatChord';
+import { isMacKeyboard } from '@core/commands/formatChord';
 import { countLabel } from './countLabel';
 import { StatusBar } from './StatusBar';
 import { FpsMeter } from './FpsMeter';

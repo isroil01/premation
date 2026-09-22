@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import NodeInspector from './NodeInspector';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
-import { propertyRegistry } from '@core/inspector/PropertyRegistry';
+import { propertyRegistry } from './PropertyRegistry';
 
 describe('NodeInspector', () => {
   beforeEach(() => {

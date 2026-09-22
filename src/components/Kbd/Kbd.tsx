@@ -4,7 +4,7 @@
  *   <Kbd chord="Ctrl+Shift+P" />      Ctrl · Shift · P
  *   <Kbd chord={formatChord(chord)} />  ⌘ · ⇧ · K
  *
- * Accepts both spellings `formatChord()` (layout/Menu/formatChord.ts) produces
+ * Accepts both spellings `formatChord()` (core/commands/formatChord.ts) produces
  * — Mac glyphs run together with no separator ("⌘⇧K"), and the `+`-joined words
  * of a PC keyboard ("Ctrl+Shift+K"). `splitChord` is the tokenizer and is
  * exported so the menu bar and the command palette can share it.

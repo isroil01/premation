@@ -37,7 +37,7 @@ import { canBe3D, is3DEnabled, set3DEnabled } from '@core/scene/threeD';
 import { getNodeMotionBlur, setNodeMotionBlur } from '@core/effects/motionBlur';
 import { getNodeAdjustment, setNodeAdjustment } from '@core/effects/adjustment';
 import { enableLayerMotionBlurWithFeedback, disableLayerMotionBlur, setAdjustmentWithFeedback } from '@core/effects/layerSwitchFeedback';
-import { useNodesRevision } from '@core/inspector/nodeRevision';
+import { useNodesRevision } from '@hooks/useNodeRevision';
 import styles from './SelectionHeader.module.css';
 
 // ── Layer switches ─────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { InspectorRow } from './Inspector';
-import { propertyRegistry } from '@core/inspector/PropertyRegistry';
+import { propertyRegistry } from './PropertyRegistry';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { defaultAnimation } from '@motion/animation';
 import { runAnimEdit } from '@core/animation/animationCommands';

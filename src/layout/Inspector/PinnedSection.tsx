@@ -18,7 +18,7 @@ import { PropertyRow } from '@components/PropertyRow';
 import defaultSceneGraph from '@core/scene/DefaultSceneGraph';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
 import { pinnedEntriesFor, setPinnedProp, type PinnedEntry } from '@core/inspector/pinnedProps';
-import { useNodeRevision } from '@core/inspector/nodeRevision';
+import { useNodeRevision } from '@hooks/useNodeRevision';
 import { readPropertyValue } from '@core/inspector/multiSelection';
 import { useThrottledTime } from '@stores/playbackClockStore';
 import { MultiPropertyRow } from './MultiPropertyRow';

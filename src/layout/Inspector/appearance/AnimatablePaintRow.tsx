@@ -33,7 +33,7 @@ import { useTrackNavigator } from '../AnimToggle';
 import { defaultAnimation } from '@motion/animation';
 import { applyValueExpression } from '@utils/evalMath';
 import { resolvePropertyMeta } from '@core/inspector/propertyMeta';
-import { useNodesRevision } from '@core/inspector/nodeRevision';
+import { useNodesRevision } from '@hooks/useNodeRevision';
 import {
   aggregateProperty,
   applyValues,

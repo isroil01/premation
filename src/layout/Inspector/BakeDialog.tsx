@@ -12,8 +12,10 @@
  * confirm, done, and the fields are there for the times that is not what you
  * meant.
  *
- * Lives beside the bake rather than in `components/` because it has no other
- * caller and no life of its own: it is the bake's argument list rendered.
+ * Lives beside its two callers (the Particle and Physics sections) rather than
+ * in `components/` because it has no life of its own: it is the bake's
+ * argument list rendered. Not beside the bake itself — `src/core` does not
+ * import React (docs/NATIVE_CORE_PLAN.md §4 T0).
  */
 
 import { useState } from 'react';
@@ -21,8 +23,8 @@ import { Modal } from '@components/Modal';
 import { Button } from '@components/Button';
 import { PropertyRow } from '@components/PropertyRow';
 import { ValueField } from '@components/ValueField';
-import { defaultBakeRange } from './bakeCommands';
-import { DEFAULT_PARTICLE_BAKE_CAP, type BakeRangeOptions } from './bakeDynamics';
+import { defaultBakeRange } from '@core/simulation/bakeCommands';
+import { DEFAULT_PARTICLE_BAKE_CAP, type BakeRangeOptions } from '@core/simulation/bakeDynamics';
 
 export interface BakeDialogProps {
   open: boolean;

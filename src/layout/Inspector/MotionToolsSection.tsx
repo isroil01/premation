@@ -10,7 +10,7 @@
  * collapsed header, two small subheads.
  */
 
-import { useNodeRevision } from '@core/inspector/nodeRevision';
+import { useNodeRevision } from '@hooks/useNodeRevision';
 import { AudioDriverSection, hasAudioDriverSection } from './AudioDriverSection';
 import { ModifierStackSection, hasModifierStackSection } from './ModifierStackSection';
 import styles from './MotionToolsSection.module.css';

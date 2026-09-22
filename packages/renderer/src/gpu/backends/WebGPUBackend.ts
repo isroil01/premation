@@ -42,7 +42,7 @@ import { sourcePassesThrough } from '../types';
 import { nextId } from '../../utils/ids';
 
 // WebGPU bit-flag constants (not in the ambient surface).
-const BUF = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128 };
+const BUF = { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128, QUERY_RESOLVE: 512 };
 const TEX = { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, RENDER_ATTACHMENT: 16 };
 const STAGE = { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 };
 
@@ -101,6 +101,11 @@ function blendState(mode: BlendMode): Record<string, unknown> | undefined {
   }
 }
 
+/** Staging buffers for the GPU-time readback: frames that may be in flight at once. */
+const GPU_TIME_RING = 4;
+/** Two u64 timestamps. */
+const GPU_TIME_BYTES = 16;
+
 const FILTER = { nearest: 'nearest', linear: 'linear' } as const;
 const ADDRESS = { clamp: 'clamp-to-edge', repeat: 'repeat', mirror: 'mirror-repeat' } as const;
 
@@ -133,6 +138,155 @@ export class WebGPUBackend implements RenderBackend {
     this.deviceLostHandler = handler;
   }
 
+  // ── GPU frame time (timestamp queries) ───────────────────────────
+  //
+  // How a frame's GPU time is measured, and why it is shaped this way:
+  //
+  //   * Chromium removed `GPUCommandEncoder.writeTimestamp` from the standard
+  //     `timestamp-query` feature (it lives behind a chromium-experimental
+  //     flag now), so the portable spelling is `timestampWrites` on a PASS:
+  //     a query index written when the pass begins and one when it ends.
+  //   * A frame is many passes and nobody knows which is the last one when it
+  //     begins. So the FIRST pass of a frame writes query 0 at its beginning,
+  //     and EVERY pass writes query 1 at its end — later passes overwrite the
+  //     same slot, and what survives is the end of the last pass. Two queries
+  //     per frame, no per-pass bookkeeping.
+  //   * `endFrame` resolves the two queries into `gpuTimeResolve` and copies
+  //     them into a free slot of a small ring of MAP_READ staging buffers,
+  //     inside the frame's own command buffer, then maps that slot AFTER the
+  //     submit. The map is the only asynchronous part and the hot path never
+  //     waits on it; when every slot is still mapping (the GPU is more than
+  //     `GPU_TIME_RING` frames behind) the frame is simply not measured.
+  //   * The readback completes when the GPU has finished the frame, which is
+  //     1–3 frames after submit. The handler therefore describes an EARLIER
+  //     frame than the one currently being encoded.
+  //
+  // Output-neutral: `timestampWrites` changes nothing about what a pass
+  // draws, stores or resolves. Cost: two 8-byte timestamp writes per pass on
+  // the GPU timeline, one 16-byte resolve + copy per frame, and one mapAsync
+  // promise per frame (its `then` callbacks are bound once per slot, so the
+  // promise is the frame's only allocation — the same as `onSubmittedWorkDone`).
+  //
+  // Not measured: queue writes (`writeTexture`/`writeBuffer` uploads run
+  // before the first pass and outside the query pair) and presentation.
+  private gpuTimeHandler: ((ms: number) => void) | null = null;
+  private gpuTimeQueries: GPUQuerySet | null = null;
+  private gpuTimeResolve: GPUBuffer | null = null;
+  private readonly gpuTimeStaging: GPUBuffer[] = [];
+  /** Per staging slot: true while a mapAsync is outstanding. */
+  private readonly gpuTimeBusy: boolean[] = [];
+  /** Per staging slot: the `then` callbacks, bound once so a frame allocates only the promise. */
+  private readonly gpuTimeOnMapped: Array<() => void> = [];
+  private readonly gpuTimeOnFailed: Array<() => void> = [];
+  /** Whether the current frame has begun a pass (query 0 written). */
+  private gpuTimeFrameStarted = false;
+
+  /** See `RenderBackend.onGpuFrameTime`. Attach any time; silent without the feature. */
+  onGpuFrameTime(handler: (ms: number) => void): void {
+    this.gpuTimeHandler = handler;
+  }
+
+  /** Allocate the query set and staging ring. Called once from `initialize` when the feature is on. */
+  private setupGpuTime(): void {
+    try {
+      this.gpuTimeQueries = this.device.createQuerySet({ type: 'timestamp', count: 2, label: 'frame-time' });
+      this.gpuTimeResolve = this.device.createBuffer({
+        label: 'frame-time/resolve',
+        size: GPU_TIME_BYTES,
+        usage: BUF.QUERY_RESOLVE | BUF.COPY_SRC,
+      });
+      for (let i = 0; i < GPU_TIME_RING; i++) {
+        const staging = this.device.createBuffer({
+          label: `frame-time/staging${i}`,
+          size: GPU_TIME_BYTES,
+          usage: BUF.MAP_READ | BUF.COPY_DST,
+        });
+        this.gpuTimeStaging.push(staging);
+        this.gpuTimeBusy.push(false);
+        this.gpuTimeOnMapped.push(() => this.readGpuTime(i));
+        this.gpuTimeOnFailed.push(() => { this.gpuTimeBusy[i] = false; });
+      }
+    } catch {
+      // The adapter advertised the feature and the device refused the query
+      // set (SwiftShader has done this). Behave as if the feature were absent.
+      this.teardownGpuTime();
+      this.capabilities.timestampQueries = false;
+    }
+  }
+
+  private teardownGpuTime(): void {
+    try { this.gpuTimeQueries?.destroy(); } catch { /* device gone */ }
+    try { this.gpuTimeResolve?.destroy(); } catch { /* device gone */ }
+    for (const b of this.gpuTimeStaging) { try { b.destroy(); } catch { /* device gone */ } }
+    this.gpuTimeQueries = null;
+    this.gpuTimeResolve = null;
+    this.gpuTimeStaging.length = 0;
+    this.gpuTimeBusy.length = 0;
+    this.gpuTimeOnMapped.length = 0;
+    this.gpuTimeOnFailed.length = 0;
+    this.gpuTimeFrameStarted = false;
+  }
+
+  /** The `timestampWrites` entry for the pass about to begin, or undefined when not measuring. */
+  private gpuTimestampWrites(): Record<string, unknown> | undefined {
+    if (!this.gpuTimeQueries) return undefined;
+    if (this.gpuTimeFrameStarted) return { querySet: this.gpuTimeQueries, endOfPassWriteIndex: 1 };
+    this.gpuTimeFrameStarted = true;
+    return { querySet: this.gpuTimeQueries, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 };
+  }
+
+  /**
+   * Encode the resolve + copy for this frame. Returns the staging slot to map
+   * after submit, or -1 when nothing was measured (no pass this frame, no
+   * handler, or every slot is still in flight).
+   */
+  private encodeGpuTimeReadback(encoder: GPUCommandEncoder): number {
+    if (!this.gpuTimeQueries || !this.gpuTimeResolve || !this.gpuTimeHandler || !this.gpuTimeFrameStarted) return -1;
+    let slot = -1;
+    for (let i = 0; i < this.gpuTimeBusy.length; i++) {
+      if (!this.gpuTimeBusy[i]) { slot = i; break; }
+    }
+    if (slot < 0) return -1;
+    encoder.resolveQuerySet(this.gpuTimeQueries, 0, 2, this.gpuTimeResolve, 0);
+    encoder.copyBufferToBuffer(this.gpuTimeResolve, 0, this.gpuTimeStaging[slot]!, 0, GPU_TIME_BYTES);
+    return slot;
+  }
+
+  /** Map the slot the frame just submitted into; the result arrives via `readGpuTime`. */
+  private mapGpuTime(slot: number): void {
+    const staging = this.gpuTimeStaging[slot];
+    if (!staging) return;
+    this.gpuTimeBusy[slot] = true;
+    try {
+      staging
+        .mapAsync(typeof GPUMapMode !== 'undefined' ? GPUMapMode.READ : 0x0001)
+        .then(this.gpuTimeOnMapped[slot], this.gpuTimeOnFailed[slot]);
+    } catch {
+      this.gpuTimeBusy[slot] = false;
+    }
+  }
+
+  /** mapAsync resolved: read the two u64 nanosecond stamps and free the slot. */
+  private readGpuTime(slot: number): void {
+    const staging = this.gpuTimeStaging[slot];
+    this.gpuTimeBusy[slot] = false;
+    if (!staging) return; // torn down while mapping
+    try {
+      const stamps = new BigUint64Array(staging.getMappedRange());
+      const begin = stamps[0]!;
+      const end = stamps[1]!;
+      staging.unmap();
+      // A quantised clock (Chromium rounds timestamps to 100 µs unless
+      // --enable-webgpu-developer-features) can make end == begin: that is a
+      // real 0.0 ms. end < begin never happens on a sane device — skip it.
+      if (end < begin) return;
+      const ms = Number(end - begin) / 1e6;
+      if (Number.isFinite(ms)) this.gpuTimeHandler?.(ms);
+    } catch {
+      try { staging.unmap(); } catch { /* not mapped */ }
+    }
+  }
+
   async initialize(surface?: RenderSurface): Promise<void> {
     const gpu = (globalThis.navigator as Navigator | undefined)?.gpu;
     if (!gpu) throw new Error('WebGPU is not available');
@@ -148,6 +302,13 @@ export class WebGPUBackend implements RenderBackend {
     if (hasFloat32Filterable) {
       requiredFeatures.push('float32-filterable');
     }
+    // GPU frame time for the HUD. Optional in the spec; SwiftShader and some
+    // mobile adapters do not offer it, and without it the frame simply is not
+    // timed (see the GPU-frame-time block below).
+    const hasTimestampQuery = !!adapter.features?.has?.('timestamp-query');
+    if (hasTimestampQuery) {
+      requiredFeatures.push('timestamp-query');
+    }
 
     const requiredLimits: Record<string, number> = {};
     if (adapter.limits?.maxTextureDimension2D) {
@@ -160,6 +321,10 @@ export class WebGPUBackend implements RenderBackend {
     });
     this.capabilities.float32Textures = hasFloat32Filterable;
     this.capabilities.maxTextureSize = this.device.limits?.maxTextureDimension2D ?? adapter.limits?.maxTextureDimension2D ?? 8192;
+    // Trust the DEVICE, not the adapter: a device may come back without a
+    // feature that was asked for, and a query set created then is invalid.
+    this.capabilities.timestampQueries = hasTimestampQuery && !!this.device.features?.has?.('timestamp-query');
+    if (this.capabilities.timestampQueries) this.setupGpuTime();
 
     /*
       `device.lost` RESOLVES on a device reset — it does not reject. A `.catch`
@@ -479,6 +644,7 @@ export class WebGPUBackend implements RenderBackend {
 
   beginFrame(): void {
     this.encoder = this.device.createCommandEncoder();
+    this.gpuTimeFrameStarted = false;
   }
   /** Surface clip rect (surface px, top-left origin), or null. */
   private frameClip: { x: number; y: number; width: number; height: number } | null = null;
@@ -522,8 +688,12 @@ export class WebGPUBackend implements RenderBackend {
     // never routed at it (CompositionPass only forms 3D groups on offscreen
     // targets created with depth).
     const depthView = !toSurface && desc.depth ? native!.depthView : undefined;
+    // Undefined when the frame is not being timed — the descriptor then has no
+    // `timestampWrites` key at all, exactly as before.
+    const timestampWrites = this.gpuTimestampWrites();
     const pass = this.encoder.beginRenderPass({
       label: desc.label,
+      ...(timestampWrites ? { timestampWrites } : {}),
       colorAttachments: [
         {
           view,
@@ -578,8 +748,13 @@ export class WebGPUBackend implements RenderBackend {
   endFrame(): void {
     this.openPass = null;
     if (!this.encoder) return;
+    // Resolve + copy ride in the frame's own command buffer, so they are
+    // ordered after the last pass without a second submit.
+    const slot = this.encodeGpuTimeReadback(this.encoder);
     this.device.queue.submit([this.encoder.finish()]);
     this.encoder = null;
+    this.gpuTimeFrameStarted = false;
+    if (slot >= 0) this.mapGpuTime(slot);
   }
   present(): void {
     // WebGPU presents implicitly on submit.
@@ -682,6 +857,7 @@ export class WebGPUBackend implements RenderBackend {
     // fresh backend can reconfigure the same canvas on re-entry.
     this.encoder = null;
     this.openPass = null;
+    this.teardownGpuTime();
     try {
       (this.context as unknown as { unconfigure?: () => void } | undefined)?.unconfigure?.();
     } catch {

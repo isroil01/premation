@@ -13,7 +13,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Paginated, PageQuery } from './transport';
+import type { Paginated, PageQuery } from '@core/api/transport';
 
 export type PagedFetcher<T> = (params: Required<PageQuery>) => Promise<Paginated<T>>;
 

@@ -26,7 +26,7 @@ import {
 } from '@motion/renderer';
 import type { RenderBackend, RenderLayer, RenderSnapshot } from './RenderBackend';
 import { snapshotToFrameScene, takeSceneLayerErrors, viewToCamera, needsShapeRaster } from './snapshotToFrameScene';
-import { perfBegin, perfEnd, PerfStage } from '@core/perf/framePerf';
+import { framePerf, perfBegin, perfEnd, PerfStage } from '@core/perf/framePerf';
 import { viewportVideoFrames } from './videoFrameCache';
 import { renderPixelMotion } from './pixelMotion';
 import { exactVideoFrames, ExactVideoFrameCache, frameImageSize, type ExactFrameImage } from './exactVideoFrames';
@@ -446,6 +446,12 @@ export class MotionRendererBackend implements RenderBackend {
         noteDeviceLoss(reason);
         this.handleGpuLoss(backend, reason);
       });
+      // GPU frame time for the HUD's `gpu time` row. Viewport only: an export
+      // or thumbnail renderer has no viewport frame for the number to describe.
+      // Silent on adapters without `timestamp-query` (the handler never runs).
+      // The hook is optional on the backend interface: test doubles and older
+      // backends don't carry it.
+      if (this.role === 'viewport') backend.onGpuFrameTime?.((ms) => framePerf.reportGpuTime(ms));
       return backend;
     }
     return new WebGL2Backend();
@@ -1295,6 +1301,9 @@ export class MotionRendererBackend implements RenderBackend {
     perfBegin(PerfStage.gpuSubmit);
     const result = this.renderer.render(vp, frameScene);
     perfEnd(PerfStage.gpuSubmit);
+    // The VRAM gauge: the renderer's resource pools already count their bytes
+    // per frame; this is two field reads, no allocation.
+    if (this.role === 'viewport') framePerf.reportGpuMemory(result.resources.gpuBytes, result.resources.gpuBytesPeak);
 
     // Preview half of the M8a split: keep the frame, but say what it is not.
     //

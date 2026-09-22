@@ -31,7 +31,7 @@ import {
   type RenderJobDto,
   type TrashedProject,
 } from '@core/api/client';
-import { usePagedList } from '@core/api/usePagedList';
+import { usePagedList } from '@hooks/usePagedList';
 import { clearRecovery } from '@core/persistence/recovery';
 import { useCompositionStore, type CompositionSettings } from '@stores/compositionStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
