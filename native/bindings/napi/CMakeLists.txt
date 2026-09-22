@@ -47,6 +47,15 @@ endif()
 add_library(motion_napi SHARED motion_napi.cpp ${CMAKE_JS_SRC})
 set_target_properties(motion_napi PROPERTIES PREFIX "" SUFFIX ".node")
 
+# cmake-js sets CMAKE_LIBRARY_OUTPUT_DIRECTORY to build/Release, but on Windows
+# a SHARED library's binary is a RUNTIME artifact, so the .node landed in
+# build/ and index.cjs (which looks in build/Release and build/Debug) could
+# not find it. Pin both kinds of output, per configuration, on every platform.
+set(_motion_napi_out "${CMAKE_BINARY_DIR}/$<IF:$<CONFIG:Debug>,Debug,Release>")
+set_target_properties(motion_napi PROPERTIES
+  LIBRARY_OUTPUT_DIRECTORY "${_motion_napi_out}"
+  RUNTIME_OUTPUT_DIRECTORY "${_motion_napi_out}")
+
 # The Node and node-addon-api headers are SYSTEM includes: our -Werror set is
 # for our code, not for warnings inside napi-inl.h.
 target_include_directories(motion_napi SYSTEM PRIVATE ${CMAKE_JS_INC} ${NODE_ADDON_API_DIR})
