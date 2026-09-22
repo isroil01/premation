@@ -47,7 +47,74 @@ export interface CliRenderRequest {
   aspect?: string;
   /** A caption file's text, imported before the render (burn-in). */
   captions?: { text: string; filename: string };
+  /**
+   * mp4 only — the H.264/HEVC encoder. Set by the export supervisor from the
+   * preference captured when the job was queued; the CLI leaves it unset.
+   */
+  videoEncoder?: string;
+  /** Chapter marks captured at queue time (see `RenderJobSpec.chapters`). */
+  chapters?: unknown;
 }
+
+/*
+  ★ The export queue's three shapes are DUPLICATED in electron/exportProcess.ts
+  — the two sides cannot import one another (see the header). Keep in step.
+*/
+
+export type ExportJobStatus =
+  | 'queued'
+  | 'preparing'
+  | 'rendering'
+  | 'encoding'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/** One queued export: the CLI's render request plus what the queue shows. */
+export interface ExportJobSpec {
+  projectPath: string;
+  comp?: string;
+  outPath: string;
+  format: string;
+  startFrame?: number;
+  endFrame?: number;
+  fps?: number;
+  width?: number;
+  height?: number;
+  quality?: 'high' | 'medium' | 'draft';
+  proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
+  transparent?: boolean;
+  videoEncoder?: string;
+  chapters?: unknown;
+  label: string;
+  totalFrames: number;
+}
+
+export interface ExportJobProgress {
+  fraction: number;
+  frame: number;
+  totalFrames: number;
+  fps: number | null;
+  etaSec: number | null;
+}
+
+export interface ExportJobRecord {
+  id: string;
+  spec: ExportJobSpec;
+  status: ExportJobStatus;
+  priority: number;
+  createdAt: number;
+  startedAt?: number;
+  finishedAt?: number;
+  progress: ExportJobProgress;
+  error?: string;
+  warnings?: string[];
+  attempts: number;
+}
+
+export type ExportQueueEvent =
+  | { type: 'snapshot'; jobs: ExportJobRecord[] }
+  | { type: 'job'; job: ExportJobRecord };
 
 /** The single report that ends a CLI run, and decides its exit code. */
 export type CliDoneReport =
@@ -700,6 +767,33 @@ export interface MotionEditorApi {
     /** Render progress 0–1. Fire-and-forget; it also resets the stall watchdog. */
     progress?(fraction: number): void;
     /** The one terminal report. The process exits on it. */
+    done?(report: CliDoneReport): void;
+  };
+
+  /**
+   * The main-owned export queue (electron/exportProcess.ts), as the editor
+   * sees it. Desktop only. See `@core/export/exportSupervisorClient`.
+   */
+  exportSupervisor?: {
+    reserve?(): Promise<{ id: string; projectPath: string }>;
+    enqueue?(req: { id?: string; spec: ExportJobSpec; priority?: number }): Promise<ExportJobRecord>;
+    cancel?(id: string): Promise<boolean>;
+    retry?(id: string): Promise<ExportJobRecord | null>;
+    setPriority?(id: string, priority: number): Promise<boolean>;
+    remove?(id: string): Promise<boolean>;
+    list?(): Promise<ExportJobRecord[]>;
+    subscribe?(): Promise<ExportJobRecord[]>;
+    chooseOutputPath?(defaultName: string): Promise<string | null>;
+    onEvent?(handler: (event: ExportQueueEvent) => void): () => void;
+  };
+
+  /**
+   * The same queue's worker side — answers only in a hidden export window,
+   * with the CLI's request and report shapes. See `src/pages/RenderPage.tsx`.
+   */
+  exportWorker?: {
+    job?(): Promise<CliTaskRequest>;
+    progress?(fraction: number): void;
     done?(report: CliDoneReport): void;
   };
 

@@ -153,6 +153,18 @@ export interface Preferences {
    */
   exportRawPipe: boolean;
   /**
+   * Desktop export: render IN the editor's own window (the pre-T2 path)
+   * rather than in a hidden window the main process owns.
+   *
+   * OFF by default — the out-of-process path is the one where closing or
+   * crashing the editor cannot lose a render and a render crash cannot take
+   * the editor with it. On is the escape hatch for a machine where the hidden
+   * window misbehaves (a GPU that refuses a second context, say), and it is
+   * also what the web edition uses regardless, having no main process. The
+   * Render Queue panel's resumable jobs are unaffected either way.
+   */
+  exportInProcess: boolean;
+  /**
    * Desktop export, MP4 only: which encoder writes the H.264/HEVC stream.
    * `libx264` is the software default and the one whose output is what the
    * golden export gate compares. A hardware encoder is opt-in, probed at
@@ -320,6 +332,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   deviceWireframesAll: false,
   useProxies: true,
   exportRawPipe: true,
+  exportInProcess: false,
   exportVideoEncoder: 'libx264',
   libraryFavorites: [],
   effectFavorites: [],

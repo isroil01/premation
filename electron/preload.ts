@@ -118,6 +118,47 @@ const bridge = {
     done: (report: unknown) => ipcRenderer.send('cli:done', report),
   },
 
+  /**
+   * The export queue main owns (electron/exportProcess.ts) — the EDITOR's side.
+   *
+   * A job is a project snapshot on disk plus a spec; main renders it in a
+   * hidden window of its own and pushes `ExportQueueEvent`s to every window
+   * that subscribed. The editor never holds a frame, a sink or a window: it
+   * enqueues and watches, and can be closed or crash without the job noticing.
+   */
+  exportSupervisor: {
+    /** An id and a snapshot path the editor writes the project to before enqueueing. */
+    reserve: () => ipcRenderer.invoke('export:reserve'),
+    enqueue: (req: { id?: string; spec: unknown; priority?: number }) => ipcRenderer.invoke('export:enqueue', req),
+    cancel: (id: string) => ipcRenderer.invoke('export:cancel', id),
+    retry: (id: string) => ipcRenderer.invoke('export:retry', id),
+    setPriority: (id: string, priority: number) => ipcRenderer.invoke('export:setPriority', id, priority),
+    remove: (id: string) => ipcRenderer.invoke('export:remove', id),
+    list: () => ipcRenderer.invoke('export:list'),
+    /** Start receiving `onEvent` pushes; resolves the current list. */
+    subscribe: () => ipcRenderer.invoke('export:subscribe'),
+    /** Native save dialog for the destination, asked BEFORE the render. */
+    chooseOutputPath: (defaultName: string) => ipcRenderer.invoke('export:chooseOutputPath', defaultName),
+    onEvent: (handler: (event: unknown) => void) => {
+      const listener = (_event: unknown, payload: unknown): void => handler(payload);
+      ipcRenderer.on('export:event', listener);
+      return () => ipcRenderer.removeListener('export:event', listener);
+    },
+  },
+
+  /**
+   * The same queue's WORKER side — what a hidden export window uses.
+   *
+   * Mirrors `cli` exactly, and the /render route tries `cli.job()` first, then
+   * this: main answers whichever launch this window is. Both reject in a
+   * normal editor session, which is what keeps the route inert there.
+   */
+  exportWorker: {
+    job: () => ipcRenderer.invoke('export:workerJob'),
+    progress: (fraction: number) => ipcRenderer.send('export:workerProgress', fraction),
+    done: (report: unknown) => ipcRenderer.send('export:workerDone', report),
+  },
+
   diag: {
     /** One-off GPU/WebGPU report from the renderer, appended to
      *  <userData>/gpu-diagnostics.log so a packaged build with DevTools disabled

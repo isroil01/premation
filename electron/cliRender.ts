@@ -90,11 +90,44 @@ export interface CliTask {
   output: CliOutputOptions;
 }
 
-/** Where the renderer lives — the dev server, or the packaged bundle. */
-function rendererEntry(): { url: string } | { file: string } {
+/**
+ * Where the renderer lives — the dev server, or the packaged bundle.
+ *
+ * Shared with the export supervisor (electron/exportProcess.ts), whose hidden
+ * windows load the same `#/render` route: one definition of "the app", so the
+ * CLI and a queued export can never open different builds.
+ */
+export function rendererEntry(): { url: string } | { file: string } {
   return process.env.NODE_ENV === 'development'
     ? { url: `${(process.env.PREMATION_DEV_URL ?? 'http://localhost:5173').replace(/\/+$/, '')}/#/render` }
     : { file: path.join(__dirname, '..', 'dist', 'index.html') };
+}
+
+/**
+ * The web preferences of a hidden render window — the CLI's and the export
+ * supervisor's alike. Same preload and sandbox as the editor window, plus the
+ * one switch a hidden render cannot work without (see `backgroundThrottling`).
+ */
+export function hiddenRenderWebPreferences(): Electron.WebPreferences {
+  return {
+    preload: path.join(__dirname, 'preload.js'),
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+    webgl: true,
+    devTools: false,
+    /*
+      The whole reason a hidden render works at all.
+
+      Chromium throttles timers in a window that is not visible — to roughly
+      one tick per second — and the offline render loop yields between frames
+      (`scheduler.yield`, falling back to `setTimeout`). Throttled, a 600-frame
+      render would take ten minutes of pure waiting and then trip the stall
+      watchdog. This is the switch that says "this window is not idle, it is
+      working".
+    */
+    backgroundThrottling: false,
+  };
 }
 
 /**
@@ -388,25 +421,7 @@ export async function runCliTask(task: CliTask): Promise<number> {
     show: false,
     width: 1280,
     height: 720,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      webgl: true,
-      devTools: false,
-      /*
-        The whole reason a hidden render works at all.
-
-        Chromium throttles timers in a window that is not visible — to roughly
-        one tick per second — and the offline render loop yields between frames
-        (`scheduler.yield`, falling back to `setTimeout`). Throttled, a 600-frame
-        render would take ten minutes of pure waiting and then trip the stall
-        watchdog. This is the switch that says "this window is not idle, it is
-        working".
-      */
-      backgroundThrottling: false,
-    },
+    webPreferences: hiddenRenderWebPreferences(),
   });
 
   // A renderer that dies — an OOM on a huge comp, a GPU process crash — must

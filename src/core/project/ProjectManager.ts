@@ -267,6 +267,20 @@ export class ProjectManager {
     return this.writeTo(ref, path);
   }
 
+  /**
+   * Write the document AS IT IS NOW to `path` without becoming that path.
+   *
+   * The export supervisor's jobs render from a project on disk — the same
+   * `openPath` the CLI uses — and this is how the editor hands one over: the
+   * same capture and the same storage a Save goes through (a `.motion` path
+   * lands as a bundle, footage collected in), but the current project keeps
+   * its own path, its dirty flag and its recent-list entry. Nothing the user
+   * would call "saving" happens.
+   */
+  async snapshotTo(path: string): Promise<void> {
+    await this.storage.save(path, this.io.capture());
+  }
+
   private async writeTo(ref: ProjectRef, path: string): Promise<SaveOutcome> {
     try {
       const file = this.io.capture();

@@ -15,6 +15,7 @@ import { cn } from '@utils/cn';
 import { Switch } from '@components/Switch';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { canEncodeLocally } from '@core/export/videoSink';
+import { exportSupervisorAvailable } from '@core/export/exportSupervisorClient';
 import { VIDEO_ENCODER_LABELS, isVideoEncoderId, type VideoEncoderId } from '@core/export/rawPipe';
 import styles from './CustomizeDialog.module.css';
 
@@ -38,9 +39,11 @@ function useHardwareEncoders(): VideoEncoderId[] | null {
 
 export function ExportSettingsSection(): JSX.Element | null {
   const rawPipe = usePreferenceStore((s) => s.exportRawPipe);
+  const inProcess = usePreferenceStore((s) => s.exportInProcess);
   const encoder = usePreferenceStore((s) => s.exportVideoEncoder);
   const setPref = usePreferenceStore((s) => s.set);
   const hardware = useHardwareEncoders();
+  const supervisor = exportSupervisorAvailable();
   if (!canEncodeLocally()) return null;
 
   // Software first, then whatever works here. A preference naming an encoder
@@ -71,6 +74,24 @@ export function ExportSettingsSection(): JSX.Element | null {
             aria-label="Stream frames to the encoder"
           />
         </div>
+
+        {supervisor ? (
+          <div className={styles.switchRow}>
+            <div className={styles.settingInfo}>
+              <span className={styles.settingTitle}>Render exports in the editor window</span>
+              <span className={styles.settingDesc}>
+                Off: each export renders in a hidden window the app owns, so closing or crashing the
+                editor cannot lose it and a failed render cannot take the editor down.
+                On: the export runs inside this window, as it did before.
+              </span>
+            </div>
+            <Switch
+              checked={inProcess}
+              onChange={(e) => setPref('exportInProcess', e.target.checked)}
+              aria-label="Render exports in the editor window"
+            />
+          </div>
+        ) : null}
 
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>

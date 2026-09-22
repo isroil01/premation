@@ -38,6 +38,13 @@ import { checkForUpdatesInteractive, initAutoUpdate } from './updater';
 import { nativeTemplateFromGroups, sanitizeMenuGroups, type NativeMenuGroupSpec, type NativeMenuOptions } from './nativeMenu';
 import { CLI_HELP, cliArgs, parseCli, type CliInvocation } from './cliArgs';
 import { runCliAndExit } from './cliRender';
+import {
+  createExportSupervisor,
+  installExportQuitGuard,
+  keepAliveForExports,
+  registerExportSupervisorIpc,
+  type ExportSupervisor,
+} from './exportProcess';
 import { enforceProjectExtension } from './projectSavePath';
 import {
   inspectJob,
@@ -59,6 +66,9 @@ const DEV_SERVER_URL = (process.env.PREMATION_DEV_URL ?? 'http://localhost:5173'
 
 /** The main window, tracked so the OAuth deep-link handler can reach it. */
 let mainWindow: BrowserWindow | null = null;
+
+/** The export queue, owned here so it outlives any window (electron/exportProcess.ts). */
+let exportSupervisor: ExportSupervisor | null = null;
 
 // ── OAuth deep link (premation://oauth?code=…) ──────────────────────────────
 //
@@ -473,8 +483,22 @@ function registerBlobIpc(): void {
  * point every other handler here works on it exactly as if it had never been
  * interrupted. See electron/renderResume.ts.
  */
-function registerRenderIpc(): void {
+/** What `registerRenderIpc` hands the export supervisor: teardown by window. */
+interface RenderIpcControl {
+  /**
+   * Kill the ffmpeg children and remove the staging dirs of every job a
+   * window began. The export supervisor calls this when it destroys a hidden
+   * window before its job completed — a crash, a stall, a cancel — because the
+   * window's own cleanup never ran, and a stream child left waiting on stdin
+   * would outlive the render holding a half-written file.
+   */
+  abortJobsOwnedBy(webContentsId: number): Promise<void>;
+}
+
+function registerRenderIpc(): RenderIpcControl {
   const jobs = new Map<string, string>();
+  /** Which window began each job, so a dead window's jobs can be found. */
+  const owners = new Map<string, number>();
   /**
    * Where staging dirs live.
    *
@@ -746,11 +770,12 @@ function registerRenderIpc(): void {
    * those genuinely do not want to be resumed — a `premation render` that
    * exited is not something a later editor session should offer to finish.
    */
-  handle('render:beginJob', async (_e, info?: { spec?: unknown; format?: string; totalFrames?: number }) => {
+  handle('render:beginJob', async (e, info?: { spec?: unknown; format?: string; totalFrames?: number }) => {
     const jobId = `${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
     const dir = resumeJobDir(stagingRoot(), jobId);
     await mkdir(dir, { recursive: true });
     jobs.set(jobId, dir);
+    owners.set(jobId, e.sender.id);
     cancelled.delete(jobId);
     if (info && typeof info.format === 'string') {
       await writeManifest(dir, {
@@ -784,11 +809,12 @@ function registerRenderIpc(): void {
    * than trusted from the manifest — a crash can leave the tally ahead of the
    * frames, and resuming one frame late writes a video with a hole in it.
    */
-  handle('render:adoptJob', async (_e, jobId: string): Promise<AdoptedRenderJob | null> => {
+  handle('render:adoptJob', async (e, jobId: string): Promise<AdoptedRenderJob | null> => {
     const root = stagingRoot();
     const adopted = await inspectJob(root, jobId);
     if (!adopted) return null;
     jobs.set(jobId, resumeJobDir(root, jobId));
+    owners.set(jobId, e.sender.id);
     return adopted;
   });
 
@@ -1242,12 +1268,29 @@ function registerRenderIpc(): void {
     running.delete(jobId);
     killStream(jobId);
     jobs.delete(jobId);
+    owners.delete(jobId);
     try {
       await rm(dir, { recursive: true, force: true });
     } catch {
       /* ignore cleanup errors */
     }
   });
+
+  return {
+    async abortJobsOwnedBy(webContentsId) {
+      for (const [jobId, owner] of [...owners]) {
+        if (owner !== webContentsId) continue;
+        cancelled.add(jobId);
+        running.get(jobId)?.kill();
+        running.delete(jobId);
+        killStream(jobId);
+        const dir = jobs.get(jobId);
+        jobs.delete(jobId);
+        owners.delete(jobId);
+        if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      }
+    },
+  };
 }
 
 /**
@@ -1739,7 +1782,16 @@ app.whenReady().then(() => {
   registerIndexIpc(app);
   registerThumbIpc(app);
   registerRevealIpc();
-  registerRenderIpc();
+  const renderIpc = registerRenderIpc();
+  // Desktop export as a main-owned queue, each job in a hidden window of its
+  // own (electron/exportProcess.ts). The queue file is read now, so jobs left
+  // from a previous session are listed the moment the editor asks; they start
+  // once the editor window is up, so a queued render never begins on a
+  // machine whose editor has not even painted.
+  exportSupervisor = createExportSupervisor({ abortRenderJobsOwnedBy: renderIpc.abortJobsOwnedBy });
+  registerExportSupervisorIpc(exportSupervisor);
+  installExportQuitGuard(exportSupervisor);
+  const supervisorLoaded = exportSupervisor.load();
   registerPopoutIpc();
   registerOAuthIpc();
   // Bundled neural segmentation model — read-only, allowlisted, no gate: the
@@ -1834,6 +1886,8 @@ app.whenReady().then(() => {
   // adapter inactive, initializationTime:0) — a premature, misleading snapshot.
   win.webContents.once('did-finish-load', () => {
     setTimeout(() => void logGpuDiagnostics(), 6000);
+    // Jobs queued in a previous session start now, with an editor to show them.
+    void supervisorLoaded.then(() => exportSupervisor?.dispatch());
   });
 
   // Cold start via a premation:// link (Windows/Linux put it in argv). Wait for
@@ -1854,6 +1908,10 @@ app.on('window-all-closed', () => {
   // would race it: the hidden window closes the moment the render resolves, and
   // on a fast `comps` listing that fires before the result has been printed.
   if (isHeadlessRun) return;
+  // The editor window is gone but exports may not be: a queued render is not
+  // the editor's to take with it. The process stays up, headless, until the
+  // queue drains, then quits (unless a window has opened again by then).
+  if (exportSupervisor && keepAliveForExports(exportSupervisor, () => app.quit())) return;
   if (process.platform !== 'darwin') app.quit();
 });
 

@@ -6,7 +6,26 @@
 > document it came from so a later reader can re-measure and disagree with
 > evidence.
 >
-> **Status (2026-09-22): T0 and T1 landed on `native-core`, everything else is plan.**
+> **Status (2026-09-22): T0, T1, N0 (+ first N1 slice) and T2 step 1 landed on `native-core`.**
+> N0: `native/` workspace (CMake presets, vcpkg, tidy, sanitizers), the C ABI
+> (`motion_abi.h`, `motion_eval.h`), `libs/motion_eval` = operation-for-
+> operation port of `packages/animation/src/interpolate.ts` with a 24-sample
+> golden table generated from the TypeScript, N-API + WASM bindings,
+> `packages/native-bridge` with the TS fallback, `.github/workflows/native.yml`.
+> **The dev laptop has no C++ toolchain; CI is the first compiler** and
+> `native/README.md` lists the nine spots not verified locally. T2 step 1:
+> raw RGBA pipe (4 MiB chunks, per-chunk ack, ≤ 3 frames buffered),
+> md5-identical MP4/ProRes output vs the staged path, hardware encoders
+> probed per session; bench 121 vs 33 fps. T2 step 2: desktop export runs
+> as a main-owned queue (`electron/exportProcess.ts`), one hidden window per
+> job, `exportInProcess` preference as the fallback. **Verified in the real
+> Electron app** (isolated profile, CDP): a 300-frame MP4 rendered correctly;
+> force-crashing the render window mid-export marked the job failed with a
+> reason, left no partial file and no ffmpeg, and the editor kept running;
+> Retry re-rendered it (live frame/fps/ETA in the row); destroying the editor
+> window at frame 9 let the job finish (300 frames, 1080p) and the app then
+> quit on its own. T3 first item: path raster key memoised (2–3× on
+> animated paths).
 > T1 delivered: every persisted file is temp-then-rename (`electron/atomicWrite.ts`);
 > WebGPU device-loss recovery and desktop recovery snapshots were already in
 > (`c47c2053`, with `gpuLossRecovery.test.ts` / `recoveryIdentity.test.ts`);

@@ -100,6 +100,17 @@ export interface HeadlessRenderRequest {
    * subtitles into a delivery without a person opening the project.
    */
   captions?: { text: string; filename: string };
+  /**
+   * mp4 only — the H.264/HEVC encoder, captured from the preference when the
+   * job was queued. Set by the export supervisor's jobs; a CLI invocation
+   * leaves it unset and renders with the software encoder.
+   */
+  videoEncoder?: RenderJobSpec['videoEncoder'];
+  /**
+   * Chapter marks captured at queue time. Set by the export supervisor's
+   * jobs, for the reason `RenderJobSpec.chapters` gives; the CLI never sets it.
+   */
+  chapters?: RenderJobSpec['chapters'];
 }
 
 export interface HeadlessRenderResult {
@@ -241,6 +252,8 @@ function specFor(
     background: comp.background,
     quality: req.quality ?? 'high',
     ...(req.proresProfile ? { proresProfile: req.proresProfile } : {}),
+    ...(req.videoEncoder ? { videoEncoder: req.videoEncoder } : {}),
+    ...(req.chapters && req.chapters.length > 0 ? { chapters: req.chapters } : {}),
     ...(req.startFrame !== undefined || req.endFrame !== undefined
       ? frameRangeToSeconds(
           req.startFrame ?? 0,

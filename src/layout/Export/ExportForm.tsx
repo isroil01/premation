@@ -34,7 +34,11 @@ import { chaptersFromMarkers, formatCarriesChapters, type ExportChapter } from '
 import { formatHdrCapabilityNote, formatHdrExportDoneNote } from '@core/export/hdrTransfer';
 import { compSizeOf } from '@core/composition/compSizes';
 import { openHelp } from '@layout/Help/openHelp';
+import { getProjectManager } from '@core/services/coreServices';
+import { buildSupervisorSpec, exportSupervisorAvailable, exportSupervisorClient } from '@core/export/exportSupervisorClient';
+import { useExportQueueStore } from '@stores/exportQueueStore';
 import { ExportPreview } from './ExportPreview';
+import { ExportQueueList } from './ExportQueueList';
 import { useExportFormStore } from './exportFormStore';
 import { loadRenderCapabilities, renderOnServer, serverEncodeFor, serverRenderAvailable } from './cloudRender';
 import type { RenderCapabilities } from '@core/api/client';
@@ -73,6 +77,24 @@ const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportF
 
 /** The job id the immediate export runs under — one at a time, by design. */
 export const EXPORT_JOB_ID = 'export';
+
+/**
+ * Formats the out-of-process path can take: everything the headless CLI can
+ * render to a file. The rest (Lottie, WAV, the editorial formats, a single
+ * PNG) are quick in-process writes with no render loop worth isolating.
+ */
+const SUPERVISED: ReadonlySet<ExportFormat> = new Set(['mp4', 'webm', 'mov', 'gif', 'png-sequence', 'jpg-sequence', 'exr-sequence']);
+
+/**
+ * Whether an export of `format` should go to the main-owned queue.
+ *
+ * Desktop with the bridge and the preference at its default (off = out of
+ * process). The web edition has no supervisor and takes the in-window path;
+ * so does anyone who turned `exportInProcess` on.
+ */
+export function shouldUseSupervisor(format: ExportFormat, exportInProcess: boolean): boolean {
+  return !exportInProcess && SUPERVISED.has(format) && exportSupervisorAvailable();
+}
 
 function dataPreviewMeta(format: ExportFormat): { icon: import('@components/Icon').IconName; title: string } {
   switch (format) {
@@ -220,17 +242,63 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   const outputName = `${fileStem(compName ?? 'composition')}.${activePreset?.ext ?? format}`;
   const busy = progress !== null;
 
+  /**
+   * The out-of-process export: where the file goes, a snapshot of the project
+   * for the hidden window to open, and a job on main's queue. Nothing waits
+   * on the render — the queue list under the form and the status-bar tray
+   * follow it, and this window can be closed.
+   *
+   * Errors before the job exists (the dialog cancelled, the snapshot failing
+   * to write) are reported here; everything after is the job's own record.
+   */
+  const exportViaSupervisor = useCallback(async (): Promise<void> => {
+    const ui = useUIStore.getState();
+    const outPath = await exportSupervisorClient.chooseOutputPath(outputName);
+    if (!outPath) return;
+    const chapterMarks = captureChapters();
+    const { exportVideoEncoder } = usePreferenceStore.getState();
+    try {
+      const { id, projectPath } = await exportSupervisorClient.reserve();
+      await getProjectManager().snapshotTo(projectPath);
+      const spec = buildSupervisorSpec({
+        compositionId: baseComp.id,
+        compositionName: compName ?? 'Composition',
+        format,
+        width,
+        height,
+        fps,
+        range: captureRange(),
+        quality,
+        ...(format === 'mov' ? { proresProfile } : {}),
+        ...(format === 'mp4' ? { videoEncoder: exportVideoEncoder } : {}),
+        transparent: alpha,
+        ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
+        projectPath,
+        outPath,
+      });
+      await useExportQueueStore.getState().connect();
+      await exportSupervisorClient.enqueue(id, spec);
+      ui.notify({ level: 'success', message: `Queued ${spec.label} — it renders in the background`, durationMs: 3000 });
+    } catch (err) {
+      ui.notify({ level: 'error', message: err instanceof Error ? err.message : 'The export could not be queued', durationMs: 8000 });
+    }
+  }, [outputName, captureChapters, captureRange, baseComp.id, compName, format, width, height, fps, quality, proresProfile, alpha]);
+
   const doExport = useCallback(async (): Promise<void> => {
     const store = useExportFormStore.getState();
     if (store.progress !== null) return;
+    // Read at click time, like the range: the pipeline and encoder are
+    // preferences, and what was set when Export was pressed is what runs.
+    const { exportRawPipe, exportVideoEncoder, exportInProcess } = usePreferenceStore.getState();
+    if (shouldUseSupervisor(format, exportInProcess)) {
+      await exportViaSupervisor();
+      return;
+    }
     const controller = new AbortController();
     store.begin(controller);
     const ui = useUIStore.getState();
     ui.startJob({ id: EXPORT_JOB_ID, label: `Exporting ${outputName}`, progress: 0 });
     const chapterMarks = captureChapters();
-    // Read at click time, like the range: the pipeline and encoder are
-    // preferences, and what was set when Export was pressed is what runs.
-    const { exportRawPipe, exportVideoEncoder } = usePreferenceStore.getState();
     try {
       const done = await runExport({
         format,
@@ -273,7 +341,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     } finally {
       useExportFormStore.getState().end();
     }
-  }, [format, width, height, fps, duration, time, quality, proresProfile, compName, comp, captureRange, captureChapters, outputName]);
+  }, [format, width, height, fps, duration, time, quality, proresProfile, compName, comp, captureRange, captureChapters, outputName, exportViaSupervisor]);
 
   const queueJob = useCallback((): boolean => {
     if (!QUEUEABLE.has(format)) return false;
@@ -720,6 +788,8 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
           )}
         </section>
       </div>
+
+      <ExportQueueList />
 
       {busy ? (
         <div className={styles.progressRow}>

@@ -84,6 +84,31 @@ describe('IPC registration goes through one door', () => {
     expect(offenders).toEqual(['ipcGuard.ts']);
   });
 
+  it('registers the export supervisor’s channels, all of them, in exportProcess.ts', () => {
+    // The out-of-process export is the one surface a hidden window and the
+    // editor both talk to; a channel that quietly moved to `ipcMain.handle`
+    // would be a channel a plugin panel could reach. Pinned by name.
+    const src = code(readFileSync(join(DIR, 'exportProcess.ts'), 'utf8'));
+    const registered = [...src.matchAll(/(?<![\w.])(?:handle|on)\(\s*'([^']+)'/g)].map((m) => m[1]).sort();
+    expect(registered).toEqual([
+      'export:cancel',
+      'export:chooseOutputPath',
+      'export:enqueue',
+      'export:list',
+      'export:remove',
+      'export:reserve',
+      'export:retry',
+      'export:setPriority',
+      'export:subscribe',
+      'export:workerDone',
+      'export:workerJob',
+      'export:workerProgress',
+    ]);
+    // And the list the module exports for the preload/docs agrees with the source.
+    const listed = [...src.matchAll(/^\s+'(export:[A-Za-z]+)',$/gm)].map((m) => m[1]).sort();
+    expect(listed).toEqual(registered);
+  });
+
   it('validates inside the wrapper rather than after it', () => {
     // The wrapper must refuse BEFORE the handler body runs. A wrapper that
     // called `fn` first and checked afterwards would pass every other

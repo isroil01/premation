@@ -39,6 +39,44 @@ import type { CliDoneReport, CliTaskRequest } from '@app-types/motionEditor';
  */
 const PROGRESS_STEP = 0.01;
 
+/** Who this window is rendering for: the CLI, or the export supervisor. */
+interface TaskSource {
+  task: CliTaskRequest;
+  progress(fraction: number): void;
+  done(report: CliDoneReport): void;
+}
+
+/**
+ * Ask main which launch this window is.
+ *
+ * `cli.job()` answers in a `premation render` process; `exportWorker.job()`
+ * answers in a hidden window the export supervisor opened. Both reject in a
+ * normal editor session, and that is the whole gate: a stray `#/render` tab
+ * has nobody to render for. Null when neither answered.
+ */
+async function pickTaskSource(): Promise<TaskSource | null> {
+  const me = window.motionEditor;
+  const cli = me?.cli;
+  if (cli?.job && cli.done) {
+    try {
+      const task = await cli.job();
+      return { task, progress: (f) => cli.progress?.(f), done: (r) => cli.done!(r) };
+    } catch {
+      /* not a CLI launch */
+    }
+  }
+  const worker = me?.exportWorker;
+  if (worker?.job && worker.done) {
+    try {
+      const task = await worker.job();
+      return { task, progress: (f) => worker.progress?.(f), done: (r) => worker.done!(r) };
+    } catch {
+      /* not an export window either */
+    }
+  }
+  return null;
+}
+
 /** The task, run once, reported once. Rendered by `RenderPage` inside Providers. */
 function HeadlessRunner(): JSX.Element {
   const [status, setStatus] = useState('Waiting for a job…');
@@ -56,25 +94,23 @@ function HeadlessRunner(): JSX.Element {
     if (started.current) return;
     started.current = true;
 
-    const cli = window.motionEditor?.cli;
-    if (!cli?.job || !cli.done) {
-      setStatus('This build has no CLI bridge.');
+    if (!window.motionEditor?.cli?.job && !window.motionEditor?.exportWorker?.job) {
+      setStatus('This build has no render bridge.');
       return;
     }
 
     void (async () => {
-      let task: CliTaskRequest;
-      try {
-        task = await cli.job!();
-      } catch {
-        // No job: a normal session that happened to navigate here. Nothing to
-        // do, and nothing to report — reporting would exit a process that is
-        // somebody's open editor.
+      // No job: a normal session that happened to navigate here. Nothing to
+      // do, and nothing to report — reporting would exit a process that is
+      // somebody's open editor.
+      const source = await pickTaskSource();
+      if (!source) {
         setStatus('Not a render launch.');
         return;
       }
+      const { task } = source;
 
-      const report = (result: CliDoneReport): void => cli.done!(result);
+      const report = (result: CliDoneReport): void => source.done(result);
 
       try {
         if (task.kind === 'comps') {
@@ -109,7 +145,7 @@ function HeadlessRunner(): JSX.Element {
           if (fraction < 1 && fraction - lastReported < PROGRESS_STEP) return;
           lastReported = fraction;
           setStatus(`Rendering… ${Math.round(fraction * 100)}%`);
-          window.motionEditor?.cli?.progress?.(fraction);
+          source.progress(fraction);
         };
 
         // The bridge types `format` as a plain string — it crosses IPC as JSON
