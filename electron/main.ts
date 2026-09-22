@@ -15,8 +15,9 @@ import { readFile, writeFile, mkdir, rename, unlink, readdir, access, rm, copyFi
 import { writeFileAtomic } from './atomicWrite';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat } from './ffmpegEncodeArgs';
-import { FfmpegStdinStream } from './ffmpegStream';
+import { buildEncodeArgs, ffmpegRate, rawVideoInput, stagedVideoInput, type EncodeFormat, type VideoEncoder } from './ffmpegEncodeArgs';
+import { FfmpegStdinStream, RAW_PIPE_MAX_CHUNK_BYTES } from './ffmpegStream';
+import { EncoderProbe } from './encoderProbe';
 import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerThumbIpc } from './thumbCache';
@@ -488,6 +489,8 @@ function registerRenderIpc(): void {
   const stagingRoot = (): string => path.join(app.getPath('userData'), 'render-staging');
   /** Running ffmpeg children per job, so `render:cancel` can kill them. */
   const running = new Map<string, ReturnType<typeof spawn>>();
+  /** Jobs whose encode was cancelled — a killed hardware encode must not be retried in software. */
+  const cancelled = new Set<string>();
   /**
    * Streaming encodes per job (`render:openStream`), with the file each writes.
    * Kept apart from `running` because a stream is fed frame by frame and its
@@ -515,27 +518,12 @@ function registerRenderIpc(): void {
     return 'ffmpeg'; // fall back to PATH
   };
 
-  /** Cached encoder probe — avoids spawning ffmpeg on every HDR export. */
-  let libx265Available: boolean | null = null;
-  const probeLibx265 = async (): Promise<boolean> => {
-    if (libx265Available !== null) return libx265Available;
-    const out = await new Promise<string | null>((resolve) => {
-      let proc: ReturnType<typeof spawn>;
-      try {
-        proc = spawn(resolveFfmpeg(), ['-hide_banner', '-encoders'], { stdio: ['ignore', 'pipe', 'pipe'] });
-      } catch {
-        resolve(null);
-        return;
-      }
-      let text = '';
-      proc.stdout?.on('data', (d) => (text += String(d)));
-      proc.stderr?.on('data', (d) => (text += String(d)));
-      proc.on('error', () => resolve(null));
-      proc.on('close', () => resolve(text || null));
-    });
-    libx265Available = !!out && /\bV[.F]{3,}.*\blibx265\b|\blibx265\b/.test(out);
-    return libx265Available;
-  };
+  /**
+   * Cached encoder probe (`ffmpeg -encoders` once per session, plus a smoke
+   * encode per hardware encoder on first use) — see encoderProbe.ts.
+   */
+  const encoderProbe = new EncoderProbe({ bin: resolveFfmpeg });
+  const probeLibx265 = (): Promise<boolean> => encoderProbe.has('libx265');
 
   const runFfmpeg = (jobId: string, args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
@@ -763,6 +751,7 @@ function registerRenderIpc(): void {
     const dir = resumeJobDir(stagingRoot(), jobId);
     await mkdir(dir, { recursive: true });
     jobs.set(jobId, dir);
+    cancelled.delete(jobId);
     if (info && typeof info.format === 'string') {
       await writeManifest(dir, {
         jobId,
@@ -876,6 +865,8 @@ function registerRenderIpc(): void {
          * would mean a second, untested copy of the ffmetadata escaping rules.
          */
         chaptersFfmetadata?: string;
+        /** mp4 only — a hardware encoder, opt-in. Probed; falls back to libx264. */
+        videoEncoder?: VideoEncoder;
       },
     ) => {
       const dir = jobs.get(jobId);
@@ -987,7 +978,7 @@ function registerRenderIpc(): void {
       // The codec/container half is shared with the streaming encode, so the two
       // paths cannot drift. Alpha follows what was staged: only a PNG sequence
       // carries it (a transparent comp stages PNG; see videoSink.ts).
-      const args = buildEncodeArgs({
+      const encodeArgs = (videoEncoder: VideoEncoder): string[] => buildEncodeArgs({
         format: opts.format,
         videoInput: stagedVideoInput(input, opts.fps),
         quality: opts.quality,
@@ -995,11 +986,29 @@ function registerRenderIpc(): void {
         audio: hasAudio ? audio : null,
         chaptersFile: wantsChapters ? path.join(dir, CHAPTER_METADATA_FILE) : null,
         alpha: staged.ext === 'png',
+        videoEncoder,
         out,
       });
-
-      await runFfmpeg(jobId, args);
-      return { path: out, frames };
+      const resolved = opts.format === 'mp4'
+        ? await encoderProbe.resolveVideoEncoder(opts.videoEncoder)
+        : { encoder: 'libx264' as const };
+      let warning = resolved.fallbackReason;
+      if (resolved.encoder !== 'libx264') {
+        // The probe said yes; the real encode can still refuse (a device busy,
+        // an unsupported frame size). The staged frames are all still here, so
+        // one more ffmpeg run with libx264 costs nothing but time. A cancel
+        // (`render:cancel` kills the child) must NOT be retried as software.
+        try {
+          await runFfmpeg(jobId, encodeArgs(resolved.encoder));
+          return { path: out, frames, videoCodec: resolved.encoder };
+        } catch (err) {
+          if (cancelled.has(jobId)) throw err;
+          warning = `${resolved.encoder} failed to encode (${String((err as Error)?.message ?? err).slice(-200)}); encoded with libx264 instead.`;
+          console.warn(`[export] ${warning}`);
+        }
+      }
+      await runFfmpeg(jobId, encodeArgs('libx264'));
+      return { path: out, frames, videoCodec: 'libx264' as const, ...(warning ? { warning } : {}) };
     },
   );
 
@@ -1036,8 +1045,10 @@ function registerRenderIpc(): void {
         proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
         alpha?: boolean;
         chaptersFfmetadata?: string;
+        /** mp4 only — a hardware encoder, opt-in. Probed first; falls back to libx264. */
+        videoEncoder?: VideoEncoder;
       },
-    ) => {
+    ): Promise<{ videoEncoder: VideoEncoder; warning?: string }> => {
       const dir = jobs.get(jobId);
       if (!dir) throw new Error('unknown render job');
       if (streams.has(jobId)) throw new Error('this render job is already streaming');
@@ -1061,6 +1072,14 @@ function registerRenderIpc(): void {
         await writeFile(path.join(dir, CHAPTER_METADATA_FILE), opts.chaptersFfmetadata!, 'utf8');
       }
       const out = path.join(dir, `out.${opts.format}`);
+      // A stream cannot retry: once frames have gone into a child that then
+      // dies, they are gone. So the hardware encoder is proven BEFORE the
+      // child opens (a cached smoke encode, see encoderProbe.ts), and anything
+      // the probe cannot vouch for streams into libx264 with a stated reason.
+      const resolved = opts.format === 'mp4'
+        ? await encoderProbe.resolveVideoEncoder(opts.videoEncoder)
+        : { encoder: 'libx264' as const };
+      if (resolved.fallbackReason) console.warn(`[export] ${resolved.fallbackReason}`);
       const args = buildEncodeArgs({
         format: opts.format,
         videoInput: rawVideoInput(width, height, opts.fps),
@@ -1070,12 +1089,54 @@ function registerRenderIpc(): void {
         audio: hasAudio ? audio : null,
         chaptersFile: wantsChapters ? path.join(dir, CHAPTER_METADATA_FILE) : null,
         alpha: !!opts.alpha,
+        videoEncoder: resolved.encoder,
+        // Raw rgba carries no colour description; a staged PNG does. Tagging
+        // the frames sRGB is what makes the two encodes byte-identical.
+        tagSrgb: true,
         out,
       });
       const stream = await FfmpegStdinStream.open({ bin: resolveFfmpeg(), args, frameBytes: width * height * 4 });
       streams.set(jobId, { stream, out });
+      return {
+        videoEncoder: resolved.encoder,
+        ...(resolved.fallbackReason ? { warning: resolved.fallbackReason } : {}),
+      };
     },
   );
+
+  /**
+   * One PIECE of a frame into the stream — the raw pixel pipe's unit of IPC.
+   *
+   * A whole 4K frame is 33 MB, and one IPC message of that size is copied
+   * through structured clone into main's heap before anything can push back.
+   * The renderer therefore sends `RAW_PIPE_CHUNK_BYTES` (4 MiB) at a time and
+   * awaits THIS handler's resolution for each — which comes only once the
+   * chunk has drained into ffmpeg's stdin. Memory in main is bounded by one
+   * chunk plus the pipe buffer, whatever the frame size or the encoder speed.
+   * See src/core/export/rawPipe.ts for the renderer half.
+   */
+  handle(
+    'render:streamChunk',
+    async (_e, jobId: string, index: number, offset: number, bytes: Uint8Array, last: boolean) => {
+      const entry = streams.get(jobId);
+      if (!entry) throw new Error('this render job is not streaming');
+      if (!(bytes instanceof Uint8Array)) throw new Error('a stream chunk must be a Uint8Array');
+      if (bytes.byteLength > RAW_PIPE_MAX_CHUNK_BYTES) {
+        throw new Error(`stream chunk of ${bytes.byteLength} bytes exceeds the ${RAW_PIPE_MAX_CHUNK_BYTES}-byte limit`);
+      }
+      if (!Number.isInteger(index) || !Number.isInteger(offset) || index < 0 || offset < 0) {
+        throw new Error('invalid stream chunk position');
+      }
+      await entry.stream.writeChunk(index, offset, bytes, !!last);
+    },
+  );
+
+  /**
+   * Which hardware encoders work on THIS machine — probed once per session,
+   * for the Settings picker. Empty where ffmpeg is missing: the picker then
+   * offers software only, and an export still explains itself at encode time.
+   */
+  handle('render:probeEncoders', async () => ({ hardware: await encoderProbe.availableHw() }));
 
   /**
    * One frame into the stream. Resolves only once ffmpeg's stdin has drained —
@@ -1103,6 +1164,7 @@ function registerRenderIpc(): void {
 
   /** Kill a running encode (the queue's Pause / the dialog's Cancel). */
   handle('render:cancel', async (_e, jobId: string) => {
+    cancelled.add(jobId);
     running.get(jobId)?.kill();
     running.delete(jobId);
     killStream(jobId);

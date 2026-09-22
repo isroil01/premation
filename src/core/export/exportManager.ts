@@ -54,6 +54,7 @@ import {
 } from './videoSink';
 import { isPluginFormat, pluginExporters } from './pluginExporters';
 import type { ExportChapter } from './chapters';
+import type { VideoEncoderId } from './rawPipe';
 
 import { useUIStore } from '@stores/uiStore';
 import { exportEdlText } from './exportEdl';
@@ -94,6 +95,19 @@ export interface ExportOptions {
   quality?: ExportQuality;
   /** mov only — which ProRes flavour to encode. Defaults to 4444 (alpha). */
   proresProfile?: ProresProfile;
+  /**
+   * mp4 only — the H.264/HEVC encoder (Settings ▸ Export ▸ Video encoder).
+   * Software by default; a hardware encoder is probed by the desktop shell and
+   * falls back to software with a `warning` on the result.
+   */
+  videoEncoder?: VideoEncoderId;
+  /**
+   * Feed frames to ffmpeg as raw RGBA over a pipe (the desktop default) or
+   * stage them as image files first (Settings ▸ Export ▸ "Stream frames to the
+   * encoder" off). Staging is what the render-worker service and a resumable
+   * queue job use regardless; `false` here forces it for a one-shot export.
+   */
+  rawPipe?: boolean;
   /**
    * Chapter marks for the delivered file, derived from the composition's
    * markers by `chaptersFromMarkers`.
@@ -539,6 +553,8 @@ export async function renderVideo(
     fps: opts.fps,
     quality: opts.quality ?? 'high',
     ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
+    ...(opts.videoEncoder ? { videoEncoder: opts.videoEncoder } : {}),
+    ...(opts.rawPipe === false ? { pipeline: 'staged' as const } : {}),
     transparent: !!opts.comp?.transparent,
     ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
     ...(audio ? { audioWav: audio } : {}),
@@ -681,6 +697,8 @@ export async function createResumableVideoRender(
     fps: opts.fps,
     quality: opts.quality ?? 'high',
     ...(opts.proresProfile ? { proresProfile: opts.proresProfile } : {}),
+    ...(opts.videoEncoder ? { videoEncoder: opts.videoEncoder } : {}),
+    ...(opts.rawPipe === false ? { pipeline: 'staged' as const } : {}),
     transparent: !!opts.comp?.transparent,
     ...(opts.chapters?.length ? { chapters: opts.chapters } : {}),
     ...(audio ? { audioWav: audio } : {}),
@@ -777,7 +795,7 @@ function defaultBaseName(): string {
 async function exportVideoFormat(
   opts: ExportOptions,
   format: VideoFormat,
-): Promise<{ videoCodec?: string; hdrMastering?: { maxCll: number; maxFall: number } }> {
+): Promise<ExportResult> {
   // GIF has a dedicated encoder in the browser (no browser will mux one), so it
   // only routes through the video sink where ffmpeg is available.
   if (format === 'gif' && !canEncodeLocally()) {
@@ -794,6 +812,7 @@ async function exportVideoFormat(
   const mastering = result.hdrMastering;
   return {
     videoCodec: result.kind === 'file' ? result.videoCodec : result.videoCodec,
+    ...(result.kind === 'file' && result.warning ? { warning: result.warning } : {}),
     ...(mastering
       ? { hdrMastering: { maxCll: mastering.maxCll, maxFall: mastering.maxFall } }
       : {}),
@@ -1439,7 +1458,7 @@ async function exportWavAudio(opts: ExportOptions): Promise<void> {
   download(mix.wav, `${opts.baseName ?? defaultBaseName()}.wav`);
 }
 
-type ExportResult = { videoCodec?: string; hdrMastering?: { maxCll: number; maxFall: number } };
+type ExportResult = { videoCodec?: string; warning?: string; hdrMastering?: { maxCll: number; maxFall: number } };
 
 /**
  * Every local export — the Export panel and the assistant both come through

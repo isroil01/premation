@@ -45,6 +45,18 @@ interface ExitInfo {
  *  per frame, so an unbounded buffer is megabytes on a long render. */
 const STDERR_TAIL = 16 * 1024;
 
+/**
+ * The largest single IPC payload `render:streamChunk` accepts.
+ *
+ * The renderer splits every frame into `RAW_PIPE_CHUNK_BYTES` pieces
+ * (src/core/export/rawPipe.ts, 4 MiB) and awaits an ack per piece; this is
+ * the ceiling main enforces on what it will take, twice that so a chunk-size
+ * change on one side needs a matching one here — a test pins the pair. An
+ * unbounded payload would let a renderer park a whole 4K frame (33 MB) per
+ * message in main's heap before back-pressure could say no.
+ */
+export const RAW_PIPE_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
+
 function spawnFailure(err: NodeJS.ErrnoException): Error {
   // ENOENT is the one failure worth explaining: nothing is wrong with the
   // render, ffmpeg simply is not installed.
@@ -118,22 +130,57 @@ export class FfmpegStdinStream {
   }
 
   /**
-   * Write frame `index`. Frames must arrive in order with no gaps — ffmpeg's
-   * rawvideo demuxer has no index, so a skipped or swapped frame would be
-   * encoded as the wrong picture with no error at all.
+   * Write frame `index` whole. Frames must arrive in order with no gaps —
+   * ffmpeg's rawvideo demuxer has no index, so a skipped or swapped frame would
+   * be encoded as the wrong picture with no error at all.
    */
-  async write(index: number, bytes: Uint8Array): Promise<void> {
+  write(index: number, bytes: Uint8Array): Promise<void> {
+    if (bytes.byteLength !== this.frameBytes) {
+      return Promise.reject(new Error(
+        `Frame ${index} is ${bytes.byteLength} bytes; the encoder was opened for ${this.frameBytes}.`,
+      ));
+    }
+    return this.writeChunk(index, 0, bytes, true);
+  }
+
+  /** Bytes of the frame currently being assembled from chunks. */
+  private partial = 0;
+
+  /**
+   * Write one piece of frame `index`, starting at byte `offset`; `last` marks
+   * the piece that completes the frame. Pieces of one frame arrive in order
+   * and contiguously — the demuxer sees a byte stream, so a gap or an overlap
+   * would shift every later pixel with no error — and a frame's byte count is
+   * checked when its last piece lands.
+   *
+   * Resolves once the pipe has drained: THAT is the back-pressure. The
+   * renderer awaits each chunk before sending the next, so at most one chunk
+   * beyond the pipe's own buffer is ever held in this process.
+   */
+  async writeChunk(index: number, offset: number, bytes: Uint8Array, last: boolean): Promise<void> {
     if (this.ended) throw new Error('The encode stream is already finished.');
     if (this.exitInfo) throw this.failure(`Encoding stopped before frame ${index}`);
     if (index !== this.nextIndex) {
       throw new Error(`Frame ${index} reached the encoder out of order (expected ${this.nextIndex}).`);
     }
-    if (bytes.byteLength !== this.frameBytes) {
+    if (offset !== this.partial) {
+      throw new Error(`Frame ${index} chunk at byte ${offset} is not contiguous (expected ${this.partial}).`);
+    }
+    if (bytes.byteLength > RAW_PIPE_MAX_CHUNK_BYTES) {
+      throw new Error(`Frame ${index} chunk is ${bytes.byteLength} bytes; the limit is ${RAW_PIPE_MAX_CHUNK_BYTES}.`);
+    }
+    const end = offset + bytes.byteLength;
+    if (end > this.frameBytes || (last && end !== this.frameBytes)) {
       throw new Error(
-        `Frame ${index} is ${bytes.byteLength} bytes; the encoder was opened for ${this.frameBytes}.`,
+        `Frame ${index} ${last ? 'is' : 'exceeds'} ${end} bytes; the encoder was opened for ${this.frameBytes}.`,
       );
     }
-    this.nextIndex += 1;
+    if (last) {
+      this.partial = 0;
+      this.nextIndex += 1;
+    } else {
+      this.partial = end;
+    }
     const stdin = this.proc.stdin;
     if (!stdin) throw new Error('The encoder has no input pipe.');
     // A view, not a copy: IPC already produced a fresh buffer for this frame.
@@ -159,6 +206,10 @@ export class FfmpegStdinStream {
 
   /** Close stdin and wait for the encode to finish. Resolves the frame count. */
   async finish(): Promise<number> {
+    if (this.partial > 0) {
+      this.kill();
+      throw new Error(`Frame ${this.nextIndex} was only partly streamed (${this.partial} of ${this.frameBytes} bytes).`);
+    }
     if (this.nextIndex === 0) {
       this.kill();
       throw new Error('No frames were streamed — refusing to write an empty file.');

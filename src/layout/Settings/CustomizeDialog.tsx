@@ -38,6 +38,7 @@ import { getAccentColor, setAccentColor } from '@core/theme/accent';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import type { KeyChord } from '@app-types/common';
 import { AiSettingsSection } from './AiSettingsSection';
+import { ExportSettingsSection } from './ExportSettingsSection';
 import { UpdatesControl } from './UpdatesControl';
 import { ObjectMatteControl } from './ObjectMatteControl';
 import { FilesTab } from './FilesTab';
@@ -939,6 +940,8 @@ export function AppearanceTab(): JSX.Element {
           </div>
         </div>
       </div>
+
+      <ExportSettingsSection />
 
       <div className={styles.sectionGroup}>
         <div className={styles.sectionHeading}>

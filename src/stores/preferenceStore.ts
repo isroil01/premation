@@ -140,6 +140,27 @@ export interface Preferences {
    */
   useProxies: boolean;
   /**
+   * Desktop export: feed frames to ffmpeg as raw RGBA over a pipe, encoding
+   * WHILE the comp renders, instead of staging every frame as a JPEG/PNG file
+   * and encoding at the end.
+   *
+   * On by default — it is the faster path and, for every format that staged
+   * PNG, hands the encoder identical pixels; for MP4/WebM it skips the JPEG
+   * generation the staged path lost. Off is the escape hatch for a machine
+   * where the pipe misbehaves (an ffmpeg that cannot take stdin, a virtualised
+   * GPU that stalls on readback). The render-worker service and resumable
+   * queue jobs stage regardless — files are what survives a restart.
+   */
+  exportRawPipe: boolean;
+  /**
+   * Desktop export, MP4 only: which encoder writes the H.264/HEVC stream.
+   * `libx264` is the software default and the one whose output is what the
+   * golden export gate compares. A hardware encoder is opt-in, probed at
+   * export time, and falls back to libx264 with a warning when this machine
+   * cannot run it. Same CRF-equivalent tiers — see electron/ffmpegEncodeArgs.
+   */
+  exportVideoEncoder: 'libx264' | 'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox';
+  /**
    * Asset-library item ids the user starred, across every section (Motion GFX,
    * Transitions, Sound FX, Lottie — ids are unique across all four, which
    * `libraryCatalogs.test.ts` pins).
@@ -298,6 +319,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   showLayerBounds: true,
   deviceWireframesAll: false,
   useProxies: true,
+  exportRawPipe: true,
+  exportVideoEncoder: 'libx264',
   libraryFavorites: [],
   effectFavorites: [],
   inspectorSections: {},

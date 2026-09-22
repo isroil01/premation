@@ -6,7 +6,7 @@
     "node": "v24.16.0"
   },
   "commit": "affdf26a",
-  "timestamp": "2026-09-22T12:05:37.484Z",
+  "timestamp": "2026-09-22T12:45:36.881Z",
   "node": "v24.16.0",
   "note": "Written by `npm run bench:baseline` from .artifacts/bench/results.json. Compare only against the same machine class; regenerate after an intentional perf change.",
   "records": [
@@ -176,6 +176,34 @@
       "metric": "flatten.min",
       "unit": "ms",
       "value": 0.8007,
+      "samples": 180
+    },
+    {
+      "name": "export/jpeg-stage-1080p",
+      "metric": "fps.best10",
+      "unit": "fps",
+      "value": 32.7316,
+      "samples": 180
+    },
+    {
+      "name": "export/jpeg-stage-1080p",
+      "metric": "frame.best10",
+      "unit": "ms",
+      "value": 30.5515,
+      "samples": 180
+    },
+    {
+      "name": "export/raw-pipe-1080p",
+      "metric": "fps.best10",
+      "unit": "fps",
+      "value": 121.1009,
+      "samples": 180
+    },
+    {
+      "name": "export/raw-pipe-1080p",
+      "metric": "frame.best10",
+      "unit": "ms",
+      "value": 8.2576,
       "samples": 180
     },
     {

@@ -118,3 +118,73 @@ describe('FfmpegStdinStream', () => {
     await expect(stream.finish()).rejects.toThrow('No frames');
   });
 });
+
+describe('FfmpegStdinStream — chunked frames (the raw pixel pipe)', () => {
+  const CHUNK = 256 * 1024;
+
+  /** Send `frame` as `CHUNK`-sized pieces, awaiting each ack. */
+  async function writeChunked(stream: FfmpegStdinStream, index: number, bytes: Uint8Array, chunk = CHUNK): Promise<number> {
+    let n = 0;
+    for (let off = 0; off < bytes.byteLength; off += chunk) {
+      const end = Math.min(bytes.byteLength, off + chunk);
+      await stream.writeChunk(index, off, bytes.subarray(off, end), end === bytes.byteLength);
+      n += 1;
+    }
+    return n;
+  }
+
+  it('reassembles chunks into whole frames, in order, with back-pressure per chunk', async () => {
+    let proc: ReturnType<typeof spawn> | null = null;
+    const { out, stream: opening } = open({ delayMs: 1, onSpawn: (p) => { proc = p; } });
+    const stream = await opening;
+    let maxBuffered = 0;
+    for (let i = 0; i < 8; i++) {
+      expect(await writeChunked(stream, i, frame(i))).toBe(FRAME / CHUNK);
+      maxBuffered = Math.max(maxBuffered, proc!.stdin!.writableLength);
+    }
+    expect(stream.framesWritten).toBe(8);
+    expect(await stream.finish()).toBe(8);
+    expect(Number(readFileSync(out, 'utf8'))).toBe(8 * FRAME);
+    expect(stream.drainWaits).toBeGreaterThan(0);
+    // Never more than one chunk parked beyond the pipe: the bound the
+    // renderer's per-chunk ack buys.
+    expect(maxBuffered).toBeLessThanOrEqual(CHUNK);
+  }, 20_000);
+
+  it('refuses a gap, an overlap, an overrun, a wrong-sized last chunk and an oversized chunk', async () => {
+    const { stream: opening } = open();
+    const stream = await opening;
+    const f = frame(9);
+    await stream.writeChunk(0, 0, f.subarray(0, CHUNK), false);
+    await expect(stream.writeChunk(0, 2 * CHUNK, f.subarray(2 * CHUNK, 3 * CHUNK), false)).rejects.toThrow('not contiguous');
+    await expect(stream.writeChunk(0, 0, f.subarray(0, CHUNK), false)).rejects.toThrow('not contiguous');
+    await expect(stream.writeChunk(1, CHUNK, f.subarray(CHUNK, 2 * CHUNK), false)).rejects.toThrow('out of order');
+    await expect(stream.writeChunk(0, CHUNK, new Uint8Array(FRAME), false)).rejects.toThrow('exceeds');
+    await expect(stream.writeChunk(0, CHUNK, f.subarray(CHUNK, 2 * CHUNK), true)).rejects.toThrow(`is ${2 * CHUNK} bytes`);
+    await expect(stream.writeChunk(0, CHUNK, new Uint8Array(9 * 1024 * 1024), false)).rejects.toThrow('the limit is');
+    // A half-sent frame cannot be finished into a file.
+    await expect(stream.finish()).rejects.toThrow('only partly streamed');
+  });
+
+  it('a whole-frame write and a chunked write are interchangeable frame to frame', async () => {
+    const { out, stream: opening } = open();
+    const stream = await opening;
+    await stream.write(0, frame(1));
+    await writeChunked(stream, 1, frame(2));
+    await stream.write(2, frame(3));
+    expect(await stream.finish()).toBe(3);
+    expect(Number(readFileSync(out, 'utf8'))).toBe(3 * FRAME);
+  });
+
+  it('a child that dies mid-frame rejects the chunk that was waiting', async () => {
+    const { stream: opening } = open({ delayMs: 5, dieAfter: 2 * FRAME + CHUNK });
+    const stream = await opening;
+    let failure: unknown = null;
+    try {
+      for (let i = 0; i < 20; i++) await writeChunked(stream, i, frame(1));
+    } catch (e) {
+      failure = e;
+    }
+    expect(String(failure)).toMatch(/exited 3.*fake encoder crashed/);
+  });
+});

@@ -90,6 +90,12 @@ export interface RenderJobSpec {
   /** mov only — ProRes flavour, captured from the dialog at queue time. */
   proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444';
   /**
+   * mp4 only — the H.264/HEVC encoder, captured from Settings at queue time
+   * for the same reason the range is: a preference changed while the job
+   * waits must not change what the job was queued to produce.
+   */
+  videoEncoder?: 'libx264' | 'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox';
+  /**
    * Chapter marks, resolved from the composition's markers at QUEUE time.
    *
    * Captured rather than re-derived at render time for the same reason the
@@ -150,6 +156,7 @@ export function jobExportOptions(job: RenderJobSpec, persistForResume = false): 
     time: 0,
     quality: job.quality ?? 'high',
     ...(job.proresProfile ? { proresProfile: job.proresProfile } : {}),
+    ...(job.videoEncoder ? { videoEncoder: job.videoEncoder } : {}),
     ...(job.chapters?.length ? { chapters: job.chapters } : {}),
     // The captured range, never the LIVE work area: a queued job must render
     // what was queued, regardless of what the user does to any timeline

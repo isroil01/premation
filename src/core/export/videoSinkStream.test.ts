@@ -203,6 +203,70 @@ describe('FfmpegStreamSink', () => {
   });
 });
 
+describe('FfmpegStreamSink — the chunked raw pipe', () => {
+  /** A bridge from a main that offers `streamChunk`; frames reassembled per index. */
+  function installChunkBridge(over: Record<string, unknown> = {}) {
+    const frames = new Map<number, Uint8Array>();
+    const chunks: Array<{ index: number; offset: number; len: number; last: boolean }> = [];
+    let outstanding = 0;
+    let maxOutstanding = 0;
+    const base = installBridge({
+      streamChunk: jest.fn(async (_job: string, index: number, offset: number, bytes: Uint8Array, last: boolean) => {
+        outstanding += 1;
+        maxOutstanding = Math.max(maxOutstanding, outstanding);
+        chunks.push({ index, offset, len: bytes.byteLength, last });
+        const f = frames.get(index) ?? new Uint8Array(0);
+        const merged = new Uint8Array(f.byteLength + bytes.byteLength);
+        merged.set(f, 0);
+        merged.set(bytes, f.byteLength);
+        frames.set(index, merged);
+        await tick();
+        outstanding -= 1;
+      }),
+      finishStream: jest.fn(async () => ({ path: '/job/out.mp4', frames: frames.size })),
+      ...over,
+    });
+    return { ...base, frames, chunks, maxOutstanding: () => maxOutstanding };
+  }
+
+  it('prefers streamChunk over streamFrame, one chunk in flight, every frame whole', async () => {
+    const { bridge, chunks, frames, maxOutstanding } = installChunkBridge();
+    const sink = new FfmpegStreamSink({ ...params, width: 8, height: 8 }, { readPixels: (c) => new Uint8Array(c.width * c.height * 4).fill(7) });
+    for (let i = 0; i < 4; i++) await sink.addFrame(canvas(8, 8), i);
+    const result = await sink.finish();
+    expect(bridge.streamFrame).not.toHaveBeenCalled();
+    expect(chunks.map((c) => c.index)).toEqual([0, 1, 2, 3]);
+    expect(chunks.every((c) => c.offset === 0 && c.len === 256 && c.last)).toBe(true);
+    expect(maxOutstanding()).toBe(1);
+    expect([...frames.values()].every((f) => f.byteLength === 256 && f.every((b) => b === 7))).toBe(true);
+    expect(result.frames).toBe(4);
+  });
+
+  it('reports the encoder main opened the child with, and its fallback warning', async () => {
+    installChunkBridge({
+      openStream: jest.fn(async () => ({ videoEncoder: 'libx264', warning: 'h264_nvenc is compiled in but failed to initialise on this machine; encoded with libx264 instead.' })),
+    });
+    const sink = new FfmpegStreamSink({ ...params, videoEncoder: 'h264_nvenc' }, { readPixels: fakePixels });
+    await sink.addFrame(canvas(), 0);
+    const result = await sink.finish();
+    expect(result.kind).toBe('file');
+    if (result.kind === 'file') {
+      expect(result.videoCodec).toBe('libx264');
+      expect(result.warning).toMatch(/h264_nvenc/);
+    }
+  });
+
+  it('passes the requested encoder to openStream for mp4 only', async () => {
+    const { bridge } = installChunkBridge();
+    const mp4 = new FfmpegStreamSink({ ...params, videoEncoder: 'h264_qsv' }, { readPixels: fakePixels });
+    await mp4.addFrame(canvas(), 0);
+    expect(bridge.openStream).toHaveBeenLastCalledWith('job1', expect.objectContaining({ videoEncoder: 'h264_qsv' }));
+    const webm = new FfmpegStreamSink({ ...params, format: 'webm', videoEncoder: 'h264_qsv' }, { readPixels: fakePixels });
+    await webm.addFrame(canvas(), 0);
+    expect(bridge.openStream).toHaveBeenLastCalledWith('job1', expect.not.objectContaining({ videoEncoder: expect.anything() }));
+  });
+});
+
 describe('which exports stream', () => {
   it('everything the ffmpeg sink encodes, except HDR, resumable renders and an explicit staged pipeline', () => {
     for (const format of ['mp4', 'webm', 'gif', 'mov'] as const) {

@@ -26,6 +26,7 @@ import { useCompositionStore } from '@stores/compositionStore';
 import { useUIStore } from '@stores/uiStore';
 import { useRenderQueueStore, outputExtFor, type OutputFormat } from '@stores/renderQueueStore';
 import { useLayoutStore } from '@stores/layoutStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { getTimelineController } from '@core/timeline/TimelineController';
 import { runExport, isAbortError, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
 import { canEncodeLocally, PRORES_PROFILE_LABELS, type ExportQuality, type ProresProfile } from '@core/export/videoSink';
@@ -227,6 +228,9 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     const ui = useUIStore.getState();
     ui.startJob({ id: EXPORT_JOB_ID, label: `Exporting ${outputName}`, progress: 0 });
     const chapterMarks = captureChapters();
+    // Read at click time, like the range: the pipeline and encoder are
+    // preferences, and what was set when Export was pressed is what runs.
+    const { exportRawPipe, exportVideoEncoder } = usePreferenceStore.getState();
     try {
       const done = await runExport({
         format,
@@ -237,6 +241,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
         time,
         quality,
         ...(format === 'mov' ? { proresProfile } : {}),
+        ...(format === 'mp4' ? { videoEncoder: exportVideoEncoder } : {}),
+        rawPipe: exportRawPipe,
         ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
         // Captured NOW, not read live mid-render: what you clicked is what
         // renders, even if the work area moves while the export runs.
@@ -251,6 +257,9 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       });
       const hdrNote = formatHdrExportDoneNote(done.videoCodec, done.hdrMastering);
       useUIStore.getState().finishJob(EXPORT_JOB_ID, { status: 'done', message: `Export complete${hdrNote}` });
+      // A hardware encoder that fell back to software is a finished export
+      // with something to say, not a failure — said once, here.
+      if (done.warning) useUIStore.getState().notify({ level: 'warning', message: done.warning, durationMs: 8000 });
     } catch (err) {
       if (isAbortError(err)) {
         useUIStore.getState().finishJob(EXPORT_JOB_ID, { status: 'cancelled', message: 'Export cancelled' });
@@ -294,6 +303,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       transparent: alpha,
       quality,
       ...(format === 'mov' ? { proresProfile } : {}),
+      // Captured at queue time, like the range — see RenderJobSpec.videoEncoder.
+      ...(format === 'mp4' ? { videoEncoder: usePreferenceStore.getState().exportVideoEncoder } : {}),
       ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
     });
     useLayoutStore.getState().openPanel('renderQueue');

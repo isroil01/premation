@@ -619,8 +619,16 @@ export interface MotionEditorApi {
          * element at all.
          */
         chaptersFfmetadata?: string;
+        /**
+         * mp4 only — the encoder for the H.264/HEVC stream. `libx264` (the
+         * default) is the software path every file has been encoded with; the
+         * hardware names are opt-in and PROBED in main: an encoder the build
+         * lacks or the machine cannot run falls back to libx264, and the
+         * result's `warning` says so.
+         */
+        videoEncoder?: 'libx264' | 'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox';
       },
-    ): Promise<{ path: string; frames: number; videoCodec?: string }>;
+    ): Promise<{ path: string; frames: number; videoCodec?: string; warning?: string }>;
     /**
      * Streaming encode — the fast path `encode` is the fallback for.
      *
@@ -646,10 +654,22 @@ export interface MotionEditorApi {
         /** The frames carry real alpha (webm keeps it). */
         alpha?: boolean;
         chaptersFfmetadata?: string;
+        /** As for `encode`: mp4 only, opt-in, probed before the child opens. */
+        videoEncoder?: 'libx264' | 'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox';
       },
-    ): Promise<void>;
+    ): Promise<{ videoEncoder: string; warning?: string } | void>;
+    /** A whole frame in one message. Superseded by `streamChunk`; kept for older mains. */
     streamFrame?(jobId: string, index: number, bytes: Uint8Array): Promise<void>;
+    /**
+     * One piece of frame `index` starting at byte `offset`; `last` completes
+     * the frame. Resolves once the piece has drained into ffmpeg's stdin —
+     * that resolution is the ACK the raw pipe's back-pressure is built on
+     * (`@core/export/rawPipe`). Pieces are at most 4 MiB; main refuses larger.
+     */
+    streamChunk?(jobId: string, index: number, offset: number, bytes: Uint8Array, last: boolean): Promise<void>;
     finishStream?(jobId: string): Promise<{ path: string; frames: number }>;
+    /** Hardware encoders that pass a smoke encode on this machine. Cached per session. */
+    probeEncoders?(): Promise<{ hardware: Array<'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox'> }>;
     /**
      * Probe host ffmpeg for HEVC (libx265). Used by the Export dialog so HDR10/HLG
      * can warn before encode when MaxCLL/MaxFALL SEI will not be written.

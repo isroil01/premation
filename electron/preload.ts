@@ -88,7 +88,12 @@ const bridge = {
     openStream: (jobId: string, opts: unknown) => ipcRenderer.invoke('render:openStream', jobId, opts),
     streamFrame: (jobId: string, index: number, bytes: Uint8Array) =>
       ipcRenderer.invoke('render:streamFrame', jobId, index, bytes),
+    /** One piece of a frame; resolves once it has drained into ffmpeg (the ack). */
+    streamChunk: (jobId: string, index: number, offset: number, bytes: Uint8Array, last: boolean) =>
+      ipcRenderer.invoke('render:streamChunk', jobId, index, offset, bytes, last),
     finishStream: (jobId: string) => ipcRenderer.invoke('render:finishStream', jobId),
+    /** Hardware encoders that pass a smoke encode on this machine (cached per session). */
+    probeEncoders: () => ipcRenderer.invoke('render:probeEncoders'),
     /** Whether host ffmpeg can encode HEVC (libx265) for HDR10/HLG delivery. */
     probeHdr: () => ipcRenderer.invoke('render:probeHdr') as Promise<{ libx265: boolean }>,
     cancel: (jobId: string) => ipcRenderer.invoke('render:cancel', jobId),

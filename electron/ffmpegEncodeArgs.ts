@@ -23,6 +23,98 @@ export type EncodeQuality = 'high' | 'medium' | 'draft';
 export type EncodeProresProfile = 'proxy' | 'lt' | '422' | 'hq' | '4444';
 
 /**
+ * Hardware H.264/HEVC encoders ffmpeg can drive, when the build and the
+ * machine have them. Opt-in: the software default is what every file has been
+ * encoded with so far, and "same CRF, same bytes" only holds for it.
+ */
+export type HwVideoEncoder = 'h264_nvenc' | 'hevc_nvenc' | 'h264_qsv' | 'h264_videotoolbox';
+export type VideoEncoder = 'libx264' | HwVideoEncoder;
+
+export const HW_VIDEO_ENCODERS: ReadonlyArray<{ id: HwVideoEncoder; label: string; platforms: NodeJS.Platform[] }> = [
+  { id: 'h264_nvenc', label: 'NVIDIA NVENC (H.264)', platforms: ['win32', 'linux'] },
+  { id: 'hevc_nvenc', label: 'NVIDIA NVENC (HEVC)', platforms: ['win32', 'linux'] },
+  { id: 'h264_qsv', label: 'Intel Quick Sync (H.264)', platforms: ['win32', 'linux'] },
+  { id: 'h264_videotoolbox', label: 'Apple VideoToolbox (H.264)', platforms: ['darwin'] },
+];
+
+export function isHwVideoEncoder(v: unknown): v is HwVideoEncoder {
+  return HW_VIDEO_ENCODERS.some((e) => e.id === v);
+}
+
+/**
+ * Encoder names out of `ffmpeg -hide_banner -encoders`.
+ *
+ * Each encoder is one line of the form ` V....D h264_nvenc   NVIDIA NVENC …`:
+ * a six-character capability column, the name, the description. Only the name
+ * matters; a line is skipped rather than guessed at when it does not fit —
+ * the header (`Encoders:`, the legend, the `------` rule) never does.
+ */
+export function parseFfmpegEncoders(text: string): Set<string> {
+  const names = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*([VAS][.FXBD]{5})\s+([A-Za-z0-9_-]+)\s/.exec(`${line} `);
+    if (m) names.add(m[2]!);
+  }
+  return names;
+}
+
+/**
+ * The quality tiers, per encoder.
+ *
+ * Software CRF is the reference: 18 / 23 / 28 at High / Medium / Draft. The
+ * hardware encoders have no CRF, so each gets its own quality knob set to the
+ * value that lands nearest the same visual tier — none of them is a promise
+ * of the same bytes, and the "bit-identical at the same CRF" gate applies to
+ * libx264 only.
+ *
+ * | tier   | libx264            | h264_nvenc / hevc_nvenc      | h264_qsv                    | h264_videotoolbox |
+ * |--------|--------------------|------------------------------|-----------------------------|-------------------|
+ * | high   | -crf 18 -preset medium   | -rc vbr -cq 18 -preset p6 -tune hq | -global_quality 18 -preset medium   | -q:v 65 |
+ * | medium | -crf 23 -preset medium   | -rc vbr -cq 23 -preset p5 -tune hq | -global_quality 23 -preset medium   | -q:v 55 |
+ * | draft  | -crf 28 -preset veryfast | -rc vbr -cq 28 -preset p3          | -global_quality 28 -preset veryfast | -q:v 45 |
+ *
+ * NVENC: `-cq` is a constant-quality target on the same 0–51 scale as CRF and
+ * needs `-rc vbr -b:v 0` or the bitrate default overrides it. The p-presets
+ * run p1 (fastest) … p7 (slowest). QSV: `-global_quality` with no bitrate set
+ * selects ICQ mode, again on a 1–51 scale; its `-preset` names match x264's.
+ * VideoToolbox: `-q:v` is 1–100 with higher meaning better, and has no
+ * documented CRF equivalence — the three values were chosen by eye against
+ * the software tiers on 1080p motion graphics. The VBV ceiling
+ * (`-maxrate`/`-bufsize`, see `h264MaxRate`) applies to all of them.
+ */
+export function videoEncoderArgs(encoder: VideoEncoder, quality: EncodeQuality = 'high'): string[] {
+  const crf = quality === 'draft' ? '28' : quality === 'medium' ? '23' : '18';
+  switch (encoder) {
+    case 'h264_nvenc':
+    case 'hevc_nvenc':
+      return [
+        '-c:v', encoder,
+        '-preset', quality === 'draft' ? 'p3' : quality === 'medium' ? 'p5' : 'p6',
+        ...(quality === 'draft' ? [] : ['-tune', 'hq']),
+        '-rc', 'vbr', '-cq', crf, '-b:v', '0',
+      ];
+    case 'h264_qsv':
+      return [
+        '-c:v', 'h264_qsv',
+        '-preset', quality === 'draft' ? 'veryfast' : 'medium',
+        '-global_quality', crf,
+      ];
+    case 'h264_videotoolbox':
+      return [
+        '-c:v', 'h264_videotoolbox',
+        '-q:v', quality === 'draft' ? '45' : quality === 'medium' ? '55' : '65',
+      ];
+    case 'libx264':
+    default:
+      return [
+        '-c:v', 'libx264',
+        '-preset', quality === 'draft' ? 'veryfast' : 'medium',
+        '-crf', crf,
+      ];
+  }
+}
+
+/**
  * ffmpeg-exact frame rate. The NTSC family are RATIONALS (30000/1001…);
  * handing ffmpeg the decimal builds a 2997/100 timebase — flagged by
  * broadcast QC, and drifting against the 48kHz mix on long renders.
@@ -72,8 +164,31 @@ export interface EncodeArgsOptions {
   alpha: boolean;
   /** Frame size and rate, when the caller knows them — sizes the H.264 bitrate ceiling. */
   frame?: { width: number; height: number; fps: number };
+  /**
+   * mp4 only — which encoder writes the H.264/HEVC stream. Defaults to
+   * libx264. Callers pass a hardware encoder only after `encoderProbe` has
+   * confirmed it (this builder does not fall back; main.ts does).
+   */
+  videoEncoder?: VideoEncoder;
+  /**
+   * The frames arrive with NO colour description (raw rgba on stdin) — tag
+   * them sRGB the way a decoded PNG is tagged, so the encoder writes the same
+   * VUI (x264 SPS) / frame-header colour fields (ProRes) as the staged path.
+   *
+   * Frame properties via `setparams` in the filter graph, which is where the
+   * PNG decoder sets them. NOT input-side `-color_primaries`/`-color_trc`:
+   * those retag the stream and change the RGB→YUV conversion, so the pixels
+   * come out different. Measured 2026-09-22 on ffmpeg 8.1.1: with this the
+   * raw and PNG-staged mp4 and mov are byte-identical; without it they differ
+   * by 2 bytes of SPS (mp4) or 2 bytes per ProRes frame header, and nothing
+   * else.
+   */
+  tagSrgb?: boolean;
   out: string;
 }
+
+/** The frame-property tag a decoded PNG carries — see `EncodeArgsOptions.tagSrgb`. */
+export const SRGB_FRAME_PARAMS = 'setparams=color_primaries=bt709:color_trc=iec61966-2-1';
 
 /**
  * The H.264 bitrate CEILING for a frame size, in bits per second.
@@ -94,8 +209,8 @@ export function h264MaxRate(width: number, height: number, fps: number, quality:
 /** The full non-HDR ffmpeg argument list. */
 export function buildEncodeArgs(o: EncodeArgsOptions): string[] {
   // Even dimensions are required by yuv420p; odd-sized comps otherwise fail
-  // the encode outright.
-  const evenScale = 'scale=trunc(iw/2)*2:trunc(ih/2)*2';
+  // the encode outright. Raw frames get their sRGB tag ahead of it.
+  const evenScale = `${o.tagSrgb ? `${SRGB_FRAME_PARAMS},` : ''}scale=trunc(iw/2)*2:trunc(ih/2)*2`;
   const crf = o.quality === 'draft' ? '28' : o.quality === 'medium' ? '23' : '18';
   const hasAudio = !!o.audio;
 
@@ -176,12 +291,15 @@ export function buildEncodeArgs(o: EncodeArgsOptions): string[] {
       ];
     }
     case 'mp4':
-    default:
+    default: {
+      const encoder = o.videoEncoder ?? 'libx264';
       return [
         ...base,
-        '-c:v', 'libx264',
-        '-preset', o.quality === 'draft' ? 'veryfast' : 'medium',
-        '-crf', crf,
+        // libx264 by default: `-c:v libx264 -preset … -crf <crf>`. A hardware
+        // encoder swaps in its own quality knob — see `videoEncoderArgs`.
+        ...videoEncoderArgs(encoder, o.quality),
+        // HEVC in MP4 needs the `hvc1` tag or QuickTime/Safari refuse the file.
+        ...(encoder === 'hevc_nvenc' ? ['-tag:v', 'hvc1'] : []),
         // Quality-targeted, but bounded — see `h264MaxRate`.
         ...(o.frame
           ? ((rate: number) => ['-maxrate', String(rate), '-bufsize', String(rate * 2)])(
@@ -201,5 +319,6 @@ export function buildEncodeArgs(o: EncodeArgsOptions): string[] {
         ...chapterMap,
         o.out,
       ];
+    }
   }
 }

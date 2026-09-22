@@ -28,6 +28,7 @@ import { openPluginExport } from './openPluginExport';
 import { createHdrMasteringAccumulator } from './hdrTransfer';
 import { FramePipeline, CanvasPool, SequentialWriter, defaultConcurrency } from './framePipeline';
 import { formatFfmetadata, formatCarriesChapters, type ExportChapter } from './chapters';
+import { streamFrameChunked, type VideoEncoderId } from './rawPipe';
 
 /**
  * A format this module can encode.
@@ -65,6 +66,13 @@ export interface VideoSinkParams {
   quality?: ExportQuality;
   /** mov only — which ProRes flavour ffmpeg encodes. Defaults to 4444. */
   proresProfile?: ProresProfile;
+  /**
+   * mp4 only — the H.264/HEVC encoder. `libx264` unless the user opted into
+   * a hardware encoder in Settings; main probes it and falls back to libx264
+   * with `warning` set on the result. Ignored by every other format and by
+   * the browser sink.
+   */
+  videoEncoder?: VideoEncoderId;
   /** Keep an alpha channel (forces lossless frame staging). */
   transparent?: boolean;
   /**
@@ -133,8 +141,10 @@ export type VideoSinkResult =
       kind: 'file';
       ext: string;
       frames: number;
-      /** Encoder used for HDR (libx265 when available, else libx264 high10). */
+      /** Encoder used: libx265/libx264 high10 for HDR, or the H.264/HEVC encoder that wrote an mp4. */
       videoCodec?: string;
+      /** Something the user should know that did not fail the export — a hardware encoder that fell back to software. */
+      warning?: string;
       /** Measured MaxCLL / MaxFALL from the staged frames (HDR exports only). */
       hdrMastering?: {
         maxCll: number;
@@ -520,7 +530,7 @@ class FfmpegSink implements VideoSink {
       void r.cancel?.(jobId).catch(() => undefined);
     };
     signal?.addEventListener('abort', onAbort, { once: true });
-    let encoded: { frames: number; videoCodec?: string };
+    let encoded: { frames: number; videoCodec?: string; warning?: string };
     try {
       encoded = await r.encode!(jobId, {
         format: encodeFormat,
@@ -529,6 +539,9 @@ class FfmpegSink implements VideoSink {
         quality: this.params.quality ?? 'high',
         ...(encodeFormat === 'mov' && this.params.proresProfile
           ? { proresProfile: this.params.proresProfile }
+          : {}),
+        ...(encodeFormat === 'mp4' && !this.hdrTransfer && this.params.videoEncoder
+          ? { videoEncoder: this.params.videoEncoder }
           : {}),
         ...(this.hdrTransfer ? { hdr: this.hdrTransfer, hdrMastering: mastering } : {}),
         ...(chapterMetadata ? { chaptersFfmetadata: chapterMetadata } : {}),
@@ -545,9 +558,10 @@ class FfmpegSink implements VideoSink {
     } finally {
       signal?.removeEventListener('abort', onAbort);
     }
-    const { frames, videoCodec } = encoded;
+    const { frames, videoCodec, warning } = encoded;
     return encodedFileResult(r, jobId, encodeFormat, frames, () => { this.jobId = null; }, {
       ...(videoCodec ? { videoCodec } : {}),
+      ...(warning ? { warning } : {}),
       ...(mastering ? { hdrMastering: mastering } : {}),
     });
   }
@@ -581,7 +595,7 @@ function encodedFileResult(
   ext: string,
   frames: number,
   forget: () => void,
-  extra: Pick<Extract<VideoSinkResult, { kind: 'file' }>, 'videoCodec' | 'hdrMastering'>,
+  extra: Pick<Extract<VideoSinkResult, { kind: 'file' }>, 'videoCodec' | 'hdrMastering' | 'warning'>,
 ): VideoSinkResult {
   const cleanup = async (): Promise<void> => {
     forget();
@@ -675,6 +689,8 @@ export class FfmpegStreamSink implements VideoSink {
   private readonly writer = new SequentialWriter({ maxQueued: STREAM_MAX_QUEUED });
   /** Set when the stream could not start: every frame then goes to the staged sink. */
   private fallback: VideoSink | null = null;
+  /** What main opened the child with, and why it differs from what was asked, if it does. */
+  private opened: { videoEncoder?: string; warning?: string } = {};
   private readonly readPixels: (canvas: HTMLCanvasElement) => Uint8Array;
   private readonly makeStaged: () => VideoSink;
 
@@ -703,7 +719,9 @@ export class FfmpegStreamSink implements VideoSink {
   }
 
   private async openStream(r: RenderBridge, width: number, height: number): Promise<string> {
-    if (!r.openStream || !r.streamFrame || !r.finishStream || !r.beginJob) {
+    // Either frame transport will do: `streamChunk` is the raw pipe, and
+    // `streamFrame` the whole-frame message a main from before it still has.
+    if (!r.openStream || !(r.streamChunk || r.streamFrame) || !r.finishStream || !r.beginJob) {
       throw new Error('This build has no streaming encode.');
     }
     const preference = await r.streamPreference?.().catch(() => 'stream' as const);
@@ -714,7 +732,7 @@ export class FfmpegStreamSink implements VideoSink {
     const format = this.params.format as 'mp4' | 'webm' | 'gif' | 'mov';
     // Same FFMETADATA1 text the staged encode sends — see FfmpegSink.finish.
     const chapterMetadata = formatCarriesChapters(format) ? formatFfmetadata(this.params.chapters ?? []) : '';
-    await r.openStream(jobId, {
+    const opened = await r.openStream(jobId, {
       format,
       fps: this.params.fps,
       width,
@@ -722,10 +740,23 @@ export class FfmpegStreamSink implements VideoSink {
       hasAudio: !!this.params.audioWav,
       quality: this.params.quality ?? 'high',
       ...(format === 'mov' && this.params.proresProfile ? { proresProfile: this.params.proresProfile } : {}),
+      ...(format === 'mp4' && this.params.videoEncoder ? { videoEncoder: this.params.videoEncoder } : {}),
       alpha: !!this.params.transparent,
       ...(chapterMetadata ? { chaptersFfmetadata: chapterMetadata } : {}),
     });
+    // An older main resolves with nothing; the encoder is then libx264.
+    this.opened = opened && typeof opened === 'object' ? opened : {};
     return jobId;
+  }
+
+  /**
+   * One frame into the pipe: chunked with an ack per chunk (`rawPipe.ts`)
+   * where main offers `streamChunk`; a main from before the chunked protocol
+   * still takes the whole frame in one message.
+   */
+  private sendFrame(r: RenderBridge, jobId: string, index: number, bytes: Uint8Array): Promise<unknown> {
+    if (r.streamChunk) return streamFrameChunked({ streamChunk: r.streamChunk }, jobId, index, bytes);
+    return r.streamFrame!(jobId, index, bytes);
   }
 
   /** Tear down a stream that never got going, before handing over to staging. */
@@ -744,7 +775,7 @@ export class FfmpegStreamSink implements VideoSink {
     if (this.frames === 0) {
       try {
         const jobId = await this.openStream(r, canvas.width, canvas.height);
-        await r.streamFrame!(jobId, index, this.readPixels(canvas));
+        await this.sendFrame(r, jobId, index, this.readPixels(canvas));
       } catch (err) {
         if (isFfmpegMissing(err)) {
           await this.abandonStream(r);
@@ -772,7 +803,7 @@ export class FfmpegStreamSink implements VideoSink {
     // moment this returns. The bytes then cross IPC while that frame renders.
     const bytes = this.readPixels(canvas);
     const jobId = this.jobId!;
-    await this.writer.push(() => r.streamFrame!(jobId, index, bytes));
+    await this.writer.push(async () => { await this.sendFrame(r, jobId, index, bytes); });
     this.frames += 1;
   }
 
@@ -810,7 +841,10 @@ export class FfmpegStreamSink implements VideoSink {
     } finally {
       signal?.removeEventListener('abort', onAbort);
     }
-    return encodedFileResult(r, jobId, this.params.format, encoded.frames, () => { this.jobId = null; }, {});
+    return encodedFileResult(r, jobId, this.params.format, encoded.frames, () => { this.jobId = null; }, {
+      ...(this.opened.videoEncoder ? { videoCodec: this.opened.videoEncoder } : {}),
+      ...(this.opened.warning ? { warning: this.opened.warning } : {}),
+    });
   }
 
   async dispose(): Promise<void> {
