@@ -1,0 +1,7 @@
+{
+  "name": "premation-viewport-proto-host",
+  "private": true,
+  "version": "0.0.0",
+  "description": "C1 prototype host: shows premation-engine frames in an Electron page by route A/B/C. Not part of the app.",
+  "main": "main.cjs"
+}

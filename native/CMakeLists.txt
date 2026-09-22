@@ -13,6 +13,8 @@
 #   MOTION_BUILD_NAPI    node-addon-api module; normally built by cmake-js from
 #                        bindings/napi instead (see that CMakeLists)   default OFF
 #   MOTION_BUILD_WASM    Emscripten glue; the `wasm` preset turns it on  default OFF
+#   MOTION_BUILD_ENGINE  premation-engine (Dawn); set together with
+#                        VCPKG_MANIFEST_FEATURES=engine — the *-engine presets   default OFF
 #   MOTION_SANITIZE      none | asan-ubsan | tsan                 default none
 
 cmake_minimum_required(VERSION 3.25)
@@ -32,6 +34,7 @@ option(MOTION_BUILD_TESTS "Build the Catch2 test suite" ON)
 option(MOTION_BUILD_BENCH "Build the Google Benchmark executables" ON)
 option(MOTION_BUILD_NAPI "Build the N-API module from the root build (needs cmake-js variables)" OFF)
 option(MOTION_BUILD_WASM "Build the Emscripten module (needs the Emscripten toolchain)" OFF)
+option(MOTION_BUILD_ENGINE "Build premation-engine (needs the vcpkg `engine` feature: Dawn)" OFF)
 
 # One compiler everywhere (§2). Not fatal — a first-time contributor on a
 # gcc-only box should get a warning, not a wall — but CI only ever runs Clang.
@@ -60,4 +63,8 @@ endif()
 
 if(MOTION_BUILD_NAPI)
   add_subdirectory(bindings/napi)
+endif()
+
+if(MOTION_BUILD_ENGINE)
+  add_subdirectory(engine)
 endif()

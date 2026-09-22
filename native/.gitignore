@@ -6,3 +6,5 @@ bindings/napi/package-lock.json
 # vcpkg manifest-mode install tree lives inside build/, but a stray
 # vcpkg_installed/ from a manual `vcpkg install` should not be committed either.
 vcpkg_installed/
+# C1 prototype measurement output (native/engine/proto-host/run-matrix.mjs default --out).
+engine/proto-host/.results/

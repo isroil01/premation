@@ -189,6 +189,21 @@ in parallel.
 | C1 | **Viewport prototype.** A native process renders a layer with Dawn; show it in the Electron viewport three ways — frames copied into the page, a native child window over the viewport, a shared GPU texture if Electron's APIs allow it (verify, don't assume). Measure latency, CPU, 1080p and 4K throughput, resize and menu overlap | A written choice with numbers; losing routes deleted | 3 wk |
 | C2 | `premation-engine` executable, the protocol transport, and `EngineSupervisor` in Electron main (the export supervisor's pattern) | Engine crash → automatic restart, UI shows a notice, nothing lost; protocol fuzz-tested | 4 wk |
 | C3 | `EngineClient` gains a second backend that speaks to the process; flag selects TS or C++ | Same command replay passes against both | 2 wk |
+| C4 | **Electron 32 → 40+ upgrade** (C1's decision needs Electron's `sharedTexture` import, added in 40.0.0 and still marked experimental). Walk every major's breaking changes: preload/sandbox, `BrowserView`→`WebContentsView`, protocol handlers, IPC, GPU flags, the auto-updater, electron-builder, the render-tests harness and CLI hidden-window render | Full jest + render-tests + the real-app harness (export crash/retry/editor-killed, Render Queue) pass on Electron 40+; route C runs inside the real app | 3–4 wk |
+
+**C1 result (2026-09-23, `docs/VIEWPORT_ROUTE.md`):** route **C, shared GPU
+texture**: 59.7 fps at 1080p and 59.9 at 4K, 12.6 ms frame latency p50,
+6.6–8.5 % of one CPU core, HTML menus and gizmos draw over the viewport
+normally. Route A (frame copy) is kept only as a half-resolution fallback:
+36 fps at 1080p, 6.7 at 4K, because the main→page copy costs ~22 ms per
+1080p frame. Route B (native child window) is rejected: menus and gizmos
+vanish behind it, and it trails splitter drags by 15–50 ms. Consequences:
+pixels never travel over the command pipe (the engine sends "frame ready in
+slot N", the page releases slots; a full ring drops a frame, never blocks);
+the supervisor must start the engine on Chromium's GPU (a vendor mismatch
+made every transfer time out); the viewport tells the engine a preview size
+and pixel ratio, not a window rectangle. Dawn comes from vcpkg's `dawn` port
+behind a manifest feature `engine`: 16 min clean build, 565 MB cache.
 
 ### Phase D — Rendering in C++
 

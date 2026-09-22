@@ -1,0 +1,82 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'" />
+<title>premation C1 viewport prototype</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #17171a; color: #d8d8de; font: 12px/1.4 system-ui, sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-rows: 34px 1fr; height: 100%; }
+  #toolbar { display: flex; align-items: center; gap: 8px; padding: 0 10px; background: #222228; border-bottom: 1px solid #333; position: relative; z-index: 20; }
+  #toolbar .route { font-weight: 600; color: #fff; margin-right: 12px; }
+  #toolbar button { background: #2f2f37; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px 10px; font: inherit; }
+  #hud { margin-left: auto; font-family: ui-monospace, Consolas, monospace; color: #9fe39f; white-space: pre; }
+  #main { display: flex; min-height: 0; }
+  #layers { width: 220px; background: #1d1d22; border-right: 1px solid #333; padding: 8px; }
+  #layers div { padding: 3px 6px; border-radius: 3px; }
+  #layers div:nth-child(2) { background: #2c3d5a; }
+  #viewport { flex: 1; position: relative; background: #000; min-width: 100px; overflow: hidden; }
+  #viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #overlay { position: absolute; left: 10px; top: 10px; color: #ffd24a; font-weight: 600; pointer-events: none; text-shadow: 0 1px 2px #000; }
+  #gizmo { position: absolute; left: 50%; top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px; pointer-events: none;
+           border: 2px solid #ff4d6d; border-radius: 50%; }
+  #gizmo::before, #gizmo::after { content: ''; position: absolute; background: #ff4d6d; }
+  #gizmo::before { left: 58px; top: -30px; width: 2px; height: 176px; }
+  #gizmo::after { top: 58px; left: -30px; height: 2px; width: 176px; }
+  #splitter { width: 6px; background: #2a2a31; cursor: col-resize; }
+  #splitter:hover { background: #3d5a8a; }
+  #inspector { width: 360px; background: #1d1d22; padding: 8px; }
+  #inspector .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #292930; }
+  #menu { position: absolute; top: 30px; left: 300px; width: 280px; background: #2a2a31; border: 1px solid #555; border-radius: 6px;
+          box-shadow: 0 8px 24px rgba(0,0,0,.6); padding: 4px; display: none; z-index: 30; }
+  #menu.open { display: block; }
+  #menu div { padding: 6px 10px; border-radius: 4px; }
+  #menu div:hover, #menu div.hl { background: #3d5a8a; color: #fff; }
+  #menu hr { border: 0; border-top: 1px solid #444; margin: 4px 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <span class="route" id="routeLabel">route ?</span>
+    <button id="viewBtn">View &#9662;</button>
+    <button id="holesBtn">holes: off</button>
+    <span id="hud">starting…</span>
+    <div id="menu">
+      <div class="hl">Resolution: Full</div>
+      <div>Resolution: Half</div>
+      <div>Resolution: Quarter</div>
+      <hr />
+      <div>Show Rulers</div>
+      <div>Show Guides</div>
+      <div>Title/Action Safe</div>
+      <hr />
+      <div>Fast Previews ▸</div>
+      <div>Transparency Grid</div>
+      <div>Region of Interest</div>
+      <div>Snapshot</div>
+      <div>Show Channel ▸</div>
+      <div>Exposure…</div>
+    </div>
+  </div>
+  <div id="main">
+    <div id="layers"><div>Layers</div><div>1 · Card (rotating)</div><div>2 · Background</div><div>fx · Blur H/V</div><div>fx · Vignette</div></div>
+    <div id="viewport">
+      <canvas id="canvas"></canvas>
+      <div id="overlay">HTML overlay over the viewport (gizmos, guides, HUD)</div>
+      <div id="gizmo"></div>
+    </div>
+    <div id="splitter"></div>
+    <div id="inspector">
+      <div class="row"><span>Position</span><span>960, 540</span></div>
+      <div class="row"><span>Rotation</span><span>animated</span></div>
+      <div class="row"><span>Blur σ</span><span>animated</span></div>
+      <div class="row"><span>Vignette</span><span>0.60</span></div>
+      <p>Drag the splitter to resize the viewport.</p>
+    </div>
+  </div>
+</div>
+<script src="page.js"></script>
+</body>
+</html>

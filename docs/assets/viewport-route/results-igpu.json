@@ -1,0 +1,1093 @@
+[
+ {
+  "name": "A-1080-1",
+  "config": {
+   "route": "A",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.08,
+   "presentedFps": 33.8,
+   "engine": {
+    "renderedFps": 60.1,
+    "sentFps": 49.09,
+    "droppedFps": 11.01,
+    "gpuMsAvg": 9.87
+   },
+   "mainDropsPerSec": 15.5,
+   "pageRafPerSec": 67.5,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 273,
+    "mean": 51.83,
+    "p50": 48.05,
+    "p95": 68.14,
+    "max": 82.42
+   },
+   "latencyCmdMs": {
+    "n": 82,
+    "mean": 91.67,
+    "p50": 90.9,
+    "p95": 111.9,
+    "max": 156
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 273,
+     "mean": 9.89,
+     "p50": 9.61,
+     "p95": 10.47,
+     "max": 18.62
+    },
+    "pipe": {
+     "n": 273,
+     "mean": 6.3,
+     "p50": 3.32,
+     "p95": 16.76,
+     "max": 20.35
+    },
+    "mainHop": {
+     "n": 273,
+     "mean": 4.79,
+     "p50": 4.58,
+     "p95": 11.73,
+     "max": 21.09
+    },
+    "ipc": {
+     "n": 273,
+     "mean": 26.07,
+     "p50": 25.94,
+     "p95": 28.61,
+     "max": 31.16
+    },
+    "upload": {
+     "n": 273,
+     "mean": 4.17,
+     "p50": 4,
+     "p95": 8,
+     "max": 13.3
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 12.38,
+    "main": 4.8,
+    "renderer": 2.8,
+    "gpuProcess": 1,
+    "other": 0,
+    "total": 21
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "A-1080-0.5",
+  "config": {
+   "route": "A",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.04,
+   "presentedFps": 59.8,
+   "engine": {
+    "renderedFps": 59.95,
+    "sentFps": 59.83,
+    "droppedFps": 0.13,
+    "gpuMsAvg": 3.2
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 67.6,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 481,
+    "mean": 18.61,
+    "p50": 18.61,
+    "p95": 29.2,
+    "max": 35.06
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 40.77,
+    "p50": 38.1,
+    "p95": 59.4,
+    "max": 66
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 481,
+     "mean": 3.18,
+     "p50": 3.09,
+     "p95": 3.66,
+     "max": 10.47
+    },
+    "pipe": {
+     "n": 481,
+     "mean": 0.57,
+     "p50": 0.26,
+     "p95": 2.56,
+     "max": 4.11
+    },
+    "mainHop": {
+     "n": 481,
+     "mean": 1.57,
+     "p50": 0,
+     "p95": 7.89,
+     "max": 14.34
+    },
+    "ipc": {
+     "n": 481,
+     "mean": 7.13,
+     "p50": 7.05,
+     "p95": 8.15,
+     "max": 10.65
+    },
+    "upload": {
+     "n": 481,
+     "mean": 6,
+     "p50": 6.8,
+     "p95": 10,
+     "max": 13.3
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 7.49,
+    "main": 2.3,
+    "renderer": 1.7,
+    "gpuProcess": 1.1,
+    "other": 0,
+    "total": 12.6
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "A-2160-1",
+  "config": {
+   "route": "A",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.21,
+   "presentedFps": 5.8,
+   "engine": {
+    "renderedFps": 60.02,
+    "sentFps": 28.71,
+    "droppedFps": 31.31,
+    "gpuMsAvg": 17.94
+   },
+   "mainDropsPerSec": 22.9,
+   "pageRafPerSec": 41.9,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 48,
+    "mean": 199.72,
+    "p50": 197.21,
+    "p95": 230.9,
+    "max": 239.89
+   },
+   "latencyCmdMs": {
+    "n": 48,
+    "mean": 305.92,
+    "p50": 308.5,
+    "p95": 347.7,
+    "max": 368.3
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 48,
+     "mean": 17.69,
+     "p50": 16.98,
+     "p95": 20.45,
+     "max": 28.54
+    },
+    "pipe": {
+     "n": 48,
+     "mean": 17.27,
+     "p50": 17.16,
+     "p95": 20.85,
+     "max": 21.68
+    },
+    "mainHop": {
+     "n": 48,
+     "mean": 0.94,
+     "p50": 0.42,
+     "p95": 4.3,
+     "max": 7.81
+    },
+    "ipc": {
+     "n": 48,
+     "mean": 105.78,
+     "p50": 103.79,
+     "p95": 117.5,
+     "max": 123.98
+    },
+    "upload": {
+     "n": 48,
+     "mean": 55.82,
+     "p50": 54.9,
+     "p95": 63.1,
+     "max": 72.3
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 17.78,
+    "main": 5.6,
+    "renderer": 3.7,
+    "gpuProcess": 0.8,
+    "other": 0,
+    "total": 27.9
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "A-2160-0.5",
+  "config": {
+   "route": "A",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.06,
+   "presentedFps": 33.7,
+   "engine": {
+    "renderedFps": 60.05,
+    "sentFps": 50.77,
+    "droppedFps": 9.28,
+    "gpuMsAvg": 9.99
+   },
+   "mainDropsPerSec": 17.1,
+   "pageRafPerSec": 67.5,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 272,
+    "mean": 50.85,
+    "p50": 47.63,
+    "p95": 67.84,
+    "max": 70.94
+   },
+   "latencyCmdMs": {
+    "n": 82,
+    "mean": 91.01,
+    "p50": 90.7,
+    "p95": 114.4,
+    "max": 166.4
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 272,
+     "mean": 9.84,
+     "p50": 9.6,
+     "p95": 10.79,
+     "max": 18.95
+    },
+    "pipe": {
+     "n": 272,
+     "mean": 7.3,
+     "p50": 4.52,
+     "p95": 18.48,
+     "max": 20.2
+    },
+    "mainHop": {
+     "n": 272,
+     "mean": 4.82,
+     "p50": 4.12,
+     "p95": 12.47,
+     "max": 15.34
+    },
+    "ipc": {
+     "n": 272,
+     "mean": 24.18,
+     "p50": 23.99,
+     "p95": 27.11,
+     "max": 29.25
+    },
+    "upload": {
+     "n": 272,
+     "mean": 4.1,
+     "p50": 3.9,
+     "p95": 8.4,
+     "max": 11.9
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 10.25,
+    "main": 4.9,
+    "renderer": 2.8,
+    "gpuProcess": 1,
+    "other": 0,
+    "total": 18.9
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "A-1080-1-e40",
+  "config": {
+   "route": "A",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.07,
+   "presentedFps": 45,
+   "engine": {
+    "renderedFps": 59.92,
+    "sentFps": 54.95,
+    "droppedFps": 4.97,
+    "gpuMsAvg": 10.03
+   },
+   "mainDropsPerSec": 10,
+   "pageRafPerSec": 67.4,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 363,
+    "mean": 39.99,
+    "p50": 38.86,
+    "p95": 50.85,
+    "max": 73.21
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 75.23,
+    "p50": 75.8,
+    "p95": 93.1,
+    "max": 111.8
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 363,
+     "mean": 9.96,
+     "p50": 9.74,
+     "p95": 10.87,
+     "max": 19.59
+    },
+    "pipe": {
+     "n": 363,
+     "mean": 2.32,
+     "p50": 0.97,
+     "p95": 9.97,
+     "max": 18.3
+    },
+    "mainHop": {
+     "n": 363,
+     "mean": 2.3,
+     "p50": 0.23,
+     "p95": 9.52,
+     "max": 13.91
+    },
+    "ipc": {
+     "n": 363,
+     "mean": 21,
+     "p50": 20.76,
+     "p95": 23.59,
+     "max": 29.73
+    },
+    "upload": {
+     "n": 363,
+     "mean": 3.73,
+     "p50": 2.7,
+     "p95": 8.5,
+     "max": 18.5
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 13.77,
+    "main": 5.2,
+    "renderer": 3.7,
+    "gpuProcess": 1.3,
+    "other": 0,
+    "total": 24
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "B-1080-1",
+  "config": {
+   "route": "B",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.01,
+   "presentedFps": 75,
+   "engine": {
+    "renderedFps": 74.97,
+    "sentFps": 74.97,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.72
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 68,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 601,
+    "mean": 0.72,
+    "p50": 0.7,
+    "p95": 0.92,
+    "max": 3.14
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 20.44,
+    "p50": 20.82,
+    "p95": 27.46,
+    "max": 28.82
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 9.91,
+    "main": 0.2,
+    "renderer": 0.2,
+    "gpuProcess": 0.1,
+    "other": 0,
+    "total": 10.4
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "B-1080-0.5",
+  "config": {
+   "route": "B",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 74.8,
+   "engine": {
+    "renderedFps": 74.71,
+    "sentFps": 74.71,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.98
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 67.8,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 600,
+    "mean": 0.98,
+    "p50": 0.82,
+    "p95": 1.66,
+    "max": 4.81
+   },
+   "latencyCmdMs": {
+    "n": 80,
+    "mean": 21.17,
+    "p50": 20.68,
+    "p95": 26.8,
+    "max": 31.93
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 12.4,
+    "main": 0.2,
+    "renderer": 0.3,
+    "gpuProcess": 0.2,
+    "other": 0,
+    "total": 13.1
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "B-2160-1",
+  "config": {
+   "route": "B",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 75.1,
+   "engine": {
+    "renderedFps": 75.08,
+    "sentFps": 75.08,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.95
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 68,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 603,
+    "mean": 0.96,
+    "p50": 0.96,
+    "p95": 1.24,
+    "max": 1.85
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 21.31,
+    "p50": 21.2,
+    "p95": 27.23,
+    "max": 30.02
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 10.27,
+    "main": 0.2,
+    "renderer": 0.2,
+    "gpuProcess": 0.1,
+    "other": 0,
+    "total": 10.8
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "B-2160-0.5",
+  "config": {
+   "route": "B",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.04,
+   "presentedFps": 74.9,
+   "engine": {
+    "renderedFps": 74.96,
+    "sentFps": 74.96,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.81
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 68,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 602,
+    "mean": 0.8,
+    "p50": 0.77,
+    "p95": 1.03,
+    "max": 1.8
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 20.71,
+    "p50": 20.41,
+    "p95": 27.54,
+    "max": 34.33
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 10.12,
+    "main": 0.2,
+    "renderer": 0.2,
+    "gpuProcess": 0.1,
+    "other": 0,
+    "total": 10.6
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "C-1080-1",
+  "config": {
+   "route": "C",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 59.9,
+   "engine": {
+    "renderedFps": 59.84,
+    "sentFps": 59.84,
+    "droppedFps": 0.12,
+    "gpuMsAvg": 9.66
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 67.3,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 481,
+    "mean": 21.65,
+    "p50": 21.3,
+    "p95": 31.02,
+    "max": 36.64
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 41.14,
+    "p50": 42.2,
+    "p95": 57,
+    "max": 89
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 481,
+     "mean": 9.66,
+     "p50": 9.49,
+     "p95": 10.62,
+     "max": 12.75
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 481,
+     "mean": 0.16,
+     "p50": 0.15,
+     "p95": 0.26,
+     "max": 0.93
+    },
+    "ipc": {
+     "n": 481,
+     "mean": 3.71,
+     "p50": 3.67,
+     "p95": 4.13,
+     "max": 5.17
+    },
+    "upload": {
+     "n": 481,
+     "mean": 10.79,
+     "p50": 10.6,
+     "p95": 20.3,
+     "max": 26.2
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 5.79,
+    "main": 0.8,
+    "renderer": 0.8,
+    "gpuProcess": 1.6,
+    "other": 0,
+    "total": 9
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "C-1080-0.5",
+  "config": {
+   "route": "C",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 0.5,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.04,
+   "presentedFps": 59.6,
+   "engine": {
+    "renderedFps": 59.82,
+    "sentFps": 59.82,
+    "droppedFps": 0.25,
+    "gpuMsAvg": 3.31
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 67.5,
+   "pageDropsPerSec": 0.1,
+   "latencyFrameMs": {
+    "n": 479,
+    "mean": 14.03,
+    "p50": 14.01,
+    "p95": 25.96,
+    "max": 30.79
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 35.23,
+    "p50": 31.2,
+    "p95": 52.3,
+    "max": 109.3
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 479,
+     "mean": 3.31,
+     "p50": 3.17,
+     "p95": 4.21,
+     "max": 5.61
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 479,
+     "mean": 0.15,
+     "p50": 0.12,
+     "p95": 0.34,
+     "max": 0.72
+    },
+    "ipc": {
+     "n": 479,
+     "mean": 1.34,
+     "p50": 1.29,
+     "p95": 1.75,
+     "max": 3.45
+    },
+    "upload": {
+     "n": 479,
+     "mean": 9.52,
+     "p50": 9.2,
+     "p95": 22.4,
+     "max": 27.3
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 4.06,
+    "main": 0.8,
+    "renderer": 0.9,
+    "gpuProcess": 1.7,
+    "other": 0,
+    "total": 7.5
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "C-2160-1",
+  "config": {
+   "route": "C",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 1,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 57.7,
+   "engine": {
+    "renderedFps": 57.64,
+    "sentFps": 57.64,
+    "droppedFps": 2.23,
+    "gpuMsAvg": 15.98
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 66.8,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 463,
+    "mean": 25.55,
+    "p50": 25.33,
+    "p95": 32.81,
+    "max": 41.69
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 38.74,
+    "p50": 38.6,
+    "p95": 50.1,
+    "max": 59.8
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 463,
+     "mean": 15.98,
+     "p50": 15.87,
+     "p95": 17.95,
+     "max": 21.09
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 463,
+     "mean": 0.19,
+     "p50": 0.18,
+     "p95": 0.3,
+     "max": 0.63
+    },
+    "ipc": {
+     "n": 463,
+     "mean": 3.07,
+     "p50": 3.04,
+     "p95": 3.62,
+     "max": 5.59
+    },
+    "upload": {
+     "n": 463,
+     "mean": 8.07,
+     "p50": 7.8,
+     "p95": 14.9,
+     "max": 25.4
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 3.88,
+    "main": 0.8,
+    "renderer": 0.9,
+    "gpuProcess": 1.6,
+    "other": 0,
+    "total": 7.2
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "C-2160-0.5",
+  "config": {
+   "route": "C",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 0.5,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "AMD Radeon 780M Graphics",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 59.8,
+   "engine": {
+    "renderedFps": 59.94,
+    "sentFps": 59.94,
+    "droppedFps": 0.13,
+    "gpuMsAvg": 9.61
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 67.3,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 480,
+    "mean": 21.4,
+    "p50": 21.55,
+    "p95": 31.29,
+    "max": 36.47
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 38.67,
+    "p50": 37.8,
+    "p95": 48.8,
+    "max": 76.3
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 480,
+     "mean": 9.61,
+     "p50": 9.4,
+     "p95": 10.7,
+     "max": 13.22
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 480,
+     "mean": 0.15,
+     "p50": 0.14,
+     "p95": 0.25,
+     "max": 0.59
+    },
+    "ipc": {
+     "n": 480,
+     "mean": 1.47,
+     "p50": 1.43,
+     "p95": 1.76,
+     "max": 3.86
+    },
+    "upload": {
+     "n": 480,
+     "mean": 10.62,
+     "p50": 10.9,
+     "p95": 20.5,
+     "max": 26
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 3.67,
+    "main": 0.8,
+    "renderer": 0.8,
+    "gpuProcess": 1.6,
+    "other": 0,
+    "total": 6.9
+   }
+  },
+  "errors": []
+ }
+]

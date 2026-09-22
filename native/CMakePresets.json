@@ -44,6 +44,18 @@
     },
 
     {
+      "name": "linux-clang-engine",
+      "displayName": "Linux · clang · premation-engine (Dawn Vulkan; route A/bench only)",
+      "inherits": "linux-clang",
+      "cacheVariables": {
+        "MOTION_BUILD_ENGINE": "ON",
+        "VCPKG_MANIFEST_FEATURES": "engine",
+        "CMAKE_BUILD_TYPE": "Release",
+        "MOTION_BUILD_BENCH": "OFF"
+      }
+    },
+
+    {
       "name": "macos-clang",
       "displayName": "macOS · clang · RelWithDebInfo",
       "inherits": ["base", "vcpkg"],
@@ -67,6 +79,18 @@
     },
 
     {
+      "name": "macos-clang-engine",
+      "displayName": "macOS · clang · premation-engine (Dawn Metal; route A/bench only)",
+      "inherits": "macos-clang",
+      "cacheVariables": {
+        "MOTION_BUILD_ENGINE": "ON",
+        "VCPKG_MANIFEST_FEATURES": "engine",
+        "CMAKE_BUILD_TYPE": "Release",
+        "MOTION_BUILD_BENCH": "OFF"
+      }
+    },
+
+    {
       "name": "windows-clang-cl",
       "displayName": "Windows · clang-cl · RelWithDebInfo",
       "inherits": ["base", "vcpkg"],
@@ -76,6 +100,17 @@
         "CMAKE_C_COMPILER": "clang-cl",
         "CMAKE_CXX_COMPILER": "clang-cl",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+      }
+    },
+    {
+      "name": "windows-clang-cl-engine",
+      "displayName": "Windows · clang-cl · premation-engine (Dawn D3D12)",
+      "inherits": "windows-clang-cl",
+      "cacheVariables": {
+        "MOTION_BUILD_ENGINE": "ON",
+        "VCPKG_MANIFEST_FEATURES": "engine",
+        "CMAKE_BUILD_TYPE": "Release",
+        "MOTION_BUILD_BENCH": "OFF"
       }
     },
     {
@@ -102,11 +137,14 @@
     { "name": "linux-clang", "configurePreset": "linux-clang" },
     { "name": "linux-clang-asan", "configurePreset": "linux-clang-asan" },
     { "name": "linux-clang-tsan", "configurePreset": "linux-clang-tsan" },
+    { "name": "linux-clang-engine", "configurePreset": "linux-clang-engine" },
     { "name": "macos-clang", "configurePreset": "macos-clang" },
     { "name": "macos-clang-asan", "configurePreset": "macos-clang-asan" },
     { "name": "macos-clang-tsan", "configurePreset": "macos-clang-tsan" },
+    { "name": "macos-clang-engine", "configurePreset": "macos-clang-engine" },
     { "name": "windows-clang-cl", "configurePreset": "windows-clang-cl" },
     { "name": "windows-clang-cl-asan", "configurePreset": "windows-clang-cl-asan" },
+    { "name": "windows-clang-cl-engine", "configurePreset": "windows-clang-cl-engine" },
     { "name": "wasm", "configurePreset": "wasm" }
   ],
   "testPresets": [
@@ -123,6 +161,7 @@
     { "name": "macos-clang-asan", "inherits": "test-base", "configurePreset": "macos-clang-asan" },
     { "name": "macos-clang-tsan", "inherits": "test-base", "configurePreset": "macos-clang-tsan" },
     { "name": "windows-clang-cl", "inherits": "test-base", "configurePreset": "windows-clang-cl" },
-    { "name": "windows-clang-cl-asan", "inherits": "test-base", "configurePreset": "windows-clang-cl-asan" }
+    { "name": "windows-clang-cl-asan", "inherits": "test-base", "configurePreset": "windows-clang-cl-asan" },
+    { "name": "windows-clang-cl-engine", "inherits": "test-base", "configurePreset": "windows-clang-cl-engine" }
   ]
 }

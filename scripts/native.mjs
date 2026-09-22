@@ -2,7 +2,8 @@
 /**
  * `npm run native:<step>` — the CMake presets in native/, picked for this OS.
  *
- *   node scripts/native.mjs configure [--asan|--tsan|--preset NAME]
+ *   node scripts/native.mjs configure [--asan|--tsan|--engine|--preset NAME]
+ *                                     (--engine: premation-engine + Dawn, docs/VIEWPORT_ROUTE.md)
  *   node scripts/native.mjs build     [same flags]
  *   node scripts/native.mjs test      [same flags]
  *   node scripts/native.mjs bench     runs the Google Benchmark binary
@@ -47,6 +48,7 @@ function preset() {
   const base = basePreset();
   if (rest.includes('--asan')) return `${base}-asan`;
   if (rest.includes('--tsan')) return `${base}-tsan`;
+  if (rest.includes('--engine')) return `${base}-engine`;
   return base;
 }
 

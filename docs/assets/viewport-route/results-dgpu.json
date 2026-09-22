@@ -1,0 +1,1159 @@
+[
+ {
+  "name": "A-1080-1",
+  "config": {
+   "route": "A",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.08,
+   "presentedFps": 35.9,
+   "engine": {
+    "renderedFps": 60,
+    "sentFps": 50.87,
+    "droppedFps": 9.13,
+    "gpuMsAvg": 5.02
+   },
+   "mainDropsPerSec": 15.2,
+   "pageRafPerSec": 74.9,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 290,
+    "mean": 41.17,
+    "p50": 38.69,
+    "p95": 57.19,
+    "max": 68.75
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 82.47,
+    "p50": 82.6,
+    "p95": 115.2,
+    "max": 124.9
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 290,
+     "mean": 4.84,
+     "p50": 4.68,
+     "p95": 6.98,
+     "max": 8.57
+    },
+    "pipe": {
+     "n": 290,
+     "mean": 6.27,
+     "p50": 4.27,
+     "p95": 17.25,
+     "max": 26.8
+    },
+    "mainHop": {
+     "n": 290,
+     "mean": 3.71,
+     "p50": 3.03,
+     "p95": 10.19,
+     "max": 14.51
+    },
+    "ipc": {
+     "n": 290,
+     "mean": 22.25,
+     "p50": 22.17,
+     "p95": 27.72,
+     "max": 35.61
+    },
+    "upload": {
+     "n": 290,
+     "mean": 3.2,
+     "p50": 2.1,
+     "p95": 7.8,
+     "max": 14.3
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 13.33,
+    "main": 4.8,
+    "renderer": 3.1,
+    "gpuProcess": 1.2,
+    "other": 0,
+    "total": 22.4
+   }
+  },
+  "tests": {
+   "clickReachedPage": true,
+   "splitDrag": {
+    "presentedFpsDuring": 26.9,
+    "rectApplyLagMs": null
+   },
+   "engineAliveAfterRestore": true,
+   "dprAfterZoom": 1.3625000715255737,
+   "otherMonitor": {
+    "dpr": 2.180000066757202,
+    "rect": {
+     "x": 480,
+     "y": 74,
+     "w": 3654,
+     "h": 2693,
+     "t": 1790091232190000
+    }
+   },
+   "presentedFpsAfterTests": 36.9
+  },
+  "errors": []
+ },
+ {
+  "name": "A-1080-0.5",
+  "config": {
+   "route": "A",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 59.4,
+   "engine": {
+    "renderedFps": 60.06,
+    "sentFps": 59.32,
+    "droppedFps": 0.75,
+    "gpuMsAvg": 4.25
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 74.9,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 477,
+    "mean": 15.37,
+    "p50": 13.95,
+    "p95": 25.25,
+    "max": 31.45
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 41.58,
+    "p50": 40.8,
+    "p95": 53.8,
+    "max": 80.5
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 477,
+     "mean": 4.36,
+     "p50": 4.23,
+     "p95": 6.77,
+     "max": 20.96
+    },
+    "pipe": {
+     "n": 477,
+     "mean": -0.27,
+     "p50": -0.54,
+     "p95": 1.59,
+     "max": 4.09
+    },
+    "mainHop": {
+     "n": 477,
+     "mean": 1.44,
+     "p50": 0,
+     "p95": 6.56,
+     "max": 13.41
+    },
+    "ipc": {
+     "n": 477,
+     "mean": 4.82,
+     "p50": 4.42,
+     "p95": 6.89,
+     "max": 13.01
+    },
+    "upload": {
+     "n": 477,
+     "mean": 4.81,
+     "p50": 4.6,
+     "p95": 11.3,
+     "max": 13.2
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 7.38,
+    "main": 1.8,
+    "renderer": 1.9,
+    "gpuProcess": 1.3,
+    "other": 0,
+    "total": 12.4
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "A-2160-1",
+  "config": {
+   "route": "A",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.32,
+   "presentedFps": 6.7,
+   "engine": {
+    "renderedFps": 59.98,
+    "sentFps": 22.31,
+    "droppedFps": 37.67,
+    "gpuMsAvg": 9.53
+   },
+   "mainDropsPerSec": 15.3,
+   "pageRafPerSec": 54.6,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 56,
+    "mean": 173.27,
+    "p50": 171.28,
+    "p95": 193.15,
+    "max": 197.75
+   },
+   "latencyCmdMs": {
+    "n": 55,
+    "mean": 272.94,
+    "p50": 274.5,
+    "p95": 310.2,
+    "max": 401.2
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 56,
+     "mean": 9.11,
+     "p50": 9.07,
+     "p95": 9.46,
+     "max": 9.9
+    },
+    "pipe": {
+     "n": 56,
+     "mean": 9.69,
+     "p50": 9.58,
+     "p95": 12.79,
+     "max": 16.7
+    },
+    "mainHop": {
+     "n": 56,
+     "mean": 4.51,
+     "p50": 0.74,
+     "p95": 14.38,
+     "max": 23.37
+    },
+    "ipc": {
+     "n": 56,
+     "mean": 114.03,
+     "p50": 114.81,
+     "p95": 124.06,
+     "max": 125.82
+    },
+    "upload": {
+     "n": 56,
+     "mean": 34.18,
+     "p50": 33.9,
+     "p95": 42.7,
+     "max": 46
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 16.46,
+    "main": 5.5,
+    "renderer": 3.2,
+    "gpuProcess": 0.7,
+    "other": 0,
+    "total": 25.9
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "A-2160-0.5",
+  "config": {
+   "route": "A",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.07,
+   "presentedFps": 36.2,
+   "engine": {
+    "renderedFps": 60.04,
+    "sentFps": 50.98,
+    "droppedFps": 9.06,
+    "gpuMsAvg": 5.03
+   },
+   "mainDropsPerSec": 14.3,
+   "pageRafPerSec": 75,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 292,
+    "mean": 43,
+    "p50": 40.32,
+    "p95": 59.95,
+    "max": 71.3
+   },
+   "latencyCmdMs": {
+    "n": 82,
+    "mean": 83.46,
+    "p50": 82,
+    "p95": 105.4,
+    "max": 176.7
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 292,
+     "mean": 4.95,
+     "p50": 4.73,
+     "p95": 7.24,
+     "max": 13.47
+    },
+    "pipe": {
+     "n": 292,
+     "mean": 6.05,
+     "p50": 4.26,
+     "p95": 16.65,
+     "max": 20.9
+    },
+    "mainHop": {
+     "n": 292,
+     "mean": 3.79,
+     "p50": 2.35,
+     "p95": 12.3,
+     "max": 17.12
+    },
+    "ipc": {
+     "n": 292,
+     "mean": 23.67,
+     "p50": 23.7,
+     "p95": 28.73,
+     "max": 34.18
+    },
+    "upload": {
+     "n": 292,
+     "mean": 3.69,
+     "p50": 2.3,
+     "p95": 10.4,
+     "max": 13.8
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 17.41,
+    "main": 4.7,
+    "renderer": 3.2,
+    "gpuProcess": 1.2,
+    "other": 0,
+    "total": 26.5
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "A-1080-1-e40",
+  "config": {
+   "route": "A",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.07,
+   "presentedFps": 43.4,
+   "engine": {
+    "renderedFps": 59.96,
+    "sentFps": 48.47,
+    "droppedFps": 11.5,
+    "gpuMsAvg": 5.74
+   },
+   "mainDropsPerSec": 5.1,
+   "pageRafPerSec": 75,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 350,
+    "mean": 35.66,
+    "p50": 34.51,
+    "p95": 48.06,
+    "max": 66.82
+   },
+   "latencyCmdMs": {
+    "n": 82,
+    "mean": 69.97,
+    "p50": 67.5,
+    "p95": 91.8,
+    "max": 127.4
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 350,
+     "mean": 5.72,
+     "p50": 5.28,
+     "p95": 7.79,
+     "max": 22.09
+    },
+    "pipe": {
+     "n": 350,
+     "mean": 7.91,
+     "p50": 6.78,
+     "p95": 16.29,
+     "max": 24.15
+    },
+    "mainHop": {
+     "n": 350,
+     "mean": 2.11,
+     "p50": 0.15,
+     "p95": 9.38,
+     "max": 16.14
+    },
+    "ipc": {
+     "n": 350,
+     "mean": 15.52,
+     "p50": 14.87,
+     "p95": 21.1,
+     "max": 31.47
+    },
+    "upload": {
+     "n": 350,
+     "mean": 3.44,
+     "p50": 2.2,
+     "p95": 8.8,
+     "max": 14.2
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 12.93,
+    "main": 4.7,
+    "renderer": 3.8,
+    "gpuProcess": 1.3,
+    "other": 0,
+    "total": 22.7
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "B-1080-1",
+  "config": {
+   "route": "B",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 75,
+   "engine": {
+    "renderedFps": 74.98,
+    "sentFps": 74.98,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.87
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 75,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 602,
+    "mean": 0.87,
+    "p50": 0.8,
+    "p95": 1.28,
+    "max": 2.74
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 20.92,
+    "p50": 20.75,
+    "p95": 24.65,
+    "max": 26.82
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 8.17,
+    "main": 0.2,
+    "renderer": 0.3,
+    "gpuProcess": 0.1,
+    "other": 0,
+    "total": 8.8
+   }
+  },
+  "tests": {
+   "clickReachedPage": true,
+   "splitDrag": {
+    "presentedFpsDuring": 73.3,
+    "rectApplyLagMs": {
+     "n": 113,
+     "mean": 17.33,
+     "p50": 14.86,
+     "p95": 50.13,
+     "max": 68.28
+    }
+   },
+   "engineAliveAfterRestore": true,
+   "dprAfterZoom": 1.3625000715255737,
+   "otherMonitor": {
+    "dpr": 2.180000066757202,
+    "rect": {
+     "x": 480,
+     "y": 74,
+     "w": 3654,
+     "h": 2693,
+     "t": 1790091331536300.2
+    }
+   },
+   "presentedFpsAfterTests": 75
+  },
+  "errors": []
+ },
+ {
+  "name": "B-1080-0.5",
+  "config": {
+   "route": "B",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 75,
+   "engine": {
+    "renderedFps": 74.96,
+    "sentFps": 74.96,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.83
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 75.1,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 602,
+    "mean": 0.83,
+    "p50": 0.81,
+    "p95": 1.02,
+    "max": 1.52
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 19.4,
+    "p50": 18.84,
+    "p95": 26.32,
+    "max": 28.84
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 7.39,
+    "main": 0.2,
+    "renderer": 0.3,
+    "gpuProcess": 0.2,
+    "other": 0,
+    "total": 8.1
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "B-2160-1",
+  "config": {
+   "route": "B",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 1,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 75,
+   "engine": {
+    "renderedFps": 74.99,
+    "sentFps": 74.99,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.94
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 75,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 602,
+    "mean": 0.94,
+    "p50": 0.89,
+    "p95": 1.33,
+    "max": 2.02
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 23.32,
+    "p50": 23.6,
+    "p95": 24.38,
+    "max": 30.48
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 8.16,
+    "main": 0.2,
+    "renderer": 0.3,
+    "gpuProcess": 0.1,
+    "other": 0,
+    "total": 8.8
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "B-2160-0.5",
+  "config": {
+   "route": "B",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 0.5,
+   "electron": "32.3.3",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.02,
+   "presentedFps": 75,
+   "engine": {
+    "renderedFps": 74.98,
+    "sentFps": 74.98,
+    "droppedFps": 0,
+    "gpuMsAvg": 0.86
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 75.1,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 602,
+    "mean": 0.85,
+    "p50": 0.84,
+    "p95": 1.09,
+    "max": 1.83
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 21.53,
+    "p50": 21.16,
+    "p95": 25.66,
+    "max": 48.56
+   },
+   "breakdownMs": {
+    "engineGpu": null,
+    "pipe": null,
+    "mainHop": null,
+    "ipc": null,
+    "upload": null
+   },
+   "cpuPctOfOneCore": {
+    "engine": 6.6,
+    "main": 0.2,
+    "renderer": 0.3,
+    "gpuProcess": 0.1,
+    "other": 0,
+    "total": 7.2
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "C-1080-1",
+  "config": {
+   "route": "C",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 1,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 59.7,
+   "engine": {
+    "renderedFps": 58.98,
+    "sentFps": 58.98,
+    "droppedFps": 0.12,
+    "gpuMsAvg": 6.06
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 75,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 479,
+    "mean": 14.58,
+    "p50": 12.55,
+    "p95": 24.33,
+    "max": 29.8
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 34.69,
+    "p50": 38.6,
+    "p95": 44.2,
+    "max": 80.3
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 479,
+     "mean": 5.91,
+     "p50": 5.33,
+     "p95": 10.84,
+     "max": 20.51
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 479,
+     "mean": 0.15,
+     "p50": 0.14,
+     "p95": 0.2,
+     "max": 0.49
+    },
+    "ipc": {
+     "n": 479,
+     "mean": 1.24,
+     "p50": 1.21,
+     "p95": 1.52,
+     "max": 2.52
+    },
+    "upload": {
+     "n": 479,
+     "mean": 7.49,
+     "p50": 5.3,
+     "p95": 18.3,
+     "max": 22.9
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 4.82,
+    "main": 0.8,
+    "renderer": 0.9,
+    "gpuProcess": 1.9,
+    "other": 0,
+    "total": 8.4
+   }
+  },
+  "tests": {
+   "clickReachedPage": true,
+   "splitDrag": {
+    "presentedFpsDuring": 43.8,
+    "rectApplyLagMs": null
+   },
+   "engineAliveAfterRestore": true,
+   "dprAfterZoom": 1.3625000715255737,
+   "otherMonitor": {
+    "dpr": 2.180000066757202,
+    "rect": {
+     "x": 480,
+     "y": 74,
+     "w": 3654,
+     "h": 2693,
+     "t": 1790091414371900.2
+    }
+   },
+   "presentedFpsAfterTests": 60.1
+  },
+  "errors": []
+ },
+ {
+  "name": "C-1080-0.5",
+  "config": {
+   "route": "C",
+   "compW": 1920,
+   "compH": 1080,
+   "scale": 0.5,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 59.8,
+   "engine": {
+    "renderedFps": 60.02,
+    "sentFps": 60.02,
+    "droppedFps": 0,
+    "gpuMsAvg": 3.36
+   },
+   "mainDropsPerSec": 0.2,
+   "pageRafPerSec": 75,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 480,
+    "mean": 12.53,
+    "p50": 11.69,
+    "p95": 21.23,
+    "max": 28.36
+   },
+   "latencyCmdMs": {
+    "n": 82,
+    "mean": 36.45,
+    "p50": 34.2,
+    "p95": 42.3,
+    "max": 119.7
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 480,
+     "mean": 3.45,
+     "p50": 3.4,
+     "p95": 5.68,
+     "max": 9.32
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 480,
+     "mean": 0.12,
+     "p50": 0.11,
+     "p95": 0.2,
+     "max": 0.53
+    },
+    "ipc": {
+     "n": 480,
+     "mean": 4.91,
+     "p50": 4.89,
+     "p95": 5.18,
+     "max": 5.51
+    },
+    "upload": {
+     "n": 480,
+     "mean": 8.14,
+     "p50": 7,
+     "p95": 17.7,
+     "max": 23.8
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 4.27,
+    "main": 0.7,
+    "renderer": 0.9,
+    "gpuProcess": 1.7,
+    "other": 0,
+    "total": 7.6
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "C-2160-1",
+  "config": {
+   "route": "C",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 1,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 59.9,
+   "engine": {
+    "renderedFps": 60.06,
+    "sentFps": 60.06,
+    "droppedFps": 0,
+    "gpuMsAvg": 6.78
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 74.9,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 481,
+    "mean": 13.31,
+    "p50": 12,
+    "p95": 19.2,
+    "max": 27.89
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 34.68,
+    "p50": 38.6,
+    "p95": 40.4,
+    "max": 79.1
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 481,
+     "mean": 6.78,
+     "p50": 6.75,
+     "p95": 7.55,
+     "max": 10.53
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 481,
+     "mean": 0.13,
+     "p50": 0.12,
+     "p95": 0.22,
+     "max": 0.42
+    },
+    "ipc": {
+     "n": 481,
+     "mean": 1.13,
+     "p50": 1.11,
+     "p95": 1.42,
+     "max": 2
+    },
+    "upload": {
+     "n": 481,
+     "mean": 5.43,
+     "p50": 3.9,
+     "p95": 11.7,
+     "max": 20.4
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 5.21,
+    "main": 0.7,
+    "renderer": 0.9,
+    "gpuProcess": 1.7,
+    "other": 0,
+    "total": 8.5
+   }
+  },
+  "errors": []
+ },
+ {
+  "name": "C-2160-0.5",
+  "config": {
+   "route": "C",
+   "compW": 3840,
+   "compH": 2160,
+   "scale": 0.5,
+   "electron": "40.10.2",
+   "fps": 60
+  },
+  "adapter": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "display": {
+   "scaleFactor": 1.090000033378601,
+   "size": {
+    "width": 1762,
+    "height": 991
+   },
+   "label": "ULTRON 2454C",
+   "internal": false
+  },
+  "steady": {
+   "label": "steady",
+   "secs": 8.03,
+   "presentedFps": 59.9,
+   "engine": {
+    "renderedFps": 59.87,
+    "sentFps": 59.87,
+    "droppedFps": 0.13,
+    "gpuMsAvg": 4.95
+   },
+   "mainDropsPerSec": 0,
+   "pageRafPerSec": 74.9,
+   "pageDropsPerSec": 0,
+   "latencyFrameMs": {
+    "n": 481,
+    "mean": 13.52,
+    "p50": 12.12,
+    "p95": 20.77,
+    "max": 26.65
+   },
+   "latencyCmdMs": {
+    "n": 81,
+    "mean": 35.45,
+    "p50": 38.9,
+    "p95": 43.9,
+    "max": 67.1
+   },
+   "breakdownMs": {
+    "engineGpu": {
+     "n": 481,
+     "mean": 5.02,
+     "p50": 4.82,
+     "p95": 7.73,
+     "max": 11.66
+    },
+    "pipe": null,
+    "mainHop": {
+     "n": 481,
+     "mean": 0.13,
+     "p50": 0.12,
+     "p95": 0.18,
+     "max": 0.43
+    },
+    "ipc": {
+     "n": 481,
+     "mean": 2.18,
+     "p50": 2.16,
+     "p95": 2.38,
+     "max": 3.42
+    },
+    "upload": {
+     "n": 481,
+     "mean": 7.36,
+     "p50": 5.3,
+     "p95": 15.5,
+     "max": 22.7
+    }
+   },
+   "cpuPctOfOneCore": {
+    "engine": 3.29,
+    "main": 0.7,
+    "renderer": 0.9,
+    "gpuProcess": 1.7,
+    "other": 0,
+    "total": 6.6
+   }
+  },
+  "errors": []
+ }
+]
